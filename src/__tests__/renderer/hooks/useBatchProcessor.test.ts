@@ -616,6 +616,8 @@ describe('useBatchProcessor hook', () => {
 	let mockWorktreeCheckout: ReturnType<typeof vi.fn>;
 	let mockGetDefaultBranch: ReturnType<typeof vi.fn>;
 	let mockCreatePR: ReturnType<typeof vi.fn>;
+	let mockEvidenceStart: ReturnType<typeof vi.fn>;
+	let mockEvidenceEnd: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		useSettingsStore.setState({ notificationHistoryAutoRunTasks: false });
@@ -654,6 +656,8 @@ describe('useBatchProcessor hook', () => {
 		mockCreatePR = vi
 			.fn()
 			.mockResolvedValue({ success: true, prUrl: 'https://github.com/test/test/pull/1' });
+		mockEvidenceStart = vi.fn().mockResolvedValue({ success: true, snapshot: null });
+		mockEvidenceEnd = vi.fn().mockResolvedValue({ success: true, evidence: null });
 
 		// Configure window.maestro
 		window.maestro = {
@@ -665,6 +669,8 @@ describe('useBatchProcessor hook', () => {
 				watchFolder: vi.fn(),
 				unwatchFolder: vi.fn(),
 				readFolder: vi.fn(),
+				evidenceStart: mockEvidenceStart,
+				evidenceEnd: mockEvidenceEnd,
 			},
 			git: {
 				...window.maestro.git,
@@ -1166,6 +1172,182 @@ describe('useBatchProcessor hook', () => {
 					sessionId: 'test-session-id',
 					sessionName: 'Test Session',
 					kind: 'spec-driven',
+				})
+			);
+		});
+
+		it('snapshots the folder at run start and hands the diff to onComplete in the playbook report', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const snapshot = { source: 'git', takenAt: 1, base: 'abc', changes: {} };
+			const evidence = {
+				source: 'git',
+				changedFiles: ['src/a.ts'],
+				createdFiles: [],
+				deletedFiles: [],
+				branch: 'main',
+			};
+			mockEvidenceStart.mockResolvedValue({ success: true, snapshot });
+			mockEvidenceEnd.mockResolvedValue({ success: true, evidence });
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				return callCount <= 2
+					? { success: true, content: '# Tasks\n- [ ] Task 1' }
+					: { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Complete the next task',
+						loopEnabled: false,
+						playbook: { id: 'pb-1', name: 'Refactor Pass' },
+					},
+					'/test/folder'
+				);
+			});
+
+			const cwd = sessions[0].cwd;
+			expect(mockEvidenceStart).toHaveBeenCalledWith(cwd, undefined);
+			expect(mockEvidenceStart.mock.invocationCallOrder[0]).toBeLessThan(
+				mockOnSpawnAgent.mock.invocationCallOrder[0]
+			);
+			expect(mockEvidenceEnd).toHaveBeenCalledWith(cwd, snapshot, undefined);
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					report: expect.objectContaining({
+						playbookName: 'Refactor Pass',
+						playbookId: 'pb-1',
+						// Problem documents are relative to it: where pristine copies are read.
+						autoRunFolderPath: '/test/folder',
+						status: 'completed',
+						evidence,
+						reportPath: expect.stringMatching(
+							/^\/test\/folder\/\.maestro-reports\/refactor-pass-\d{8}-\d{6}\.md$/
+						),
+					}),
+				})
+			);
+
+			// Both report files land under the Auto Run folder's .maestro-reports/.
+			const writes = vi.mocked(window.maestro.fs.writeFile).mock.calls.map((call) => call[0]);
+			expect(writes).toEqual(
+				expect.arrayContaining([
+					expect.stringMatching(/\/\.maestro-reports\/refactor-pass-.*\.md$/),
+					expect.stringMatching(/\/\.maestro-reports\/refactor-pass-.*\.json$/),
+				])
+			);
+
+			// The final summary entry leads with the rendered report and carries its data.
+			const summaryEntry = mockOnAddHistoryEntry.mock.calls
+				.map((call) => call[0])
+				.find((entry) => entry.playbookReport);
+			expect(summaryEntry?.fullResponse).toMatch(/^# Refactor Pass\n/);
+			expect(summaryEntry?.fullResponse).toContain('`src/a.ts`');
+			expect(summaryEntry?.fullResponse).toContain('**Auto Run Summary**');
+		});
+
+		it('takes no evidence and builds no report for an ad-hoc run', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				return callCount <= 2
+					? { success: true, content: '# Tasks\n- [ ] Task 1' }
+					: { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Complete the next task',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockEvidenceStart).not.toHaveBeenCalled();
+			expect(mockEvidenceEnd).not.toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.not.objectContaining({ report: expect.anything() })
+			);
+		});
+
+		it('leaves the report document out of the task loop', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename === 'pb/REPORT.md') {
+					return { success: true, content: '# Report\n- [ ] Describe the run' };
+				}
+				callCount++;
+				return callCount <= 2
+					? { success: true, content: '# Tasks\n- [ ] Task 1' }
+					: { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [
+							{ filename: 'pb/tasks', resetOnCompletion: false },
+							{ filename: 'pb/REPORT', resetOnCompletion: false },
+						],
+						prompt: 'Complete the next task',
+						loopEnabled: false,
+						playbook: { id: 'pb-1', name: 'Refactor', reportDocument: 'pb/REPORT' },
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					report: expect.objectContaining({
+						facts: expect.objectContaining({ documents: ['pb/tasks'] }),
+					}),
 				})
 			);
 		});
@@ -6637,6 +6819,229 @@ describe('useBatchProcessor hook', () => {
 				autoRunId: AUTO_RUN_ID,
 				modelOverride: undefined,
 				effortOverride: undefined,
+			});
+		});
+	});
+
+	describe('missing required playbook parameters', () => {
+		// An overlay-only name is a required parameter with no default.
+		const playbook = {
+			id: 'pb-1',
+			ownerSessionId: 'owner-session-id',
+			parameterOverlay: [{ name: 'REPO_URL' }],
+		};
+
+		// Unchecked until the agent has run once, then done, so the run ends.
+		const mockDocUntilSpawned = () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: mockOnSpawnAgent.mock.calls.length > 0 ? '- [x] Task' : '- [ ] Task',
+			}));
+		};
+
+		const renderProcessor = () =>
+			renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+		it('pauses before any spawn, then re-reads the answers on Resume and continues', async () => {
+			mockDocUntilSpawned();
+			const mockListPlaybooks = vi.fn().mockResolvedValue({
+				success: true,
+				playbooks: [{ ...playbook, parameterValues: { REPO_URL: 'https://example.com/repo' } }],
+			});
+			window.maestro.playbooks = { ...window.maestro.playbooks, list: mockListPlaybooks };
+
+			const { result } = renderProcessor();
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Work on [REPO_URL]',
+						loopEnabled: false,
+						playbook,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
+			);
+			const pausedState = result.current.getBatchState('test-session-id');
+			expect(pausedState.error?.type).toBe('missing_parameters');
+			expect(pausedState.error?.message).toBe('Missing required parameters: REPO_URL');
+			expect(pausedState.error?.recoverable).toBe(true);
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockListPlaybooks).not.toHaveBeenCalled();
+
+			act(() => {
+				result.current.resumeAfterError('test-session-id');
+			});
+			await startPromise!;
+
+			expect(mockListPlaybooks).toHaveBeenCalledWith('owner-session-id');
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(mockOnSpawnAgent.mock.calls[0][1]).toContain('Work on https://example.com/repo');
+		});
+
+		it('proceeds without pausing when every required parameter has an answer', async () => {
+			mockDocUntilSpawned();
+			const { result } = renderProcessor();
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Work on [REPO_URL]',
+						loopEnabled: false,
+						playbook: { ...playbook, parameterValues: { REPO_URL: 'https://example.com/repo' } },
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(result.current.getBatchState('test-session-id').errorPaused).toBeFalsy();
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('stats playbook identity and outcome', () => {
+		const renderProcessor = () =>
+			renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+		const lastEndOutcome = () => vi.mocked(window.maestro.stats.endAutoRun).mock.calls.at(-1)?.[4];
+
+		it('names the playbook and launch source at start and records a completed run at the end', async () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: mockOnSpawnAgent.mock.calls.length > 0 ? '- [x] Task' : '- [ ] Task',
+			}));
+			const { result } = renderProcessor();
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						launchSource: 'panel',
+						playbook: {
+							id: 'pb-local-1',
+							marketplaceId: 'message-bus',
+							sourceVersion: '2026-08-30',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(window.maestro.stats.startAutoRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					playbookLocalId: 'pb-local-1',
+					playbookId: 'message-bus',
+					playbookVersion: '2026-08-30',
+					launchSource: 'panel',
+				})
+			);
+			expect(lastEndOutcome()).toEqual({ status: 'completed', documentsStalled: 0, failures: [] });
+		});
+
+		it('hands the completion an official run_completed event, built from what main is told', async () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: mockOnSpawnAgent.mock.calls.length > 0 ? '- [x] Task' : '- [ ] Task',
+			}));
+			const { result } = renderProcessor();
+
+			const run = (sourceChannel: 'official' | 'local') =>
+				act(async () => {
+					await result.current.startBatchRun(
+						'test-session-id',
+						{
+							documents: [{ filename: 'tasks', resetOnCompletion: false }],
+							prompt: 'Test',
+							loopEnabled: false,
+							playbook: {
+								id: 'pb-local-1',
+								marketplaceId: 'message-bus',
+								sourceVersion: '2026-08-30',
+								sourceChannel,
+							},
+						},
+						'/test/folder'
+					);
+				});
+
+			await run('official');
+			const ended = vi.mocked(window.maestro.stats.playbookRunEnded).mock.calls.at(-1)?.[1];
+			expect(mockOnComplete).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					playbookTelemetryEvent: expect.objectContaining({
+						type: 'run_completed',
+						playbook_id: 'message-bus',
+						source_version: '2026-08-30',
+						status: 'completed',
+						duration_ms: ended?.durationMs,
+						documents_total: 1,
+						documents_stalled: 0,
+					}),
+				})
+			);
+
+			mockOnSpawnAgent.mockClear();
+			await run('local');
+			expect(mockOnComplete.mock.calls.at(-1)?.[0].playbookTelemetryEvent).toBeUndefined();
+		});
+
+		it('records a run a halt marker ended as failed, with the halt as a failure row', async () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content:
+					mockOnSpawnAgent.mock.calls.length > 0
+						? '- [x] Task 1\n- [ ] Task 2\n\n<!-- maestro:halt: upstream is down -->'
+						: '- [ ] Task 1\n- [ ] Task 2',
+			}));
+			const { result } = renderProcessor();
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(lastEndOutcome()).toEqual({
+				status: 'failed',
+				documentsStalled: 0,
+				failures: [
+					expect.objectContaining({ kind: 'halt', documentFilename: 'tasks', taskIndex: 1 }),
+				],
 			});
 		});
 	});

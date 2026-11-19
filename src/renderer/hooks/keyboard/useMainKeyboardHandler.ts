@@ -15,6 +15,7 @@ import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
+import { openPlaybookConfigure } from '../../services/playbookConfigure';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -1132,6 +1133,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				openPromptLinks();
 				trackShortcut('openPromptLinks');
+			} else if (ctx.isShortcut(e, 'openPlaybookConfigure')) {
+				e.preventDefault();
+				openPlaybookConfigure();
+				trackShortcut('openPlaybookConfigure');
+			} else if (ctx.isShortcut(e, 'openPlaybookExchange')) {
+				// The Exchange installs into the active agent's Auto Run folder and
+				// renders only when one is set, so without a folder the chord would
+				// leave an invisible modal open that pops up once a folder appears.
+				e.preventDefault();
+				if (selectActiveSession(useSessionStore.getState())?.autoRunFolderPath) {
+					getModalActions().setMarketplaceModalOpen(true);
+					trackShortcut('openPlaybookExchange');
+				}
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

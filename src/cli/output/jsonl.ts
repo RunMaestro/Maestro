@@ -2,6 +2,7 @@
 // Outputs machine-parseable JSON lines to stdout
 
 import type { UsageStats } from '../../shared/types';
+import type { PlaybookRunReport } from '../../shared/playbookRunReport';
 
 // Base event interface - all events have a type and timestamp
 export interface JsonlEvent {
@@ -117,6 +118,21 @@ export interface DocumentGatedEvent extends JsonlEvent {
 	line: number;
 }
 
+/**
+ * The playbook run report, just before `complete` (after `evidence`). `path` and `jsonPath`
+ * are the two files saved under `<autoRunFolder>/.maestro-reports/`; both are absent when the
+ * save failed. Not emitted for a dry run or by `run-doc`.
+ */
+export interface ReportEvent extends JsonlEvent {
+	type: 'report';
+	status: PlaybookRunReport['status'];
+	/** The rendered markdown report. */
+	path?: string;
+	/** The JSON copy, which carries `reportPath`. */
+	jsonPath?: string;
+	report: PlaybookRunReport;
+}
+
 export interface HaltEvent extends JsonlEvent {
 	type: 'halt';
 	document: string;
@@ -128,6 +144,8 @@ export interface ErrorEvent extends JsonlEvent {
 	type: 'error';
 	message: string;
 	code?: string;
+	/** `MISSING_PARAMETERS`: the required parameter names with no answer. */
+	missing?: string[];
 }
 
 // List command events

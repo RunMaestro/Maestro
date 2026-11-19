@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Play, XCircle } from 'lucide-react';
+import { Play, SlidersHorizontal, XCircle } from 'lucide-react';
 import type { Theme } from '../../types';
 import { AutoRunNoticeBanner } from './AutoRunNoticeBanner';
 
@@ -12,6 +12,11 @@ export interface AutoRunErrorBannerProps {
 	isHumanGate?: boolean;
 	onResumeAfterError?: () => void;
 	onAbortBatchOnError?: () => void;
+	/**
+	 * Opens the run's playbook in the Configure form. Passed for a pause on
+	 * missing or unresolved playbook parameters: answer them, then Resume.
+	 */
+	onConfigure?: () => void;
 	/**
 	 * When set, the actions render disabled with this string as their tooltip
 	 * instead of being hidden. Used when the paused run belongs to another
@@ -30,10 +35,12 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 	isHumanGate = false,
 	onResumeAfterError,
 	onAbortBatchOnError,
+	onConfigure,
 	disabledReason,
 }: AutoRunErrorBannerProps) {
 	const showResume = isRecoverable && Boolean(onResumeAfterError);
 	const showAbort = Boolean(onAbortBatchOnError);
+	const showConfigure = Boolean(onConfigure);
 	const disabled = Boolean(disabledReason);
 
 	return (
@@ -42,8 +49,25 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 			severity="error"
 			title="Auto Run Paused"
 			actions={
-				showResume || showAbort ? (
+				showResume || showAbort || showConfigure ? (
 					<>
+						{/* Configure button - for a pause on playbook parameters */}
+						{showConfigure && (
+							<button
+								onClick={onConfigure}
+								disabled={disabled}
+								className={`flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium border transition-colors ${disabled ? 'cursor-not-allowed' : 'hover:bg-white/5'}`}
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									opacity: disabled ? 0.6 : 1,
+								}}
+								title={disabledReason ?? "Answer the playbook's parameters, then Resume"}
+							>
+								<SlidersHorizontal className="w-3 h-3" />
+								Configure
+							</button>
+						)}
 						{/* Resume button - for recoverable errors */}
 						{showResume && (
 							<button

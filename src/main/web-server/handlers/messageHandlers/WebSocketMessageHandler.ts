@@ -104,6 +104,7 @@ import {
 	handleMarketplaceGetDocument,
 	handleMarketplaceGetReadme,
 	handleMarketplaceImportPlaybook,
+	handleMarketplaceCheckUpdates,
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import { handleListAgentModels } from './models';
@@ -951,6 +952,10 @@ export class WebSocketMessageHandler {
 
 			case 'marketplace_import_playbook':
 				handleMarketplaceImportPlaybook(this.ctx, client, message);
+				break;
+
+			case 'marketplace_check_updates':
+				handleMarketplaceCheckUpdates(this.ctx, client, message);
 				break;
 
 			case 'list_desktop_sessions':

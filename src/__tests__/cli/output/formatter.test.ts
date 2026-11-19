@@ -876,6 +876,71 @@ describe('formatter', () => {
 			expect(result).toContain('Loop 3 complete');
 		});
 
+		it('should format evidence event with file counts and the source', () => {
+			const gitResult = formatRunEvent({
+				type: 'evidence',
+				timestamp,
+				evidence: {
+					source: 'git',
+					createdFiles: ['a.ts', 'b.ts'],
+					changedFiles: ['c.ts'],
+					deletedFiles: [],
+				},
+			});
+			expect(gitResult).toContain('Files: 2 created, 1 changed, 0 deleted');
+			expect(gitResult).toContain('(git)');
+
+			const mtimeResult = formatRunEvent({
+				type: 'evidence',
+				timestamp,
+				evidence: { source: 'mtime', createdFiles: [], changedFiles: [], deletedFiles: ['d.md'] },
+			});
+			expect(mtimeResult).toContain('0 created, 0 changed, 1 deleted');
+			expect(mtimeResult).toContain('(file times)');
+		});
+
+		it('should print the run report and where it was saved', () => {
+			const report = {
+				playbookName: 'Ship It',
+				status: 'partial' as const,
+				facts: {
+					wasStopped: false,
+					statusText: 'completed with stalls' as const,
+					statusMessage: 'Completed with 1 stalled document(s)',
+					summary: 'Auto Run completed with stalls: 1 task in 0s (1 stalled)',
+					isSuccess: true,
+					totalCompletedTasks: 1,
+					totalElapsedMs: 0,
+					loopEnabled: false,
+					loopsCompleted: 1,
+					totalInputTokens: 0,
+					totalOutputTokens: 0,
+					totalCost: 0,
+					documents: ['a', 'b'],
+					stalledDocuments: [{ filename: 'a', reason: 'no progress' }],
+				},
+				parameters: [],
+				startedAt: 0,
+				finishedAt: 0,
+			};
+
+			const saved = formatRunEvent({
+				type: 'report',
+				timestamp,
+				status: 'partial',
+				path: '/p/.maestro-reports/ship-it-20260101-000000.md',
+				report,
+			});
+			expect(saved).toContain('Run report');
+			expect(saved).toContain('(Partially completed)');
+			expect(saved).toContain('# Ship It');
+			expect(saved).toContain('## What did not happen');
+			expect(saved).toContain('Report saved: /p/.maestro-reports/ship-it-20260101-000000.md');
+
+			const unsaved = formatRunEvent({ type: 'report', timestamp, status: 'partial', report });
+			expect(unsaved).toContain('Report not saved');
+		});
+
 		it('should format complete event', () => {
 			const event: RunEvent = {
 				type: 'complete',

@@ -133,6 +133,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	concertoStagePosition: null,
 	spellCheck: false,
 	userJourneyEnabled: true,
+	playbookTelemetryEnabled: false,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
 	pianolaAutoFixEnabled: false,

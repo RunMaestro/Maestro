@@ -20,12 +20,10 @@
  * Note: Worktree configuration has been moved to WorktreeConfigModal (git branch overlay)
  */
 
-import { generateId } from '../../utils/ids';
-
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
 import type { Playbook, BatchDocumentEntry, TaskSelectionMode } from '../../types';
-import { DEFAULT_BATCH_PROMPT } from './batchUtils';
+import { playbookBatchDocuments, playbookEffectivePrompt } from './playbookRunConfig';
 import { logger } from '../../utils/logger';
 
 const DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}[-_ ]?/;
@@ -151,22 +149,37 @@ export function usePlaybookManagement(
 	// Ref for dropdown click-outside detection
 	const playbackDropdownRef = useRef<HTMLDivElement>(null);
 
-	// Load playbooks on mount
+	// Load playbooks on mount, then reload whenever main reports a write to
+	// this agent's records (an Exchange install, the CLI, another window), so
+	// the list never goes stale while the panel stays mounted.
 	useEffect(() => {
-		const loadPlaybooks = async () => {
-			setLoadingPlaybooks(true);
+		let cancelled = false;
+		const loadPlaybooks = async (showLoading: boolean) => {
+			if (showLoading) setLoadingPlaybooks(true);
 			try {
 				const result = await window.maestro.playbooks.list(sessionId);
-				if (result.success) {
+				if (!cancelled && result.success) {
 					setPlaybooks(result.playbooks);
+					// The loaded playbook follows its stored record, so answers saved
+					// from the Configure form (or the CLI) reach the next run.
+					setLoadedPlaybook((prev) =>
+						prev ? (result.playbooks.find((pb) => pb.id === prev.id) ?? prev) : prev
+					);
 				}
 			} catch (error) {
 				logger.error('Failed to load playbooks:', undefined, error);
 			}
-			setLoadingPlaybooks(false);
+			if (!cancelled && showLoading) setLoadingPlaybooks(false);
 		};
 
-		loadPlaybooks();
+		void loadPlaybooks(true);
+		const unsubscribe = window.maestro.playbooks.onChanged((changedSessionId) => {
+			if (changedSessionId === sessionId) void loadPlaybooks(false);
+		});
+		return () => {
+			cancelled = true;
+			unsubscribe();
+		};
 	}, [sessionId]);
 
 	// Close dropdown when clicking outside
@@ -215,30 +228,14 @@ export function usePlaybookManagement(
 	// Handle loading a playbook
 	const handleLoadPlaybook = useCallback(
 		(playbook: Playbook) => {
-			// Convert stored entries to BatchDocumentEntry with IDs
-			// Also detect missing documents (documents in playbook that don't exist in allDocuments)
-			const allDocsSet = new Set(allDocuments);
-
-			const entries: BatchDocumentEntry[] = playbook.documents.map((doc, index) => ({
-				id: generateId(),
-				filename: doc.filename,
-				resetOnCompletion: doc.resetOnCompletion,
-				// Mark as duplicate if same filename appears earlier
-				isDuplicate: playbook.documents.slice(0, index).some((d) => d.filename === doc.filename),
-				// Mark as missing if document doesn't exist in the folder
-				isMissing: !allDocsSet.has(doc.filename),
-			}));
-
-			// Apply configuration through callback
-			// Note: Worktree settings are no longer managed here - see WorktreeConfigModal
-			// Fall back to default prompt if playbook has no/empty agent prompt
-			const effectivePrompt = playbook.prompt?.trim() ? playbook.prompt : DEFAULT_BATCH_PROMPT;
-
+			// Stored entries become run-list entries with ids, and a document no
+			// longer in the folder is marked missing. Worktree settings are not
+			// managed here (see WorktreeConfigModal).
 			onApplyPlaybook({
-				documents: entries,
+				documents: playbookBatchDocuments(playbook, allDocuments),
 				loopEnabled: playbook.loopEnabled,
 				maxLoops: playbook.maxLoops ?? null,
-				prompt: effectivePrompt,
+				prompt: playbookEffectivePrompt(playbook),
 				taskSelectionMode: playbook.taskSelectionMode ?? 'task',
 			});
 

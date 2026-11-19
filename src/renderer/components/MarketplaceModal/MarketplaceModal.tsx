@@ -7,11 +7,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
+import {
+	PLAYBOOK_BROWSE_SORTS,
+	selectMostPopularPlaybookIds,
+	sortPlaybooksByHealth,
+} from '../../../shared/playbookHealth';
+import { isUnboundedLoop } from '../../../shared/playbookRun';
+import { findPlaybookUpdateStatus } from '../../../shared/playbookUpdates';
+import type { Playbook } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
-import { MarketplaceBrowseTab, MarketplaceHeader, PlaybookDetailView } from './components';
+import { checkPlaybookUpdates } from '../../services/playbookUpdates';
+import {
+	useIsPlaybookUpdating,
+	usePlaybookUpdateStatuses,
+} from '../../stores/playbookUpdatesStore';
+import {
+	MarketplaceBrowseTab,
+	MarketplaceHeader,
+	PlaybookConfigureStep,
+	PlaybookDetailView,
+} from './components';
 import { partitionPlaybooksByCompatibility } from './helpers';
 import {
 	useMarketplaceCategoryDocumentCycle,
@@ -30,6 +49,7 @@ export function MarketplaceModal({
 	sessionId,
 	sshRemoteId,
 	onImportComplete,
+	onRunPlaybook,
 }: MarketplaceModalProps) {
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -43,6 +63,7 @@ export function MarketplaceModal({
 	const {
 		manifest,
 		categories,
+		health,
 		isLoading,
 		isRefreshing,
 		isImporting,
@@ -60,9 +81,32 @@ export function MarketplaceModal({
 		fetchDocument,
 	} = useMarketplace();
 
+	const { value: sort, setValue: setSort } = usePersistedChoice(
+		'marketplace.sort',
+		PLAYBOOK_BROWSE_SORTS,
+		'default'
+	);
+
+	// Sorted before the compatibility split, so each section keeps the order
+	// and the keyboard walks the tiles as they are drawn.
 	const { compatiblePlaybooks, incompatiblePlaybooks, orderedPlaybooks } = useMemo(
-		() => partitionPlaybooksByCompatibility(filteredPlaybooks, runningVersion),
-		[filteredPlaybooks, runningVersion]
+		() =>
+			partitionPlaybooksByCompatibility(
+				sortPlaybooksByHealth(filteredPlaybooks, sort, health),
+				runningVersion
+			),
+		[filteredPlaybooks, sort, health, runningVersion]
+	);
+
+	// Ranked over the whole catalog, so a filter cannot hand the badge to a
+	// playbook that is only the most popular of what is on screen.
+	const mostPopularIds = useMemo(
+		() =>
+			selectMostPopularPlaybookIds(
+				health,
+				(manifest?.playbooks ?? []).map((playbook) => playbook.id)
+			),
+		[health, manifest]
 	);
 
 	const [selectedTileIndex, setSelectedTileIndex] = useState(0);
@@ -86,9 +130,26 @@ export function MarketplaceModal({
 		handleSelectDocument,
 	} = detailState;
 
-	const { handleImport, handleBrowseFolder } = usePlaybookImportActions({
+	// Set once Install and Run stores the record: the modal leaves the detail
+	// view for the configure step instead of closing.
+	const [configuringPlaybook, setConfiguringPlaybook] = useState<Playbook | null>(null);
+
+	// Every open re-checks which of the agent's installed playbooks have an
+	// update, so the detail view offers Update for one already installed.
+	useEffect(() => {
+		if (!isOpen) return;
+		void checkPlaybookUpdates({ sessionId, autoRunFolderPath, sshRemoteId }, { force: true });
+	}, [isOpen, sessionId, autoRunFolderPath, sshRemoteId]);
+	const updateStatuses = usePlaybookUpdateStatuses(sessionId);
+	const installedStatus = selectedPlaybook
+		? findPlaybookUpdateStatus(updateStatuses, selectedPlaybook.id)
+		: undefined;
+	const isUpdating = useIsPlaybookUpdating(installedStatus?.playbookId);
+
+	const { handleInstallAndRun, handleInstallOnly, handleBrowseFolder } = usePlaybookImportActions({
 		selectedPlaybook,
 		targetFolderName,
+		installed: installedStatus,
 		autoRunFolderPath,
 		sessionId,
 		sshRemoteId,
@@ -96,6 +157,7 @@ export function MarketplaceModal({
 		importPlaybook,
 		onImportComplete,
 		onClose,
+		onConfigure: setConfiguringPlaybook,
 		setTargetFolderName,
 	});
 
@@ -105,6 +167,14 @@ export function MarketplaceModal({
 			setSelectedTileIndex(0);
 		},
 		[setSelectedCategory]
+	);
+
+	const handleSortChange = useCallback(
+		(next: typeof sort) => {
+			setSort(next);
+			setSelectedTileIndex(0);
+		},
+		[setSort]
 	);
 
 	const handleSearchChange = useCallback(
@@ -121,12 +191,19 @@ export function MarketplaceModal({
 	showHelpRef.current = showHelp;
 	const handleBackToListRef = useRef(handleBackToList);
 	handleBackToListRef.current = handleBackToList;
+	const configuringRef = useRef(configuringPlaybook);
+	configuringRef.current = configuringPlaybook;
 
 	useModalLayer(
 		MODAL_PRIORITIES.MARKETPLACE,
 		'Playbook Exchange',
 		() => {
-			if (showHelpRef.current) {
+			if (configuringRef.current) {
+				// The install already happened; Escape leaves the Exchange
+				// rather than stepping back to a detail view that would
+				// offer a second install.
+				onCloseRef.current();
+			} else if (showHelpRef.current) {
 				setShowHelp(false);
 			} else if (showDetailViewRef.current) {
 				handleBackToListRef.current();
@@ -151,8 +228,11 @@ export function MarketplaceModal({
 		[handleSelectPlaybook]
 	);
 
+	// The browse and detail keyboard maps stand down on the configure step.
+	const browseKeysActive = isOpen && !configuringPlaybook;
+
 	useMarketplaceListKeyboardNav({
-		isOpen,
+		isOpen: browseKeysActive,
 		showDetailView,
 		orderedPlaybooks,
 		selectedTileIndex,
@@ -162,7 +242,7 @@ export function MarketplaceModal({
 	});
 
 	useMarketplaceCategoryDocumentCycle({
-		isOpen,
+		isOpen: browseKeysActive,
 		categories,
 		selectedCategory,
 		showDetailView,
@@ -206,7 +286,26 @@ export function MarketplaceModal({
 					canReset={resizableModal.canReset}
 				/>
 
-				{showDetailView && selectedPlaybook ? (
+				{configuringPlaybook ? (
+					<PlaybookConfigureStep
+						theme={theme}
+						playbook={configuringPlaybook}
+						sessionId={sessionId}
+						readmeContent={readmeContent}
+						importCappedLoops={
+							selectedPlaybook
+								? isUnboundedLoop(selectedPlaybook.loopEnabled, selectedPlaybook.maxLoops)
+								: false
+						}
+						health={
+							configuringPlaybook.provenance?.marketplaceId
+								? health[configuringPlaybook.provenance.marketplaceId]
+								: undefined
+						}
+						onRunPlaybook={onRunPlaybook}
+						onClose={onClose}
+					/>
+				) : showDetailView && selectedPlaybook ? (
 					<PlaybookDetailView
 						theme={theme}
 						playbook={selectedPlaybook}
@@ -215,14 +314,16 @@ export function MarketplaceModal({
 						documentContent={documentContent}
 						isLoadingDocument={isLoadingDocument}
 						targetFolderName={targetFolderName}
-						isImporting={isImporting}
+						isImporting={isImporting || isUpdating}
+						installed={installedStatus}
 						isRemoteSession={isRemoteSession}
 						runningVersion={runningVersion}
 						onBack={handleBackToList}
 						onSelectDocument={handleSelectDocument}
 						onTargetFolderChange={setTargetFolderName}
 						onBrowseFolder={handleBrowseFolder}
-						onImport={handleImport}
+						onInstallAndRun={handleInstallAndRun}
+						onInstallOnly={handleInstallOnly}
 					/>
 				) : (
 					<>
@@ -253,6 +354,10 @@ export function MarketplaceModal({
 							isLoading={isLoading}
 							error={error}
 							runningVersion={runningVersion}
+							health={health}
+							mostPopularIds={mostPopularIds}
+							sort={sort}
+							onSortChange={handleSortChange}
 							onRefresh={() => refresh()}
 							onSelectPlaybook={handleSelectPlaybookFromList}
 							searchInputRef={searchInputRef}

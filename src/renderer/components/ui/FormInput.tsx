@@ -73,6 +73,12 @@ export interface FormInputProps {
 	testId?: string;
 	/** Whether to select all text when focused */
 	selectOnFocus?: boolean;
+	/** Lower bound for a `type="number"` input */
+	min?: number;
+	/** Upper bound for a `type="number"` input */
+	max?: number;
+	/** Step for a `type="number"` input */
+	step?: number | 'any';
 }
 
 /**
@@ -101,6 +107,9 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 			id: providedId,
 			testId,
 			selectOnFocus = false,
+			min,
+			max,
+			step,
 		},
 		ref
 	) => {
@@ -148,6 +157,9 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 						ref={ref}
 						id={inputId}
 						type={type}
+						min={min}
+						max={max}
+						step={step}
 						value={value}
 						onChange={(e) => onChange(e.target.value)}
 						onKeyDown={handleKeyDown}

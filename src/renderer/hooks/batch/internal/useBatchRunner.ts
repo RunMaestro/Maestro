@@ -10,6 +10,30 @@ import type {
 	AgentError,
 } from '../../../types';
 import { gitService } from '../../../services/git';
+import { finishRunEvidenceCapture, startRunEvidenceCapture } from '../../../services/runEvidence';
+import type { RunEvidenceSnapshot } from '../../../../shared/runEvidence';
+import { withoutReportDocument } from '../../../../shared/playbookRun';
+import { playbookFailureKindForAgentError } from '../../../../shared/playbookFailureCore';
+import {
+	buildPlaybookRunReportParameters,
+	type PlaybookReportSynopsis,
+} from '../../../../shared/playbookReportAuthoring';
+import {
+	buildFinalSummaryFacts,
+	buildPlaybookRunReport,
+	playbookRunReportStatus,
+	renderPlaybookReportMarkdown,
+	type PlaybookRunReport,
+	type PlaybookRunReportProblem,
+} from '../../../../shared/playbookRunReport';
+import { savePlaybookRunReport } from '../../../services/playbookRunReport';
+import {
+	buildPlaybookRunCompletedEvent,
+	type PlaybookTelemetryRunCompletedEvent,
+	type PlaybookTelemetryRunEnd,
+	type PlaybookTelemetryRunStart,
+} from '../../../../shared/playbookTelemetry';
+import { authorRunReport, type AuthoredRunReport } from './batchRunReport';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
@@ -29,9 +53,12 @@ import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import {
 	aggregateAutoRunHistoryTotals,
+	autoRunOutcomeStatus,
+	buildAutoRunEndOutcome,
 	buildFinalSummary,
 	mergeFinalSummaryTotals,
 } from './batchFinalSummary';
+import type { AutoRunFailureEntry } from '../../../../shared/stats-types';
 import {
 	MAX_CONSECUTIVE_NO_CHANGES,
 	describeStall,
@@ -63,11 +90,18 @@ import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 import type { UseWorktreeManagerReturn } from '../useWorktreeManager';
-import type {
-	AutoRunSpawnAgentFn,
-	DocumentRunOverrides,
-	UseDocumentProcessorReturn,
+import {
+	AutoRunPauseError,
+	type AutoRunSpawnAgentFn,
+	type DocumentRunOverrides,
+	type UseDocumentProcessorReturn,
 } from '../useDocumentProcessor';
+import type { PlaybookParamSet } from '../../../../shared/playbookParams';
+import {
+	missingParamsPauseError,
+	reloadRunPlaybookParams,
+	resolveRunPlaybookParams,
+} from './batchPlaybookParams';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -228,7 +262,11 @@ export function useBatchRunner({
 				return;
 			}
 
-			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
+			const { prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
+			// The playbook's report document runs once after every other document
+			// (see authorRunReport), so the task loop never works through it.
+			const reportDocument = config.playbook?.reportDocument;
+			const documents = withoutReportDocument(config.documents, reportDocument);
 
 			// Run-scoped model/effort override, built only when the run picked one so
 			// default runs pass no spawn options at all. An absent override means the
@@ -242,6 +280,14 @@ export function useBatchRunner({
 							...(config.ignoreModelHints && { ignoreModelHints: true }),
 						}
 					: undefined;
+
+			// The launching playbook's parameters, resolved once per run: specs are
+			// per playbook, not per document. An ad-hoc run has none. Reassigned only
+			// when a Resume re-reads answers the user gave during a pause.
+			let playbookParams: PlaybookParamSet | undefined = resolveRunPlaybookParams(
+				config.playbook,
+				prompt
+			);
 
 			if (documents.length === 0) {
 				window.maestro.logger.log(
@@ -296,6 +342,8 @@ export function useBatchRunner({
 			let initialTotalTasks = 0;
 			let initialCheckedTasks = 0;
 			let startPublished = false;
+			// The folder as the run found it, for the report's "Files changed".
+			let evidenceSnapshot: RunEvidenceSnapshot | null = null;
 
 			try {
 				// Initialize visibility-based time tracking for this session using the extracted hook
@@ -343,6 +391,13 @@ export function useBatchRunner({
 					} catch {
 						// Ignore git errors - branch will be empty string
 					}
+				}
+
+				// Snapshot the folder the tasks will work in (the worktree, when the
+				// run uses one) so the run report can say what changed on disk. Only a
+				// saved playbook's run has a report.
+				if (config.playbook) {
+					evidenceSnapshot = await startRunEvidenceCapture(effectiveCwd, sshRemoteId);
 				}
 
 				// Calculate initial total tasks across all documents (checked + unchecked),
@@ -442,6 +497,12 @@ export function useBatchRunner({
 						// Resolved once, here, so the run keeps the auto-resume terms it was
 						// launched under even if the user edits the defaults mid-run.
 						autoResumePolicy: resolveAutoResumePolicy(config),
+						...(config.playbook && {
+							playbookRef: {
+								id: config.playbook.id,
+								ownerSessionId: config.playbook.ownerSessionId ?? sessionId,
+							},
+						}),
 						startTime: batchStartTime,
 						// Time tracking
 						cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
@@ -595,10 +656,41 @@ export function useBatchRunner({
 					tasksTotal: initialTotalTasks,
 					projectPath: session.cwd,
 					kind: 'spec-driven',
+					...(config.playbook && {
+						playbookLocalId: config.playbook.id,
+						playbookId: config.playbook.marketplaceId,
+						playbookVersion: config.playbook.sourceVersion,
+					}),
+					launchSource: config.launchSource,
 				});
 			} catch (statsError) {
 				// Don't fail the batch if stats tracking fails
 				logger.warn('[BatchProcessor] Failed to start stats tracking:', undefined, statsError);
+			}
+
+			// Playbook telemetry. Main drops it unless the user opted in and the
+			// playbook came from the official Exchange; never blocks the run.
+			const playbookTelemetryStart: PlaybookTelemetryRunStart | null = config.playbook
+				?.marketplaceId
+				? {
+						playbookId: config.playbook.marketplaceId,
+						sourceVersion: config.playbook.sourceVersion,
+						sourceChannel: config.playbook.sourceChannel,
+						interaction: config.playbook.interaction,
+						launchSource: config.launchSource,
+						documentsTotal: documents.length,
+					}
+				: null;
+			if (playbookTelemetryStart) {
+				try {
+					await window.maestro.stats.playbookRunStarted(sessionId, playbookTelemetryStart);
+				} catch (telemetryError) {
+					logger.warn(
+						'[BatchProcessor] Failed to note playbook run start:',
+						undefined,
+						telemetryError
+					);
+				}
 			}
 
 			// Work tasks hand to other agents with `maestro-cli dispatch` reports back
@@ -620,10 +712,31 @@ export function useBatchRunner({
 
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
+			// Each task's synopsis, for the run report's narrative when the playbook
+			// has no report document of its own.
+			const reportSynopses: PlaybookReportSynopsis[] = [];
 			let totalCompletedTasks = 0;
 			// Agent invocations recorded to auto_run_tasks, productive or not.
 			let agentTurnIndex = 0;
 			let loopIteration = 0;
+
+			// Every stall, task error, and halt of this run, in order, for the
+			// auto_run_failures rows endAutoRun writes. taskIndex is the document's
+			// checked-task count when it happened: the 0-based task the run was on.
+			const runFailures: AutoRunFailureEntry[] = [];
+			const noteRunFailure = (
+				kind: AutoRunFailureEntry['kind'],
+				documentFilename: string,
+				taskIndex: number
+			) => {
+				runFailures.push({
+					kind,
+					documentFilename,
+					taskIndex,
+					agentType: session.toolType,
+					createdAt: Date.now(),
+				});
+			};
 
 			// Register this Auto Run for emergency stats/history flush on force-kill.
 			// Populated even if startAutoRun failed (statsAutoRunId null) so killBatchRun can
@@ -639,6 +752,7 @@ export function useBatchRunner({
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => documents.length,
 				kind: 'spec-driven',
+				getFailures: () => [...runFailures],
 			};
 
 			// Per-loop tracking for loop summary. The span is sleep-aware so a
@@ -670,6 +784,26 @@ export function useBatchRunner({
 			// the same agent-driven early-exit contract. (#231)
 			let haltRequest: { document: string; reason: string } | null = null;
 
+			// The last agent error or halt, located by document and task, for the
+			// run report's "What did not happen" card.
+			let lastRunError: PlaybookRunReportProblem | null = null;
+			// The agent error a pause is waiting on, read when the run meets the
+			// pause (SET_ERROR has already landed; resolving it clears the error).
+			// A HITL gate is a planned stop, not an error.
+			const notePausedAgentError = (document: string, taskIndex: number) => {
+				const pausedError = useBatchStore.getState().batchRunStates[sessionId]?.error;
+				if (pausedError && pausedError.type !== 'hitl_gate') {
+					const failureKind = playbookFailureKindForAgentError(pausedError);
+					lastRunError = {
+						kind: 'error',
+						document,
+						taskIndex,
+						message: pausedError.message,
+						...(failureKind !== 'error' && { failureKind }),
+					};
+				}
+			};
+
 			// Track the line of the currently-active HITL gate (null when none).
 			// Used to (a) dedupe the sticky toast on Resume-without-tick -
 			// pauseBatchOnError fires every iteration that re-detects the same
@@ -679,6 +813,11 @@ export function useBatchRunner({
 			// the pre-existing agent_crashed/permission_denied/etc. resume
 			// paths.
 			let activeHitlGateLine: number | null = null;
+
+			// True while the run is paused because a required playbook parameter has
+			// no answer. The next check re-reads the answers from the playbook store
+			// first, so a Resume after configuring the playbook continues.
+			let missingParamsPaused = false;
 
 			// Track working copies for reset-on-completion documents (original filename -> working copy path)
 			// Working copies are stored in /Runs/ and serve as audit logs
@@ -838,6 +977,7 @@ export function useBatchRunner({
 						// Pause processing until the user resolves the error state
 						const errorResolution = errorResolutionRefs.current[sessionId];
 						if (errorResolution) {
+							notePausedAgentError(docEntry.filename, docCheckedCount);
 							const action = await errorResolution.promise;
 							delete errorResolutionRefs.current[sessionId];
 
@@ -898,6 +1038,39 @@ export function useBatchRunner({
 								}
 								if (remainingTasks === 0) break;
 							}
+						}
+
+						// Missing-required precondition: a required playbook parameter with no
+						// answer pauses the run before anything is spawned. It runs for every
+						// task, so it holds at the first document and at each document change.
+						// Same pause path as the HITL gate below, so the AutoRunErrorBanner's
+						// Resume / Abort applies; Resume re-reads the answers and re-checks.
+						if (playbookParams && config.playbook) {
+							if (missingParamsPaused) {
+								playbookParams = await reloadRunPlaybookParams(
+									config.playbook,
+									config.playbook.ownerSessionId ?? sessionId,
+									prompt,
+									playbookParams
+								);
+							}
+							const missingError = missingParamsPauseError(playbookParams, {
+								agentId: session.toolType,
+								sessionId,
+							});
+							if (missingError) {
+								if (!missingParamsPaused) {
+									window.maestro.logger.autorun(
+										`Auto Run paused: ${missingError.message}`,
+										session.name,
+										{ document: docEntry.filename, playbookId: config.playbook.id }
+									);
+								}
+								missingParamsPaused = true;
+								pauseBatchOnError(sessionId, missingError, docIndex);
+								continue;
+							}
+							missingParamsPaused = false;
 						}
 
 						// HITL gate detection: if the document has a HITL marker positioned
@@ -1018,6 +1191,7 @@ export function useBatchRunner({
 									steeringNotes,
 									autoRunId: delegationRunId,
 									delegationResults,
+									playbookParams,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,
@@ -1041,6 +1215,13 @@ export function useBatchRunner({
 							// Track agent session IDs
 							if (taskResult.agentSessionId) {
 								agentSessionIds.push(taskResult.agentSessionId);
+							}
+							if (taskResult.shortSummary?.trim()) {
+								reportSynopses.push({
+									document: docEntry.filename,
+									summary: taskResult.shortSummary,
+									success: taskResult.success,
+								});
 							}
 
 							anyTasksProcessedThisIteration = true;
@@ -1306,6 +1487,7 @@ export function useBatchRunner({
 
 								// Track this document as stalled
 								stalledDocuments.set(docEntry.filename, stallReason);
+								noteRunFailure('stall', docEntry.filename, docCheckedCount);
 
 								// AUTORUN LOG: Document stalled
 								window.maestro.logger.autorun(
@@ -1392,6 +1574,13 @@ export function useBatchRunner({
 									document: docEntry.filename,
 									reason: haltMarker.reason || 'Halted by agent',
 								};
+								noteRunFailure('halt', docEntry.filename, docCheckedCount);
+								lastRunError = {
+									kind: 'halt',
+									document: docEntry.filename,
+									taskIndex: docCheckedCount,
+									message: haltRequest.reason,
+								};
 								window.maestro.logger.autorun('Auto Run halted by agent', session.name, {
 									document: docEntry.filename,
 									reason: haltRequest.reason,
@@ -1413,11 +1602,27 @@ export function useBatchRunner({
 								success: false,
 							});
 
+							noteRunFailure('error', docEntry.filename, docCheckedCount);
+							lastRunError = {
+								kind: 'error',
+								document: docEntry.filename,
+								taskIndex: docCheckedCount,
+								message: error instanceof Error ? error.message : String(error),
+							};
+
+							// A task that refused to spawn (a playbook token with no value)
+							// pauses the run on the Resume / Abort banner, handled below.
+							if (error instanceof AutoRunPauseError) {
+								pauseBatchOnError(sessionId, error.agentError, docIndex);
+							}
+
 							// Check if an error resolution promise was created (e.g., by onAgentError → pauseBatchOnError)
 							// This handles the case where the agent error (e.g., context limit) triggered a pause,
 							// but processTask threw before the next loop iteration could check for it.
 							const postTaskErrorResolution = errorResolutionRefs.current[sessionId];
 							if (postTaskErrorResolution) {
+								// The AgentError itself says more than the exception it caused.
+								notePausedAgentError(docEntry.filename, docCheckedCount);
 								const action = await postTaskErrorResolution.promise;
 								delete errorResolutionRefs.current[sessionId];
 
@@ -1673,6 +1878,7 @@ export function useBatchRunner({
 			// Create PR if worktree was used, PR creation is enabled, and not stopped
 			const wasStopped = stopRequestedRefs.current[sessionId] || false;
 			const sessionName = session.name || session.cwd.split('/').pop() || 'Unknown';
+			let createdPrUrl: string | undefined;
 			if (
 				worktreeActive &&
 				worktree?.createPROnCompletion &&
@@ -1699,6 +1905,7 @@ export function useBatchRunner({
 					documents,
 					totalCompletedTasks,
 				});
+				if (prResult.success) createdPrUrl = prResult.prUrl;
 
 				if (onPRResult) {
 					onPRResult({
@@ -1731,6 +1938,54 @@ export function useBatchRunner({
 			// and the attempt count is spent - the ERR badge clears with it.
 			clearAutoResume(sessionId);
 
+			// What the run changed on disk, against the snapshot taken at start.
+			const evidence = evidenceSnapshot
+				? await finishRunEvidenceCapture(effectiveCwd, evidenceSnapshot, sshRemoteId, createdPrUrl)
+				: null;
+
+			// Tier C of the playbook run report: the report document's pass, or a
+			// synthesis over the task synopses. Runs before the totals are read so
+			// its tokens and cost count toward the run. Only for a saved playbook.
+			const halted = haltRequest !== null;
+			let authoredReport: AuthoredRunReport | null = null;
+			if (config.playbook) {
+				const runFacts = buildFinalSummaryFacts({
+					wasStopped,
+					totalCompletedTasks,
+					totalElapsedMs: timeTracking.getElapsedTime(sessionId),
+					stalledDocuments,
+					documents,
+					loopEnabled,
+					loopIteration,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCost,
+				});
+				authoredReport = await authorRunReport({
+					session,
+					folderPath,
+					effectiveCwd,
+					sshRemoteId,
+					gitBranch,
+					groupName,
+					playbookName: config.playbook.name || 'Playbook',
+					reportDocument,
+					status: playbookRunReportStatus(runFacts, halted),
+					facts: runFacts,
+					...(evidence && { evidence }),
+					synopses: reportSynopses,
+					playbookParams,
+					runModel: config.model,
+					runEffort: config.effort,
+					onSpawnAgent,
+				});
+			}
+			if (authoredReport?.usageStats) {
+				totalInputTokens += authoredReport.usageStats.inputTokens || 0;
+				totalOutputTokens += authoredReport.usageStats.outputTokens || 0;
+				totalCost += authoredReport.usageStats.totalCostUsd || 0;
+			}
+
 			// Add final Auto Run summary entry
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
 			// (excludes time when laptop was sleeping/suspended)
@@ -1760,6 +2015,8 @@ export function useBatchRunner({
 				summary: finalSummary,
 				details: finalDetails,
 				isSuccess,
+				statusText: finalStatusText,
+				facts: finalFacts,
 			} = buildFinalSummary({
 				wasStopped,
 				totalCompletedTasks: finalTotals.totalCompletedTasks,
@@ -1774,9 +2031,45 @@ export function useBatchRunner({
 				autoRunStats,
 			});
 
+			// The playbook run report, saved under <autoRunFolder>/.maestro-reports/
+			// so nothing is lost if the completion modal is dismissed. Only a run of a
+			// saved playbook has one.
+			let report: PlaybookRunReport | undefined;
+			if (config.playbook) {
+				const { usageStats: _reportUsage, ...authored } = authoredReport ?? {};
+				report = buildPlaybookRunReport({
+					playbookName: config.playbook.name || 'Playbook',
+					playbookId: config.playbook.id,
+					...(config.playbook.marketplaceId && {
+						source: {
+							marketplaceId: config.playbook.marketplaceId,
+							...(config.playbook.sourceVersion && {
+								sourceVersion: config.playbook.sourceVersion,
+							}),
+						},
+					}),
+					autoRunFolderPath: folderPath,
+					facts: finalFacts,
+					halted,
+					failures: runFailures,
+					lastError: lastRunError,
+					evidence,
+					authored,
+					parameters: buildPlaybookRunReportParameters(playbookParams),
+					startedAt: batchStartTime,
+					finishedAt: Date.now(),
+					cwd: effectiveCwd,
+				});
+				const saved = await savePlaybookRunReport(report, folderPath, sshRemoteId);
+				if (saved) report = { ...report, reportPath: saved.markdownPath };
+			}
+
 			// Claim the flush state: if killBatchRun already flushed, skip the history + stats
 			// writes here to avoid clobbering recorded duration with a stale/zero value.
 			const alreadyFlushed = claimFlushState(autoRunFlushStateRefs, sessionId) === null;
+			// The `run_completed` event this run produced, for the one-time consent
+			// step on the completion modal. Null unless the playbook is official.
+			let playbookTelemetryEvent: PlaybookTelemetryRunCompletedEvent | null = null;
 
 			if (!alreadyFlushed) {
 				try {
@@ -1784,7 +2077,12 @@ export function useBatchRunner({
 						type: 'AUTO',
 						timestamp: Date.now(),
 						summary: finalSummary,
-						fullResponse: finalDetails,
+						// A playbook run leads with its report, so History shows what the
+						// run did and how to use it, with every path a clickable link.
+						fullResponse: report
+							? `${renderPlaybookReportMarkdown(report).trimEnd()}\n\n${finalDetails}`
+							: finalDetails,
+						...(report && { playbookReport: report }),
 						projectPath: session.cwd,
 						sessionId, // Include sessionId so the summary appears in session's history
 						success: isSuccess,
@@ -1806,6 +2104,34 @@ export function useBatchRunner({
 					// Ignore history errors
 				}
 
+				const endStatus = autoRunOutcomeStatus(finalStatusText, haltRequest !== null);
+				const endOutcome = buildAutoRunEndOutcome(endStatus, runFailures);
+
+				// Playbook telemetry: noted before endAutoRun, whose handler flushes
+				// the outbox, so this run's events ride that flush.
+				if (playbookTelemetryStart) {
+					const playbookTelemetryEnd: PlaybookTelemetryRunEnd = {
+						status: endStatus,
+						durationMs: finalTotals.totalElapsedMs,
+						documentsStalled: endOutcome.documentsStalled,
+						failures: endOutcome.failures,
+					};
+					// The same builder main uses, so the consent step shows the literal event.
+					playbookTelemetryEvent = buildPlaybookRunCompletedEvent(
+						playbookTelemetryStart,
+						playbookTelemetryEnd
+					);
+					try {
+						await window.maestro.stats.playbookRunEnded(sessionId, playbookTelemetryEnd);
+					} catch (telemetryError) {
+						logger.warn(
+							'[BatchProcessor] Failed to note playbook run end:',
+							undefined,
+							telemetryError
+						);
+					}
+				}
+
 				// End stats tracking for this Auto Run session
 				if (statsAutoRunId) {
 					try {
@@ -1816,7 +2142,8 @@ export function useBatchRunner({
 							statsAutoRunId,
 							finalTotals.totalElapsedMs,
 							finalTotals.totalCompletedTasks,
-							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks)
+							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks),
+							endOutcome
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails
@@ -1863,6 +2190,8 @@ export function useBatchRunner({
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
 					kind: 'spec-driven',
+					...(report && { report }),
+					...(playbookTelemetryEvent && { playbookTelemetryEvent }),
 				});
 			}
 

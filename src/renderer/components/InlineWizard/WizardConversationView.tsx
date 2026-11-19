@@ -292,9 +292,10 @@ function getUserFriendlyErrorMessage(error: string): { title: string; descriptio
 }
 
 /**
- * ErrorDisplay - Shows error messages with a retry button
+ * WizardErrorDisplay - Shows error messages with a retry button. Also used by the
+ * playbook concierge's interview panel.
  */
-function ErrorDisplay({
+export function WizardErrorDisplay({
 	theme,
 	error,
 	onRetry,
@@ -642,7 +643,12 @@ export function WizardConversationView({
 
 			{/* Error Display - shown when there's an error */}
 			{error && !isLoading && (
-				<ErrorDisplay theme={theme} error={error} onRetry={onRetry} onDismiss={onClearError} />
+				<WizardErrorDisplay
+					theme={theme}
+					error={error}
+					onRetry={onRetry}
+					onDismiss={onClearError}
+				/>
 			)}
 
 			{/* "Let's Go" Action Button - shown when ready and confidence threshold met, but NOT after generation has started */}

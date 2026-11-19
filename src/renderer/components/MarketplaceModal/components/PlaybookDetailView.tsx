@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { isBeta, isCompatible } from '../../../../shared/marketplace-compatibility';
 import { GhostIconButton } from '../../ui/GhostIconButton';
+import { Markdown } from '../../Markdown';
 import { openUrl } from '../../../utils/openUrl';
 import type { PlaybookDetailViewProps } from '../types';
 import {
@@ -9,6 +11,8 @@ import {
 	INCOMPAT_BADGE_BG,
 	LOCAL_BADGE_BG,
 	LOCAL_BADGE_FG,
+	getInteractionBadge,
+	getScopeBadge,
 } from '../helpers';
 import { DocumentSelector } from './DocumentSelector';
 import { MarkdownPreviewPane } from './MarkdownPreviewPane';
@@ -24,16 +28,24 @@ export function PlaybookDetailView({
 	isLoadingDocument,
 	targetFolderName,
 	isImporting,
+	installed,
 	isRemoteSession,
 	runningVersion,
 	onBack,
 	onSelectDocument,
 	onTargetFolderChange,
 	onBrowseFolder,
-	onImport,
+	onInstallAndRun,
+	onInstallOnly,
 }: PlaybookDetailViewProps) {
 	const compatible = isCompatible(playbook, runningVersion);
 	const beta = isBeta(playbook);
+	const interactionBadge = useMemo(
+		() => getInteractionBadge(playbook.interaction),
+		[playbook.interaction]
+	);
+	const scopeBadge = useMemo(() => getScopeBadge(playbook.scope), [playbook.scope]);
+	const traitBadges = scopeBadge ? [interactionBadge, scopeBadge] : [interactionBadge];
 
 	return (
 		<div className="flex flex-col h-full overflow-hidden">
@@ -82,6 +94,19 @@ export function PlaybookDetailView({
 								BETA
 							</span>
 						)}
+						{traitBadges.map((badge) => (
+							<span
+								key={badge.label}
+								className="px-2 py-0.5 rounded text-xs font-medium"
+								style={{
+									backgroundColor: `${theme.colors.textDim}20`,
+									color: theme.colors.textMain,
+								}}
+								title={badge.title}
+							>
+								{badge.label}
+							</span>
+						))}
 						{!compatible && (
 							<span
 								className="px-2 py-0.5 rounded text-xs font-semibold"
@@ -157,6 +182,33 @@ export function PlaybookDetailView({
 						selectedDocFilename={selectedDocFilename}
 						onSelectDocument={onSelectDocument}
 					/>
+					{playbook.prompt && (
+						<details
+							className="px-4 py-2 border-b shrink-0"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+							data-testid="playbook-agent-instructions"
+						>
+							<summary
+								className="cursor-pointer text-xs font-semibold uppercase tracking-wide"
+								style={{ color: theme.colors.textDim }}
+							>
+								Agent instructions
+							</summary>
+							{/* `marketplace-preview` picks up the prose styles MarkdownPreviewPane scopes to that class. */}
+							<div
+								className="marketplace-preview prose prose-sm max-w-none mt-2 max-h-64 overflow-y-auto select-text"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Markdown
+									preset="document"
+									frontmatter={false}
+									theme={theme}
+									content={playbook.prompt}
+									onExternalLinkClick={openUrl}
+								/>
+							</div>
+						</details>
+					)}
 					<MarkdownPreviewPane
 						theme={theme}
 						readmeContent={readmeContent}
@@ -172,11 +224,13 @@ export function PlaybookDetailView({
 				playbook={playbook}
 				targetFolderName={targetFolderName}
 				isImporting={isImporting}
+				installed={installed}
 				isRemoteSession={isRemoteSession}
 				runningVersion={runningVersion}
 				onTargetFolderChange={onTargetFolderChange}
 				onBrowseFolder={onBrowseFolder}
-				onImport={onImport}
+				onInstallAndRun={onInstallAndRun}
+				onInstallOnly={onInstallOnly}
 			/>
 		</div>
 	);

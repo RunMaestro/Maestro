@@ -22,6 +22,8 @@ import {
 import { rebaseAssetReferences } from '../../../../main/services/marketplace-service';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { IMPORTED_MAX_LOOPS_CEILING } from '../../../../shared/playbookRun';
+import { logger } from '../../../../main/utils/logger';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -46,12 +48,17 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
-// Mock crypto
-vi.mock('crypto', () => ({
-	default: {
-		randomUUID: vi.fn(),
-	},
-}));
+// Mock crypto: randomUUID is pinned per test, createHash stays real so the
+// provenance document hashes can be checked against a real sha256.
+vi.mock('crypto', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('crypto')>();
+	return {
+		default: {
+			randomUUID: vi.fn(),
+			createHash: actual.createHash,
+		},
+	};
+});
 
 // Mock electron-store
 vi.mock('electron-store', () => {
@@ -64,14 +71,16 @@ vi.mock('electron-store', () => {
 });
 
 // Mock remote-fs for SSH operations using vi.hoisted for factory hoisting
-const { mockWriteFileRemote, mockMkdirRemote } = vi.hoisted(() => ({
+const { mockWriteFileRemote, mockMkdirRemote, mockReadFileRemote } = vi.hoisted(() => ({
 	mockWriteFileRemote: vi.fn(),
 	mockMkdirRemote: vi.fn(),
+	mockReadFileRemote: vi.fn(),
 }));
 
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	writeFileRemote: mockWriteFileRemote,
 	mkdirRemote: mockMkdirRemote,
+	readFileRemote: mockReadFileRemote,
 }));
 
 // Mock the logger
@@ -84,15 +93,28 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock global fetch
+// Mock global fetch. GitHub contents API requests (remote asset discovery) go to
+// their own mock, which answers 404 (no assets folder) unless a test says
+// otherwise, so the ordered document and asset mocks below stay in call order.
+const GITHUB_CONTENTS_API = 'https://api.github.com/repos/RunMaestro/Maestro-Playbooks/contents/';
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const mockContentsFetch = vi.fn();
+global.fetch = ((url: string, init?: RequestInit) =>
+	String(url).startsWith(GITHUB_CONTENTS_API)
+		? mockContentsFetch(url, init)
+		: mockFetch(url, init)) as typeof fetch;
+
+/** A contents API listing of `assets/`, as GitHub returns it. */
+function contentsListing(entries: Array<{ name: string; type: string }>) {
+	return { ok: true, status: 200, statusText: 'OK', json: () => Promise.resolve(entries) };
+}
 
 describe('marketplace IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockApp: App;
 	let mockSettingsStore: { get: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn> };
 	let mockDeps: MarketplaceHandlerDependencies;
+	let mockSafeSend: ReturnType<typeof vi.fn>;
 
 	// Sample SSH remote configuration for testing
 	const sampleSshRemote: SshRemoteConfig = {
@@ -184,9 +206,11 @@ describe('marketplace IPC handlers', () => {
 		};
 
 		// Setup dependencies
+		mockSafeSend = vi.fn();
 		mockDeps = {
 			app: mockApp,
 			settingsStore: mockSettingsStore as unknown as Store,
+			safeSend: mockSafeSend,
 		};
 
 		// Default mock for crypto.randomUUID
@@ -195,9 +219,12 @@ describe('marketplace IPC handlers', () => {
 		// Reset remote-fs mocks
 		mockWriteFileRemote.mockReset();
 		mockMkdirRemote.mockReset();
+		mockReadFileRemote.mockReset();
 		vi.mocked(fs.readdir).mockReset();
 		vi.mocked(fs.stat).mockReset();
 		vi.mocked(fs.readdir).mockRejectedValue({ code: 'ENOENT' });
+		mockContentsFetch.mockReset();
+		mockContentsFetch.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
 
 		// Register handlers
 		registerMarketplaceHandlers(mockDeps);
@@ -212,9 +239,11 @@ describe('marketplace IPC handlers', () => {
 			const expectedChannels = [
 				'marketplace:getManifest',
 				'marketplace:refreshManifest',
+				'marketplace:getHealth',
 				'marketplace:getDocument',
 				'marketplace:getReadme',
 				'marketplace:importPlaybook',
+				'marketplace:checkUpdates',
 			];
 
 			for (const channel of expectedChannels) {
@@ -482,6 +511,133 @@ describe('marketplace IPC handlers', () => {
 		});
 	});
 
+	describe('marketplace:getHealth', () => {
+		const HEALTH_URL = 'https://runmaestro.ai/api/v1/playbooks/health';
+		const healthCachePath = path.join('/mock/userData', 'marketplace-health-cache.json');
+		const sampleHealth = {
+			'test-playbook-1': {
+				installs_30d: 42,
+				runs_30d: 130,
+				success_rate_30d: 0.92,
+				median_duration_ms: 540_000,
+				median_cost_usd: 0.37,
+				recent_failures: 1,
+			},
+		};
+
+		it('fetches the figures, caches them, and answers them', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(sampleHealth),
+			});
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(mockFetch).toHaveBeenCalledWith(HEALTH_URL, expect.anything());
+			expect(result).toEqual({ success: true, health: sampleHealth, fromCache: false });
+			const write = vi.mocked(fs.writeFile).mock.calls.find(([file]) => file === healthCachePath);
+			expect(write).toBeDefined();
+			expect(JSON.parse(write![1] as string).health).toEqual(sampleHealth);
+		});
+
+		it('drops malformed rows from the server', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve({ ...sampleHealth, broken: { installs_30d: 'lots' } }),
+			});
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result.health).toEqual(sampleHealth);
+		});
+
+		it('serves the cache within the TTL without a request', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ fetchedAt: Date.now() - 60 * 60 * 1000, health: sampleHealth })
+			);
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: true, health: sampleHealth, fromCache: true });
+		});
+
+		it('bypasses a fresh cache when forced', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ fetchedAt: Date.now(), health: {} })
+			);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(sampleHealth),
+			});
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any, true);
+
+			expect(mockFetch).toHaveBeenCalledWith(HEALTH_URL, expect.anything());
+			expect(result.health).toEqual(sampleHealth);
+		});
+
+		it('answers no figures on a 404 and caches the absence', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result).toEqual({ success: true, health: {}, fromCache: false });
+			const write = vi.mocked(fs.writeFile).mock.calls.find(([file]) => file === healthCachePath);
+			expect(JSON.parse(write![1] as string).health).toEqual({});
+			expect(logger.warn).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+		});
+
+		it('falls back to the stale cache on a network error', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ fetchedAt: Date.now() - 7 * 60 * 60 * 1000, health: sampleHealth })
+			);
+			mockFetch.mockRejectedValue(new Error('ECONNRESET'));
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result).toEqual({ success: true, health: sampleHealth, fromCache: true });
+			expect(logger.error).not.toHaveBeenCalled();
+		});
+
+		it('answers no figures on a server error with no cache', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			mockFetch.mockResolvedValue({ ok: false, status: 503, statusText: 'Unavailable' });
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result).toEqual({ success: true, health: {}, fromCache: false });
+		});
+
+		it('never touches the manifest cache', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(sampleHealth),
+			});
+
+			await handlers.get('marketplace:getHealth')!({} as any);
+
+			const manifestCachePath = path.join('/mock/userData', 'marketplace-cache.json');
+			expect(vi.mocked(fs.writeFile).mock.calls.some(([file]) => file === manifestCachePath)).toBe(
+				false
+			);
+		});
+	});
+
 	describe('marketplace:getDocument', () => {
 		it('should fetch document from GitHub', async () => {
 			const docContent = '# Phase 1\n\n- [ ] Task 1\n- [ ] Task 2';
@@ -604,6 +760,9 @@ describe('marketplace IPC handlers', () => {
 			expect(result.playbook).toBeDefined();
 			expect(result.playbook.name).toBe('Test Playbook');
 			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
+
+			// Listing surfaces hear about the new record
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
 
 			// Verify documents have target folder prefixed in their filenames
 			// This ensures the playbook can find documents in subfolders
@@ -807,6 +966,42 @@ describe('marketplace IPC handlers', () => {
 			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
 			expect(writtenData.playbooks).toHaveLength(1);
 			expect(writtenData.playbooks[0].id).toBe('test-uuid-123');
+			// A finite loop bound is kept as it shipped.
+			expect(writtenData.playbooks[0].maxLoops).toBe(3);
+		});
+
+		it('caps an unlimited loop at the import ceiling', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: {
+					...sampleManifest,
+					playbooks: [
+						{
+							...sampleManifest.playbooks[1],
+							id: 'loop-forever',
+							loopEnabled: true,
+							maxLoops: null,
+						},
+					],
+				},
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({ ok: true, text: () => Promise.resolve('# Content') });
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			await handler!({} as any, 'loop-forever', 'Loop', '/autorun', 'session-123');
+
+			const playbooksWriteCall = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find((call) => (call[0] as string).includes('session-123.json'));
+			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
+			expect(writtenData.playbooks[0].loopEnabled).toBe(true);
+			expect(writtenData.playbooks[0].maxLoops).toBe(IMPORTED_MAX_LOOPS_CEILING);
 		});
 
 		it('should append to existing playbooks', async () => {
@@ -949,6 +1144,7 @@ describe('marketplace IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Playbook not found');
+			expect(mockSafeSend).not.toHaveBeenCalledWith('playbooks:changed', expect.anything());
 		});
 
 		it('should import a local playbook that only exists in the local manifest', async () => {
@@ -1061,15 +1257,15 @@ describe('marketplace IPC handlers', () => {
 			// Mock file reads in order:
 			// 1. Official cache
 			// 2. Local manifest (with the filesystem playbook)
-			// 3. Document read: /Users/test/custom-playbooks/my-playbook/phase-1.md
-			// 4. Document read: /Users/test/custom-playbooks/my-playbook/phase-2.md
-			// 5. Existing playbooks file (ENOENT = none)
+			// 3. Existing playbooks file (ENOENT = none), read before any write
+			// 4. Document read: /Users/test/custom-playbooks/my-playbook/phase-1.md
+			// 5. Document read: /Users/test/custom-playbooks/my-playbook/phase-2.md
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache)) // 1. Official cache
 				.mockResolvedValueOnce(JSON.stringify(localManifest)) // 2. Local manifest
-				.mockResolvedValueOnce('# Phase 1 from filesystem\n\n- [ ] Task 1') // 3. phase-1.md
-				.mockResolvedValueOnce('# Phase 2 from filesystem\n\n- [ ] Task 2') // 4. phase-2.md
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // 5. No existing playbooks
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // 3. No existing playbooks
+				.mockResolvedValueOnce('# Phase 1 from filesystem\n\n- [ ] Task 1') // 4. phase-1.md
+				.mockResolvedValueOnce('# Phase 2 from filesystem\n\n- [ ] Task 2'); // 5. phase-2.md
 
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1162,12 +1358,12 @@ describe('marketplace IPC handlers', () => {
 			// The tilde path ~/playbooks/my-tilde-playbook will be resolved to:
 			// /Users/testuser/playbooks/my-tilde-playbook (or similar based on os.homedir)
 			// For this test, we just verify that fs.readFile is called (not fetch).
-			// Order: cache, local manifest, document content, playbooks file (ENOENT).
+			// Order: cache, local manifest, playbooks file (ENOENT), document content.
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
 				.mockResolvedValueOnce(JSON.stringify(localManifest)) // local manifest
-				.mockResolvedValueOnce('# Setup from tilde path') // document content
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // playbooks file (no existing)
+				.mockResolvedValueOnce('# Setup from tilde path'); // document content
 
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1228,6 +1424,9 @@ describe('marketplace IPC handlers', () => {
 			expect(result.playbook.documents.map((d: { filename: string }) => d.filename)).toEqual([
 				'Partial/phase-2',
 			]);
+			// A partial import is reported in the result, not only logged.
+			expect(result.failedDocs).toEqual(['phase-1']);
+			expect(result.failedAssets).toEqual([]);
 		});
 
 		// Coderabbit feedback: the per-doc loop is intentionally tolerant so
@@ -1244,7 +1443,8 @@ describe('marketplace IPC handlers', () => {
 
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1683,9 +1883,221 @@ describe('marketplace IPC handlers', () => {
 					'session-123'
 				);
 
-				// Should still succeed with partial assets
+				// Should still succeed with partial assets, and say which one failed
 				expect(result.success).toBe(true);
 				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(result.failedAssets).toEqual(['config.yaml']);
+				expect(result.failedDocs).toEqual([]);
+			});
+
+			describe('remote asset discovery (GitHub contents API)', () => {
+				/** Import the one-document playbook `entry` from a cached official manifest. */
+				async function importRemote(
+					entry: MarketplaceManifest['playbooks'][number],
+					sshRemoteId?: string
+				) {
+					vi.mocked(fs.readFile)
+						.mockResolvedValueOnce(
+							JSON.stringify({
+								fetchedAt: Date.now(),
+								manifest: { ...sampleManifest, playbooks: [entry] },
+							})
+						)
+						.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+						.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file
+					vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+					vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+					mockMkdirRemote.mockResolvedValue({ success: true });
+					mockWriteFileRemote.mockResolvedValue({ success: true });
+					const handler = handlers.get('marketplace:importPlaybook');
+					return handler!(
+						{} as any,
+						entry.id,
+						'Discovered',
+						sshRemoteId ? '/remote/autorun' : '/autorun',
+						'session-123',
+						sshRemoteId
+					);
+				}
+
+				const bareRemotePlaybook = {
+					...sampleManifest.playbooks[0],
+					id: 'message-bus',
+					path: 'Assistants/Message-Bus',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+				} as MarketplaceManifest['playbooks'][number];
+
+				it('installs the files the assets folder holds when the manifest lists none', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([
+							{ name: 'maestro_message_scanner.py', type: 'file' },
+							{ name: 'cue-subscription.yaml', type: 'file' },
+							{ name: 'nested', type: 'dir' },
+						])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('print(1)').buffer),
+						})
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('event: time').buffer),
+						});
+
+					const result = await importRemote(bareRemotePlaybook);
+
+					expect(mockContentsFetch).toHaveBeenCalledTimes(1);
+					expect(mockContentsFetch).toHaveBeenCalledWith(
+						'https://api.github.com/repos/RunMaestro/Maestro-Playbooks/contents/Assistants/Message-Bus/assets?ref=main',
+						expect.objectContaining({
+							headers: expect.objectContaining({ Accept: 'application/vnd.github+json' }),
+						})
+					);
+					// Each discovered file downloads through the existing raw asset fetch.
+					expect(mockFetch).toHaveBeenCalledWith(
+						'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/Assistants/Message-Bus/assets/maestro_message_scanner.py',
+						expect.anything()
+					);
+					expect(fs.writeFile).toHaveBeenCalledWith(
+						path.join('/autorun', 'Discovered', 'assets', 'cue-subscription.yaml'),
+						expect.any(Buffer)
+					);
+					// The directory entry is not an asset.
+					expect(result.importedAssets).toEqual([
+						'maestro_message_scanner.py',
+						'cue-subscription.yaml',
+					]);
+					expect(result.failedAssets).toEqual([]);
+				});
+
+				it('unions discovered files with the manifest list without duplicates', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([
+							{ name: 'logo.png', type: 'file' },
+							{ name: 'extra.json', type: 'file' },
+							{ name: '..', type: 'file' },
+						])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValue({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(sampleManifest.playbooks[2]);
+
+					// Manifest order first, then discovered names; an unsafe name is dropped.
+					expect(result.importedAssets).toEqual(['config.yaml', 'logo.png', 'extra.json']);
+				});
+
+				it('treats a 404 as no assets folder and creates none', async () => {
+					mockContentsFetch.mockResolvedValueOnce({
+						ok: false,
+						status: 404,
+						statusText: 'Not Found',
+					});
+					mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main') });
+
+					const result = await importRemote(bareRemotePlaybook);
+
+					expect(result.success).toBe(true);
+					expect(result.importedAssets).toEqual([]);
+					expect(result.failedAssets).toEqual([]);
+					expect(mockFetch).toHaveBeenCalledTimes(1);
+					const assetsFolderCreated = vi
+						.mocked(fs.mkdir)
+						.mock.calls.some((call) => String(call[0]).endsWith(path.join('Discovered', 'assets')));
+					expect(assetsFolderCreated).toBe(false);
+					expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+						expect.stringContaining('Could not list the remote assets'),
+						expect.anything(),
+						expect.anything()
+					);
+				});
+
+				it('warns on a 403 rate limit and falls back to the manifest asset list', async () => {
+					mockContentsFetch.mockResolvedValueOnce({
+						ok: false,
+						status: 403,
+						statusText: 'Forbidden',
+					});
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValue({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(sampleManifest.playbooks[2]);
+
+					expect(result.success).toBe(true);
+					expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
+					expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+						expect.stringContaining('GitHub API rate limit, HTTP 403'),
+						'[Marketplace]',
+						undefined
+					);
+				});
+
+				it('falls back to the manifest list when the listing request throws', async () => {
+					mockContentsFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValue({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(sampleManifest.playbooks[2]);
+
+					expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
+				});
+
+				it('reports a discovered asset that fails to download in failedAssets', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([
+							{ name: 'scanner.py', type: 'file' },
+							{ name: 'cue.yaml', type: 'file' },
+						])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' })
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(bareRemotePlaybook);
+
+					expect(result.success).toBe(true);
+					expect(result.importedAssets).toEqual(['cue.yaml']);
+					expect(result.failedAssets).toEqual(['scanner.py']);
+				});
+
+				it('discovers assets for an SSH import and writes them on the remote host', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([{ name: 'scanner.py', type: 'file' }])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(bareRemotePlaybook, 'ssh-remote-1');
+
+					expect(mockWriteFileRemote).toHaveBeenCalledWith(
+						'/remote/autorun/Discovered/assets/scanner.py',
+						expect.any(Buffer),
+						sampleSshRemote
+					);
+					expect(result.importedAssets).toEqual(['scanner.py']);
+				});
 			});
 
 			it('should import assets via SSH for remote sessions', async () => {
@@ -1816,10 +2228,10 @@ describe('marketplace IPC handlers', () => {
 				vi.mocked(fs.readFile)
 					.mockResolvedValueOnce(JSON.stringify(validCache))
 					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // playbooks file
 					.mockResolvedValueOnce('# Main local doc')
 					.mockResolvedValueOnce(Buffer.from('asset-one'))
-					.mockResolvedValueOnce(Buffer.from('asset-two'))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(Buffer.from('asset-two'));
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				vi.mocked(fs.readdir).mockResolvedValue(['settings.yaml', 'logo.png']);
@@ -1879,11 +2291,11 @@ describe('marketplace IPC handlers', () => {
 				vi.mocked(fs.readFile)
 					.mockResolvedValueOnce(JSON.stringify(validCache))
 					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // playbooks file
 					.mockResolvedValueOnce('# Main local doc')
 					.mockResolvedValueOnce(Buffer.from('config'))
 					.mockResolvedValueOnce(Buffer.from('logo'))
-					.mockResolvedValueOnce(Buffer.from('dockerignore'))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(Buffer.from('dockerignore'));
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				vi.mocked(fs.readdir).mockResolvedValue(['logo.png', '.dockerignore']);
@@ -1913,6 +2325,567 @@ describe('marketplace IPC handlers', () => {
 					expect.any(Buffer)
 				);
 				expect(mockFetch).not.toHaveBeenCalled();
+			});
+		});
+	});
+
+	describe('import provenance and Exchange fields', () => {
+		const sha256 = (text: string) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+
+		const exchangePlaybook = {
+			...sampleManifest.playbooks[0],
+			id: 'exchange-playbook',
+			lastUpdated: '2026-09-01',
+			parameters: [
+				{ name: 'PR_URL', type: 'url', required: true },
+				{ name: 'bad name', type: 'url' },
+			],
+			interaction: 'guided',
+			scope: 'repo',
+			report: 'Final-Report.md',
+		} as unknown as MarketplaceManifest['playbooks'][number];
+
+		const rawPhase1 = '# Phase 1\n\nSee {{AUTORUN_FOLDER}}/assets/config.yaml';
+		const rawPhase2 = '# Phase 2';
+		const rawReport = '# Report\n\nSay what was installed.';
+
+		/** Run one import of `entry` from a cached official manifest. */
+		async function importEntry(
+			entry: MarketplaceManifest['playbooks'][number],
+			options: {
+				autoRunFolderPath?: string;
+				sshRemoteId?: string;
+				failPristine?: boolean;
+			} = {}
+		) {
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(
+					JSON.stringify({
+						fetchedAt: Date.now(),
+						manifest: { ...sampleManifest, playbooks: [entry] },
+					})
+				)
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockImplementation(async (file) => {
+				if (options.failPristine && String(file).includes('.maestro-playbook')) {
+					throw new Error('EACCES');
+				}
+			});
+			mockFetch
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawPhase1) })
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawPhase2) });
+			// An unlisted report document is fetched third; queue it only then, so no
+			// unused response leaks into the next test.
+			const report = (entry as unknown as { report?: unknown }).report;
+			const reportName = typeof report === 'string' ? report.trim().replace(/\.md$/i, '') : '';
+			if (reportName && !entry.documents.some((doc) => doc.filename === reportName)) {
+				mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawReport) });
+			}
+			const handler = handlers.get('marketplace:importPlaybook');
+			return handler!(
+				{} as any,
+				entry.id,
+				'My Test Playbook',
+				options.autoRunFolderPath ?? '/autorun/folder',
+				'session-123',
+				options.sshRemoteId
+			);
+		}
+
+		function savedRecord() {
+			const written = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find(([file]) => String(file).endsWith('session-123.json'));
+			return JSON.parse(String(written![1])).playbooks[0];
+		}
+
+		it('stamps marketplace provenance with sha256 hashes of the documents as fetched', async () => {
+			const before = Date.now();
+			const result = await importEntry(exchangePlaybook);
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.provenance).toEqual({
+				kind: 'marketplace',
+				marketplaceId: 'exchange-playbook',
+				sourceVersion: '2026-09-01',
+				sourceChannel: 'official',
+				targetFolderName: 'My Test Playbook',
+				importedAt: expect.any(Number),
+				documentHashes: {
+					'phase-1': sha256(rawPhase1),
+					'phase-2': sha256(rawPhase2),
+					'Final-Report': sha256(rawReport),
+				},
+			});
+			expect(result.playbook.provenance.importedAt).toBeGreaterThanOrEqual(before);
+			// The user's copy is rebased; the hash is of what shipped.
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'My Test Playbook', 'phase-1.md'),
+				'# Phase 1\n\nSee {{AUTORUN_FOLDER}}/My Test Playbook/assets/config.yaml',
+				'utf-8'
+			);
+			expect(savedRecord().provenance).toEqual(result.playbook.provenance);
+		});
+
+		it('copies parameters, interaction, scope, and report from the manifest entry', async () => {
+			const result = await importEntry(exchangePlaybook);
+
+			expect(result.playbook.parameterOverlay).toEqual([
+				{ name: 'PR_URL', type: 'url', required: true },
+			]);
+			expect(result.playbook.interaction).toBe('guided');
+			expect(result.playbook.scope).toBe('repo');
+			expect(result.playbook.report).toBe('Final-Report');
+			const saved = savedRecord();
+			expect(saved.parameterOverlay).toEqual(result.playbook.parameterOverlay);
+			expect(saved.interaction).toBe('guided');
+			expect(saved.scope).toBe('repo');
+			expect(saved.report).toBe('Final-Report');
+		});
+
+		it('fetches a report document the manifest does not list, and keeps it off the run list', async () => {
+			const result = await importEntry(exchangePlaybook);
+
+			expect(mockFetch).toHaveBeenCalledTimes(3);
+			expect(String(mockFetch.mock.calls[2][0])).toContain('Final-Report.md');
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'My Test Playbook', 'Final-Report.md'),
+				rawReport,
+				'utf-8'
+			);
+			expect(result.playbook.documents.map((doc: { filename: string }) => doc.filename)).toEqual([
+				'My Test Playbook/phase-1',
+				'My Test Playbook/phase-2',
+			]);
+		});
+
+		it('fetches a listed report document once', async () => {
+			const listed = {
+				...exchangePlaybook,
+				report: 'phase-2',
+			} as unknown as MarketplaceManifest['playbooks'][number];
+			await importEntry(listed);
+
+			expect(mockFetch).toHaveBeenCalledTimes(2);
+		});
+
+		it('leaves malformed Exchange fields off the record', async () => {
+			const result = await importEntry({
+				...exchangePlaybook,
+				parameters: 'not-a-list',
+				interaction: 'wizard',
+				scope: 'galaxy',
+				report: '   ',
+			} as unknown as MarketplaceManifest['playbooks'][number]);
+
+			expect(result.success).toBe(true);
+			for (const field of ['parameterOverlay', 'interaction', 'scope', 'report']) {
+				expect(field in result.playbook).toBe(false);
+			}
+		});
+
+		it('writes a pristine copy of every fetched document under .maestro-playbook/source', async () => {
+			await importEntry(exchangePlaybook);
+
+			const sourceDir = path.join(
+				'/autorun/folder',
+				'My Test Playbook',
+				'.maestro-playbook',
+				'source'
+			);
+			expect(fs.mkdir).toHaveBeenCalledWith(sourceDir, { recursive: true });
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(sourceDir, 'phase-1.md'),
+				rawPhase1,
+				'utf-8'
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(sourceDir, 'phase-2.md'),
+				rawPhase2,
+				'utf-8'
+			);
+		});
+
+		it('writes the pristine copies on the remote host for an SSH import', async () => {
+			mockMkdirRemote.mockResolvedValue({ success: true });
+			mockWriteFileRemote.mockResolvedValue({ success: true });
+
+			const result = await importEntry(exchangePlaybook, {
+				autoRunFolderPath: '/remote/autorun',
+				sshRemoteId: 'ssh-remote-1',
+			});
+
+			expect(result.success).toBe(true);
+			const sourceDir = '/remote/autorun/My Test Playbook/.maestro-playbook/source';
+			expect(mockMkdirRemote).toHaveBeenCalledWith(sourceDir, sampleSshRemote, true);
+			expect(mockWriteFileRemote).toHaveBeenCalledWith(
+				`${sourceDir}/phase-1.md`,
+				rawPhase1,
+				sampleSshRemote
+			);
+			expect(mockWriteFileRemote).toHaveBeenCalledWith(
+				`${sourceDir}/phase-2.md`,
+				rawPhase2,
+				sampleSshRemote
+			);
+			const pristineLocalWrites = vi
+				.mocked(fs.writeFile)
+				.mock.calls.filter(([file]) => String(file).includes('.maestro-playbook'));
+			expect(pristineLocalWrites).toHaveLength(0);
+		});
+
+		it('still imports when a pristine copy cannot be written', async () => {
+			const result = await importEntry(exchangePlaybook, { failPristine: true });
+
+			expect(result.success).toBe(true);
+			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
+			expect(Object.keys(result.playbook.provenance.documentHashes)).toEqual([
+				'phase-1',
+				'phase-2',
+				'Final-Report',
+			]);
+		});
+
+		it('records the local manifest folder as the source path of a local playbook', async () => {
+			const localEntry = {
+				...exchangePlaybook,
+				id: 'local-exchange',
+				path: '/Users/test/custom-playbooks/my-playbook',
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify({ fetchedAt: Date.now(), manifest: sampleManifest }))
+				.mockResolvedValueOnce(
+					JSON.stringify({ lastUpdated: '2026-09-01', playbooks: [localEntry] })
+				)
+				.mockResolvedValueOnce(rawPhase1)
+				.mockResolvedValueOnce(rawPhase2)
+				.mockResolvedValueOnce(rawReport)
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'local-exchange',
+				'My Test Playbook',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			expect(result.playbook.provenance).toMatchObject({
+				kind: 'marketplace',
+				marketplaceId: 'local-exchange',
+				sourceChannel: 'local',
+				sourcePath: '/Users/test/custom-playbooks/my-playbook',
+				documentHashes: {
+					'phase-1': sha256(rawPhase1),
+					'phase-2': sha256(rawPhase2),
+					'Final-Report': sha256(rawReport),
+				},
+			});
+		});
+	});
+
+	describe('update detection and update in place', () => {
+		const sha256 = (text: string) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+		const rawPhase1 = '# Phase 1\n\n- [ ] Task';
+		const rawPhase2 = '# Phase 2\n\n- [ ] Task';
+		const newPhase1 = '# Phase 1 v2\n\n- [ ] Task';
+		const newPhase2 = '# Phase 2 v2\n\n- [ ] Task';
+
+		const entry = {
+			...sampleManifest.playbooks[0],
+			id: 'exchange-playbook',
+			title: 'Exchange Playbook',
+			lastUpdated: '2026-09-01',
+		} as MarketplaceManifest['playbooks'][number];
+
+		const installedRecord = {
+			id: 'existing-id',
+			name: 'Exchange Playbook',
+			createdAt: 5,
+			updatedAt: 6,
+			documents: [
+				{ filename: 'Old Folder/phase-1', resetOnCompletion: false },
+				{ filename: 'Old Folder/phase-2', resetOnCompletion: true },
+			],
+			loopEnabled: false,
+			maxLoops: null,
+			prompt: '',
+			parameterValues: { PR_URL: 'https://example.com/pr/1' },
+			worktreeSettings: { branchNameTemplate: 'pb/{{DATE}}', createPROnCompletion: false },
+			provenance: {
+				kind: 'marketplace',
+				marketplaceId: 'exchange-playbook',
+				sourceVersion: '2026-08-01',
+				sourceChannel: 'official',
+				targetFolderName: 'Old Folder',
+				importedAt: 1,
+				documentHashes: { 'phase-1': sha256(rawPhase1), 'phase-2': sha256(rawPhase2) },
+			},
+		};
+		const otherRecord = { id: 'other-id', name: 'Hand Made', documents: [] };
+
+		const cacheJson = (playbooks: MarketplaceManifest['playbooks']) =>
+			JSON.stringify({ fetchedAt: Date.now(), manifest: { ...sampleManifest, playbooks } });
+
+		function queueStoreReads(playbooks: unknown[]) {
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(cacheJson([entry]))
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockResolvedValueOnce(JSON.stringify({ playbooks })); // playbooks file
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		}
+
+		function savedPlaybooks() {
+			const written = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find(([file]) => String(file).endsWith('session-123.json'));
+			return JSON.parse(String(written![1])).playbooks;
+		}
+
+		it('refuses a second install of an entry the agent already has, before writing anything', async () => {
+			queueStoreReads([installedRecord]);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'exchange-playbook',
+				'New Folder',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('already installed');
+			expect(result.error).toContain('Old Folder/');
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(mockSafeSend).not.toHaveBeenCalled();
+		});
+
+		it('updates the record in its own folder, refreshes the pristine copies, and keeps the answers', async () => {
+			queueStoreReads([otherRecord, installedRecord]);
+			mockFetch
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(newPhase1) })
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(newPhase2) });
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'exchange-playbook',
+				'',
+				'/autorun/folder',
+				'session-123',
+				undefined,
+				{ update: true }
+			);
+
+			expect(result.success).toBe(true);
+			// Re-fetched into the installed folder, not a new one.
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'Old Folder', 'phase-1.md'),
+				newPhase1,
+				'utf-8'
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'Old Folder', '.maestro-playbook', 'source', 'phase-2.md'),
+				newPhase2,
+				'utf-8'
+			);
+
+			const saved = savedPlaybooks();
+			// Replaced in place: still two records, the other one untouched.
+			expect(saved).toHaveLength(2);
+			expect(saved[0]).toEqual(otherRecord);
+			const updated = saved[1];
+			expect(updated.id).toBe('existing-id');
+			expect(updated.createdAt).toBe(5);
+			expect(updated.parameterValues).toEqual({ PR_URL: 'https://example.com/pr/1' });
+			expect(updated.worktreeSettings).toEqual(installedRecord.worktreeSettings);
+			expect(updated.documents.map((doc: { filename: string }) => doc.filename)).toEqual([
+				'Old Folder/phase-1',
+				'Old Folder/phase-2',
+			]);
+			expect(updated.provenance).toEqual(
+				expect.objectContaining({
+					marketplaceId: 'exchange-playbook',
+					sourceVersion: '2026-09-01',
+					targetFolderName: 'Old Folder',
+					documentHashes: { 'phase-1': sha256(newPhase1), 'phase-2': sha256(newPhase2) },
+				})
+			);
+			expect(result.playbook).toEqual(updated);
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
+		});
+
+		it('refuses an update of an entry the agent never installed', async () => {
+			queueStoreReads([otherRecord]);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'exchange-playbook',
+				'',
+				'/autorun/folder',
+				'session-123',
+				undefined,
+				{ update: true }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('nothing to update');
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		describe('marketplace:checkUpdates', () => {
+			const modifiedRecord = {
+				...installedRecord,
+				id: 'modified-id',
+				provenance: {
+					...installedRecord.provenance,
+					marketplaceId: 'edited-playbook',
+					sourceVersion: '2026-09-01',
+					targetFolderName: 'Edited',
+				},
+			};
+			const retiredRecord = {
+				...installedRecord,
+				id: 'retired-id',
+				provenance: {
+					...installedRecord.provenance,
+					marketplaceId: 'retired-playbook',
+					targetFolderName: 'Retired',
+				},
+			};
+			const zipRecord = {
+				id: 'zip-id',
+				name: 'From a ZIP',
+				documents: [],
+				provenance: { kind: 'zip', targetFolderName: 'Zip', importedAt: 1, documentHashes: {} },
+			};
+			const manifestEntries = [
+				entry,
+				{ ...entry, id: 'edited-playbook', lastUpdated: '2026-09-01' },
+			] as MarketplaceManifest['playbooks'];
+
+			/** Answer reads by path: the store, the cache, and the pristine copies. */
+			function mockDisk(playbooks: unknown[], pristine: Record<string, string>) {
+				vi.mocked(fs.readFile).mockImplementation((async (file: string) => {
+					const name = String(file);
+					if (name.endsWith('session-123.json')) return JSON.stringify({ playbooks });
+					if (name.endsWith('marketplace-cache.json')) return cacheJson(manifestEntries);
+					if (name in pristine) return pristine[name];
+					throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				}) as any);
+			}
+			// mockDisk installs an implementation, which clearAllMocks keeps; put
+			// back whatever the file's other tests had, so none of them inherit it.
+			let previousReadFile: ReturnType<
+				ReturnType<typeof vi.mocked<typeof fs.readFile>>['getMockImplementation']
+			>;
+			beforeEach(() => {
+				previousReadFile = vi.mocked(fs.readFile).getMockImplementation();
+			});
+			afterEach(() => {
+				if (previousReadFile) vi.mocked(fs.readFile).mockImplementation(previousReadFile);
+				else vi.mocked(fs.readFile).mockReset();
+			});
+			const pristinePath = (folder: string, doc: string) =>
+				path.join('/autorun/folder', folder, '.maestro-playbook', 'source', `${doc}.md`);
+
+			it('classifies each installed Exchange record and skips the others', async () => {
+				mockDisk([installedRecord, modifiedRecord, retiredRecord, zipRecord, otherRecord], {
+					[pristinePath('Old Folder', 'phase-1')]: rawPhase1,
+					[pristinePath('Old Folder', 'phase-2')]: rawPhase2,
+					[pristinePath('Edited', 'phase-1')]: rawPhase1,
+					[pristinePath('Edited', 'phase-2')]: '# Phase 2, edited by hand',
+					// The retired record's pristine copies are missing: not an edit.
+				});
+
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/autorun/folder');
+
+				expect(result.success).toBe(true);
+				expect(Object.keys(result.updates).sort()).toEqual([
+					'existing-id',
+					'modified-id',
+					'retired-id',
+				]);
+				expect(result.updates['existing-id']).toEqual({
+					playbookId: 'existing-id',
+					marketplaceId: 'exchange-playbook',
+					name: 'Exchange Playbook',
+					targetFolderName: 'Old Folder',
+					installedVersion: '2026-08-01',
+					latestVersion: '2026-09-01',
+					state: 'update-available',
+					updateAvailable: true,
+					modifiedDocuments: [],
+				});
+				expect(result.updates['modified-id']).toEqual(
+					expect.objectContaining({
+						state: 'locally-modified',
+						updateAvailable: false,
+						modifiedDocuments: ['phase-2'],
+					})
+				);
+				expect(result.updates['retired-id']).toEqual(
+					expect.objectContaining({ state: 'up-to-date', updateAvailable: false })
+				);
+				expect(result.updates['retired-id'].latestVersion).toBeUndefined();
+			});
+
+			it('reads the pristine copies on the SSH remote that holds the folder', async () => {
+				mockDisk([installedRecord], {});
+				mockReadFileRemote.mockImplementation(async (file: string) =>
+					file.endsWith('phase-1.md')
+						? { success: true, data: rawPhase1 }
+						: { success: true, data: '# Phase 2, edited by hand' }
+				);
+
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/remote/autorun/', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(mockReadFileRemote).toHaveBeenCalledWith(
+					'/remote/autorun/Old Folder/.maestro-playbook/source/phase-1.md',
+					sampleSshRemote
+				);
+				expect(result.updates['existing-id']).toEqual(
+					expect.objectContaining({
+						state: 'locally-modified',
+						updateAvailable: true,
+						modifiedDocuments: ['phase-2'],
+					})
+				);
+			});
+
+			it('fails loudly when the SSH remote cannot be resolved', async () => {
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/remote', 'missing-remote');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('SSH remote not found or disabled');
+				expect(mockReadFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('answers an empty map without reading the catalog when nothing is installed', async () => {
+				mockDisk([otherRecord], {});
+
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/autorun/folder');
+
+				expect(result).toEqual({ success: true, updates: {} });
+				const catalogReads = vi
+					.mocked(fs.readFile)
+					.mock.calls.filter(([file]) => String(file).endsWith('marketplace-cache.json'));
+				expect(catalogReads).toHaveLength(0);
 			});
 		});
 	});
@@ -1947,8 +2920,8 @@ describe('marketplace IPC handlers', () => {
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache))
 				.mockResolvedValueOnce(JSON.stringify(localManifest))
-				.mockResolvedValueOnce('# Phase 1 Content') // The document read
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // No existing playbooks
+				.mockResolvedValueOnce('# Phase 1 Content'); // The document read
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -2018,8 +2991,8 @@ describe('marketplace IPC handlers', () => {
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache))
 				.mockResolvedValueOnce(JSON.stringify(localManifest))
-				.mockResolvedValueOnce('# Doc content') // Document read
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // No existing playbooks
+				.mockResolvedValueOnce('# Doc content'); // Document read
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 

@@ -75,6 +75,14 @@ vi.mock('../../../../main/stats/query-events-buffer', () => ({
 		bufferFlush.listener = listener;
 	},
 }));
+// Playbook telemetry: the handler forwards to these and flushes on end-autorun.
+const playbookTelemetry = vi.hoisted(() => ({
+	notePlaybookRunStarted: vi.fn(),
+	notePlaybookRunEnded: vi.fn(),
+	flushPlaybookTelemetry: vi.fn(async () => ({ ok: false, reason: 'disabled' })),
+}));
+vi.mock('../../../../main/services/playbook-telemetry', () => playbookTelemetry);
+
 function flushBuffer(count = 1): void {
 	bufferFlush.listener?.(count);
 }
@@ -208,6 +216,8 @@ describe('stats IPC handlers', () => {
 				'stats:record-session-created',
 				'stats:record-session-closed',
 				'stats:get-session-lifecycle',
+				'stats:playbook-run-started',
+				'stats:playbook-run-ended',
 			];
 
 			for (const channel of expectedChannels) {
@@ -518,6 +528,7 @@ describe('stats IPC handlers', () => {
 					'autorun-session-id',
 					60000,
 					4,
+					undefined,
 					undefined
 				);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
@@ -536,20 +547,124 @@ describe('stats IPC handlers', () => {
 			});
 		});
 
+		describe('playbook telemetry', () => {
+			it('flushes playbook telemetry when an Auto Run ends', async () => {
+				playbookTelemetry.flushPlaybookTelemetry.mockClear();
+				await handlers.get('stats:end-autorun')!({} as any, 'run-1', 1000, 1);
+				expect(playbookTelemetry.flushPlaybookTelemetry).toHaveBeenCalledWith({
+					reason: 'autorun',
+				});
+			});
+
+			it('forwards a run start', async () => {
+				const start = {
+					playbookId: 'assistants-message-bus',
+					sourceChannel: 'official',
+					documentsTotal: 2,
+				};
+				await handlers.get('stats:playbook-run-started')!({} as any, 'agent-1', start);
+				expect(playbookTelemetry.notePlaybookRunStarted).toHaveBeenLastCalledWith('agent-1', start);
+			});
+
+			it('forwards a run end with a known status and only well-formed failures', async () => {
+				const failure = {
+					kind: 'error',
+					documentFilename: 'A.md',
+					taskIndex: 0,
+					agentType: 'codex',
+					createdAt: 1,
+				};
+				await handlers.get('stats:playbook-run-ended')!({} as any, 'agent-1', {
+					status: 'failed',
+					durationMs: 50,
+					documentsStalled: 0,
+					failures: [failure, { kind: 'bogus' }, null],
+				});
+				expect(playbookTelemetry.notePlaybookRunEnded).toHaveBeenLastCalledWith('agent-1', {
+					status: 'failed',
+					durationMs: 50,
+					documentsStalled: 0,
+					failures: [failure],
+				});
+			});
+
+			it('drops a run end whose status this build does not know', async () => {
+				playbookTelemetry.notePlaybookRunEnded.mockClear();
+				await handlers.get('stats:playbook-run-ended')!({} as any, 'agent-1', {
+					status: 'exploded',
+					durationMs: 50,
+				});
+				expect(playbookTelemetry.notePlaybookRunEnded).not.toHaveBeenCalled();
+			});
+		});
+
 		describe('stats:end-autorun tasks total', () => {
 			it('forwards a finite tasksTotal and drops anything else', async () => {
 				const handler = handlers.get('stats:end-autorun');
 
 				await handler!({} as any, 'run-1', 1000, 12, 12);
-				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-1', 1000, 12, 12);
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
+					'run-1',
+					1000,
+					12,
+					12,
+					undefined
+				);
 
 				await handler!({} as any, 'run-2', 1000, 3, Number.NaN);
 				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
 					'run-2',
 					1000,
 					3,
+					undefined,
 					undefined
 				);
+			});
+		});
+
+		describe('stats:end-autorun outcome', () => {
+			it('forwards the outcome and its failures', async () => {
+				const handler = handlers.get('stats:end-autorun');
+				const failures = [
+					{
+						kind: 'halt',
+						documentFilename: 'A.md',
+						taskIndex: 2,
+						agentType: 'codex',
+						createdAt: 5,
+					},
+				];
+
+				await handler!({} as any, 'run-1', 1000, 2, 3, {
+					status: 'failed',
+					documentsStalled: 0,
+					failures,
+				});
+
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-1', 1000, 2, 3, {
+					status: 'failed',
+					documentsStalled: 0,
+					failures,
+				});
+			});
+
+			it('drops an outcome that is not an object and a failures field that is not a list', async () => {
+				const handler = handlers.get('stats:end-autorun');
+
+				await handler!({} as any, 'run-1', 1000, 2, 3, 'completed');
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
+					'run-1',
+					1000,
+					2,
+					3,
+					undefined
+				);
+
+				await handler!({} as any, 'run-2', 1000, 2, 3, { status: 'completed', failures: 'nope' });
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-2', 1000, 2, 3, {
+					status: 'completed',
+					failures: [],
+				});
 			});
 		});
 

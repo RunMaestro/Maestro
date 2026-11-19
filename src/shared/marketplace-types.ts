@@ -6,7 +6,8 @@
  * and the local cache.
  */
 
-import type { TaskSelectionMode } from './types';
+import type { PlaybookParamOverlay } from './playbookParams';
+import type { Playbook, PlaybookInteraction, PlaybookScope, TaskSelectionMode } from './types';
 
 // ============================================================================
 // Marketplace Manifest Types (fetched from GitHub)
@@ -86,6 +87,17 @@ export interface MarketplacePlaybook {
 	 * value (false, "yes", 1, absent) is treated as not-beta. Does not affect install.
 	 */
 	beta?: boolean;
+	/**
+	 * Typed declarations for the parameters the prompt's prose form names. They
+	 * own type and validation only; defaults and help stay in the prose.
+	 */
+	parameters?: PlaybookParamOverlay[];
+	/** How parameters are collected: a plain `form` (the default) or a `guided` interview. */
+	interaction?: PlaybookInteraction;
+	/** What the playbook changes: the user's `machine` or one `repo`. A hint only. */
+	scope?: PlaybookScope;
+	/** A document filename (without `.md`) run once at the end as the report author. */
+	report?: string;
 }
 
 /**
@@ -225,22 +237,49 @@ export interface GetReadmeResponse {
  * Response from marketplace:importPlaybook handler.
  */
 export interface ImportPlaybookResponse {
-	/** The created playbook entry */
-	playbook: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	};
+	/** The created playbook record, with its provenance and Exchange fields */
+	playbook: Playbook;
 	/** List of imported document filenames */
 	importedDocs: string[];
 	/** List of imported asset filenames (from assets/ subfolder) */
-	importedAssets?: string[];
+	importedAssets: string[];
+	/**
+	 * Documents the manifest lists that did not import (fetch or write failed).
+	 * Non-empty means the import was partial: the playbook record omits them.
+	 */
+	failedDocs: string[];
+	/** Assets (listed or discovered) that did not import (fetch or write failed) */
+	failedAssets: string[];
 }
+
+/**
+ * One line naming what a partial import left behind, or `null` when nothing
+ * failed. Shared by every surface that reports an import (toast, CLI).
+ */
+export function describeMarketplaceImportFailures(
+	result: Pick<Partial<ImportPlaybookResponse>, 'failedDocs' | 'failedAssets'>
+): string | null {
+	const parts: string[] = [];
+	const failedDocs = result.failedDocs ?? [];
+	const failedAssets = result.failedAssets ?? [];
+	if (failedDocs.length > 0) {
+		parts.push(`${failedDocs.length === 1 ? 'document' : 'documents'} ${failedDocs.join(', ')}`);
+	}
+	if (failedAssets.length > 0) {
+		parts.push(`${failedAssets.length === 1 ? 'asset' : 'assets'} ${failedAssets.join(', ')}`);
+	}
+	return parts.length > 0 ? `Not imported: ${parts.join('; ')}` : null;
+}
+
+/**
+ * What a marketplace import returns across a process boundary (IPC, the web
+ * bridge, the CLI): the full {@link ImportPlaybookResponse} on success, or an
+ * error message. One shape, so no layer drops the record on the way out.
+ */
+export type MarketplaceImportPlaybookResult = {
+	success: boolean;
+	error?: string;
+} & Partial<ImportPlaybookResponse>;
 
 /**
  * Standard error response format for marketplace handlers.

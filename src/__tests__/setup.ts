@@ -313,6 +313,13 @@ const mockMaestro = {
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
+		previewPlaybookFailure: vi.fn().mockResolvedValue({
+			repo: 'RunMaestro/Maestro-Playbooks',
+			title: 'Playbook test: stalled at DOC.md task 1',
+			body: '## Playbook failure',
+			fingerprint: '0123456789abcdef',
+		}),
+		submitPlaybookFailure: vi.fn().mockResolvedValue({ success: true }),
 		drafts: {
 			list: vi.fn().mockResolvedValue({ drafts: [] }),
 			save: vi.fn((draft: unknown) => Promise.resolve({ draft })),
@@ -528,6 +535,9 @@ const mockMaestro = {
 		unwatchFolder: vi.fn(),
 		readFolder: vi.fn().mockResolvedValue({ success: true, files: [] }),
 		listDocs: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		// No evidence by default: a run then reports no "Files changed" section.
+		evidenceStart: vi.fn().mockResolvedValue({ success: true, snapshot: null }),
+		evidenceEnd: vi.fn().mockResolvedValue({ success: true, evidence: null }),
 	},
 	playbooks: {
 		list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),
@@ -536,6 +546,9 @@ const mockMaestro = {
 		delete: vi.fn().mockResolvedValue({ success: true }),
 		export: vi.fn().mockResolvedValue({ success: true }),
 		import: vi.fn().mockResolvedValue({ success: true, playbook: {} }),
+		// No facts by default: the configure flow then proposes nothing and never interviews.
+		gatherFacts: vi.fn().mockResolvedValue({ success: false, error: 'not mocked' }),
+		onChanged: vi.fn().mockReturnValue(() => {}),
 	},
 	plugins: {
 		list: vi.fn().mockResolvedValue({ plugins: [] }),
@@ -595,9 +608,12 @@ const mockMaestro = {
 			manifest: { lastUpdated: '2025-01-01', playbooks: [] },
 			fromCache: false,
 		}),
+		getHealth: vi.fn().mockResolvedValue({ success: true, health: {}, fromCache: false }),
 		getDocument: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getReadme: vi.fn().mockResolvedValue({ success: true, content: null }),
 		importPlaybook: vi.fn().mockResolvedValue({ success: true, playbook: {}, importedDocs: [] }),
+		updatePlaybook: vi.fn().mockResolvedValue({ success: true, playbook: {}, importedDocs: [] }),
+		checkUpdates: vi.fn().mockResolvedValue({ success: true, updates: {} }),
 		onManifestChanged: vi.fn().mockReturnValue(() => {}),
 	},
 	live: {
@@ -762,6 +778,8 @@ const mockMaestro = {
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),
+		playbookRunStarted: vi.fn().mockResolvedValue(undefined),
+		playbookRunEnded: vi.fn().mockResolvedValue(undefined),
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
 		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),

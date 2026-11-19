@@ -3650,6 +3650,81 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('openPlaybookConfigure shortcut', () => {
+		afterEach(() => {
+			useModalStore.getState().closeModal('playbookConfigure');
+		});
+
+		it('opens Configure Playbook on the active agent on Opt+Cmd+Shift+P', () => {
+			useSessionStore.setState({ activeSessionId: 'agent-active' });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openPlaybookConfigure',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'P',
+						code: 'KeyP',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('playbookConfigure')).toBe(true);
+			expect(useModalStore.getState().getData('playbookConfigure')).toEqual({
+				sessionId: 'agent-active',
+			});
+		});
+	});
+
+	describe('openPlaybookExchange shortcut', () => {
+		const pressExchangeChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'E',
+						code: 'KeyE',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		const mountWithAgent = (autoRunFolderPath?: string) => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 'agent-active', autoRunFolderPath },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openPlaybookExchange',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+		};
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('marketplace');
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		});
+
+		it('opens the Playbook Exchange on Opt+Cmd+Shift+E', () => {
+			mountWithAgent('/project/.maestro/playbooks');
+			pressExchangeChord();
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(true);
+		});
+
+		it('stays closed when the active agent has no Auto Run folder', () => {
+			mountWithAgent(undefined);
+			pressExchangeChord();
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(false);
+		});
+	});
+
 	describe('openNotificationCenter shortcut', () => {
 		// Unbound by default, so the test binds it through isShortcut.
 		const press = () =>

@@ -8,7 +8,11 @@ import type { BatchAction } from '../batchReducer';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
-import { aggregateAutoRunHistoryTotals, mergeFinalSummaryTotals } from './batchFinalSummary';
+import {
+	aggregateAutoRunHistoryTotals,
+	buildAutoRunEndOutcome,
+	mergeFinalSummaryTotals,
+} from './batchFinalSummary';
 
 interface TimeTrackingApi {
 	getElapsedTime: (sessionId: string) => number;
@@ -116,12 +120,30 @@ export function useBatchKillAction({
 						{ sessionId, error: historyError }
 					);
 				}
+				// Playbook telemetry: a stop sends `run_completed` with status
+				// `stopped` and no `run_failed`. Main ignores an agent with no
+				// tracked playbook run, so a plain Auto Run costs one no-op call.
+				try {
+					await window.maestro.stats.playbookRunEnded(sessionId, {
+						status: 'stopped',
+						durationMs: finalTotals.totalElapsedMs,
+						failures: flushState.getFailures?.() ?? [],
+					});
+				} catch (telemetryError) {
+					logger.warn(
+						'[BatchProcessor:killBatchRun] Failed to note playbook run end:',
+						undefined,
+						telemetryError
+					);
+				}
 				if (flushState.statsAutoRunId) {
 					try {
 						await window.maestro.stats.endAutoRun(
 							flushState.statsAutoRunId,
 							finalTotals.totalElapsedMs,
-							finalTotals.totalCompletedTasks
+							finalTotals.totalCompletedTasks,
+							undefined,
+							buildAutoRunEndOutcome('stopped', flushState.getFailures?.() ?? [])
 						);
 					} catch (statsError) {
 						logger.warn(

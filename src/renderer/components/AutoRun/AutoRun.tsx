@@ -84,6 +84,7 @@ import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { notifyToast } from '../../stores/notificationStore';
+import { isPlaybookParamsPause, openPlaybookConfigure } from '../../services/playbookConfigure';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import {
 	MIRRORED_RUN_CONTROL_TITLE,
@@ -812,6 +813,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isHumanGate={batchError.type === 'hitl_gate'}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+					onConfigure={
+						isPlaybookParamsPause(batchError.type) && batchRunState?.playbookRef
+							? () =>
+									openPlaybookConfigure({
+										sessionId: batchRunState.playbookRef!.ownerSessionId,
+										playbookId: batchRunState.playbookRef!.id,
+									})
+							: undefined
+					}
 					disabledReason={isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : undefined}
 				/>
 			)}

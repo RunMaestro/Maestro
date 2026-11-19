@@ -1348,6 +1348,25 @@ describe('storage service', () => {
 				expect(JSON.parse(appended.trim()).id).toBe('new-entry');
 			});
 
+			it('writes per-session when the history folder exists but the marker does not', () => {
+				// A data dir that started on the per-session format never gets the
+				// migration marker. Writing the legacy file there hid the entry from
+				// the desktop, and the next desktop start migrated it over the
+				// agent's per-session file.
+				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
+					const pathStr = path.normalize(String(filepath));
+					if (pathStr.includes('history-migrated.json')) return false;
+					return pathStr.endsWith(`${path.sep}history`);
+				});
+
+				addHistoryEntry(mockHistoryEntry({ id: 'cli-run', sessionId: 'session-123' }));
+
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+				const appendCall = vi.mocked(fs.appendFileSync).mock.calls[0];
+				expect(appendCall[0]).toContain(path.join('history', 'session-123.jsonl'));
+				expect(JSON.parse(String(appendCall[1]).trim()).id).toBe('cli-run');
+			});
+
 			it('should create history directory if it does not exist', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
 					const pathStr = path.normalize(String(filepath));

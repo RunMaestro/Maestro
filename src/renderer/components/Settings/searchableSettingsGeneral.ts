@@ -571,6 +571,27 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-playbook-telemetry',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Share Anonymous Playbook Usage',
+		description:
+			'Send installs, runs, and outcomes of official Exchange playbooks so the Exchange can show popular and broken playbooks',
+		keywords: [
+			'playbook',
+			'playbooks',
+			'exchange',
+			'marketplace',
+			'telemetry',
+			'usage',
+			'anonymous',
+			'privacy',
+			'share',
+			'popular',
+			'broken',
+		],
+	},
+	{
 		id: 'general-browser',
 		tab: 'general',
 		tabLabel: 'General',

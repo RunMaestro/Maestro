@@ -376,6 +376,24 @@ describe.skipIf(!DatabaseSync)('createStatsRecorder', () => {
 			expect(result.ok ? '' : result.message).toContain('auto_run_sessions');
 		});
 
+		it('skips a file the desktop has not migrated to the playbook identity columns', async () => {
+			createDesktopDatabase();
+			const db = new DatabaseSync!(statsFile);
+			db.exec('ALTER TABLE auto_run_sessions DROP COLUMN playbook_id');
+			db.close();
+			const result = await createStatsRecorder({
+				paths: { statsFile },
+				loadSqlite: () => Adapted,
+			}).startAutoRun({
+				sessionId: 'agent-1',
+				agentType: 'claude-code',
+				startTime: 1,
+				duration: 0,
+			});
+			expect(result).toMatchObject({ ok: false, reason: 'schema' });
+			expect(result.ok ? '' : result.message).toContain('playbook_id');
+		});
+
 		it('is not recorded when usage statistics are turned off', async () => {
 			createDesktopDatabase();
 			const result = await createStatsRecorder({

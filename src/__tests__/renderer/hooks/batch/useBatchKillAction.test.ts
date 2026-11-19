@@ -92,6 +92,36 @@ const setupHook = (override: { flushAtStart?: AutoRunFlushState | null } = {}) =
 };
 
 describe('useBatchKillAction', () => {
+	it('records a killed run as stopped, with the stalls and errors it had so far', async () => {
+		const failures = [
+			{
+				kind: 'stall' as const,
+				documentFilename: 'A.md',
+				taskIndex: 1,
+				agentType: 'codex',
+				createdAt: 1,
+			},
+			{
+				kind: 'error' as const,
+				documentFilename: 'B.md',
+				taskIndex: 0,
+				agentType: 'codex',
+				createdAt: 2,
+			},
+		];
+		const { hook } = setupHook({ flushAtStart: mkFlush({ getFailures: () => failures }) });
+
+		await act(async () => {
+			await hook.result.current.killBatchRun('sess');
+		});
+
+		expect(endAutoRun).toHaveBeenCalledWith('stats-1', 12_345, 3, undefined, {
+			status: 'stopped',
+			documentsStalled: 1,
+			failures,
+		});
+	});
+
 	it('claims the flush state, captures elapsed time, and writes the killed history entry', async () => {
 		const { hook, autoRunFlushStateRefs, onAddHistoryEntry } = setupHook();
 
@@ -115,7 +145,11 @@ describe('useBatchKillAction', () => {
 			await hook.result.current.killBatchRun('sess');
 		});
 
-		expect(endAutoRun).toHaveBeenCalledWith('stats-1', 12_345, 3);
+		expect(endAutoRun).toHaveBeenCalledWith('stats-1', 12_345, 3, undefined, {
+			status: 'stopped',
+			documentsStalled: 0,
+			failures: [],
+		});
 		// stopTracking happens AFTER endAutoRun in the runtime; assert ordering by call order.
 		expect(endAutoRun.mock.invocationCallOrder[0]).toBeLessThan(
 			timeTracking.stopTracking.mock.invocationCallOrder[0]
@@ -210,7 +244,11 @@ describe('useBatchKillAction', () => {
 		});
 
 		expect(getHistory).toHaveBeenCalledWith(undefined, 'sess');
-		expect(endAutoRun).toHaveBeenCalledWith('stats-1', 50_000, 2);
+		expect(endAutoRun).toHaveBeenCalledWith('stats-1', 50_000, 2, undefined, {
+			status: 'stopped',
+			documentsStalled: 0,
+			failures: [],
+		});
 		const entry = onAddHistoryEntry.mock.calls[0][0];
 		expect(entry.summary).toContain('Auto Run killed: 2 tasks in');
 		expect(entry.elapsedTimeMs).toBe(50_000);

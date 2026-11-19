@@ -71,6 +71,14 @@ export const MODAL_PRIORITIES = {
 	/** Gist publish confirmation modal - high priority */
 	GIST_PUBLISH: 980,
 
+	/**
+	 * Playbook completion report. Pops when a playbook run finishes, wherever
+	 * the user is (the one place stealing focus is the feature), so it ranks
+	 * above every surface and dialog it can land on, the Playbook Exchange
+	 * included, and below the confirmations, which must stay answerable.
+	 */
+	PLAYBOOK_COMPLETION: 960,
+
 	/** Playbook delete confirmation - high priority, appears on top of BatchRunner */
 	PLAYBOOK_DELETE_CONFIRM: 950,
 
@@ -228,6 +236,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Playbook Exchange modal - browse and import community playbooks (opens from BatchRunner or AutoRunExpanded, so needs higher priority than both) */
 	MARKETPLACE: 735,
+
+	/** Playbook Configure modal - a playbook's parameter form (opens from BatchRunner and the Auto Run error banner, so above both and above the Exchange) */
+	PLAYBOOK_CONFIGURE: 737,
 
 	/** Symphony modal - browse and contribute to open source projects */
 	SYMPHONY: 710,

@@ -36,6 +36,7 @@ import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { useBatchProcessor, type UseBatchProcessorProps } from './useBatchProcessor';
 import { useBatchStore } from '../../stores/batchStore';
+import { usePlaybookCompletionStore } from '../../stores/playbookCompletionStore';
 import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecution';
@@ -300,6 +301,14 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				taskDuration: info.elapsedTimeMs,
 				sessionId: info.sessionId,
 			});
+
+			// A saved playbook's run ends with its report, which pops wherever the
+			// user is. Runs that finish together queue rather than stack.
+			if (info.report) {
+				usePlaybookCompletionStore
+					.getState()
+					.enqueue(info.sessionId, info.report, info.playbookTelemetryEvent);
+			}
 
 			// Record achievement and check for badge unlocks
 			if (info.elapsedTimeMs > 0) {

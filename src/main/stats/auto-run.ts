@@ -6,6 +6,8 @@
 
 import type Database from 'better-sqlite3';
 import type {
+	AutoRunEndOutcome,
+	AutoRunFailure,
 	AutoRunSession,
 	AutoRunTask,
 	AutoRunTurnsByHour,
@@ -13,19 +15,24 @@ import type {
 } from '../../shared/stats-types';
 import { generateId, getTimeRangeStart, normalizePath, LOG_CONTEXT } from './utils';
 import {
+	mapAutoRunFailureRow,
 	mapAutoRunSessionRow,
 	mapAutoRunTaskRow,
+	type AutoRunFailureRow,
 	type AutoRunSessionRow,
 	type AutoRunTaskRow,
 } from './row-mappers';
 import { StatementCache } from './utils';
 import { logger } from '../utils/logger';
 import {
+	INSERT_AUTO_RUN_FAILURE_SQL,
 	INSERT_AUTO_RUN_SESSION_SQL,
 	INSERT_AUTO_RUN_TASK_SQL,
+	bindAutoRunFailure,
 	bindAutoRunSession,
 	bindAutoRunTask,
 } from '../../shared/maestro-lib/stats/auto-run-insert';
+import { normalizeAutoRunOutcomeStatus } from '../../shared/stats-types';
 
 const stmtCache = new StatementCache();
 
@@ -91,35 +98,83 @@ export function updateAutoRunSession(
 }
 
 /**
- * Record how an Auto Run ended: its wall time and the checkboxes it ticked.
+ * Record how an Auto Run ended: its wall time, the checkboxes it ticked, and
+ * (when the runner reports it) its outcome.
  *
  * `tasks_total` is the checkbox count when the run STARTED. A looping run
  * re-checks the same tasks every loop, so its completions can pass that count
  * and a raw ratio reads over 100%. The stored total is therefore raised to at
  * least the completed count (and to `tasksTotal` when the caller knows a
  * better figure), so "done of attempted" never exceeds 100%.
+ *
+ * `outcome` sets `status` and `documents_stalled` only when given (an absent
+ * field keeps the stored value) and adds one `auto_run_failures` row per
+ * failure. It all lands in one transaction, so a run is never left with its
+ * failures but not its end, or the reverse.
  */
 export function finishAutoRunSession(
 	db: Database.Database,
 	id: string,
 	duration: number,
 	tasksCompleted: number,
-	tasksTotal?: number
+	tasksTotal?: number,
+	outcome?: AutoRunEndOutcome
 ): boolean {
-	const result = stmtCache
-		.get(
-			db,
-			`
+	const status = normalizeAutoRunOutcomeStatus(outcome?.status);
+	const documentsStalled =
+		Number.isInteger(outcome?.documentsStalled) && (outcome?.documentsStalled as number) >= 0
+			? (outcome?.documentsStalled as number)
+			: null;
+	let changed = false;
+
+	db.transaction(() => {
+		const result = stmtCache
+			.get(
+				db,
+				`
       UPDATE auto_run_sessions
       SET duration = ?,
           tasks_completed = ?,
-          tasks_total = MAX(COALESCE(tasks_total, 0), ?, ?)
+          tasks_total = MAX(COALESCE(tasks_total, 0), ?, ?),
+          status = COALESCE(?, status),
+          documents_stalled = COALESCE(?, documents_stalled)
       WHERE id = ?
     `
-		)
-		.run(duration, tasksCompleted, tasksCompleted, tasksTotal ?? 0, id);
+			)
+			.run(duration, tasksCompleted, tasksCompleted, tasksTotal ?? 0, status, documentsStalled, id);
+		changed = result.changes > 0;
+		// A failure must belong to a run that exists (the column references it).
+		if (!changed) return;
+
+		const insertFailure = stmtCache.get(db, INSERT_AUTO_RUN_FAILURE_SQL);
+		for (const failure of outcome?.failures ?? []) {
+			const params = bindAutoRunFailure(generateId(), { ...failure, autoRunSessionId: id });
+			if (params) insertFailure.run(...params);
+		}
+	})();
+
 	logger.debug(`Finished Auto Run session ${id}`, LOG_CONTEXT);
-	return result.changes > 0;
+	return changed;
+}
+
+/**
+ * Get the failures recorded for one Auto Run, oldest first.
+ */
+export function getAutoRunFailures(
+	db: Database.Database,
+	autoRunSessionId: string
+): AutoRunFailure[] {
+	const rows = stmtCache
+		.get(
+			db,
+			`
+      SELECT * FROM auto_run_failures
+      WHERE auto_run_session_id = ?
+      ORDER BY created_at ASC
+    `
+		)
+		.all(autoRunSessionId) as AutoRunFailureRow[];
+	return rows.map(mapAutoRunFailureRow);
 }
 
 /**

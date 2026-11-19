@@ -229,6 +229,7 @@ import type {
 	GetMarketplaceDocumentCallback,
 	GetMarketplaceReadmeCallback,
 	ImportMarketplacePlaybookCallback,
+	CheckMarketplaceUpdatesCallback,
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 } from './types';
@@ -1141,6 +1142,10 @@ export class WebServer {
 		this.callbackRegistry.setImportMarketplacePlaybookCallback(callback);
 	}
 
+	setCheckMarketplaceUpdatesCallback(callback: CheckMarketplaceUpdatesCallback): void {
+		this.callbackRegistry.setCheckMarketplaceUpdatesCallback(callback);
+	}
+
 	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {
 		this.callbackRegistry.setListDesktopSessionsCallback(callback);
 	}
@@ -1759,8 +1764,17 @@ export class WebServer {
 			importMarketplacePlaybook: async (
 				sessionId: string,
 				playbookId: string,
-				targetFolderName: string
-			) => this.callbackRegistry.importMarketplacePlaybook(sessionId, playbookId, targetFolderName),
+				targetFolderName: string,
+				options?: { update?: boolean }
+			) =>
+				this.callbackRegistry.importMarketplacePlaybook(
+					sessionId,
+					playbookId,
+					targetFolderName,
+					options
+				),
+			checkMarketplaceUpdates: async (sessionId: string) =>
+				this.callbackRegistry.checkMarketplaceUpdates(sessionId),
 			listDesktopSessions: () => this.callbackRegistry.listDesktopSessions(),
 			getSessionHistory: (tabId, options) =>
 				this.callbackRegistry.getSessionHistory(tabId, options),

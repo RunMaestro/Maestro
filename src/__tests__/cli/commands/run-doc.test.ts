@@ -150,6 +150,19 @@ describe('run-doc command', () => {
 		);
 	});
 
+	it('asks the engine for no run report: loose documents are not a saved playbook', async () => {
+		vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([{ type: 'complete' }]));
+
+		await runDoc(['plans/frontend-plan.md'], { agent: 'Frontend' });
+
+		expect(executePlaybook).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			'/path/to/playbooks',
+			expect.objectContaining({ report: false })
+		);
+	});
+
 	it('passes loop configuration through to the ephemeral playbook', async () => {
 		vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
 

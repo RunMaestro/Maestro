@@ -17,6 +17,8 @@ import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
+import { PlaybookConfigureModal } from './PlaybookLaunch/PlaybookConfigureModal';
+import { PlaybookCompletionModal } from './PlaybookCompletionModal/PlaybookCompletionModal';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { useProfilingAutoStop } from '../hooks/ui/useProfilingAutoStop';
 import { WindowsWarningModal } from './WindowsWarningModal';
@@ -43,6 +45,7 @@ import type {
 	Session,
 	Shortcut,
 	AutoRunStats,
+	BatchRunConfig,
 	EncoreFeatureFlags,
 	FilePreviewTab,
 } from '../types';
@@ -110,6 +113,8 @@ export interface AppStandaloneModalsProps {
 
 	// --- Marketplace ---
 	onMarketplaceImportComplete: (folderName: string) => Promise<void>;
+	/** Starts an installed playbook's run on an agent; resolves true once it is running. */
+	onRunMarketplacePlaybook: (sessionId: string, config: BatchRunConfig) => Promise<boolean>;
 
 	// --- Symphony ---
 	setActiveSessionId: (id: string) => void;
@@ -191,6 +196,7 @@ function AppStandaloneModalsInner({
 	onKeyboardMasteryCelebrationClose,
 	// Marketplace
 	onMarketplaceImportComplete,
+	onRunMarketplacePlaybook,
 	// Symphony
 	setActiveSessionId,
 	onStartContribution,
@@ -418,9 +424,16 @@ function AppStandaloneModalsInner({
 							undefined
 						}
 						onImportComplete={onMarketplaceImportComplete}
+						onRunPlaybook={onRunMarketplacePlaybook}
 					/>
 				</Suspense>
 			)}
+
+			{/* --- PLAYBOOK CONFIGURE (self-subscribes to the playbookConfigure modal) --- */}
+			<PlaybookConfigureModal theme={theme} />
+
+			{/* --- PLAYBOOK COMPLETION (self-subscribes to the playbook completion queue) --- */}
+			<PlaybookCompletionModal theme={theme} />
 
 			{/* --- SYMPHONY MODAL (lazy-loaded) --- */}
 			{encoreFeatures.symphony && symphonyModalOpen && (

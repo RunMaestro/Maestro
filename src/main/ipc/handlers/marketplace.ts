@@ -10,21 +10,26 @@
  * - Manifest is cached locally with 6-hour TTL
  * - Individual documents are fetched on-demand (not cached)
  * - Force refresh bypasses cache and fetches fresh data
+ * - Health figures (popularity, reliability) are cached with the same TTL on
+ *   their own channel, so the manifest never waits on them
  */
 
 import { ipcMain, App, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
-import { createSafeSend } from '../../utils/safe-send';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../../shared/playbooksChanged';
 import { SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
+	getMarketplaceHealth,
 	getMarketplaceDocument,
 	getMarketplaceReadme,
 	importMarketplacePlaybook,
+	checkMarketplacePlaybookUpdates,
 	createLocalManifestWatcher,
 } from '../../services/marketplace-service';
 
@@ -36,6 +41,11 @@ export interface MarketplaceHandlerDependencies {
 	settingsStore?: Store<MaestroSettings>;
 	/** Main window getter, used to bridge manifest-change pushes to web clients */
 	getMainWindow?: () => BrowserWindow | null;
+	/**
+	 * Broadcast to every renderer and web client. Carries the
+	 * `playbooks:changed` push after an import; defaults to the main window.
+	 */
+	safeSend?: SafeSendFn;
 }
 
 let marketplaceSettingsStore: Store<MaestroSettings> | undefined;
@@ -54,6 +64,19 @@ function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
 	return sshRemotes.find((r) => r.id === sshRemoteId && r.enabled);
 }
 
+/**
+ * The SSH config for a request that named a remote. Fails loudly when the
+ * remote cannot be resolved: silently working locally would land (or read)
+ * the playbook on the wrong host (the SSH spawn pattern in CLAUDE.md: never
+ * silently downgrade to local).
+ */
+function resolveSshConfig(sshRemoteId: string | undefined): SshRemoteConfig | undefined {
+	if (!sshRemoteId) return undefined;
+	const sshConfig = getSshRemoteById(sshRemoteId);
+	if (!sshConfig) throw new Error(`SSH remote not found or disabled: ${sshRemoteId}`);
+	return sshConfig;
+}
+
 const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions => ({
 	context: LOG_CONTEXT,
 	operation,
@@ -66,6 +89,7 @@ const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions
 export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies): void {
 	const { app, settingsStore, getMainWindow } = deps;
 	const safeSend = createSafeSend(getMainWindow ?? (() => null));
+	const broadcast = deps.safeSend ?? safeSend;
 
 	marketplaceSettingsStore = settingsStore;
 
@@ -101,6 +125,15 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 		})
 	);
 
+	// marketplace:getHealth - Popularity and reliability figures, fetched beside
+	// the manifest. Never fails: an absent endpoint answers with no figures.
+	ipcMain.handle(
+		'marketplace:getHealth',
+		createIpcHandler(handlerOpts('getHealth', false), async (forceRefresh?: boolean) => {
+			return getMarketplaceHealth(app, { forceRefresh: forceRefresh === true });
+		})
+	);
+
 	// marketplace:getDocument - Fetch a single document
 	ipcMain.handle(
 		'marketplace:getDocument',
@@ -127,16 +160,10 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				targetFolderName: string,
 				autoRunFolderPath: string,
 				sessionId: string,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				options?: { update?: boolean }
 			) => {
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail loudly when the user opted into SSH but the remote
-				// can't be resolved - silently importing locally would land
-				// the playbook on the wrong host (mirrors the SSH spawn
-				// pattern in CLAUDE.md: never silently downgrade to local).
-				if (sshRemoteId && !sshConfig) {
-					throw new Error(`SSH remote not found or disabled: ${sshRemoteId}`);
-				}
+				const sshConfig = resolveSshConfig(sshRemoteId);
 				const result = await importMarketplacePlaybook({
 					app,
 					playbookId,
@@ -144,8 +171,30 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					autoRunFolderPath,
 					sessionId,
 					sshConfig,
+					update: options?.update === true,
 				});
+				// The import appended (or, for an update, replaced) a record in
+				// the agent's playbook list.
+				broadcast(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
 				return { ...result };
+			}
+		)
+	);
+
+	// marketplace:checkUpdates - Classify every playbook the agent installed
+	// from the Exchange: up-to-date, update-available, or locally-modified.
+	ipcMain.handle(
+		'marketplace:checkUpdates',
+		createIpcHandler(
+			handlerOpts('checkUpdates', false),
+			async (sessionId: string, autoRunFolderPath: string, sshRemoteId?: string) => {
+				const updates = await checkMarketplacePlaybookUpdates({
+					app,
+					sessionId,
+					autoRunFolderPath,
+					sshConfig: resolveSshConfig(sshRemoteId),
+				});
+				return { updates };
 			}
 		)
 	);

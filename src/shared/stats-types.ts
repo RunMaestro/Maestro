@@ -72,6 +72,54 @@ export function normalizeAutoRunKind(value: unknown): AutoRunKind {
 }
 
 /**
+ * Where an Auto Run was launched from: the Playbook Exchange, the Auto Run
+ * panel, `maestro-cli`, or a Cue subscription. Stored in
+ * `auto_run_sessions.launch_source`; NULL when the launcher did not say.
+ */
+export type AutoRunLaunchSource = 'exchange' | 'panel' | 'cli' | 'cue';
+
+const AUTO_RUN_LAUNCH_SOURCES: readonly AutoRunLaunchSource[] = ['exchange', 'panel', 'cli', 'cue'];
+
+/**
+ * How an Auto Run ended, as stored in `auto_run_sessions.status`.
+ * - `completed`: it reached the end, even if some (not all) documents stalled.
+ * - `stalled`: every document stalled.
+ * - `stopped`: the user (or a kill) stopped it.
+ * - `failed`: it ended early on a halt marker.
+ */
+export type AutoRunOutcomeStatus = 'completed' | 'stalled' | 'stopped' | 'failed';
+
+const AUTO_RUN_OUTCOME_STATUSES: readonly AutoRunOutcomeStatus[] = [
+	'completed',
+	'stalled',
+	'stopped',
+	'failed',
+];
+
+/** What went wrong in an `auto_run_failures` row. */
+export type AutoRunFailureKind = 'stall' | 'error' | 'halt';
+
+const AUTO_RUN_FAILURE_KINDS: readonly AutoRunFailureKind[] = ['stall', 'error', 'halt'];
+
+/** A launch source from IPC, or null when it is absent or not one this build knows. */
+export function normalizeAutoRunLaunchSource(value: unknown): AutoRunLaunchSource | null {
+	return AUTO_RUN_LAUNCH_SOURCES.includes(value as AutoRunLaunchSource)
+		? (value as AutoRunLaunchSource)
+		: null;
+}
+
+/** An outcome status from IPC, or null when it is absent or not one this build knows. */
+export function normalizeAutoRunOutcomeStatus(value: unknown): AutoRunOutcomeStatus | null {
+	return AUTO_RUN_OUTCOME_STATUSES.includes(value as AutoRunOutcomeStatus)
+		? (value as AutoRunOutcomeStatus)
+		: null;
+}
+
+export function isAutoRunFailureKind(value: unknown): value is AutoRunFailureKind {
+	return AUTO_RUN_FAILURE_KINDS.includes(value as AutoRunFailureKind);
+}
+
+/**
  * An Auto Run session - a complete batch processing run of a document
  */
 export interface AutoRunSession {
@@ -86,6 +134,42 @@ export interface AutoRunSession {
 	projectPath?: string;
 	/** Which engine ran it. Optional on the wire; stored as `spec-driven` when absent. */
 	kind?: AutoRunKind;
+	/** The marketplace entry id from the playbook's provenance. Absent for a local or ad-hoc run. */
+	playbookId?: string;
+	/** The saved playbook record's UUID. Absent for an ad-hoc run. */
+	playbookLocalId?: string;
+	/** The marketplace entry version the playbook was imported at. */
+	playbookVersion?: string;
+	launchSource?: AutoRunLaunchSource;
+	/** Set when the run ends; absent while it runs and on rows from before v17. */
+	status?: AutoRunOutcomeStatus;
+	/** Documents that stalled during the run. */
+	documentsStalled?: number;
+}
+
+/** One stall, task error, or halt inside an Auto Run (`auto_run_failures`). */
+export interface AutoRunFailure {
+	id: string;
+	autoRunSessionId: string;
+	documentFilename?: string;
+	/**
+	 * The 0-based index of the task the run was on: the number of checked tasks
+	 * in the document when the failure was recorded.
+	 */
+	taskIndex?: number;
+	kind: AutoRunFailureKind;
+	agentType: string;
+	createdAt: number;
+}
+
+/** A failure as the runner reports it at the end of a run, before it has a row id. */
+export type AutoRunFailureEntry = Omit<AutoRunFailure, 'id' | 'autoRunSessionId'>;
+
+/** How a run ended, passed with `endAutoRun`. Every field is optional. */
+export interface AutoRunEndOutcome {
+	status?: AutoRunOutcomeStatus;
+	documentsStalled?: number;
+	failures?: AutoRunFailureEntry[];
 }
 
 /**
@@ -391,4 +475,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 16;
+export const STATS_DB_VERSION = 17;

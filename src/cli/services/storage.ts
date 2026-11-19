@@ -182,11 +182,20 @@ export function readGroups(): Group[] {
 // ============================================================================
 
 /**
- * Check if migration to per-session history format has been completed
+ * Whether this data dir keeps History in per-session files.
+ *
+ * The desktop writes `history-migrated.json` only after it migrates a legacy
+ * `maestro-history.json`, so a data dir that started on the per-session format
+ * never gets the marker. Its `history/` folder (which the desktop creates at
+ * every start) is the other proof. Reading the marker alone sent CLI entries to
+ * the legacy file, where the desktop never showed them.
  */
 function hasMigrated(): boolean {
-	const markerPath = path.join(getConfigDir(), 'history-migrated.json');
-	return fs.existsSync(markerPath);
+	const configDir = getConfigDir();
+	return (
+		fs.existsSync(path.join(configDir, 'history-migrated.json')) ||
+		fs.existsSync(path.join(configDir, 'history'))
+	);
 }
 
 /**

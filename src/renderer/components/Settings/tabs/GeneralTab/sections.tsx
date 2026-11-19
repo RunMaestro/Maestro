@@ -308,6 +308,8 @@ function Privacy({ theme }: SettingsSectionProps) {
 			setCrashReportingEnabled={settings.setCrashReportingEnabled}
 			userJourneyEnabled={settings.userJourneyEnabled}
 			setUserJourneyEnabled={settings.setUserJourneyEnabled}
+			playbookTelemetryEnabled={settings.playbookTelemetryEnabled}
+			setPlaybookTelemetryEnabled={settings.setPlaybookTelemetryEnabled}
 		/>
 	);
 }
@@ -401,7 +403,7 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 	{ key: 'updates', settingIds: ['general-updates', 'general-beta-updates'], Component: Updates },
 	{
 		key: 'privacy',
-		settingIds: ['general-crash-reporting', 'general-user-journey'],
+		settingIds: ['general-crash-reporting', 'general-user-journey', 'general-playbook-telemetry'],
 		Component: Privacy,
 	},
 	{

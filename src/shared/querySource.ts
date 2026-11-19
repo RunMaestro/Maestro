@@ -47,3 +47,24 @@ export type QuerySource = 'user' | 'auto' | 'cue';
  * point of the marker is to be trusted.
  */
 export const DEFAULT_QUERY_SOURCE: QuerySource = 'user';
+
+const QUERY_SOURCES: readonly QuerySource[] = ['user', 'auto', 'cue'];
+
+/**
+ * The {@link QuerySource} a process inherited, read from its environment.
+ * Null when the variable is unset or holds a value outside the vocabulary: a
+ * shell the user opened themselves carries none, and that is not a claim.
+ */
+export function readQuerySource(env: Record<string, string | undefined>): QuerySource | null {
+	const value = env[QUERY_SOURCE_ENV_VAR]?.trim();
+	return QUERY_SOURCES.find((source) => source === value) ?? null;
+}
+
+/**
+ * Whether an automation (an Auto Run task or a Cue subscription) started the
+ * work, rather than a person. Unset counts as a person, per
+ * {@link DEFAULT_QUERY_SOURCE}.
+ */
+export function isAutomationQuerySource(source: QuerySource | null): boolean {
+	return source === 'auto' || source === 'cue';
+}

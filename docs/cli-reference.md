@@ -338,9 +338,13 @@ Show detailed information about a playbook
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli playbook <playbook-id>`
+## `maestro-cli playbook`
 
-Run a playbook
+Run a playbook (`playbook <playbook-id>`), or configure its parameters
+
+## `maestro-cli playbook run <playbook-id>`
+
+Run a playbook (the default: `run` may be omitted); ends with a run report saved under .maestro-reports/ (a `report` event with --json)
 
 | Option                 | Description                                                                                                 | Default |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------- | ------- |
@@ -354,6 +358,17 @@ Run a playbook
 | `--model <model>`      | Model to use for this run only, overriding the agent's configured default                                   | -       |
 | `--effort <effort>`    | Reasoning effort for this run only, overriding the agent's configured default                               | -       |
 | `--ignore-model-hints` | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default) | -       |
+| `--param <NAME=VALUE>` | Answer a playbook parameter for this run only (repeatable; never saved)                                     | `[]`    |
+| `--params-file <path>` | JSON object of parameter answers for this run only (--param wins; never saved)                              | -       |
+
+## `maestro-cli playbook configure <playbook-id>`
+
+Show a playbook's parameters, or save answers to them with --set
+
+| Option               | Description                                                           | Default |
+| -------------------- | --------------------------------------------------------------------- | ------- |
+| `--set <NAME=VALUE>` | Save a parameter answer on the playbook (repeatable; NAME= clears it) | `[]`    |
+| `--json`             | Output as JSON (for scripting)                                        | -       |
 
 ## `maestro-cli goal-run <agent-id> <goal>`
 
@@ -1205,18 +1220,19 @@ Revoke a prompt link so it never runs again (accepts a unique id prefix)
 
 ## `maestro-cli marketplace`
 
-Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
+Browse, import, and update Playbook Exchange playbooks (the modal: `open marketplace`)
 
 ## `maestro-cli marketplace list`
 
 List playbooks in the official + local catalog
 
-| Option                  | Description                           | Default |
-| ----------------------- | ------------------------------------- | ------- |
-| `-c, --category <name>` | Only this category                    | -       |
-| `-s, --search <text>`   | Match id, title, description, or tags | -       |
-| `--refresh`             | Bypass the catalog cache              | -       |
-| `--json`                | Output as JSON (for scripting)        | -       |
+| Option                  | Description                                                                        | Default |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------- |
+| `-c, --category <name>` | Only this category                                                                 | -       |
+| `-s, --search <text>`   | Match id, title, description, or tags                                              | -       |
+| `--refresh`             | Bypass the catalog cache                                                           | -       |
+| `--sort <order>`        | default (the Exchange order) or popular (most installed in the last 30 days first) | -       |
+| `--json`                | Output as JSON (for scripting)                                                     | -       |
 
 ## `maestro-cli marketplace show <playbook-id>`
 
@@ -1230,11 +1246,21 @@ Show a playbook's details, documents, and README
 
 Install a playbook into an agent's Auto Run folder
 
-| Option                | Description                                                     | Default |
-| --------------------- | --------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`    | Target agent ID                                                 | -       |
-| `-f, --folder <name>` | Folder name under the Auto Run folder (default: from the title) | -       |
-| `--json`              | Output as JSON (for scripting)                                  | -       |
+| Option                | Description                                                                           | Default |
+| --------------------- | ------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent ID                                                                       | -       |
+| `-f, --folder <name>` | Folder name under the Auto Run folder (default: from the title)                       | -       |
+| `--update`            | Update the copy already installed on the agent (same folder, keeps parameter answers) | -       |
+| `--json`              | Output as JSON (for scripting)                                                        | -       |
+
+## `maestro-cli marketplace updates`
+
+Show which of an agent's installed playbooks are up to date, have an update, or were edited
+
+| Option             | Description                    | Default |
+| ------------------ | ------------------------------ | ------- |
+| `-a, --agent <id>` | Target agent ID                | -       |
+| `--json`           | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli remove-playbook <agent-id> <playbook-id>`
 

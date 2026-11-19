@@ -341,7 +341,10 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			},
 			importedDocs: [],
 			importedAssets: [],
+			failedDocs: [],
+			failedAssets: [],
 		}),
+		checkMarketplaceUpdates: vi.fn().mockResolvedValue({ success: true, updates: {} }),
 		listDesktopSessions: vi.fn().mockReturnValue([]),
 		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
@@ -5104,6 +5107,47 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	// `maestro-cli playbook configure --set` saves parameter answers through here.
+	describe('update_playbook parameterValues', () => {
+		const update = (parameterValues: unknown) => ({
+			type: 'update_playbook' as const,
+			sessionId: 'session-1',
+			playbookId: 'pb-1',
+			updates: { parameterValues },
+		});
+
+		it('forwards a valid answer set to the callback', async () => {
+			handler.handleMessage(client, update({ MAX_ITEMS: '25', PR_URL: 'https://x.test/1' }));
+			await vi.waitFor(() => {
+				expect(callbacks.updatePlaybook).toHaveBeenCalledWith('session-1', 'pb-1', {
+					parameterValues: { MAX_ITEMS: '25', PR_URL: 'https://x.test/1' },
+				});
+			});
+		});
+
+		it('accepts an empty object, which clears every saved answer', async () => {
+			handler.handleMessage(client, update({}));
+			await vi.waitFor(() => {
+				expect(callbacks.updatePlaybook).toHaveBeenCalledWith('session-1', 'pb-1', {
+					parameterValues: {},
+				});
+			});
+		});
+
+		it.each([
+			['an array', ['A']],
+			['a non-string value', { MAX_ITEMS: 25 }],
+			['an illegal name', { max_items: '25' }],
+			['null', null],
+		])('rejects %s instead of dropping it', (_label, parameterValues) => {
+			handler.handleMessage(client, update(parameterValues));
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toMatch(/parameterValues/);
+			expect(callbacks.updatePlaybook).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Create Gist', () => {
 		it('replies with create_gist_result on success', async () => {
 			handler.handleMessage(client, {
@@ -5255,6 +5299,39 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.requestId).toBe('req-1');
 		});
 
+		it('carries the health figures, and an empty map when the callback has none', async () => {
+			const health = {
+				'sample-playbook': {
+					installs_30d: 12,
+					runs_30d: 40,
+					success_rate_30d: 0.9,
+					recent_failures: 0,
+				},
+			};
+			callbacks.getMarketplaceManifest = vi.fn().mockResolvedValue({
+				manifest: { lastUpdated: '2026-01-01', playbooks: [] },
+				fromCache: false,
+				health,
+			});
+			handler.setCallbacks(callbacks);
+			handler.handleMessage(client, { type: 'marketplace_get_manifest', requestId: 'req-h1' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBe(1);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0]).health).toEqual(health);
+
+			callbacks.getMarketplaceManifest = vi.fn().mockResolvedValue({
+				manifest: { lastUpdated: '2026-01-01', playbooks: [] },
+				fromCache: false,
+			});
+			handler.setCallbacks(callbacks);
+			handler.handleMessage(client, { type: 'marketplace_get_manifest', requestId: 'req-h2' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBe(2);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[1][0]).health).toEqual({});
+		});
+
 		it('forwards refresh:true when requested', async () => {
 			handler.handleMessage(client, {
 				type: 'marketplace_get_manifest',
@@ -5374,7 +5451,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith(
 					'session-1',
 					'pb-1',
-					'my-folder'
+					'my-folder',
+					{ update: false }
 				);
 			});
 
@@ -5382,6 +5460,58 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('marketplace_import_playbook_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			// A partial import's failure lists travel to the client with the result.
+			expect(response.failedDocs).toEqual([]);
+			expect(response.failedAssets).toEqual([]);
+		});
+
+		it('updates an installed playbook without a targetFolderName when update is set', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				update: true,
+				requestId: 'req-6u',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith('session-1', 'pb-1', '', {
+					update: true,
+				});
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('answers marketplace_check_updates with the statuses', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_check_updates',
+				sessionId: 'session-1',
+				requestId: 'req-cu',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.checkMarketplaceUpdates).toHaveBeenCalledWith('session-1');
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_check_updates_result');
+			expect(response.success).toBe(true);
+			expect(response.updates).toEqual({});
+			expect(response.requestId).toBe('req-cu');
+		});
+
+		it('rejects marketplace_check_updates without a sessionId via typed result', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_check_updates',
+				requestId: 'req-cu2',
+			});
+
+			expect(callbacks.checkMarketplaceUpdates).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_check_updates_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('sessionId');
 		});
 
 		it('rejects marketplace_import_playbook missing required fields via typed result', () => {

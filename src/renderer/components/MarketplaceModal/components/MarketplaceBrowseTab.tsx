@@ -1,10 +1,21 @@
 import { Package, Search } from 'lucide-react';
+import { hasPlaybookHealth, type PlaybookBrowseSort } from '../../../../shared/playbookHealth';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { isImeComposing } from '../../../utils/ime';
 import type { MarketplaceBrowseTabProps } from '../types';
 import { getCategoryCount, LOADING_TILE_IDS } from '../helpers';
+import { SegmentedControl, type SegmentedOption } from '../../ui/SegmentedControl';
 import { PlaybookTile } from './PlaybookTile';
 import { PlaybookTileSkeleton } from './PlaybookTileSkeleton';
+
+const SORT_OPTIONS: ReadonlyArray<SegmentedOption<PlaybookBrowseSort>> = [
+	{ value: 'default', label: 'Featured', title: 'The order the Exchange lists them in' },
+	{
+		value: 'popular',
+		label: 'Most popular',
+		title: 'Most installed in the last 30 days first',
+	},
+];
 
 export function MarketplaceBrowseTab({
 	theme,
@@ -21,11 +32,22 @@ export function MarketplaceBrowseTab({
 	isLoading,
 	error,
 	runningVersion,
+	health,
+	mostPopularIds,
+	sort,
+	onSortChange,
 	onRefresh,
 	onSelectPlaybook,
 	searchInputRef,
 	gridContainerRef,
 }: MarketplaceBrowseTabProps) {
+	// No figures from the server (endpoint absent or not loaded yet): no sort
+	// control and no badges, so the Exchange looks exactly as it did before.
+	const showSort = hasPlaybookHealth(
+		health,
+		(manifest?.playbooks ?? []).map((playbook) => playbook.id)
+	);
+
 	return (
 		<>
 			<div
@@ -61,31 +83,43 @@ export function MarketplaceBrowseTab({
 				className="px-4 py-3 border-b"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<div className="relative">
-					<Search
-						className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
-						style={{ color: theme.colors.textDim }}
-					/>
-					<input
-						ref={searchInputRef}
-						type="text"
-						value={searchQuery}
-						onChange={(e) => onSearchChange(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === 'Escape' && !isImeComposing(e)) {
-								e.preventDefault();
-								e.stopPropagation();
-								gridContainerRef.current?.focus();
-							}
-						}}
-						placeholder="Search playbooks..."
-						className="w-full pl-10 pr-4 py-2 rounded border outline-none"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							backgroundColor: theme.colors.bgActivity,
-						}}
-					/>
+				<div className="flex items-center gap-3">
+					<div className="relative flex-1 min-w-0">
+						<Search
+							className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
+							style={{ color: theme.colors.textDim }}
+						/>
+						<input
+							ref={searchInputRef}
+							type="text"
+							value={searchQuery}
+							onChange={(e) => onSearchChange(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === 'Escape' && !isImeComposing(e)) {
+									e.preventDefault();
+									e.stopPropagation();
+									gridContainerRef.current?.focus();
+								}
+							}}
+							placeholder="Search playbooks..."
+							className="w-full pl-10 pr-4 py-2 rounded border outline-none"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+								backgroundColor: theme.colors.bgActivity,
+							}}
+						/>
+					</div>
+					{showSort && (
+						<SegmentedControl
+							value={sort}
+							onChange={onSortChange}
+							options={SORT_OPTIONS}
+							theme={theme}
+							ariaLabel="Sort playbooks"
+							testId="marketplace-sort"
+						/>
+					)}
 				</div>
 			</div>
 
@@ -161,6 +195,8 @@ export function MarketplaceBrowseTab({
 										theme={theme}
 										isSelected={selectedTileIndex === index}
 										runningVersion={runningVersion}
+										health={health[playbook.id]}
+										isMostPopular={mostPopularIds.has(playbook.id)}
 										onSelect={() => onSelectPlaybook(playbook)}
 									/>
 								))}
@@ -190,6 +226,8 @@ export function MarketplaceBrowseTab({
 											theme={theme}
 											isSelected={selectedTileIndex === compatiblePlaybooks.length + index}
 											runningVersion={runningVersion}
+											health={health[playbook.id]}
+											isMostPopular={mostPopularIds.has(playbook.id)}
 											onSelect={() => onSelectPlaybook(playbook)}
 										/>
 									))}

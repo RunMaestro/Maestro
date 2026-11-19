@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
 	aggregateAutoRunHistoryTotals,
+	autoRunOutcomeStatus,
+	buildAutoRunEndOutcome,
 	buildFinalSummary,
+	buildFinalSummaryFacts,
 	mergeFinalSummaryTotals,
 } from '../../../../renderer/hooks/batch/internal/batchFinalSummary';
+import { renderFinalSummaryFactsMarkdown } from '../../../../shared/playbookRunReport';
 
 const docs = (...names: string[]) => names.map((filename) => ({ filename }));
 
@@ -485,5 +489,101 @@ describe('buildFinalSummary', () => {
 			totalOutputTokens: 50,
 			totalCost: 0.2,
 		});
+	});
+});
+
+describe('autoRunOutcomeStatus', () => {
+	it('maps each summary status to the stats status', () => {
+		expect(autoRunOutcomeStatus('completed', false)).toBe('completed');
+		expect(autoRunOutcomeStatus('completed with stalls', false)).toBe('completed');
+		expect(autoRunOutcomeStatus('stalled', false)).toBe('stalled');
+		expect(autoRunOutcomeStatus('stopped', false)).toBe('stopped');
+	});
+
+	it('reads a halted run as failed unless the user stopped it', () => {
+		expect(autoRunOutcomeStatus('completed', true)).toBe('failed');
+		expect(autoRunOutcomeStatus('stalled', true)).toBe('failed');
+		expect(autoRunOutcomeStatus('stopped', true)).toBe('stopped');
+	});
+
+	it('agrees with the statusText buildFinalSummary returns', () => {
+		const { statusText } = buildFinalSummary({
+			wasStopped: false,
+			totalCompletedTasks: 0,
+			totalElapsedMs: 1000,
+			stalledDocuments: new Map([['A.md', 'no progress']]),
+			documents: docs('A.md'),
+			loopEnabled: false,
+			loopIteration: 0,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCost: 0,
+		});
+		expect(autoRunOutcomeStatus(statusText, false)).toBe('stalled');
+	});
+});
+
+describe('buildAutoRunEndOutcome', () => {
+	it('counts distinct stalled documents and keeps every failure in order', () => {
+		const failures = [
+			{
+				kind: 'stall' as const,
+				documentFilename: 'A.md',
+				taskIndex: 0,
+				agentType: 'codex',
+				createdAt: 1,
+			},
+			{
+				kind: 'error' as const,
+				documentFilename: 'B.md',
+				taskIndex: 2,
+				agentType: 'codex',
+				createdAt: 2,
+			},
+			// A looping run can stall the same document again on a later loop.
+			{
+				kind: 'stall' as const,
+				documentFilename: 'A.md',
+				taskIndex: 0,
+				agentType: 'codex',
+				createdAt: 3,
+			},
+		];
+		const outcome = buildAutoRunEndOutcome('completed', failures);
+		expect(outcome).toEqual({ status: 'completed', documentsStalled: 1, failures });
+		expect(outcome.failures).not.toBe(failures);
+	});
+
+	it('reports zero stalls for a clean run', () => {
+		expect(buildAutoRunEndOutcome('completed', [])).toEqual({
+			status: 'completed',
+			documentsStalled: 0,
+			failures: [],
+		});
+	});
+});
+
+describe('buildFinalSummary facts (shared tier A)', () => {
+	const params = {
+		wasStopped: false,
+		totalCompletedTasks: 2,
+		totalElapsedMs: 90_000,
+		stalledDocuments: new Map([['b.md', '3 consecutive runs']]),
+		documents: docs('a.md', 'b.md'),
+		loopEnabled: false,
+		loopIteration: 0,
+		totalInputTokens: 10,
+		totalOutputTokens: 5,
+		totalCost: 0.01,
+	};
+
+	it('returns the shared facts and builds details from them', () => {
+		const result = buildFinalSummary(params);
+		expect(result.facts).toEqual(buildFinalSummaryFacts(params));
+		expect(result.summary).toBe(result.facts.summary);
+		expect(result.statusText).toBe(result.facts.statusText);
+		expect(result.isSuccess).toBe(result.facts.isSuccess);
+		expect(result.details.startsWith(renderFinalSummaryFactsMarkdown(result.facts))).toBe(true);
+		expect(result.details).toContain('**Achievement Progress**');
 	});
 });

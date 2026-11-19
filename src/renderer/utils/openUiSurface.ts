@@ -19,6 +19,7 @@ import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab, uiSurfaceRefusal } from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
 import { isPromptLinksEnabled, openPromptLinks } from '../services/promptLinks';
+import { openPlaybookReport } from '../services/playbookCompletion';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
 export interface OpenUiSurfaceResult {
@@ -102,6 +103,11 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			}
 			// Same entry point as the hotkey: the create form starts on the active agent.
 			openPromptLinks();
+			return { ok: true };
+		case 'playbook-report':
+			// The waiting reports, or the active agent's newest saved one, read
+			// from disk. Nothing to show is said in a toast once the read settles.
+			void openPlaybookReport();
 			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');

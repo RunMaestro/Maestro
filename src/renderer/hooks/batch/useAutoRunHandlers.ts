@@ -60,6 +60,13 @@ export interface UseAutoRunHandlersReturn {
 	handleAutoRunFolderSelected: (folderPath: string) => Promise<void>;
 	/** Start a batch run with the given configuration */
 	handleStartBatchRun: (config: BatchRunConfig) => Promise<void>;
+	/**
+	 * Start a run on a named agent from outside the Auto Run panel (the
+	 * Playbook Exchange's Run button), then reveal the Auto Run panel so its
+	 * running state shows. Resolves true once the run is running; false (after
+	 * a toast) when it did not start.
+	 */
+	handleLaunchPlaybookRun: (sessionId: string, config: BatchRunConfig) => Promise<boolean>;
 	/** Get the number of unchecked tasks in a document */
 	getDocumentTaskCount: (filename: string) => Promise<number>;
 	/** Handle content changes in the Auto Run editor */
@@ -320,6 +327,44 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			}
 		},
 		[launchBatchRun]
+	);
+
+	const handleLaunchPlaybookRun = useCallback(
+		async (sessionId: string, config: BatchRunConfig): Promise<boolean> => {
+			if (useSettingsStore.getState().autoRunDisabled) {
+				notifyToast({
+					type: 'warning',
+					title: 'Auto Run is disabled',
+					message: 'Turn Auto Run back on in Settings to run this playbook.',
+				});
+				return false;
+			}
+			let started = false;
+			try {
+				// Naming the agent pins the run to the one that owns the playbook and
+				// waits for the batch store to report it running, not just requested.
+				started = await launchBatchRun(config, sessionId);
+			} catch (error) {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run start failed',
+					message: error instanceof Error ? error.message : String(error),
+				});
+				return false;
+			}
+			if (!started) {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run did not start',
+					message: 'The run never reported running. Check the Auto Run panel and try again.',
+				});
+				return false;
+			}
+			setActiveRightTab('autorun');
+			setRightPanelOpen(true);
+			return true;
+		},
+		[launchBatchRun, setActiveRightTab, setRightPanelOpen]
 	);
 
 	useEffect(() => {
@@ -613,6 +658,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	return {
 		handleAutoRunFolderSelected,
 		handleStartBatchRun,
+		handleLaunchPlaybookRun,
 		getDocumentTaskCount,
 		handleAutoRunContentChange,
 		handleAutoRunModeChange,

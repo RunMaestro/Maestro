@@ -58,7 +58,8 @@ const METHODS: Record<string, string> = {
 	logger: 'getLogLevel log',
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
-	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
+	marketplace:
+		'checkUpdates getDocument getHealth getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
 	// Main owns the inbox; a browser marks read or clears through the same delta.
 	notification: 'changeHistory',
@@ -82,7 +83,7 @@ const METHODS: Record<string, string> = {
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:
-		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
+		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs playbook-run-ended playbook-run-started record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
 	symphony:
 		'cancel checkPRStatuses clearCache cloneRepo complete createDraftPR fetchDocumentContent getActive getCompleted getIssueCounts getIssues getRegistry getState getStats manualCredit registerActive start startContribution syncContribution updateStatus',
 	tabNaming: 'generateTabName',
@@ -116,6 +117,7 @@ const EVENTS: Record<string, string> = {
 	marketplace: 'manifestChanged',
 	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
+	playbooks: 'changed',
 	plugins: 'changed groupings-changed',
 	process:
 		'call-usage claude-mode-resolved command-exit data exit harness-interaction-request harness-interaction-settled headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',

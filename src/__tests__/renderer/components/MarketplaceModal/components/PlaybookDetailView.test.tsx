@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, within } from '@testing-library/react';
 import { PlaybookDetailView } from '../../../../../renderer/components/MarketplaceModal/components';
 import { makePlaybook, mockTheme } from '../_fixtures';
 
@@ -34,7 +34,8 @@ const baseProps = (overrides: Partial<React.ComponentProps<typeof PlaybookDetail
 	onSelectDocument: vi.fn(),
 	onTargetFolderChange: vi.fn(),
 	onBrowseFolder: vi.fn(),
-	onImport: vi.fn(),
+	onInstallAndRun: vi.fn(),
+	onInstallOnly: vi.fn(),
 	...overrides,
 });
 
@@ -137,16 +138,18 @@ describe('PlaybookDetailView', () => {
 		expect(container.querySelector('.animate-spin')).toBeTruthy();
 	});
 
-	it('updates target folder, browses locally, imports, and disables browse remotely', () => {
+	it('updates target folder, browses locally, installs, and disables browse remotely', () => {
 		const onTargetFolderChange = vi.fn();
 		const onBrowseFolder = vi.fn();
-		const onImport = vi.fn();
+		const onInstallAndRun = vi.fn();
+		const onInstallOnly = vi.fn();
 		const { getByPlaceholderText, getByTitle, getByText, rerender } = render(
 			<PlaybookDetailView
 				{...baseProps({
 					onTargetFolderChange,
 					onBrowseFolder,
-					onImport,
+					onInstallAndRun,
+					onInstallOnly,
 				})}
 			/>
 		);
@@ -157,10 +160,106 @@ describe('PlaybookDetailView', () => {
 		fireEvent.click(getByTitle('Browse for folder'));
 		expect(onBrowseFolder).toHaveBeenCalledTimes(1);
 
-		fireEvent.click(getByText('Import Playbook'));
-		expect(onImport).toHaveBeenCalledTimes(1);
+		fireEvent.click(getByText('Install and Run'));
+		expect(onInstallAndRun).toHaveBeenCalledTimes(1);
+		expect(onInstallOnly).not.toHaveBeenCalled();
+
+		fireEvent.click(getByText('Install only'));
+		expect(onInstallOnly).toHaveBeenCalledTimes(1);
 
 		rerender(<PlaybookDetailView {...baseProps({ isRemoteSession: true })} />);
 		expect(getByTitle('Browse is not available for remote sessions')).toBeDisabled();
+	});
+
+	it('shows the Form interaction badge by default and Guided plus scope when declared', () => {
+		const { getByText, queryByText, rerender } = render(<PlaybookDetailView {...baseProps()} />);
+		expect(getByText('Form')).toBeTruthy();
+		expect(queryByText('Machine')).toBeNull();
+
+		rerender(
+			<PlaybookDetailView
+				{...baseProps({ playbook: makePlaybook({ interaction: 'guided', scope: 'machine' }) })}
+			/>
+		);
+		expect(getByText('Guided')).toBeTruthy();
+		expect(getByText('Machine').getAttribute('title')).toBe(
+			'This playbook configures your machine, not just this project.'
+		);
+	});
+
+	it('lists the merged parameter form with type, default, and required marker', () => {
+		const prompt = [
+			'<!-- CONFIGURE: How many items to process -->',
+			'**MAX_ITEMS:** `25`',
+			'',
+			'<!-- CONFIGURE: The pull request to review -->',
+			'**PR_URL:** `https://github.com/OWNER/REPO/pull/XXX`',
+		].join('\n');
+		const playbook = makePlaybook({
+			prompt,
+			parameters: [
+				{ name: 'MAX_ITEMS', type: 'number', min: 1 },
+				{ name: 'PR_URL', type: 'url' },
+				{ name: 'EXTRA_TAGS', type: 'multi-enum', options: ['a', 'b'], required: false },
+			],
+		});
+		const { getByTestId, getByText } = render(<PlaybookDetailView {...baseProps({ playbook })} />);
+
+		expect(getByText('Configuration (3)')).toBeTruthy();
+
+		const maxItems = within(getByTestId('playbook-param-MAX_ITEMS'));
+		expect(maxItems.getByText('number')).toBeTruthy();
+		expect(maxItems.getByText('25')).toBeTruthy();
+		expect(maxItems.queryByLabelText('Required')).toBeNull();
+		expect(getByTestId('playbook-param-MAX_ITEMS').getAttribute('title')).toBe(
+			'How many items to process'
+		);
+
+		// A placeholder default is no default, so the parameter is required.
+		const prUrl = within(getByTestId('playbook-param-PR_URL'));
+		expect(prUrl.getByText('url')).toBeTruthy();
+		expect(prUrl.getByText('No default')).toBeTruthy();
+		expect(prUrl.getByLabelText('Required')).toBeTruthy();
+
+		const extra = within(getByTestId('playbook-param-EXTRA_TAGS'));
+		expect(extra.getByText('multi-enum')).toBeTruthy();
+		expect(extra.queryByLabelText('Required')).toBeNull();
+	});
+
+	it('says when a playbook has no parameters and hides the instructions without a prompt', () => {
+		const { getByText, queryByTestId } = render(<PlaybookDetailView {...baseProps()} />);
+		expect(getByText('No parameters to configure.')).toBeTruthy();
+		expect(queryByTestId('playbook-agent-instructions')).toBeNull();
+	});
+
+	it('shows the raw prompt in a collapsed Agent instructions disclosure', () => {
+		const playbook = makePlaybook({ prompt: 'Do the thing with [MAX_ITEMS].' });
+		const { getByTestId } = render(<PlaybookDetailView {...baseProps({ playbook })} />);
+
+		const disclosure = getByTestId('playbook-agent-instructions');
+		expect(disclosure.tagName).toBe('DETAILS');
+		expect(disclosure.hasAttribute('open')).toBe(false);
+		expect(within(disclosure).getByText('Agent instructions')).toBeTruthy();
+		expect(within(disclosure).getByTestId('markdown').textContent).toBe(
+			'Do the thing with [MAX_ITEMS].'
+		);
+	});
+
+	it('lists manifest assets, or notes that they are discovered at install', () => {
+		const { getByText, rerender } = render(<PlaybookDetailView {...baseProps()} />);
+		expect(
+			getByText(
+				"Not listed in the manifest. Any files in the playbook's assets folder are discovered at install."
+			)
+		).toBeTruthy();
+
+		rerender(
+			<PlaybookDetailView
+				{...baseProps({ playbook: makePlaybook({ assets: ['config.yaml', 'Dockerfile'] }) })}
+			/>
+		);
+		expect(getByText('Assets (2)')).toBeTruthy();
+		expect(getByText('config.yaml')).toBeTruthy();
+		expect(getByText('Dockerfile')).toBeTruthy();
 	});
 });

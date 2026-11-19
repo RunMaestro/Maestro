@@ -300,13 +300,14 @@ describe('StatsDB class (mocked)', () => {
 			// query_events token/cost columns, resilience_events table,
 			// wizard_runs table, query_events user_name column, wizard_runs.active_ms,
 			// shortcut_usage_by_id table + idx_query_start_session (v14),
-			// auto_run_sessions kind column (v15), token_speed_hourly table (v16).
-			expect(db.getTargetVersion()).toBe(16);
+			// auto_run_sessions kind column (v15), token_speed_hourly table (v16),
+			// playbook identity columns + auto_run_failures table (v17).
+			expect(db.getTargetVersion()).toBe(17);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 16 }];
+				if (sql === 'user_version') return [{ user_version: 17 }];
 				return undefined;
 			});
 
@@ -322,7 +323,7 @@ describe('StatsDB class (mocked)', () => {
 			// by checking current version < target version
 
 			// Simulate a database that's already at the target version
-			let currentVersion = 16;
+			let currentVersion = 17;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -337,8 +338,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(16);
-			expect(db.getTargetVersion()).toBe(16);
+			expect(db.getCurrentVersion()).toBe(17);
+			expect(db.getTargetVersion()).toBe(17);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 

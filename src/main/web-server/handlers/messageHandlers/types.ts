@@ -37,10 +37,12 @@ import type {
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
 	WebPlaybookDocument,
+	WebPlaybookUpdate,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
+	MarketplaceCheckUpdatesResult,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
@@ -355,13 +357,7 @@ export interface MessageHandlerCallbacks {
 	updatePlaybook: (
 		sessionId: string,
 		playbookId: string,
-		updates: Partial<{
-			name: string;
-			documents: WebPlaybookDocument[];
-			loopEnabled: boolean;
-			maxLoops?: number | null;
-			prompt: string;
-		}>
+		updates: WebPlaybookUpdate
 	) => Promise<WebPlaybook | null>;
 	deletePlaybook: (sessionId: string, playbookId: string) => Promise<boolean>;
 	getSettings: () => WebSettings;
@@ -493,8 +489,10 @@ export interface MessageHandlerCallbacks {
 	importMarketplacePlaybook: (
 		sessionId: string,
 		playbookId: string,
-		targetFolderName: string
+		targetFolderName: string,
+		options?: { update?: boolean }
 	) => Promise<MarketplaceImportResult>;
+	checkMarketplaceUpdates: (sessionId: string) => Promise<MarketplaceCheckUpdatesResult>;
 	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
 	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
 	 *  can address tabs by id without owning a persistent channel. */

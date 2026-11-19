@@ -2167,6 +2167,7 @@ function MaestroConsoleInner() {
 	const {
 		handleAutoRunFolderSelected,
 		handleStartBatchRun,
+		handleLaunchPlaybookRun,
 		getDocumentTaskCount,
 		handleAutoRunContentChange,
 		handleAutoRunModeChange,
@@ -3881,6 +3882,7 @@ function MaestroConsoleInner() {
 						onKeyboardMasteryCelebrationClose={handleKeyboardMasteryCelebrationClose}
 						// Marketplace
 						onMarketplaceImportComplete={handleMarketplaceImportComplete}
+						onRunMarketplacePlaybook={handleLaunchPlaybookRun}
 						// Symphony
 						setActiveSessionId={setActiveSessionId}
 						onStartContribution={handleStartContribution}

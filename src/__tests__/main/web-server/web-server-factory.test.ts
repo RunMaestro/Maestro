@@ -157,6 +157,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetMarketplaceDocumentCallback = vi.fn();
 			setGetMarketplaceReadmeCallback = vi.fn();
 			setImportMarketplacePlaybookCallback = vi.fn();
+			setCheckMarketplaceUpdatesCallback = vi.fn();
 			setListDesktopSessionsCallback = vi.fn();
 			setGetSessionHistoryCallback = vi.fn();
 			// Concerto: Movement (in-app panels) + Cadenza (HUD cards) bridge callbacks.
@@ -214,9 +215,11 @@ vi.mock('../../../main/utils/logger', () => ({
 vi.mock('../../../main/services/marketplace-service', () => ({
 	getMarketplaceManifest: vi.fn(),
 	refreshMarketplaceManifest: vi.fn(),
+	getMarketplaceHealth: vi.fn().mockResolvedValue({ health: {}, fromCache: false }),
 	getMarketplaceDocument: vi.fn(),
 	getMarketplaceReadme: vi.fn(),
 	importMarketplacePlaybook: vi.fn(),
+	checkMarketplacePlaybookUpdates: vi.fn(),
 }));
 
 // Mock Sentry - captureException is called from the import callback's
@@ -244,7 +247,10 @@ import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-
 import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
-import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
+import {
+	importMarketplacePlaybook,
+	checkMarketplacePlaybookUpdates,
+} from '../../../main/services/marketplace-service';
 import {
 	applyMovementHtmlPayload,
 	clearConcertoHtmlDocumentsForTests,
@@ -1654,7 +1660,8 @@ describe('web-server/web-server-factory', () => {
 			return setImport.mock.calls[0][0] as (
 				sessionId: string,
 				playbookId: string,
-				targetFolderName: string
+				targetFolderName: string,
+				options?: { update?: boolean }
 			) => Promise<{ success: boolean; error?: string }>;
 		};
 
@@ -1732,6 +1739,8 @@ describe('web-server/web-server-factory', () => {
 				playbook: { id: 'pb-1', name: 'pb', createdAt: 0, updatedAt: 0, documents: [] } as any,
 				importedDocs: [],
 				importedAssets: [],
+				failedDocs: [],
+				failedAssets: [],
 			});
 			const callback = setupImportCallback(
 				[
@@ -1748,8 +1757,127 @@ describe('web-server/web-server-factory', () => {
 
 			expect(importMarketplacePlaybook).toHaveBeenCalledTimes(1);
 			expect(importMarketplacePlaybook).toHaveBeenCalledWith(
-				expect.objectContaining({ sshConfig: undefined })
+				expect.objectContaining({ sshConfig: undefined, update: false })
 			);
+		});
+
+		it('forwards an update request to the service', async () => {
+			vi.mocked(importMarketplacePlaybook).mockResolvedValueOnce({
+				playbook: { id: 'pb-1', name: 'pb', createdAt: 0, updatedAt: 0, documents: [] } as any,
+				importedDocs: [],
+				importedAssets: [],
+				failedDocs: [],
+				failedAssets: [],
+			});
+			const callback = setupImportCallback(
+				[{ id: 'session-1', autoRunFolderPath: '/auto-run' }],
+				[]
+			);
+
+			const result = await callback('session-1', 'pb', '', { update: true });
+
+			expect(result.success).toBe(true);
+			expect(importMarketplacePlaybook).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'session-1',
+					playbookId: 'pb',
+					autoRunFolderPath: '/auto-run',
+					update: true,
+				})
+			);
+		});
+	});
+
+	describe('checkMarketplaceUpdatesCallback behavior', () => {
+		const setupCheckCallback = (
+			sessions: Array<Record<string, unknown>>,
+			sshRemotes: Array<Record<string, unknown>>
+		) => {
+			mockSessionsStore.get = vi.fn((key: string, defaultValue?: any) => {
+				if (key === 'sessions') return sessions;
+				return defaultValue;
+			}) as any;
+			const originalSettingsGet = mockSettingsStore.get as (
+				key: string,
+				defaultValue?: unknown
+			) => unknown;
+			mockSettingsStore.get = vi.fn((key: string, defaultValue?: any) => {
+				if (key === 'sshRemotes') return sshRemotes;
+				return originalSettingsGet(key, defaultValue);
+			}) as any;
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const setCheck = server.setCheckMarketplaceUpdatesCallback as ReturnType<typeof vi.fn>;
+			return setCheck.mock.calls[0][0] as (
+				sessionId: string
+			) => Promise<{ success: boolean; updates?: unknown; error?: string }>;
+		};
+
+		it("checks the session's Auto Run folder on its SSH remote", async () => {
+			const updates = {
+				'pb-1': {
+					playbookId: 'pb-1',
+					marketplaceId: 'mp-1',
+					name: 'pb',
+					targetFolderName: 'pb',
+					state: 'update-available',
+					updateAvailable: true,
+					modifiedDocuments: [],
+				},
+			};
+			vi.mocked(checkMarketplacePlaybookUpdates).mockResolvedValueOnce(updates as any);
+			const remote = { id: 'remote-1', enabled: true };
+			const callback = setupCheckCallback(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/auto-run',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				],
+				[remote]
+			);
+
+			const result = await callback('session-1');
+
+			expect(result).toEqual({ success: true, updates });
+			expect(checkMarketplacePlaybookUpdates).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'session-1',
+					autoRunFolderPath: '/auto-run',
+					sshConfig: remote,
+				})
+			);
+		});
+
+		it('fails loudly when the SSH remote cannot be resolved', async () => {
+			const callback = setupCheckCallback(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/auto-run',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'gone' },
+					},
+				],
+				[]
+			);
+
+			const result = await callback('session-1');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('SSH remote not found or disabled');
+			expect(checkMarketplacePlaybookUpdates).not.toHaveBeenCalled();
+		});
+
+		it('fails when the session has no Auto Run folder', async () => {
+			const callback = setupCheckCallback([{ id: 'session-1' }], []);
+
+			const result = await callback('session-1');
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Session has no Auto Run folder configured',
+			});
 		});
 	});
 

@@ -18,19 +18,47 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { recordPlaybookInstall } from './playbook-telemetry';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type {
+	ImportPlaybookResponse,
 	MarketplaceManifest,
 	MarketplaceCache,
 	MarketplacePlaybook,
 } from '../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
+import {
+	parsePlaybookHealth,
+	PLAYBOOK_HEALTH_URL,
+	type GetPlaybookHealthResponse,
+	type PlaybookHealthCache,
+} from '../../shared/playbookHealth';
 import { isCompatible } from '../../shared/marketplace-compatibility';
-import { isTaskSelectionMode, SshRemoteConfig, type TaskSelectionMode } from '../../shared/types';
-import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
+import {
+	isPlaybookSourceChannel,
+	isTaskSelectionMode,
+	PLAYBOOK_PRISTINE_SOURCE_DIR,
+	readPlaybookExchangeHints,
+	SshRemoteConfig,
+	type Playbook,
+	type PlaybookSourceProvenance,
+} from '../../shared/types';
+import { readPlaybookParamOverlay } from '../../shared/playbookParams';
+import { clampImportedMaxLoops } from '../../shared/playbookRun';
+import { writeFileRemote, mkdirRemote, readFileRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
+import { hashPlaybookDocument } from '../utils/playbook-document-hash';
+import {
+	classifyPlaybookUpdate,
+	findInstalledMarketplacePlaybook,
+	marketplaceProvenanceOf,
+	type PlaybookUpdateStatusMap,
+} from '../../shared/playbookUpdates';
 
-const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
+const MARKETPLACE_REPO = 'RunMaestro/Maestro-Playbooks';
+const MARKETPLACE_BRANCH = 'main';
+const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${MARKETPLACE_REPO}/${MARKETPLACE_BRANCH}`;
+const GITHUB_CONTENTS_API_BASE = `https://api.github.com/repos/${MARKETPLACE_REPO}/contents`;
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -41,10 +69,19 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
  * that never resolves.
  */
 const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * The health figures only decorate the catalog, so a slow server costs a
+ * badge, not a wait: a short budget, after which the Exchange shows none.
+ */
+const HEALTH_FETCH_TIMEOUT_MS = 10_000;
 const LOG_CONTEXT = '[Marketplace]';
 
 export function getCacheFilePath(app: App): string {
 	return path.join(app.getPath('userData'), 'marketplace-cache.json');
+}
+
+export function getHealthCacheFilePath(app: App): string {
+	return path.join(app.getPath('userData'), 'marketplace-health-cache.json');
 }
 
 export function getLocalManifestPath(app: App): string {
@@ -354,6 +391,78 @@ async function fetchAsset(playbookPath: string, assetFilename: string): Promise<
 	}
 }
 
+/** A name the contents API lists that is safe to write under `assets/`. */
+function isSafeAssetFilename(name: string): boolean {
+	return (
+		name.length > 0 &&
+		name !== '.' &&
+		name !== '..' &&
+		!name.includes('/') &&
+		!name.includes('\\') &&
+		!name.includes('\0')
+	);
+}
+
+/**
+ * List the files in a remote playbook's `assets/` folder through the GitHub
+ * contents API, so a remote import installs the assets that ship with a
+ * playbook even when its manifest entry lists none. The request is
+ * unauthenticated. Discovery only ever adds to the manifest list, so every
+ * failure resolves to `[]`: a 404 means the playbook has no assets folder, and
+ * a 403 or 429 (the unauthenticated rate limit) or any other failure is a
+ * warning, after which the import installs the manifest list alone.
+ */
+async function discoverRemoteAssets(playbookPath: string): Promise<string[]> {
+	const encodedPath = playbookPath
+		.split('/')
+		.filter((segment) => segment.length > 0)
+		.map(encodeURIComponent)
+		.join('/');
+	const url = `${GITHUB_CONTENTS_API_BASE}/${encodedPath}/assets?ref=${MARKETPLACE_BRANCH}`;
+	const fallBack = (reason: string, details?: Record<string, unknown>): string[] => {
+		logger.warn(
+			`Could not list the remote assets of ${playbookPath} (${reason}); installing the manifest's asset list only`,
+			LOG_CONTEXT,
+			details
+		);
+		return [];
+	};
+
+	let response: Response;
+	try {
+		response = await fetchWithTimeout(
+			url,
+			{ headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Maestro' } },
+			MARKETPLACE_FETCH_TIMEOUT_MS
+		);
+	} catch (error) {
+		return fallBack('network error', { error });
+	}
+	if (response.status === 404) return [];
+	if (response.status === 403 || response.status === 429) {
+		return fallBack(`GitHub API rate limit, HTTP ${response.status}`);
+	}
+	if (!response.ok) return fallBack(`HTTP ${response.status} ${response.statusText}`);
+
+	let entries: unknown;
+	try {
+		entries = await response.json();
+	} catch (error) {
+		return fallBack('unreadable response', { error });
+	}
+	// An object, not a list, means `assets` is a file rather than a folder.
+	if (!Array.isArray(entries)) return [];
+	const discovered: string[] = [];
+	for (const entry of entries) {
+		if (!entry || typeof entry !== 'object') continue;
+		const { type, name } = entry as { type?: unknown; name?: unknown };
+		if (type === 'file' && typeof name === 'string' && isSafeAssetFilename(name)) {
+			discovered.push(name);
+		}
+	}
+	return discovered;
+}
+
 async function fetchReadme(playbookPath: string): Promise<string | null> {
 	if (isLocalPath(playbookPath)) {
 		const resolvedPath = resolveTildePath(playbookPath);
@@ -444,6 +553,62 @@ export async function refreshMarketplaceManifest(
 	return { manifest: mergedManifest, fromCache };
 }
 
+async function readHealthCache(app: App): Promise<PlaybookHealthCache | null> {
+	try {
+		const data = JSON.parse(await fs.readFile(getHealthCacheFilePath(app), 'utf-8'));
+		if (typeof data?.fetchedAt !== 'number') return null;
+		return { fetchedAt: data.fetchedAt, health: parsePlaybookHealth(data.health) };
+	} catch {
+		// Missing or unreadable: the health figures are optional, fetch again.
+		return null;
+	}
+}
+
+async function writeHealthCache(app: App, cache: PlaybookHealthCache): Promise<void> {
+	try {
+		await fs.writeFile(getHealthCacheFilePath(app), JSON.stringify(cache), 'utf-8');
+	} catch (error) {
+		logger.warn('Failed to write the playbook health cache', LOG_CONTEXT, { error });
+	}
+}
+
+/**
+ * The Exchange server's popularity and reliability figures, cached for the
+ * manifest's 6 hour TTL. Never throws and never reports to Sentry: the
+ * endpoint is optional, so a 404 is cached as "no figures" (no new request
+ * for 6 hours), and a network or server error falls back to the last cached
+ * figures, or none. Callers fetch this beside the manifest, never before it.
+ */
+export async function getMarketplaceHealth(
+	app: App,
+	options: { forceRefresh?: boolean } = {}
+): Promise<GetPlaybookHealthResponse> {
+	const cache = await readHealthCache(app);
+	if (cache && !options.forceRefresh && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
+		return { health: cache.health, fromCache: true };
+	}
+	try {
+		const response = await fetchWithTimeout(
+			PLAYBOOK_HEALTH_URL,
+			{ headers: { Accept: 'application/json' } },
+			HEALTH_FETCH_TIMEOUT_MS
+		);
+		if (response.status === 404) {
+			await writeHealthCache(app, { fetchedAt: Date.now(), health: {} });
+			return { health: {}, fromCache: false };
+		}
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const health = parsePlaybookHealth(await response.json());
+		await writeHealthCache(app, { fetchedAt: Date.now(), health });
+		return { health, fromCache: false };
+	} catch (error) {
+		logger.debug('Playbook health figures unavailable', LOG_CONTEXT, {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return { health: cache?.health ?? {}, fromCache: !!cache };
+	}
+}
+
 export async function getMarketplaceDocument(
 	playbookPath: string,
 	filename: string
@@ -467,42 +632,26 @@ export interface ImportPlaybookOptions {
 	sessionId: string;
 	/** Resolved SSH config - caller is responsible for looking it up. */
 	sshConfig?: SshRemoteConfig;
+	/**
+	 * Update the record this agent already holds for the entry instead of
+	 * installing it: the documents are re-fetched into that record's own
+	 * folder (`targetFolderName` is ignored), the pristine copies are
+	 * refreshed, and the record keeps its id and parameter answers. Without
+	 * it, an entry that is already installed is refused.
+	 */
+	update?: boolean;
 }
 
-export interface ImportPlaybookServiceResult {
-	playbook: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-		taskSelectionMode?: TaskSelectionMode;
-	};
-	importedDocs: string[];
-	importedAssets: string[];
-}
+/** The saved record, with provenance, plus the documents and assets that landed. */
+export type ImportPlaybookServiceResult = ImportPlaybookResponse;
 
 /**
- * Import a playbook to the Auto Run folder (local or remote via SSH).
- * Mirrors the IPC handler import flow exactly.
+ * The merged official + local manifest an import or an update check works
+ * from: the cache when fresh, else a fetch, else the stale cache, so a
+ * transient network failure does not hide a playbook the Exchange is still
+ * showing from that same stale cache.
  */
-export async function importMarketplacePlaybook(
-	opts: ImportPlaybookOptions
-): Promise<ImportPlaybookServiceResult> {
-	const { app, playbookId, targetFolderName, autoRunFolderPath, sessionId, sshConfig } = opts;
-	const isRemote = !!sshConfig;
-
-	assertSafeTargetFolderName(targetFolderName);
-
-	logger.info(
-		`Importing playbook "${playbookId}" to "${targetFolderName}"${isRemote ? ' (remote via SSH)' : ''}`,
-		LOG_CONTEXT
-	);
-
-	// Re-resolve manifest (cache-aware) so local + official playbooks are visible
+async function resolveCurrentManifest(app: App): Promise<MarketplaceManifest> {
 	const cache = await readCache(app);
 	let officialManifest: MarketplaceManifest | null = null;
 	if (cache && isCacheValid(cache)) {
@@ -535,7 +684,51 @@ export async function importMarketplacePlaybook(
 		}
 	}
 	const localManifest = await readLocalManifest(app);
-	const manifest = mergeManifests(officialManifest, localManifest);
+	return mergeManifests(officialManifest, localManifest);
+}
+
+function getSessionPlaybooksFilePath(app: App, sessionId: string): string {
+	return path.join(app.getPath('userData'), 'playbooks', `${sessionId}.json`);
+}
+
+/**
+ * The agent's saved playbook records. ENOENT is an agent with none yet;
+ * anything else (corrupt JSON, EACCES) is user data this process could not
+ * read, so it throws rather than let a later write start from `[]` and drop
+ * every saved playbook.
+ */
+async function readSessionPlaybooksStrict(app: App, sessionId: string): Promise<Playbook[]> {
+	try {
+		const content = await fs.readFile(getSessionPlaybooksFilePath(app, sessionId), 'utf-8');
+		const data = JSON.parse(content);
+		return Array.isArray(data.playbooks) ? data.playbooks : [];
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		void captureException(error);
+		throw new MarketplaceImportError(
+			`Failed to read existing playbooks file (refusing to overwrite): ${error instanceof Error ? error.message : String(error)}`,
+			error
+		);
+	}
+}
+
+/**
+ * Import a playbook to the Auto Run folder (local or remote via SSH), or
+ * update the record the agent already holds for it (`update: true`).
+ * Mirrors the IPC handler import flow exactly.
+ */
+export async function importMarketplacePlaybook(
+	opts: ImportPlaybookOptions
+): Promise<ImportPlaybookServiceResult> {
+	const { app, playbookId, autoRunFolderPath, sessionId, sshConfig, update = false } = opts;
+	const isRemote = !!sshConfig;
+
+	// An install names its folder; an update reuses the installed record's, so
+	// the requested one is checked only for an install.
+	if (!update) assertSafeTargetFolderName(opts.targetFolderName);
+
+	// Re-resolve manifest (cache-aware) so local + official playbooks are visible
+	const manifest = await resolveCurrentManifest(app);
 
 	const marketplacePlaybook = manifest.playbooks.find((p) => p.id === playbookId);
 	if (!marketplacePlaybook) {
@@ -553,44 +746,111 @@ export async function importMarketplacePlaybook(
 		);
 	}
 
+	// Read before anything is written: an entry that is already installed is
+	// updated in place, never installed a second time over the same files.
+	const existingPlaybooks = await readSessionPlaybooksStrict(app, sessionId);
+	const installed = findInstalledMarketplacePlaybook(existingPlaybooks, playbookId);
+	if (installed && !update) {
+		throw new MarketplaceImportError(
+			`"${installed.name}" is already installed from this playbook in ` +
+				`${installed.provenance!.targetFolderName}/. Update it instead of installing a second copy.`
+		);
+	}
+	if (update && !installed) {
+		throw new MarketplaceImportError(
+			`Playbook ${playbookId} is not installed on this agent, so there is nothing to update.`
+		);
+	}
+	const targetFolderName = installed
+		? installed.provenance!.targetFolderName
+		: opts.targetFolderName;
+	if (update) assertSafeTargetFolderName(targetFolderName);
+
+	logger.info(
+		`${update ? 'Updating' : 'Importing'} playbook "${playbookId}" ${update ? 'in' : 'to'} "${targetFolderName}"${isRemote ? ' (remote via SSH)' : ''}`,
+		LOG_CONTEXT
+	);
+
 	const targetPath = isRemote
 		? autoRunFolderPath.endsWith('/')
 			? `${autoRunFolderPath}${targetFolderName}`
 			: `${autoRunFolderPath}/${targetFolderName}`
 		: path.join(autoRunFolderPath, targetFolderName);
 
-	if (isRemote) {
-		const mkdirResult = await mkdirRemote(targetPath, sshConfig!, true);
-		if (!mkdirResult.success) {
-			throw new MarketplaceImportError(`Failed to create remote directory: ${mkdirResult.error}`);
+	// Every path below lives under the target folder, on whichever host owns it.
+	const joinTarget = (...parts: string[]): string =>
+		isRemote ? parts.join('/') : path.join(...parts);
+	const makeTargetDir = async (dirPath: string): Promise<void> => {
+		if (isRemote) {
+			const mkdirResult = await mkdirRemote(dirPath, sshConfig!, true);
+			if (!mkdirResult.success) {
+				throw new MarketplaceImportError(`Failed to create remote directory: ${mkdirResult.error}`);
+			}
+		} else {
+			await fs.mkdir(dirPath, { recursive: true });
 		}
-	} else {
-		await fs.mkdir(targetPath, { recursive: true });
-	}
+	};
+	const writeTargetFile = async (filePath: string, content: string | Buffer): Promise<void> => {
+		if (isRemote) {
+			const writeResult = await writeFileRemote(filePath, content, sshConfig!);
+			if (!writeResult.success) {
+				throw new Error(writeResult.error || 'Failed to write remote file');
+			}
+		} else if (typeof content === 'string') {
+			await fs.writeFile(filePath, content, 'utf-8');
+		} else {
+			await fs.writeFile(filePath, content);
+		}
+	};
+
+	await makeTargetDir(targetPath);
+
+	// A pristine copy of each document as fetched, so a later run can diff the
+	// user's copy against what shipped. Losing it costs only that diff, never
+	// the import, so a failure is reported and the import goes on.
+	const pristineDir = joinTarget(targetPath, ...PLAYBOOK_PRISTINE_SOURCE_DIR.split('/'));
+	let pristineDirState: 'pending' | 'ready' | 'failed' = 'pending';
+	const writePristineCopy = async (filename: string, fetched: string): Promise<void> => {
+		try {
+			if (pristineDirState === 'pending') {
+				pristineDirState = 'failed';
+				await makeTargetDir(pristineDir);
+				pristineDirState = 'ready';
+			}
+			if (pristineDirState === 'failed') return;
+			await writeTargetFile(joinTarget(pristineDir, `${filename}.md`), fetched);
+		} catch (error) {
+			void captureException(error, { operation: 'marketplace:writePristineSource' });
+			logger.warn(`Failed to write the pristine source copy of ${filename}`, LOG_CONTEXT, {
+				error,
+			});
+		}
+	};
 
 	const importedDocs: string[] = [];
-	for (const doc of marketplacePlaybook.documents) {
+	const failedDocs: string[] = [];
+	const documentHashes: Record<string, string> = {};
+	const importDocument = async (filename: string): Promise<boolean> => {
+		let fetched: string;
 		try {
-			const content = rebaseAssetReferences(
-				await fetchDocument(marketplacePlaybook.path, doc.filename),
-				targetFolderName
+			fetched = await fetchDocument(marketplacePlaybook.path, filename);
+			await writeTargetFile(
+				joinTarget(targetPath, `${filename}.md`),
+				rebaseAssetReferences(fetched, targetFolderName)
 			);
-			const docPath = isRemote
-				? `${targetPath}/${doc.filename}.md`
-				: path.join(targetPath, `${doc.filename}.md`);
-			if (isRemote) {
-				const writeResult = await writeFileRemote(docPath, content, sshConfig!);
-				if (!writeResult.success) {
-					throw new Error(writeResult.error || 'Failed to write remote file');
-				}
-			} else {
-				await fs.writeFile(docPath, content, 'utf-8');
-			}
-			importedDocs.push(doc.filename);
+			// Hashed as fetched, before the asset rebase, so the hash names what shipped.
+			documentHashes[filename] = hashPlaybookDocument(fetched);
 		} catch (error) {
 			void captureException(error);
-			logger.warn(`Failed to import document ${doc.filename}`, LOG_CONTEXT, { error });
+			logger.warn(`Failed to import document ${filename}`, LOG_CONTEXT, { error });
+			failedDocs.push(filename);
+			return false;
 		}
+		await writePristineCopy(filename, fetched);
+		return true;
+	};
+	for (const doc of marketplacePlaybook.documents) {
+		if (await importDocument(doc.filename)) importedDocs.push(doc.filename);
 	}
 
 	// Refuse to persist a playbook whose documents all failed to write -
@@ -604,10 +864,26 @@ export async function importMarketplacePlaybook(
 		);
 	}
 
-	// Build effective asset list (local: union manifest + discovered files)
+	// The report document runs once after the others, read from the import
+	// folder (`resolvePlaybookReportDocument`). An author need not also list it
+	// in `documents`, so an unlisted one is fetched here; it stays off the run
+	// list, which the task loop works through.
+	const reportName = readPlaybookExchangeHints(
+		marketplacePlaybook as unknown as Record<string, unknown>
+	).report;
+	if (reportName && !marketplacePlaybook.documents.some((doc) => doc.filename === reportName)) {
+		await importDocument(reportName);
+	}
+
+	// The effective asset list is the manifest list plus the files found in the
+	// playbook's assets/ folder: read from disk for a local playbook, listed
+	// through the GitHub contents API for a remote one.
 	const manifestAssets = marketplacePlaybook.assets ?? [];
 	let effectiveAssets = manifestAssets;
-	if (isLocalPath(marketplacePlaybook.path)) {
+	if (!isLocalPath(marketplacePlaybook.path)) {
+		const discoveredAssets = await discoverRemoteAssets(marketplacePlaybook.path);
+		effectiveAssets = Array.from(new Set([...manifestAssets, ...discoveredAssets]));
+	} else {
 		const discoveredAssets: string[] = [];
 		const resolvedPlaybookPath = resolveTildePath(marketplacePlaybook.path);
 		const localAssetsPath = path.join(resolvedPlaybookPath, 'assets');
@@ -633,35 +909,27 @@ export async function importMarketplacePlaybook(
 	}
 
 	const importedAssets: string[] = [];
+	const failedAssets: string[] = [];
 	if (effectiveAssets.length > 0) {
-		const assetsPath = isRemote ? `${targetPath}/assets` : path.join(targetPath, 'assets');
-		if (isRemote) {
-			const mkdirResult = await mkdirRemote(assetsPath, sshConfig!, true);
-			if (!mkdirResult.success) {
-				logger.warn(`Failed to create remote assets directory: ${mkdirResult.error}`, LOG_CONTEXT);
-			}
-		} else {
-			await fs.mkdir(assetsPath, { recursive: true });
+		const assetsPath = joinTarget(targetPath, 'assets');
+		try {
+			await makeTargetDir(assetsPath);
+		} catch (error) {
+			// A remote assets folder that will not create is warned about, as it always
+			// was; each asset write below then fails and is reported on its own.
+			if (!isRemote) throw error;
+			logger.warn(String(error instanceof Error ? error.message : error), LOG_CONTEXT);
 		}
 
 		for (const assetFilename of effectiveAssets) {
 			try {
 				const content = await fetchAsset(marketplacePlaybook.path, assetFilename);
-				const assetPath = isRemote
-					? `${assetsPath}/${assetFilename}`
-					: path.join(assetsPath, assetFilename);
-				if (isRemote) {
-					const writeResult = await writeFileRemote(assetPath, content, sshConfig!);
-					if (!writeResult.success) {
-						throw new Error(writeResult.error || 'Failed to write remote asset file');
-					}
-				} else {
-					await fs.writeFile(assetPath, content);
-				}
+				await writeTargetFile(joinTarget(assetsPath, assetFilename), content);
 				importedAssets.push(assetFilename);
 			} catch (error) {
 				void captureException(error);
 				logger.warn(`Failed to import asset ${assetFilename}`, LOG_CONTEXT, { error });
+				failedAssets.push(assetFilename);
 			}
 		}
 	}
@@ -671,7 +939,25 @@ export async function importMarketplacePlaybook(
 	// importedDocs success set.
 	const importedDocSet = new Set(importedDocs);
 	const now = Date.now();
-	const newPlaybook = {
+	// The manifest is someone else's JSON, typed or not: every field read here
+	// is checked for shape, and a malformed one is left off the record.
+	const manifestEntry = marketplacePlaybook as unknown as Record<string, unknown>;
+	const parameterOverlay = readPlaybookParamOverlay(manifestEntry.parameters);
+	const provenance: PlaybookSourceProvenance = {
+		kind: 'marketplace',
+		marketplaceId: marketplacePlaybook.id,
+		...(typeof manifestEntry.lastUpdated === 'string' && {
+			sourceVersion: manifestEntry.lastUpdated,
+		}),
+		...(isPlaybookSourceChannel(manifestEntry.source) && { sourceChannel: manifestEntry.source }),
+		...(isLocalPath(marketplacePlaybook.path) && {
+			sourcePath: resolveTildePath(marketplacePlaybook.path),
+		}),
+		targetFolderName,
+		importedAt: now,
+		documentHashes,
+	};
+	const newPlaybook: Playbook = {
 		id: crypto.randomUUID(),
 		name: marketplacePlaybook.title,
 		createdAt: now,
@@ -683,45 +969,143 @@ export async function importMarketplacePlaybook(
 				resetOnCompletion: d.resetOnCompletion,
 			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
-		maxLoops: marketplacePlaybook.maxLoops,
+		// An unlimited loop (`maxLoops: null`) is capped so one click never starts an
+		// unbounded run; the Exchange's Run row says so and lets the user raise it.
+		maxLoops: clampImportedMaxLoops(marketplacePlaybook.loopEnabled, marketplacePlaybook.maxLoops),
 		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
 		// The manifest is someone else's JSON: only a value Auto Run knows is kept. Absent means
 		// per task, so a playbook that never declared one imports exactly as it always has.
 		...(isTaskSelectionMode(marketplacePlaybook.taskSelectionMode) && {
 			taskSelectionMode: marketplacePlaybook.taskSelectionMode,
 		}),
+		...(parameterOverlay && { parameterOverlay }),
+		...readPlaybookExchangeHints(manifestEntry),
+		provenance,
 	};
 
-	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');
-	await fs.mkdir(playbooksDir, { recursive: true });
-	const playbooksFilePath = path.join(playbooksDir, `${sessionId}.json`);
-	let playbooks: any[] = [];
-	try {
-		const content = await fs.readFile(playbooksFilePath, 'utf-8');
-		const data = JSON.parse(content);
-		playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
-	} catch (error) {
-		// ENOENT is normal (first save). Anything else (corrupt JSON, EACCES,
-		// etc.) means there's existing user data we couldn't read - refuse
-		// to silently overwrite it, since starting from [] would drop their
-		// previously-saved playbooks on the next write.
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-			void captureException(error);
-			throw new MarketplaceImportError(
-				`Failed to read existing playbooks file (refusing to overwrite): ${error instanceof Error ? error.message : String(error)}`,
-				error
-			);
-		}
-	}
-	playbooks.push(newPlaybook);
+	// An update keeps the record's identity and the user's own answers: its id
+	// (Cue subscriptions and History name it), when it was first saved, the
+	// parameter answers, and the worktree settings. Everything the manifest
+	// owns is taken fresh.
+	const savedPlaybook: Playbook = installed
+		? {
+				...newPlaybook,
+				id: installed.id,
+				createdAt: installed.createdAt,
+				...(installed.parameterValues && { parameterValues: installed.parameterValues }),
+				...(installed.worktreeSettings && { worktreeSettings: installed.worktreeSettings }),
+			}
+		: newPlaybook;
+
+	const playbooksFilePath = getSessionPlaybooksFilePath(app, sessionId);
+	await fs.mkdir(path.dirname(playbooksFilePath), { recursive: true });
+	const playbooks = installed
+		? existingPlaybooks.map((playbook) => (playbook.id === installed.id ? savedPlaybook : playbook))
+		: [...existingPlaybooks, savedPlaybook];
 	await fs.writeFile(playbooksFilePath, JSON.stringify({ playbooks }, null, 2), 'utf-8');
 
 	logger.info(
-		`Successfully imported playbook "${marketplacePlaybook.title}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,
+		`Successfully ${installed ? 'updated' : 'imported'} playbook "${marketplacePlaybook.title}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,
 		LOG_CONTEXT
 	);
 
-	return { playbook: newPlaybook, importedDocs, importedAssets };
+	if (failedDocs.length > 0 || failedAssets.length > 0) {
+		logger.warn(
+			`Playbook "${marketplacePlaybook.title}" imported partially: ${failedDocs.length} documents and ${failedAssets.length} assets failed`,
+			LOG_CONTEXT,
+			{ failedDocs, failedAssets }
+		);
+	}
+
+	// Anonymous `install` event; dropped unless the user opted in and the
+	// entry came from the official manifest. An update is not a new install.
+	if (!installed) recordPlaybookInstall(provenance);
+
+	return { playbook: savedPlaybook, importedDocs, importedAssets, failedDocs, failedAssets };
+}
+
+export interface CheckPlaybookUpdatesOptions {
+	app: App;
+	sessionId: string;
+	autoRunFolderPath: string;
+	/** Resolved SSH config when the Auto Run folder lives on a remote host. */
+	sshConfig?: SshRemoteConfig;
+}
+
+/**
+ * Classify every playbook this agent installed from the Exchange as
+ * `up-to-date`, `update-available`, or `locally-modified`
+ * (`classifyPlaybookUpdate()`): the record's `sourceVersion` against the
+ * current manifest, and its `documentHashes` against the pristine copies
+ * under `.maestro-playbook/source/`, on whichever host holds the folder.
+ * A record whose entry left the catalog is `up-to-date`, since nothing
+ * newer exists to fetch.
+ */
+export async function checkMarketplacePlaybookUpdates(
+	opts: CheckPlaybookUpdatesOptions
+): Promise<PlaybookUpdateStatusMap> {
+	const { app, sessionId, autoRunFolderPath, sshConfig } = opts;
+	const playbooks = await readSessionPlaybooksStrict(app, sessionId);
+	const installed = playbooks.filter((playbook) => marketplaceProvenanceOf(playbook) !== null);
+	if (installed.length === 0) return {};
+
+	const manifest = await resolveCurrentManifest(app);
+	const latestVersions = new Map(
+		manifest.playbooks.map((entry) => [
+			entry.id,
+			typeof entry.lastUpdated === 'string' ? entry.lastUpdated : undefined,
+		])
+	);
+
+	const pristinePath = (folderName: string, documentName: string): string => {
+		const parts = [folderName, ...PLAYBOOK_PRISTINE_SOURCE_DIR.split('/'), `${documentName}.md`];
+		if (!sshConfig) return path.join(autoRunFolderPath, ...parts);
+		return [autoRunFolderPath.replace(/\/+$/, ''), ...parts].join('/');
+	};
+	// A copy that cannot be read is `null`: it was written best-effort at
+	// import, so its absence is not an edit.
+	const hashPristineCopy = async (filePath: string): Promise<string | null> => {
+		try {
+			if (sshConfig) {
+				const result = await readFileRemote(filePath, sshConfig);
+				return result.success && typeof result.data === 'string'
+					? hashPlaybookDocument(result.data)
+					: null;
+			}
+			return hashPlaybookDocument(await fs.readFile(filePath, 'utf-8'));
+		} catch {
+			return null;
+		}
+	};
+
+	const statuses: PlaybookUpdateStatusMap = {};
+	await Promise.all(
+		installed.map(async (playbook) => {
+			const provenance = marketplaceProvenanceOf(playbook)!;
+			const documentNames = Object.keys(provenance.documentHashes ?? {});
+			const hashes = await Promise.all(
+				documentNames.map((name) =>
+					hashPristineCopy(pristinePath(provenance.targetFolderName, name))
+				)
+			);
+			const pristineHashes = Object.fromEntries(
+				documentNames.map((name, index) => [name, hashes[index]])
+			);
+			const latestVersion = latestVersions.get(provenance.marketplaceId);
+			statuses[playbook.id] = {
+				playbookId: playbook.id,
+				marketplaceId: provenance.marketplaceId,
+				name: playbook.name,
+				targetFolderName: provenance.targetFolderName,
+				...(provenance.sourceVersion !== undefined && {
+					installedVersion: provenance.sourceVersion,
+				}),
+				...(latestVersion !== undefined && { latestVersion }),
+				...classifyPlaybookUpdate({ provenance, latestVersion, pristineHashes }),
+			};
+		})
+	);
+	return statuses;
 }
 
 /**

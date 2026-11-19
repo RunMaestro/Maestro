@@ -359,6 +359,8 @@ describe('searchableSettings', () => {
 			['typo', 'general-spell-check'],
 			['user journey', 'general-user-journey'],
 			['record the files', 'general-user-journey'],
+			['playbook usage', 'general-playbook-telemetry'],
+			['recently broken', 'general-playbook-telemetry'],
 			// Theme tab
 			['follow system', 'theme-follow-system'],
 			['prefers-color-scheme', 'theme-follow-system'],

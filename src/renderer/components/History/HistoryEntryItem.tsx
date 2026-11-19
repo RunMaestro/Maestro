@@ -9,6 +9,7 @@ import {
 	User,
 	ChevronDown,
 	ChevronRight,
+	FileText,
 } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
@@ -18,6 +19,7 @@ import { formatCount, formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { openPlaybookReportFromHistory } from '../../services/playbookCompletion';
 import { CueGroupRuns } from './CueGroupRuns';
 import type { CueGroupExpansionApi } from '../../hooks/history/useExpandedCueGroups';
 import type { ResumeSessionOptions } from '../../hooks/agent/useAgentSessionManagement';
@@ -92,6 +94,10 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 	// one, so a row that has one is always standing for runs worth opening.
 	const expandable = Boolean(cueGroup && cueGroupExpansion);
 	const expanded = expandable && isCueGroupExpanded;
+
+	// A playbook run's summary entry carries its report; "Open report" shows it
+	// in the completion modal.
+	const playbookReport = entry.type === 'AUTO' ? entry.playbookReport : undefined;
 
 	return (
 		<div
@@ -323,6 +329,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 			{(entry.elapsedTimeMs !== undefined ||
 				(entry.usageStats && entry.usageStats.totalCostUsd > 0) ||
 				tokenPill ||
+				playbookReport ||
 				entry.achievementAction ||
 				entry.userName ||
 				entry.hostname) && (
@@ -366,6 +373,27 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							{tokenPill.label}
 						</span>
 					)}
+					{/* Open the playbook run report this entry carries */}
+					{playbookReport && (
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								openPlaybookReportFromHistory(entry.sessionId, playbookReport);
+							}}
+							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 ml-auto"
+							style={{
+								backgroundColor: theme.colors.accent + '20',
+								color: theme.colors.accent,
+								border: `1px solid ${theme.colors.accent}40`,
+							}}
+							title={`Open the ${playbookReport.playbookName} run report`}
+							data-testid="history-open-report"
+						>
+							<FileText className="w-3 h-3" />
+							Open report
+						</button>
+					)}
 					{/* Achievement Action Button */}
 					{entry.achievementAction === 'openAbout' && onOpenAboutModal && (
 						<button
@@ -373,7 +401,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 								e.stopPropagation();
 								onOpenAboutModal();
 							}}
-							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 ml-auto"
+							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 ${playbookReport ? '' : 'ml-auto'}`}
 							style={{
 								backgroundColor: theme.colors.warning + '20',
 								color: theme.colors.warning,
@@ -388,7 +416,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					{/* Sender pill - shown for turns a logged-in browser sent */}
 					{entry.userName && (
 						<span
-							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction || playbookReport ? '' : 'ml-auto'}`}
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textDim,
@@ -403,7 +431,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					{/* Remote hostname pill - shown for entries from other hosts */}
 					{entry.hostname && (
 						<span
-							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction || entry.userName ? '' : 'ml-auto'}`}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction || entry.userName || playbookReport ? '' : 'ml-auto'}`}
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textDim,

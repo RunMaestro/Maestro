@@ -247,6 +247,59 @@ export function detectHaltMarker(content: string): { halted: boolean; reason?: s
 }
 
 /**
+ * The tag that ends a halt marker Maestro wrote itself. Only a tagged marker is
+ * Maestro's to remove; a halt a person or an executing agent wrote is never
+ * touched, because only they know whether its cause is gone.
+ */
+export const MAESTRO_WRITTEN_HALT_TAG = '(written by Maestro)';
+
+/**
+ * The halt marker an automation run writes into a playbook's first document
+ * when required parameters have no value, so the next scheduled fire refuses
+ * (`HALT_MARKER_PRESENT`) instead of retrying forever. Configuring the
+ * parameters removes it again ({@link stripMissingParamsHaltMarkers}).
+ */
+export function buildMissingParamsHaltMarker(names: string[]): string {
+	return `<!-- maestro:halt: missing required parameters: ${names.join(', ')} ${MAESTRO_WRITTEN_HALT_TAG} -->`;
+}
+
+// A whole line holding a marker built by buildMissingParamsHaltMarker.
+const MISSING_PARAMS_HALT_LINE_REGEX =
+	/^\s*<!--\s*maestro:halt\s*:\s*missing required parameters:[^>]*\(written by Maestro\)\s*-->\s*$/i;
+
+/**
+ * Remove every live line that holds a missing-parameters halt marker Maestro
+ * wrote. Markers inside fenced code are examples and stay. Returns the new
+ * content, or null when there was nothing to remove.
+ */
+export function stripMissingParamsHaltMarkers(content: string): string | null {
+	const remove = new Set<number>();
+	forEachMarkdownLine(content, (line, i) => {
+		if (MISSING_PARAMS_HALT_LINE_REGEX.test(line)) remove.add(i);
+	});
+	if (remove.size === 0) return null;
+
+	const eol = content.includes('\r\n') ? '\r\n' : '\n';
+	const lines = content.replace(/\r\n?/g, '\n').split('\n');
+	return lines.filter((_, i) => !remove.has(i)).join(eol);
+}
+
+/**
+ * `content` with a missing-parameters halt marker naming `names` on its own line
+ * at the end. Any marker Maestro wrote before is replaced, so a refused fire
+ * that names different parameters never stacks a second line. The end of the
+ * document keeps any YAML front matter intact, and the engine scans the whole
+ * document for a halt.
+ */
+export function withMissingParamsHaltMarker(content: string, names: string[]): string {
+	const base = stripMissingParamsHaltMarkers(content) ?? content;
+	const eol = base.includes('\r\n') ? '\r\n' : '\n';
+	const body = base.replace(/(?:\r?\n)+$/, '');
+	const marker = buildMissingParamsHaltMarker(names);
+	return body.trim() === '' ? `${marker}${eol}` : `${body}${eol}${eol}${marker}${eol}`;
+}
+
+/**
  * Why a run refused to start over a halt marker an EARLIER run left behind.
  *
  * Both engines refuse: the CLI as its `HALT_MARKER_PRESENT` error, the desktop

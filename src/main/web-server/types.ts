@@ -1235,6 +1235,20 @@ export interface WebPlaybook {
 }
 
 /**
+ * The fields an `update_playbook` message may change. `parameterValues` is
+ * the playbook's saved parameter answers by name (`maestro-cli playbook
+ * configure --set`); it replaces the whole set.
+ */
+export type WebPlaybookUpdate = Partial<{
+	name: string;
+	documents: WebPlaybookDocument[];
+	loopEnabled: boolean;
+	maxLoops?: number | null;
+	prompt: string;
+	parameterValues: Record<string, string>;
+}>;
+
+/**
  * File tree entry.
  */
 export interface FileTreeNode {
@@ -1463,13 +1477,7 @@ export type CreatePlaybookCallback = (
 export type UpdatePlaybookCallback = (
 	sessionId: string,
 	playbookId: string,
-	updates: Partial<{
-		name: string;
-		documents: WebPlaybookDocument[];
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	}>
+	updates: WebPlaybookUpdate
 ) => Promise<WebPlaybook | null>;
 export type DeletePlaybookCallback = (sessionId: string, playbookId: string) => Promise<boolean>;
 export type GetFileTreeCallback = (sessionId: string, subPath?: string) => Promise<FileTreeNode[]>;
@@ -1698,7 +1706,13 @@ export type GenerateDirectorNotesSynopsisCallback = (
 // Marketplace (Playbook Exchange) Types
 // =============================================================================
 
-import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
+import type {
+	MarketplaceImportPlaybookResult,
+	MarketplaceManifest,
+	MarketplacePlaybook,
+} from '../../shared/marketplace-types';
+import type { PlaybookHealthMap } from '../../shared/playbookHealth';
+import type { PlaybookUpdateStatusMap } from '../../shared/playbookUpdates';
 
 /** Re-export for convenience so handlers don't pull from two places. */
 export type { MarketplaceManifest, MarketplacePlaybook };
@@ -1708,25 +1722,12 @@ export interface MarketplaceManifestResult {
 	manifest: MarketplaceManifest;
 	fromCache: boolean;
 	cacheAge?: number;
+	/** Popularity and reliability figures by playbook id; empty when the server has none. */
+	health?: PlaybookHealthMap;
 }
 
-/** Result from the marketplace import callback. */
-export interface MarketplaceImportResult {
-	success: boolean;
-	error?: string;
-	playbook?: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	};
-	importedDocs?: string[];
-	importedAssets?: string[];
-}
+/** Result from the marketplace import callback: the shared IPC shape, record included. */
+export type MarketplaceImportResult = MarketplaceImportPlaybookResult;
 
 export type GetMarketplaceManifestCallback = (options?: {
 	refresh?: boolean;
@@ -1741,8 +1742,25 @@ export type GetMarketplaceReadmeCallback = (
 	playbookPath: string
 ) => Promise<{ content: string | null }>;
 
+/**
+ * `options.update` updates the record the agent already holds for the entry,
+ * in its own folder (`targetFolderName` is ignored), keeping its parameter
+ * answers. Without it an entry that is already installed is refused.
+ */
 export type ImportMarketplacePlaybookCallback = (
 	sessionId: string,
 	playbookId: string,
-	targetFolderName: string
+	targetFolderName: string,
+	options?: { update?: boolean }
 ) => Promise<MarketplaceImportResult>;
+
+/** Result from the update check: a status per installed Exchange record, or the failure. */
+export interface MarketplaceCheckUpdatesResult {
+	success: boolean;
+	updates?: PlaybookUpdateStatusMap;
+	error?: string;
+}
+
+export type CheckMarketplaceUpdatesCallback = (
+	sessionId: string
+) => Promise<MarketplaceCheckUpdatesResult>;

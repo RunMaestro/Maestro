@@ -221,9 +221,22 @@ import type {
 	CueStatsSourceTotals,
 	CueStatsTimeRange,
 } from '../shared/cue-stats-types';
-import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
+import type {
+	AutoRunEndOutcome,
+	AutoRunKind,
+	AutoRunLaunchSource,
+	QueryEvent,
+	StatsAggregation,
+} from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type {
+	PlaybookTelemetryRunEnd,
+	PlaybookTelemetryRunStart,
+} from '../shared/playbookTelemetry';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
+import type { MarketplaceImportPlaybookResult } from '../shared/marketplace-types';
+import type { PlaybookHealthMap } from '../shared/playbookHealth';
+import type { PlaybookUpdateStatusMap } from '../shared/playbookUpdates';
 import type {
 	CotAgentConfig,
 	CotAgentStatus,
@@ -1438,6 +1451,12 @@ interface MaestroAPI {
 			issueNumber: number,
 			comment?: string
 		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		previewPlaybookFailure: (
+			payload: import('../shared/feedback').PlaybookFailurePreviewPayload
+		) => Promise<import('../shared/feedback').PlaybookFailureIssuePreview>;
+		submitPlaybookFailure: (
+			payload: import('../shared/feedback').PlaybookFailureSubmitPayload
+		) => Promise<import('../shared/feedback').PlaybookFailureSubmitResponse>;
 		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
 		rememberAccount: (key: string | null) => Promise<void>;
 		drafts: {
@@ -3212,26 +3231,37 @@ interface MaestroAPI {
 		) => () => void;
 		/** Auto Run delegation lifecycle; narrow with `parseAutoRunDelegationEvent`. */
 		onDelegation: (handler: (event: unknown) => void) => () => void;
+		/**
+		 * Snapshot an agent's folder at run start for the run report's disk
+		 * evidence. `snapshot` is null when there is nothing to compare later.
+		 */
+		evidenceStart: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			snapshot?: import('../shared/runEvidence').RunEvidenceSnapshot | null;
+			error?: string;
+		}>;
+		/** Diff the folder at run end against the start snapshot. */
+		evidenceEnd: (
+			cwd: string,
+			snapshot: import('../shared/runEvidence').RunEvidenceSnapshot,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			evidence?: import('../shared/playbookRunReport').DiskEvidence | null;
+			error?: string;
+		}>;
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {
+		/** The agent's stored playbook records, parameter answers and overlay included. */
 		list: (sessionId: string) => Promise<{
 			success: boolean;
-			playbooks: Array<{
-				id: string;
-				name: string;
-				createdAt: number;
-				updatedAt: number;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}>;
+			playbooks: import('../shared/types').Playbook[];
 			error?: string;
 		}>;
 		create: (
@@ -3253,20 +3283,7 @@ interface MaestroAPI {
 		update: (
 			sessionId: string,
 			playbookId: string,
-			updates: Partial<{
-				name: string;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-				taskSelectionMode?: 'task' | 'document';
-				updatedAt: number;
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}>
+			updates: import('../shared/types').PlaybookUpdate
 		) => Promise<{ success: boolean; playbook?: any; error?: string }>;
 		delete: (
 			sessionId: string,
@@ -3282,6 +3299,14 @@ interface MaestroAPI {
 			sessionId: string,
 			autoRunFolderPath: string
 		) => Promise<{ success: boolean; playbook?: any; importedDocs?: string[]; error?: string }>;
+		/** The local facts pack for an agent (git, gh, python3, Encore, Cue). Never fails on a missing tool. */
+		gatherFacts: (sessionId: string) => Promise<{
+			success: boolean;
+			facts?: import('../shared/playbookFacts').PlaybookFacts;
+			error?: string;
+		}>;
+		/** Fires with the agent id after any write to that agent's playbook records. Returns an unsubscribe. */
+		onChanged: (handler: (sessionId: string) => void) => () => void;
 	};
 	// Marketplace API (browse and import playbooks from GitHub)
 	marketplace: {
@@ -3342,6 +3367,13 @@ interface MaestroAPI {
 			fromCache?: boolean;
 			error?: string;
 		}>;
+		/** Popularity and reliability figures by playbook id; empty when the server has none. */
+		getHealth: (forceRefresh?: boolean) => Promise<{
+			success: boolean;
+			health?: PlaybookHealthMap;
+			fromCache?: boolean;
+			error?: string;
+		}>;
 		getDocument: (
 			playbookPath: string,
 			filename: string
@@ -3361,19 +3393,20 @@ interface MaestroAPI {
 			autoRunFolderPath: string,
 			sessionId: string,
 			sshRemoteId?: string
+		) => Promise<MarketplaceImportPlaybookResult>;
+		updatePlaybook: (
+			playbookId: string,
+			autoRunFolderPath: string,
+			sessionId: string,
+			sshRemoteId?: string
+		) => Promise<MarketplaceImportPlaybookResult>;
+		checkUpdates: (
+			sessionId: string,
+			autoRunFolderPath: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
-			playbook?: {
-				id: string;
-				name: string;
-				createdAt: number;
-				updatedAt: number;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-			};
-			importedDocs?: string[];
+			updates?: PlaybookUpdateStatusMap;
 			error?: string;
 		}>;
 		onManifestChanged: (handler: () => void) => () => void;
@@ -4155,14 +4188,24 @@ interface MaestroAPI {
 			tasksTotal?: number;
 			projectPath?: string;
 			kind?: AutoRunKind;
+			playbookId?: string;
+			playbookLocalId?: string;
+			playbookVersion?: string;
+			launchSource?: AutoRunLaunchSource;
 		}) => Promise<string>;
-		// End an Auto Run session (update duration and completed count)
+		// End an Auto Run session (update duration and completed count, plus the
+		// run's outcome when the runner knows it)
 		endAutoRun: (
 			id: string,
 			duration: number,
 			tasksCompleted: number,
-			tasksTotal?: number
+			tasksTotal?: number,
+			outcome?: AutoRunEndOutcome
 		) => Promise<boolean>;
+		// Playbook telemetry (opt-in, official Exchange playbooks only): a
+		// playbook run began / ended on agent `runKey`
+		playbookRunStarted: (runKey: string, start: PlaybookTelemetryRunStart) => Promise<void>;
+		playbookRunEnded: (runKey: string, end: PlaybookTelemetryRunEnd) => Promise<void>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
 			autoRunSessionId: string;

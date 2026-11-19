@@ -16,6 +16,8 @@ import type { AutoRunKind } from '../../stats-types';
 import type { PromptId } from '../../promptDefinitions';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AutoRunPolicy } from './policy';
+import type { DiskEvidence } from '../../playbookRunReport';
+import type { RunEvidenceSnapshot } from '../../runEvidence';
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -30,8 +32,12 @@ export interface AutoRunEvent {
 	[key: string]: unknown;
 }
 
-/** What a turn is for. The engine resolves model and effort per purpose; the adapter forwards them. */
-export type AutoRunTurnPurpose = 'task' | 'synopsis' | 'goal-iteration' | 'goal-handoff';
+/**
+ * What a turn is for. The engine resolves model and effort per purpose; the adapter forwards them.
+ * `report` is the playbook's report document, run once in a fresh session after every other
+ * document to write the run report's narrative.
+ */
+export type AutoRunTurnPurpose = 'task' | 'synopsis' | 'report' | 'goal-iteration' | 'goal-handoff';
 
 export interface AutoRunTurnRequest {
 	purpose: AutoRunTurnPurpose;
@@ -185,6 +191,13 @@ export interface AutoRunDeps {
 		isGitRepo(cwd: string): MaybePromise<boolean>;
 		groupName(groupId: string | undefined): MaybePromise<string | undefined>;
 		/**
+		 * Disk evidence for the run report (tier B): snapshot the folder when the run starts, and
+		 * diff it against that snapshot when the run ends. Best effort: `null` is "no evidence",
+		 * never an error. Absent: the run reports no evidence.
+		 */
+		evidenceStart?(cwd: string): MaybePromise<RunEvidenceSnapshot | null>;
+		evidenceEnd?(cwd: string, start: RunEvidenceSnapshot): MaybePromise<DiskEvidence | null>;
+		/**
 		 * Policy `checkpointCommits` (AE23): `git add -A` and commit what the iteration left. Best
 		 * effort, never throws into the run. Absent: no checkpoint.
 		 */
@@ -192,6 +205,14 @@ export interface AutoRunDeps {
 			cwd: string,
 			message: string
 		): MaybePromise<{ committed: boolean; commitHash?: string; error?: string }>;
+	};
+	/**
+	 * Optional. Writes a playbook run report file (`<autoRunFolder>/.maestro-reports/...`),
+	 * creating its folder. The engine builds the path and the text. May throw: the engine then
+	 * reports the run without a saved path. Absent: the report is emitted but never saved.
+	 */
+	reports?: {
+		write(path: string, content: string): MaybePromise<void>;
 	};
 	/** Tells the desktop and other CLI processes that this agent is busy for the run's length. */
 	activity: {

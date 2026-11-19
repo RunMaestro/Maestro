@@ -246,6 +246,7 @@ const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averagePhasesPerWizard: 0,
 	totalTasksGenerated: 0,
 	averageTasksPerPhase: 0,
+	playbookTelemetryPromptShownAt: 0,
 };
 
 const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = { ...ENCORE_FEATURE_DEFAULTS };
@@ -501,6 +502,7 @@ export interface SettingsStoreState
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
 	userJourneyEnabled: boolean;
+	playbookTelemetryEnabled: boolean;
 	pianolaAutoWatchNewAgents: boolean;
 	pianolaAutoFixEnabled: boolean;
 }
@@ -628,6 +630,7 @@ export interface SettingsStoreActions
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
 	setUserJourneyEnabled: (value: boolean) => void;
+	setPlaybookTelemetryEnabled: (value: boolean) => void;
 	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
@@ -683,6 +686,8 @@ export interface SettingsStoreActions
 	recordTourStart: () => void;
 	recordTourComplete: (stepsViewed: number) => void;
 	recordTourSkip: (stepsViewed: number) => void;
+	/** Note that the playbook telemetry consent step was shown (first time only). */
+	recordPlaybookTelemetryPromptShown: () => void;
 	getOnboardingAnalytics: () => {
 		wizardCompletionRate: number;
 		tourCompletionRate: number;
@@ -895,6 +900,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		lastSelectedPromptId: null,
 		spellCheck: false,
 		userJourneyEnabled: true,
+		playbookTelemetryEnabled: false,
 		pianolaAutoWatchNewAgents: false,
 		pianolaAutoFixEnabled: false,
 
@@ -1578,6 +1584,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('userJourneyEnabled', value);
 		},
 
+		setPlaybookTelemetryEnabled: (value) => {
+			set({ playbookTelemetryEnabled: value });
+			window.maestro.settings.set('playbookTelemetryEnabled', value);
+		},
+
 		setPianolaAutoFixEnabled: async (value) => {
 			const revision = ++pianolaAutoFixRevision;
 			try {
@@ -1952,6 +1963,14 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 				averageTourStepsViewed:
 					totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
 			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
+
+		recordPlaybookTelemetryPromptShown: () => {
+			const prev = get().onboardingStats;
+			if (prev.playbookTelemetryPromptShownAt > 0) return;
+			const updated: OnboardingStats = { ...prev, playbookTelemetryPromptShownAt: Date.now() };
 			set({ onboardingStats: updated });
 			window.maestro.settings.set('onboardingStats', updated);
 		},
@@ -2843,6 +2862,9 @@ export async function loadAllSettings(): Promise<void> {
 		// On unless explicitly switched off.
 		patch.userJourneyEnabled = allSettings['userJourneyEnabled'] !== false;
 
+		// Off unless the user opted in: playbook telemetry is a new egress channel.
+		patch.playbookTelemetryEnabled = allSettings['playbookTelemetryEnabled'] === true;
+
 		patch.pianolaAutoFixEnabled = allSettings['pianolaAutoFixEnabled'] === true;
 		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
 
@@ -3049,6 +3071,7 @@ export function getSettingsActions() {
 		recordTourStart: state.recordTourStart,
 		recordTourComplete: state.recordTourComplete,
 		recordTourSkip: state.recordTourSkip,
+		recordPlaybookTelemetryPromptShown: state.recordPlaybookTelemetryPromptShown,
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
 		setPersistentWebLink: state.setPersistentWebLink,
@@ -3121,6 +3144,7 @@ export function getSettingsActions() {
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setUserJourneyEnabled: state.setUserJourneyEnabled,
+		setPlaybookTelemetryEnabled: state.setPlaybookTelemetryEnabled,
 		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setPianolaAutoFixEnabled: state.setPianolaAutoFixEnabled,
 		setAutoRunDisabled: state.setAutoRunDisabled,

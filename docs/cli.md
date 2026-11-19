@@ -1737,8 +1737,14 @@ maestro-cli playbook <playbook-id> --json
 {"type":"task_complete","timestamp":...,"success":true,"summary":"...","elapsedMs":8000,"usageStats":{...}}
 {"type":"document_complete","timestamp":...,"document":"tasks.md","tasksCompleted":5}
 {"type":"loop_complete","timestamp":...,"iteration":1,"tasksCompleted":5,"elapsedMs":60000}
+{"type":"evidence","timestamp":...,"evidence":{"source":"git","changedFiles":["src/app.ts"],"createdFiles":["src/new.ts"],"deletedFiles":[],"branch":"main"}}
+{"type":"report","timestamp":...,"status":"completed","path":"/path/to/playbooks/.maestro-reports/my-playbook-20261119-153000.md","jsonPath":"/path/to/playbooks/.maestro-reports/my-playbook-20261119-153000.json","report":{...}}
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
 ```
+
+Just before `complete`, a playbook run emits an `evidence` event listing the files it created, changed, and deleted in the agent's folder. In a git repository (`"source":"git"`) the folder is compared against the commit the run started from, so commits the agent made count too. Outside a repository (`"source":"mtime"`) the first 200 files in the top three folder levels are compared by modification time, skipping `node_modules` and `.git`. There is no `evidence` event for a dry run, for an SSH agent, or when the folder cannot be read.
+
+After `evidence`, a playbook run emits a `report` event with the run report: `status` (`completed`, `partial`, `failed`, or `stopped`), the full report as `report`, and the two files it was saved to under the Auto Run folder's `.maestro-reports/` (`path` for the markdown, `jsonPath` for the JSON copy). `path` and `jsonPath` are absent when the files could not be written. Without `--json`, the report is printed as markdown at the end of the run. When the playbook names a `report` document, that document runs once after all the others to write the report's narrative, **How to use it**, and **Next steps**; it is skipped when the run halted or was stopped. A dry run and `run-doc` emit no `report` event. See [The Run Report](/playbook-exchange#the-run-report).
 
 If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
 

@@ -28,7 +28,7 @@ import type { PluginToolReceipt } from '../../main/plugins/plugin-tool-run-ident
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { readCallerIdentity } from '../../shared/agentDelegation';
-import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
+import { readQuerySource } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
@@ -115,7 +115,7 @@ type SendOrigin = { kind: 'cue' } | { kind: 'agent'; agentName: string } | { kin
  * of theirs, at a shell.
  */
 function resolveSendOrigin(env: NodeJS.ProcessEnv): SendOrigin {
-	if (env[QUERY_SOURCE_ENV_VAR]?.trim() === 'cue') return { kind: 'cue' };
+	if (readQuerySource(env) === 'cue') return { kind: 'cue' };
 	const caller = readCallerIdentity(env);
 	if (!caller) return { kind: 'user' };
 	// A caller whose agent is gone by now still asked; its id is the only name

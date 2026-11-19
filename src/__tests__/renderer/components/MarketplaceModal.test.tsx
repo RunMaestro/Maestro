@@ -82,6 +82,7 @@ function renderMarketplace(
 	mocks.marketplaceState = createMarketplaceState(stateOverrides);
 	const onClose = vi.fn();
 	const onImportComplete = vi.fn();
+	const onRunPlaybook = vi.fn().mockResolvedValue(true);
 	const renderResult = render(
 		<MarketplaceModal
 			theme={mockTheme}
@@ -90,6 +91,7 @@ function renderMarketplace(
 			autoRunFolderPath="/autorun"
 			sessionId="session-1"
 			onImportComplete={onImportComplete}
+			onRunPlaybook={onRunPlaybook}
 			{...props}
 		/>
 	);
@@ -98,6 +100,7 @@ function renderMarketplace(
 		...renderResult,
 		onClose,
 		onImportComplete,
+		onRunPlaybook,
 		state: mocks.marketplaceState,
 	};
 }
@@ -121,6 +124,7 @@ describe('MarketplaceModal', () => {
 				autoRunFolderPath="/autorun"
 				sessionId="session-1"
 				onImportComplete={vi.fn()}
+				onRunPlaybook={vi.fn()}
 			/>
 		);
 
@@ -180,6 +184,7 @@ describe('MarketplaceModal', () => {
 				autoRunFolderPath="/autorun"
 				sessionId="session-1"
 				onImportComplete={vi.fn()}
+				onRunPlaybook={vi.fn()}
 			/>
 		);
 		expect(screen.getByText('Failed to load marketplace')).toBeTruthy();
@@ -198,6 +203,7 @@ describe('MarketplaceModal', () => {
 				autoRunFolderPath="/autorun"
 				sessionId="session-1"
 				onImportComplete={vi.fn()}
+				onRunPlaybook={vi.fn()}
 			/>
 		);
 		expect(screen.getByText('No results found')).toBeTruthy();
@@ -268,12 +274,12 @@ describe('MarketplaceModal', () => {
 		});
 	});
 
-	it('imports successfully and closes the modal', async () => {
+	it('Install only imports successfully and closes the modal', async () => {
 		const { state, onClose, onImportComplete } = renderMarketplace();
 
 		fireEvent.click(screen.getByText('Alpha Playbook'));
 		await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
-		fireEvent.click(screen.getByText('Import Playbook'));
+		fireEvent.click(screen.getByText('Install only'));
 
 		await waitFor(() => {
 			expect(state.importPlaybook).toHaveBeenCalledWith(
@@ -288,18 +294,46 @@ describe('MarketplaceModal', () => {
 		});
 	});
 
+	it('Install and Run keeps the modal open on the configure step, and Escape then closes it', async () => {
+		const record = {
+			id: 'record-1',
+			name: 'Alpha Playbook',
+			documents: [{ filename: 'phase-1', resetOnCompletion: false }],
+			prompt: '<!-- CONFIGURE: The pull request to review -->\n**PR_URL:** `<UNSET>`',
+			provenance: { kind: 'marketplace', targetFolderName: 'alpha-playbook' },
+		};
+		const importPlaybook = vi.fn().mockResolvedValue({ success: true, playbook: record });
+		const { onClose, onImportComplete } = renderMarketplace({}, { importPlaybook });
+
+		fireEvent.click(screen.getByText('Alpha Playbook'));
+		await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
+		fireEvent.click(screen.getByText('Install and Run'));
+
+		await waitFor(() => expect(screen.getByTestId('playbook-configure-step')).toBeTruthy());
+		expect(onImportComplete).toHaveBeenCalledWith('alpha-playbook');
+		expect(onClose).not.toHaveBeenCalled();
+		expect(screen.getByText('Configure run')).toBeTruthy();
+		expect(screen.queryByText('Install and Run')).toBeNull();
+		// The step hosts the parameter form, gated on the unresolved required answer.
+		expect(screen.getByTestId('parameter-row-PR_URL')).toBeTruthy();
+		expect(screen.getByTestId('parameter-sheet-run')).toHaveProperty('disabled', true);
+
+		act(() => mocks.escapeHandler?.());
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
 	it('shows a sticky toast when import fails', async () => {
 		const importPlaybook = vi.fn().mockResolvedValue({ success: false, error: 'Bad folder' });
 		renderMarketplace({}, { importPlaybook });
 
 		fireEvent.click(screen.getByText('Alpha Playbook'));
 		await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
-		fireEvent.click(screen.getByText('Import Playbook'));
+		fireEvent.click(screen.getByText('Install and Run'));
 
 		await waitFor(() => {
 			expect(mocks.notifyToast).toHaveBeenCalledWith({
 				color: 'red',
-				title: 'Import failed',
+				title: 'Install failed',
 				message: 'Bad folder',
 				dismissible: true,
 			});
@@ -314,7 +348,7 @@ describe('MarketplaceModal', () => {
 		await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
 
 		expect(screen.getByTitle('Browse is not available for remote sessions')).toBeDisabled();
-		fireEvent.click(screen.getByText('Import Playbook'));
+		fireEvent.click(screen.getByText('Install only'));
 
 		await waitFor(() => {
 			expect(importPlaybook).toHaveBeenCalledWith(

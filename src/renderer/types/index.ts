@@ -72,7 +72,7 @@ export type {
 	ModeratorConfig,
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
-import type { AgentError, SessionCliActivity } from '../../shared/types';
+import type { AgentError, BatchRunPlaybookRef, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
@@ -724,6 +724,11 @@ export interface BatchRunState {
 	lastActiveTimestamp?: number; // Last timestamp when actively tracking (for pause/resume calculation)
 
 	// Error handling state (Phase 5.10)
+	/**
+	 * The saved playbook this run was launched from, so a pause for missing
+	 * parameters can open that record's Configure form. Absent for an ad-hoc run.
+	 */
+	playbookRef?: BatchRunPlaybookRef;
 	error?: AgentError; // Current error if batch is paused due to agent error
 	errorPaused?: boolean; // True if batch is paused waiting for error resolution
 	errorDocumentIndex?: number; // Which document had the error (for skip functionality)
@@ -820,6 +825,14 @@ export interface OnboardingStats {
 	averagePhasesPerWizard: number; // Average documents per completed wizard
 	totalTasksGenerated: number; // Total tasks generated across all documents
 	averageTasksPerPhase: number; // Average tasks per document
+
+	// Playbook telemetry consent
+	/**
+	 * When the one-time "Share anonymous usage" step was shown on the playbook
+	 * completion modal (0 if never). Once set, the step never returns, whatever
+	 * the answer: `playbookTelemetryEnabled` holds the answer itself.
+	 */
+	playbookTelemetryPromptShownAt: number;
 }
 
 // AI Tab for multi-tab support within a Maestro session

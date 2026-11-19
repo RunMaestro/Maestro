@@ -1,7 +1,10 @@
+import { useMemo } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
+import { resolvePlaybookParamSpecs } from '../../../../shared/playbookParams';
 import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
+import { MiniBadge } from '../../ui/MiniBadge';
 import { LOCAL_BADGE_BG, LOCAL_BADGE_FG } from '../helpers';
 
 export interface PlaybookMetadataSidebarProps {
@@ -17,6 +20,13 @@ export function PlaybookMetadataSidebar({
 	selectedDocFilename,
 	onSelectDocument,
 }: PlaybookMetadataSidebarProps) {
+	// The same specs both Auto Run engines resolve against: prose form plus manifest overlay.
+	const paramSpecs = useMemo(
+		() => resolvePlaybookParamSpecs(playbook.prompt ?? '', playbook.parameters),
+		[playbook.prompt, playbook.parameters]
+	);
+	const assets = playbook.assets ?? [];
+
 	return (
 		<div
 			className="w-64 shrink-0 p-4 border-r overflow-y-auto"
@@ -123,6 +133,83 @@ export function PlaybookMetadataSidebar({
 						);
 					})}
 				</ul>
+			</div>
+
+			<div className="mb-4">
+				<h4
+					className="text-xs font-semibold mb-1 uppercase tracking-wide"
+					style={{ color: theme.colors.textDim }}
+				>
+					Assets{assets.length > 0 ? ` (${assets.length})` : ''}
+				</h4>
+				{assets.length > 0 ? (
+					<ul className="space-y-0.5 select-text">
+						{assets.map((asset) => (
+							<li
+								key={asset}
+								className="text-sm font-mono px-2 truncate"
+								style={{ color: theme.colors.textMain }}
+								title={`assets/${asset}`}
+							>
+								{asset}
+							</li>
+						))}
+					</ul>
+				) : (
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						Not listed in the manifest. Any files in the playbook's assets folder are discovered at
+						install.
+					</p>
+				)}
+			</div>
+
+			<div className="mb-4" data-testid="playbook-configuration">
+				<h4
+					className="text-xs font-semibold mb-1 uppercase tracking-wide"
+					style={{ color: theme.colors.textDim }}
+				>
+					Configuration{paramSpecs.length > 0 ? ` (${paramSpecs.length})` : ''}
+				</h4>
+				{paramSpecs.length > 0 ? (
+					<ul className="space-y-2 select-text">
+						{paramSpecs.map((spec) => (
+							<li key={spec.name} title={spec.help} data-testid={`playbook-param-${spec.name}`}>
+								<div className="flex items-center gap-1.5 min-w-0">
+									<span
+										className="text-sm font-mono truncate"
+										style={{ color: theme.colors.textMain }}
+									>
+										{spec.name}
+									</span>
+									{spec.required && (
+										<span
+											className="text-sm font-semibold"
+											style={{ color: theme.colors.error }}
+											title="Required: the run cannot start without a value"
+											aria-label="Required"
+										>
+											*
+										</span>
+									)}
+									<MiniBadge label={spec.type} theme={theme} title={`Type: ${spec.type}`} />
+								</div>
+								<div className="text-xs truncate" style={{ color: theme.colors.textDim }}>
+									{spec.default !== undefined ? (
+										<>
+											Default: <span className="font-mono">{spec.default}</span>
+										</>
+									) : (
+										'No default'
+									)}
+								</div>
+							</li>
+						))}
+					</ul>
+				) : (
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						No parameters to configure.
+					</p>
+				)}
 			</div>
 
 			<div className="mb-4">

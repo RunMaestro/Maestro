@@ -13,7 +13,7 @@
  */
 
 import { useCallback } from 'react';
-import type { Session, TaskSelectionMode, UsageStats } from '../../types';
+import type { AgentError, Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, prepareDesktopAutoRunPrompt } from './batchUtils';
@@ -32,6 +32,28 @@ import {
 	formatDelegationResultsBlock,
 	type AutoRunDelegation,
 } from '../../../shared/autoRunDelegation';
+import {
+	applyPlaybookParamsToPrompt,
+	describeSurvivingParams,
+	expandPlaybookParamTemplates,
+	substitutePlaybookParams,
+	type PlaybookParamSet,
+} from '../../../shared/playbookParams';
+
+/**
+ * A task that must PAUSE the run rather than fail it: thrown before anything is
+ * spawned, carrying the AgentError the runner hands to `pauseBatchOnError` so
+ * the Resume / Abort banner shows it.
+ */
+export class AutoRunPauseError extends Error {
+	readonly agentError: AgentError;
+
+	constructor(agentError: AgentError) {
+		super(agentError.message);
+		this.name = 'AutoRunPauseError';
+		this.agentError = agentError;
+	}
+}
 
 /**
  * Configuration for document processing
@@ -103,6 +125,11 @@ export interface DocumentProcessorConfig {
 	 * last task. Prepended to this task's prompt. Already consumed by the caller.
 	 */
 	delegationResults?: readonly AutoRunDelegation[];
+	/**
+	 * The launching playbook's parameter specs and answers. Template variables in
+	 * them are expanded here, per task. Absent or empty means no parameters.
+	 */
+	playbookParams?: PlaybookParamSet;
 }
 
 /**
@@ -379,6 +406,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				steeringNotes,
 				autoRunId,
 				delegationResults,
+				playbookParams,
 			} = config;
 
 			const docFilePath = `${folderPath}/${filename}.md`;
@@ -403,13 +431,21 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				documentPath: docFilePath,
 			};
 
-			let documentContent = '';
+			// Parameter answers and defaults may name template variables (a default of
+			// `{{AGENT_PATH}}`), so they are expanded once here, against this task's
+			// context, before they are substituted literally.
+			const paramSet = expandPlaybookParamTemplates(
+				playbookParams ?? { specs: [], values: {} },
+				(text) => substituteTemplateVariables(text, templateContext)
+			);
+
+			// `expandedDocContent` is what is on disk; `documentContent` is what the
+			// turn works from. They differ only by the parameter answers, which are
+			// substituted in memory and never written back, so they are never burned
+			// into the template.
+			let expandedDocContent = '';
 			if (docReadResult.success && docReadResult.content) {
-				const expandedDocContent = substituteTemplateVariables(
-					docReadResult.content,
-					templateContext
-				);
-				documentContent = expandedDocContent;
+				expandedDocContent = substituteTemplateVariables(docReadResult.content, templateContext);
 
 				// Write the expanded content back to the document temporarily
 				// (Agent will read this file, so it needs the expanded variables)
@@ -422,6 +458,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 					);
 				}
 			}
+			const documentContent = substitutePlaybookParams(
+				expandedDocContent,
+				paramSet.specs,
+				paramSet.values
+			).text;
 
 			// Resolve this task's model hint from the document. Recomputed per
 			// dispatch rather than tracked as run state, so editing the document
@@ -479,11 +520,29 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				hintSegment
 			);
 
-			// Substitute template variables in the prompt
-			const substitutedPrompt = substituteTemplateVariables(
-				promptWithSelectionBlock,
-				templateContext
+			// Substitute template variables in the prompt, then the parameter answers
+			// in memory, with the Resolved Configuration table appended. Both happen
+			// before the steering and delegation blocks are prepended, which stay
+			// literal.
+			const paramTurn = applyPlaybookParamsToPrompt(
+				substituteTemplateVariables(promptWithSelectionBlock, templateContext),
+				documentContent,
+				paramSet
 			);
+			const substitutedPrompt = paramTurn.prompt;
+
+			// A `[NAME]` that is still there would reach the agent as a placeholder.
+			// Pause the run instead, before anything is spawned.
+			if (paramTurn.surviving.length > 0) {
+				throw new AutoRunPauseError({
+					type: 'parameter_substitution',
+					message: describeSurvivingParams(paramTurn.surviving),
+					recoverable: true,
+					agentId: session.toolType,
+					sessionId: session.id,
+					timestamp: Date.now(),
+				});
+			}
 
 			// Steering notes ride in FRONT of the prompt, and are prepended AFTER
 			// substitution on purpose: a `{{...}}` the operator typed into a note is
@@ -547,7 +606,9 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// task again; the rest of the document is left exactly as the turn left it.
 			const isFailedGrokTurn = session.toolType === 'grok' && !result.success;
 			if (isFailedGrokTurn && afterResult.content) {
-				const contentAtDispatch = documentContent || contentBeforeTask;
+				// The on-disk text, not the substituted one: restore matches it
+				// against what the turn left on disk.
+				const contentAtDispatch = expandedDocContent || contentBeforeTask;
 				const restore = restoreTasksCheckedByFailedTurn(contentAtDispatch, afterResult.content);
 				if (restore.restored > 0) {
 					await window.maestro.autorun.writeDoc(

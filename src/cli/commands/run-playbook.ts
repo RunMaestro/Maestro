@@ -6,10 +6,20 @@ import { findPlaybookById } from '../services/playbooks';
 import { runPlaybook as executePlaybook } from '../services/batch-processor';
 import { detectAgent } from '../services/agent-spawner';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
-import { emitError, type CompleteEvent } from '../output/jsonl';
+import { emitError, emitJsonl, type CompleteEvent } from '../output/jsonl';
 import { formatRunEvent, formatError, formatInfo, RunEvent } from '../output/formatter';
 import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
 import { installInterruptHandler } from '../utils/interrupt';
+import { ExitCode, exitWith } from '../exit-codes';
+import {
+	PlaybookParamInputError,
+	resolveRunParams,
+	writeMissingParamsHaltMarker,
+	type RunParamResolution,
+} from '../services/playbook-params';
+import { describeMissingRequiredParams } from '../../shared/playbookParams';
+import type { Playbook } from '../../shared/types';
+import { isAutomationQuerySource, readQuerySource } from '../../shared/querySource';
 
 interface RunPlaybookOptions {
 	dryRun?: boolean;
@@ -28,6 +38,41 @@ interface RunPlaybookOptions {
 	effort?: string;
 	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
 	ignoreModelHints?: boolean;
+	/** Repeated `--param NAME=VALUE`: answers for this run only, never saved. */
+	param?: string[];
+	/** `--params-file <path>`: a JSON object of answers for this run only (`--param` wins). */
+	paramsFile?: string;
+}
+
+/**
+ * When an automation (a Cue subscription, or an Auto Run task) started this
+ * run, leave a halt marker in the playbook's first document so the next
+ * scheduled fire refuses up front instead of failing the same way forever. A
+ * person at a shell never gets one: they read the error and answer. Returns the
+ * marked document, or null. A marker that could not be written is reported, not
+ * thrown: the run is refused either way, and exit 2 is what the caller acts on.
+ */
+function markMissingParamsForAutomation(
+	agentId: string,
+	playbook: Pick<Playbook, 'documents'>,
+	missing: string[]
+): string | null {
+	if (!isAutomationQuerySource(readQuerySource(process.env))) return null;
+	const folder = getSessionById(agentId)?.autoRunFolderPath;
+	if (!folder) return null;
+	try {
+		const marked = writeMissingParamsHaltMarker(folder, playbook, missing);
+		if (marked) {
+			console.error(
+				`Wrote a halt marker into "${marked}" so the next scheduled run refuses until the parameters are configured.`
+			);
+		}
+		return marked;
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		console.error(formatError(`Could not write the missing-parameters halt marker: ${reason}`));
+		return null;
+	}
 }
 
 export async function runPlaybook(playbookId: string, options: RunPlaybookOptions): Promise<void> {
@@ -50,6 +95,48 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				console.error(formatError(message));
 			}
 			process.exit(1);
+		}
+
+		// Playbook parameters: the saved answers, overridden for this run only by
+		// --params-file and --param. Checked before anything else so a run that
+		// cannot start never detects, waits on, or spawns an agent.
+		let params: RunParamResolution;
+		try {
+			params = resolveRunParams(playbook, {
+				param: options.param,
+				paramsFile: options.paramsFile,
+			});
+		} catch (error) {
+			if (!(error instanceof PlaybookParamInputError)) throw error;
+			if (useJson) {
+				emitError(error.message, 'INVALID_PARAMETERS');
+			} else {
+				console.error(formatError(error.message));
+			}
+			exitWith(ExitCode.InvalidUsage);
+		}
+		if (params.missing.length > 0) {
+			const missing = params.missing.map((spec) => spec.name);
+			const message = describeMissingRequiredParams(params.missing);
+			console.error(formatError(message));
+			console.error(
+				`Answer them for this run with --param NAME=VALUE, or save them with: maestro-cli playbook configure ${playbook.id} --set NAME=VALUE`
+			);
+			const haltMarker = markMissingParamsForAutomation(agentId, playbook, missing);
+			if (useJson) {
+				emitJsonl({
+					type: 'error',
+					message,
+					code: 'MISSING_PARAMETERS',
+					missing,
+					...(haltMarker ? { haltMarker } : {}),
+				});
+			}
+			exitWith(ExitCode.InvalidUsage);
+		}
+		// The engine reads answers off the record; this copy is never saved.
+		if (params.specs.length > 0) {
+			playbook = { ...playbook, parameterValues: params.values };
 		}
 
 		const agent = getSessionById(agentId)!;

@@ -23,7 +23,6 @@ import {
 	setCachedGhStatus,
 	getCachedGhStatus,
 	getExpandedEnv,
-	resolveGhPath,
 } from '../utils/cliDetection';
 import { execFileNoThrow } from '../utils/execFile';
 import {
@@ -33,8 +32,7 @@ import {
 	isGitHubMissingScopeError,
 	isGitHubOAuthRestrictionError,
 } from '../utils/ghErrors';
-import { getSettingsStore } from '../stores/getters';
-import { isInitialized } from '../stores/instances';
+import { resolveConfiguredGhCommand } from '../utils/gh-command';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
 import { captureFeedbackLiveDiagnosis } from './live-state';
 import {
@@ -64,8 +62,24 @@ import {
 	type FeedbackSubmitResponse,
 	type SubmittedIssue,
 	type FeedbackGhLoginCommand,
+	type PlaybookFailureIssuePreview,
+	type PlaybookFailurePreviewPayload,
+	type PlaybookFailureSubmitPayload,
+	type PlaybookFailureSubmitResponse,
+	type PrefilledIssueUrl,
+	cappedNewIssueUrl,
 	GH_LOGIN_ARGS,
 } from '../../shared/feedback';
+import {
+	buildPlaybookFailureIssue,
+	buildPlaybookFailureRecurrenceComment,
+	isPlaybookFailureKind,
+	playbookFailureFingerprintComment,
+	PLAYBOOK_FAILURE_LABEL,
+	type PlaybookFailureParameter,
+	type PlaybookFailureReport,
+	type PlaybookFailureReportInput,
+} from '../../shared/playbookFailure';
 import { formatAgentLoginCommand } from '../../shared/agentMetadata';
 import { mediaSubtype, parseBase64DataUrl } from '../../shared/dataUrl';
 
@@ -377,13 +391,17 @@ async function recordSubmittedIssue(params: {
  * `gh api graphql` call. Returns null on any gh/network/auth failure so callers
  * can fall back to cached state.
  */
-async function fetchIssueStates(numbers: number[]): Promise<Map<number, 'open' | 'closed'> | null> {
+async function fetchIssueStates(
+	numbers: number[],
+	repo: string = FEEDBACK_REPO
+): Promise<Map<number, 'open' | 'closed'> | null> {
 	const unique = Array.from(new Set(numbers.filter((n) => Number.isFinite(n))));
 	if (unique.length === 0) return new Map();
+	const [owner, name] = repo.split('/');
 	const fields = unique.map((n) => `i${n}: issue(number: ${n}) { number state }`).join(' ');
-	const query = `query { repository(owner: "RunMaestro", name: "Maestro") { ${fields} } }`;
+	const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${fields} } }`;
 	const result = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', 'graphql', '-f', `query=${query}`],
 		undefined,
 		getExpandedEnv()
@@ -574,32 +592,9 @@ function buildEnvironmentSummary(payload: FeedbackSubmitPayload): FeedbackEnviro
 	};
 }
 
-/**
- * Resolve the gh binary this handler should invoke.
- *
- * Honours the user's configured Settings > GitHub CLI (gh) Path, falling back to
- * auto-detection. Every gh call in this file must go through here: a bare 'gh'
- * literal silently ignores that setting, which is the whole reason it exists for
- * installs where gh is not on the expanded PATH.
- */
-async function resolveFeedbackGhCommand(): Promise<string> {
-	// Guard on the predicate rather than catching. The stores genuinely are not
-	// initialised in every context (unit tests, early startup), and falling back
-	// to auto-detection there is correct, but a blanket catch would also swallow
-	// a real store failure and silently run some other binary.
-	if (!isInitialized()) {
-		return resolveGhPath();
-	}
-
-	const configured = getSettingsStore().get('ghPath');
-	const customPath =
-		typeof configured === 'string' && configured.trim() ? configured.trim() : undefined;
-	return resolveGhPath(customPath);
-}
-
 async function getGitHubLogin(): Promise<string> {
 	const result = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', 'user', '--jq', '.login'],
 		undefined,
 		getExpandedEnv()
@@ -628,7 +623,7 @@ function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {
 	const repoCheck = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', `repos/${owner}/${ATTACHMENTS_REPO}`],
 		undefined,
 		getExpandedEnv()
@@ -638,7 +633,7 @@ async function ensureAttachmentsRepo(owner: string): Promise<void> {
 	}
 
 	const repoCreate = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		[
 			'api',
 			'user/repos',
@@ -729,7 +724,7 @@ async function uploadAttachments(
 					'utf8'
 				);
 				const uploadResult = await execFileNoThrow(
-					await resolveFeedbackGhCommand(),
+					await resolveConfiguredGhCommand(),
 					[
 						'api',
 						`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
@@ -805,7 +800,7 @@ async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<str
 	);
 	try {
 		const uploadResult = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'api',
 				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
@@ -830,6 +825,41 @@ async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<str
 	}
 }
 
+/**
+ * Build a support package, upload it, and return the markdown link for an
+ * issue body. Never throws: anything that goes wrong becomes a warning and an
+ * empty string, so the issue still files without it.
+ */
+async function buildAndUploadDebugPackage(
+	debugPackageDeps: DebugPackageDependencies,
+	warnings: string[]
+): Promise<string> {
+	try {
+		const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps);
+		if (!packageResult.success || !packageResult.path) {
+			warnings.push('The support package could not be built, so it is not included in the report.');
+			return '';
+		}
+		let markdown = '';
+		try {
+			markdown = await uploadFeedbackZip(packageResult.path, 'maestro-debug-package.zip');
+		} finally {
+			await fs.unlink(packageResult.path).catch(() => {});
+		}
+		if (!markdown) {
+			warnings.push(
+				'The support package could not be uploaded, so it is not included in the report.'
+			);
+		}
+		return markdown;
+	} catch (e) {
+		void captureException(e);
+		logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
+		warnings.push('The support package could not be built, so it is not included in the report.');
+		return '';
+	}
+}
+
 async function composeFeedbackPrompt(
 	feedbackText: string,
 	attachments: FeedbackAttachmentInput[]
@@ -842,10 +872,26 @@ async function composeFeedbackPrompt(
 	return { prompt };
 }
 
-async function ensureFeedbackLabel(): Promise<void> {
+/** A label `gh issue create` attaches, and the repo it lives on. */
+interface FeedbackLabelTarget {
+	repo: string;
+	name: string;
+	color: string;
+	description: string;
+}
+
+const FEEDBACK_LABEL: FeedbackLabelTarget = {
+	repo: FEEDBACK_REPO,
+	name: 'Maestro-feedback',
+	color: '663579',
+	description: 'Feedback issues filed from the Maestro in-app feedback flow',
+};
+
+/** Make sure a label exists on its repo, creating it when it does not. Throws on refusal. */
+async function ensureFeedbackLabel(target: FeedbackLabelTarget = FEEDBACK_LABEL): Promise<void> {
 	const labelCheck = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
-		['api', 'repos/RunMaestro/Maestro/labels/Maestro-feedback'],
+		await resolveConfiguredGhCommand(),
+		['api', `repos/${target.repo}/labels/${encodeURIComponent(target.name)}`],
 		undefined,
 		getExpandedEnv()
 	);
@@ -854,23 +900,26 @@ async function ensureFeedbackLabel(): Promise<void> {
 	}
 
 	const labelCreate = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		[
 			'label',
 			'create',
-			'Maestro-feedback',
+			target.name,
 			'-R',
-			'RunMaestro/Maestro',
+			target.repo,
 			'--color',
-			'663579',
+			target.color,
 			'--description',
-			'Feedback issues filed from the Maestro in-app feedback flow',
+			target.description,
 		],
 		undefined,
 		getExpandedEnv()
 	);
 	if (labelCreate.exitCode !== 0 && !labelCreate.stderr.includes('already exists')) {
-		throw new GhCommandError(labelCreate.stderr, 'Failed to ensure Maestro-feedback label exists.');
+		throw new GhCommandError(
+			labelCreate.stderr,
+			`Failed to ensure ${target.name} label exists on ${target.repo}.`
+		);
 	}
 }
 
@@ -966,7 +1015,7 @@ export async function checkFeedbackGhAuth(
 	// binaries that PATH lookup cannot find. Resolve it before reading the
 	// cache, because the cache is keyed by the command a verdict was reached
 	// against, and the other gh callers probe the PATH-resolved binary.
-	const ghCommand = await resolveFeedbackGhCommand();
+	const ghCommand = await resolveConfiguredGhCommand();
 	const notInstalled: FeedbackAuthResponse = {
 		authenticated: false,
 		reason: 'not-installed',
@@ -1116,7 +1165,7 @@ function ghLoginCommandFor(ghCommand: string): FeedbackGhLoginCommand {
  * (a configured custom path wins).
  */
 export async function getFeedbackGhLoginCommand(): Promise<FeedbackGhLoginCommand> {
-	return ghLoginCommandFor(await resolveFeedbackGhCommand());
+	return ghLoginCommandFor(await resolveConfiguredGhCommand());
 }
 
 /**
@@ -1126,8 +1175,11 @@ export async function getFeedbackGhLoginCommand(): Promise<FeedbackGhLoginComman
  */
 export async function searchFeedbackIssues(payload: {
 	query: string;
+	/** The repo to search. Defaults to the feedback repo. */
+	repo?: string;
 }): Promise<FeedbackIssueSearchResponse> {
 	const query = typeof payload?.query === 'string' ? payload.query.trim() : '';
+	const repo = typeof payload?.repo === 'string' && payload.repo ? payload.repo : FEEDBACK_REPO;
 	if (!query) {
 		return { issues: [] };
 	}
@@ -1201,13 +1253,13 @@ export async function searchFeedbackIssues(payload: {
 
 	const searchPromises = searchQueries.map(async (q) => {
 		const result = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'search',
 				'issues',
 				q,
 				'--repo',
-				'RunMaestro/Maestro',
+				repo,
 				'--limit',
 				'5',
 				'--json',
@@ -1252,18 +1304,21 @@ export async function searchFeedbackIssues(payload: {
 export async function subscribeFeedbackIssue(payload: {
 	issueNumber: number;
 	comment?: string;
+	/** The repo the issue is on. Defaults to the feedback repo. */
+	repo?: string;
 }): Promise<FeedbackSubmitResponse> {
 	const { issueNumber, comment } = payload;
+	const repo = typeof payload.repo === 'string' && payload.repo ? payload.repo : FEEDBACK_REPO;
 	if (!issueNumber || typeof issueNumber !== 'number') {
 		return { success: false, error: 'Invalid issue number.' };
 	}
 
 	// Add a +1 reaction to show interest
 	await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		[
 			'api',
-			`repos/RunMaestro/Maestro/issues/${issueNumber}/reactions`,
+			`repos/${repo}/issues/${issueNumber}/reactions`,
 			'--method',
 			'POST',
 			'-f',
@@ -1276,16 +1331,8 @@ export async function subscribeFeedbackIssue(payload: {
 	// Add a comment if provided
 	if (comment && comment.trim()) {
 		const commentResult = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
-			[
-				'issue',
-				'comment',
-				String(issueNumber),
-				'-R',
-				'RunMaestro/Maestro',
-				'--body',
-				comment.trim(),
-			],
+			await resolveConfiguredGhCommand(),
+			['issue', 'comment', String(issueNumber), '-R', repo, '--body', comment.trim()],
 			undefined,
 			getExpandedEnv()
 		);
@@ -1394,18 +1441,18 @@ export async function submitFeedback(
 	try {
 		await fs.writeFile(bodyPath, buildIssueBody(normalizedPayload, environment, markdown), 'utf8');
 		const issueCreate = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'issue',
 				'create',
 				'-R',
-				'RunMaestro/Maestro',
+				FEEDBACK_REPO,
 				'--title',
 				buildIssueTitle(normalizedPayload.category, normalizedPayload.summary),
 				'--body-file',
 				bodyPath,
 				'--label',
-				'Maestro-feedback',
+				FEEDBACK_LABEL.name,
 			],
 			undefined,
 			getExpandedEnv()
@@ -1632,37 +1679,10 @@ export async function submitFeedbackConversation(
 		const liveDiagnosis = await captureFeedbackLiveDiagnosis();
 
 		// Generate and upload debug package if requested
-		let debugPackageMarkdown = '';
-		if (payload.includeDebugPackage && debugPackageDeps) {
-			try {
-				const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps);
-				if (packageResult.success && packageResult.path) {
-					try {
-						debugPackageMarkdown = await uploadFeedbackZip(
-							packageResult.path,
-							'maestro-debug-package.zip'
-						);
-					} finally {
-						await fs.unlink(packageResult.path).catch(() => {});
-					}
-					if (!debugPackageMarkdown) {
-						warnings.push(
-							'The support package could not be uploaded, so it is not included in the report.'
-						);
-					}
-				} else {
-					warnings.push(
-						'The support package could not be built, so it is not included in the report.'
-					);
-				}
-			} catch (e) {
-				void captureException(e);
-				logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
-				warnings.push(
-					'The support package could not be built, so it is not included in the report.'
-				);
-			}
-		}
+		const debugPackageMarkdown =
+			payload.includeDebugPackage && debugPackageDeps
+				? await buildAndUploadDebugPackage(debugPackageDeps, warnings)
+				: '';
 
 		// Upload performance trace if one was captured from the modal. The temp
 		// zip is kept until the issue is created, so a failed create can be
@@ -1724,18 +1744,18 @@ export async function submitFeedbackConversation(
 
 		try {
 			const issueCreate = await execFileNoThrow(
-				await resolveFeedbackGhCommand(),
+				await resolveConfiguredGhCommand(),
 				[
 					'issue',
 					'create',
 					'-R',
-					'RunMaestro/Maestro',
+					FEEDBACK_REPO,
 					'--title',
 					title,
 					'--body-file',
 					bodyFile,
 					'--label',
-					'Maestro-feedback',
+					FEEDBACK_LABEL.name,
 				],
 				undefined,
 				getExpandedEnv()
@@ -1884,4 +1904,253 @@ export async function refreshSubmittedIssueStates(): Promise<{ issues: Submitted
 		await writeSubmittedIssues(current.map((i) => byNumber.get(i.number) ?? i));
 	});
 	return { issues: next };
+}
+
+// ============================================================================
+// Playbook failure reports
+// ============================================================================
+
+const PLAYBOOK_FAILURE_LABEL_COLOR = 'b60205';
+const PLAYBOOK_FAILURE_LABEL_DESCRIPTION =
+	'A playbook run failed; filed from the Maestro run report';
+const MAX_PLAYBOOK_FAILURE_TEXT = 200;
+const MAX_PLAYBOOK_FAILURE_PARAMETERS = 50;
+const MAX_PRISTINE_SOURCE_LENGTH = 512 * 1024;
+
+// Playbook failures this process filed, by fingerprint. GitHub's search index
+// lags a new issue by up to a minute, so a second report of the same failure
+// right after the first would miss it there; this finds it instead.
+const filedPlaybookFailureIssues = new Map<string, { number: number; url: string }>();
+// Fingerprints being filed right now, so a double click files one issue.
+const inFlightPlaybookFailures = new Set<string>();
+
+/** Test seam: forget the playbook failures this process filed. */
+export function resetPlaybookFailureSubmissionGuard(): void {
+	filedPlaybookFailureIssues.clear();
+	inFlightPlaybookFailures.clear();
+}
+
+function readBoundedString(value: unknown, max = MAX_PLAYBOOK_FAILURE_TEXT): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const trimmed = sanitizeTextInput(value);
+	return trimmed ? trimmed.slice(0, max) : undefined;
+}
+
+/**
+ * Read a failure report out of an IPC payload. Every field is re-read rather
+ * than trusted, so the issue can carry only what the builder allows.
+ */
+function normalizePlaybookFailureInput(
+	raw: unknown
+): { report: PlaybookFailureReportInput; pristineSource: string | null } | { error: string } {
+	const payload = (raw ?? {}) as Partial<PlaybookFailurePreviewPayload>;
+	const input = (payload.report ?? {}) as Partial<PlaybookFailureReportInput>;
+	const playbookId = readBoundedString(input.playbookId);
+	const documentFilename = readBoundedString(input.documentFilename);
+	if (!playbookId || !documentFilename) {
+		return { error: 'The failure report does not name a playbook and document.' };
+	}
+	if (
+		typeof input.taskIndex !== 'number' ||
+		!Number.isInteger(input.taskIndex) ||
+		input.taskIndex < 0
+	) {
+		return { error: 'The failure report does not name a task.' };
+	}
+	if (!isPlaybookFailureKind(input.kind)) {
+		return { error: 'The failure report has an unknown failure kind.' };
+	}
+	const sourceVersion = readBoundedString(input.sourceVersion);
+	const parameters = Array.isArray(input.parameters)
+		? input.parameters
+				.slice(0, MAX_PLAYBOOK_FAILURE_PARAMETERS)
+				.filter(
+					(param): param is PlaybookFailureParameter =>
+						Boolean(param) && typeof param.name === 'string' && typeof param.provenance === 'string'
+				)
+				.map((param) => ({
+					name: param.name.slice(0, MAX_PLAYBOOK_FAILURE_TEXT),
+					...(typeof param.value === 'string' && { value: param.value }),
+					provenance: param.provenance,
+				}))
+		: [];
+	const pristineSource =
+		typeof payload.pristineSource === 'string'
+			? payload.pristineSource.slice(0, MAX_PRISTINE_SOURCE_LENGTH)
+			: null;
+	return {
+		report: {
+			playbookId,
+			...(sourceVersion && { sourceVersion }),
+			documentFilename,
+			taskIndex: input.taskIndex,
+			kind: input.kind,
+			agentProvider: readBoundedString(input.agentProvider, 80) ?? 'unknown',
+			parameters,
+		},
+		pristineSource,
+	};
+}
+
+function playbookFailureReportFor(report: PlaybookFailureReportInput): PlaybookFailureReport {
+	return { ...report, appVersion: app.getVersion() };
+}
+
+/**
+ * The issue a playbook failure would file, exactly as it would be sent: the
+ * completion modal shows it before the user agrees to anything.
+ */
+export async function previewPlaybookFailureIssue(
+	payload: PlaybookFailurePreviewPayload
+): Promise<PlaybookFailureIssuePreview> {
+	const normalized = normalizePlaybookFailureInput(payload);
+	if ('error' in normalized) throw new Error(normalized.error);
+	return buildPlaybookFailureIssue(playbookFailureReportFor(normalized.report), {
+		pristineSource: normalized.pristineSource,
+	});
+}
+
+/** The issue body with the support-package link placed above its fingerprint comment. */
+function withSupportPackage(issue: PlaybookFailureIssuePreview, markdown: string): string {
+	if (!markdown) return issue.body;
+	const comment = playbookFailureFingerprintComment(issue.fingerprint);
+	const at = issue.body.lastIndexOf(comment);
+	const head = (at >= 0 ? issue.body.slice(0, at) : issue.body).trimEnd();
+	return `${head}\n\n### Support Package\n\n${markdown}\n\n${comment}`;
+}
+
+/** The browser path: a prefilled new-issue page, its overflow kept for the clipboard. */
+function playbookFailureBrowserFallback(issue: PlaybookFailureIssuePreview): PrefilledIssueUrl {
+	const comment = playbookFailureFingerprintComment(issue.fingerprint);
+	const at = issue.body.lastIndexOf(comment);
+	const body = (at >= 0 ? issue.body.slice(0, at) : issue.body).trimEnd();
+	return cappedNewIssueUrl(issue.repo, issue.title, body, { trailer: comment });
+}
+
+/**
+ * File a playbook failure. Routed by kind to the playbooks repo or the app
+ * repo, labelled `playbook-failure`.
+ *
+ * A failure someone already reported is not filed twice: the fingerprint is
+ * searched first, and an open issue that carries it gets a +1 and a
+ * "also hit on <version> with <provider>" comment instead; its URL comes back
+ * with `deduplicated`.
+ *
+ * Without a usable gh (not installed, not signed in) nothing is sent: the
+ * result carries a prefilled new-issue URL, capped so a browser takes it, and
+ * the overflow for the clipboard.
+ */
+export async function submitPlaybookFailure(
+	payload: PlaybookFailureSubmitPayload,
+	debugPackageDeps?: DebugPackageDependencies
+): Promise<PlaybookFailureSubmitResponse> {
+	const normalized = normalizePlaybookFailureInput(payload);
+	if ('error' in normalized) return { success: false, error: normalized.error };
+	const report = playbookFailureReportFor(normalized.report);
+	const issue = buildPlaybookFailureIssue(report, { pristineSource: normalized.pristineSource });
+	const { repo, fingerprint } = issue;
+
+	const auth = await checkFeedbackGhAuth();
+	const ghUnusable =
+		auth.reason === 'not-installed' ||
+		auth.reason === 'not-authenticated' ||
+		// The up-front probe asks about the app repo only; a refusal there says
+		// nothing about the playbooks repo.
+		(auth.reason === 'no-repo-access' && repo === FEEDBACK_REPO);
+	if (!auth.authenticated && ghUnusable) {
+		return {
+			success: false,
+			repo,
+			error: auth.message,
+			browserFallback: playbookFailureBrowserFallback(issue),
+		};
+	}
+
+	if (inFlightPlaybookFailures.has(fingerprint)) {
+		return { success: false, repo, error: 'This failure is already being reported.' };
+	}
+	inFlightPlaybookFailures.add(fingerprint);
+	try {
+		const existing =
+			filedPlaybookFailureIssues.get(fingerprint) ??
+			(await searchFeedbackIssues({ query: fingerprint, repo })).issues.find(
+				(match) => match.state.toLowerCase() === 'open'
+			);
+		if (existing) {
+			const subscribed = await subscribeFeedbackIssue({
+				issueNumber: existing.number,
+				comment: buildPlaybookFailureRecurrenceComment(report, fingerprint),
+				repo,
+			});
+			if (!subscribed.success) return { ...subscribed, repo };
+			return { success: true, repo, issueUrl: existing.url, deduplicated: true };
+		}
+
+		const warnings: string[] = [];
+		const supportPackage =
+			payload.includeDebugPackage === true && debugPackageDeps
+				? await buildAndUploadDebugPackage(debugPackageDeps, warnings)
+				: '';
+
+		let labelled = true;
+		try {
+			await ensureFeedbackLabel({
+				repo,
+				name: PLAYBOOK_FAILURE_LABEL,
+				color: PLAYBOOK_FAILURE_LABEL_COLOR,
+				description: PLAYBOOK_FAILURE_LABEL_DESCRIPTION,
+			});
+		} catch (error) {
+			// A missing label must not lose the report: file it unlabelled.
+			labelled = false;
+			logger.warn(`Could not ensure the ${PLAYBOOK_FAILURE_LABEL} label: ${error}`, LOG_CONTEXT);
+		}
+
+		const bodyFile = feedbackTempPath('maestro-playbook-failure', '.md');
+		await fs.writeFile(bodyFile, withSupportPackage(issue, supportPackage), 'utf-8');
+		try {
+			const issueCreate = await execFileNoThrow(
+				await resolveConfiguredGhCommand(),
+				[
+					'issue',
+					'create',
+					'-R',
+					repo,
+					'--title',
+					issue.title,
+					'--body-file',
+					bodyFile,
+					...(labelled ? ['--label', PLAYBOOK_FAILURE_LABEL] : []),
+				],
+				undefined,
+				getExpandedEnv()
+			);
+			if (issueCreate.exitCode !== 0) {
+				return {
+					...ghFailureResult(issueCreate.stderr, 'Failed to create GitHub issue.'),
+					repo,
+					...(warnings.length > 0 ? { warnings } : {}),
+				};
+			}
+			const issueUrl = issueCreate.stdout.trim();
+			const number = Number(issueUrl.match(/\/issues\/(\d+)/)?.[1]);
+			if (Number.isFinite(number))
+				filedPlaybookFailureIssues.set(fingerprint, { number, url: issueUrl });
+			// The Feedback history reads issue states from the app repo only, so an
+			// issue on the playbooks repo is not recorded there.
+			if (issueUrl && repo === FEEDBACK_REPO) {
+				await recordSubmittedIssue({ issueUrl, title: issue.title, category: 'bug_report' });
+			}
+			return {
+				success: true,
+				repo,
+				issueUrl: issueUrl || undefined,
+				...(warnings.length > 0 ? { warnings } : {}),
+			};
+		} finally {
+			await fs.unlink(bodyFile).catch(() => {});
+		}
+	} finally {
+		inFlightPlaybookFailures.delete(fingerprint);
+	}
 }

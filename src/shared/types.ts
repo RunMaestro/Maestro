@@ -8,6 +8,8 @@ import type { LiftedToPointer } from './maestro-lib/agents/lift-pointer';
 import type { CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { NativeSessionBinding } from './maestro-lib/agents/providerSwap';
+import type { PlaybookParamOverlay, PlaybookParamValues } from './playbookParams';
+import type { AutoRunLaunchSource } from './stats-types';
 
 /**
  * Union type of all valid agent IDs.
@@ -663,6 +665,12 @@ export interface HistoryEntry {
 	 * run" is a worse row than the run itself.
 	 */
 	cueGroup?: CueHistoryGroupSummary;
+	/**
+	 * The playbook run report, on the final summary entry of a saved playbook's
+	 * Auto Run. `fullResponse` already leads with its rendered markdown; this is
+	 * the data, for surfaces that draw the report's sections themselves.
+	 */
+	playbookReport?: import('./playbookRunReport').PlaybookRunReport;
 }
 
 /**
@@ -718,6 +726,54 @@ export function isTaskSelectionMode(value: unknown): value is TaskSelectionMode 
 	return value === 'task' || value === 'document';
 }
 
+/**
+ * How a playbook collects its parameters before a run: a plain `form`, or a
+ * `guided` interview that fills the same form. Absent means `form`.
+ */
+export type PlaybookInteraction = 'form' | 'guided';
+
+export function isPlaybookInteraction(value: unknown): value is PlaybookInteraction {
+	return value === 'form' || value === 'guided';
+}
+
+/**
+ * What a playbook changes: the user's `machine` (an installer) or one `repo`.
+ * A hint for a notice on the confirm sheet only; it never picks the agent.
+ */
+export type PlaybookScope = 'machine' | 'repo';
+
+export function isPlaybookScope(value: unknown): value is PlaybookScope {
+	return value === 'machine' || value === 'repo';
+}
+
+/** Which manifest a marketplace entry came from: the official repository or the local manifest. */
+export type PlaybookSourceChannel = 'official' | 'local';
+
+export function isPlaybookSourceChannel(value: unknown): value is PlaybookSourceChannel {
+	return value === 'official' || value === 'local';
+}
+
+/**
+ * Where an imported playbook came from. Without it a saved playbook has no
+ * link back to its marketplace entry, so update detection, failure reports,
+ * and telemetry cannot name it. `documentHashes` hashes each document as it
+ * was fetched (sha256 hex, keyed by document filename without `.md`), before
+ * any run mutates it.
+ */
+export interface PlaybookSourceProvenance {
+	kind: 'marketplace' | 'zip' | 'local';
+	/** The manifest entry `id`. The one field everything downstream keys on. */
+	marketplaceId?: string;
+	/** The manifest entry `lastUpdated` at import time. */
+	sourceVersion?: string;
+	sourceChannel?: PlaybookSourceChannel;
+	/** A local manifest folder or the imported ZIP file. */
+	sourcePath?: string;
+	targetFolderName: string;
+	importedAt: number;
+	documentHashes: Record<string, string>;
+}
+
 // A saved Playbook configuration
 export interface Playbook {
 	id: string;
@@ -734,6 +790,46 @@ export interface Playbook {
 		createPROnCompletion: boolean;
 		prTargetBranch?: string;
 	};
+	/** The user's answers to the playbook's parameter form, by parameter name. */
+	parameterValues?: PlaybookParamValues;
+	/** The manifest's typed parameter declarations, merged over the prompt's prose form. */
+	parameterOverlay?: PlaybookParamOverlay[];
+	interaction?: PlaybookInteraction;
+	scope?: PlaybookScope;
+	/** A document filename (without `.md`) run once at the end as the report author. */
+	report?: string;
+	provenance?: PlaybookSourceProvenance;
+}
+
+/** The fields a `playbooks:update` call may change. */
+export type PlaybookUpdate = Partial<Omit<Playbook, 'id' | 'createdAt'>>;
+
+/**
+ * Where an import keeps a pristine copy of each document, relative to the
+ * playbook's Auto Run folder: `<folder>/.maestro-playbook/source/<doc>.md`.
+ * It is the text that shipped, so a later run can diff the user's copy
+ * against it. Auto Run skips dot folders, so these copies never list as
+ * documents.
+ */
+export const PLAYBOOK_PRISTINE_SOURCE_DIR = '.maestro-playbook/source';
+
+/**
+ * Read `interaction`, `scope`, and `report` out of untrusted JSON (a
+ * marketplace manifest entry or a ZIP `manifest.json`). A value with the
+ * wrong shape is dropped. `report` is a document name, so a trailing `.md`
+ * is stripped the same way a manifest document filename is.
+ */
+export function readPlaybookExchangeHints(
+	raw: Record<string, unknown>
+): Pick<Playbook, 'interaction' | 'scope' | 'report'> {
+	const hints: Pick<Playbook, 'interaction' | 'scope' | 'report'> = {};
+	if (isPlaybookInteraction(raw.interaction)) hints.interaction = raw.interaction;
+	if (isPlaybookScope(raw.scope)) hints.scope = raw.scope;
+	if (typeof raw.report === 'string') {
+		const report = raw.report.trim().replace(/\.md$/i, '');
+		if (report !== '') hints.report = report;
+	}
+	return hints;
 }
 
 /**
@@ -853,6 +949,54 @@ export interface BatchRunConfig {
 	maxAutoResumes?: number;
 	/** Presence selects goal-driven rather than document/task-driven mode. */
 	goalConfig?: import('./goalDriven/types').GoalRunConfig;
+	/**
+	 * The saved playbook this run was launched from. Its parameter overlay and
+	 * answers resolve the `[NAME]` tokens in the prompt and documents. Absent
+	 * for an ad-hoc run, which has no parameters.
+	 */
+	playbook?: BatchRunPlaybook;
+	/** Where the run was launched from, for the stats row. Absent when the launcher did not say. */
+	launchSource?: AutoRunLaunchSource;
+}
+
+/**
+ * Which saved playbook a run came from, and the agent whose playbook store
+ * holds the record (the launching agent, not a worktree the run executes in).
+ */
+export interface BatchRunPlaybookRef {
+	id: string;
+	ownerSessionId: string;
+}
+
+/**
+ * The parts of a saved playbook an Auto Run needs to resolve its parameters
+ * and to name the playbook in its stats row.
+ */
+export interface BatchRunPlaybook {
+	id: string;
+	/** The playbook's name, the title of its run report. */
+	name?: string;
+	/**
+	 * The `report` document as a run-list filename (Auto Run folder relative,
+	 * without `.md`). It is left out of the task loop and run once at the end
+	 * to author the run report.
+	 */
+	reportDocument?: string;
+	/** `provenance.marketplaceId`: the Playbook Exchange entry it was imported from. */
+	marketplaceId?: string;
+	/** `provenance.sourceVersion`: the entry version it was imported at. */
+	sourceVersion?: string;
+	/** `provenance.sourceChannel`: telemetry is sent only for `official`. */
+	sourceChannel?: PlaybookSourceChannel;
+	/** How the playbook collects its parameters (absent means `form`). */
+	interaction?: PlaybookInteraction;
+	/**
+	 * The agent whose playbook store holds this record. A worktree run executes
+	 * in another agent, so a Resume re-reads the answers from here.
+	 */
+	ownerSessionId?: string;
+	parameterOverlay?: PlaybookParamOverlay[];
+	parameterValues?: PlaybookParamValues;
 }
 
 // ============================================================================
@@ -968,6 +1112,8 @@ export type AgentErrorType =
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
 	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker
+	| 'parameter_substitution' // A playbook [NAME] token had no value, so the task was not sent
+	| 'missing_parameters' // A required playbook parameter has no answer, so the run has not started
 	| 'unknown'; // Unrecognized error
 
 /**
@@ -1105,6 +1251,7 @@ export type {
 	GetDocumentResponse,
 	GetReadmeResponse,
 	ImportPlaybookResponse,
+	MarketplaceImportPlaybookResult,
 	MarketplaceErrorResponse,
 } from './marketplace-types';
 

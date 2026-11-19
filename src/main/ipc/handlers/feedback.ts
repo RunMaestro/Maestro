@@ -20,11 +20,13 @@ import {
 	getFeedbackGhLoginCommand,
 	listFeedbackDrafts,
 	listSubmittedIssues,
+	previewPlaybookFailureIssue,
 	refreshSubmittedIssueStates,
 	saveFeedbackDraft,
 	searchFeedbackIssues,
 	submitFeedback,
 	submitFeedbackConversation,
+	submitPlaybookFailure,
 	subscribeFeedbackIssue,
 } from '../../feedback';
 import { listFeedbackAccounts, rememberFeedbackAccount } from '../../feedback/accounts';
@@ -80,6 +82,27 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 		'feedback:search-issues',
 		withIpcErrorLogging(handlerOpts('search-issues'), (payload: { query: string }) =>
 			searchFeedbackIssues(payload)
+		)
+	);
+
+	// "Report a problem" on a finished playbook run: preview is the consent
+	// surface (the exact body), submit files it or adds to the open issue that
+	// already carries its fingerprint.
+	ipcMain.handle(
+		'feedback:preview-playbook-failure',
+		withIpcErrorLogging(
+			handlerOpts('preview-playbook-failure'),
+			(payload: Parameters<typeof previewPlaybookFailureIssue>[0]) =>
+				previewPlaybookFailureIssue(payload)
+		)
+	);
+
+	ipcMain.handle(
+		'feedback:submit-playbook-failure',
+		withIpcErrorLogging(
+			handlerOpts('submit-playbook-failure'),
+			(payload: Parameters<typeof submitPlaybookFailure>[0]) =>
+				submitPlaybookFailure(payload, deps.debugPackageDeps)
 		)
 	);
 

@@ -150,6 +150,18 @@ export interface PromptLinksModalData {
 }
 
 /**
+ * Playbook Configure modal data. Absent fields fall back to the active agent
+ * and to a picker of its playbooks, which is how the hotkey, the palette, and
+ * the menu open it. The Auto Run panel and the paused-run banner name the
+ * playbook so the form opens on it directly.
+ */
+export interface PlaybookConfigureModalData {
+	/** The agent whose playbook store holds the record. */
+	sessionId?: string;
+	playbookId?: string;
+}
+
+/**
  * Model & effort modal data. Only the tab id travels: the modal resolves the
  * agent, the option lists, and the tab > session > agent-default ladder from
  * the stores itself, so an opener can't hand it a stale snapshot.
@@ -432,6 +444,8 @@ export type ModalId =
 	| 'batchRunner'
 	| 'autoRunSetup'
 	| 'marketplace'
+	| 'playbookConfigure'
+	| 'playbookReport'
 	// Worktree
 	| 'worktreeConfig'
 	| 'createWorktree'
@@ -607,6 +621,7 @@ export interface ModalDataMap {
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
 	promptLinks: PromptLinksModalData;
+	playbookConfigure: PlaybookConfigureModalData;
 	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;

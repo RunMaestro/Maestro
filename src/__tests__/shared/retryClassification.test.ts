@@ -176,6 +176,8 @@ describe('classifyRetryableError', () => {
 			'permission_denied',
 			'session_not_found',
 			'hitl_gate',
+			'parameter_substitution',
+			'missing_parameters',
 			'token_exhaustion', // context-window-full: resending can't help
 			'agent_crashed',
 		];

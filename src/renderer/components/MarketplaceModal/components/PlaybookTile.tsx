@@ -7,6 +7,7 @@ import {
 	INCOMPAT_BADGE_BG,
 	LOCAL_BADGE_BG,
 	LOCAL_BADGE_FG,
+	getPlaybookHealthBadges,
 } from '../helpers';
 
 export function PlaybookTile({
@@ -14,6 +15,8 @@ export function PlaybookTile({
 	theme,
 	isSelected,
 	runningVersion,
+	health,
+	isMostPopular = false,
 	onSelect,
 }: PlaybookTileProps) {
 	const tileRef = useRef<HTMLButtonElement>(null);
@@ -26,6 +29,7 @@ export function PlaybookTile({
 
 	const compatible = isCompatible(playbook, runningVersion);
 	const beta = isBeta(playbook);
+	const healthBadges = getPlaybookHealthBadges(health, isMostPopular);
 	const bodyOpacity = compatible ? 1 : 0.4;
 	const iconFilter = compatible ? undefined : 'grayscale(100%)';
 
@@ -45,8 +49,19 @@ export function PlaybookTile({
 				}),
 			}}
 		>
-			{(beta || !compatible) && (
+			{(beta || !compatible || healthBadges.length > 0) && (
 				<div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+					{healthBadges.map((badge) => (
+						<span
+							key={badge.kind}
+							className="px-2 py-0.5 rounded text-xs-plus font-semibold"
+							style={{ backgroundColor: badge.background, color: BADGE_FG }}
+							title={badge.title}
+							data-testid={`playbook-tile-${badge.kind}-badge`}
+						>
+							{badge.label}
+						</span>
+					))}
 					{beta && (
 						<span
 							className="px-2 py-0.5 rounded text-xs-plus font-semibold uppercase tracking-wide"

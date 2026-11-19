@@ -82,6 +82,12 @@ export interface ParsedResponse {
 	parseSuccess: boolean;
 	/** Error message if parsing failed */
 	parseError?: string;
+	/**
+	 * The whole JSON object the structured fields came from, when parsing
+	 * succeeded. A caller whose prompt asks for extra fields (the playbook
+	 * concierge's `parameters`) reads them here.
+	 */
+	raw?: Record<string, unknown>;
 }
 
 /**
@@ -242,11 +248,7 @@ export function parseStructuredOutput(response: string): ParsedResponse {
 	try {
 		const parsed = JSON.parse(rawText);
 		if (isValidStructuredResponse(parsed)) {
-			return {
-				structured: normalizeResponse(parsed),
-				rawText,
-				parseSuccess: true,
-			};
+			return acceptStructured(parsed, rawText);
 		}
 	} catch {
 		// Continue to next strategy
@@ -258,11 +260,7 @@ export function parseStructuredOutput(response: string): ParsedResponse {
 		try {
 			const parsed = JSON.parse(codeBlockMatch[1].trim());
 			if (isValidStructuredResponse(parsed)) {
-				return {
-					structured: normalizeResponse(parsed),
-					rawText,
-					parseSuccess: true,
-				};
+				return acceptStructured(parsed, rawText);
 			}
 		} catch {
 			// Continue to next strategy
@@ -275,11 +273,7 @@ export function parseStructuredOutput(response: string): ParsedResponse {
 		try {
 			const parsed = JSON.parse(jsonMatch[0]);
 			if (isValidStructuredResponse(parsed)) {
-				return {
-					structured: normalizeResponse(parsed),
-					rawText,
-					parseSuccess: true,
-				};
+				return acceptStructured(parsed, rawText);
 			}
 		} catch {
 			// Continue to next strategy
@@ -292,11 +286,7 @@ export function parseStructuredOutput(response: string): ParsedResponse {
 		try {
 			const parsed = JSON.parse(anyJsonMatch[0]);
 			if (isValidStructuredResponse(parsed)) {
-				return {
-					structured: normalizeResponse(parsed),
-					rawText,
-					parseSuccess: true,
-				};
+				return acceptStructured(parsed, rawText);
 			}
 		} catch {
 			// Continue to fallback
@@ -305,6 +295,16 @@ export function parseStructuredOutput(response: string): ParsedResponse {
 
 	// Fallback: Create a response from the raw text
 	return createFallbackResponse(rawText);
+}
+
+/** A parse that found a valid structured object: normalized fields plus the raw object. */
+function acceptStructured(parsed: StructuredAgentResponse, rawText: string): ParsedResponse {
+	return {
+		structured: normalizeResponse(parsed),
+		rawText,
+		parseSuccess: true,
+		raw: parsed as unknown as Record<string, unknown>,
+	};
 }
 
 /**

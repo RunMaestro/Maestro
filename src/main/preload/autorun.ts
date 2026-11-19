@@ -8,8 +8,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { PlaybookStatus } from '../../shared/types';
+import type { PlaybookStatus, PlaybookUpdate, Playbook as SavedPlaybook } from '../../shared/types';
 import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../shared/playbooksChanged';
+import type { DiskEvidence } from '../../shared/playbookRunReport';
+import type { RunEvidenceSnapshot } from '../../shared/runEvidence';
 
 /**
  * Playbook document configuration
@@ -39,6 +42,12 @@ export interface Playbook {
 	prompt: string;
 	taskSelectionMode?: 'task' | 'document';
 	worktreeSettings?: WorktreeSettings;
+	parameterValues?: SavedPlaybook['parameterValues'];
+	parameterOverlay?: SavedPlaybook['parameterOverlay'];
+	interaction?: SavedPlaybook['interaction'];
+	scope?: SavedPlaybook['scope'];
+	report?: SavedPlaybook['report'];
+	provenance?: SavedPlaybook['provenance'];
 }
 
 /**
@@ -171,6 +180,26 @@ export function createAutorunApi() {
 			ipcRenderer.on(AUTORUN_DELEGATION_CHANNEL, wrappedHandler);
 			return () => ipcRenderer.removeListener(AUTORUN_DELEGATION_CHANNEL, wrappedHandler);
 		},
+
+		/**
+		 * Snapshot an agent's folder at run start for the run report's disk
+		 * evidence (git, or an mtime scan outside a repository).
+		 */
+		evidenceStart: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; snapshot?: RunEvidenceSnapshot | null; error?: string }> =>
+			ipcRenderer.invoke('autorun:evidenceStart', cwd, sshRemoteId, remoteCwd),
+
+		/** Diff the folder at run end against the snapshot `evidenceStart` returned. */
+		evidenceEnd: (
+			cwd: string,
+			snapshot: RunEvidenceSnapshot,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; evidence?: DiskEvidence | null; error?: string }> =>
+			ipcRenderer.invoke('autorun:evidenceEnd', cwd, snapshot, sshRemoteId, remoteCwd),
 	};
 }
 
@@ -184,11 +213,8 @@ export function createPlaybooksApi() {
 		create: (sessionId: string, playbook: Playbook) =>
 			ipcRenderer.invoke('playbooks:create', sessionId, playbook),
 
-		update: (
-			sessionId: string,
-			playbookId: string,
-			updates: Partial<Playbook & { updatedAt: number }>
-		) => ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
+		update: (sessionId: string, playbookId: string, updates: PlaybookUpdate) =>
+			ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
 
 		delete: (sessionId: string, playbookId: string) =>
 			ipcRenderer.invoke('playbooks:delete', sessionId, playbookId),
@@ -200,6 +226,17 @@ export function createPlaybooksApi() {
 
 		import: (sessionId: string, autoRunFolderPath: string) =>
 			ipcRenderer.invoke('playbooks:import', sessionId, autoRunFolderPath),
+
+		/** The local facts pack for an agent (git, gh, python3, Encore, Cue). Never fails on a missing tool. */
+		gatherFacts: (sessionId: string) => ipcRenderer.invoke('playbooks:gatherFacts', sessionId),
+
+		/** Fires with the agent id after any write to that agent's playbook records. */
+		onChanged: (handler: (sessionId: string) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, sessionId: string) =>
+				handler(sessionId);
+			ipcRenderer.on(PLAYBOOKS_CHANGED_CHANNEL, wrappedHandler);
+			return () => ipcRenderer.removeListener(PLAYBOOKS_CHANGED_CHANNEL, wrappedHandler);
+		},
 	};
 }
 
@@ -211,6 +248,9 @@ export function createMarketplaceApi() {
 		getManifest: () => ipcRenderer.invoke('marketplace:getManifest'),
 
 		refreshManifest: () => ipcRenderer.invoke('marketplace:refreshManifest'),
+
+		getHealth: (forceRefresh?: boolean) =>
+			ipcRenderer.invoke('marketplace:getHealth', forceRefresh),
 
 		getDocument: (playbookPath: string, filename: string) =>
 			ipcRenderer.invoke('marketplace:getDocument', playbookPath, filename),
@@ -232,6 +272,31 @@ export function createMarketplaceApi() {
 				sessionId,
 				sshRemoteId
 			),
+
+		/**
+		 * Update the record this agent already holds for an Exchange entry:
+		 * re-fetch its documents into the record's own folder, refresh the
+		 * pristine copies, and keep the parameter answers.
+		 */
+		updatePlaybook: (
+			playbookId: string,
+			autoRunFolderPath: string,
+			sessionId: string,
+			sshRemoteId?: string
+		) =>
+			ipcRenderer.invoke(
+				'marketplace:importPlaybook',
+				playbookId,
+				'',
+				autoRunFolderPath,
+				sessionId,
+				sshRemoteId,
+				{ update: true }
+			),
+
+		/** Classify every playbook the agent installed from the Exchange. */
+		checkUpdates: (sessionId: string, autoRunFolderPath: string, sshRemoteId?: string) =>
+			ipcRenderer.invoke('marketplace:checkUpdates', sessionId, autoRunFolderPath, sshRemoteId),
 
 		onManifestChanged: (handler: () => void) => {
 			const wrappedHandler = () => handler();

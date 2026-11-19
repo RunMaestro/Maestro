@@ -31,6 +31,8 @@ import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
 import type { AutoRunKind } from '../../../shared/stats-types';
+import type { PlaybookRunReport } from '../../../shared/playbookRunReport';
+import type { PlaybookTelemetryRunCompletedEvent } from '../../../shared/playbookTelemetry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
@@ -52,6 +54,18 @@ export interface BatchCompleteInfo {
 	documentsProcessed: number;
 	/** Which engine ran it. Undefined is treated as spec-driven downstream. */
 	kind?: AutoRunKind;
+	/**
+	 * The playbook run report (facts, disk evidence, narrative, configuration), already saved
+	 * under `<autoRunFolder>/.maestro-reports/`. Present only for a run of a saved playbook that
+	 * reached its own summary: an ad-hoc run has none, and neither does a run a hard stop ended.
+	 */
+	report?: PlaybookRunReport;
+	/**
+	 * The `run_completed` telemetry event this run produced, built whether or not
+	 * telemetry is on: the completion modal shows it as the literal payload of
+	 * the one-time consent step. Present only for an official Exchange playbook.
+	 */
+	playbookTelemetryEvent?: PlaybookTelemetryRunCompletedEvent;
 }
 
 export interface PRResultInfo {

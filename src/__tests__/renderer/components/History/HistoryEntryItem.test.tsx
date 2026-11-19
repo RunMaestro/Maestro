@@ -5,8 +5,37 @@ import { HistoryEntryItem } from '../../../../renderer/components/History';
 import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
 
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import {
+	buildFinalSummaryFacts,
+	type PlaybookRunReport,
+} from '../../../../shared/playbookRunReport';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+
+const openReport = vi.hoisted(() => vi.fn());
+vi.mock('../../../../renderer/services/playbookCompletion', () => ({
+	openPlaybookReportFromHistory: openReport,
+}));
+
+const playbookReport: PlaybookRunReport = {
+	playbookName: 'Release Pipeline',
+	status: 'completed',
+	facts: buildFinalSummaryFacts({
+		wasStopped: false,
+		totalCompletedTasks: 1,
+		totalElapsedMs: 1000,
+		stalledDocuments: new Map(),
+		documents: [{ filename: 'a.md' }],
+		loopEnabled: false,
+		loopIteration: 0,
+		totalInputTokens: 0,
+		totalOutputTokens: 0,
+		totalCost: 0,
+	}),
+	parameters: [],
+	startedAt: 0,
+	finishedAt: 1000,
+};
 // Create mock theme
 
 // Create mock history entry factory
@@ -932,5 +961,51 @@ describe('HistoryEntryItem', () => {
 		// Should show time format (no date portion since it's today)
 		const timestampEl = screen.getByText(/^\d{1,2}:\d{2}\s*(AM|PM)$/i);
 		expect(timestampEl).toBeInTheDocument();
+	});
+
+	describe('Open report', () => {
+		beforeEach(() => openReport.mockReset());
+
+		it('opens the report an AUTO entry carries, without opening the detail view', () => {
+			const onOpenDetailModal = vi.fn();
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ sessionId: 'agent-1', playbookReport })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={onOpenDetailModal}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('history-open-report'));
+			expect(openReport).toHaveBeenCalledWith('agent-1', playbookReport);
+			expect(onOpenDetailModal).not.toHaveBeenCalled();
+		});
+
+		it('is absent on an AUTO entry without a report', () => {
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ elapsedTimeMs: 1000 })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+			expect(screen.queryByTestId('history-open-report')).toBeNull();
+		});
+
+		it('is absent on a non-AUTO entry even if it carries a report', () => {
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ type: 'USER', playbookReport })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+			expect(screen.queryByTestId('history-open-report')).toBeNull();
+		});
 	});
 });

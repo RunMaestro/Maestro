@@ -135,6 +135,21 @@ describe('wizardPrompts', () => {
 				expect(result.rawText).toBe(input);
 			});
 
+			it('keeps the whole parsed object as raw, extra fields included', () => {
+				const input =
+					'{"confidence": 90, "ready": true, "message": "Done", "parameters": [{"name": "PR_URL"}]}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.raw?.parameters).toEqual([{ name: 'PR_URL' }]);
+			});
+
+			it('leaves raw unset when nothing parsed', () => {
+				const result = parseStructuredOutput('plain words, no JSON');
+
+				expect(result.raw).toBeUndefined();
+			});
+
 			it('should parse JSON with extra whitespace', () => {
 				const input = '  {"confidence": 50, "ready": false, "message": "Test"}  ';
 				const result = parseStructuredOutput(input);

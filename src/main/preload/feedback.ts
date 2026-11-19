@@ -17,6 +17,10 @@ import type {
 	FeedbackIssueSearchResponse,
 	FeedbackSubmissionPayload,
 	FeedbackSubmitResponse,
+	PlaybookFailureIssuePreview,
+	PlaybookFailurePreviewPayload,
+	PlaybookFailureSubmitPayload,
+	PlaybookFailureSubmitResponse,
 	SubmittedIssue,
 } from '../../shared/feedback';
 import type { FeedbackAccountsResponse } from '../../shared/feedbackAccounts';
@@ -33,6 +37,10 @@ export type {
 	FeedbackDraftStructured,
 	FeedbackSubmissionPayload,
 	FeedbackSubmitResponse,
+	PlaybookFailureIssuePreview,
+	PlaybookFailurePreviewPayload,
+	PlaybookFailureSubmitPayload,
+	PlaybookFailureSubmitResponse,
 	SubmittedIssue,
 } from '../../shared/feedback';
 
@@ -75,6 +83,18 @@ export interface FeedbackApi {
 	 * Subscribe to an existing issue (+1 reaction) and optionally comment
 	 */
 	subscribeIssue: (issueNumber: number, comment?: string) => Promise<FeedbackSubmitResponse>;
+	/**
+	 * The issue a failed playbook run would file, exactly as it would be sent
+	 */
+	previewPlaybookFailure: (
+		payload: PlaybookFailurePreviewPayload
+	) => Promise<PlaybookFailureIssuePreview>;
+	/**
+	 * File a failed playbook run (or +1 the open issue that already tracks it)
+	 */
+	submitPlaybookFailure: (
+		payload: PlaybookFailureSubmitPayload
+	) => Promise<PlaybookFailureSubmitResponse>;
 	/**
 	 * Persisted, resumable feedback drafts (list / upsert / delete)
 	 */
@@ -134,6 +154,16 @@ export function createFeedbackApi(): FeedbackApi {
 
 		subscribeIssue: (issueNumber: number, comment?: string): Promise<FeedbackSubmitResponse> =>
 			ipcRenderer.invoke('feedback:subscribe-issue', { issueNumber, comment }),
+
+		previewPlaybookFailure: (
+			payload: PlaybookFailurePreviewPayload
+		): Promise<PlaybookFailureIssuePreview> =>
+			ipcRenderer.invoke('feedback:preview-playbook-failure', payload),
+
+		submitPlaybookFailure: (
+			payload: PlaybookFailureSubmitPayload
+		): Promise<PlaybookFailureSubmitResponse> =>
+			ipcRenderer.invoke('feedback:submit-playbook-failure', payload),
 
 		drafts: {
 			list: (): Promise<{ drafts: FeedbackDraft[] }> => ipcRenderer.invoke('feedback:drafts:list'),

@@ -2,6 +2,12 @@
 // Provides beautiful, colored terminal output
 
 import { formatDurationDecimal } from '../../shared/formatters';
+import {
+	playbookRunReportStatusLabel,
+	renderPlaybookReportMarkdown,
+	type DiskEvidence,
+	type PlaybookRunReport,
+} from '../../shared/playbookRunReport';
 
 // ANSI color codes
 const colors = {
@@ -436,6 +442,33 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 		case 'loop_complete': {
 			const loopNum = event.iteration as number;
 			return `${timeStr} ${c('magenta', '↻')} Loop ${loopNum} complete`;
+		}
+
+		case 'evidence': {
+			const evidence = event.evidence as DiskEvidence;
+			const counts = [
+				`${evidence.createdFiles.length} created`,
+				`${evidence.changedFiles.length} changed`,
+				`${evidence.deletedFiles.length} deleted`,
+			].join(', ');
+			const source = evidence.source === 'git' ? 'git' : 'file times';
+			return `${timeStr} ${c('cyan', '🗂')} Files: ${counts} ${dim(`(${source})`)}`;
+		}
+
+		case 'report': {
+			// The whole report, as the desktop's Copy produces it, then where it was saved.
+			const report = event.report as PlaybookRunReport;
+			const path = event.path as string | undefined;
+			const status = playbookRunReportStatusLabel(report.status);
+			return [
+				`${timeStr} ${c('cyan', '📋')} ${bold('Run report')} ${dim(`(${status})`)}`,
+				'',
+				renderPlaybookReportMarkdown(report).trimEnd(),
+				'',
+				path
+					? `${timeStr} ${dim(`Report saved: ${path}`)}`
+					: `${timeStr} ${dim('Report not saved')}`,
+			].join('\n');
 		}
 
 		case 'complete': {

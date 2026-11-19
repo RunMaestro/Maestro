@@ -24,6 +24,14 @@ import {
 } from '../../utils/remote-fs';
 import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR, STATUS_PATH } from '../../../shared/maestro-paths';
 import { WatcherLeases } from '../../utils/watcher-leases';
+import { execGitReadOnly } from '../../utils/remote-git';
+import {
+	RUN_EVIDENCE_GIT_TIMEOUT_MS,
+	finishRunEvidence,
+	startRunEvidence,
+	type RunEvidenceHost,
+} from '../../services/run-evidence';
+import { isRunEvidenceSnapshot } from '../../../shared/runEvidence';
 
 const LOG_CONTEXT = '[AutoRun]';
 
@@ -1640,6 +1648,59 @@ export function registerAutorunHandlers(
 			async (event: unknown, projectPath: string, subscriberId: string) => {
 				await statusLeases.release(projectPath, event, subscriberId);
 				return {};
+			}
+		)
+	);
+
+	// Disk evidence for a playbook run report: snapshot the agent's folder at
+	// run start, diff it at run end (src/main/services/run-evidence.ts). git
+	// runs on the SSH remote for a remote agent; an unknown remote fails rather
+	// than reading this machine's folder of the same name.
+	const evidenceHost = (cwd: string, sshRemoteId?: string, remoteCwd?: string): RunEvidenceHost => {
+		const sshRemote = sshRemoteId ? getSshRemoteById(settingsStore, sshRemoteId) : undefined;
+		if (sshRemoteId && !sshRemote) {
+			throw new Error(`SSH remote not found: ${sshRemoteId}`);
+		}
+		const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+		return {
+			cwd: effectiveRemoteCwd ?? cwd,
+			local: !sshRemote,
+			git: (args) =>
+				execGitReadOnly(args, cwd, sshRemote, effectiveRemoteCwd, RUN_EVIDENCE_GIT_TIMEOUT_MS),
+		};
+	};
+
+	ipcMain.handle(
+		'autorun:evidenceStart',
+		createIpcHandler(
+			handlerOpts('evidenceStart', false),
+			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
+				try {
+					return { snapshot: await startRunEvidence(evidenceHost(cwd, sshRemoteId, remoteCwd)) };
+				} catch (error) {
+					void captureException(error, { operation: 'autorun:evidenceStart' });
+					throw error;
+				}
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'autorun:evidenceEnd',
+		createIpcHandler(
+			handlerOpts('evidenceEnd', false),
+			async (cwd: string, snapshot: unknown, sshRemoteId?: string, remoteCwd?: string) => {
+				if (!isRunEvidenceSnapshot(snapshot)) {
+					throw new Error('Invalid run evidence snapshot');
+				}
+				try {
+					return {
+						evidence: await finishRunEvidence(evidenceHost(cwd, sshRemoteId, remoteCwd), snapshot),
+					};
+				} catch (error) {
+					void captureException(error, { operation: 'autorun:evidenceEnd' });
+					throw error;
+				}
 			}
 		)
 	);

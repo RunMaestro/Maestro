@@ -13,6 +13,9 @@ import {
 	describeUnresolvedHaltMarker,
 	findHaltMarker,
 	hasMaestroMarker,
+	buildMissingParamsHaltMarker,
+	stripMissingParamsHaltMarkers,
+	withMissingParamsHaltMarker,
 } from '../../shared/autorunMarkers';
 
 describe('scanMaestroMarkers - HITL', () => {
@@ -377,5 +380,65 @@ describe('acknowledgeHitlGate', () => {
 				['<!-- MAESTRO:HITL reason="r" -->', '- [x] done', '- [ ] task'].join('\n')
 			)
 		).toBeNull();
+	});
+});
+
+describe('missing-parameters halt marker', () => {
+	const marker = buildMissingParamsHaltMarker(['PR_URL', 'MAX_ITEMS']);
+
+	it('is a live halt the engine refuses on, with the names as its reason', () => {
+		expect(marker).toBe(
+			'<!-- maestro:halt: missing required parameters: PR_URL, MAX_ITEMS (written by Maestro) -->'
+		);
+		expect(detectHaltMarker(`${marker}\n# Doc\n- [ ] task`)).toEqual({
+			halted: true,
+			reason: 'missing required parameters: PR_URL, MAX_ITEMS (written by Maestro)',
+		});
+	});
+
+	it('strips only the marker line Maestro wrote, keeping line endings', () => {
+		const doc = [marker, '# Doc', '- [ ] task'].join('\r\n');
+		expect(stripMissingParamsHaltMarkers(doc)).toBe(['# Doc', '- [ ] task'].join('\r\n'));
+	});
+
+	it("leaves a person's or an agent's halt marker alone", () => {
+		const doc = ['<!-- maestro:halt: build broken -->', '- [ ] task'].join('\n');
+		expect(stripMissingParamsHaltMarkers(doc)).toBeNull();
+		const untagged = '<!-- maestro:halt: missing required parameters: PR_URL -->';
+		expect(stripMissingParamsHaltMarkers(untagged)).toBeNull();
+	});
+
+	it('leaves a quoted example inside a code fence alone', () => {
+		const doc = ['```', marker, '```'].join('\n');
+		expect(stripMissingParamsHaltMarkers(doc)).toBeNull();
+	});
+	it('appends the marker after the body, keeping front matter and line endings', () => {
+		const doc = ['---', 'title: Doc', '---', '# Doc', '- [ ] task', ''].join('\r\n');
+		const next = withMissingParamsHaltMarker(doc, ['PR_URL']);
+		expect(next).toBe(
+			[
+				'---',
+				'title: Doc',
+				'---',
+				'# Doc',
+				'- [ ] task',
+				'',
+				buildMissingParamsHaltMarker(['PR_URL']),
+				'',
+			].join('\r\n')
+		);
+		expect(detectHaltMarker(next).halted).toBe(true);
+	});
+
+	it('replaces an earlier Maestro marker rather than adding a second', () => {
+		const once = withMissingParamsHaltMarker('# Doc\n', ['PR_URL', 'MAX_ITEMS']);
+		const twice = withMissingParamsHaltMarker(once, ['PR_URL']);
+		expect(twice).toBe(`# Doc\n\n${buildMissingParamsHaltMarker(['PR_URL'])}\n`);
+	});
+
+	it('writes just the marker into an empty document', () => {
+		expect(withMissingParamsHaltMarker('', ['PR_URL'])).toBe(
+			`${buildMissingParamsHaltMarker(['PR_URL'])}\n`
+		);
 	});
 });

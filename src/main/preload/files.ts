@@ -10,6 +10,7 @@
 import { ipcRenderer } from 'electron';
 import type { HistoryEntryType } from '../../shared/types';
 import type { GraphBucket } from '../../shared/history';
+import type { PlaybookRunReport } from '../../shared/playbookRunReport';
 
 /**
  * All-time graph data returned by `history:getGraphData` and
@@ -61,6 +62,8 @@ export interface HistoryEntry {
 	tokenSource?: 'interactive' | 'api';
 	/** Claude-only, per-turn: `auto` = user/usage selected, `limit` = forced API fallback. */
 	tokenSourceReason?: 'auto' | 'limit';
+	/** The playbook run report, on a saved playbook's final Auto Run summary entry. */
+	playbookReport?: PlaybookRunReport;
 }
 
 /**

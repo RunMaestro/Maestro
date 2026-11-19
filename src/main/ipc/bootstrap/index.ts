@@ -179,6 +179,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		mainWindow: deps.getMainWindow(),
 		getMainWindow: deps.getMainWindow,
 		app: deps.app,
+		safeSend: deps.safeSend,
+		getCueStatus: () => deps.getCueEngine()?.getStatus(),
 	});
 
 	// History operations - extracted to src/main/ipc/handlers/history.ts
@@ -479,6 +481,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		safeSend: deps.safeSend,
 	});
 
 	// Register Stats handlers for usage tracking

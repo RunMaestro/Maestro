@@ -7,8 +7,96 @@ import archiver from 'archiver';
 import { readZipArchive } from '../../utils/zip-archive';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import {
+	isPlaybookSourceChannel,
+	readPlaybookExchangeHints,
+	type Playbook,
+	type PlaybookSourceProvenance,
+	type PlaybookUpdate,
+} from '../../../shared/types';
+import { readPlaybookParamOverlay, readPlaybookParamValues } from '../../../shared/playbookParams';
+import { hashPlaybookDocument } from '../../utils/playbook-document-hash';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../../shared/playbooksChanged';
+import {
+	createPlaybookFactsDeps,
+	gatherPlaybookFacts,
+	type PlaybookFactsDeps,
+} from '../../services/playbook-facts';
 
 const LOG_CONTEXT = '[Playbooks]';
+
+/**
+ * The ZIP `manifest.json` format. Version 2 adds the Exchange fields
+ * (`parameterValues`, `parameterOverlay`, `interaction`, `scope`, `report`,
+ * and the marketplace link of `provenance`). Version 1 has none of them and
+ * still imports: every one is optional.
+ */
+const PLAYBOOK_ZIP_MANIFEST_VERSION = 2;
+
+type PlaybookExchangeFields = Pick<
+	Playbook,
+	'parameterValues' | 'parameterOverlay' | 'interaction' | 'scope' | 'report'
+>;
+
+/**
+ * Read the Exchange fields out of an untrusted ZIP manifest. A field with the
+ * wrong shape is dropped rather than stored, so a hand-edited ZIP cannot put
+ * a value on the record that the run engines would trip over.
+ */
+function readPlaybookExchangeFields(manifest: Record<string, unknown>): PlaybookExchangeFields {
+	const fields: PlaybookExchangeFields = {};
+	const parameterValues = readPlaybookParamValues(manifest.parameterValues);
+	if (parameterValues) fields.parameterValues = parameterValues;
+	const parameterOverlay = readPlaybookParamOverlay(manifest.parameterOverlay);
+	if (parameterOverlay) fields.parameterOverlay = parameterOverlay;
+	return { ...fields, ...readPlaybookExchangeHints(manifest) };
+}
+
+/**
+ * The part of a record's provenance a ZIP carries: the link back to the
+ * marketplace entry. Local paths, timestamps, and hashes describe the
+ * exporting machine's copy, so they stay behind; import stamps its own.
+ */
+function exportedProvenance(
+	provenance: PlaybookSourceProvenance | undefined
+): Partial<PlaybookSourceProvenance> | undefined {
+	if (!provenance) return undefined;
+	const link: Partial<PlaybookSourceProvenance> = { kind: provenance.kind };
+	if (provenance.marketplaceId) link.marketplaceId = provenance.marketplaceId;
+	if (provenance.sourceVersion) link.sourceVersion = provenance.sourceVersion;
+	if (provenance.sourceChannel) link.sourceChannel = provenance.sourceChannel;
+	return link;
+}
+
+/**
+ * Provenance for a playbook imported from a ZIP. It is always `kind: 'zip'`;
+ * a marketplace link the ZIP carried is kept so the record still names its
+ * Exchange entry.
+ */
+function zipImportProvenance(
+	manifest: Record<string, unknown>,
+	zipPath: string,
+	autoRunFolderPath: string,
+	documentHashes: Record<string, string>,
+	importedAt: number
+): PlaybookSourceProvenance {
+	const provenance: PlaybookSourceProvenance = {
+		kind: 'zip',
+		sourcePath: zipPath,
+		targetFolderName: path.basename(autoRunFolderPath),
+		importedAt,
+		documentHashes,
+	};
+	const carried = manifest.provenance;
+	if (carried && typeof carried === 'object' && !Array.isArray(carried)) {
+		const link = carried as Record<string, unknown>;
+		if (typeof link.marketplaceId === 'string') provenance.marketplaceId = link.marketplaceId;
+		if (typeof link.sourceVersion === 'string') provenance.sourceVersion = link.sourceVersion;
+		if (isPlaybookSourceChannel(link.sourceChannel)) provenance.sourceChannel = link.sourceChannel;
+	}
+	return provenance;
+}
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions => ({
@@ -24,6 +112,16 @@ export interface PlaybooksHandlerDependencies {
 	mainWindow: BrowserWindow | null;
 	getMainWindow: () => BrowserWindow | null;
 	app: App;
+	/**
+	 * Broadcast to every renderer and web client. Carries the
+	 * `playbooks:changed` push; defaults to the main window only.
+	 */
+	safeSend?: SafeSendFn;
+	/**
+	 * The running Cue engine's per-agent status, for the facts pack's
+	 * subscription count. Absent or null when Cue is not running.
+	 */
+	getCueStatus?: PlaybookFactsDeps['getCueStatus'];
 }
 
 /**
@@ -73,9 +171,18 @@ async function writePlaybooks(app: App, sessionId: string, playbooks: any[]): Pr
  * - Delete a playbook
  * - Export a playbook to ZIP file
  * - Import a playbook from ZIP file
+ * - Gather the local facts pack for the configure step
  */
 export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): void {
 	const { getMainWindow, app } = deps;
+	const safeSend = deps.safeSend ?? createSafeSend(getMainWindow);
+	const factsDeps = createPlaybookFactsDeps(deps.getCueStatus);
+
+	/** Write an agent's records, then tell every listing surface to reload. */
+	const savePlaybooks = async (sessionId: string, playbooks: any[]): Promise<void> => {
+		await writePlaybooks(app, sessionId, playbooks);
+		safeSend(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
+	};
 
 	// List all playbooks for a session
 	ipcMain.handle(
@@ -85,6 +192,15 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 			logger.info(`Listed ${playbooks.length} playbooks for session ${sessionId}`, LOG_CONTEXT);
 			return { playbooks };
 		})
+	);
+
+	// The local facts pack for an agent's configure step. Best-effort probes;
+	// the gather never rejects, so a slow or missing tool is an answer.
+	ipcMain.handle(
+		'playbooks:gatherFacts',
+		createIpcHandler(handlerOpts('gatherFacts', false), async (sessionId: string) => ({
+			facts: await gatherPlaybookFacts(sessionId, factsDeps),
+		}))
 	);
 
 	// Create a new playbook
@@ -146,7 +262,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Add to list and save
 				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
+				await savePlaybooks(sessionId, playbooks);
 
 				logger.info(`Created playbook "${playbook.name}" for session ${sessionId}`, LOG_CONTEXT);
 				return { playbook: newPlaybook };
@@ -159,24 +275,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 		'playbooks:update',
 		createIpcHandler(
 			handlerOpts('update'),
-			async (
-				sessionId: string,
-				playbookId: string,
-				updates: Partial<{
-					name: string;
-					documents: any[];
-					loopEnabled: boolean;
-					maxLoops?: number | null;
-					prompt: string;
-					taskSelectionMode?: 'task' | 'document';
-					updatedAt: number;
-					worktreeSettings?: {
-						branchNameTemplate: string;
-						createPROnCompletion: boolean;
-						prTargetBranch?: string;
-					};
-				}>
-			) => {
+			async (sessionId: string, playbookId: string, updates: PlaybookUpdate) => {
 				const playbooks = await readPlaybooks(app, sessionId);
 
 				// Find the playbook to update
@@ -193,7 +292,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				};
 				playbooks[index] = updatedPlaybook;
 
-				await writePlaybooks(app, sessionId, playbooks);
+				await savePlaybooks(sessionId, playbooks);
 
 				logger.info(
 					`Updated playbook "${updatedPlaybook.name}" for session ${sessionId}`,
@@ -220,7 +319,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 			// Remove from list and save
 			playbooks.splice(index, 1);
-			await writePlaybooks(app, sessionId, playbooks);
+			await savePlaybooks(sessionId, playbooks);
 
 			logger.info(`Deleted playbook "${deletedName}" from session ${sessionId}`, LOG_CONTEXT);
 			return {};
@@ -234,6 +333,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 			const filePath = getPlaybooksFilePath(app, sessionId);
 			try {
 				await fs.unlink(filePath);
+				safeSend(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
 				logger.info(`Deleted all playbooks for session ${sessionId}`, LOG_CONTEXT);
 			} catch (error) {
 				// File doesn't exist, that's fine
@@ -293,7 +393,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Create manifest JSON (playbook settings without the id - will be regenerated on import)
 				const manifest = {
-					version: 1,
+					version: PLAYBOOK_ZIP_MANIFEST_VERSION,
 					name: playbook.name,
 					documents: playbook.documents,
 					loopEnabled: playbook.loopEnabled,
@@ -301,6 +401,12 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 					prompt: playbook.prompt,
 					taskSelectionMode: playbook.taskSelectionMode,
 					worktreeSettings: playbook.worktreeSettings,
+					parameterValues: playbook.parameterValues,
+					parameterOverlay: playbook.parameterOverlay,
+					interaction: playbook.interaction,
+					scope: playbook.scope,
+					report: playbook.report,
+					provenance: exportedProvenance(playbook.provenance),
 					exportedAt: Date.now(),
 				};
 
@@ -398,6 +504,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Extract document files to autorun folder
 				const importedDocs: string[] = [];
+				const documentHashes: Record<string, string> = {};
 				for (const entry of zipEntries) {
 					if (entry.entryName.startsWith('documents/') && entry.entryName.endsWith('.md')) {
 						const filename = path.basename(entry.entryName);
@@ -407,8 +514,11 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 						await fs.mkdir(autoRunFolderPath, { recursive: true });
 
 						// Write document file
-						await fs.writeFile(destPath, entry.getData().toString('utf-8'), 'utf-8');
-						importedDocs.push(filename.replace('.md', ''));
+						const content = entry.getData().toString('utf-8');
+						await fs.writeFile(destPath, content, 'utf-8');
+						const docName = filename.replace('.md', '');
+						importedDocs.push(docName);
+						documentHashes[docName] = hashPlaybookDocument(content);
 					}
 				}
 
@@ -434,7 +544,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				const playbooks = await readPlaybooks(app, sessionId);
 				const now = Date.now();
 
-				const newPlaybook = {
+				const newPlaybook: Playbook = {
 					id: crypto.randomUUID(),
 					name: manifest.name,
 					createdAt: now,
@@ -445,11 +555,19 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 					prompt: manifest.prompt || '',
 					taskSelectionMode: manifest.taskSelectionMode,
 					worktreeSettings: manifest.worktreeSettings,
+					...readPlaybookExchangeFields(manifest),
+					provenance: zipImportProvenance(
+						manifest,
+						zipPath,
+						autoRunFolderPath,
+						documentHashes,
+						now
+					),
 				};
 
 				// Add to list and save
 				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
+				await savePlaybooks(sessionId, playbooks);
 
 				logger.info(
 					`Imported playbook "${manifest.name}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,

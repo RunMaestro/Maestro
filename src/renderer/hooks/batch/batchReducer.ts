@@ -13,6 +13,7 @@
 
 import type { BatchRunState, AgentError, PlaybookStatus } from '../../types';
 import type { GoalExitReason } from '../../../shared/goalDriven/types';
+import type { BatchRunPlaybookRef } from '../../../shared/types';
 import type { AutoRunPendingDelegation } from '../../../shared/autoRunDelegation';
 import {
 	transition,
@@ -176,6 +177,8 @@ export interface StartBatchPayload {
 	runModelOverride?: string;
 	/** Resolved auto-resume policy; `null` when the run opted out. */
 	autoResumePolicy?: import('../../../shared/autorunAutoResume').AutoResumePolicy | null;
+	/** The saved playbook the run was launched from. Absent for an ad-hoc run. */
+	playbookRef?: BatchRunPlaybookRef;
 	startTime: number;
 	// Time tracking
 	cumulativeTaskTimeMs: number;
@@ -305,6 +308,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					customPrompt: payload.customPrompt,
 					runModelOverride: payload.runModelOverride,
 					autoResumePolicy: payload.autoResumePolicy,
+					playbookRef: payload.playbookRef,
 					sessionIds: [],
 					startTime: payload.startTime,
 					// Time tracking

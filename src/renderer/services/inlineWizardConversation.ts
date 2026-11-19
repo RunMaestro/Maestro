@@ -9,7 +9,7 @@
  * this service exports stateless functions that work with the useInlineWizard hook's state.
  */
 
-import type { ToolType, ProcessConfig } from '../types';
+import type { ToolType, ProcessConfig, Session } from '../types';
 import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
@@ -106,11 +106,11 @@ export interface WizardResponse {
 /**
  * Result of sending a message to the wizard conversation.
  */
-export interface InlineWizardSendResult {
+export interface InlineWizardSendResult<R extends WizardResponse = WizardResponse> {
 	/** Whether the operation was successful */
 	success: boolean;
 	/** The parsed response (if successful) */
-	response?: WizardResponse;
+	response?: R;
 	/** Error message (if unsuccessful) */
 	error?: string;
 	/** Raw output from the agent (for debugging) */
@@ -158,6 +158,62 @@ export interface InlineWizardConversationConfig {
 	sessionCustomEffort?: string;
 	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
 	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
+}
+
+/**
+ * The agent a wizard-style conversation runs on: everything a read-only
+ * discovery turn needs to spawn it (locally or over SSH) with the agent's own
+ * overrides. Shared by the inline wizard and the playbook concierge.
+ */
+export type WizardConversationAgentConfig = Pick<
+	InlineWizardConversationConfig,
+	| 'agentType'
+	| 'directoryPath'
+	| 'projectName'
+	| 'sessionSshRemoteConfig'
+	| 'sessionCustomPath'
+	| 'sessionCustomArgs'
+	| 'sessionCustomEnvVars'
+	| 'sessionCustomModel'
+	| 'sessionCustomEffort'
+	| 'sessionClaudeTokenSource'
+>;
+
+/**
+ * The agent config for a wizard-style conversation that runs on an agent as
+ * it is configured (agent-level model and effort, not a tab's). The inline
+ * wizard builds its own, with the launching tab's model and effort.
+ */
+export function wizardAgentConfigFromSession(
+	session: Pick<
+		Session,
+		| 'toolType'
+		| 'cwd'
+		| 'projectRoot'
+		| 'name'
+		| 'sessionSshRemoteConfig'
+		| 'customPath'
+		| 'customArgs'
+		| 'customEnvVars'
+		| 'customModel'
+		| 'customEffort'
+		| 'enableMaestroP'
+		| 'maestroPMode'
+		| 'maestroPPath'
+	>
+): WizardConversationAgentConfig {
+	return {
+		agentType: session.toolType,
+		directoryPath: session.projectRoot || session.cwd,
+		projectName: session.name,
+		sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+		sessionCustomPath: session.customPath,
+		sessionCustomArgs: session.customArgs,
+		sessionCustomEnvVars: session.customEnvVars,
+		sessionCustomModel: session.customModel,
+		sessionCustomEffort: session.customEffort,
+		sessionClaudeTokenSource: getClaudeTokenSourceFields(session),
+	};
 }
 
 /**
@@ -237,10 +293,44 @@ IMPORTANT: This is a discovery conversation. You may read files or fetch issue/d
 {"confidence": <0-100>, "ready": <true/false>, "message": "<your response>"}`;
 
 /**
- * Generate a unique session ID for wizard conversations.
+ * Generate a unique session ID for wizard conversations. The prefix names the
+ * caller in process lists and logs.
  */
-function generateWizardSessionId(): string {
-	return `inline-wizard-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+function generateWizardSessionId(prefix = 'inline-wizard'): string {
+	return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * Open a conversation session on an agent with a ready-made system prompt.
+ * Each later `sendWizardMessage` is one read-only agent turn.
+ *
+ * @param config The agent to run on, with its overrides
+ * @param systemPrompt The full system prompt every turn starts with
+ * @param idPrefix Prefix of the process id (`inline-wizard`, `playbook-concierge`)
+ */
+export function createWizardConversationSession(
+	config: WizardConversationAgentConfig,
+	systemPrompt: string,
+	idPrefix?: string
+): InlineWizardConversationSession {
+	return {
+		sessionId: generateWizardSessionId(idPrefix),
+		agentType: config.agentType,
+		directoryPath: config.directoryPath,
+		projectName: config.projectName,
+		systemPrompt,
+		isActive: true,
+		// Only pass SSH config if it is explicitly enabled to prevent false positives in process manager
+		sessionSshRemoteConfig: config.sessionSshRemoteConfig?.enabled
+			? config.sessionSshRemoteConfig
+			: undefined,
+		sessionCustomPath: config.sessionCustomPath,
+		sessionCustomArgs: config.sessionCustomArgs,
+		sessionCustomEnvVars: config.sessionCustomEnvVars,
+		sessionCustomModel: config.sessionCustomModel,
+		sessionCustomEffort: config.sessionCustomEffort,
+		sessionClaudeTokenSource: config.sessionClaudeTokenSource,
+	};
 }
 
 /**
@@ -322,35 +412,18 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
 export function startInlineWizardConversation(
 	config: InlineWizardConversationConfig
 ): InlineWizardConversationSession {
-	const sessionId = generateWizardSessionId();
 	const systemPrompt = generateInlineWizardPrompt(config);
+	const session = createWizardConversationSession(config, systemPrompt);
 
 	logger.info(`Created wizard conversation session`, '[InlineWizardConversation]', {
-		sessionId,
+		sessionId: session.sessionId,
 		mode: config.mode,
 		agentType: config.agentType,
 		projectName: config.projectName,
 		promptLength: systemPrompt.length,
 	});
 
-	return {
-		sessionId,
-		agentType: config.agentType,
-		directoryPath: config.directoryPath,
-		projectName: config.projectName,
-		systemPrompt,
-		isActive: true,
-		// Only pass SSH config if it is explicitly enabled to prevent false positives in process manager
-		sessionSshRemoteConfig: config.sessionSshRemoteConfig?.enabled
-			? config.sessionSshRemoteConfig
-			: undefined,
-		sessionCustomPath: config.sessionCustomPath,
-		sessionCustomArgs: config.sessionCustomArgs,
-		sessionCustomEnvVars: config.sessionCustomEnvVars,
-		sessionCustomModel: config.sessionCustomModel,
-		sessionCustomEffort: config.sessionCustomEffort,
-		sessionClaudeTokenSource: config.sessionClaudeTokenSource,
-	};
+	return session;
 }
 
 /**
@@ -361,12 +434,14 @@ export function startInlineWizardConversation(
  * @param session The conversation session
  * @param userMessage The current user message
  * @param conversationHistory Previous messages in the conversation
+ * @param structuredOutputSuffix The JSON reminder appended to the current message
  * @returns The complete prompt to send to the agent
  */
 function buildPromptWithContext(
 	session: InlineWizardConversationSession,
 	userMessage: string,
-	conversationHistory: InlineWizardMessage[]
+	conversationHistory: InlineWizardMessage[],
+	structuredOutputSuffix: string
 ): string {
 	const parts: string[] = [session.systemPrompt, ''];
 
@@ -381,7 +456,7 @@ function buildPromptWithContext(
 
 	// Add the current user message with structured output suffix
 	parts.push('## Current Message', '');
-	parts.push(userMessage + STRUCTURED_OUTPUT_SUFFIX);
+	parts.push(userMessage + structuredOutputSuffix);
 
 	return parts.join('\n');
 }
@@ -549,6 +624,24 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 }
 
 /**
+ * Providers whose wizard read-only restriction travels as spawn intent
+ * (`permissionMode: 'readonly'`) instead of renderer-built args. For these,
+ * main's buildAgentArgs() must know the turn is read-only, because their
+ * batch-mode args grant write access (Codex bypasses its sandbox) and only
+ * buildAgentArgs() can drop them before appending `readOnlyArgs`.
+ */
+const WIZARD_READ_ONLY_SPAWN_AGENTS: ReadonlySet<string> = new Set(['codex', 'grok']);
+
+/** Spawn-config fields that make a wizard discovery turn read-only. */
+function wizardReadOnlySpawnFields(
+	agentType: string
+): Pick<ProcessConfig, 'permissionMode' | 'readOnlyMode'> {
+	return WIZARD_READ_ONLY_SPAWN_AGENTS.has(agentType)
+		? { permissionMode: 'readonly', readOnlyMode: true }
+		: {};
+}
+
+/**
  * Build CLI args for the agent based on its type and capabilities.
  * For wizard conversations, we restrict tool usage to read-only operations
  * to prevent the agent from making changes during the discovery phase.
@@ -581,6 +674,11 @@ function buildArgsForAgent(agent: any): string[] {
 			// batchModePrefix, batchModeArgs, jsonOutputArgs, and workingDirArgs
 			// automatically when a prompt is present. Adding them here would
 			// duplicate flags and cause "unexpected argument" exit code 2.
+			// Read-only is NOT appended here either: it travels as spawn intent
+			// (see wizardReadOnlySpawnFields), so buildAgentArgs() drops the
+			// sandbox-bypassing batchModeArgs and appends readOnlyArgs itself.
+			// Appending `--sandbox read-only` here would be nullified by the
+			// `--dangerously-bypass-approvals-and-sandbox` batch arg.
 			return [...(agent.args || [])];
 		}
 
@@ -621,6 +719,17 @@ function buildArgsForAgent(agent: any): string[] {
 }
 
 /**
+ * How a caller with its own JSON contract (the playbook concierge) reuses the
+ * wizard turn loop: its own end-of-message JSON reminder and its own parser.
+ * The parser gets the agent's final text and whether the provider requires a
+ * validated structure (Grok); it returns null when the text is not a response.
+ */
+export interface WizardTurnOptions<R extends WizardResponse = WizardResponse> {
+	structuredOutputSuffix?: string;
+	parseResponse?: (text: string, requireStructured: boolean) => R | null;
+}
+
+/**
  * Send a message to the inline wizard conversation and wait for a response.
  *
  * This spawns a new agent process for each message (batch mode), waits for
@@ -630,14 +739,21 @@ function buildArgsForAgent(agent: any): string[] {
  * @param userMessage The user's message to send
  * @param conversationHistory Previous messages in the conversation
  * @param callbacks Optional callbacks for progress updates
+ * @param options A different JSON reminder and parser (defaults: the wizard's)
  * @returns The result of sending the message
  */
-export async function sendWizardMessage(
+export async function sendWizardMessage<R extends WizardResponse = WizardResponse>(
 	session: InlineWizardConversationSession,
 	userMessage: string,
 	conversationHistory: InlineWizardMessage[],
-	callbacks?: ConversationCallbacks
-): Promise<InlineWizardSendResult> {
+	callbacks?: ConversationCallbacks,
+	options?: WizardTurnOptions<R>
+): Promise<InlineWizardSendResult<R>> {
+	const structuredOutputSuffix = options?.structuredOutputSuffix ?? STRUCTURED_OUTPUT_SUFFIX;
+	const parseResponse =
+		options?.parseResponse ??
+		((text: string, requireStructured: boolean) =>
+			parseWizardResponse(text, requireStructured) as R | null);
 	if (!session.isActive) {
 		return {
 			success: false,
@@ -681,13 +797,23 @@ export async function sendWizardMessage(
 				sessionId: session.sessionId,
 				agentType: session.agentType,
 				isRemote: isRemoteSession,
-				promptLength: buildPromptWithContext(session, userMessage, conversationHistory).length,
+				promptLength: buildPromptWithContext(
+					session,
+					userMessage,
+					conversationHistory,
+					structuredOutputSuffix
+				).length,
 				agentAvailable: agent?.available ?? false,
 			}
 		);
 
 		// Build the full prompt with conversation context
-		const fullPrompt = buildPromptWithContext(session, userMessage, conversationHistory);
+		const fullPrompt = buildPromptWithContext(
+			session,
+			userMessage,
+			conversationHistory,
+			structuredOutputSuffix
+		);
 
 		// Build args for the agent
 		const argsForSpawn = agent
@@ -698,7 +824,7 @@ export async function sendWizardMessage(
 		if (!session.isActive) return { success: false, error: 'Session is not active' };
 
 		// Spawn agent and collect output
-		const result = await new Promise<InlineWizardSendResult>((resolve) => {
+		const result = await new Promise<InlineWizardSendResult<R>>((resolve) => {
 			let outputBuffer = '';
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
@@ -870,9 +996,7 @@ export async function sendWizardMessage(
 						// Preserve reference-provider parsing; Grok requires validated structure.
 						const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
 						const textToParse = grokOutput ? grokOutput.text : extractedResult || outputBuffer;
-						const parsedResponse = textToParse.trim()
-							? parseWizardResponse(textToParse, isGrok)
-							: null;
+						const parsedResponse = textToParse.trim() ? parseResponse(textToParse, isGrok) : null;
 
 						if (parsedResponse) {
 							resolve({
@@ -926,9 +1050,7 @@ export async function sendWizardMessage(
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
-					...(session.agentType === 'grok'
-						? { permissionMode: 'readonly', readOnlyMode: true }
-						: {}),
+					...wizardReadOnlySpawnFields(session.agentType),
 					// Pass SSH config for remote execution
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					// Pass session-level overrides

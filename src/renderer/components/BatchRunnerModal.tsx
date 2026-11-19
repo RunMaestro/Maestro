@@ -19,6 +19,7 @@ import {
 	Target,
 	LogOut,
 	Clock,
+	SlidersHorizontal,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { ToggleSwitch } from './ui/ToggleSwitch';
@@ -35,6 +36,7 @@ import {
 	clampAutoResumeMinutes,
 	clampMaxAutoResumes,
 } from '../../shared/autorunAutoResume';
+import { toBatchRunPlaybook } from '../../shared/playbookRun';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -43,6 +45,11 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
+import { openPlaybookConfigure } from '../services/playbookConfigure';
+import { checkPlaybookUpdates, updateInstalledPlaybook } from '../services/playbookUpdates';
+import { usePlaybookUpdateStatuses, usePlaybookUpdatesStore } from '../stores/playbookUpdatesStore';
+import { PlaybookUpdatePill } from './MarketplaceModal/components/PlaybookUpdatePill';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
 import { GoalConfigPanel } from './GoalConfigPanel';
@@ -487,6 +494,20 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		useCallback((s) => !!s.batchRunStates[sessionId]?.isRunning, [sessionId])
 	);
 
+	// Playbooks installed from the Exchange: checked once per agent per app
+	// start (the Exchange re-checks on every open). A row's pill offers the
+	// update, which re-fetches the documents and keeps the parameter answers.
+	const activeSshRemoteId = getSessionSshRemoteId(activeSession);
+	const playbookUpdateTarget = useMemo(
+		() => ({ sessionId, autoRunFolderPath: folderPath, sshRemoteId: activeSshRemoteId }),
+		[sessionId, folderPath, activeSshRemoteId]
+	);
+	useEffect(() => {
+		void checkPlaybookUpdates(playbookUpdateTarget);
+	}, [playbookUpdateTarget]);
+	const playbookUpdateStatuses = usePlaybookUpdateStatuses(sessionId);
+	const updatingPlaybookIds = usePlaybookUpdatesStore((s) => s.updatingPlaybookIds);
+
 	// Dispatching to a separate worktree spawns/uses a different agent, so the current
 	// session being busy is irrelevant - let the user launch regardless. (Busy open-worktree
 	// targets are already disabled in the WorktreeRunSection dropdown.)
@@ -697,6 +718,10 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(runEffort && { effort: runEffort }),
 						...(ignoreModelHints && { ignoreModelHints: true }),
 						...autoResumeFields,
+						launchSource: 'panel',
+						// The playbook's parameter answers resolve its `[NAME]` tokens.
+						// Its provenance names it in the stats row.
+						...(loadedPlaybook && { playbook: toBatchRunPlaybook(loadedPlaybook, sessionId) }),
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
@@ -931,12 +956,64 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 															>
 																{pb.name}
 															</span>
+															{playbookUpdateStatuses[pb.id]?.updateAvailable ? (
+																<button
+																	type="button"
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		void updateInstalledPlaybook(
+																			playbookUpdateTarget,
+																			playbookUpdateStatuses[pb.id].marketplaceId
+																		);
+																	}}
+																	disabled={
+																		isBatchRunningForSession || !!updatingPlaybookIds[pb.id]
+																	}
+																	className="shrink-0 flex items-center rounded disabled:opacity-50 disabled:cursor-not-allowed"
+																	aria-label={`Update ${pb.name}`}
+																	data-testid={`playbook-update-${pb.id}`}
+																>
+																	{updatingPlaybookIds[pb.id] ? (
+																		<Spinner size={12} />
+																	) : (
+																		<PlaybookUpdatePill
+																			theme={theme}
+																			status={playbookUpdateStatuses[pb.id]}
+																			title={
+																				isBatchRunningForSession
+																					? 'Wait for the running Auto Run to finish before updating its documents'
+																					: undefined
+																			}
+																		/>
+																	)}
+																</button>
+															) : (
+																<PlaybookUpdatePill
+																	theme={theme}
+																	status={playbookUpdateStatuses[pb.id]}
+																	testId={`playbook-update-pill-${pb.id}`}
+																/>
+															)}
 															<span
 																className="text-2xs shrink-0"
 																style={{ color: theme.colors.textDim }}
 															>
 																{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
 															</span>
+															<button
+																onClick={(e) => {
+																	e.stopPropagation();
+																	setShowPlaybookDropdown(false);
+																	openPlaybookConfigure({ sessionId, playbookId: pb.id });
+																}}
+																className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+																style={{ color: theme.colors.textDim }}
+																title="Configure..."
+																aria-label={`Configure ${pb.name}`}
+																data-testid={`playbook-configure-${pb.id}`}
+															>
+																<SlidersHorizontal className="w-3 h-3" />
+															</button>
 															<button
 																onClick={(e) => {
 																	e.stopPropagation();

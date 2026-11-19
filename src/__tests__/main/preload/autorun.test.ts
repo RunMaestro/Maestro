@@ -245,6 +245,35 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('evidenceStart / evidenceEnd', () => {
+			it('invokes the evidence pair with the folder, the snapshot, and the SSH target', async () => {
+				const snapshot = { source: 'mtime', takenAt: 1, files: {}, truncated: false } as const;
+				mockInvoke.mockResolvedValueOnce({ success: true, snapshot });
+				await expect(api.evidenceStart('/project', 'remote-1', '/remote/project')).resolves.toEqual(
+					{
+						success: true,
+						snapshot,
+					}
+				);
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'autorun:evidenceStart',
+					'/project',
+					'remote-1',
+					'/remote/project'
+				);
+
+				mockInvoke.mockResolvedValueOnce({ success: true, evidence: null });
+				await api.evidenceEnd('/project', snapshot);
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'autorun:evidenceEnd',
+					'/project',
+					snapshot,
+					undefined,
+					undefined
+				);
+			});
+		});
+
 		describe('createBackup', () => {
 			it('should invoke autorun:createBackup', async () => {
 				mockInvoke.mockResolvedValue({ success: true });
@@ -365,6 +394,17 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('gatherFacts', () => {
+			it('should invoke playbooks:gatherFacts', async () => {
+				mockInvoke.mockResolvedValue({ success: true, facts: { cwd: '/work' } });
+
+				const result = await api.gatherFacts('session-123');
+
+				expect(mockInvoke).toHaveBeenCalledWith('playbooks:gatherFacts', 'session-123');
+				expect(result).toEqual({ success: true, facts: { cwd: '/work' } });
+			});
+		});
+
 		describe('deleteAll', () => {
 			it('should invoke playbooks:deleteAll', async () => {
 				mockInvoke.mockResolvedValue({ success: true });
@@ -403,6 +443,26 @@ describe('Autorun Preload API', () => {
 				);
 			});
 		});
+
+		describe('onChanged', () => {
+			it('registers playbooks:changed and hands the agent id to the callback', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, sessionId: string) => void;
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, sessionId: string) => void) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onChanged(callback);
+
+				expect(mockOn).toHaveBeenCalledWith('playbooks:changed', expect.any(Function));
+				registeredHandler!({}, 'session-123');
+				expect(callback).toHaveBeenCalledWith('session-123');
+				cleanup();
+				expect(mockRemoveListener).toHaveBeenCalledWith('playbooks:changed', registeredHandler!);
+			});
+		});
 	});
 
 	describe('createMarketplaceApi', () => {
@@ -431,6 +491,18 @@ describe('Autorun Preload API', () => {
 				await api.refreshManifest();
 
 				expect(mockInvoke).toHaveBeenCalledWith('marketplace:refreshManifest');
+			});
+		});
+
+		describe('getHealth', () => {
+			it('should invoke marketplace:getHealth with the force flag', async () => {
+				mockInvoke.mockResolvedValue({ success: true, health: {}, fromCache: false });
+
+				await api.getHealth();
+				await api.getHealth(true);
+
+				expect(mockInvoke).toHaveBeenNthCalledWith(1, 'marketplace:getHealth', undefined);
+				expect(mockInvoke).toHaveBeenNthCalledWith(2, 'marketplace:getHealth', true);
 			});
 		});
 
@@ -494,6 +566,39 @@ describe('Autorun Preload API', () => {
 					'/project/.maestro',
 					'session-123',
 					'ssh-remote-1'
+				);
+			});
+		});
+
+		describe('updatePlaybook', () => {
+			it('should invoke marketplace:importPlaybook in update mode, with no folder', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.updatePlaybook('mp-1', '/project/.maestro', 'session-123', 'ssh-remote-1');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'marketplace:importPlaybook',
+					'mp-1',
+					'',
+					'/project/.maestro',
+					'session-123',
+					'ssh-remote-1',
+					{ update: true }
+				);
+			});
+		});
+
+		describe('checkUpdates', () => {
+			it('should invoke marketplace:checkUpdates', async () => {
+				mockInvoke.mockResolvedValue({ success: true, updates: {} });
+
+				await api.checkUpdates('session-123', '/project/.maestro');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'marketplace:checkUpdates',
+					'session-123',
+					'/project/.maestro',
+					undefined
 				);
 			});
 		});

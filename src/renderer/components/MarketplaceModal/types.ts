@@ -1,6 +1,12 @@
 import type { RefObject } from 'react';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
-import type { Theme } from '../../types';
+import type {
+	PlaybookBrowseSort,
+	PlaybookHealthMap,
+	PlaybookHealthStats,
+} from '../../../shared/playbookHealth';
+import type { PlaybookUpdateStatus } from '../../../shared/playbookUpdates';
+import type { BatchRunConfig, Theme } from '../../types';
 
 export interface MarketplaceModalProps {
 	theme: Theme;
@@ -11,6 +17,11 @@ export interface MarketplaceModalProps {
 	/** SSH remote ID for importing to remote hosts */
 	sshRemoteId?: string;
 	onImportComplete: (folderName: string) => void;
+	/**
+	 * Starts an installed playbook's run on an agent (the configure step's
+	 * Run). Resolves true once the run is running; the modal closes only then.
+	 */
+	onRunPlaybook: (sessionId: string, config: BatchRunConfig) => Promise<boolean>;
 }
 
 export interface PlaybookTileProps {
@@ -18,6 +29,10 @@ export interface PlaybookTileProps {
 	theme: Theme;
 	isSelected: boolean;
 	runningVersion: string;
+	/** The Exchange server's figures for this playbook, when it has any. */
+	health?: PlaybookHealthStats;
+	/** In the top installs (`selectMostPopularPlaybookIds`). */
+	isMostPopular?: boolean;
 	onSelect: () => void;
 }
 
@@ -48,6 +63,12 @@ export interface MarketplaceBrowseTabProps {
 	isLoading: boolean;
 	error: string | null;
 	runningVersion: string;
+	/** Health figures by playbook id; empty hides the sort control and the badges. */
+	health: PlaybookHealthMap;
+	/** Ids that carry the "Most popular" badge. */
+	mostPopularIds: ReadonlySet<string>;
+	sort: PlaybookBrowseSort;
+	onSortChange: (sort: PlaybookBrowseSort) => void;
 	onRefresh: () => void;
 	onSelectPlaybook: (playbook: MarketplacePlaybook) => void;
 	searchInputRef: RefObject<HTMLInputElement>;
@@ -63,6 +84,12 @@ export interface PlaybookDetailViewProps {
 	isLoadingDocument: boolean;
 	targetFolderName: string;
 	isImporting: boolean;
+	/**
+	 * The copy of this playbook the agent already has, from the update check.
+	 * When set, the footer offers Update (same folder, answers kept) instead of
+	 * a second install.
+	 */
+	installed?: PlaybookUpdateStatus;
 	/** Whether this is a remote SSH session (disables local folder browsing) */
 	isRemoteSession: boolean;
 	runningVersion: string;
@@ -70,5 +97,6 @@ export interface PlaybookDetailViewProps {
 	onSelectDocument: (filename: string) => void;
 	onTargetFolderChange: (name: string) => void;
 	onBrowseFolder: () => void;
-	onImport: () => void;
+	onInstallAndRun: () => void;
+	onInstallOnly: () => void;
 }

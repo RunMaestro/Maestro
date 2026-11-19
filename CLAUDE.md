@@ -164,6 +164,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
 - **Filing GitHub feedback (check gh, search, +1, submit):** `submitFeedbackConversation()`, `searchFeedbackIssues()` in `src/main/feedback/index.ts`
+- **The gh binary a main-process call runs (Settings > GitHub CLI Path):** `resolveConfiguredGhCommand()` in `src/main/utils/gh-command.ts`
 - **Writing lifetime counters that must never go down:** `mergeUsagePeaks()` in `src/shared/usagePeaks.ts`, `mergeAutoRunStats()` in `src/shared/autoRunStatsMerge.ts`, enforced by `settings:set` in `src/main/ipc/handlers/persistence.ts`
 
 #### Spawning and stopping agents (process, SSH, env, prompts)
@@ -213,7 +214,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()`, `hasEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts` (a wire format; never template it inline)
-- **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource`, `DEFAULT_QUERY_SOURCE` in `src/shared/querySource.ts` (`MAESTRO_QUERY_SOURCE`)
+- **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource`, `DEFAULT_QUERY_SOURCE`, `readQuerySource()`, `isAutomationQuerySource()` in `src/shared/querySource.ts` (`MAESTRO_QUERY_SOURCE`)
 - **Prefixing an agent's New Session Message:** `prependNewSessionMessageOnFirstTurn()`, `prependNewSessionMessage()` in `src/shared/newSessionMessage.ts`
 - **Who SENT this turn (Web Login attribution):** `getActingUser()` in `src/main/web-server/auth/acting-user.ts`; `noteTurnActor()`, `resolveTurnActor()`, `forgetAgentActors()` in `src/main/web-server/auth/turn-attribution.ts`
 - **An agent's effective environment:** `resolveAgentEnvironment()`, `isSecretEnvKey()`, `maskEnvValue()` in `src/shared/agentEnvironment.ts`, rendered by `<EnvVarList>` in `src/renderer/components/ui/EnvVarList.tsx`
@@ -386,6 +387,19 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`
+- **Playbook parameters (`[NAME]` form, overlay, substitution):** `parsePlaybookParameterForm()`, `mergePlaybookParams()`, `substitutePlaybookParams()`, `collectUnresolvedRequired()`, `resolvePlaybookParamSpecs()`, `applyPlaybookParamsToPrompt()`, `proposeFromFacts()` in `src/shared/playbookParams.ts`
+- **The playbook guided interview (when it may run, what it may propose):** `decidePlaybookConcierge()`, `readConciergeParameters()`, `mergeConciergeProposals()` in `src/shared/playbookConcierge.ts`; `startPlaybookConcierge()`, `sendPlaybookConciergeMessage()` in `src/renderer/services/playbookConcierge.ts`
+- **Turning a saved playbook into a run (loop cap, `BatchRunConfig`):** `clampImportedMaxLoops()`, `isUnboundedLoop()`, `toBatchRunPlaybook()` in `src/shared/playbookRun.ts`; `buildPlaybookBatchRunConfig()`, `playbookBatchDocuments()` in `src/renderer/hooks/batch/playbookRunConfig.ts`
+- **The report a finished playbook run produces (facts, disk evidence, narrative):** `buildFinalSummaryFacts()`, `renderFinalSummaryFactsMarkdown()`, `buildPlaybookRunReport()`, `playbookRunReportStatus()`, `buildPlaybookRunReportProblems()`, `renderPlaybookReportMarkdown()` in `src/shared/playbookRunReport.ts`
+- **A playbook failure report (fingerprint, repo route, issue body):** `playbookFailureFingerprint()`, `routePlaybookFailure()`, `buildPlaybookFailureIssue()`, `taskLineAtIndex()` in `src/shared/playbookFailure.ts`; `playbookFailureFromRunReport()` in `src/shared/playbookFailureCore.ts`
+- **Anonymous playbook usage telemetry:** `buildPlaybookRunCompletedEvent()`, `officialPlaybookId()` in `src/shared/playbookTelemetry.ts`; `notePlaybookRunStarted()`, `notePlaybookRunEnded()`, `flushPlaybookTelemetry()` in `src/main/services/playbook-telemetry.ts`
+- **Playbook popularity and health in the Exchange:** `parsePlaybookHealth()`, `selectMostPopularPlaybookIds()`, `isPlaybookRecentlyBroken()`, `sortPlaybooksByHealth()` in `src/shared/playbookHealth.ts`; `getMarketplaceHealth()` in `src/main/services/marketplace-service.ts`
+- **Whether an installed Exchange playbook has an update:** `classifyPlaybookUpdate()` in `src/shared/playbookUpdates.ts`; `checkMarketplacePlaybookUpdates()` in `src/main/services/marketplace-service.ts`; `updateInstalledPlaybook()` in `src/renderer/services/playbookUpdates.ts`
+- **A prefilled GitHub new-issue link:** `githubNewIssueUrl()`, `cappedNewIssueUrl()` in `src/shared/feedback.ts`
+- **Writing and saving a playbook run report:** `parsePlaybookReportAnswer()`, `playbookReportNarrativeAllowed()` in `src/shared/playbookReportAuthoring.ts`; `authorRunReport()` in `src/renderer/hooks/batch/internal/batchRunReport.ts`; `savePlaybookRunReport()` in `src/renderer/services/playbookRunReport.ts`
+- **Showing a finished playbook run's report:** `usePlaybookCompletionStore` in `src/renderer/stores/playbookCompletionStore.ts`; `openPlaybookReport()` in `src/renderer/services/playbookCompletion.ts`; `playbookReportSections()` in `src/shared/playbookRunReport.ts`; `<PlaybookReportBody>`
+- **What a run changed on disk (run report tier B):** `startRunEvidence()`, `finishRunEvidence()`, `createLocalGitRunner()` in `src/main/services/run-evidence.ts`, over `diffGitChanges()`, `diffMtimeSnapshots()`, `RunEvidenceSnapshot` in `src/shared/runEvidence.ts`
+- **A read-only wizard-style agent conversation with its own JSON contract:** `createWizardConversationSession()`, `wizardAgentConfigFromSession()`, `sendWizardMessage()` (its `WizardTurnOptions`) in `src/renderer/services/inlineWizardConversation.ts`
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
 - **Ordering the Auto Run run list from the picker:** `applySelectionOrder()`, `selectFolderFiles()` in `src/renderer/utils/documentSelectionOrder.ts`
 - **Whether an Auto Run is parked waiting on the user:** `useAutoRunErrorPaused(sessionId)` in `src/renderer/hooks/batch/useAutoRunPause.ts` (never `errorPaused` off the `batchRunState` prop)
@@ -458,6 +472,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
 - **Segmented toolbar (sort/filter pill bar):** `<SegmentedControl>` in `src/renderer/components/ui/SegmentedControl.tsx`
+- **Multi-select chip row:** `<ToggleChipGroup>` in `src/renderer/components/ui/ToggleChipGroup.tsx`
 - **Paginating a list already in memory:** `usePagination()` in `src/renderer/hooks/ui/usePagination.ts`, `<Pager>` in `src/renderer/components/ui/Pager.tsx` (not `useHistoryPagination`)
 - **Sortable table header:** `<SortableTh>` in `src/renderer/components/ui/SortableTh.tsx` + `useTableSort()` in `src/renderer/hooks/ui/useTableSort.ts`
 - **A list of editable `key = value` pairs:** `<KeyValueRows>` in `src/renderer/components/ui/KeyValueRows.tsx`, with `recordToKeyValueRows()` / `keyValueRowsToRecords()` beside it

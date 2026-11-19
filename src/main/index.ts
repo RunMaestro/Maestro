@@ -159,6 +159,7 @@ import {
 	type OpenedConsentWindow,
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
+import { configurePlaybookTelemetry } from './services/playbook-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { beginCueRunCapture, recordCommandLineRuns } from './cot-export/runtime';
 import { executeCueShell } from './cue/cue-shell-executor';
@@ -1775,6 +1776,18 @@ app
 				const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
 				return ef.maestroCue && ef.usageStats;
 			},
+		});
+
+		// Playbook telemetry (official Exchange playbooks only). Opt-in: the
+		// setting defaults to false and is read on every call, so toggling it
+		// takes effect without a restart. Dev builds never send.
+		configurePlaybookTelemetry({
+			getInstallationId: () => store.get('installationId') as string | null,
+			getAppVersion: () => app.getVersion(),
+			getPlatform: () => process.platform,
+			isEnabled: () => store.get('playbookTelemetryEnabled') === true,
+			isPackaged: () => app.isPackaged,
+			outboxPath: path.join(app.getPath('userData'), 'playbook-telemetry-outbox.json'),
 		});
 
 		// Initialize the Pianola supervised daemon and its scheduled re-learn job.

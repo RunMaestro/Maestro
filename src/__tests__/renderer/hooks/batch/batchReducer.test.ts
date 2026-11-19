@@ -53,6 +53,37 @@ describe('batchReducer', () => {
 			expect(result['session-1'].processingState).toBe('INITIALIZING');
 		});
 
+		it('carries the launching playbook ref, and none for an ad-hoc run', () => {
+			const payload = {
+				documents: ['doc1.md'],
+				lockedDocuments: ['doc1.md'],
+				totalTasksAcrossAllDocs: 1,
+				loopEnabled: false,
+				maxLoops: null,
+				folderPath: '/test/folder',
+				worktreeActive: false,
+				startTime: 1000,
+				cumulativeTaskTimeMs: 0,
+				accumulatedElapsedMs: 0,
+				lastActiveTimestamp: 1000,
+			};
+			const withPlaybook = batchReducer(
+				{},
+				{
+					type: 'START_BATCH',
+					sessionId: 'session-1',
+					payload: { ...payload, playbookRef: { id: 'pb-1', ownerSessionId: 'owner-1' } },
+				}
+			);
+			expect(withPlaybook['session-1'].playbookRef).toEqual({
+				id: 'pb-1',
+				ownerSessionId: 'owner-1',
+			});
+
+			const adHoc = batchReducer({}, { type: 'START_BATCH', sessionId: 'session-1', payload });
+			expect(adHoc['session-1'].playbookRef).toBeUndefined();
+		});
+
 		it('records pre-checked tasks as the ETA baseline', () => {
 			const result = batchReducer(
 				{},

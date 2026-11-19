@@ -13,7 +13,10 @@ export enum ExitCode {
 	Success = 0,
 	/** Generic / uncategorized failure (the historical `process.exit(1)`). */
 	GeneralError = 1,
-	/** Bad invocation: unknown flag, missing/invalid argument, nothing to do. */
+	/**
+	 * Bad invocation: unknown flag, missing/invalid argument, nothing to do, or a
+	 * playbook run whose required parameters have no answer (`MISSING_PARAMETERS`).
+	 */
 	InvalidUsage = 2,
 	/** The Maestro desktop app is not running or not reachable. */
 	NotRunning = 3,

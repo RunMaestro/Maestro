@@ -371,6 +371,86 @@ describe('useMarketplace', () => {
 		});
 	});
 
+	describe('health figures', () => {
+		const sampleHealth = {
+			'test-playbook': {
+				installs_30d: 40,
+				runs_30d: 120,
+				success_rate_30d: 0.9,
+				median_duration_ms: 600_000,
+				median_cost_usd: 0.4,
+				recent_failures: 1,
+			},
+		};
+
+		it('starts empty and loads the figures beside the manifest', async () => {
+			vi.mocked(window.maestro.marketplace.getHealth).mockResolvedValue({
+				success: true,
+				health: sampleHealth,
+				fromCache: false,
+			});
+
+			const { result } = renderHook(() => useMarketplace());
+			expect(result.current.health).toEqual({});
+
+			await waitFor(() => {
+				expect(result.current.health).toEqual(sampleHealth);
+			});
+			expect(window.maestro.marketplace.getHealth).toHaveBeenCalledWith(false);
+			expect(window.maestro.marketplace.getManifest).toHaveBeenCalledTimes(1);
+		});
+
+		it('never holds the manifest back while the figures are pending', async () => {
+			vi.mocked(window.maestro.marketplace.getHealth).mockImplementationOnce(
+				() => new Promise(() => {})
+			);
+			vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
+				success: true,
+				manifest: createManifest([createPlaybook()]),
+				fromCache: false,
+			});
+
+			const { result } = renderHook(() => useMarketplace());
+
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+			expect(result.current.playbooks).toHaveLength(1);
+			expect(result.current.health).toEqual({});
+			expect(result.current.error).toBeNull();
+		});
+
+		it('stays empty and raises no error when the figures fail', async () => {
+			vi.mocked(window.maestro.marketplace.getHealth).mockRejectedValueOnce(new Error('offline'));
+
+			const { result } = renderHook(() => useMarketplace());
+
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+			expect(result.current.health).toEqual({});
+			expect(result.current.error).toBeNull();
+		});
+
+		it('refresh re-fetches the figures past the cache', async () => {
+			vi.mocked(window.maestro.marketplace.getHealth).mockResolvedValue({
+				success: true,
+				health: {},
+				fromCache: true,
+			});
+			const { result } = renderHook(() => useMarketplace());
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+
+			await act(async () => {
+				await result.current.refresh();
+			});
+
+			expect(window.maestro.marketplace.getHealth).toHaveBeenLastCalledWith(true);
+		});
+	});
+
 	describe('refresh functionality', () => {
 		it('sets isRefreshing while refreshing', async () => {
 			vi.mocked(window.maestro.marketplace.refreshManifest).mockImplementation(
@@ -559,6 +639,54 @@ describe('useMarketplace', () => {
 			});
 
 			expect(importResult!.success).toBe(true);
+		});
+
+		it('passes the saved record, documents, and assets through to the caller', async () => {
+			const saved = {
+				id: 'pb-1',
+				name: 'Test',
+				createdAt: 1,
+				updatedAt: 1,
+				documents: [{ filename: 'folder/phase-1', resetOnCompletion: false }],
+				loopEnabled: false,
+				prompt: '',
+				provenance: {
+					kind: 'marketplace' as const,
+					marketplaceId: 'test-playbook',
+					targetFolderName: 'folder',
+					importedAt: 1,
+					documentHashes: { 'phase-1': 'abc' },
+				},
+			};
+			vi.mocked(window.maestro.marketplace.importPlaybook).mockResolvedValue({
+				success: true,
+				playbook: saved,
+				importedDocs: ['phase-1'],
+				importedAssets: ['config.yaml'],
+			});
+
+			const { result } = renderHook(() => useMarketplace());
+
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+
+			let importResult: Awaited<ReturnType<typeof result.current.importPlaybook>> | undefined;
+			await act(async () => {
+				importResult = await result.current.importPlaybook(
+					createPlaybook(),
+					'folder',
+					'/path',
+					'session'
+				);
+			});
+
+			expect(importResult).toEqual({
+				success: true,
+				playbook: saved,
+				importedDocs: ['phase-1'],
+				importedAssets: ['config.yaml'],
+			});
 		});
 
 		it('returns error result when import fails', async () => {
