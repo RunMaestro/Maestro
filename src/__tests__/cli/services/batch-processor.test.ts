@@ -526,6 +526,29 @@ describe('batch-processor', () => {
 			expect(promptArg).not.toContain('{{');
 		});
 
+		it('substitutes the stored playbook parameter answers into the spawn prompt in memory', async () => {
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3
+					? { content: '- [ ] Process [MAX_ITEMS] items', taskCount: 1 }
+					: { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				prompt: '<!-- CONFIGURE: How many items -->\n**MAX_ITEMS:** `25`\n\nRun it.',
+				parameterValues: { MAX_ITEMS: '7' },
+			});
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2] as string;
+			expect(promptArg).toContain('- [ ] Process 7 items');
+			expect(promptArg).toContain('| `MAX_ITEMS` | 7 |');
+			expect(promptArg).not.toContain('[MAX_ITEMS]');
+		});
+
 		it('asks for the selection block matching the playbook mode', async () => {
 			// readDocAndCountTasks is called several times per pass (initial scan,
 			// loop check, prompt build, post-task remaining check). Feed the task

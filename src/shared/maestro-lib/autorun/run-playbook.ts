@@ -26,6 +26,15 @@ import { resolveTurnSettings, describeTurnSettings } from '../../autorunTurnSett
 import { countMarkdownTasks, restoreTasksCheckedByFailedTurn } from '../../markdownTaskScan';
 import { cheapResumeTurnSettings } from '../../modelTiers';
 import { prependNewSessionMessage } from '../../newSessionMessage';
+import {
+	applyPlaybookParamsToPrompt,
+	describeSurvivingParams,
+	expandPlaybookParamTemplates,
+	readPlaybookParamOverlay,
+	readPlaybookParamValues,
+	resolvePlaybookParamSpecs,
+	substitutePlaybookParams,
+} from '../../playbookParams';
 import { PROMPT_IDS } from '../../promptDefinitions';
 import { isFailedSynopsisResponse, parseSynopsis } from '../../synopsis';
 import { substituteTemplateVariables, type TemplateContext } from '../../templateVariables';
@@ -293,6 +302,16 @@ export async function* runPlaybook(
 				});
 			}
 		}
+
+		// The playbook's `[NAME]` parameters: the prompt's prose form merged with the
+		// manifest overlay, resolved once per run. The answers are per playbook, not
+		// per document; their `{{}}` variables are expanded per task below. The CLI
+		// hands over the store file's record as parsed, so both are read defensively.
+		const playbookParamSpecs = resolvePlaybookParamSpecs(
+			playbook.prompt ?? '',
+			readPlaybookParamOverlay(playbook.parameterOverlay)
+		);
+		const playbookParamValues = readPlaybookParamValues(playbook.parameterValues) ?? {};
 
 		// Track totals
 		let totalCompletedTasks = 0;
@@ -627,6 +646,21 @@ export async function* runPlaybook(
 						await deps.documents.write(folderPath, `${docEntry.filename}.md`, expandedDocContent);
 					}
 
+					// Parameter answers and defaults may name template variables (a default
+					// of `{{AGENT_PATH}}`), so they expand against this task's context first.
+					// The answers are then substituted in memory only: `expandedDocContent`
+					// is what is on disk, `documentContent` is what the turn is handed, and
+					// the answers are never written back into the template.
+					const paramSet = expandPlaybookParamTemplates(
+						{ specs: playbookParamSpecs, values: playbookParamValues },
+						(text) => substituteTemplateVariables(text, templateContext)
+					);
+					const documentContent = substitutePlaybookParams(
+						expandedDocContent,
+						paramSet.specs,
+						paramSet.values
+					).text;
+
 					// Resolve the task-selection block BEFORE the template-variable pass,
 					// so variables inside the swapped-in block expand too. The desktop
 					// engine has always done this (useDocumentProcessor -> batchUtils);
@@ -653,15 +687,60 @@ export async function* runPlaybook(
 					// A playbook prompt that never names the document still gets the
 					// default's selection and document blocks, unless the policy pastes
 					// the document in below (resolveAutoRunPromptTemplate).
-					const basePrompt = substituteTemplateVariables(
-						resolveAutoRunPromptTemplate(rawBasePrompt, {
-							selectionBlock,
-							documentBlock: policy.inlineDocument
-								? null
-								: await deps.prompts.get(PROMPT_IDS.AUTORUN_DOCUMENT),
-						}),
-						templateContext
+					// Then the parameter answers, in memory, with the Resolved Configuration
+					// table appended; the New Session Message is prepended after, literally.
+					const paramTurn = applyPlaybookParamsToPrompt(
+						substituteTemplateVariables(
+							resolveAutoRunPromptTemplate(rawBasePrompt, {
+								selectionBlock,
+								documentBlock: policy.inlineDocument
+									? null
+									: await deps.prompts.get(PROMPT_IDS.AUTORUN_DOCUMENT),
+							}),
+							templateContext
+						),
+						documentContent,
+						paramSet
 					);
+					const basePrompt = paramTurn.prompt;
+
+					// A `[NAME]` that is still there would reach the agent as a placeholder.
+					// Refuse before anything is spawned and end the run like a halt, so the
+					// stats row and the History boundary still close.
+					if (paramTurn.surviving.length > 0) {
+						const reason = describeSurvivingParams(paramTurn.surviving);
+						log.autorun(`Auto Run halted: playbook parameters have no value`, session.name, {
+							document: docEntry.filename,
+							taskIndex,
+							parameters: paramTurn.surviving,
+							loopNumber: loopIteration + 1,
+						});
+						yield {
+							type: 'error',
+							timestamp: clock.now(),
+							message: reason,
+							code: 'PARAMETER_SUBSTITUTION',
+							document: docEntry.filename,
+							parameters: paramTurn.surviving,
+						};
+
+						await createFinalLoopEntry(`Halted: ${reason}`);
+						deps.activity.end(session.id);
+						const paramReconciled = await reconcileTotals();
+						await createAutoRunSummary(paramReconciled, `halted: ${reason}`);
+
+						yield {
+							type: 'complete',
+							timestamp: clock.now(),
+							success: false,
+							totalTasksCompleted: paramReconciled.totalCompletedTasks,
+							totalElapsedMs: paramReconciled.totalElapsedMs,
+							totalCost: paramReconciled.totalCost,
+							halted: true,
+							haltReason: reason,
+						};
+						return;
+					}
 
 					// Combine prompt with document content - agent works on what it's given
 					// Include explicit file path so agent knows where to save changes.
@@ -669,7 +748,7 @@ export async function* runPlaybook(
 					// New Session Message onto every spawn (matches interactive behavior).
 					const finalPrompt = prependNewSessionMessage(
 						policy.inlineDocument
-							? `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`
+							? `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${documentContent}`
 							: basePrompt,
 						session.newSessionMessage
 					);

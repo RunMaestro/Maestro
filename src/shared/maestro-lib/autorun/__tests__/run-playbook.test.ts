@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PLACEHOLDER_PR_URL } from '../../../playbookParams';
 import type { Playbook } from '../../../types';
 import { runPlaybook } from '../run-playbook';
 import { collect, createFakeDeps, session, tickFirstTask } from './fake-deps';
@@ -361,5 +362,87 @@ describe('runPlaybook (library engine)', () => {
 		);
 
 		expect(fake.requests[0]).toMatchObject({ purpose: 'task', model: 'sonnet', effort: 'low' });
+	});
+
+	describe('playbook parameters', () => {
+		const PARAM_PROMPT = [
+			'<!-- CONFIGURE: How many items to process -->',
+			'**MAX_ITEMS:** `25`',
+			'',
+			'<!-- CONFIGURE: Folder to work in -->',
+			'**TARGET_DIR:** `{{AUTORUN_FOLDER}}`',
+			'',
+			'<!-- CONFIGURE: Pull request to review -->',
+			`**PR_URL:** \`${PLACEHOLDER_PR_URL}\``,
+			'',
+			'Process [MAX_ITEMS] items under [TARGET_DIR].',
+		].join('\n');
+
+		it('substitutes [NAME] in memory while the document on disk keeps the token', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] Process [MAX_ITEMS] items for [PR_URL]\n' });
+			let diskAtDispatch = '';
+			fake.onTurn = (_request, f) => {
+				diskAtDispatch = f.docs.get('tasks') ?? '';
+				f.docs.set('tasks', tickFirstTask(diskAtDispatch));
+				return { success: true, response: 'x' };
+			};
+
+			const events = await collect(
+				runPlaybook(
+					session(),
+					playbook({
+						prompt: PARAM_PROMPT,
+						parameterValues: { MAX_ITEMS: '7', PR_URL: 'https://github.com/o/r/pull/1' },
+					}),
+					'/folder',
+					{ skipSynopsis: true },
+					fake.deps
+				)
+			);
+
+			const prompt = fake.requests[0].prompt;
+			expect(prompt).toContain('Process 7 items under /folder.');
+			expect(prompt).toContain('- [ ] Process 7 items for https://github.com/o/r/pull/1');
+			expect(prompt).toContain('## Resolved Configuration');
+			expect(prompt).toContain('| `TARGET_DIR` | /folder |');
+			expect(prompt).not.toContain('[MAX_ITEMS]');
+			expect(diskAtDispatch).toBe('- [ ] Process [MAX_ITEMS] items for [PR_URL]\n');
+			expect(fake.docs.get('tasks')).toBe('- [x] Process [MAX_ITEMS] items for [PR_URL]\n');
+			expect(events.at(-1)).toMatchObject({ type: 'complete', success: true });
+		});
+
+		it('halts before any spawn when a [NAME] token survives substitution', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] Review [PR_URL]\n- [ ] two\n' });
+
+			const events = await collect(
+				runPlaybook(
+					session(),
+					playbook({ prompt: PARAM_PROMPT }),
+					'/p',
+					{ skipSynopsis: true },
+					fake.deps
+				)
+			);
+
+			expect(fake.requests).toHaveLength(0);
+			expect(events.find((e) => e.type === 'error')).toMatchObject({
+				code: 'PARAMETER_SUBSTITUTION',
+				document: 'tasks',
+				parameters: ['PR_URL'],
+			});
+			expect(events.at(-1)).toMatchObject({ type: 'complete', halted: true, success: false });
+			expect(fake.history.at(-1)?.summary).toContain('Auto Run halted');
+			expect(fake.activity.at(-1)).toBe('end:agent-1');
+			expect(fake.docs.get('tasks')).toBe('- [ ] Review [PR_URL]\n- [ ] two\n');
+		});
+
+		it('leaves a playbook with no parameter form untouched', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] keep [LITERAL] brackets\n' });
+
+			await collect(runPlaybook(session(), playbook(), '/p', { skipSynopsis: true }, fake.deps));
+
+			expect(fake.requests[0].prompt).toContain('- [ ] keep [LITERAL] brackets');
+			expect(fake.requests[0].prompt).not.toContain('## Resolved Configuration');
+		});
 	});
 });
