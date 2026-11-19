@@ -117,6 +117,7 @@ describe('error pause (playbook)', () => {
 			'task_start',
 			'task_complete',
 			'document_complete',
+			'report',
 			'complete',
 		]);
 		expect(events.find((e) => e.type === 'paused')).toMatchObject({
@@ -315,6 +316,7 @@ describe('HITL gate (playbook)', () => {
 			'task_start',
 			'task_complete',
 			'document_complete',
+			'report',
 			'complete',
 		]);
 		expect(events.find((e) => e.type === 'paused')).toMatchObject({
@@ -361,6 +363,7 @@ describe('HITL gate (playbook)', () => {
 			'task_start',
 			'task_complete',
 			'document_complete',
+			'report',
 			'complete',
 		]);
 		expect(h.fake.requests.filter((r) => r.purpose === 'task')).toHaveLength(2);

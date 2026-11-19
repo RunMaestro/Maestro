@@ -24,6 +24,7 @@ import {
 	readDocAndGetTasks,
 	uncheckAllTasks,
 	writeDoc,
+	writeFileCreatingFolder,
 	type SpawnAgentOptions,
 } from './agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
@@ -137,6 +138,19 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 								}),
 							}
 						);
+					case 'report':
+						// The playbook's report document: a fresh session, like a task, with the
+						// same Maestro context, so the agent can read what the run left behind.
+						return turn(
+							request,
+							{
+								agentId: session.id,
+								sessionId: session.id,
+								source: 'cli:autorun-report',
+								prompt: request.prompt,
+							},
+							{ ...autoRunTurnOptions(session), appendSystemPrompt }
+						);
 					case 'synopsis':
 						// A resume into the session that already holds the system prompt:
 						// re-sending it would waste tokens.
@@ -200,6 +214,10 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 				isSshAgent(session) ? null : startRunEvidence(localEvidenceHost(cwd)),
 			evidenceEnd: (cwd, start) =>
 				isSshAgent(session) ? null : finishRunEvidence(localEvidenceHost(cwd), start),
+		},
+		// The run report lands beside the documents, which the CLI reads on this machine.
+		reports: {
+			write: (filePath, content) => writeFileCreatingFolder(filePath, content),
 		},
 		activity: {
 			begin: (entry) =>

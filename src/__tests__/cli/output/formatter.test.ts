@@ -899,6 +899,48 @@ describe('formatter', () => {
 			expect(mtimeResult).toContain('(file times)');
 		});
 
+		it('should print the run report and where it was saved', () => {
+			const report = {
+				playbookName: 'Ship It',
+				status: 'partial' as const,
+				facts: {
+					wasStopped: false,
+					statusText: 'completed with stalls' as const,
+					statusMessage: 'Completed with 1 stalled document(s)',
+					summary: 'Auto Run completed with stalls: 1 task in 0s (1 stalled)',
+					isSuccess: true,
+					totalCompletedTasks: 1,
+					totalElapsedMs: 0,
+					loopEnabled: false,
+					loopsCompleted: 1,
+					totalInputTokens: 0,
+					totalOutputTokens: 0,
+					totalCost: 0,
+					documents: ['a', 'b'],
+					stalledDocuments: [{ filename: 'a', reason: 'no progress' }],
+				},
+				parameters: [],
+				startedAt: 0,
+				finishedAt: 0,
+			};
+
+			const saved = formatRunEvent({
+				type: 'report',
+				timestamp,
+				status: 'partial',
+				path: '/p/.maestro-reports/ship-it-20260101-000000.md',
+				report,
+			});
+			expect(saved).toContain('Run report');
+			expect(saved).toContain('(Partially completed)');
+			expect(saved).toContain('# Ship It');
+			expect(saved).toContain('## What did not happen');
+			expect(saved).toContain('Report saved: /p/.maestro-reports/ship-it-20260101-000000.md');
+
+			const unsaved = formatRunEvent({ type: 'report', timestamp, status: 'partial', report });
+			expect(unsaved).toContain('Report not saved');
+		});
+
 		it('should format complete event', () => {
 			const event: RunEvent = {
 				type: 'complete',

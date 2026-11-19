@@ -9,6 +9,11 @@ import {
 	goalExitReasonLabel,
 	summaryUsageStats,
 } from '../history-entries';
+import {
+	buildFinalSummaryFacts,
+	renderPlaybookReportMarkdown,
+	type PlaybookRunReport,
+} from '../../../playbookRunReport';
 
 const agent = { id: 'agent-1', cwd: '/work' };
 
@@ -59,6 +64,40 @@ describe('Auto Run History rows', () => {
 		expect(buildAutoRunSummaryEntry(agent, 1, totals, 1).summary).toBe(
 			'Auto Run completed: 4 tasks in 1 loop'
 		);
+	});
+
+	it('leads the summary row with a playbook run report and keeps it on the row', () => {
+		const totals = {
+			totalCompletedTasks: 2,
+			totalElapsedMs: 1000,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCost: 0,
+		};
+		const report: PlaybookRunReport = {
+			playbookName: 'Ship It',
+			status: 'completed',
+			facts: buildFinalSummaryFacts({
+				...totals,
+				wasStopped: false,
+				stalledDocuments: new Map(),
+				documents: [{ filename: 'tasks' }],
+				loopEnabled: false,
+				loopIteration: 0,
+			}),
+			parameters: [],
+			startedAt: 0,
+			finishedAt: 1000,
+		};
+
+		const row = buildAutoRunSummaryEntry(agent, 1, totals, 1, undefined, report);
+
+		// The summary line is the run boundary, so it never changes.
+		expect(row.summary).toBe('Auto Run completed: 2 tasks in 1 loop');
+		expect(row.playbookReport).toBe(report);
+		expect(row.fullResponse?.startsWith(renderPlaybookReportMarkdown(report).trimEnd())).toBe(true);
+		expect(row.fullResponse).toContain('**Auto Run Summary**');
+		expect(buildAutoRunSummaryEntry(agent, 1, totals, 1).playbookReport).toBeUndefined();
 	});
 
 	it('names the exit reason on the final loop row and pluralizes the task count', () => {

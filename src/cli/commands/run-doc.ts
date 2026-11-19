@@ -244,6 +244,8 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			model: options.model?.trim() || undefined,
 			effort: options.effort?.trim() || undefined,
 			ignoreModelHints: options.ignoreModelHints || undefined,
+			// Loose documents are not a saved playbook, so no run report (the desktop agrees).
+			report: false,
 		});
 
 		try {

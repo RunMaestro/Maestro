@@ -344,7 +344,7 @@ Run a playbook (`playbook <playbook-id>`), or configure its parameters
 
 ## `maestro-cli playbook run <playbook-id>`
 
-Run a playbook (the default: `run` may be omitted)
+Run a playbook (the default: `run` may be omitted); ends with a run report saved under .maestro-reports/ (a `report` event with --json)
 
 | Option                 | Description                                                                                                 | Default |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------- | ------- |

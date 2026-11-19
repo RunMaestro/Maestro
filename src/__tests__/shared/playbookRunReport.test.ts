@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	buildFinalSummaryFacts,
+	buildPlaybookRunReport,
 	buildPlaybookRunReportProblems,
 	playbookReportFooterParts,
 	playbookReportSections,
@@ -339,6 +340,76 @@ describe('buildPlaybookRunReportProblems', () => {
 
 	it('is empty for a clean run', () => {
 		expect(buildPlaybookRunReportProblems({ stalledDocuments: [], lastError: null })).toEqual([]);
+	});
+});
+
+describe('buildPlaybookRunReport', () => {
+	const base = {
+		playbookName: 'Release Pipeline',
+		parameters: [],
+		startedAt: 1,
+		finishedAt: 2,
+	};
+
+	it('derives the status and keeps only the tiers it was given', () => {
+		const report = buildPlaybookRunReport({
+			...base,
+			playbookId: 'pb-1',
+			facts: buildFinalSummaryFacts(baseParams),
+			evidence: null,
+			authored: {},
+			cwd: '/work',
+		});
+		expect(report).toEqual({
+			...base,
+			playbookId: 'pb-1',
+			status: 'completed',
+			facts: buildFinalSummaryFacts(baseParams),
+			cwd: '/work',
+		});
+	});
+
+	it('marks a halted run failed and leads its problems with the halt', () => {
+		const report = buildPlaybookRunReport({
+			...base,
+			facts: buildFinalSummaryFacts(baseParams),
+			halted: true,
+			lastError: { kind: 'halt', document: '02-BUILD.md', taskIndex: 1, message: 'blocked' },
+		});
+		expect(report.status).toBe('failed');
+		expect(report.problems).toEqual([
+			{ kind: 'halt', document: '02-BUILD.md', taskIndex: 1, message: 'blocked' },
+		]);
+	});
+
+	it('makes a run with some stalled documents partial, with each stall located', () => {
+		const report = buildPlaybookRunReport({
+			...base,
+			facts: buildFinalSummaryFacts({
+				...baseParams,
+				stalledDocuments: new Map([['01-SETUP.md', 'no progress']]),
+			}),
+			failures: [{ kind: 'stall', documentFilename: '01-SETUP.md', taskIndex: 2 }],
+			evidence: { source: 'git', changedFiles: ['a.ts'], createdFiles: [], deletedFiles: [] },
+			authored: { narrative, howToUse: 'Run it.', nextSteps: ['Ship'] },
+		});
+		expect(report).toMatchObject({
+			status: 'partial',
+			problems: [{ kind: 'stall', document: '01-SETUP.md', taskIndex: 2, message: 'no progress' }],
+			evidence: { source: 'git', changedFiles: ['a.ts'] },
+			narrative,
+			howToUse: 'Run it.',
+			nextSteps: ['Ship'],
+		});
+	});
+
+	it('reports a stopped run as stopped whatever else happened', () => {
+		const report = buildPlaybookRunReport({
+			...base,
+			facts: buildFinalSummaryFacts({ ...baseParams, wasStopped: true }),
+			halted: true,
+		});
+		expect(report.status).toBe('stopped');
 	});
 });
 

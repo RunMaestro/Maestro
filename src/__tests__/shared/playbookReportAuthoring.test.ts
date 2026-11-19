@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	PLAYBOOK_REPORTS_DIR,
+	buildPlaybookReportDocumentPrompt,
+	buildPlaybookReportSynthesisPrompt,
 	buildPlaybookRunReportParameters,
 	extractMarkdownSection,
 	fillPlaybookReportPrompt,
@@ -17,6 +19,7 @@ import {
 	playbookReportProjectFileName,
 	playbookReportRelativePaths,
 	playbookReportSlug,
+	preparePlaybookReportDocument,
 	REPORT_SYNOPSES_MAX,
 } from '../../shared/playbookReportAuthoring';
 import { buildFinalSummaryFacts } from '../../shared/playbookRunReport';
@@ -398,5 +401,71 @@ describe('parsePlaybookRunReportJson', () => {
 		).toBeUndefined();
 		const { parameters: _parameters, ...noParameters } = report;
 		expect(parsePlaybookRunReportJson(JSON.stringify(noParameters))).toBeUndefined();
+	});
+});
+
+describe('report prompts', () => {
+	const context = {
+		playbookName: 'Message Bus',
+		status: 'completed' as const,
+		facts: facts(),
+		evidence: {
+			source: 'git' as const,
+			changedFiles: ['a.ts'],
+			createdFiles: [],
+			deletedFiles: [],
+		},
+	};
+	const TEMPLATE = [
+		'{{PLAYBOOK_NAME}}',
+		'{{RUN_FACTS}}',
+		'{{FILES_CHANGED}}',
+		'{{REPORT_DOCUMENT_PATH}}',
+		'{{REPORT_DOCUMENT}}',
+		'{{TASK_SYNOPSES}}',
+		'{{AGENT_NAME}}',
+	].join('\n');
+
+	it('fills the report document prompt with the run and the document, once', () => {
+		const prompt = buildPlaybookReportDocumentPrompt(TEMPLATE, {
+			...context,
+			documentPath: '/p/pb/REPORT.md',
+			documentContent: 'Mentions {{PLAYBOOK_NAME}} literally',
+		});
+		const lines = prompt.split('\n');
+		expect(lines[0]).toBe('Message Bus');
+		expect(prompt).toContain(formatPlaybookReportRunFacts('completed', context.facts));
+		expect(prompt).toContain('- changed: a.ts');
+		expect(prompt).toContain('/p/pb/REPORT.md');
+		// A value is inserted literally, never substituted again.
+		expect(prompt).toContain('Mentions {{PLAYBOOK_NAME}} literally');
+		// Tokens this prompt does not own are left for the template-variable pass.
+		expect(prompt).toContain('{{TASK_SYNOPSES}}');
+		expect(prompt).toContain('{{AGENT_NAME}}');
+	});
+
+	it('fills the synthesis prompt with the synopses', () => {
+		const prompt = buildPlaybookReportSynthesisPrompt(TEMPLATE, {
+			...context,
+			evidence: undefined,
+			synopses: [{ document: 'pb/one', summary: 'Wired the bus.', success: true }],
+		});
+		expect(prompt).toContain('- [pb/one] Wired the bus.');
+		expect(prompt).toContain('(Not recorded for this run.)');
+		expect(prompt).toContain('{{REPORT_DOCUMENT}}');
+	});
+
+	it('expands variables, then substitutes parameter answers, in memory', () => {
+		const expand = (text: string) => text.replace('{{AGENT_NAME}}', 'Ada');
+		const content = 'Hello {{AGENT_NAME}}, the bus is [BUS_NAME].';
+		expect(preparePlaybookReportDocument(content, expand)).toBe(
+			'Hello Ada, the bus is [BUS_NAME].'
+		);
+		expect(
+			preparePlaybookReportDocument(content, expand, {
+				specs: [{ name: 'BUS_NAME', type: 'string', required: true, source: 'prose' }],
+				values: { BUS_NAME: 'nats' },
+			})
+		).toBe('Hello Ada, the bus is nats.');
 	});
 });

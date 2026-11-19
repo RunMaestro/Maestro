@@ -104,6 +104,8 @@ A run that failed or was stopped gets no narrative, only the facts. A run that f
 
 When the run finishes, the report opens in a window on top of whatever you are doing. **Copy report** puts the markdown on the clipboard, **Save to project** writes it into the agent's working directory as `<playbook>-REPORT-<date>-<time>.md`, and file paths in the report open in the File Preview. If several runs finish together, their reports wait in line: the header shows "1 of 3", and **Done** (or <kbd>Esc</kbd>) moves to the next one. Closing a report loses nothing. To see the last one again, run **Open Last Playbook Report** from the command palette, or `maestro-cli open playbook-report`. Opening the run's entry in History shows the same report, with the classic Auto Run summary folded below it, and the entry's **Open report** button opens it in the report window again.
 
+A run from the command line (`maestro-cli playbook <id>`) writes the same two files and the same History entry, and prints the report when it ends. With `--json` the report arrives as a `report` event just before `complete`. The command line runs a `report` document the same way, but it writes no synopsis summary, so a playbook without a `report` document gets a report with the facts and no narrative. `maestro-cli run-doc` runs loose documents, not a playbook, so it writes no report.
+
 ### Use One as Reference
 
 A playbook does not have to be run as-is. Importing one pulls it down locally, so you can also treat it as reference material: tell your agent what you actually want, point it at the imported document, and let it adapt the structure to your project. Customize it to your desire.

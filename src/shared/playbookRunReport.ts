@@ -347,6 +347,56 @@ export function buildPlaybookRunReportProblems(params: {
 	return problems;
 }
 
+/** Everything a finished run knows that its report is built from. */
+export interface BuildPlaybookRunReportParams {
+	playbookName: string;
+	playbookId?: string;
+	/** The facts from the reconciled totals (the same ones the final History row shows). */
+	facts: FinalSummaryFacts;
+	/** The agent wrote a halt marker (or the run refused to start a task): a failure. */
+	halted?: boolean;
+	/** The run's failure log in order, for the task each stalled document stalled on. */
+	failures?: ReadonlyArray<PlaybookRunFailureLocation>;
+	/** The last error or halt, which leads "What did not happen". */
+	lastError?: PlaybookRunReportProblem | null;
+	evidence?: DiskEvidence | null;
+	/** Tier C, when a report document or a synthesis turn wrote it. */
+	authored?: Pick<PlaybookRunReport, 'narrative' | 'howToUse' | 'nextSteps'>;
+	parameters: PlaybookRunReportParameter[];
+	startedAt: number;
+	finishedAt: number;
+	cwd?: string;
+}
+
+/**
+ * The report of a finished run, from its facts and the optional tiers. The
+ * one place the status and the "What did not happen" list are derived, so the
+ * desktop runner and the CLI engine build the same report. Pure.
+ */
+export function buildPlaybookRunReport(params: BuildPlaybookRunReportParams): PlaybookRunReport {
+	const problems = buildPlaybookRunReportProblems({
+		stalledDocuments: params.facts.stalledDocuments,
+		failures: params.failures,
+		lastError: params.lastError,
+	});
+	const { narrative, howToUse, nextSteps } = params.authored ?? {};
+	return {
+		playbookName: params.playbookName,
+		...(params.playbookId !== undefined && { playbookId: params.playbookId }),
+		status: playbookRunReportStatus(params.facts, params.halted ?? false),
+		facts: params.facts,
+		...(problems.length > 0 && { problems }),
+		...(params.evidence && { evidence: params.evidence }),
+		...(narrative && { narrative }),
+		...(howToUse && { howToUse }),
+		...(nextSteps && { nextSteps }),
+		parameters: params.parameters,
+		startedAt: params.startedAt,
+		finishedAt: params.finishedAt,
+		...(params.cwd !== undefined && { cwd: params.cwd }),
+	};
+}
+
 /** `task 3 of \`doc.md\``, or just the document when the task is unknown. */
 function problemLocation(problem: PlaybookRunReportProblem): string {
 	const doc = inlineCode(problem.document);

@@ -39,6 +39,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	readDocAndGetTasks: vi.fn(),
 	uncheckAllTasks: vi.fn(),
 	writeDoc: vi.fn(),
+	writeFileCreatingFolder: vi.fn(),
 }));
 
 // Mock the CLI system-prompt builder. Real-impl would read the bundled
@@ -94,6 +95,7 @@ import {
 	readDocAndGetTasks,
 	uncheckAllTasks,
 	writeDoc,
+	writeFileCreatingFolder,
 } from '../../../cli/services/agent-spawner';
 import { addHistoryEntry, readGroups, readHistory } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
@@ -2838,6 +2840,97 @@ describe('batch-processor', () => {
 				expect(events.find((e) => e.type === 'task_complete')).toMatchObject({ success: false });
 				expect(events.find((e) => e.type === 'complete')?.totalTasksCompleted).toBe(1);
 			});
+		});
+	});
+
+	describe('run report (CLI adapter)', () => {
+		// One task in `tasks`, finished by the first turn. `REPORT` is the report document.
+		const oneTask = () => {
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation((_folder, name) => {
+				if (name === 'REPORT') return { content: 'Write the report.', taskCount: 0 };
+				calls++;
+				return calls <= 2
+					? { content: '- [ ] Task', taskCount: 1 }
+					: { content: '- [x] Task', taskCount: 0 };
+			});
+		};
+
+		it('writes the report and its JSON under .maestro-reports and emits the paths', async () => {
+			oneTask();
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const report = events.find((e) => e.type === 'report');
+			expect(report?.status).toBe('completed');
+			expect(report?.path).toMatch(
+				/^\/playbooks\/\.maestro-reports\/test-playbook-\d{8}-\d{6}\.md$/
+			);
+			expect(writeFileCreatingFolder).toHaveBeenCalledWith(
+				report?.path,
+				expect.stringContaining('# Test Playbook')
+			);
+			expect(writeFileCreatingFolder).toHaveBeenCalledWith(
+				report?.jsonPath,
+				expect.stringContaining(`"reportPath": "${report?.path}"`)
+			);
+			// The History boundary row carries the report too.
+			const summary = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map(([entry]) => entry)
+				.find((entry) => entry.summary.startsWith('Auto Run completed'));
+			expect(summary?.playbookReport).toMatchObject({ playbookName: 'Test Playbook' });
+		});
+
+		it('runs the report document once, in a fresh session with the Maestro system prompt', async () => {
+			oneTask();
+			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('SYSTEM PROMPT');
+
+			await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						documents: [
+							{ filename: 'tasks', resetOnCompletion: false },
+							{ filename: 'REPORT', resetOnCompletion: false },
+						],
+						report: 'REPORT',
+					}),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+
+			// The task, then the report document: never a task turn for REPORT.
+			expect(spawnAgent).toHaveBeenCalledTimes(2);
+			const [, cwd, , resumeSessionId, options] = vi.mocked(spawnAgent).mock.calls[1];
+			expect(cwd).toBe('/path/to/project');
+			expect(resumeSessionId).toBeUndefined();
+			expect(options).toMatchObject({ appendSystemPrompt: 'SYSTEM PROMPT', querySource: 'auto' });
+			expect(readDocAndCountTasks).toHaveBeenCalledWith('/playbooks', 'REPORT');
+		});
+
+		it('turns a failed report write into a warning and an unsaved report', async () => {
+			oneTask();
+			vi.mocked(writeFileCreatingFolder).mockImplementationOnce(() => {
+				throw new Error('EACCES');
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const report = events.find((e) => e.type === 'report');
+			expect(report).toBeDefined();
+			expect(report?.path).toBeUndefined();
+			expect(events.at(-1)).toMatchObject({ type: 'complete', success: true });
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to save the playbook run report',
+				expect.anything(),
+				expect.anything()
+			);
 		});
 	});
 });

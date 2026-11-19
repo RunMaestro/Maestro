@@ -26,7 +26,9 @@ import { fileTimestampSlug } from './formatters';
 import { forEachMarkdownLine } from './markdownTaskScan';
 import {
 	describePlaybookParamProvenance,
+	expandPlaybookParamTemplates,
 	resolvePlaybookParamValue,
+	substitutePlaybookParams,
 	type PlaybookParamSet,
 } from './playbookParams';
 import type {
@@ -375,6 +377,65 @@ export function fillPlaybookReportPrompt(
 	return template.replace(/\{\{([A-Z_]+)\}\}/g, (token, name: string) =>
 		Object.prototype.hasOwnProperty.call(values, name) ? values[name] : token
 	);
+}
+
+/** What every report prompt is told about the run. */
+export interface PlaybookReportPromptContext {
+	playbookName: string;
+	status: PlaybookRunReportStatus;
+	facts: FinalSummaryFacts;
+	evidence?: DiskEvidence | null;
+}
+
+function reportPromptValues(context: PlaybookReportPromptContext): Record<string, string> {
+	return {
+		PLAYBOOK_NAME: context.playbookName,
+		RUN_FACTS: formatPlaybookReportRunFacts(context.status, context.facts),
+		FILES_CHANGED: formatPlaybookReportFilesChanged(context.evidence ?? undefined),
+	};
+}
+
+/**
+ * The `playbook-report-document` prompt for one run, with the report
+ * document's text (already expanded, see {@link preparePlaybookReportDocument})
+ * inlined.
+ */
+export function buildPlaybookReportDocumentPrompt(
+	template: string,
+	context: PlaybookReportPromptContext & { documentPath: string; documentContent: string }
+): string {
+	return fillPlaybookReportPrompt(template, {
+		...reportPromptValues(context),
+		REPORT_DOCUMENT_PATH: context.documentPath,
+		REPORT_DOCUMENT: context.documentContent,
+	});
+}
+
+/** The `playbook-report-synthesis` prompt for one run, over its task synopses. */
+export function buildPlaybookReportSynthesisPrompt(
+	template: string,
+	context: PlaybookReportPromptContext & { synopses: readonly PlaybookReportSynopsis[] }
+): string {
+	return fillPlaybookReportPrompt(template, {
+		...reportPromptValues(context),
+		TASK_SYNOPSES: formatPlaybookReportSynopses(context.synopses),
+	});
+}
+
+/**
+ * The report document as the agent is handed it: template variables expanded
+ * by `expand`, then the playbook's parameter answers substituted. In memory
+ * only; the file on disk keeps its placeholders.
+ */
+export function preparePlaybookReportDocument(
+	content: string,
+	expand: (text: string) => string,
+	params?: PlaybookParamSet
+): string {
+	const expanded = expand(content);
+	if (!params) return expanded;
+	const set = expandPlaybookParamTemplates(params, expand);
+	return substitutePlaybookParams(expanded, set.specs, set.values).text;
 }
 
 // ============================================================================

@@ -511,7 +511,9 @@ const collectAssignment = (value: string, previous: string[]) => [...previous, v
 
 playbookCommand
 	.command('run <playbook-id>', { isDefault: true })
-	.description('Run a playbook (the default: `run` may be omitted)')
+	.description(
+		'Run a playbook (the default: `run` may be omitted); ends with a run report saved under .maestro-reports/ (a `report` event with --json)'
+	)
 	.option('--dry-run', 'Show what would be executed without running')
 	.option('--no-history', 'Do not write history entries')
 	.option('--json', 'Output as JSON lines (for scripting)')

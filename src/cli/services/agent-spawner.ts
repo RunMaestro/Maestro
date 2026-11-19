@@ -2270,3 +2270,12 @@ export function writeDoc(folderPath: string, filename: string, content: string):
 	const filePath = `${folderPath}/${filename}`;
 	fs.writeFileSync(filePath, content, 'utf-8');
 }
+
+/**
+ * Write a file beside the documents, creating its folder first (a playbook run report under
+ * `<autoRunFolder>/.maestro-reports/`).
+ */
+export function writeFileCreatingFolder(filePath: string, content: string): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, content, 'utf-8');
+}

@@ -15,20 +15,16 @@
 
 import type { Session, UsageStats } from '../../../types';
 import { cheapTurnSettings } from '../../../../shared/modelTiers';
+import type { PlaybookParamSet } from '../../../../shared/playbookParams';
 import {
-	expandPlaybookParamTemplates,
-	substitutePlaybookParams,
-	type PlaybookParamSet,
-} from '../../../../shared/playbookParams';
-import {
-	fillPlaybookReportPrompt,
-	formatPlaybookReportFilesChanged,
-	formatPlaybookReportRunFacts,
-	formatPlaybookReportSynopses,
+	buildPlaybookReportDocumentPrompt,
+	buildPlaybookReportSynthesisPrompt,
 	parsePlaybookReportAnswer,
 	parsePlaybookReportSynthesis,
 	playbookReportNarrativeAllowed,
+	preparePlaybookReportDocument,
 	type PlaybookReportAuthoredParts,
+	type PlaybookReportPromptContext,
 	type PlaybookReportSynopsis,
 } from '../../../../shared/playbookReportAuthoring';
 import type {
@@ -76,11 +72,12 @@ export interface AuthoredRunReport extends PlaybookReportAuthoredParts {
 	usageStats?: UsageStats;
 }
 
-function sharedPromptValues(params: AuthorRunReportParams): Record<string, string> {
+function promptContext(params: AuthorRunReportParams): PlaybookReportPromptContext {
 	return {
-		PLAYBOOK_NAME: params.playbookName,
-		RUN_FACTS: formatPlaybookReportRunFacts(params.status, params.facts),
-		FILES_CHANGED: formatPlaybookReportFilesChanged(params.evidence),
+		playbookName: params.playbookName,
+		status: params.status,
+		facts: params.facts,
+		evidence: params.evidence,
 	};
 }
 
@@ -113,12 +110,11 @@ async function readReportDocument(
 		documentName: reportDocument,
 		documentPath: path,
 	};
-	const expand = (text: string) => substituteTemplateVariables(text, templateContext);
-	let content = expand(result.content);
-	if (params.playbookParams) {
-		const set = expandPlaybookParamTemplates(params.playbookParams, expand);
-		content = substitutePlaybookParams(content, set.specs, set.values).text;
-	}
+	const content = preparePlaybookReportDocument(
+		result.content,
+		(text) => substituteTemplateVariables(text, templateContext),
+		params.playbookParams
+	);
 	return { path, content };
 }
 
@@ -127,10 +123,10 @@ async function runReportDocument(
 	document: { path: string; content: string }
 ): Promise<AuthoredRunReport> {
 	const template = await loadPlaybookReportPrompt(PROMPT_IDS.PLAYBOOK_REPORT_DOCUMENT);
-	const prompt = fillPlaybookReportPrompt(template, {
-		...sharedPromptValues(params),
-		REPORT_DOCUMENT_PATH: document.path,
-		REPORT_DOCUMENT: document.content,
+	const prompt = buildPlaybookReportDocumentPrompt(template, {
+		...promptContext(params),
+		documentPath: document.path,
+		documentContent: document.content,
 	});
 	const result = await params.onSpawnAgent(params.session.id, prompt, params.effectiveCwd, {
 		...(params.runModel && { modelOverride: params.runModel }),
@@ -146,9 +142,9 @@ async function runReportDocument(
 async function runSynthesis(params: AuthorRunReportParams): Promise<AuthoredRunReport> {
 	if (!params.synopses.some((synopsis) => synopsis.summary.trim() !== '')) return {};
 	const template = await loadPlaybookReportPrompt(PROMPT_IDS.PLAYBOOK_REPORT_SYNTHESIS);
-	const prompt = fillPlaybookReportPrompt(template, {
-		...sharedPromptValues(params),
-		TASK_SYNOPSES: formatPlaybookReportSynopses(params.synopses),
+	const prompt = buildPlaybookReportSynthesisPrompt(template, {
+		...promptContext(params),
+		synopses: params.synopses,
 	});
 	const cheap = cheapTurnSettings(params.session.toolType);
 	const result = await params.onSpawnAgent(params.session.id, prompt, params.effectiveCwd, {

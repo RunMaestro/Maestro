@@ -32,8 +32,12 @@ export interface AutoRunEvent {
 	[key: string]: unknown;
 }
 
-/** What a turn is for. The engine resolves model and effort per purpose; the adapter forwards them. */
-export type AutoRunTurnPurpose = 'task' | 'synopsis' | 'goal-iteration' | 'goal-handoff';
+/**
+ * What a turn is for. The engine resolves model and effort per purpose; the adapter forwards them.
+ * `report` is the playbook's report document, run once in a fresh session after every other
+ * document to write the run report's narrative.
+ */
+export type AutoRunTurnPurpose = 'task' | 'synopsis' | 'report' | 'goal-iteration' | 'goal-handoff';
 
 export interface AutoRunTurnRequest {
 	purpose: AutoRunTurnPurpose;
@@ -201,6 +205,14 @@ export interface AutoRunDeps {
 			cwd: string,
 			message: string
 		): MaybePromise<{ committed: boolean; commitHash?: string; error?: string }>;
+	};
+	/**
+	 * Optional. Writes a playbook run report file (`<autoRunFolder>/.maestro-reports/...`),
+	 * creating its folder. The engine builds the path and the text. May throw: the engine then
+	 * reports the run without a saved path. Absent: the report is emitted but never saved.
+	 */
+	reports?: {
+		write(path: string, content: string): MaybePromise<void>;
 	};
 	/** Tells the desktop and other CLI processes that this agent is busy for the run's length. */
 	activity: {

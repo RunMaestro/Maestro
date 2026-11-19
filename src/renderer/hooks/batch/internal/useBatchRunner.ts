@@ -19,7 +19,7 @@ import {
 } from '../../../../shared/playbookReportAuthoring';
 import {
 	buildFinalSummaryFacts,
-	buildPlaybookRunReportProblems,
+	buildPlaybookRunReport,
 	playbookRunReportStatus,
 	renderPlaybookReportMarkdown,
 	type PlaybookRunReport,
@@ -1998,24 +1998,20 @@ export function useBatchRunner({
 			let report: PlaybookRunReport | undefined;
 			if (config.playbook) {
 				const { usageStats: _reportUsage, ...authored } = authoredReport ?? {};
-				const problems = buildPlaybookRunReportProblems({
-					stalledDocuments: finalFacts.stalledDocuments,
-					failures: runFailures,
-					lastError: lastRunError,
-				});
-				report = {
+				report = buildPlaybookRunReport({
 					playbookName: config.playbook.name || 'Playbook',
 					playbookId: config.playbook.id,
-					status: playbookRunReportStatus(finalFacts, halted),
 					facts: finalFacts,
-					...(problems.length > 0 && { problems }),
-					...(evidence && { evidence }),
-					...authored,
+					halted,
+					failures: runFailures,
+					lastError: lastRunError,
+					evidence,
+					authored,
 					parameters: buildPlaybookRunReportParameters(playbookParams),
 					startedAt: batchStartTime,
 					finishedAt: Date.now(),
 					cwd: effectiveCwd,
-				};
+				});
 				const saved = await savePlaybookRunReport(report, folderPath, sshRemoteId);
 				if (saved) report = { ...report, reportPath: saved.markdownPath };
 			}

@@ -40,7 +40,27 @@ import { isFailedSynopsisResponse, parseSynopsis } from '../../synopsis';
 import { substituteTemplateVariables, type TemplateContext } from '../../templateVariables';
 import type { Playbook, SessionInfo, UsageStats } from '../../types';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
-import type { DiskEvidence } from '../../playbookRunReport';
+import { joinPath } from '../../formatters';
+import { resolvePlaybookReportDocument, withoutReportDocument } from '../../playbookRun';
+import {
+	buildPlaybookReportDocumentPrompt,
+	buildPlaybookRunReportParameters,
+	parsePlaybookReportAnswer,
+	playbookReportNarrativeAllowed,
+	playbookReportRelativePaths,
+	preparePlaybookReportDocument,
+	type PlaybookReportAuthoredParts,
+} from '../../playbookReportAuthoring';
+import {
+	buildFinalSummaryFacts,
+	buildPlaybookRunReport,
+	playbookRunReportStatus,
+	renderPlaybookReportMarkdown,
+	type DiskEvidence,
+	type PlaybookRunFailureLocation,
+	type PlaybookRunReport,
+	type PlaybookRunReportProblem,
+} from '../../playbookRunReport';
 import type { RunEvidenceSnapshot } from '../../runEvidence';
 import {
 	buildAutoRunSummaryEntry,
@@ -78,6 +98,13 @@ export interface RunPlaybookOptions {
 	 * "stopped" (never a failure) and ends cleanly.
 	 */
 	signal?: AbortSignal;
+	/**
+	 * Build the playbook run report at the end (the default): saved under
+	 * `<folder>/.maestro-reports/` through `deps.reports`, emitted as a `report` event, and led
+	 * with in the summary History row. `run-doc` passes false: a run of loose documents is not a
+	 * saved playbook, and the desktop reports only those.
+	 */
+	report?: boolean;
 }
 
 const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
@@ -89,7 +116,7 @@ const OPERATOR_ABORT_OUTCOME = 'stopped: aborted by operator';
  */
 export async function* runPlaybook(
 	session: SessionInfo,
-	playbook: Playbook,
+	playbookRecord: Playbook,
 	folderPath: string,
 	options: RunPlaybookOptions,
 	deps: AutoRunDeps
@@ -104,7 +131,17 @@ export async function* runPlaybook(
 		effort: runEffort,
 		ignoreModelHints = false,
 		signal,
+		report: buildReport = true,
 	} = options;
+	// The playbook's report document runs once at the end, never in the task loop, the same as
+	// the desktop (`withoutReportDocument` in useBatchRunner).
+	const reportDocument = resolvePlaybookReportDocument(playbookRecord);
+	const playbook: Playbook = reportDocument
+		? {
+				...playbookRecord,
+				documents: withoutReportDocument(playbookRecord.documents, reportDocument),
+			}
+		: playbookRecord;
 	const { clock, log, controller } = deps;
 	const policy = deps.policy ?? CLI_AUTORUN_POLICY;
 	// Pausing needs somebody to answer. Without a controller a gate is reported and skipped, and a
@@ -296,19 +333,17 @@ export async function* runPlaybook(
 				error: String(evidenceError),
 			});
 		}
-		// Every non-dry end of the run emits this just before its `complete`. A new event type, so
-		// `complete` keeps its shape (AE5).
-		const emitEvidence = async function* (): AsyncGenerator<AutoRunEvent> {
-			if (!evidenceStart || !deps.environment.evidenceEnd) return;
-			let evidence: DiskEvidence | null = null;
+		// The folder against that snapshot, once the run is over. Null when there is none.
+		const collectEvidence = async (): Promise<DiskEvidence | null> => {
+			if (!evidenceStart || !deps.environment.evidenceEnd) return null;
 			try {
-				evidence = await deps.environment.evidenceEnd(session.cwd, evidenceStart);
+				return (await deps.environment.evidenceEnd(session.cwd, evidenceStart)) ?? null;
 			} catch (evidenceError) {
 				log.warn('Failed to diff the folder for run evidence', session.name, {
 					error: String(evidenceError),
 				});
+				return null;
 			}
-			if (evidence) yield { type: 'evidence', timestamp: clock.now(), evidence };
 		};
 
 		// Usage Dashboard bookkeeping for the run. A port that cannot record is a warning, not a stop.
@@ -359,6 +394,12 @@ export async function* runPlaybook(
 		// Total tracking across all loops
 		let totalInputTokens = 0;
 		let totalOutputTokens = 0;
+
+		// What the run report's "What did not happen" is built from: each stalled document and
+		// why, the failure log (for the task each one stalled on), and the last error or halt.
+		const stalledDocuments = new Map<string, string>();
+		const runFailures: PlaybookRunFailureLocation[] = [];
+		let lastRunError: PlaybookRunReportProblem | null = null;
 
 		// Helper to create final loop entry with exit reason
 		const createFinalLoopEntry = async (exitReason: string): Promise<void> => {
@@ -436,7 +477,8 @@ export async function* runPlaybook(
 		// rows and reported the two runs added together.
 		const createAutoRunSummary = async (
 			reconciled: FinalSummaryTotals,
-			outcome?: string
+			outcome?: string,
+			report?: PlaybookRunReport
 		): Promise<void> => {
 			// Every end of a run passes through here, so this is where the stats row closes.
 			if (statsRunId && deps.stats) {
@@ -454,8 +496,196 @@ export async function* runPlaybook(
 			}
 			if (!writeHistory) return;
 			await deps.history.append(
-				buildAutoRunSummaryEntry(session, clock.now(), reconciled, loopIteration + 1, outcome)
+				buildAutoRunSummaryEntry(
+					session,
+					clock.now(),
+					reconciled,
+					loopIteration + 1,
+					outcome,
+					report
+				)
 			);
+		};
+
+		// The run's facts from the in-memory counters, before reconciliation: what the report
+		// document is told while the final totals are not known yet.
+		const liveFacts = () =>
+			buildFinalSummaryFacts({
+				wasStopped: false,
+				totalCompletedTasks,
+				totalElapsedMs: clock.now() - batchStartTime - (controller?.pausedMs() ?? 0),
+				stalledDocuments,
+				documents: playbook.documents,
+				loopEnabled: playbook.loopEnabled,
+				loopIteration,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCost,
+			});
+
+		// Tier C of the run report: the playbook's report document, run once in a fresh session
+		// with the `playbook-report-document` prompt around it. Only a run that finished (all
+		// documents, or all but the stalled ones) is narrated. The CLI has no synthesis turn, so a
+		// playbook without a report document has no narrative and the report shows the facts.
+		// Never throws: a failure here only costs the narrative. The turn's spend counts toward
+		// the run's totals.
+		const authorReport = async (
+			evidence: DiskEvidence | null
+		): Promise<PlaybookReportAuthoredParts | undefined> => {
+			if (!reportDocument) return undefined;
+			const facts = liveFacts();
+			const status = playbookRunReportStatus(facts);
+			if (!playbookReportNarrativeAllowed(status)) return undefined;
+			try {
+				const { content } = await deps.documents.read(folderPath, reportDocument);
+				if (!content || content.trim() === '') {
+					log.warn(
+						'Report document is missing or empty; the report has no narrative',
+						session.name,
+						{
+							reportDocument,
+						}
+					);
+					return undefined;
+				}
+				const documentPath = `${folderPath}/${reportDocument}.md`;
+				const templateContext: TemplateContext = {
+					session: { ...session, isGitRepo: isGit },
+					gitBranch,
+					groupName,
+					groupId: session.groupId,
+					autoRunFolder: folderPath,
+					loopNumber: facts.loopsCompleted,
+					documentName: reportDocument,
+					documentPath,
+				};
+				const documentContent = preparePlaybookReportDocument(
+					content,
+					(text) => substituteTemplateVariables(text, templateContext),
+					{ specs: playbookParamSpecs, values: playbookParamValues }
+				);
+				const prompt = buildPlaybookReportDocumentPrompt(
+					await deps.prompts.get(PROMPT_IDS.PLAYBOOK_REPORT_DOCUMENT),
+					{ playbookName: playbook.name, status, facts, evidence, documentPath, documentContent }
+				);
+				// The run's own model and effort, as a task without a model hint gets them.
+				const settings = resolveTurnSettings(
+					session.toolType,
+					null,
+					runModel ?? session.customModel,
+					runEffort ?? session.customEffort
+				);
+				const result = await deps.turns.run({
+					purpose: 'report',
+					prompt: prependNewSessionMessage(prompt, session.newSessionMessage),
+					model: settings.model,
+					effort: settings.effort,
+					document: reportDocument,
+					signal,
+				});
+				if (result.usageStats) {
+					totalInputTokens += result.usageStats.inputTokens || 0;
+					totalOutputTokens += result.usageStats.outputTokens || 0;
+					totalCost += result.usageStats.totalCostUsd || 0;
+				}
+				if (!result.success || !result.response) {
+					log.warn('Report document turn failed', session.name, { error: result.error });
+					return undefined;
+				}
+				return parsePlaybookReportAnswer(result.response);
+			} catch (reportError) {
+				log.warn('Run report narrative failed', session.name, { error: String(reportError) });
+				return undefined;
+			}
+		};
+
+		// Save the report as `<folder>/.maestro-reports/<slug>-<timestamp>.{md,json}`, the same two
+		// files the desktop writes. The JSON carries `reportPath`. Null when there is no port or a
+		// write failed: the report is still emitted and recorded, just without a path.
+		const saveReport = async (
+			report: PlaybookRunReport
+		): Promise<{ markdownPath: string; jsonPath: string } | null> => {
+			if (!deps.reports) return null;
+			const relative = playbookReportRelativePaths(report.playbookName, report.finishedAt);
+			const markdownPath = joinPath(folderPath, relative.markdown);
+			const jsonPath = joinPath(folderPath, relative.json);
+			const saved: PlaybookRunReport = { ...report, reportPath: markdownPath };
+			try {
+				await deps.reports.write(markdownPath, renderPlaybookReportMarkdown(saved));
+				await deps.reports.write(jsonPath, `${JSON.stringify(saved, null, 2)}\n`);
+				return { markdownPath, jsonPath };
+			} catch (saveError) {
+				log.warn('Failed to save the playbook run report', session.name, {
+					markdownPath,
+					error: String(saveError),
+				});
+				return null;
+			}
+		};
+
+		// Every non-dry end of the run closes here, after its final loop row: diff the folder,
+		// write the narrative (a finished run only), reconcile the totals, build and save the run
+		// report, and write the summary row that is the run boundary. Yields `evidence` and
+		// `report` (new event types, so `complete` keeps its shape, AE5) and returns the totals
+		// the caller's `complete` reports.
+		const closeRun = async function* (end: {
+			outcome?: string;
+			wasStopped: boolean;
+			halted: boolean;
+		}): AsyncGenerator<AutoRunEvent, FinalSummaryTotals> {
+			const evidence = await collectEvidence();
+			const authored =
+				buildReport && !end.wasStopped && !end.halted ? await authorReport(evidence) : undefined;
+			const reconciled = await reconcileTotals();
+
+			let report: PlaybookRunReport | undefined;
+			let saved: { markdownPath: string; jsonPath: string } | null = null;
+			if (buildReport) {
+				report = buildPlaybookRunReport({
+					playbookName: playbook.name,
+					playbookId: playbook.id,
+					facts: buildFinalSummaryFacts({
+						wasStopped: end.wasStopped,
+						totalCompletedTasks: reconciled.totalCompletedTasks,
+						totalElapsedMs: reconciled.totalElapsedMs,
+						stalledDocuments,
+						documents: playbook.documents,
+						loopEnabled: playbook.loopEnabled,
+						loopIteration,
+						totalInputTokens: reconciled.totalInputTokens,
+						totalOutputTokens: reconciled.totalOutputTokens,
+						totalCost: reconciled.totalCost,
+					}),
+					halted: end.halted,
+					failures: runFailures,
+					lastError: lastRunError,
+					evidence,
+					authored,
+					parameters: buildPlaybookRunReportParameters({
+						specs: playbookParamSpecs,
+						values: playbookParamValues,
+					}),
+					startedAt: batchStartTime,
+					finishedAt: clock.now(),
+					cwd: session.cwd,
+				});
+				saved = await saveReport(report);
+				if (saved) report = { ...report, reportPath: saved.markdownPath };
+			}
+
+			await createAutoRunSummary(reconciled, end.outcome, report);
+
+			if (evidence) yield { type: 'evidence', timestamp: clock.now(), evidence };
+			if (report) {
+				yield {
+					type: 'report',
+					timestamp: clock.now(),
+					status: report.status,
+					...(saved && { path: saved.markdownPath, jsonPath: saved.jsonPath }),
+					report,
+				};
+			}
+			return reconciled;
 		};
 
 		// End the run on an operator stop (Ctrl+C, a graceful stop, or an abort answered at a pause).
@@ -474,13 +704,12 @@ export async function* runPlaybook(
 			await createFinalLoopEntry(aborted ? 'Aborted by operator' : 'Stopped by operator');
 			deps.activity.end(session.id);
 
-			const stopReconciled = await reconcileTotals();
-			await createAutoRunSummary(
-				stopReconciled,
-				aborted ? OPERATOR_ABORT_OUTCOME : OPERATOR_STOP_OUTCOME
-			);
+			const stopReconciled = yield* closeRun({
+				outcome: aborted ? OPERATOR_ABORT_OUTCOME : OPERATOR_STOP_OUTCOME,
+				wasStopped: true,
+				halted: false,
+			});
 
-			yield* emitEvidence();
 			yield {
 				type: 'complete',
 				timestamp: clock.now(),
@@ -668,6 +897,9 @@ export async function* runPlaybook(
 					const expandedDocContent = docContent
 						? substituteTemplateVariables(docContent, templateContext)
 						: '';
+					// The document's tasks as this dispatch found them. Its checked count is the 0-based
+					// task the run is on, which is how the run report locates a failure.
+					const tasksBefore = countMarkdownTasks(expandedDocContent || docContent);
 
 					// Write expanded content back to document (so agent edits have correct paths)
 					if (expandedDocContent && expandedDocContent !== docContent) {
@@ -752,12 +984,20 @@ export async function* runPlaybook(
 							parameters: paramTurn.surviving,
 						};
 
+						lastRunError = {
+							kind: 'halt',
+							document: docEntry.filename,
+							taskIndex: tasksBefore.checked,
+							message: reason,
+						};
 						await createFinalLoopEntry(`Halted: ${reason}`);
 						deps.activity.end(session.id);
-						const paramReconciled = await reconcileTotals();
-						await createAutoRunSummary(paramReconciled, `halted: ${reason}`);
+						const paramReconciled = yield* closeRun({
+							outcome: `halted: ${reason}`,
+							wasStopped: false,
+							halted: true,
+						});
 
-						yield* emitEvidence();
 						yield {
 							type: 'complete',
 							timestamp: clock.now(),
@@ -891,7 +1131,7 @@ export async function* runPlaybook(
 					// explanation into the file instead, and a byte comparison would read
 					// that as progress and let the loop run forever.
 					const stall = evaluateStall({
-						before: countMarkdownTasks(expandedDocContent || docContent),
+						before: tasksBefore,
 						after: countMarkdownTasks(postContent),
 						consecutiveNoChangeCount,
 						// A watchdog killed the turn: a dead run, not a slow one.
@@ -984,6 +1224,17 @@ export async function* runPlaybook(
 						fullSynopsis = result.error || shortSummary;
 					}
 
+					// The run report names the last task that failed. A stop is not a failure.
+					if (!result.success && result.outcome !== 'interrupted' && !signal?.aborted) {
+						lastRunError = {
+							kind: 'error',
+							document: docEntry.filename,
+							taskIndex: tasksBefore.checked,
+							message:
+								result.agentError?.message || result.error || `[${docEntry.filename}] Task failed`,
+						};
+					}
+
 					// Emit task complete event
 					yield {
 						type: 'task_complete',
@@ -1066,6 +1317,12 @@ export async function* runPlaybook(
 							reason: haltReason,
 						};
 
+						lastRunError = {
+							kind: 'halt',
+							document: docEntry.filename,
+							taskIndex: tasksBefore.checked,
+							message: haltReason,
+						};
 						await createFinalLoopEntry(`Halted by agent: ${haltReason}`);
 						deps.activity.end(session.id);
 
@@ -1074,10 +1331,12 @@ export async function* runPlaybook(
 						// crossed a restart before halting, and - because the halt returns
 						// early - would also leave no final summary row, so the NEXT run's
 						// aggregation would absorb this one's task entries.
-						const haltReconciled = await reconcileTotals();
-						await createAutoRunSummary(haltReconciled, `halted: ${haltReason}`);
+						const haltReconciled = yield* closeRun({
+							outcome: `halted: ${haltReason}`,
+							wasStopped: false,
+							halted: true,
+						});
 
-						yield* emitEvidence();
 						yield {
 							type: 'complete',
 							timestamp: clock.now(),
@@ -1147,6 +1406,12 @@ export async function* runPlaybook(
 							reason: stall.reason ?? describeStall(consecutiveNoChangeCount),
 							remainingTasks,
 						};
+						stalledDocuments.set(docEntry.filename, documentStalled.reason);
+						runFailures.push({
+							kind: 'stall',
+							documentFilename: docEntry.filename,
+							taskIndex: tasksBefore.checked,
+						});
 						break;
 					}
 					if (documentSkipped) break;
@@ -1394,24 +1659,28 @@ export async function* runPlaybook(
 			loopIteration++;
 		}
 
-		// The run is no longer busy
-		deps.activity.end(session.id);
-
-		// Reconcile cumulative totals against persisted history so a run that
-		// spanned a restart/resume reports its full stats, not just this
-		// process's in-memory slice.
-		const reconciled = await reconcileTotals();
-
 		// A stop that lands after the last task is still a stop. The only other
 		// abort check sits inside the task loop, so a Ctrl+C arriving once the
 		// loop was done fell through to the success block below and exited 0
 		// instead of 130. The loop has already written its own final entry by
 		// now ("All tasks completed" and the like), so history records why the
 		// LOOP ended while this records why the RUN did.
-		if (signal?.aborted) {
-			await createAutoRunSummary(reconciled, OPERATOR_STOP_OUTCOME);
+		const stoppedAtEnd = signal?.aborted === true;
 
-			yield* emitEvidence();
+		// Reconcile cumulative totals against persisted history so a run that
+		// spanned a restart/resume reports its full stats, not just this
+		// process's in-memory slice. The report document's turn runs inside, so
+		// the agent stays busy until it is done.
+		const reconciled = yield* closeRun({
+			outcome: stoppedAtEnd ? OPERATOR_STOP_OUTCOME : undefined,
+			wasStopped: stoppedAtEnd,
+			halted: false,
+		});
+
+		// The run is no longer busy
+		deps.activity.end(session.id);
+
+		if (stoppedAtEnd) {
 			yield {
 				type: 'complete',
 				timestamp: clock.now(),
@@ -1424,12 +1693,8 @@ export async function* runPlaybook(
 			return;
 		}
 
-		// Add total Auto Run summary
-		await createAutoRunSummary(reconciled);
-
 		// Emit complete event with the reconciled totals so resumed runs report
 		// cumulative stats to consumers, not just the persisted summary entry.
-		yield* emitEvidence();
 		yield {
 			type: 'complete',
 			timestamp: clock.now(),

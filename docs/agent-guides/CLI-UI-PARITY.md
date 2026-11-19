@@ -555,9 +555,10 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    modal is reachable with `open playbook-report`, and the report is on disk
    as `<autoRunFolder>/.maestro-reports/<slug>-<timestamp>.{json,md}`, which an
    agent can read or copy directly. There is no verb that writes the
-   `<slug>-REPORT-<timestamp>.md` project copy. The CLI engine's own report
-   (PLAYBOOK-EXCHANGE-04, the CLI mirror task) is the natural home for one,
-   through `savePlaybookReportToProject()`'s shared file name. History's
+   `<slug>-REPORT-<timestamp>.md` project copy. The CLI engine writes the
+   same `.maestro-reports/` pair and prints the report (`maestro-cli playbook`,
+   `report` event with `--json`), so the copy is one `cp` away; a verb for it
+   would reuse `playbookReportProjectFileName()`. History's
    "Open report" on an older run has no verb either: `open playbook-report`
    shows only the newest report, and an older one is read from its
    `.maestro-reports/` file or the History entry's `playbookReport` field.

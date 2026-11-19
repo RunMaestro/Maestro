@@ -12,6 +12,7 @@ import type { GoalExitReason } from '../../goalDriven/types';
 import { formatElapsedTime } from '../../formatters';
 import type { FinalSummaryTotals } from '../../autoRunHistoryReconciliation';
 import type { HistoryEntry, UsageStats } from '../../types';
+import { renderPlaybookReportMarkdown, type PlaybookRunReport } from '../../playbookRunReport';
 import { generateUUID } from '../../uuid';
 
 /** The agent fields a row names. */
@@ -142,13 +143,17 @@ export function buildLoopEntry(
  * The run's own summary. Written for EVERY run, and it is the BOUNDARY the next run's
  * aggregation scans back to, so its wording must keep matching `FINAL_AUTORUN_SUMMARY_RE` in
  * `autoRunHistoryReconciliation.ts`.
+ *
+ * With a playbook run report the row leads with it (the same text the desktop's summary row
+ * carries) and keeps it as `playbookReport`, so History can draw it and offer Open report.
  */
 export function buildAutoRunSummaryEntry(
 	agent: RowAgent,
 	now: number,
 	reconciled: FinalSummaryTotals,
 	loopsCompleted: number,
-	outcome?: string
+	outcome?: string,
+	report?: PlaybookRunReport
 ): HistoryEntry {
 	const summary = outcome
 		? `Auto Run ${outcome}`
@@ -173,7 +178,10 @@ export function buildAutoRunSummaryEntry(
 		type: 'AUTO',
 		timestamp: now,
 		summary,
-		fullResponse: details,
+		fullResponse: report
+			? `${renderPlaybookReportMarkdown(report).trimEnd()}\n\n${details}`
+			: details,
+		...(report && { playbookReport: report }),
 		projectPath: agent.cwd,
 		sessionId: agent.id,
 		success: true,
