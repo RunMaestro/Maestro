@@ -445,4 +445,133 @@ describe('runPlaybook (library engine)', () => {
 			expect(fake.requests[0].prompt).not.toContain('## Resolved Configuration');
 		});
 	});
+
+	describe('disk evidence (run report tier B)', () => {
+		const snapshot = {
+			source: 'mtime' as const,
+			takenAt: 1,
+			files: { 'a.txt': 1 },
+			truncated: false,
+		};
+		const evidence = {
+			source: 'mtime' as const,
+			changedFiles: ['a.txt'],
+			createdFiles: ['b.txt'],
+			deletedFiles: [],
+		};
+
+		const withEvidencePorts = (fake: ReturnType<typeof createFakeDeps>) => {
+			const calls: string[] = [];
+			fake.deps.environment.evidenceStart = (cwd) => {
+				calls.push(`start:${cwd}`);
+				return snapshot;
+			};
+			fake.deps.environment.evidenceEnd = (cwd, start) => {
+				calls.push(`end:${cwd}:${start === snapshot}`);
+				return evidence;
+			};
+			return calls;
+		};
+
+		it('snapshots the agent folder before the first task and emits the diff just before complete', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] one\n' });
+			const calls = withEvidencePorts(fake);
+			const base = fake.onTurn;
+			fake.onTurn = (request, f) => {
+				calls.push('turn');
+				return base(request, f);
+			};
+
+			const events = await collect(
+				runPlaybook(session(), playbook(), '/p', { skipSynopsis: true }, fake.deps)
+			);
+
+			expect(calls).toEqual(['start:/work/project', 'turn', 'end:/work/project:true']);
+			expect(types(events).slice(-2)).toEqual(['evidence', 'complete']);
+			expect(events.at(-2)).toMatchObject({ type: 'evidence', evidence });
+		});
+
+		it('emits evidence on a halted run and on a stopped run too', async () => {
+			const halted = createFakeDeps({ tasks: '- [ ] one\n- [ ] two\n' });
+			withEvidencePorts(halted);
+			halted.onTurn = (_request, f) => {
+				f.docs.set(
+					'tasks',
+					`${tickFirstTask(f.docs.get('tasks') ?? '')}\n<!-- maestro:halt: stop -->\n`
+				);
+				return { success: true, response: 'x' };
+			};
+			const haltEvents = await collect(
+				runPlaybook(session(), playbook(), '/p', { skipSynopsis: true }, halted.deps)
+			);
+			expect(types(haltEvents).slice(-2)).toEqual(['evidence', 'complete']);
+			expect(haltEvents.at(-1)).toMatchObject({ halted: true });
+
+			const controller = new AbortController();
+			const stopped = createFakeDeps({ tasks: '- [ ] one\n- [ ] two\n' });
+			withEvidencePorts(stopped);
+			const base = stopped.onTurn;
+			stopped.onTurn = (request, f) => {
+				controller.abort();
+				return base(request, f);
+			};
+			const stopEvents = await collect(
+				runPlaybook(
+					session(),
+					playbook(),
+					'/p',
+					{ signal: controller.signal, skipSynopsis: true },
+					stopped.deps
+				)
+			);
+			expect(types(stopEvents).slice(-2)).toEqual(['evidence', 'complete']);
+			expect(stopEvents.at(-1)).toMatchObject({ stopped: true });
+		});
+
+		it('never snapshots a dry run', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] one\n' });
+			const calls = withEvidencePorts(fake);
+
+			const events = await collect(
+				runPlaybook(session(), playbook(), '/p', { dryRun: true }, fake.deps)
+			);
+
+			expect(calls).toEqual([]);
+			expect(types(events)).not.toContain('evidence');
+		});
+
+		it('skips the end diff when the start had nothing to compare', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] one\n' });
+			const calls = withEvidencePorts(fake);
+			fake.deps.environment.evidenceStart = () => null;
+
+			const events = await collect(
+				runPlaybook(session(), playbook(), '/p', { skipSynopsis: true }, fake.deps)
+			);
+
+			expect(calls).toEqual([]);
+			expect(types(events)).not.toContain('evidence');
+			expect(events.at(-1)).toMatchObject({ type: 'complete', success: true });
+		});
+
+		it('turns a throwing evidence port into a warning, not a failed run', async () => {
+			const fake = createFakeDeps({ tasks: '- [ ] one\n' });
+			withEvidencePorts(fake);
+			fake.deps.environment.evidenceEnd = () => {
+				throw new Error('git exploded');
+			};
+			const warnings: string[] = [];
+			fake.deps.log.warn = (message) => {
+				warnings.push(message);
+			};
+
+			const events = await collect(
+				runPlaybook(session(), playbook(), '/p', { skipSynopsis: true }, fake.deps)
+			);
+
+			expect(types(events)).not.toContain('evidence');
+			expect(events.at(-1)).toMatchObject({ type: 'complete', success: true });
+			expect(warnings).toContain('Failed to diff the folder for run evidence');
+		});
+	});
 });

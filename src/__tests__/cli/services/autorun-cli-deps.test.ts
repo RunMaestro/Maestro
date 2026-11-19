@@ -15,6 +15,21 @@ vi.mock('../../../cli/services/agent-run-capture', () => ({
 vi.mock('../../../cli/services/system-prompt', () => ({
 	prepareMaestroSystemPromptCli: vi.fn(async () => 'SYSTEM'),
 }));
+vi.mock('../../../main/services/run-evidence', () => ({
+	createLocalGitRunner: vi.fn((cwd: string) => `git-in:${cwd}`),
+	startRunEvidence: vi.fn(async () => ({
+		source: 'mtime',
+		takenAt: 1,
+		files: {},
+		truncated: false,
+	})),
+	finishRunEvidence: vi.fn(async () => ({
+		source: 'mtime',
+		changedFiles: [],
+		createdFiles: ['a.md'],
+		deletedFiles: [],
+	})),
+}));
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(() => []),
@@ -24,6 +39,7 @@ vi.mock('../../../cli/services/storage', () => ({
 
 import { createCliAutoRunDeps } from '../../../cli/services/autorun-cli-deps';
 import { spawnAgent } from '../../../cli/services/agent-spawner';
+import { finishRunEvidence, startRunEvidence } from '../../../main/services/run-evidence';
 import type { SessionInfo } from '../../../shared/types';
 import type { AutoRunTurnRequest } from '../../../shared/maestro-lib/autorun/engine-types';
 
@@ -60,4 +76,48 @@ describe('createCliAutoRunDeps', () => {
 			});
 		}
 	);
+
+	describe('run evidence', () => {
+		beforeEach(() => {
+			vi.mocked(startRunEvidence).mockClear();
+			vi.mocked(finishRunEvidence).mockClear();
+		});
+
+		it("takes the evidence in the agent's folder with local git", async () => {
+			const deps = createCliAutoRunDeps(session);
+
+			const start = await deps.environment.evidenceStart!('/project');
+			expect(startRunEvidence).toHaveBeenCalledWith({
+				cwd: '/project',
+				git: 'git-in:/project',
+				local: true,
+			});
+			expect(await deps.environment.evidenceEnd!('/project', start!)).toMatchObject({
+				createdFiles: ['a.md'],
+			});
+			expect(finishRunEvidence).toHaveBeenCalledWith(
+				{ cwd: '/project', git: 'git-in:/project', local: true },
+				start
+			);
+		});
+
+		it('has no evidence for an SSH agent rather than reading a local folder of the same name', async () => {
+			const deps = createCliAutoRunDeps({
+				...session,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			} as SessionInfo);
+
+			expect(await deps.environment.evidenceStart!('/project')).toBeNull();
+			expect(
+				await deps.environment.evidenceEnd!('/project', {
+					source: 'mtime',
+					takenAt: 1,
+					files: {},
+					truncated: false,
+				})
+			).toBeNull();
+			expect(startRunEvidence).not.toHaveBeenCalled();
+			expect(finishRunEvidence).not.toHaveBeenCalled();
+		});
+	});
 });

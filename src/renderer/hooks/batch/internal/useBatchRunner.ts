@@ -10,6 +10,8 @@ import type {
 	AgentError,
 } from '../../../types';
 import { gitService } from '../../../services/git';
+import { finishRunEvidenceCapture, startRunEvidenceCapture } from '../../../services/runEvidence';
+import type { RunEvidenceSnapshot } from '../../../../shared/runEvidence';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
@@ -314,6 +316,8 @@ export function useBatchRunner({
 			let initialTotalTasks = 0;
 			let initialCheckedTasks = 0;
 			let startPublished = false;
+			// The folder as the run found it, for the report's "Files changed".
+			let evidenceSnapshot: RunEvidenceSnapshot | null = null;
 
 			try {
 				// Initialize visibility-based time tracking for this session using the extracted hook
@@ -362,6 +366,10 @@ export function useBatchRunner({
 						// Ignore git errors - branch will be empty string
 					}
 				}
+
+				// Snapshot the folder the tasks will work in (the worktree, when the
+				// run uses one) so the end of the run can say what changed on disk.
+				evidenceSnapshot = await startRunEvidenceCapture(effectiveCwd, sshRemoteId);
 
 				// Calculate initial total tasks across all documents (checked + unchecked),
 				// and find any halt marker an earlier run left behind in the same pass.
@@ -1771,6 +1779,7 @@ export function useBatchRunner({
 			// Create PR if worktree was used, PR creation is enabled, and not stopped
 			const wasStopped = stopRequestedRefs.current[sessionId] || false;
 			const sessionName = session.name || session.cwd.split('/').pop() || 'Unknown';
+			let createdPrUrl: string | undefined;
 			if (
 				worktreeActive &&
 				worktree?.createPROnCompletion &&
@@ -1797,6 +1806,7 @@ export function useBatchRunner({
 					documents,
 					totalCompletedTasks,
 				});
+				if (prResult.success) createdPrUrl = prResult.prUrl;
 
 				if (onPRResult) {
 					onPRResult({
@@ -1828,6 +1838,11 @@ export function useBatchRunner({
 			// pending auto-resume must not fire into a loop that no longer exists,
 			// and the attempt count is spent - the ERR badge clears with it.
 			clearAutoResume(sessionId);
+
+			// What the run changed on disk, against the snapshot taken at start.
+			const evidence = evidenceSnapshot
+				? await finishRunEvidenceCapture(effectiveCwd, evidenceSnapshot, sshRemoteId, createdPrUrl)
+				: null;
 
 			// Add final Auto Run summary entry
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
@@ -1966,6 +1981,7 @@ export function useBatchRunner({
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
 					kind: 'spec-driven',
+					...(evidence ? { evidence } : {}),
 				});
 			}
 

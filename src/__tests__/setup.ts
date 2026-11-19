@@ -528,6 +528,9 @@ const mockMaestro = {
 		unwatchFolder: vi.fn(),
 		readFolder: vi.fn().mockResolvedValue({ success: true, files: [] }),
 		listDocs: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		// No evidence by default: a run then reports no "Files changed" section.
+		evidenceStart: vi.fn().mockResolvedValue({ success: true, snapshot: null }),
+		evidenceEnd: vi.fn().mockResolvedValue({ success: true, evidence: null }),
 	},
 	playbooks: {
 		list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),

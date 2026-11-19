@@ -28,10 +28,25 @@ import {
 } from './agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
 import { getGitBranch, isGitRepo } from './git-utils';
+import {
+	createLocalGitRunner,
+	finishRunEvidence,
+	startRunEvidence,
+	type RunEvidenceHost,
+} from '../../main/services/run-evidence';
 import { getCliPrompt, getCliTaskSelectionBlock } from './prompt-loader';
 import { addHistoryEntry, readGroups, readHistory, readSettings } from './storage';
 import { autoRunMaestroPMaxWaitSeconds } from '../../shared/claudeTokenMode';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
+
+/** Where the CLI takes a run's disk evidence: the folder on this machine, with local git. */
+function localEvidenceHost(cwd: string): RunEvidenceHost {
+	return { cwd, git: createLocalGitRunner(cwd), local: true };
+}
+
+function isSshAgent(session: SessionInfo): boolean {
+	return session.sessionSshRemoteConfig?.enabled === true;
+}
 
 /** The Claude token source and the other settings every task and synopsis turn honors. */
 function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
@@ -179,6 +194,12 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 			gitBranch: (cwd) => getGitBranch(cwd),
 			isGitRepo: (cwd) => isGitRepo(cwd),
 			groupName: (groupId) => readGroups().find((g) => g.id === groupId)?.name,
+			// The CLI's git runs on this machine, so an SSH agent's folder (a path on the remote)
+			// has no evidence rather than a reading of a local folder that happens to share its name.
+			evidenceStart: (cwd) =>
+				isSshAgent(session) ? null : startRunEvidence(localEvidenceHost(cwd)),
+			evidenceEnd: (cwd, start) =>
+				isSshAgent(session) ? null : finishRunEvidence(localEvidenceHost(cwd), start),
 		},
 		activity: {
 			begin: (entry) =>

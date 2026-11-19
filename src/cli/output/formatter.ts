@@ -2,6 +2,7 @@
 // Provides beautiful, colored terminal output
 
 import { formatDurationDecimal } from '../../shared/formatters';
+import type { DiskEvidence } from '../../shared/playbookRunReport';
 
 // ANSI color codes
 const colors = {
@@ -436,6 +437,17 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 		case 'loop_complete': {
 			const loopNum = event.iteration as number;
 			return `${timeStr} ${c('magenta', '↻')} Loop ${loopNum} complete`;
+		}
+
+		case 'evidence': {
+			const evidence = event.evidence as DiskEvidence;
+			const counts = [
+				`${evidence.createdFiles.length} created`,
+				`${evidence.changedFiles.length} changed`,
+				`${evidence.deletedFiles.length} deleted`,
+			].join(', ');
+			const source = evidence.source === 'git' ? 'git' : 'file times';
+			return `${timeStr} ${c('cyan', '🗂')} Files: ${counts} ${dim(`(${source})`)}`;
 		}
 
 		case 'complete': {

@@ -1737,8 +1737,11 @@ maestro-cli playbook <playbook-id> --json
 {"type":"task_complete","timestamp":...,"success":true,"summary":"...","elapsedMs":8000,"usageStats":{...}}
 {"type":"document_complete","timestamp":...,"document":"tasks.md","tasksCompleted":5}
 {"type":"loop_complete","timestamp":...,"iteration":1,"tasksCompleted":5,"elapsedMs":60000}
+{"type":"evidence","timestamp":...,"evidence":{"source":"git","changedFiles":["src/app.ts"],"createdFiles":["src/new.ts"],"deletedFiles":[],"branch":"main"}}
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
 ```
+
+Just before `complete`, a playbook run emits an `evidence` event listing the files it created, changed, and deleted in the agent's folder. In a git repository (`"source":"git"`) the folder is compared against the commit the run started from, so commits the agent made count too. Outside a repository (`"source":"mtime"`) the first 200 files in the top three folder levels are compared by modification time, skipping `node_modules` and `.git`. There is no `evidence` event for a dry run, for an SSH agent, or when the folder cannot be read.
 
 If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
 

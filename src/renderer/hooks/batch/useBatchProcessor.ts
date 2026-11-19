@@ -31,6 +31,7 @@ import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
 import type { AutoRunKind } from '../../../shared/stats-types';
+import type { DiskEvidence } from '../../../shared/playbookRunReport';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
@@ -52,6 +53,11 @@ export interface BatchCompleteInfo {
 	documentsProcessed: number;
 	/** Which engine ran it. Undefined is treated as spec-driven downstream. */
 	kind?: AutoRunKind;
+	/**
+	 * What the run changed on disk (the run report's "Files changed"). Absent when the folder
+	 * could not be read, and on a run a hard stop ended before its own summary.
+	 */
+	evidence?: DiskEvidence;
 }
 
 export interface PRResultInfo {

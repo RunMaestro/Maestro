@@ -21,6 +21,7 @@ import { formatElapsedTime, humanizeDuration } from './duration';
 import { formatCost, formatCount } from './formatters';
 import { narrativeToMarkdown, type DirectorNotesNarrative } from './directorNotesNarrative';
 import type { PlaybookParamProvenance } from './playbookParams';
+import { RUN_EVIDENCE_MTIME_MAX_DEPTH, RUN_EVIDENCE_MTIME_MAX_ENTRIES } from './runEvidence';
 
 // ============================================================================
 // Tier A: facts
@@ -306,7 +307,7 @@ function filesChangedSection(evidence: DiskEvidence): string[] {
 	lines.push(
 		evidence.source === 'git'
 			? '_From git: the working tree and HEAD compared at run start and run end._'
-			: '_From file modification times: this folder is not a git repository, so deletions are not detected._',
+			: `_From file modification times: this folder is not a git repository, so only the first ${RUN_EVIDENCE_MTIME_MAX_ENTRIES} files in its top ${RUN_EVIDENCE_MTIME_MAX_DEPTH} folder levels are compared._`,
 		''
 	);
 	if (evidence.branch) lines.push(`- **Branch:** ${inlineCode(evidence.branch)}`);

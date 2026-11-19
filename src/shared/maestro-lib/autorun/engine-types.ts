@@ -16,6 +16,8 @@ import type { AutoRunKind } from '../../stats-types';
 import type { PromptId } from '../../promptDefinitions';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AutoRunPolicy } from './policy';
+import type { DiskEvidence } from '../../playbookRunReport';
+import type { RunEvidenceSnapshot } from '../../runEvidence';
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -184,6 +186,13 @@ export interface AutoRunDeps {
 		gitBranch(cwd: string): MaybePromise<string | undefined>;
 		isGitRepo(cwd: string): MaybePromise<boolean>;
 		groupName(groupId: string | undefined): MaybePromise<string | undefined>;
+		/**
+		 * Disk evidence for the run report (tier B): snapshot the folder when the run starts, and
+		 * diff it against that snapshot when the run ends. Best effort: `null` is "no evidence",
+		 * never an error. Absent: the run reports no evidence.
+		 */
+		evidenceStart?(cwd: string): MaybePromise<RunEvidenceSnapshot | null>;
+		evidenceEnd?(cwd: string, start: RunEvidenceSnapshot): MaybePromise<DiskEvidence | null>;
 		/**
 		 * Policy `checkpointCommits` (AE23): `git add -A` and commit what the iteration left. Best
 		 * effort, never throws into the run. Absent: no checkpoint.

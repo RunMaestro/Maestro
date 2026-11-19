@@ -11,6 +11,8 @@ import { ipcRenderer } from 'electron';
 import type { PlaybookStatus, PlaybookUpdate, Playbook as SavedPlaybook } from '../../shared/types';
 import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
 import { PLAYBOOKS_CHANGED_CHANNEL } from '../../shared/playbooksChanged';
+import type { DiskEvidence } from '../../shared/playbookRunReport';
+import type { RunEvidenceSnapshot } from '../../shared/runEvidence';
 
 /**
  * Playbook document configuration
@@ -178,6 +180,26 @@ export function createAutorunApi() {
 			ipcRenderer.on(AUTORUN_DELEGATION_CHANNEL, wrappedHandler);
 			return () => ipcRenderer.removeListener(AUTORUN_DELEGATION_CHANNEL, wrappedHandler);
 		},
+
+		/**
+		 * Snapshot an agent's folder at run start for the run report's disk
+		 * evidence (git, or an mtime scan outside a repository).
+		 */
+		evidenceStart: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; snapshot?: RunEvidenceSnapshot | null; error?: string }> =>
+			ipcRenderer.invoke('autorun:evidenceStart', cwd, sshRemoteId, remoteCwd),
+
+		/** Diff the folder at run end against the snapshot `evidenceStart` returned. */
+		evidenceEnd: (
+			cwd: string,
+			snapshot: RunEvidenceSnapshot,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; evidence?: DiskEvidence | null; error?: string }> =>
+			ipcRenderer.invoke('autorun:evidenceEnd', cwd, snapshot, sshRemoteId, remoteCwd),
 	};
 }
 

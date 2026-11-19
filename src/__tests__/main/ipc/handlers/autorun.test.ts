@@ -130,6 +130,24 @@ vi.mock('../../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
+// Run evidence: the service is tested against real folders on its own; here only
+// the wiring (host, SSH routing, snapshot validation) is under test.
+const { mockStartRunEvidence, mockFinishRunEvidence, mockExecGitReadOnly } = vi.hoisted(() => ({
+	mockStartRunEvidence: vi.fn(),
+	mockFinishRunEvidence: vi.fn(),
+	mockExecGitReadOnly: vi.fn(),
+}));
+
+vi.mock('../../../../main/services/run-evidence', () => ({
+	RUN_EVIDENCE_GIT_TIMEOUT_MS: 20_000,
+	startRunEvidence: mockStartRunEvidence,
+	finishRunEvidence: mockFinishRunEvidence,
+}));
+
+vi.mock('../../../../main/utils/remote-git', () => ({
+	execGitReadOnly: mockExecGitReadOnly,
+}));
+
 describe('autorun IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockMainWindow: Partial<BrowserWindow>;
@@ -2058,6 +2076,79 @@ describe('autorun IPC handlers', () => {
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('SSH remote not found');
 			});
+		});
+	});
+
+	describe('autorun:evidenceStart / evidenceEnd', () => {
+		const snapshot = { source: 'git', takenAt: 1, base: 'abc123', changes: {} };
+		const gitOk = { stdout: 'true\n', stderr: '', exitCode: 0 };
+
+		it('snapshots a local folder with local git and the mtime fallback allowed', async () => {
+			mockStartRunEvidence.mockResolvedValue(snapshot);
+			mockExecGitReadOnly.mockResolvedValue(gitOk);
+
+			const result = await handlers.get('autorun:evidenceStart')!({} as any, '/project');
+
+			expect(result).toEqual({ success: true, snapshot });
+			const host = mockStartRunEvidence.mock.calls[0][0];
+			expect(host).toMatchObject({ cwd: '/project', local: true });
+			await host.git(['rev-parse', '--is-inside-work-tree']);
+			expect(mockExecGitReadOnly).toHaveBeenCalledWith(
+				['rev-parse', '--is-inside-work-tree'],
+				'/project',
+				undefined,
+				undefined,
+				20_000
+			);
+		});
+
+		it('runs git on the SSH remote and takes the remote folder as the cwd', async () => {
+			mockFinishRunEvidence.mockResolvedValue({
+				source: 'git',
+				changedFiles: ['a.ts'],
+				createdFiles: [],
+				deletedFiles: [],
+			});
+			mockExecGitReadOnly.mockResolvedValue(gitOk);
+
+			const result = await handlers.get('autorun:evidenceEnd')!(
+				{} as any,
+				'/local/mirror',
+				snapshot,
+				'ssh-remote-1',
+				'/remote/project'
+			);
+
+			expect(result).toMatchObject({ success: true, evidence: { changedFiles: ['a.ts'] } });
+			const [host, start] = mockFinishRunEvidence.mock.calls[0];
+			expect(start).toEqual(snapshot);
+			expect(host).toMatchObject({ cwd: '/remote/project', local: false });
+			await host.git(['status']);
+			expect(mockExecGitReadOnly).toHaveBeenCalledWith(
+				['status'],
+				'/local/mirror',
+				sampleSshRemote,
+				'/remote/project',
+				20_000
+			);
+		});
+
+		it('refuses an unknown SSH remote instead of reading the local folder', async () => {
+			const result = await handlers.get('autorun:evidenceStart')!({} as any, '/project', 'missing');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('SSH remote not found');
+			expect(mockStartRunEvidence).not.toHaveBeenCalled();
+		});
+
+		it('rejects a snapshot it did not produce', async () => {
+			const result = await handlers.get('autorun:evidenceEnd')!({} as any, '/project', {
+				source: 'git',
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid run evidence snapshot');
+			expect(mockFinishRunEvidence).not.toHaveBeenCalled();
 		});
 	});
 });

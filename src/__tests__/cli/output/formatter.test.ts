@@ -876,6 +876,29 @@ describe('formatter', () => {
 			expect(result).toContain('Loop 3 complete');
 		});
 
+		it('should format evidence event with file counts and the source', () => {
+			const gitResult = formatRunEvent({
+				type: 'evidence',
+				timestamp,
+				evidence: {
+					source: 'git',
+					createdFiles: ['a.ts', 'b.ts'],
+					changedFiles: ['c.ts'],
+					deletedFiles: [],
+				},
+			});
+			expect(gitResult).toContain('Files: 2 created, 1 changed, 0 deleted');
+			expect(gitResult).toContain('(git)');
+
+			const mtimeResult = formatRunEvent({
+				type: 'evidence',
+				timestamp,
+				evidence: { source: 'mtime', createdFiles: [], changedFiles: [], deletedFiles: ['d.md'] },
+			});
+			expect(mtimeResult).toContain('0 created, 0 changed, 1 deleted');
+			expect(mtimeResult).toContain('(file times)');
+		});
+
 		it('should format complete event', () => {
 			const event: RunEvent = {
 				type: 'complete',

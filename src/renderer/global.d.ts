@@ -3219,6 +3219,30 @@ interface MaestroAPI {
 		) => () => void;
 		/** Auto Run delegation lifecycle; narrow with `parseAutoRunDelegationEvent`. */
 		onDelegation: (handler: (event: unknown) => void) => () => void;
+		/**
+		 * Snapshot an agent's folder at run start for the run report's disk
+		 * evidence. `snapshot` is null when there is nothing to compare later.
+		 */
+		evidenceStart: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			snapshot?: import('../shared/runEvidence').RunEvidenceSnapshot | null;
+			error?: string;
+		}>;
+		/** Diff the folder at run end against the start snapshot. */
+		evidenceEnd: (
+			cwd: string,
+			snapshot: import('../shared/runEvidence').RunEvidenceSnapshot,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			evidence?: import('../shared/playbookRunReport').DiskEvidence | null;
+			error?: string;
+		}>;
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {

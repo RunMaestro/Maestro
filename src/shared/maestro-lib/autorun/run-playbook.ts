@@ -40,6 +40,8 @@ import { isFailedSynopsisResponse, parseSynopsis } from '../../synopsis';
 import { substituteTemplateVariables, type TemplateContext } from '../../templateVariables';
 import type { Playbook, SessionInfo, UsageStats } from '../../types';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
+import type { DiskEvidence } from '../../playbookRunReport';
+import type { RunEvidenceSnapshot } from '../../runEvidence';
 import {
 	buildAutoRunSummaryEntry,
 	buildErrorPauseEntry,
@@ -284,6 +286,31 @@ export async function* runPlaybook(
 		// system prompt rather than aborting the playbook.
 		await deps.turns.prepare?.();
 
+		// The folder as the run found it, for the run report's "Files changed" (tier B). Evidence
+		// never costs the run: a port that throws is a warning and the run reports none.
+		let evidenceStart: RunEvidenceSnapshot | null = null;
+		try {
+			evidenceStart = (await deps.environment.evidenceStart?.(session.cwd)) ?? null;
+		} catch (evidenceError) {
+			log.warn('Failed to snapshot the folder for run evidence', session.name, {
+				error: String(evidenceError),
+			});
+		}
+		// Every non-dry end of the run emits this just before its `complete`. A new event type, so
+		// `complete` keeps its shape (AE5).
+		const emitEvidence = async function* (): AsyncGenerator<AutoRunEvent> {
+			if (!evidenceStart || !deps.environment.evidenceEnd) return;
+			let evidence: DiskEvidence | null = null;
+			try {
+				evidence = await deps.environment.evidenceEnd(session.cwd, evidenceStart);
+			} catch (evidenceError) {
+				log.warn('Failed to diff the folder for run evidence', session.name, {
+					error: String(evidenceError),
+				});
+			}
+			if (evidence) yield { type: 'evidence', timestamp: clock.now(), evidence };
+		};
+
 		// Usage Dashboard bookkeeping for the run. A port that cannot record is a warning, not a stop.
 		let statsRunId: string | null = null;
 		if (deps.stats) {
@@ -453,6 +480,7 @@ export async function* runPlaybook(
 				aborted ? OPERATOR_ABORT_OUTCOME : OPERATOR_STOP_OUTCOME
 			);
 
+			yield* emitEvidence();
 			yield {
 				type: 'complete',
 				timestamp: clock.now(),
@@ -729,6 +757,7 @@ export async function* runPlaybook(
 						const paramReconciled = await reconcileTotals();
 						await createAutoRunSummary(paramReconciled, `halted: ${reason}`);
 
+						yield* emitEvidence();
 						yield {
 							type: 'complete',
 							timestamp: clock.now(),
@@ -1048,6 +1077,7 @@ export async function* runPlaybook(
 						const haltReconciled = await reconcileTotals();
 						await createAutoRunSummary(haltReconciled, `halted: ${haltReason}`);
 
+						yield* emitEvidence();
 						yield {
 							type: 'complete',
 							timestamp: clock.now(),
@@ -1381,6 +1411,7 @@ export async function* runPlaybook(
 		if (signal?.aborted) {
 			await createAutoRunSummary(reconciled, OPERATOR_STOP_OUTCOME);
 
+			yield* emitEvidence();
 			yield {
 				type: 'complete',
 				timestamp: clock.now(),
@@ -1398,6 +1429,7 @@ export async function* runPlaybook(
 
 		// Emit complete event with the reconciled totals so resumed runs report
 		// cumulative stats to consumers, not just the persisted summary entry.
+		yield* emitEvidence();
 		yield {
 			type: 'complete',
 			timestamp: clock.now(),

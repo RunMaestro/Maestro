@@ -616,6 +616,8 @@ describe('useBatchProcessor hook', () => {
 	let mockWorktreeCheckout: ReturnType<typeof vi.fn>;
 	let mockGetDefaultBranch: ReturnType<typeof vi.fn>;
 	let mockCreatePR: ReturnType<typeof vi.fn>;
+	let mockEvidenceStart: ReturnType<typeof vi.fn>;
+	let mockEvidenceEnd: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		useSettingsStore.setState({ notificationHistoryAutoRunTasks: false });
@@ -654,6 +656,8 @@ describe('useBatchProcessor hook', () => {
 		mockCreatePR = vi
 			.fn()
 			.mockResolvedValue({ success: true, prUrl: 'https://github.com/test/test/pull/1' });
+		mockEvidenceStart = vi.fn().mockResolvedValue({ success: true, snapshot: null });
+		mockEvidenceEnd = vi.fn().mockResolvedValue({ success: true, evidence: null });
 
 		// Configure window.maestro
 		window.maestro = {
@@ -665,6 +669,8 @@ describe('useBatchProcessor hook', () => {
 				watchFolder: vi.fn(),
 				unwatchFolder: vi.fn(),
 				readFolder: vi.fn(),
+				evidenceStart: mockEvidenceStart,
+				evidenceEnd: mockEvidenceEnd,
 			},
 			git: {
 				...window.maestro.git,
@@ -1167,6 +1173,99 @@ describe('useBatchProcessor hook', () => {
 					sessionName: 'Test Session',
 					kind: 'spec-driven',
 				})
+			);
+		});
+
+		it('snapshots the folder at run start and hands the diff to onComplete as evidence', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			const snapshot = { source: 'git', takenAt: 1, base: 'abc', changes: {} };
+			const evidence = {
+				source: 'git',
+				changedFiles: ['src/a.ts'],
+				createdFiles: [],
+				deletedFiles: [],
+				branch: 'main',
+			};
+			mockEvidenceStart.mockResolvedValue({ success: true, snapshot });
+			mockEvidenceEnd.mockResolvedValue({ success: true, evidence });
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				return callCount <= 2
+					? { success: true, content: '# Tasks\n- [ ] Task 1' }
+					: { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Complete the next task',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			const cwd = sessions[0].cwd;
+			expect(mockEvidenceStart).toHaveBeenCalledWith(cwd, undefined);
+			expect(mockEvidenceStart.mock.invocationCallOrder[0]).toBeLessThan(
+				mockOnSpawnAgent.mock.invocationCallOrder[0]
+			);
+			expect(mockEvidenceEnd).toHaveBeenCalledWith(cwd, snapshot, undefined);
+			expect(mockOnComplete).toHaveBeenCalledWith(expect.objectContaining({ evidence }));
+		});
+
+		it('completes without evidence when the start snapshot has nothing to compare', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				return callCount <= 2
+					? { success: true, content: '# Tasks\n- [ ] Task 1' }
+					: { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Complete the next task',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockEvidenceEnd).not.toHaveBeenCalled();
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.not.objectContaining({ evidence: expect.anything() })
 			);
 		});
 

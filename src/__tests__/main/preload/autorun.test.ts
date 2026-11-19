@@ -245,6 +245,35 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('evidenceStart / evidenceEnd', () => {
+			it('invokes the evidence pair with the folder, the snapshot, and the SSH target', async () => {
+				const snapshot = { source: 'mtime', takenAt: 1, files: {}, truncated: false } as const;
+				mockInvoke.mockResolvedValueOnce({ success: true, snapshot });
+				await expect(api.evidenceStart('/project', 'remote-1', '/remote/project')).resolves.toEqual(
+					{
+						success: true,
+						snapshot,
+					}
+				);
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'autorun:evidenceStart',
+					'/project',
+					'remote-1',
+					'/remote/project'
+				);
+
+				mockInvoke.mockResolvedValueOnce({ success: true, evidence: null });
+				await api.evidenceEnd('/project', snapshot);
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'autorun:evidenceEnd',
+					'/project',
+					snapshot,
+					undefined,
+					undefined
+				);
+			});
+		});
+
 		describe('createBackup', () => {
 			it('should invoke autorun:createBackup', async () => {
 				mockInvoke.mockResolvedValue({ success: true });
