@@ -566,9 +566,10 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    a tab's unlock: the click is the person's consent for that tab. The CLI
    mirror is a per-call unlock flag on each `maestro-cli sqlite` WRITE verb,
    which enables editing for that one call and disables it after through the
-   same two functions. No write verb exists yet, so there is nothing for a
-   CLI call to unlock; the flag lands with the first one (the Phase 3 cell
-   edit).
+   same two functions, and writes through `beginSqliteWrite()` like the tab,
+   so a CLI write also takes the once-per-session backup before the file's
+   first change. No write verb exists yet, so there is nothing for a CLI call
+   to unlock; the flag lands with the first one (the Phase 3 cell edit).
 
 ### Federation: remaining gaps
 

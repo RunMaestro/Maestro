@@ -11,6 +11,8 @@
  *     ever (sqlite-query-task.ts).
  *   - `export`: the same statement, every row written to a file as CSV or
  *     JSON Lines (Query mode's Export, also sqlite-query-task.ts).
+ *   - `backup`: `VACUUM INTO` a copy beside the file, taken before the app
+ *     first writes to it (sqlite-backup-task.ts).
  *
  * Nothing here, or reachable from here, may import `electron`.
  */
@@ -20,6 +22,11 @@ import type {
 	SqliteQueryExported,
 	SqliteQueryResult,
 } from '../../shared/sqlite/types';
+import {
+	runSqliteBackupTask,
+	type SqliteBackupTask,
+	type SqliteBackupTaskResult,
+} from './sqlite-backup-task';
 import { runSqliteIntegrityCheck, type SqliteIntegrityTask } from './sqlite-integrity-task';
 import {
 	exportSqliteQueryTask,
@@ -33,6 +40,7 @@ export interface SqliteWorkerTasks {
 	integrity: { task: SqliteIntegrityTask; result: SqliteIntegrityResult };
 	query: { task: SqliteQueryTask; result: SqliteQueryResult };
 	export: { task: SqliteQueryExportTask; result: SqliteQueryExported };
+	backup: { task: SqliteBackupTask; result: SqliteBackupTaskResult };
 }
 
 export type SqliteWorkerKind = keyof SqliteWorkerTasks;
@@ -65,6 +73,7 @@ const RUNNERS: {
 	integrity: runSqliteIntegrityCheck,
 	query: runSqliteQueryTask,
 	export: exportSqliteQueryTask,
+	backup: runSqliteBackupTask,
 };
 
 /** Run one task where it is called. The child process calls this; so does the inline fallback. */

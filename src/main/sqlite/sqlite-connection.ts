@@ -7,6 +7,8 @@
  * first:
  *
  *   - `readonly: true`: writes fail at the driver, whatever SQL reaches it.
+ *     The one exception is the editing unlock's writable connection
+ *     (`openWritableSqliteConnection()`), which keeps every other guard.
  *   - `fileMustExist: true`: opening a path that vanished never creates an
  *     empty database in its place.
  *   - `trusted_schema = OFF`: a hostile file cannot route schema-embedded SQL
@@ -45,7 +47,7 @@ export function describeSqliteOpenFailure(error: unknown, filePath: string): Err
 			message = `Another process has ${filePath} locked. Try again once it finishes writing.`;
 			break;
 		case 'SQLITE_CANTOPEN':
-			message = `Could not open ${filePath} read-only: ${detail}`;
+			message = `Could not open ${filePath}: ${detail}`;
 			break;
 		default:
 			if (typeof code === 'string' && code.startsWith('SQLITE_CORRUPT')) {
@@ -65,10 +67,26 @@ export function describeSqliteOpenFailure(error: unknown, filePath: string): Err
  * connection.
  */
 export function openReadOnlySqliteConnection(filePath: string): Database.Database {
+	return openSqliteConnection(filePath, true);
+}
+
+/**
+ * Open `filePath` for WRITING, with every other guard the read-only open has
+ * (never created, `trusted_schema = OFF`, the short busy timeout).
+ *
+ * Only the editing unlock opens one (`openSqliteWriteConnection()` in
+ * sqlite-editing.ts), after the write gate and the backup. Nothing else may
+ * call this: every other connection on a user's database is read-only.
+ */
+export function openWritableSqliteConnection(filePath: string): Database.Database {
+	return openSqliteConnection(filePath, false);
+}
+
+function openSqliteConnection(filePath: string, readonly: boolean): Database.Database {
 	let db: Database.Database;
 	try {
 		db = new Database(filePath, {
-			readonly: true,
+			readonly,
 			fileMustExist: true,
 			timeout: SQLITE_BUSY_TIMEOUT_MS,
 		});

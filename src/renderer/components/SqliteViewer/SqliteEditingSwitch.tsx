@@ -28,7 +28,7 @@ interface SqliteEditingSwitchProps {
 }
 
 const ENABLE_TITLE =
-	'Allow changes to this database from this tab only. Other tabs on the file stay read-only, and editing turns off again when this tab closes.';
+	'Allow changes to this database from this tab only. Other tabs on the file stay read-only, and editing turns off again when this tab closes. Before the first change, a backup copy of the file is saved beside it.';
 
 export function SqliteEditingSwitch({
 	enabled,

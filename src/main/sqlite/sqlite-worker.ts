@@ -1,6 +1,6 @@
 /**
- * Child process entry for one SQLite task: an integrity check or a Query-mode
- * run (see sqlite-worker-task.ts). Forked by `startSqliteWorkerTask()`
+ * Child process entry for one SQLite task: an integrity check, a Query-mode
+ * run or export, or a backup (see sqlite-worker-task.ts). Forked by `startSqliteWorkerTask()`
  * (sqlite-worker-runner.ts), which sends the task as the first IPC message;
  * this answers with one reply and exits.
  *

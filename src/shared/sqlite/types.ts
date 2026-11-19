@@ -41,6 +41,21 @@ export interface SqliteEditingGrant {
 	editToken: string;
 }
 
+/**
+ * The copy of a database taken before the app first wrote to it this session
+ * (src/main/sqlite/sqlite-backup.ts): a `VACUUM INTO` snapshot beside the
+ * file. Every write result that made the backup carries it, so the viewer can
+ * say where it went.
+ */
+export interface SqliteBackup {
+	/** Absolute path of the backup file. */
+	path: string;
+	/** Its size on disk. */
+	bytes: number;
+	/** When it was taken, epoch ms. */
+	createdAt: number;
+}
+
 /** The four kinds of schema object the table-list rail shows, in rail order. */
 export type SqliteObjectKind = 'table' | 'view' | 'index' | 'trigger';
 

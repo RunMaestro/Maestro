@@ -12,16 +12,33 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 // better-sqlite3's native binary is built for Electron's ABI and does not load
 // under vitest. The unlock never touches the database, so a bare fake is
-// enough; the files are real because the checks read file metadata.
-vi.mock('better-sqlite3', () => {
+// enough; the files are real because the checks read file metadata. The fake
+// records each connection, and its `VACUUM INTO` (the backup before the first
+// write) copies the file's bytes.
+const driver = vi.hoisted(() => ({
+	connections: [] as Array<{ path: string; readonly: boolean; closed: boolean }>,
+}));
+
+vi.mock('better-sqlite3', async () => {
+	const { copyFileSync } = await import('fs');
 	class FakeDatabase {
+		record: (typeof driver.connections)[number];
+		constructor(filePath: string, options: { readonly?: boolean }) {
+			this.record = { path: filePath, readonly: options.readonly === true, closed: false };
+			driver.connections.push(this.record);
+		}
 		pragma() {
 			return 1;
 		}
 		function() {
 			return this;
 		}
-		close() {}
+		prepare() {
+			return { run: (dest: string) => copyFileSync(this.record.path, dest) };
+		}
+		close() {
+			this.record.closed = true;
+		}
 	}
 	return { default: FakeDatabase };
 });
@@ -32,10 +49,13 @@ import {
 	getSqliteDatabase,
 	openSqliteDatabase,
 } from '../../../main/sqlite/sqlite-database';
+import { forgetSqliteBackups, SQLITE_BACKUP_NAME_MARKER } from '../../../main/sqlite/sqlite-backup';
 import {
 	SQLITE_EDITING_LOCKED_MESSAGE,
+	beginSqliteWrite,
 	disableSqliteEditing,
 	enableSqliteEditing,
+	hasSqliteWriteConnection,
 	requireSqliteEditing,
 	sqliteEditingGrantCount,
 	sqliteEditingRefusal,
@@ -60,7 +80,22 @@ afterAll(async () => {
 
 afterEach(async () => {
 	await closeAllSqliteDatabases();
+	forgetSqliteBackups();
+	driver.connections.length = 0;
 });
+
+/** The backups beside `file`. */
+async function backupsOf(file: string): Promise<string[]> {
+	const stem = path.basename(file, path.extname(file));
+	return (await fs.readdir(path.dirname(file))).filter((name) =>
+		name.startsWith(`${stem}.${SQLITE_BACKUP_NAME_MARKER}-`)
+	);
+}
+
+/** Open writable connections on `file`. */
+function writableConnections(file: string) {
+	return driver.connections.filter((c) => c.path === file && !c.readonly && !c.closed);
+}
 
 describe('enableSqliteEditing', () => {
 	it('hands each tab its own token, and only a live token passes the gate', async () => {
@@ -174,5 +209,88 @@ describe('sqliteEditingRefusal', () => {
 		await expect(sqliteEditingRefusal(database)).resolves.toBe(
 			`${file} was replaced since it was opened. Reopen the file to edit it.`
 		);
+	});
+});
+
+describe('beginSqliteWrite', () => {
+	it('refuses a tab without a grant, before any backup or writable connection', async () => {
+		const file = await writeFixture('write-locked.db');
+		const { handle } = await openSqliteDatabase(file);
+
+		await expect(beginSqliteWrite(handle, undefined)).rejects.toThrow(
+			SQLITE_EDITING_LOCKED_MESSAGE
+		);
+		expect(await backupsOf(file)).toEqual([]);
+		expect(hasSqliteWriteConnection(handle)).toBe(false);
+	});
+
+	it('backs the file up before the first write, then hands back one writable connection', async () => {
+		const file = await writeFixture('write-first.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		// Enabling alone writes nothing and opens nothing writable.
+		expect(await backupsOf(file)).toEqual([]);
+		expect(writableConnections(file)).toHaveLength(0);
+
+		const first = await beginSqliteWrite(handle, grant.editToken);
+		expect(first.backupCreated).toBe(true);
+		expect(await backupsOf(file)).toEqual([path.basename(first.backup.path)]);
+		expect(first.database).toBe(getSqliteDatabase(handle));
+		expect(writableConnections(file)).toHaveLength(1);
+
+		const second = await beginSqliteWrite(handle, grant.editToken);
+		expect(second.backupCreated).toBe(false);
+		expect(second.backup).toEqual(first.backup);
+		expect(second.db).toBe(first.db);
+		expect(await backupsOf(file)).toHaveLength(1);
+	});
+
+	it('closes the writable connection when the last tab locks, not before', async () => {
+		const file = await writeFixture('write-lock.db');
+		const { handle } = await openSqliteDatabase(file);
+		const a = await enableSqliteEditing(handle);
+		const b = await enableSqliteEditing(handle);
+		await beginSqliteWrite(handle, a.editToken);
+
+		disableSqliteEditing(handle, a.editToken);
+		expect(hasSqliteWriteConnection(handle)).toBe(true);
+		disableSqliteEditing(handle, b.editToken);
+		expect(hasSqliteWriteConnection(handle)).toBe(false);
+		expect(writableConnections(file)).toHaveLength(0);
+	});
+
+	it('closes the writable connection when the handle is released', async () => {
+		const file = await writeFixture('write-release.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		await beginSqliteWrite(handle, grant.editToken);
+
+		await closeSqliteDatabase(handle);
+		expect(hasSqliteWriteConnection(handle)).toBe(false);
+		expect(writableConnections(file)).toHaveLength(0);
+	});
+
+	it('refuses a file replaced since the unlock, backing nothing up', async () => {
+		const file = await writeFixture('write-swapped.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		await fs.rename(await writeFixture('write-swapped.db.tmp'), file);
+
+		await expect(beginSqliteWrite(handle, grant.editToken)).rejects.toThrow(
+			`${file} was replaced since it was opened. Reopen the file to edit it.`
+		);
+		expect(await backupsOf(file)).toEqual([]);
+		expect(writableConnections(file)).toHaveLength(0);
+	});
+
+	it('gives no writable connection to a tab that locked while the backup ran', async () => {
+		const file = await writeFixture('write-lock-midway.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+
+		const write = beginSqliteWrite(handle, grant.editToken);
+		disableSqliteEditing(handle, grant.editToken);
+		await expect(write).rejects.toThrow(SQLITE_EDITING_LOCKED_MESSAGE);
+		expect(writableConnections(file)).toHaveLength(0);
 	});
 });
