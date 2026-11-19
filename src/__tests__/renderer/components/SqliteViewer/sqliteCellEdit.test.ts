@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	isSqliteCellNullChord,
+	sqliteCellEditDraft,
 	sqliteCellEditRefusal,
 	sqliteCellEditText,
 	sqliteCellEditValue,
@@ -98,25 +100,81 @@ describe('sqliteCellEditText', () => {
 	});
 });
 
+describe('sqliteCellEditDraft', () => {
+	it('opens a NULL as NULL and an empty string as text, so the two never look alike', () => {
+		expect(sqliteCellEditDraft(null)).toEqual({ text: '', isNull: true });
+		expect(sqliteCellEditDraft('')).toEqual({ text: '', isNull: false });
+		expect(sqliteCellEditDraft(0)).toEqual({ text: '0', isNull: false });
+	});
+});
+
+describe('isSqliteCellNullChord', () => {
+	const press = (overrides: Partial<Parameters<typeof isSqliteCellNullChord>[0]>) =>
+		isSqliteCellNullChord({
+			key: 'Backspace',
+			altKey: true,
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			...overrides,
+		});
+
+	it('is Alt+Cmd+Backspace, or Alt+Ctrl+Backspace off macOS', () => {
+		expect(press({})).toBe(true);
+		expect(press({ metaKey: false, ctrlKey: true })).toBe(true);
+	});
+
+	it('leaves the text-editing chords alone, and never matches Remove Agent', () => {
+		expect(press({ altKey: false })).toBe(false); // Cmd+Backspace: delete to line start
+		expect(press({ metaKey: false })).toBe(false); // Alt+Backspace: delete a word
+		expect(press({ altKey: false, shiftKey: true })).toBe(false); // Cmd+Shift+Backspace
+		expect(press({ shiftKey: true })).toBe(false);
+		expect(press({ key: 'Delete' })).toBe(false);
+	});
+});
+
 describe('sqliteCellEditValue', () => {
-	it('writes nothing when the text is what the editor opened with', () => {
-		expect(sqliteCellEditValue(null, '')).toBeNull();
-		expect(sqliteCellEditValue('ada', 'ada')).toBeNull();
-		expect(sqliteCellEditValue(42, '42')).toBeNull();
+	const text = (value: string) => ({ text: value, isNull: false });
+	const NULL_DRAFT = { text: '', isNull: true };
+
+	it('writes nothing when the draft is what the editor opened with', () => {
+		expect(sqliteCellEditValue(null, NULL_DRAFT)).toBeNull();
+		expect(sqliteCellEditValue('', text(''))).toBeNull();
+		expect(sqliteCellEditValue('ada', text('ada'))).toBeNull();
+		expect(sqliteCellEditValue(42, text('42'))).toBeNull();
+		// NULL kept what was typed before it was set; still NULL, still nothing.
+		expect(sqliteCellEditValue(null, { text: 'typed', isNull: true })).toBeNull();
+	});
+
+	it('binds NULL only for a NULL draft, whatever text it kept', () => {
+		expect(sqliteCellEditValue('ada', NULL_DRAFT)).toEqual({ type: 'null', text: '' });
+		expect(sqliteCellEditValue('', NULL_DRAFT)).toEqual({ type: 'null', text: '' });
+		expect(sqliteCellEditValue(42, { text: '42', isNull: true })).toEqual({
+			type: 'null',
+			text: '',
+		});
+	});
+
+	it('writes an empty string, never NULL, for an emptied box', () => {
+		expect(sqliteCellEditValue('ada', text(''))).toEqual({ type: 'text', text: '' });
+		// A NULL cell whose NULL was turned off (or typed over, then cleared).
+		expect(sqliteCellEditValue(null, text(''))).toEqual({ type: 'text', text: '' });
+		expect(sqliteCellEditValue(42, text(''))).toEqual({ type: 'text', text: '' });
 	});
 
 	it('keeps a number a number while the text is still one', () => {
-		expect(sqliteCellEditValue(42, ' 43 ')).toEqual({ type: 'number', text: '43' });
-		expect(sqliteCellEditValue({ kind: 'integer', text: '9007199254740993' }, '1e3')).toEqual({
-			type: 'number',
-			text: '1e3',
+		expect(sqliteCellEditValue(42, text(' 43 '))).toEqual({ type: 'number', text: '43' });
+		expect(sqliteCellEditValue({ kind: 'integer', text: '9007199254740993' }, text('1e3'))).toEqual(
+			{ type: 'number', text: '1e3' }
+		);
+		expect(sqliteCellEditValue(42, text('forty-two'))).toEqual({
+			type: 'text',
+			text: 'forty-two',
 		});
-		expect(sqliteCellEditValue(42, 'forty-two')).toEqual({ type: 'text', text: 'forty-two' });
 	});
 
 	it('binds everything else as TEXT, verbatim, for the column affinity to convert', () => {
-		expect(sqliteCellEditValue('ada', ' grace ')).toEqual({ type: 'text', text: ' grace ' });
-		expect(sqliteCellEditValue(null, '7')).toEqual({ type: 'text', text: '7' });
-		expect(sqliteCellEditValue('ada', '')).toEqual({ type: 'text', text: '' });
+		expect(sqliteCellEditValue('ada', text(' grace '))).toEqual({ type: 'text', text: ' grace ' });
+		expect(sqliteCellEditValue(null, text('7'))).toEqual({ type: 'text', text: '7' });
 	});
 });

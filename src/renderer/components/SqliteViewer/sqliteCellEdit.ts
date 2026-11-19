@@ -70,6 +70,38 @@ export function sqliteCellEditRefusal(
 	return null;
 }
 
+/**
+ * What a cell editor holds. NULL is its own state, not an empty box: a text
+ * input cannot tell NULL from '' (the classic data-grid data-loss bug), so
+ * the editor says which one it holds and only an explicit act moves between
+ * them. While `isNull` is set, `text` keeps what was typed, so turning NULL
+ * back off restores it.
+ */
+export interface SqliteCellDraft {
+	text: string;
+	isNull: boolean;
+}
+
+/**
+ * The chord that sets the open cell to NULL, inside the cell editor only.
+ * Clearing the text leaves an empty string; this is the one keyboard way to
+ * NULL. Not Cmd+Shift+Backspace, which is Remove Agent everywhere else.
+ */
+export const SQLITE_CELL_NULL_KEYS = ['Alt', 'Meta', 'Backspace'];
+
+/** Whether a keydown in the cell editor is SQLITE_CELL_NULL_KEYS (Ctrl for Cmd off macOS). */
+export function isSqliteCellNullChord(event: {
+	key: string;
+	altKey: boolean;
+	metaKey: boolean;
+	ctrlKey: boolean;
+	shiftKey: boolean;
+}): boolean {
+	return (
+		event.key === 'Backspace' && event.altKey && (event.metaKey || event.ctrlKey) && !event.shiftKey
+	);
+}
+
 /** The text an editor opens with: the value as typed, NULL as empty. */
 export function sqliteCellEditText(value: SqliteCellValue): string {
 	if (value === null) return '';
@@ -80,23 +112,32 @@ export function sqliteCellEditText(value: SqliteCellValue): string {
 	return '';
 }
 
+/** The draft an editor opens with: a NULL opens as NULL, never as ''. */
+export function sqliteCellEditDraft(value: SqliteCellValue): SqliteCellDraft {
+	return { text: sqliteCellEditText(value), isNull: value === null };
+}
+
 /**
- * What an edit writes, or null when the text is what the editor opened with
+ * What an edit writes, or null when the draft is what the editor opened with
  * (Enter on an untouched cell writes nothing, so a NULL never turns into an
- * empty string by accident). A number stays a number while the text is still
- * one, so a column with no affinity does not silently start storing TEXT;
- * anything else binds as TEXT, for the column's affinity to convert.
+ * empty string by accident). A NULL draft binds NULL. An empty text draft is
+ * an empty string, even on a cell that held NULL: getting there took typing
+ * or turning NULL off, both deliberate. A number stays a number while the
+ * text is still one, so a column with no affinity does not silently start
+ * storing TEXT; anything else binds as TEXT, for the column's affinity to
+ * convert.
  */
 export function sqliteCellEditValue(
 	original: SqliteCellValue,
-	draft: string
+	draft: SqliteCellDraft
 ): SqliteParameterValue | null {
-	if (draft === sqliteCellEditText(original)) return null;
+	if (draft.isNull) return original === null ? null : { type: 'null', text: '' };
+	if (original !== null && draft.text === sqliteCellEditText(original)) return null;
 	const numeric =
 		typeof original === 'number' ||
 		(original !== null && typeof original === 'object' && original.kind === 'integer');
-	if (numeric && sqliteNumberBindValue(draft.trim()) !== null) {
-		return { type: 'number', text: draft.trim() };
+	if (numeric && sqliteNumberBindValue(draft.text.trim()) !== null) {
+		return { type: 'number', text: draft.text.trim() };
 	}
-	return { type: 'text', text: draft };
+	return { type: 'text', text: draft.text };
 }

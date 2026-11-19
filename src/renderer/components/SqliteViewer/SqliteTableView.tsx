@@ -54,7 +54,9 @@
  * not re-applied until the next read. A cell main would refuse anyway (a
  * BLOB, a cut TEXT value, a generated column, a key holding NULL) says why in
  * the footer instead of opening, and so does a refused save, with SQLite's
- * own words. The first save of a session announces where the file's backup went.
+ * own words. NULL is a state of the editor, set by its NULL button or
+ * Alt+Cmd+Backspace and never by clearing the text, so an emptied box saves an
+ * empty string and a NULL cell saved untouched stays NULL. The first save of a session announces where the file's backup went.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -91,10 +93,11 @@ import { RecordDetailModal, type RecordDetailField } from '../ui/RecordDetailMod
 import { Spinner } from '../ui/Spinner';
 import { SqliteCellEditor } from './SqliteCellEditor';
 import {
+	sqliteCellEditDraft,
 	sqliteCellEditRefusal,
-	sqliteCellEditText,
 	sqliteCellEditValue,
 	sqliteRowKeyAt,
+	type SqliteCellDraft,
 } from './sqliteCellEdit';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
 
@@ -211,7 +214,7 @@ export function SqliteTableView({
 	const [rowKeys, setRowKeys] = useState<SqliteKeyValue[][] | null>(null);
 	/** The cell an editor is open on, and its draft. */
 	const [editingCell, setEditingCell] = useState<DataGridCellPosition | null>(null);
-	const [editDraft, setEditDraft] = useState('');
+	const [editDraft, setEditDraft] = useState<SqliteCellDraft>({ text: '', isNull: false });
 	/** A cell save is in flight. */
 	const [savingCell, setSavingCell] = useState(false);
 	/** The last edit's outcome or refusal, for the footer. */
@@ -430,7 +433,7 @@ export function SqliteTableView({
 			return;
 		}
 		setEditStatus(null);
-		setEditDraft(sqliteCellEditText(value));
+		setEditDraft(sqliteCellEditDraft(value));
 		setEditingCell({ row: rowPosition, column: columnPosition });
 	});
 

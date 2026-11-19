@@ -2205,6 +2205,68 @@ describe('SqliteViewer cell edit', () => {
 		expect(updateCell).not.toHaveBeenCalled();
 	});
 
+	it('sets NULL only through the NULL button, never by clearing the text', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		const nullButton = screen.getByTestId('sqlite-cell-editor-null');
+		expect(nullButton).toHaveAttribute('aria-pressed', 'false');
+
+		fireEvent.click(nullButton);
+		expect(nullButton).toHaveAttribute('aria-pressed', 'true');
+		expect(editor).toHaveValue('');
+		expect(editor).toHaveAttribute('placeholder', 'NULL');
+		// Pressing the button is not leaving the cell: nothing saved yet.
+		expect(updateCell).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(updateCell).toHaveBeenCalledTimes(1));
+		expect(updateCell).toHaveBeenLastCalledWith(
+			expect.objectContaining({ column: 'kind', value: { type: 'null', text: '' } })
+		);
+		await waitFor(() => expect(cell(1, 'kind')).toHaveTextContent('NULL'));
+	});
+
+	it('saves an emptied box as an empty string, and says so in the box', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value: '' } });
+		expect(editor).toHaveAttribute('placeholder', 'empty string');
+		expect(screen.getByTestId('sqlite-cell-editor-null')).toHaveAttribute('aria-pressed', 'false');
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(updateCell).toHaveBeenCalledTimes(1));
+		expect(updateCell).toHaveBeenLastCalledWith(
+			expect.objectContaining({ column: 'kind', value: { type: 'text', text: '' } })
+		);
+	});
+
+	it('sets an empty string to NULL with Alt+Cmd+Backspace, and typing leaves NULL again', async () => {
+		await renderEditing();
+		// Row 1's kind is an empty string, not NULL.
+		fireEvent.doubleClick(cell(0, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		const nullButton = screen.getByTestId('sqlite-cell-editor-null');
+		expect(editor).toHaveAttribute('placeholder', 'empty string');
+
+		fireEvent.keyDown(editor, { key: 'Backspace', altKey: true, metaKey: true });
+		expect(nullButton).toHaveAttribute('aria-pressed', 'true');
+		fireEvent.change(editor, { target: { value: 'x' } });
+		expect(nullButton).toHaveAttribute('aria-pressed', 'false');
+		expect(editor).toHaveValue('x');
+
+		fireEvent.click(nullButton);
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(updateCell).toHaveBeenCalledTimes(1));
+		expect(updateCell).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				column: 'kind',
+				row: { kind: 'primary-key', values: { id: { type: 'integer', text: '1' } } },
+				value: { type: 'null', text: '' },
+			})
+		);
+	});
+
 	it('cancels on Escape without writing', async () => {
 		await renderEditing();
 		fireEvent.doubleClick(cell(1, 'kind'));
