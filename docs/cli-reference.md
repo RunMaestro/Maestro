@@ -3386,15 +3386,16 @@ Show a table's or view's columns (type, affinity, nullability, default, primary 
 
 ## `maestro-cli sqlite rows <path> <object>`
 
-Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally sorted by a column in SQLite
+Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite
 
-| Option            | Description                                                            | Default |
-| ----------------- | ---------------------------------------------------------------------- | ------- |
-| `--offset <n>`    | Rows to skip                                                           | `0`     |
-| `--limit <n>`     | Rows to show (at most 1000)                                            | `50`    |
-| `--sort <column>` | Sort by this column (server side, ties broken by rowid or primary key) | -       |
-| `--desc`          | Sort descending (needs --sort)                                         | -       |
-| `--json`          | Output as JSON (for scripting)                                         | -       |
+| Option            | Description                                                                                                                            | Default |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--offset <n>`    | Rows to skip                                                                                                                           | `0`     |
+| `--limit <n>`     | Rows to show (at most 1000)                                                                                                            | `50`    |
+| `--sort <column>` | Sort by this column (server side, ties broken by rowid or primary key)                                                                 | -       |
+| `--desc`          | Sort descending (needs --sort)                                                                                                         | -       |
+| `--filter <expr>` | Filter rows in SQLite, in the viewer's filter language (e.g. "status = active and price > 100", or a bare word to search every column) | -       |
+| `--json`          | Output as JSON (for scripting)                                                                                                         | -       |
 
 ## `maestro-cli quick-chat`
 

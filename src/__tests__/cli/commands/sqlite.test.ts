@@ -318,6 +318,7 @@ function respondRows(page: Record<string, unknown> = {}) {
 			hasMore: true,
 			orderedBy: ['rowid'],
 			elapsedMs: 2,
+			filtered: false,
 			...page,
 		},
 	});
@@ -337,7 +338,7 @@ describe('sqlite rows', () => {
 		});
 	});
 
-	it('sends the resolved path, the window, and no sort by default', async () => {
+	it('sends the resolved path, the window, and no sort or filter by default', async () => {
 		const sent = respondRows();
 		await sqliteRows(DB, 'users', {});
 		expect(sent[0]).toEqual({
@@ -347,6 +348,7 @@ describe('sqlite rows', () => {
 			offset: 0,
 			limit: 50,
 			sort: null,
+			filter: null,
 			responseType: 'sqlite_rows_result',
 		});
 	});
@@ -358,6 +360,52 @@ describe('sqlite rows', () => {
 			offset: 100,
 			limit: 20,
 			sort: { column: 'email', direction: 'desc' },
+		});
+	});
+
+	it('sends --filter as written, for the app to compile', async () => {
+		const sent = respondRows({ filtered: true });
+		await sqliteRows(DB, 'users', { filter: 'email ~ example and id > 1' });
+		expect(sent[0]).toMatchObject({ filter: 'email ~ example and id > 1' });
+		expect(logged()).toContain('Matching rows 1-3; more follow (--offset 3).');
+	});
+
+	it('says when a filter matches nothing', async () => {
+		respondRows({ rows: [], hasMore: false, filtered: true });
+		await sqliteRows(DB, 'users', { filter: 'id = 999' });
+		expect(logged()).toContain('No matching rows.');
+	});
+
+	it('exits 1 and points at the span when the filter does not parse', async () => {
+		respondRows({
+			rows: [],
+			hasMore: false,
+			filterProblem: {
+				message: 'No column "emial". Did you mean "email"?',
+				start: 0,
+				end: 5,
+				suggestion: 'email',
+			},
+		});
+		await expect(sqliteRows(DB, 'users', { filter: 'emial ~ ada' })).rejects.toThrow('__exit__');
+		const errors = errorSpy.mock.calls.join('\n');
+		expect(errors).toContain('Filter problem: No column "emial". Did you mean "email"?');
+		expect(errors).toContain('  emial ~ ada\n  ^^^^^');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it('reports a filter problem as JSON under --json', async () => {
+		const filterProblem = { message: 'Unterminated string', start: 8, end: 12 };
+		respondRows({ rows: [], hasMore: false, filterProblem });
+		await expect(sqliteRows(DB, 'users', { filter: 'email = "ada', json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		const json = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(json).toEqual({
+			success: false,
+			error: 'Unterminated string',
+			path: DB,
+			filterProblem,
 		});
 	});
 

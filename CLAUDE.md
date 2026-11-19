@@ -142,6 +142,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
 - **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()` in `src/shared/sqlite/sql.ts`
 - **Reading a window of a SQLite table's rows (LIMIT/OFFSET, server-side sort):** `readSqliteRows()` in `src/main/sqlite/sqlite-rows.ts`; `formatSqliteCell()` in `src/shared/sqlite/cells.ts`
+- **Filtering a SQLite table's rows (a parameterised WHERE):** `buildSqliteFilter()`, `compileSqliteFilter()`, `sqliteRegexpTest()` in `src/shared/sqlite/filter.ts`
 - **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
@@ -472,6 +473,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Switching a `key = value` entry off without deleting it:** `splitParkedEntries()` / `setKeysParked()` / `parkedPairKeys()` in `src/shared/parkedRecords.ts`
 - **Record view for one table row:** `<RecordDetailModal>` in `src/renderer/components/ui/RecordDetailModal.tsx`
 - **A virtualized grid over rows an engine pages in:** `<DataGrid>`, `dataGridColumnWidth()`, `nextDataGridSort()` in `src/renderer/components/ui/DataGrid.tsx`
+- **A filter-expression box over a data viewer (Parquet, SQLite):** `<FilterExpressionBar>` in `src/renderer/components/ui/FilterExpressionBar.tsx`, `quoteFilterColumnName()` in `src/shared/parquet/filterExpression.ts`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
 - **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/SummaryCards.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`

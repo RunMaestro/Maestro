@@ -1,1 +1,1 @@
-export { SqliteViewer } from './SqliteViewer';
+export { SqliteViewer, type SqliteViewerHandle } from './SqliteViewer';

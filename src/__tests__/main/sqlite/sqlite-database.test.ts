@@ -12,6 +12,7 @@ const driver = vi.hoisted(() => ({
 		path: string;
 		options: Record<string, unknown>;
 		pragmas: string[];
+		functions: Array<{ name: string; options: Record<string, unknown>; fn: unknown }>;
 		closed: boolean;
 	}>,
 	/** Error the next `pragma('schema_version')` throws, if any. */
@@ -29,7 +30,7 @@ vi.mock('better-sqlite3', () => {
 				driver.constructorError = null;
 				throw error;
 			}
-			this.record = { path: filePath, options, pragmas: [], closed: false };
+			this.record = { path: filePath, options, pragmas: [], functions: [], closed: false };
 			driver.instances.push(this.record);
 		}
 		pragma(source: string) {
@@ -41,6 +42,10 @@ vi.mock('better-sqlite3', () => {
 			}
 			return 1;
 		}
+		function(name: string, options: Record<string, unknown>, fn: unknown) {
+			this.record.functions.push({ name, options, fn });
+			return this;
+		}
 		close() {
 			this.record.closed = true;
 		}
@@ -48,6 +53,7 @@ vi.mock('better-sqlite3', () => {
 	return { default: FakeDatabase };
 });
 
+import { SQLITE_REGEXP_FUNCTION, sqliteRegexpTest } from '../../../shared/sqlite/filter';
 import {
 	SQLITE_BUSY_TIMEOUT_MS,
 	closeAllSqliteDatabases,
@@ -107,6 +113,14 @@ describe('openSqliteDatabase', () => {
 		const file = await writeFixture('trusted.db');
 		await openSqliteDatabase(file);
 		expect(driver.instances[0].pragmas).toEqual(['trusted_schema = OFF', 'schema_version']);
+	});
+
+	it("registers the table filter's regex function as deterministic", async () => {
+		const file = await writeFixture('regexp.db');
+		await openSqliteDatabase(file);
+		expect(driver.instances[0].functions).toEqual([
+			{ name: SQLITE_REGEXP_FUNCTION, options: { deterministic: true }, fn: sqliteRegexpTest },
+		]);
 	});
 
 	it('reuses the open connection for the same file', async () => {

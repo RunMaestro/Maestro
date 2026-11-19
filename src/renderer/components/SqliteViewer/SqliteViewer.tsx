@@ -19,9 +19,13 @@
  * rows (SqliteTableView, for a table or view) or its schema
  * (SqliteSchemaPanel), chosen by a Data / Schema switch the viewer remembers.
  * An index or trigger has no rows of its own, so it always shows its schema.
+ *
+ * Each table's or view's filter text is kept here, keyed by object, so going
+ * back to a table finds its filter as it was left. Cmd+F in the file preview
+ * lands in the filter box (`focusFilter()`), switching to the Data view first.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { AlertTriangle, Database } from 'lucide-react';
 
 import type {
@@ -63,6 +67,16 @@ interface SqliteViewerProps {
 	theme: Theme;
 }
 
+/** Imperative handle so the file preview can route Cmd+F to the filter box. */
+export interface SqliteViewerHandle {
+	focusFilter: () => void;
+}
+
+/** Key for an object's remembered filter text: a trigger may share a table's name. */
+function filterKey(object: Pick<SqliteObjectSummary, 'kind' | 'name'>): string {
+	return `${object.kind}:${object.name}`;
+}
+
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -73,7 +87,10 @@ function defaultSelection(objects: readonly SqliteObjectSummary[]): string | nul
 	return visible[0]?.name ?? objects[0]?.name ?? null;
 }
 
-export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
+export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(function SqliteViewer(
+	{ filePath, fileName, theme },
+	ref
+) {
 	const [info, setInfo] = useState<SqliteDatabaseInfo | null>(null);
 	const [list, setList] = useState<SqliteObjectList | null>(null);
 	const [stats, setStats] = useState<ReadonlyMap<string, SqliteObjectStats>>(() => new Map());
@@ -82,6 +99,8 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 	const [selectedName, setSelectedName] = useState<string | null>(null);
 	const showInternal = usePersistedToggle('sqlite-show-internal', false);
 	const objectView = usePersistedChoice<ObjectView>('sqlite-object-view', OBJECT_VIEWS, 'data');
+	const [filters, setFilters] = useState<ReadonlyMap<string, string>>(() => new Map());
+	const [focusFilterRequested, setFocusFilterRequested] = useState(false);
 
 	// -- Open the database and read its object list -------------------------
 
@@ -93,6 +112,7 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 		setOpenError(null);
 		setStatsError(null);
 		setSelectedName(null);
+		setFilters(new Map());
 
 		window.maestro.sqlite
 			.open(filePath)
@@ -168,6 +188,31 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 	}, [list]);
 
 	const handleSelect = useCallback((name: string) => setSelectedName(name), []);
+
+	const selectedFilterKey = selected ? filterKey(selected) : null;
+	const handleFilterChange = useCallback(
+		(value: string) => {
+			if (!selectedFilterKey) return;
+			setFilters((previous) => new Map(previous).set(selectedFilterKey, value));
+		},
+		[selectedFilterKey]
+	);
+	const handleFilterFocused = useCallback(() => setFocusFilterRequested(false), []);
+
+	const setObjectView = objectView.setValue;
+	useImperativeHandle(
+		ref,
+		() => ({
+			focusFilter: () => {
+				// Only a table or view has rows to filter; an index or trigger
+				// shows its schema, and there is nothing for Cmd+F to find.
+				if (selected?.kind !== 'table' && selected?.kind !== 'view') return;
+				setObjectView('data');
+				setFocusFilterRequested(true);
+			},
+		}),
+		[selected?.kind, setObjectView]
+	);
 
 	if (openError) {
 		return (
@@ -307,6 +352,10 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 										key={`${selected.kind}:${selected.name}`}
 										handle={info.handle}
 										object={selected}
+										filter={filters.get(filterKey(selected)) ?? ''}
+										onFilterChange={handleFilterChange}
+										focusFilterRequested={focusFilterRequested}
+										onFilterFocused={handleFilterFocused}
 										theme={theme}
 									/>
 								</div>
@@ -325,4 +374,4 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 			</div>
 		</div>
 	);
-}
+});

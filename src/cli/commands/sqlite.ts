@@ -7,8 +7,9 @@
 //       -> the schema pane: columns with type, affinity, nullability, default,
 //          primary key and foreign-key targets, index key columns, CREATE SQL
 //   maestro-cli sqlite rows <path> <object> [--offset <n>] [--limit <n>]
-//                           [--sort <column>] [--desc] [--json]
-//       -> the table view: one LIMIT/OFFSET window of rows, sorted in SQLite
+//                           [--sort <column>] [--desc] [--filter <expr>] [--json]
+//       -> the table view: one LIMIT/OFFSET window of rows, filtered and
+//          sorted in SQLite
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_list_objects`, `sqlite_read_schema`,
@@ -268,6 +269,7 @@ interface SqliteRowsOptions {
 	limit?: string;
 	sort?: string;
 	desc?: boolean;
+	filter?: string;
 	json?: boolean;
 }
 
@@ -323,7 +325,15 @@ export async function sqliteRows(
 	try {
 		reply = await withMaestroClient((client) =>
 			client.sendCommand<SqliteRowsReply>(
-				{ type: 'sqlite_read_rows', path: filePath, name, offset, limit, sort },
+				{
+					type: 'sqlite_read_rows',
+					path: filePath,
+					name,
+					offset,
+					limit,
+					sort,
+					filter: options.filter ?? null,
+				},
 				'sqlite_rows_result',
 				SQLITE_TIMEOUT_MS
 			)
@@ -336,6 +346,24 @@ export async function sqliteRows(
 	}
 
 	const { database, page } = reply;
+	if (page.filterProblem) {
+		// The viewer underlines the span; a terminal gets the span as a caret line.
+		const problem = page.filterProblem;
+		const filterText = options.filter ?? '';
+		if (options.json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: problem.message,
+					path: database.displayPath,
+					filterProblem: problem,
+				})
+			);
+			exitWith(ExitCode.GeneralError);
+		}
+		const marker = `${' '.repeat(problem.start)}${'^'.repeat(Math.max(1, problem.end - problem.start))}`;
+		fail(`Filter problem: ${problem.message}\n  ${filterText}\n  ${marker}`, false);
+	}
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, path: database.displayPath, ...page }));
 		return;
@@ -343,7 +371,8 @@ export async function sqliteRows(
 
 	const lines: string[] = [`${page.name} in ${database.displayPath}`];
 	if (page.rows.length === 0) {
-		lines.push('', offset > 0 ? `No rows past offset ${offset}.` : 'No rows.');
+		const none = page.filtered ? 'No matching rows' : 'No rows';
+		lines.push('', offset > 0 ? `${none} past offset ${offset}.` : `${none}.`);
 	} else {
 		lines.push(
 			'',
@@ -356,7 +385,7 @@ export async function sqliteRows(
 		const last = page.offset + page.rows.length;
 		lines.push(
 			'',
-			`Rows ${first}-${last}${page.hasMore ? `; more follow (--offset ${last})` : ''}.`
+			`${page.filtered ? 'Matching rows' : 'Rows'} ${first}-${last}${page.hasMore ? `; more follow (--offset ${last})` : ''}.`
 		);
 	}
 	lines.push(

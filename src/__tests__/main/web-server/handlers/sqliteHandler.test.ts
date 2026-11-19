@@ -238,6 +238,7 @@ describe('sqlite_read_rows handler', () => {
 			offset: 10,
 			limit: 5,
 			sort: { column: 'name', direction: 'desc' },
+			filter: 'name ~ smith',
 		});
 		await flush();
 
@@ -247,6 +248,7 @@ describe('sqlite_read_rows handler', () => {
 			offset: 10,
 			limit: 5,
 			sort: { column: 'name', direction: 'desc' },
+			filter: 'name ~ smith',
 		});
 		expect(lastResponse(client)).toMatchObject({
 			type: 'sqlite_rows_result',
@@ -258,7 +260,7 @@ describe('sqlite_read_rows handler', () => {
 		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
 	});
 
-	it('defaults to the first 50 rows, unsorted', async () => {
+	it('defaults to the first 50 rows, unsorted and unfiltered', async () => {
 		rows.readSqliteRows.mockReturnValue({ name: 'users' });
 		handler.handleMessage(client, {
 			type: 'sqlite_read_rows',
@@ -273,6 +275,7 @@ describe('sqlite_read_rows handler', () => {
 			offset: 0,
 			limit: 50,
 			sort: null,
+			filter: null,
 		});
 	});
 
@@ -296,7 +299,7 @@ describe('sqlite_read_rows handler', () => {
 		});
 	});
 
-	it('refuses a missing name or a malformed sort before opening anything', async () => {
+	it('refuses a missing name, a malformed sort, or a non-string filter before opening anything', async () => {
 		handler.handleMessage(client, { type: 'sqlite_read_rows', requestId: 'r4', path: '/x.db' });
 		await flush();
 		expect(lastResponse(client)).toMatchObject({ requestId: 'r4', success: false });
@@ -313,6 +316,20 @@ describe('sqlite_read_rows handler', () => {
 			requestId: 'r5',
 			success: false,
 			error: 'sort must be { column, direction: "asc" | "desc" }',
+		});
+
+		handler.handleMessage(client, {
+			type: 'sqlite_read_rows',
+			requestId: 'r6',
+			path: '/x.db',
+			name: 'users',
+			filter: 42,
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'r6',
+			success: false,
+			error: 'filter must be a string',
 		});
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
 	});

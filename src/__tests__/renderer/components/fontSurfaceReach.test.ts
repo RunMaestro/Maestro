@@ -44,10 +44,11 @@ describe('font settings reach their surfaces', () => {
 			expect(src).not.toContain('ui-monospace, SFMono-Regular');
 		});
 
-		it('keeps the parquet filter on a code face, but the chosen one', () => {
+		it('keeps the data-viewer filter on a code face, but the chosen one', () => {
 			// A filter expression is code, so it stays monospace - it just
-			// follows the user's code font rather than a hard-coded stack.
-			const src = read('src/renderer/components/ParquetViewer/ParquetFilterBar.tsx');
+			// follows the user's code font rather than a hard-coded stack. The
+			// parquet and SQLite viewers both draw the shared bar.
+			const src = read('src/renderer/components/ui/FilterExpressionBar.tsx');
 			expect(src).toContain('var(--maestro-font-mono');
 		});
 	});

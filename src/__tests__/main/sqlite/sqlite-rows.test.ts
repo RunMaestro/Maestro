@@ -57,8 +57,10 @@ function fakeDb() {
 					if (flag) state.flags.push('safeIntegers');
 					return statement;
 				},
-				all(limit: number, offset: number) {
-					state.windowArgs.push([limit, offset]);
+				// Filter bindings (if any) come first, then LIMIT and OFFSET.
+				all(...args: unknown[]) {
+					state.windowArgs.push(args);
+					const [limit, offset] = args.slice(-2) as [number, number];
 					return table.rows.slice(offset, offset + limit);
 				},
 			};
@@ -333,6 +335,61 @@ describe('readSqliteRows', () => {
 		expect(() => readSqliteRows({ handle: 'h1', name: 'broken', offset: 0, limit: 5 })).toThrow(
 			'no such table: main.gone'
 		);
+	});
+
+	it('compiles a filter into a WHERE whose values are bound ahead of LIMIT and OFFSET', () => {
+		const page = readSqliteRows({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 2,
+			filter: 'id > 2 and name ~ "o\'; DROP TABLE users"',
+		});
+		const sql = state.windowSql[0];
+		expect(sql).toContain(' WHERE ("id" > ? AND ');
+		expect(sql).toContain(' ORDER BY "rowid" LIMIT ? OFFSET ?');
+		expect(sql).not.toContain('DROP TABLE');
+		expect(state.windowArgs[0]).toEqual(['2', "%o'; drop table users%", 3, 0]);
+		expect(page.filtered).toBe(true);
+		expect(page.filterProblem).toBeUndefined();
+	});
+
+	it('treats blank filter text as no filter', () => {
+		const page = readSqliteRows({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 2,
+			filter: '   ',
+		});
+		expect(state.windowSql[0]).not.toContain('WHERE');
+		expect(page.filtered).toBe(false);
+	});
+
+	it('reads nothing and returns the problem when the filter names a missing column', () => {
+		const page = readSqliteRows({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 2,
+			filter: 'nmae = bob',
+		});
+		expect(state.windowSql).toEqual([]);
+		expect(page.rows).toEqual([]);
+		expect(page.filtered).toBe(false);
+		expect(page.filterProblem).toMatchObject({
+			message: 'No column "nmae". Did you mean "name"?',
+			start: 0,
+			end: 4,
+			suggestion: 'name',
+		});
+	});
+
+	it("binds a filter literal by the column's affinity", () => {
+		// `n` is a view expression column: no affinity, so a number binds as one.
+		readSqliteRows({ handle: 'h1', name: 'active', offset: 0, limit: 5, filter: 'n = 3' });
+		expect(state.windowSql[0]).toContain(' WHERE "n" = ? LIMIT');
+		expect(state.windowArgs[0]).toEqual([3, 6, 0]);
 	});
 
 	it('fails on a handle that is no longer open', () => {

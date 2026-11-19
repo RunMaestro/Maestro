@@ -9,6 +9,15 @@
  * renderer addresses it by the opaque `handle` it got back from opening it.
  */
 
+import type { ParquetFilterProblem } from '../parquet/types';
+
+/**
+ * Filter text that did not parse or bind, with the span to underline. The
+ * table view's filter speaks the Parquet viewer's language
+ * (src/shared/sqlite/filter.ts), so the problem has the same shape.
+ */
+export type SqliteFilterProblem = ParquetFilterProblem;
+
 /** What opening a database returns. Later calls name the database by `handle`. */
 export interface SqliteDatabaseInfo {
 	/** Opaque id of the main-process connection. */
@@ -191,6 +200,11 @@ export interface SqliteRowsRequest {
 	limit: number;
 	/** `ORDER BY` this column, or null for the table's own order. */
 	sort?: SqliteSortSpec | null;
+	/**
+	 * Filter expression in the viewer's filter language, compiled to a
+	 * parameterised `WHERE`. Empty or absent means every row.
+	 */
+	filter?: string | null;
 }
 
 /** A result column, as the statement reports it. */
@@ -242,4 +256,11 @@ export interface SqliteRowsPage {
 	orderedBy: string[];
 	/** Time SQLite spent on the window, in milliseconds. */
 	elapsedMs: number;
+	/** True when a filter narrowed the rows; `offset` and `hasMore` count matches. */
+	filtered: boolean;
+	/**
+	 * Set when the filter did not parse or bind. Nothing was read: `rows` is
+	 * empty and `filtered` is false, so a caller keeps showing what it had.
+	 */
+	filterProblem?: SqliteFilterProblem;
 }

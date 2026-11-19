@@ -68,7 +68,7 @@ import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { isSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
-import { SqliteViewer } from '../SqliteViewer';
+import { SqliteViewer, type SqliteViewerHandle } from '../SqliteViewer';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
 import {
@@ -468,6 +468,7 @@ export const FilePreview = React.memo(
 		// read off the marker for the same reason. `isDataViewer` covers both: every
 		// text-only guard below must exclude a tab whose content is a marker.
 		const isSqlite = file ? isSqlitePreviewMarker(file.content) : false;
+		const sqliteRef = useRef<SqliteViewerHandle>(null);
 		const isDataViewer = isParquet || isSqlite;
 
 		// Playable audio/video never reaches this component: the open path diverts
@@ -1896,9 +1897,12 @@ export const FilePreview = React.memo(
 					parquetRef.current?.focusFilter();
 					return;
 				}
-				// The SQLite viewer has no text to find either, and no filter box yet:
-				// swallow the shortcut rather than search the marker.
-				if (isSqlite) return;
+				// The SQLite viewer has no text to find either: its table view's
+				// filter box is the find affordance, the same as parquet's.
+				if (isSqlite) {
+					sqliteRef.current?.focusFilter();
+					return;
+				}
 				// All three tiers (Rich / Fast / Giant) now share the same search
 				// bar. Giant tier exposes findInContent/scrollToMatch through its
 				// adapter so the count + navigation flow through the same UI.
@@ -2639,7 +2643,7 @@ export const FilePreview = React.memo(
 						// Ahead of the text branches for the same reason as parquet.
 						// `fs:readFile` only hands back a SQLite marker for a local
 						// file, so there is no SSH remote to pass.
-						<SqliteViewer filePath={file.path} fileName={file.name} theme={theme} />
+						<SqliteViewer ref={sqliteRef} filePath={file.path} fileName={file.name} theme={theme} />
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />

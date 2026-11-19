@@ -25,6 +25,7 @@ import { promises as fs } from 'fs';
 
 import Database from 'better-sqlite3';
 
+import { SQLITE_REGEXP_FUNCTION, sqliteRegexpTest } from '../../shared/sqlite/filter';
 import type { SqliteDatabaseInfo } from '../../shared/sqlite/types';
 import { createIdleHandleRegistry } from '../utils/idle-handle-registry';
 import { isSqliteDatabaseFile } from './sqlite-detect';
@@ -137,6 +138,10 @@ export async function openSqliteDatabase(filePath: string): Promise<SqliteDataba
 		db.close();
 		throw describeOpenFailure(error, filePath);
 	}
+	// The table view's regex filter (`name ~ /^acme/`) calls this; SQLite has
+	// no REGEXP of its own. Deterministic, so SQLite may evaluate it once per
+	// distinct input. Registering a function writes nothing to the file.
+	db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
 
 	const id = randomUUID();
 	const info: SqliteDatabaseInfo = {

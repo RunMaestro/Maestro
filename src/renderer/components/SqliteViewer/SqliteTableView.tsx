@@ -1,26 +1,34 @@
 /**
  * SqliteTableView - the rows of the selected table or view, in the shared
- * `<DataGrid>`.
+ * `<DataGrid>`, under the shared `<FilterExpressionBar>`.
  *
  * Rows are paged from the main process with `LIMIT`/`OFFSET` (see
  * src/main/sqlite/sqlite-rows.ts): the first window on selection, the next
  * when the grid scrolls near the end of what is loaded. A header click sorts
- * in SQLite (`ORDER BY`), so it orders the whole table, and starts again from
- * the first window. Nothing is sorted or filtered over the loaded rows.
+ * in SQLite (`ORDER BY`), and the filter box compiles to a parameterised
+ * `WHERE` there (src/shared/sqlite/filter.ts), so both cover the whole table
+ * and either change starts again from the first window. Nothing is sorted or
+ * filtered over the loaded rows.
  *
  * The parent remounts this per object (`key`), so a selection change never
- * shows the previous object's rows. Within one object, a generation token
- * drops the reply to a window asked for under an older sort.
+ * shows the previous object's rows; it keeps each object's filter text, so
+ * coming back to a table restores its filter. Within one object, a generation
+ * token drops the reply to a window asked for under an older sort or filter,
+ * and the rows on screen stay until the new first window replaces them: a
+ * filter that does not parse underlines itself and leaves the last good
+ * result in place.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatCount } from '../../../shared/formatters';
+import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { formatSqliteCell } from '../../../shared/sqlite/cells';
 import { sqliteColumnAffinity } from '../../../shared/sqlite/schema';
 import type {
 	SqliteAffinity,
 	SqliteCellValue,
+	SqliteFilterProblem,
 	SqliteObjectSummary,
 	SqliteResultColumn,
 	SqliteRowsPage,
@@ -33,10 +41,42 @@ import {
 	type DataGridCell,
 	type DataGridColumn,
 } from '../ui/DataGrid';
+import {
+	FilterExpressionBar,
+	type FilterExpressionBarHandle,
+	type FilterExpressionExample,
+} from '../ui/FilterExpressionBar';
 import { Spinner } from '../ui/Spinner';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
 const PAGE_SIZE = 300;
+
+/** Quiet time after the last keystroke before the filter runs. */
+const FILTER_DEBOUNCE_MS = 250;
+
+/** The syntax popover, in ascending order of sophistication. */
+const SYNTAX_EXAMPLES: readonly FilterExpressionExample[] = [
+	{ expression: 'acme', description: 'any column contains "acme"' },
+	{ expression: 'status = active', description: 'exact match' },
+	{ expression: 'price > 100 and qty <= 5', description: 'combine with and / or / not' },
+	{ expression: 'region in (us, eu)', description: 'set membership' },
+	{ expression: 'id between 100 and 200', description: 'inclusive range' },
+	{ expression: 'created_at >= 2024-01-15', description: 'compared the way SQLite compares' },
+	{ expression: 'name ~ smith', description: 'contains (ASCII case-insensitive)' },
+	{ expression: 'name ~ /^acme-\\d+$/', description: 'regular expression' },
+	{ expression: 'path ^= /var/log', description: 'starts with ( $= ends with )' },
+	{ expression: 'notes is null', description: 'null tests' },
+	{ expression: '[order id] = 42', description: 'bracket names with spaces' },
+];
+
+const FOOTNOTE = (
+	<>
+		Terms sitting next to each other are combined with <code>and</code>. Every value is a bound
+		parameter, and SQLite compares it by the column&apos;s affinity: <code>price &gt; 100</code>{' '}
+		compares numbers on an INTEGER or REAL column, and a date compares as text where dates are
+		stored as text.
+	</>
+);
 
 /** Typical content width for a column of each affinity. */
 const CONTENT_WIDTH: Record<SqliteAffinity, number> = {
@@ -74,18 +114,35 @@ interface SqliteTableViewProps {
 	handle: string;
 	/** A table or view. */
 	object: SqliteObjectSummary;
+	/** This object's filter text; the parent keeps it per object. */
+	filter: string;
+	onFilterChange: (value: string) => void;
+	/** Focus the filter box once (Cmd+F), then report it done. */
+	focusFilterRequested: boolean;
+	onFilterFocused: () => void;
 	theme: Theme;
 }
 
-export function SqliteTableView({ handle, object, theme }: SqliteTableViewProps) {
+export function SqliteTableView({
+	handle,
+	object,
+	filter,
+	onFilterChange,
+	focusFilterRequested,
+	onFilterFocused,
+	theme,
+}: SqliteTableViewProps) {
 	const [sort, setSort] = useState<SqliteSortSpec | null>(null);
+	const appliedFilter = useDebouncedValue(filter.trim(), FILTER_DEBOUNCE_MS);
+	const [filterProblem, setFilterProblem] = useState<SqliteFilterProblem | undefined>(undefined);
+	const filterBarRef = useRef<FilterExpressionBarHandle>(null);
 	const [columns, setColumns] = useState<SqliteResultColumn[] | null>(null);
 	const [rows, setRows] = useState<SqliteCellValue[][]>([]);
 	const [lastPage, setLastPage] = useState<SqliteRowsPage | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
-	/** Bumped on every sort change; a reply for an older one is dropped. */
+	/** Bumped on every sort or filter change; a reply for an older one is dropped. */
 	const generation = useRef(0);
 	/** Generation of the window in flight, or null when none is. */
 	const inFlight = useRef<number | null>(null);
@@ -103,8 +160,18 @@ export function SqliteTableView({ handle, object, theme }: SqliteTableViewProps)
 					offset,
 					limit: PAGE_SIZE,
 					sort,
+					filter: appliedFilter || null,
 				});
 				if (token !== generation.current) return;
+				if (page.filterProblem) {
+					// Nothing was read: keep the last good rows and underline the text.
+					// A filter restored on mount can fail before any rows arrived, so
+					// the header still comes from this reply.
+					setFilterProblem(page.filterProblem);
+					setColumns((previous) => previous ?? page.columns);
+					return;
+				}
+				setFilterProblem(undefined);
 				setLastPage(page);
 				if (offset === 0) {
 					setColumns(page.columns);
@@ -121,24 +188,38 @@ export function SqliteTableView({ handle, object, theme }: SqliteTableViewProps)
 				}
 			}
 		},
-		[handle, name, sort]
+		[handle, name, sort, appliedFilter]
 	);
 
-	// A new sort means a new order: start again from the first window. The
-	// columns stay up meanwhile, so the header the user just clicked does not
-	// vanish under the pointer.
+	// A new sort or filter means a new row set: start again from the first
+	// window. What is on screen stays until that window replaces it, so the
+	// header the user just clicked does not vanish under the pointer and a
+	// filter mid-edit does not blank the grid.
 	useEffect(() => {
 		generation.current++;
-		setRows([]);
-		setLastPage(null);
 		setError(null);
 		void fetchWindow(0);
 	}, [fetchWindow]);
 
 	const handleReachEnd = useCallback(() => {
-		if (!lastPage?.hasMore || inFlight.current !== null || error) return;
+		if (!lastPage?.hasMore || inFlight.current !== null || error || filterProblem) return;
 		void fetchWindow(rows.length);
-	}, [lastPage, rows.length, error, fetchWindow]);
+	}, [lastPage, rows.length, error, filterProblem, fetchWindow]);
+
+	useEffect(() => {
+		if (!focusFilterRequested) return;
+		filterBarRef.current?.focus();
+		onFilterFocused();
+	}, [focusFilterRequested, onFilterFocused]);
+
+	const completions = useMemo(
+		() =>
+			(columns ?? []).map((column) => ({
+				name: column.name,
+				detail: column.declaredType || undefined,
+			})),
+		[columns]
+	);
 
 	const handleSortChange = useCallback((next: SqliteSortSpec | null) => setSort(next), []);
 
@@ -189,6 +270,7 @@ export function SqliteTableView({ handle, object, theme }: SqliteTableViewProps)
 		);
 	}
 
+	const filtered = lastPage?.filtered === true;
 	const orderText =
 		lastPage === null
 			? null
@@ -198,6 +280,20 @@ export function SqliteTableView({ handle, object, theme }: SqliteTableViewProps)
 
 	return (
 		<div className="flex flex-col h-full min-h-0" data-testid="sqlite-table-view">
+			<FilterExpressionBar
+				ref={filterBarRef}
+				value={filter}
+				onChange={onFilterChange}
+				columns={completions}
+				problem={filterProblem}
+				busy={busy && appliedFilter.length > 0}
+				busyLabel="filtering…"
+				placeholder="Filter rows: try  status = active and price > 100"
+				examples={SYNTAX_EXAMPLES}
+				footnote={FOOTNOTE}
+				testIdPrefix="sqlite"
+				theme={theme}
+			/>
 			<div className="flex-1 min-h-0">
 				<DataGrid
 					columns={gridColumns}
@@ -221,10 +317,12 @@ export function SqliteTableView({ handle, object, theme }: SqliteTableViewProps)
 			>
 				<span>
 					{rows.length > 0
-						? `${formatCount(rows.length)} loaded${lastPage?.hasMore ? ', more below' : ''}`
+						? `${formatCount(rows.length)} ${filtered ? 'matching ' : ''}loaded${lastPage?.hasMore ? ', more below' : ''}`
 						: busy
 							? 'Reading rows...'
-							: 'No rows'}
+							: filtered
+								? 'No matching rows'
+								: 'No rows'}
 				</span>
 				{orderText && <span>{orderText}</span>}
 				{lastPage && <span>{lastPage.elapsedMs} ms</span>}

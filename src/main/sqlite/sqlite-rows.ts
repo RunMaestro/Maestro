@@ -2,14 +2,17 @@
  * SQLite Row Windows
  *
  * What the viewer's table view shows: one window of a table's or view's rows,
- * `LIMIT`/`OFFSET` paged, optionally `ORDER BY` one column. The sort runs in
- * SQLite, never over the loaded page, so it orders the whole table.
+ * `LIMIT`/`OFFSET` paged, optionally narrowed by a filter (`WHERE`) and
+ * ordered by one column (`ORDER BY`). Both run in SQLite, never over the
+ * loaded page, so they cover the whole table.
  *
  * Three rules keep a window honest and cheap:
  *
  *   - **Identifiers are quoted, values are bound.** The table and column names
  *     go through `quoteSqliteIdentifier()`; the sort column must be one the
- *     statement itself reports, and `LIMIT`/`OFFSET` are bound parameters.
+ *     statement itself reports, `LIMIT`/`OFFSET` are bound parameters, and the
+ *     filter compiles to a `WHERE` whose every value is a bound parameter
+ *     (`buildSqliteFilter()` in src/shared/sqlite/filter.ts).
  *   - **Pages do not drift.** Paging with `OFFSET` is only stable when the
  *     order is total, so a sort is followed by `rowid` (or, for a `WITHOUT
  *     ROWID` table, its primary key) as a tie-break. A view has neither, so
@@ -20,13 +23,16 @@
  *     Integers are read as BigInt and only narrowed when that loses nothing.
  *
  * better-sqlite3 is synchronous, so a sort on an unindexed column of a very
- * large table holds the main process while SQLite sorts. The window is
- * bounded (`SQLITE_ROWS_MAX_LIMIT`), the sort is not.
+ * large table holds the main process while SQLite sorts, and a filter that
+ * matches few rows holds it while SQLite scans for them. The window is
+ * bounded (`SQLITE_ROWS_MAX_LIMIT`), the sort and the scan are not.
  */
 
 import type Database from 'better-sqlite3';
 
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../shared/sqlite/cells';
+import { buildSqliteFilter } from '../../shared/sqlite/filter';
+import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
 	SqliteCellValue,
@@ -150,6 +156,15 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		}
 	}
 
+	const filterText = request.filter?.trim() ?? '';
+	const filter = buildSqliteFilter(
+		filterText,
+		columns.map((column) => ({
+			name: column.name,
+			affinity: sqliteColumnAffinity(column.declaredType ?? '', object.strict === true),
+		}))
+	);
+
 	const orderedBy = sort ? [sort.column] : [];
 	for (const column of tieBreakColumns(db, object, columns)) {
 		if (!orderedBy.includes(column)) orderedBy.push(column);
@@ -161,8 +176,26 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 
 	const selectList =
 		columns.length > 0 ? columns.map((column) => columnExpressions(column.name)).join(', ') : '1';
+	if (filter.problem) {
+		// Text that does not parse reads nothing: the caller keeps what it shows
+		// and underlines the span.
+		return {
+			name: object.name,
+			columns,
+			rows: [],
+			offset,
+			hasMore: false,
+			orderedBy,
+			elapsedMs: 0,
+			filtered: false,
+			filterProblem: filter.problem,
+		};
+	}
+	const where = filter.compiled;
+
 	const sql =
 		`SELECT ${selectList} FROM ${source}` +
+		(where ? ` WHERE ${where.where}` : '') +
 		(orderTerms.length > 0 ? ` ORDER BY ${orderTerms.join(', ')}` : '') +
 		' LIMIT ? OFFSET ?';
 
@@ -172,7 +205,7 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		.prepare(sql)
 		.raw(true)
 		.safeIntegers(true)
-		.all(limit + 1, offset) as unknown[][];
+		.all(...(where?.params ?? []), limit + 1, offset) as unknown[][];
 	const elapsedMs = Math.round(performance.now() - started);
 
 	const rows = raw
@@ -187,5 +220,6 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		hasMore: raw.length > limit,
 		orderedBy,
 		elapsedMs,
+		filtered: where !== null,
 	};
 }

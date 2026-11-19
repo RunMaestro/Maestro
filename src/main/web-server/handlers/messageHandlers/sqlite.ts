@@ -112,6 +112,15 @@ export async function handleSqliteReadRows(
 		}
 		sort = { column: raw.column, direction: raw.direction };
 	}
+	if (
+		message.filter !== undefined &&
+		message.filter !== null &&
+		typeof message.filter !== 'string'
+	) {
+		reply({ success: false, error: 'filter must be a string' });
+		return;
+	}
+	const filter = typeof message.filter === 'string' ? message.filter : null;
 
 	try {
 		const database = await openSqliteDatabase(filePath);
@@ -121,6 +130,7 @@ export async function handleSqliteReadRows(
 			offset: offset as number,
 			limit: limit as number,
 			sort,
+			filter,
 		});
 		reply({ success: true, database, page });
 	} catch (error) {

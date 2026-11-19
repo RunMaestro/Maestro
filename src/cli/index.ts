@@ -3872,7 +3872,7 @@ sqliteCmd
 sqliteCmd
 	.command('rows <path> <object>')
 	.description(
-		"Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally sorted by a column in SQLite"
+		"Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite"
 	)
 	.option('--offset <n>', 'Rows to skip', '0')
 	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
@@ -3881,6 +3881,10 @@ sqliteCmd
 		'Sort by this column (server side, ties broken by rowid or primary key)'
 	)
 	.option('--desc', 'Sort descending (needs --sort)')
+	.option(
+		'--filter <expr>',
+		'Filter rows in SQLite, in the viewer\'s filter language (e.g. "status = active and price > 100", or a bare word to search every column)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, object, options) => sqliteRows(file, object, options));
 

@@ -1,7 +1,11 @@
+import { createRef } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
-import { SqliteViewer } from '../../../../renderer/components/SqliteViewer';
+import {
+	SqliteViewer,
+	type SqliteViewerHandle,
+} from '../../../../renderer/components/SqliteViewer';
 import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import type {
 	SqliteDatabaseInfo,
@@ -107,6 +111,7 @@ function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
 		hasMore: request.offset + count < total,
 		orderedBy: request.sort ? [request.sort.column, 'id'] : ['id'],
 		elapsedMs: 3,
+		filtered: Boolean(request.filter),
 	};
 }
 
@@ -434,6 +439,7 @@ describe('SqliteViewer table view', () => {
 			offset: 0,
 			limit: 300,
 			sort: null,
+			filter: null,
 		});
 		expect(readSchema).not.toHaveBeenCalled();
 	});
@@ -530,6 +536,94 @@ describe('SqliteViewer table view', () => {
 				expect.objectContaining({ name: 'active_users', offset: 0, sort: null })
 			)
 		);
+	});
+
+	it('filters in SQLite once typing pauses, starting again from the first window', async () => {
+		renderViewer();
+		const input = await screen.findByTestId('sqlite-filter-input');
+		fireEvent.change(input, { target: { value: 'kind = click' } });
+		// Not on the keystroke: the filter waits for the debounce.
+		expect(readRows).not.toHaveBeenLastCalledWith(
+			expect.objectContaining({ filter: 'kind = click' })
+		);
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ name: 'events', offset: 0, filter: 'kind = click' })
+			)
+		);
+		expect(await screen.findByTestId('sqlite-rows-footer')).toHaveTextContent('2 matching loaded');
+	});
+
+	it('says when a filter matches nothing', async () => {
+		renderViewer();
+		const input = await screen.findByTestId('sqlite-filter-input');
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 0));
+		fireEvent.change(input, { target: { value: 'id = 999' } });
+		await waitFor(() =>
+			expect(screen.getByTestId('sqlite-rows-footer')).toHaveTextContent('No matching rows')
+		);
+	});
+
+	it('underlines a filter that does not parse and keeps the last good rows', async () => {
+		renderViewer();
+		const input = await screen.findByTestId('sqlite-filter-input');
+		await screen.findByTestId('sqlite-row-1');
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => ({
+			...eventsPage(request),
+			rows: [],
+			hasMore: false,
+			filtered: false,
+			filterProblem: {
+				message: 'No column "knd". Did you mean "kind"?',
+				start: 0,
+				end: 3,
+				suggestion: 'kind',
+			},
+		}));
+		fireEvent.change(input, { target: { value: 'knd = click' } });
+		expect(await screen.findByTestId('sqlite-filter-error')).toHaveTextContent(
+			'No column "knd". Did you mean "kind"?'
+		);
+		expect(screen.getByTestId('sqlite-row-1')).toHaveTextContent('click');
+		fireEvent.click(screen.getByText('Use "kind"'));
+		expect(screen.getByTestId('sqlite-filter-input')).toHaveValue('kind = click');
+	});
+
+	it("keeps each object's filter text when the selection moves away and back", async () => {
+		renderViewer();
+		const input = await screen.findByTestId('sqlite-filter-input');
+		fireEvent.change(input, { target: { value: 'kind ~ cl' } });
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users'));
+		await waitFor(() => expect(screen.getByTestId('sqlite-filter-input')).toHaveValue(''));
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-events'));
+		await waitFor(() => expect(screen.getByTestId('sqlite-filter-input')).toHaveValue('kind ~ cl'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ name: 'events', filter: 'kind ~ cl' })
+			)
+		);
+	});
+
+	it('focuses the filter on request (Cmd+F), switching from the schema to the rows', async () => {
+		const ref = createRef<SqliteViewerHandle>();
+		render(<SqliteViewer ref={ref} filePath="/data/app.db" fileName="app.db" theme={mockTheme} />);
+		await screen.findByTestId('sqlite-table-view');
+		fireEvent.click(screen.getByTestId('sqlite-object-view-schema'));
+		await screen.findByTestId('sqlite-schema');
+		act(() => ref.current?.focusFilter());
+		const input = await screen.findByTestId('sqlite-filter-input');
+		await waitFor(() => expect(document.activeElement).toBe(input));
+		expect(localStorage.getItem('sqlite-object-view')).toBe('data');
+	});
+
+	it('ignores a focus request on an index, which has no rows to filter', async () => {
+		const ref = createRef<SqliteViewerHandle>();
+		render(<SqliteViewer ref={ref} filePath="/data/app.db" fileName="app.db" theme={mockTheme} />);
+		await screen.findByTestId('sqlite-table-view');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
+		await screen.findByTestId('sqlite-schema');
+		act(() => ref.current?.focusFilter());
+		expect(screen.queryByTestId('sqlite-filter-input')).not.toBeInTheDocument();
 	});
 
 	it('shows an index or trigger as its schema, with no Data switch', async () => {
