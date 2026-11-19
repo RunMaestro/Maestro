@@ -27,10 +27,12 @@ const objects = vi.hoisted(() => ({
 vi.mock('../../../../main/sqlite/sqlite-database', () => database);
 const schema = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
 const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
+const count = vi.hoisted(() => ({ countSqliteRows: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
 vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
+vi.mock('../../../../main/sqlite/sqlite-count', () => count);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -46,6 +48,7 @@ describe('SQLite IPC handlers', () => {
 	it('registers the channels the viewer uses', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'sqlite:close',
+			'sqlite:countRows',
 			'sqlite:listObjects',
 			'sqlite:open',
 			'sqlite:readObjectStats',
@@ -93,6 +96,20 @@ describe('SQLite IPC handlers', () => {
 			hasMore: false,
 		});
 		expect(rows.readSqliteRows).toHaveBeenCalledWith(request);
+	});
+
+	it('counts rows with the default budget, passing the cursor through', async () => {
+		const request = {
+			handle: 'h1',
+			name: 'users',
+			filter: 'status = active',
+			cursor: { matched: 10, scanned: 40, afterRowid: '40' },
+		};
+		const result = { name: 'users', matched: 12, complete: true, cursor: null };
+		count.countSqliteRows.mockReturnValue(result);
+		await expect(invoke('sqlite:countRows', request)).resolves.toEqual(result);
+		// No budget argument: the IPC surface cannot widen how long main is held.
+		expect(count.countSqliteRows).toHaveBeenCalledWith(request);
 	});
 
 	it('closes by handle', async () => {

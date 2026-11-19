@@ -10,10 +10,13 @@
 //                           [--sort <column>] [--desc] [--filter <expr>] [--json]
 //       -> the table view: one LIMIT/OFFSET window of rows, filtered and
 //          sorted in SQLite
+//   maestro-cli sqlite count <path> <object> [--filter <expr>] [--json]
+//       -> the table view's footer count: how many rows the filter matches,
+//          counted to the end
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_list_objects`, `sqlite_read_schema`,
-// `sqlite_read_rows`) to the running app, which answers with the same
+// `sqlite_read_rows`, `sqlite_count_rows`) to the running app, which answers with the same
 // functions the viewer's `sqlite:*` IPC calls. The app must be running, and
 // the database is opened read-only there.
 
@@ -41,11 +44,13 @@ import {
 import { formatSqliteCell } from '../../shared/sqlite/cells';
 import type {
 	SqliteDatabaseInfo,
+	SqliteFilterProblem,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteRowCount,
 	SqliteRowsPage,
 } from '../../shared/sqlite/types';
 
@@ -305,6 +310,31 @@ function cellText(text: string): string {
 }
 
 /**
+ * Exit on filter text that did not parse or bind. The viewer underlines the
+ * span; a terminal gets the span as a caret line under the text.
+ */
+function failOnFilterProblem(
+	problem: SqliteFilterProblem,
+	filterText: string | undefined,
+	displayPath: string,
+	json: boolean | undefined
+): never {
+	if (json) {
+		console.log(
+			JSON.stringify({
+				success: false,
+				error: problem.message,
+				path: displayPath,
+				filterProblem: problem,
+			})
+		);
+		exitWith(ExitCode.GeneralError);
+	}
+	const marker = `${' '.repeat(problem.start)}${'^'.repeat(Math.max(1, problem.end - problem.start))}`;
+	fail(`Filter problem: ${problem.message}\n  ${filterText ?? ''}\n  ${marker}`, false);
+}
+
+/**
  * `maestro-cli sqlite rows <path> <object>` - one window of a table's or
  * view's rows, the way the viewer's table view pages and sorts them.
  */
@@ -347,22 +377,7 @@ export async function sqliteRows(
 
 	const { database, page } = reply;
 	if (page.filterProblem) {
-		// The viewer underlines the span; a terminal gets the span as a caret line.
-		const problem = page.filterProblem;
-		const filterText = options.filter ?? '';
-		if (options.json) {
-			console.log(
-				JSON.stringify({
-					success: false,
-					error: problem.message,
-					path: database.displayPath,
-					filterProblem: problem,
-				})
-			);
-			exitWith(ExitCode.GeneralError);
-		}
-		const marker = `${' '.repeat(problem.start)}${'^'.repeat(Math.max(1, problem.end - problem.start))}`;
-		fail(`Filter problem: ${problem.message}\n  ${filterText}\n  ${marker}`, false);
+		failOnFilterProblem(page.filterProblem, options.filter, database.displayPath, options.json);
 	}
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, path: database.displayPath, ...page }));
@@ -394,4 +409,61 @@ export async function sqliteRows(
 			: 'Not ordered: rows come back in the order SQLite scans them.'
 	);
 	console.log(lines.join('\n'));
+}
+
+interface SqliteCountOptions {
+	filter?: string;
+	json?: boolean;
+}
+
+interface SqliteCountReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	count?: SqliteRowCount;
+}
+
+/**
+ * `maestro-cli sqlite count <path> <object>` - how many rows of a table or
+ * view the filter matches. The viewer's footer shows this count converging
+ * (`1,204+`); the CLI waits for the settled number.
+ */
+export async function sqliteCount(
+	file: string,
+	name: string,
+	options: SqliteCountOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	let reply: SqliteCountReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteCountReply>(
+				{ type: 'sqlite_count_rows', path: filePath, name, filter: options.filter ?? null },
+				'sqlite_count_result',
+				SQLITE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.count) {
+		fail(reply.error || `Could not count rows of ${name} in ${filePath}`, options.json);
+	}
+
+	const { database, count } = reply;
+	if (count.filterProblem) {
+		failOnFilterProblem(count.filterProblem, options.filter, database.displayPath, options.json);
+	}
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, path: database.displayPath, ...count }));
+		return;
+	}
+	const noun = count.filtered ? 'matching rows' : 'rows';
+	console.log(
+		`${count.name} in ${database.displayPath}: ${formatSqliteRowCount({
+			rowCount: count.matched,
+			rowCountCapped: !count.complete,
+		})} ${noun} (${count.elapsedMs} ms).`
+	);
 }

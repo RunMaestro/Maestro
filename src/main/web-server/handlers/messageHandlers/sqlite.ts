@@ -4,13 +4,15 @@
  *   - `sqlite_list_objects`: the table-list rail (`maestro-cli sqlite tables`).
  *   - `sqlite_read_schema`: one object's schema pane (`maestro-cli sqlite schema`).
  *   - `sqlite_read_rows`: one window of the table view (`maestro-cli sqlite rows`).
+ *   - `sqlite_count_rows`: the table view's row count, settled (`maestro-cli sqlite count`).
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
  * functions the `sqlite:*` IPC handlers call: `openSqliteDatabase()` for the
  * read-only connection, `listSqliteObjects()` for the rail, the budgeted
  * stats reader for the row counts and sizes, `readSqliteObjectSchema()` for
- * the schema pane, and `readSqliteRows()` for the table view, so the CLI
+ * the schema pane, `readSqliteRows()` for the table view, and the budgeted
+ * row counter run to the end for the footer's count, so the CLI
  * prints what the viewer shows.
  *
  * The connection is NOT closed afterwards. It may be the one a preview tab is
@@ -18,6 +20,7 @@
  * would strand that tab; the idle reaper releases it once nothing uses it.
  */
 
+import { countAllSqliteRows } from '../../../sqlite/sqlite-count';
 import { openSqliteDatabase } from '../../../sqlite/sqlite-database';
 import { listSqliteObjects, readAllSqliteObjectStats } from '../../../sqlite/sqlite-objects';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
@@ -133,6 +136,42 @@ export async function handleSqliteReadRows(
 			filter,
 		});
 		reply({ success: true, database, page });
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+export async function handleSqliteCountRows(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_count_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const name = typeof message.name === 'string' ? message.name : '';
+	if (!filePath || !name) {
+		reply({ success: false, error: 'Missing required "path" or "name" for sqlite_count_rows' });
+		return;
+	}
+	if (
+		message.filter !== undefined &&
+		message.filter !== null &&
+		typeof message.filter !== 'string'
+	) {
+		reply({ success: false, error: 'filter must be a string' });
+		return;
+	}
+	const filter = typeof message.filter === 'string' ? message.filter : null;
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		// Counted batch by batch with a yield between, so a huge table does not
+		// hold the main process; the reply carries the settled count.
+		const count = await countAllSqliteRows({ handle: database.handle, name, filter });
+		reply({ success: true, database, count });
 	} catch (error) {
 		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
 	}

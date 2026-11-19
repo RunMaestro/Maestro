@@ -5,7 +5,8 @@
  * hides internal objects unless `--internal`, and reports failures with exit 1.
  * Also `maestro-cli sqlite schema`: columns, foreign keys, index keys, and the
  * CREATE SQL, over `sqlite_read_schema`. And `maestro-cli sqlite rows`: one
- * LIMIT/OFFSET window, sorted in SQLite, over `sqlite_read_rows`.
+ * LIMIT/OFFSET window, sorted in SQLite, over `sqlite_read_rows`. And
+ * `maestro-cli sqlite count`: the settled row count, over `sqlite_count_rows`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -16,7 +17,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { sqliteRows, sqliteSchema, sqliteTables } from '../../../cli/commands/sqlite';
+import { sqliteCount, sqliteRows, sqliteSchema, sqliteTables } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 const DB = path.resolve('/data/app.db');
@@ -456,6 +457,104 @@ describe('sqlite rows', () => {
 		});
 		await expect(sqliteRows(DB, 'users', { sort: 'zzz' })).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('no column named zzz');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+});
+
+describe('sqlite count', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+
+	function respondCount(
+		count: Record<string, unknown> = {},
+		overrides: Record<string, unknown> = {}
+	) {
+		return mockReply({
+			type: 'sqlite_count_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 2_000_000 },
+			count: {
+				name: 'users',
+				matched: 1_204_331,
+				complete: true,
+				cursor: null,
+				filtered: false,
+				elapsedMs: 840,
+				...count,
+			},
+			...overrides,
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the resolved path and no filter by default', async () => {
+		const sent = respondCount();
+		await sqliteCount(DB, 'users', {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_count_rows',
+			path: DB,
+			name: 'users',
+			filter: null,
+			responseType: 'sqlite_count_result',
+		});
+		expect(logged()).toBe(`users in ${DB}: 1,204,331 rows (840 ms).`);
+	});
+
+	it('sends --filter as written and says the count is of matches', async () => {
+		const sent = respondCount({ matched: 12, filtered: true });
+		await sqliteCount(DB, 'users', { filter: 'status = active' });
+		expect(sent[0]).toMatchObject({ filter: 'status = active' });
+		expect(logged()).toContain(': 12 matching rows');
+	});
+
+	it('marks a count that did not settle as a lower bound', async () => {
+		respondCount({ matched: 40_000, complete: false });
+		await sqliteCount(DB, 'users', {});
+		expect(logged()).toContain(': 40,000+ rows');
+	});
+
+	it('prints the count as JSON under --json', async () => {
+		respondCount();
+		await sqliteCount(DB, 'users', { json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+			success: true,
+			path: DB,
+			name: 'users',
+			matched: 1_204_331,
+			complete: true,
+		});
+	});
+
+	it('exits 1 and points at the span when the filter does not parse', async () => {
+		respondCount({
+			matched: 0,
+			complete: false,
+			filterProblem: { message: 'No column "stauts"', start: 0, end: 6 },
+		});
+		await expect(sqliteCount(DB, 'users', { filter: 'stauts = x' })).rejects.toThrow('__exit__');
+		const errors = errorSpy.mock.calls.join('\n');
+		expect(errors).toContain('Filter problem: No column "stauts"');
+		expect(errors).toContain('  stauts = x\n  ^^^^^^');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it("exits 1 with the app's error", async () => {
+		mockReply({
+			type: 'sqlite_count_result',
+			success: false,
+			error: 'No table or view is named gone.',
+		});
+		await expect(sqliteCount(DB, 'gone', {})).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('No table or view is named gone.');
 		expect(process.exit).toHaveBeenCalledWith(1);
 	});
 });

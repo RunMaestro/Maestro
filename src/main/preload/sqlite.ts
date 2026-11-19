@@ -3,16 +3,18 @@
  *
  * Exposes window.maestro.sqlite: open a database read-only, list its schema
  * objects, measure their row counts and sizes, read one object's structure,
- * read a window of a table's rows, close the handle.
+ * read a window of a table's rows, count its rows, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
 import type {
+	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../shared/sqlite/types';
@@ -56,6 +58,14 @@ export function createSqliteApi() {
 		 */
 		readRows: (request: SqliteRowsRequest): Promise<SqliteRowsPage> =>
 			ipcRenderer.invoke('sqlite:readRows', request),
+
+		/**
+		 * Count the rows a filter matches, a time budget at a time. While
+		 * `complete` is false the count is a lower bound: ask again with the
+		 * returned `cursor` to continue it.
+		 */
+		countRows: (request: SqliteCountRequest): Promise<SqliteRowCount> =>
+			ipcRenderer.invoke('sqlite:countRows', request),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

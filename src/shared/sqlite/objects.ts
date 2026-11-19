@@ -51,6 +51,31 @@ export function formatSqliteRowCount(
 	return `${formatCount(stats.rowCount)}${stats.rowCountCapped ? '+' : ''}`;
 }
 
+/**
+ * The table view's row total, from the two things that bound it: what paging
+ * has proved and how far the converging count (`countSqliteRows()`) has got.
+ *
+ *   - Paging past the last row (`hasMore: false`) makes `loaded` exact.
+ *   - A finished count makes `count.matched` exact.
+ *   - Otherwise the total is at least the larger of the two, so it shows as
+ *     `1,204+` and only ever grows until it settles.
+ *
+ * `hasMore` is null before the first window arrives; with no count either,
+ * nothing is known yet and `rowCount` is null. The result has the rail's
+ * shape, so `formatSqliteRowCount()` prints both the same way.
+ */
+export function sqliteConvergingRowTotal(input: {
+	loaded: number;
+	hasMore: boolean | null;
+	count: { matched: number; complete: boolean } | null;
+}): Pick<SqliteObjectStats, 'rowCount' | 'rowCountCapped'> {
+	const { loaded, hasMore, count } = input;
+	if (hasMore === false) return { rowCount: loaded, rowCountCapped: false };
+	if (count?.complete) return { rowCount: count.matched, rowCountCapped: false };
+	if (hasMore === null && !count) return { rowCount: null, rowCountCapped: false };
+	return { rowCount: Math.max(loaded, count?.matched ?? 0), rowCountCapped: true };
+}
+
 /** Short tags for an object's flavour: `virtual`, `without rowid`, `strict`, `shadow`. */
 export function sqliteObjectTags(object: SqliteObjectSummary): string[] {
 	const tags: string[] = [];

@@ -3397,6 +3397,15 @@ Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optiona
 | `--filter <expr>` | Filter rows in SQLite, in the viewer's filter language (e.g. "status = active and price > 100", or a bare word to search every column) | -       |
 | `--json`          | Output as JSON (for scripting)                                                                                                         | -       |
 
+## `maestro-cli sqlite count <path> <object>`
+
+Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them
+
+| Option            | Description                                                              | Default |
+| ----------------- | ------------------------------------------------------------------------ | ------- |
+| `--filter <expr>` | Count only the rows this filter matches, in the viewer's filter language | -       |
+| `--json`          | Output as JSON (for scripting)                                           | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

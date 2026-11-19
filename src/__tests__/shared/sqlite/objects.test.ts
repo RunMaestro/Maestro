@@ -4,6 +4,7 @@ import {
 	SQLITE_OBJECT_KINDS,
 	formatSqliteRowCount,
 	groupSqliteObjects,
+	sqliteConvergingRowTotal,
 	sqliteObjectTags,
 } from '../../../shared/sqlite/objects';
 import { quoteSqliteIdentifier } from '../../../shared/sqlite/sql';
@@ -67,6 +68,48 @@ describe('formatSqliteRowCount', () => {
 	it('returns null when there is no count', () => {
 		expect(formatSqliteRowCount(undefined)).toBeNull();
 		expect(formatSqliteRowCount({ rowCount: null, rowCountCapped: false })).toBeNull();
+	});
+});
+
+describe('sqliteConvergingRowTotal', () => {
+	const total = (input: Parameters<typeof sqliteConvergingRowTotal>[0]) =>
+		formatSqliteRowCount(sqliteConvergingRowTotal(input));
+
+	it('knows nothing before the first window or any count', () => {
+		expect(sqliteConvergingRowTotal({ loaded: 0, hasMore: null, count: null })).toEqual({
+			rowCount: null,
+			rowCountCapped: false,
+		});
+	});
+
+	it('is a lower bound from the loaded rows while more follow', () => {
+		expect(total({ loaded: 300, hasMore: true, count: null })).toBe('300+');
+	});
+
+	it('grows with the count, taking the larger of the two bounds', () => {
+		expect(total({ loaded: 300, hasMore: true, count: { matched: 40_000, complete: false } })).toBe(
+			'40,000+'
+		);
+		expect(total({ loaded: 600, hasMore: true, count: { matched: 20, complete: false } })).toBe(
+			'600+'
+		);
+		expect(total({ loaded: 0, hasMore: null, count: { matched: 20, complete: false } })).toBe(
+			'20+'
+		);
+	});
+
+	it('is exact once the count settles', () => {
+		expect(
+			total({ loaded: 300, hasMore: true, count: { matched: 1_204_331, complete: true } })
+		).toBe('1,204,331');
+	});
+
+	it('is exact once paging reaches the last row, whatever the count says', () => {
+		expect(total({ loaded: 12, hasMore: false, count: null })).toBe('12');
+		expect(total({ loaded: 12, hasMore: false, count: { matched: 5, complete: false } })).toBe(
+			'12'
+		);
+		expect(total({ loaded: 0, hasMore: false, count: null })).toBe('0');
 	});
 });
 

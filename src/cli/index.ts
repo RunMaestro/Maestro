@@ -159,7 +159,7 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
-import { sqliteRows, sqliteSchema, sqliteTables } from './commands/sqlite';
+import { sqliteCount, sqliteRows, sqliteSchema, sqliteTables } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3887,6 +3887,18 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, object, options) => sqliteRows(file, object, options));
+
+sqliteCmd
+	.command('count <path> <object>')
+	.description(
+		"Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them"
+	)
+	.option(
+		'--filter <expr>',
+		"Count only the rows this filter matches, in the viewer's filter language"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteCount(file, object, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

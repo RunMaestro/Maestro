@@ -264,3 +264,52 @@ export interface SqliteRowsPage {
 	 */
 	filterProblem?: SqliteFilterProblem;
 }
+
+/**
+ * Where an unfinished count stopped, handed back verbatim to resume it. The
+ * main process keeps no counting state between calls, so the renderer holds
+ * this and the walk survives any number of interleaved row reads.
+ */
+export interface SqliteCountCursor {
+	/** Rows that matched so far. */
+	matched: number;
+	/** Rows walked so far, matching or not. Also the resume `OFFSET` for a source with no rowid. */
+	scanned: number;
+	/**
+	 * The last rowid walked, as decimal text (a rowid may pass 2^53), or null
+	 * when the source has no rowid or nothing was walked yet.
+	 */
+	afterRowid: string | null;
+}
+
+/** Count the rows of a table or view that a filter matches, a time budget at a time. */
+export interface SqliteCountRequest {
+	handle: string;
+	/** The table or view to count. */
+	name: string;
+	/** Filter expression, compiled exactly as `SqliteRowsRequest.filter` is. */
+	filter?: string | null;
+	/** Resume where the previous call stopped; absent or null starts at the first row. */
+	cursor?: SqliteCountCursor | null;
+}
+
+/**
+ * What `countSqliteRows()` returns: a count that only ever grows until it
+ * settles. While `complete` is false, `matched` is a lower bound (shown as
+ * `1,204+`) and `cursor` resumes the walk.
+ */
+export interface SqliteRowCount {
+	name: string;
+	/** Rows matched so far; the exact count once `complete`. */
+	matched: number;
+	/** Every row has been walked, so `matched` is exact. */
+	complete: boolean;
+	/** Pass back to continue; null once complete or on a filter problem. */
+	cursor: SqliteCountCursor | null;
+	/** True when a filter narrowed the count. */
+	filtered: boolean;
+	/** Time SQLite spent in this call, in milliseconds. */
+	elapsedMs: number;
+	/** Set when the filter did not parse or bind. Nothing was counted. */
+	filterProblem?: SqliteFilterProblem;
+}

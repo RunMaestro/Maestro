@@ -55,6 +55,18 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readRows', request);
 	});
 
+	it('counts rows, passing the request through', async () => {
+		const request = {
+			handle: 'h1',
+			name: 'users',
+			filter: null,
+			cursor: { matched: 1, scanned: 1, afterRowid: '1' },
+		};
+		mockInvoke.mockResolvedValue({ name: 'users', matched: 2, complete: true, cursor: null });
+		await api.countRows(request);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:countRows', request);
+	});
+
 	it('closes a handle', async () => {
 		mockInvoke.mockResolvedValue(undefined);
 		await api.close('h1');

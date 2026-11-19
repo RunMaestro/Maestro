@@ -6,13 +6,16 @@ import {
 	SqliteViewer,
 	type SqliteViewerHandle,
 } from '../../../../renderer/components/SqliteViewer';
+import { AUTO_COUNT_PASSES } from '../../../../renderer/components/SqliteViewer/SqliteTableView';
 import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import type {
+	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../../../shared/sqlite/types';
@@ -91,6 +94,19 @@ let readObjectStats: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
 let readSchema: ReturnType<typeof vi.fn>;
 let readRows: ReturnType<typeof vi.fn>;
+let countRows: ReturnType<typeof vi.fn>;
+
+/** A count reply: settled at `matched` unless `complete` says otherwise. */
+function countReply(request: SqliteCountRequest, matched: number, complete = true): SqliteRowCount {
+	return {
+		name: request.name,
+		matched,
+		complete,
+		cursor: complete ? null : { matched, scanned: matched, afterRowid: String(matched) },
+		filtered: Boolean(request.filter),
+		elapsedMs: 1,
+	};
+}
 
 /** A page of `count` rows of events, starting at `offset`. */
 function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
@@ -193,8 +209,11 @@ beforeEach(() => {
 		name === 'users_email' ? INDEX_SCHEMA : { ...EVENTS_SCHEMA, name }
 	);
 	readRows = vi.fn(async (request: SqliteRowsRequest) => eventsPage(request));
+	// The count never answers unless a test says so: a settled count would
+	// replace the rail's capped counts that other tests assert on.
+	countRows = vi.fn(() => new Promise<SqliteRowCount>(() => {}));
 	(window as unknown as { maestro: unknown }).maestro = {
-		sqlite: { open, listObjects, readObjectStats, readSchema, readRows, close },
+		sqlite: { open, listObjects, readObjectStats, readSchema, readRows, countRows, close },
 	};
 });
 
@@ -551,7 +570,9 @@ describe('SqliteViewer table view', () => {
 				expect.objectContaining({ name: 'events', offset: 0, filter: 'kind = click' })
 			)
 		);
-		expect(await screen.findByTestId('sqlite-rows-footer')).toHaveTextContent('2 matching loaded');
+		const footer = await screen.findByTestId('sqlite-rows-footer');
+		await waitFor(() => expect(footer).toHaveTextContent('2 matching rows'));
+		expect(footer).toHaveTextContent('2 loaded');
 	});
 
 	it('says when a filter matches nothing', async () => {
@@ -633,5 +654,146 @@ describe('SqliteViewer table view', () => {
 		expect(await screen.findByTestId('sqlite-schema')).toBeInTheDocument();
 		expect(screen.queryByTestId('sqlite-object-view')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('sqlite-table-view')).not.toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer converging row count', () => {
+	const total = () => screen.getByTestId('sqlite-rows-total');
+
+	it('shows a lower bound from the first window, then the settled count', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 5000));
+		let resolveFirst: (count: SqliteRowCount) => void = () => {};
+		countRows.mockImplementationOnce(
+			() => new Promise<SqliteRowCount>((resolve) => (resolveFirst = resolve))
+		);
+		countRows.mockImplementationOnce(async (request: SqliteCountRequest) =>
+			countReply(request, 5000)
+		);
+		renderViewer();
+		await screen.findByTestId('sqlite-row-0');
+		expect(total()).toHaveTextContent('300+ rows');
+		expect(screen.getByTestId('sqlite-rows-counting')).toBeInTheDocument();
+		await waitFor(() => expect(countRows).toHaveBeenCalledTimes(1));
+
+		resolveFirst(countReply({ handle: 'h1', name: 'events' }, 1200, false));
+		await waitFor(() => expect(total()).toHaveTextContent('5,000 rows'));
+		expect(total()).not.toHaveTextContent('+');
+		expect(screen.queryByTestId('sqlite-rows-counting')).not.toBeInTheDocument();
+		// The second call resumed where the first stopped.
+		expect(countRows).toHaveBeenNthCalledWith(2, {
+			handle: 'h1',
+			name: 'events',
+			filter: null,
+			cursor: { matched: 1200, scanned: 1200, afterRowid: '1200' },
+		});
+	});
+
+	it('is exact as soon as paging reaches the last row', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-row-1');
+		expect(total()).toHaveTextContent('2 rows');
+		expect(screen.queryByTestId('sqlite-rows-counting')).not.toBeInTheDocument();
+	});
+
+	it('counts the filter the rows were read with, and starts over on a new one', async () => {
+		renderViewer();
+		const input = await screen.findByTestId('sqlite-filter-input');
+		await waitFor(() => expect(countRows).toHaveBeenCalledTimes(1));
+		countRows.mockImplementation(async (request: SqliteCountRequest) => countReply(request, 1));
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 1));
+		fireEvent.change(input, { target: { value: 'kind = click' } });
+		await waitFor(() =>
+			expect(countRows).toHaveBeenLastCalledWith({
+				handle: 'h1',
+				name: 'events',
+				filter: 'kind = click',
+				cursor: null,
+			})
+		);
+		await waitFor(() => expect(total()).toHaveTextContent('1 matching row'));
+	});
+
+	it('does not count again for a new sort, which keeps the same rows', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-header-kind');
+		await waitFor(() => expect(countRows).toHaveBeenCalledTimes(1));
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ sort: { column: 'kind', direction: 'asc' } })
+			)
+		);
+		expect(countRows).toHaveBeenCalledTimes(1);
+	});
+
+	it('pauses a very large count for "Count all", which resumes it', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 10_000));
+		let calls = 0;
+		countRows.mockImplementation(async (request: SqliteCountRequest) => {
+			calls++;
+			return calls > AUTO_COUNT_PASSES + 2
+				? countReply(request, 9_000_000)
+				: countReply(request, calls * 1000, false);
+		});
+		renderViewer();
+		const button = await screen.findByTestId('sqlite-count-all');
+		expect(countRows).toHaveBeenCalledTimes(AUTO_COUNT_PASSES);
+		expect(total()).toHaveTextContent(
+			`${(AUTO_COUNT_PASSES * 1000).toLocaleString('en-US')}+ rows`
+		);
+
+		fireEvent.click(button);
+		await waitFor(() => expect(total()).toHaveTextContent('9,000,000 rows'));
+		expect(countRows).toHaveBeenNthCalledWith(
+			AUTO_COUNT_PASSES + 1,
+			expect.objectContaining({
+				cursor: {
+					matched: AUTO_COUNT_PASSES * 1000,
+					scanned: AUTO_COUNT_PASSES * 1000,
+					afterRowid: String(AUTO_COUNT_PASSES * 1000),
+				},
+			})
+		);
+		expect(screen.queryByTestId('sqlite-count-all')).not.toBeInTheDocument();
+	});
+
+	it("replaces the rail's capped count once the unfiltered count settles", async () => {
+		countRows.mockImplementation(async (request: SqliteCountRequest) =>
+			countReply(request, 250_003)
+		);
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 1000));
+		renderViewer();
+		await waitFor(() =>
+			expect(screen.getByTestId('sqlite-rail-rows-events')).toHaveTextContent('250,003')
+		);
+		expect(screen.getByTestId('sqlite-rail-rows-events')).not.toHaveTextContent('+');
+	});
+
+	it('leaves the rail alone for a filtered count', async () => {
+		countRows.mockImplementation((request: SqliteCountRequest) =>
+			request.filter
+				? Promise.resolve(countReply(request, 7))
+				: new Promise<SqliteRowCount>(() => {})
+		);
+		renderViewer();
+		const input = await screen.findByTestId('sqlite-filter-input');
+		expect(await screen.findByTestId('sqlite-rail-rows-events')).toHaveTextContent('100,000+');
+		fireEvent.change(input, { target: { value: 'kind = click' } });
+		await waitFor(() =>
+			expect(countRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ filter: 'kind = click' })
+			)
+		);
+		expect(screen.getByTestId('sqlite-rail-rows-events')).toHaveTextContent('100,000+');
+	});
+
+	it('says when counting stopped, and why', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 5000));
+		countRows.mockRejectedValue(new Error('database is locked'));
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-count-error')).toHaveTextContent(
+			'Counting stopped: database is locked'
+		);
+		expect(total()).toHaveTextContent('300+ rows');
 	});
 });

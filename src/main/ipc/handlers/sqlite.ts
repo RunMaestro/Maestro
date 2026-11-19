@@ -11,14 +11,17 @@
 import { ipcMain } from 'electron';
 
 import type {
+	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../../shared/sqlite/types';
+import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
@@ -67,6 +70,14 @@ export function registerSqliteHandlers(): void {
 	ipcMain.handle(
 		'sqlite:readRows',
 		async (_event, request: SqliteRowsRequest): Promise<SqliteRowsPage> => readSqliteRows(request)
+	);
+
+	// The table view's converging row count: rows walked against a time
+	// budget, with a cursor the renderer hands back to continue. The count
+	// grows call by call until `complete`, so main is never held for a table.
+	ipcMain.handle(
+		'sqlite:countRows',
+		async (_event, request: SqliteCountRequest): Promise<SqliteRowCount> => countSqliteRows(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are

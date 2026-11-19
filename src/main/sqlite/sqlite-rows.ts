@@ -31,7 +31,7 @@
 import type Database from 'better-sqlite3';
 
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../shared/sqlite/cells';
-import { buildSqliteFilter } from '../../shared/sqlite/filter';
+import { buildSqliteFilter, type SqliteFilterBuild } from '../../shared/sqlite/filter';
 import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
@@ -63,6 +63,24 @@ function windowBound(value: unknown, label: string): number {
 }
 
 /**
+ * The rowid alias a statement over this object can use, or null when it has
+ * none: views, virtual tables, and `WITHOUT ROWID` tables have no rowid, and a
+ * real column named `rowid` hides that alias, so the first name still free
+ * wins. A table whose columns take all three names has no reachable rowid.
+ * Shared with the row counter (sqlite-count.ts), which walks a table by it.
+ */
+export function reachableRowidAlias(
+	object: SqliteObjectSummary,
+	columns: readonly SqliteResultColumn[]
+): string | null {
+	if (object.kind !== 'table' || object.tableType === 'virtual' || object.withoutRowid) {
+		return null;
+	}
+	const taken = new Set(columns.map((column) => column.name.toLowerCase()));
+	return ROWID_ALIASES.find((candidate) => !taken.has(candidate)) ?? null;
+}
+
+/**
  * The columns that make the order total after the sort column: a usable rowid
  * alias for an ordinary table, the primary key for a `WITHOUT ROWID` one, and
  * nothing for a view or a virtual table, which promise neither.
@@ -80,11 +98,54 @@ function tieBreakColumns(
 				.all(object.name) as Array<{ name: string }>
 		).map((row) => row.name);
 	}
-	// A real column may be named `rowid`; it then hides the alias, so use one
-	// that is still free. A table that names all three has no reachable rowid.
-	const taken = new Set(columns.map((column) => column.name.toLowerCase()));
-	const alias = ROWID_ALIASES.find((candidate) => !taken.has(candidate));
+	const alias = reachableRowidAlias(object, columns);
 	return alias ? [alias] : [];
+}
+
+/** What a row statement reads from: the object, its columns, and the compiled filter. */
+export interface SqliteRowSource {
+	object: SqliteObjectSummary;
+	/** The object's name, quoted for SQL text. */
+	source: string;
+	/** `SELECT *`'s columns, in order. */
+	columns: SqliteResultColumn[];
+	/** The filter text compiled against those columns, or its problem. */
+	filter: SqliteFilterBuild;
+}
+
+/**
+ * Resolve the table or view a row statement reads and compile its filter.
+ * Shared by the row reader and the row counter (sqlite-count.ts), so a window
+ * and a count over the same filter text always mean the same rows. Throws
+ * when no table or view has the name.
+ */
+export function resolveSqliteRowSource(
+	db: Database.Database,
+	name: string,
+	filterText: string | null | undefined
+): SqliteRowSource {
+	const objects = readSqliteObjectSummaries(db);
+	const object =
+		findSqliteObject(objects, name, 'table') ?? findSqliteObject(objects, name, 'view');
+	if (!object) throw new Error(`No table or view is named ${name}.`);
+
+	const source = quoteSqliteIdentifier(object.name);
+	// `SELECT *` is what the user means by "the table": it leaves out a virtual
+	// table's hidden columns and keeps generated ones. Preparing it runs
+	// nothing; it only reports the columns.
+	const columns: SqliteResultColumn[] = db
+		.prepare(`SELECT * FROM ${source}`)
+		.columns()
+		.map((column) => ({ name: column.name, declaredType: column.type }));
+
+	const filter = buildSqliteFilter(
+		filterText?.trim() ?? '',
+		columns.map((column) => ({
+			name: column.name,
+			affinity: sqliteColumnAffinity(column.declaredType ?? '', object.strict === true),
+		}))
+	);
+	return { object, source, columns, filter };
 }
 
 /**
@@ -131,20 +192,11 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 	const offset = windowBound(request.offset, 'offset');
 	const limit = Math.min(windowBound(request.limit, 'limit'), SQLITE_ROWS_MAX_LIMIT);
 
-	const objects = readSqliteObjectSummaries(db);
-	const object =
-		findSqliteObject(objects, request.name, 'table') ??
-		findSqliteObject(objects, request.name, 'view');
-	if (!object) throw new Error(`No table or view is named ${request.name}.`);
-
-	const source = quoteSqliteIdentifier(object.name);
-	// `SELECT *` is what the user means by "the table": it leaves out a virtual
-	// table's hidden columns and keeps generated ones. Preparing it runs
-	// nothing; it only reports the columns.
-	const columns: SqliteResultColumn[] = db
-		.prepare(`SELECT * FROM ${source}`)
-		.columns()
-		.map((column) => ({ name: column.name, declaredType: column.type }));
+	const { object, source, columns, filter } = resolveSqliteRowSource(
+		db,
+		request.name,
+		request.filter
+	);
 
 	const sort = request.sort ?? null;
 	if (sort) {
@@ -155,15 +207,6 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 			throw new Error(`Sort direction must be asc or desc.`);
 		}
 	}
-
-	const filterText = request.filter?.trim() ?? '';
-	const filter = buildSqliteFilter(
-		filterText,
-		columns.map((column) => ({
-			name: column.name,
-			affinity: sqliteColumnAffinity(column.declaredType ?? '', object.strict === true),
-		}))
-	);
 
 	const orderedBy = sort ? [sort.column] : [];
 	for (const column of tieBreakColumns(db, object, columns)) {

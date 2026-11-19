@@ -33,6 +33,8 @@ vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schemas);
 const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
+const counts = vi.hoisted(() => ({ countAllSqliteRows: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-count', () => counts);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -328,6 +330,101 @@ describe('sqlite_read_rows handler', () => {
 		await flush();
 		expect(lastResponse(client)).toMatchObject({
 			requestId: 'r6',
+			success: false,
+			error: 'filter must be a string',
+		});
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_count_rows handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+	});
+
+	it('answers with the settled count from the shared counter', async () => {
+		const count = { name: 'users', matched: 1204, complete: true, cursor: null, filtered: true };
+		counts.countAllSqliteRows.mockResolvedValue(count);
+
+		handler.handleMessage(client, {
+			type: 'sqlite_count_rows',
+			requestId: 'c1',
+			path: '/data/app.db',
+			name: 'users',
+			filter: 'status = active',
+		});
+		await flush();
+
+		expect(counts.countAllSqliteRows).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'users',
+			filter: 'status = active',
+		});
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_count_result',
+			requestId: 'c1',
+			success: true,
+			database: info,
+			count,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('counts every row when no filter is sent', async () => {
+		counts.countAllSqliteRows.mockResolvedValue({ name: 'users', matched: 3, complete: true });
+		handler.handleMessage(client, {
+			type: 'sqlite_count_rows',
+			requestId: 'c2',
+			path: '/data/app.db',
+			name: 'users',
+		});
+		await flush();
+		expect(counts.countAllSqliteRows).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'users',
+			filter: null,
+		});
+	});
+
+	it("reports the counter's failure with the request id", async () => {
+		counts.countAllSqliteRows.mockRejectedValue(new Error('No table or view is named gone.'));
+		handler.handleMessage(client, {
+			type: 'sqlite_count_rows',
+			requestId: 'c3',
+			path: '/data/app.db',
+			name: 'gone',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_count_result',
+			requestId: 'c3',
+			success: false,
+			error: 'No table or view is named gone.',
+		});
+	});
+
+	it('refuses a missing name or a non-string filter before opening anything', async () => {
+		handler.handleMessage(client, { type: 'sqlite_count_rows', requestId: 'c4', path: '/x.db' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'c4', success: false });
+
+		handler.handleMessage(client, {
+			type: 'sqlite_count_rows',
+			requestId: 'c5',
+			path: '/x.db',
+			name: 'users',
+			filter: ['x'],
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'c5',
 			success: false,
 			error: 'filter must be a string',
 		});

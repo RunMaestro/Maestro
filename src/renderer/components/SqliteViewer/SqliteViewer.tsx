@@ -13,7 +13,9 @@
  *    once whatever the database's size.
  *  - Row counts and sizes are measured afterwards in budgeted batches (the main
  *    process is synchronous while SQLite runs), and the rail fills in as each
- *    batch lands. Visible objects are measured before internal ones.
+ *    batch lands. Visible objects are measured before internal ones. A table
+ *    whose rail count stopped at the cap (`100,000+`) gets its exact count
+ *    once the table view's converging count settles.
  *
  * The content pane shows the selected object: its counts, then either its
  * rows (SqliteTableView, for a table or view) or its schema
@@ -25,7 +27,15 @@
  * lands in the filter box (`focusFilter()`), switching to the Data view first.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import {
+	forwardRef,
+	useCallback,
+	useEffect,
+	useImperativeHandle,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import { AlertTriangle, Database } from 'lucide-react';
 
 import type {
@@ -101,6 +111,11 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const objectView = usePersistedChoice<ObjectView>('sqlite-object-view', OBJECT_VIEWS, 'data');
 	const [filters, setFilters] = useState<ReadonlyMap<string, string>>(() => new Map());
 	const [focusFilterRequested, setFocusFilterRequested] = useState(false);
+	/**
+	 * Exact row counts the table view settled. A stats batch that lands later
+	 * carries the capped count, so it must not overwrite these.
+	 */
+	const settledCounts = useRef(new Map<string, number>());
 
 	// -- Open the database and read its object list -------------------------
 
@@ -109,6 +124,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setInfo(null);
 		setList(null);
 		setStats(new Map());
+		settledCounts.current = new Map();
 		setOpenError(null);
 		setStatsError(null);
 		setSelectedName(null);
@@ -160,7 +176,13 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 				remaining = remaining.slice(batch.length);
 				setStats((previous) => {
 					const next = new Map(previous);
-					for (const entry of batch) next.set(entry.name, entry);
+					for (const entry of batch) {
+						const settled = settledCounts.current.get(entry.name);
+						next.set(
+							entry.name,
+							settled === undefined ? entry : { ...entry, rowCount: settled, rowCountCapped: false }
+						);
+					}
 					return next;
 				});
 			}
@@ -198,6 +220,17 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		[selectedFilterKey]
 	);
 	const handleFilterFocused = useCallback(() => setFocusFilterRequested(false), []);
+
+	const handleRowCountSettled = useCallback((name: string, rowCount: number) => {
+		settledCounts.current.set(name, rowCount);
+		setStats((previous) => {
+			const entry = previous.get(name);
+			// Not measured yet: the batch that measures it applies the count.
+			if (!entry || entry.rowCount === null) return previous;
+			if (entry.rowCount === rowCount && !entry.rowCountCapped) return previous;
+			return new Map(previous).set(name, { ...entry, rowCount, rowCountCapped: false });
+		});
+	}, []);
 
 	const setObjectView = objectView.setValue;
 	useImperativeHandle(
@@ -356,6 +389,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 										onFilterChange={handleFilterChange}
 										focusFilterRequested={focusFilterRequested}
 										onFilterFocused={handleFilterFocused}
+										onRowCountSettled={handleRowCountSettled}
 										theme={theme}
 									/>
 								</div>

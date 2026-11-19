@@ -142,6 +142,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
 - **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()` in `src/shared/sqlite/sql.ts`
 - **Reading a window of a SQLite table's rows (LIMIT/OFFSET, server-side sort):** `readSqliteRows()` in `src/main/sqlite/sqlite-rows.ts`; `formatSqliteCell()` in `src/shared/sqlite/cells.ts`
+- **Counting a SQLite table's rows (a converging count):** `countSqliteRows()`, `countAllSqliteRows()` in `src/main/sqlite/sqlite-count.ts`; `sqliteConvergingRowTotal()` in `src/shared/sqlite/objects.ts`
 - **Filtering a SQLite table's rows (a parameterised WHERE):** `buildSqliteFilter()`, `compileSqliteFilter()`, `sqliteRegexpTest()` in `src/shared/sqlite/filter.ts`
 - **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
