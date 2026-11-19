@@ -6966,6 +6966,53 @@ describe('useBatchProcessor hook', () => {
 			expect(lastEndOutcome()).toEqual({ status: 'completed', documentsStalled: 0, failures: [] });
 		});
 
+		it('hands the completion an official run_completed event, built from what main is told', async () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: mockOnSpawnAgent.mock.calls.length > 0 ? '- [x] Task' : '- [ ] Task',
+			}));
+			const { result } = renderProcessor();
+
+			const run = (sourceChannel: 'official' | 'local') =>
+				act(async () => {
+					await result.current.startBatchRun(
+						'test-session-id',
+						{
+							documents: [{ filename: 'tasks', resetOnCompletion: false }],
+							prompt: 'Test',
+							loopEnabled: false,
+							playbook: {
+								id: 'pb-local-1',
+								marketplaceId: 'message-bus',
+								sourceVersion: '2026-08-30',
+								sourceChannel,
+							},
+						},
+						'/test/folder'
+					);
+				});
+
+			await run('official');
+			const ended = vi.mocked(window.maestro.stats.playbookRunEnded).mock.calls.at(-1)?.[1];
+			expect(mockOnComplete).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					playbookTelemetryEvent: expect.objectContaining({
+						type: 'run_completed',
+						playbook_id: 'message-bus',
+						source_version: '2026-08-30',
+						status: 'completed',
+						duration_ms: ended?.durationMs,
+						documents_total: 1,
+						documents_stalled: 0,
+					}),
+				})
+			);
+
+			mockOnSpawnAgent.mockClear();
+			await run('local');
+			expect(mockOnComplete.mock.calls.at(-1)?.[0].playbookTelemetryEvent).toBeUndefined();
+		});
+
 		it('records a run a halt marker ended as failed, with the halt as a failure row', async () => {
 			mockReadDoc.mockImplementation(async () => ({
 				success: true,

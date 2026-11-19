@@ -1489,6 +1489,7 @@ describe('useSettings', () => {
 				averagePhasesPerWizard: 0,
 				totalTasksGenerated: 0,
 				averageTasksPerPhase: 0,
+				playbookTelemetryPromptShownAt: 0,
 			});
 		});
 

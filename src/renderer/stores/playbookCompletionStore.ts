@@ -19,6 +19,7 @@
 
 import { create } from 'zustand';
 import type { PlaybookRunReport } from '../../shared/playbookRunReport';
+import type { PlaybookTelemetryRunCompletedEvent } from '../../shared/playbookTelemetry';
 import { generateId } from '../utils/ids';
 import { useModalStore } from './modalStore';
 
@@ -29,12 +30,23 @@ export interface PlaybookCompletion {
 	/** The agent that ran the playbook (its cwd is where Save writes). */
 	sessionId: string;
 	report: PlaybookRunReport;
+	/**
+	 * The `run_completed` telemetry event of a run that just finished (official
+	 * Exchange playbooks only): the literal payload the one-time consent step
+	 * shows. Absent on a report reopened from History or disk, so the consent
+	 * step only ever follows a live completion.
+	 */
+	telemetryEvent?: PlaybookTelemetryRunCompletedEvent;
 }
 
 interface PlaybookCompletionState {
 	queue: PlaybookCompletion[];
 	/** Add a report to the back of the queue and make sure the modal is open. */
-	enqueue: (sessionId: string, report: PlaybookRunReport) => void;
+	enqueue: (
+		sessionId: string,
+		report: PlaybookRunReport,
+		telemetryEvent?: PlaybookTelemetryRunCompletedEvent
+	) => void;
 	/** Drop the report on screen. Closes the modal when it was the last one. */
 	dismissCurrent: () => void;
 	/** Drop every waiting report and close the modal. */
@@ -44,8 +56,13 @@ interface PlaybookCompletionState {
 export const usePlaybookCompletionStore = create<PlaybookCompletionState>()((set, get) => ({
 	queue: [],
 
-	enqueue: (sessionId, report) => {
-		set((state) => ({ queue: [...state.queue, { id: generateId(), sessionId, report }] }));
+	enqueue: (sessionId, report, telemetryEvent) => {
+		set((state) => ({
+			queue: [
+				...state.queue,
+				{ id: generateId(), sessionId, report, ...(telemetryEvent && { telemetryEvent }) },
+			],
+		}));
 		useModalStore.getState().openModal('playbookReport');
 	},
 

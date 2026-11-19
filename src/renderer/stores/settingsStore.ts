@@ -246,6 +246,7 @@ const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averagePhasesPerWizard: 0,
 	totalTasksGenerated: 0,
 	averageTasksPerPhase: 0,
+	playbookTelemetryPromptShownAt: 0,
 };
 
 const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = { ...ENCORE_FEATURE_DEFAULTS };
@@ -685,6 +686,8 @@ export interface SettingsStoreActions
 	recordTourStart: () => void;
 	recordTourComplete: (stepsViewed: number) => void;
 	recordTourSkip: (stepsViewed: number) => void;
+	/** Note that the playbook telemetry consent step was shown (first time only). */
+	recordPlaybookTelemetryPromptShown: () => void;
 	getOnboardingAnalytics: () => {
 		wizardCompletionRate: number;
 		tourCompletionRate: number;
@@ -1964,6 +1967,14 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('onboardingStats', updated);
 		},
 
+		recordPlaybookTelemetryPromptShown: () => {
+			const prev = get().onboardingStats;
+			if (prev.playbookTelemetryPromptShownAt > 0) return;
+			const updated: OnboardingStats = { ...prev, playbookTelemetryPromptShownAt: Date.now() };
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
+
 		getOnboardingAnalytics: () => {
 			const stats = get().onboardingStats;
 			const totalWizardAttempts = stats.wizardStartCount;
@@ -3060,6 +3071,7 @@ export function getSettingsActions() {
 		recordTourStart: state.recordTourStart,
 		recordTourComplete: state.recordTourComplete,
 		recordTourSkip: state.recordTourSkip,
+		recordPlaybookTelemetryPromptShown: state.recordPlaybookTelemetryPromptShown,
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
 		setPersistentWebLink: state.setPersistentWebLink,

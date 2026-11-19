@@ -305,7 +305,9 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			// A saved playbook's run ends with its report, which pops wherever the
 			// user is. Runs that finish together queue rather than stack.
 			if (info.report) {
-				usePlaybookCompletionStore.getState().enqueue(info.sessionId, info.report);
+				usePlaybookCompletionStore
+					.getState()
+					.enqueue(info.sessionId, info.report, info.playbookTelemetryEvent);
 			}
 
 			// Record achievement and check for badge unlocks

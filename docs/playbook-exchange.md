@@ -146,6 +146,8 @@ Playbooks are fetched from the [Maestro-Playbooks](https://github.com/RunMaestro
 
 Playbook ids are public, so they are sent as they are. Paths, parameter values, agent names, and your identity are not fields at all; the only identifier is Maestro's anonymous installation id. A stopped run sends no `run_failed` events. Playbooks from a local manifest send nothing. Events wait in a file in Maestro's data folder and go out after an Auto Run ends or when Maestro quits. Set `MAESTRO_DISABLE_PLAYBOOK_TELEMETRY=1` to turn the channel off regardless of the setting.
 
+Maestro asks once. The first time a run of an official Exchange playbook finishes while the setting is off, the completion report opens with a short step that shows the exact `run_completed` event that run would have sent, with **Share anonymous usage** and **No thanks**. Either answer sets the setting. Escape or the close button skips to the report and leaves the setting off. The question never returns; change your answer in Settings later.
+
 ## Contributing Playbooks
 
 Want to share your playbooks with the community? You can contribute in two ways:

@@ -1009,6 +1009,24 @@ describe('useBatchHandlers', () => {
 			const queue = usePlaybookCompletionStore.getState().queue;
 			expect(queue).toHaveLength(1);
 			expect(queue[0]).toMatchObject({ sessionId: 'session-1', report });
+			expect(queue[0].telemetryEvent).toBeUndefined();
+
+			// An official playbook's run carries its run_completed event to the
+			// modal, which shows it in the one-time consent step.
+			const playbookTelemetryEvent = {
+				type: 'run_completed' as const,
+				ts: '2026-11-19T12:00:00.000Z',
+				playbook_id: 'message-bus',
+				source_version: '1.0.0',
+				status: 'completed' as const,
+				duration_ms: 0,
+				documents_total: 1,
+				documents_stalled: 0,
+			};
+			act(() => callArgs.onComplete({ ...info, report, playbookTelemetryEvent }));
+			expect(usePlaybookCompletionStore.getState().queue[1].telemetryEvent).toEqual(
+				playbookTelemetryEvent
+			);
 			usePlaybookCompletionStore.getState().clear();
 		});
 

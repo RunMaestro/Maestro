@@ -12,6 +12,12 @@
  * the report for a consent step that shows the exact issue it would file
  * (`PlaybookFailureReportStep`); Back or Escape returns to the report.
  *
+ * The first live completion of an official Exchange playbook while playbook
+ * telemetry is off leads with a one-time consent step instead of the report
+ * (`PlaybookTelemetryConsentStep`): the literal `run_completed` event, "Share
+ * anonymous usage", and "No thanks". Either answer, Escape, or the X goes on
+ * to the report, and the step never returns.
+ *
  * Ways in: a finished playbook run, "Open Last Playbook Report" in the command
  * palette, and `maestro-cli open playbook-report` (all but the first through
  * `openPlaybookReport`). Ways out: Done, Escape, and the header X.
@@ -24,7 +30,7 @@
  * until the `playbookReport` modal is open with a report waiting.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type {
 	PlaybookFailureIssuePreview,
 	PlaybookFailurePreviewPayload,
@@ -42,6 +48,11 @@ import {
 	previewPlaybookFailure,
 	submitPlaybookFailureReport,
 } from '../../services/playbookFailureReport';
+import {
+	answerPlaybookTelemetryConsent,
+	notePlaybookTelemetryConsentShown,
+	shouldOfferPlaybookTelemetryConsent,
+} from '../../services/playbookTelemetryConsent';
 import { selectModalOpen, useModalStore } from '../../stores/modalStore';
 import {
 	selectCurrentPlaybookCompletion,
@@ -61,6 +72,7 @@ import {
 	playbookReportStatusColor,
 } from './PlaybookReportBody';
 import { PlaybookFailureReportStep } from './PlaybookFailureReportStep';
+import { PlaybookTelemetryConsentStep } from './PlaybookTelemetryConsentStep';
 
 /** The "Report a problem" consent step, while it is open. */
 interface FailureReportState {
@@ -114,6 +126,20 @@ function PlaybookCompletionModalBody({
 	const [failureReport, setFailureReport] = useState<FailureReportState | null>(null);
 	const [includeDebugPackage, setIncludeDebugPackage] = useState(false);
 	const [sendingReport, setSendingReport] = useState(false);
+	// Decided once per entry: the step is offered only if it was never shown.
+	const [telemetryConsentOpen, setTelemetryConsentOpen] = useState(() =>
+		shouldOfferPlaybookTelemetryConsent(completion.telemetryEvent)
+	);
+
+	useEffect(() => {
+		if (telemetryConsentOpen) notePlaybookTelemetryConsentShown();
+	}, [telemetryConsentOpen]);
+
+	const answerTelemetryConsent = useCallback((share: boolean) => {
+		answerPlaybookTelemetryConsent(share);
+		setTelemetryConsentOpen(false);
+	}, []);
+	const skipTelemetryConsent = useCallback(() => setTelemetryConsentOpen(false), []);
 
 	const cwd = report.cwd ?? agentCwd;
 	// The agent's file tree indexes the agent's cwd; a worktree run's paths are
@@ -221,6 +247,32 @@ function PlaybookCompletionModalBody({
 		</>
 	);
 
+	const consentFooter = (
+		<>
+			<button
+				type="button"
+				onClick={() => answerTelemetryConsent(false)}
+				className={`${MODAL_BUTTON_SECONDARY_CLASS} mr-auto`}
+				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				data-testid="playbook-telemetry-consent-decline"
+			>
+				No thanks
+			</button>
+			<button
+				type="button"
+				onClick={() => answerTelemetryConsent(true)}
+				className={MODAL_BUTTON_BASE_CLASS}
+				style={{
+					backgroundColor: theme.colors.accent,
+					color: theme.colors.accentForeground,
+				}}
+				data-testid="playbook-telemetry-consent-accept"
+			>
+				Share anonymous usage
+			</button>
+		</>
+	);
+
 	const footer = (
 		<>
 			{report.status !== 'completed' && (
@@ -278,6 +330,9 @@ function PlaybookCompletionModalBody({
 		</>
 	);
 
+	// The event itself, so the step renders only with a payload to show.
+	const showTelemetryConsent = telemetryConsentOpen ? completion.telemetryEvent : undefined;
+
 	return (
 		<Modal
 			theme={theme}
@@ -285,16 +340,24 @@ function PlaybookCompletionModalBody({
 			subtitle={subtitle}
 			headerIcon={<PlaybookReportStatusIcon status={report.status} color={color} />}
 			priority={MODAL_PRIORITIES.PLAYBOOK_COMPLETION}
-			onClose={failureReport ? closeFailureReport : dismissCurrent}
+			onClose={
+				showTelemetryConsent
+					? skipTelemetryConsent
+					: failureReport
+						? closeFailureReport
+						: dismissCurrent
+			}
 			width={720}
 			resizeKey="modal-playbook-completion"
 			defaultSize={{ width: 720, height: 640 }}
 			minSize={{ width: 480, height: 360 }}
-			footer={failureReport ? reportFooter : footer}
+			footer={showTelemetryConsent ? consentFooter : failureReport ? reportFooter : footer}
 			testId="playbook-completion-modal"
 			contentClassName="flex-1 min-h-0 overflow-y-auto px-6 py-4 select-none"
 		>
-			{failureReport ? (
+			{showTelemetryConsent ? (
+				<PlaybookTelemetryConsentStep theme={theme} event={showTelemetryConsent} />
+			) : failureReport ? (
 				<PlaybookFailureReportStep
 					theme={theme}
 					preview={failureReport.preview}

@@ -1756,6 +1756,22 @@ describe('settingsStore', () => {
 			expect(stats.averageTourStepsViewed).toBe(3);
 		});
 
+		it('recordPlaybookTelemetryPromptShown stamps the first showing only', () => {
+			const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+			useSettingsStore.getState().recordPlaybookTelemetryPromptShown();
+			expect(useSettingsStore.getState().onboardingStats.playbookTelemetryPromptShownAt).toBe(1000);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'onboardingStats',
+				expect.objectContaining({ playbookTelemetryPromptShownAt: 1000 })
+			);
+
+			now.mockReturnValue(2000);
+			vi.mocked(window.maestro.settings.set).mockClear();
+			useSettingsStore.getState().recordPlaybookTelemetryPromptShown();
+			expect(useSettingsStore.getState().onboardingStats.playbookTelemetryPromptShownAt).toBe(1000);
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+		});
+
 		it('getOnboardingAnalytics returns correct rates', () => {
 			useSettingsStore.setState({
 				onboardingStats: {

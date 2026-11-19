@@ -312,6 +312,7 @@ export interface UseSettingsReturn {
 	recordTourStart: () => void;
 	recordTourComplete: (stepsViewed: number) => void;
 	recordTourSkip: (stepsViewed: number) => void;
+	recordPlaybookTelemetryPromptShown: () => void;
 	getOnboardingAnalytics: () => {
 		wizardCompletionRate: number;
 		tourCompletionRate: number;

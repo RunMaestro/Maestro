@@ -825,6 +825,14 @@ export interface OnboardingStats {
 	averagePhasesPerWizard: number; // Average documents per completed wizard
 	totalTasksGenerated: number; // Total tasks generated across all documents
 	averageTasksPerPhase: number; // Average tasks per document
+
+	// Playbook telemetry consent
+	/**
+	 * When the one-time "Share anonymous usage" step was shown on the playbook
+	 * completion modal (0 if never). Once set, the step never returns, whatever
+	 * the answer: `playbookTelemetryEnabled` holds the answer itself.
+	 */
+	playbookTelemetryPromptShownAt: number;
 }
 
 // AI Tab for multi-tab support within a Maestro session

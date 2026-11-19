@@ -1,7 +1,8 @@
 /**
  * PlaybookCompletionModal: shows the oldest waiting report with "1 of N" when
  * more wait, Done and Escape advance the queue, and Copy, Save to project, and
- * a clicked path act on the report on screen.
+ * a clicked path act on the report on screen. The one-time telemetry consent
+ * step leads a live official completion and records either answer.
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -10,12 +11,14 @@ import { PlaybookCompletionModal } from '../../../../renderer/components/Playboo
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { usePlaybookCompletionStore } from '../../../../renderer/stores/playbookCompletionStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	buildFinalSummaryFacts,
 	renderPlaybookReportMarkdown,
 	type PlaybookRunReport,
 	type PlaybookRunReportStatus,
 } from '../../../../shared/playbookRunReport';
+import type { PlaybookTelemetryRunCompletedEvent } from '../../../../shared/playbookTelemetry';
 import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -366,6 +369,121 @@ describe('PlaybookCompletionModal', () => {
 			renderModal();
 			act(() => store().enqueue('agent-1', exchangeReport('stopped')));
 			expect(screen.getByTestId('playbook-completion-report-problem')).toBeDisabled();
+		});
+	});
+
+	describe('telemetry consent', () => {
+		const event: PlaybookTelemetryRunCompletedEvent = {
+			type: 'run_completed',
+			ts: '2026-11-19T12:00:00.000Z',
+			playbook_id: 'best-pr',
+			source_version: '1.2.0',
+			status: 'completed',
+			duration_ms: 65_000,
+			documents_total: 2,
+			documents_stalled: 0,
+		};
+		const settings = () => useSettingsStore.getState();
+		const resetConsent = () =>
+			useSettingsStore.setState({
+				playbookTelemetryEnabled: false,
+				onboardingStats: { ...settings().onboardingStats, playbookTelemetryPromptShownAt: 0 },
+			});
+
+		beforeEach(resetConsent);
+		afterEach(resetConsent);
+
+		it('leads with the literal run_completed event before the report, and records that it was shown', () => {
+			renderModal();
+			act(() => store().enqueue('agent-1', makeReport('Official'), event));
+
+			expect(screen.getByTestId('playbook-telemetry-consent-step')).toBeInTheDocument();
+			expect(
+				JSON.parse(screen.getByTestId('playbook-telemetry-consent-payload').textContent ?? '')
+			).toEqual(event);
+			expect(screen.queryByTestId('playbook-completion-done')).toBeNull();
+			expect(settings().onboardingStats.playbookTelemetryPromptShownAt).toBeGreaterThan(0);
+		});
+
+		it('"Share anonymous usage" turns telemetry on and goes on to the report', () => {
+			renderModal();
+			act(() => store().enqueue('agent-1', makeReport('Official'), event));
+
+			fireEvent.click(screen.getByTestId('playbook-telemetry-consent-accept'));
+
+			expect(settings().playbookTelemetryEnabled).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('playbookTelemetryEnabled', true);
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+			expect(screen.getByTestId('playbook-completion-done')).toBeInTheDocument();
+			expect(store().queue).toHaveLength(1);
+		});
+
+		it('"No thanks" keeps telemetry off and goes on to the report', () => {
+			renderModal();
+			act(() => store().enqueue('agent-1', makeReport('Official'), event));
+
+			fireEvent.click(screen.getByTestId('playbook-telemetry-consent-decline'));
+
+			expect(settings().playbookTelemetryEnabled).toBe(false);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('playbookTelemetryEnabled', false);
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+			expect(screen.getByTestId('playbook-completion-done')).toBeInTheDocument();
+		});
+
+		it('never returns once answered', () => {
+			renderModal();
+			act(() => {
+				store().enqueue('agent-1', makeReport('First'), event);
+				store().enqueue('agent-1', makeReport('Second'), event);
+			});
+
+			fireEvent.click(screen.getByTestId('playbook-telemetry-consent-decline'));
+			fireEvent.click(screen.getByTestId('playbook-completion-done'));
+
+			expect(screen.getByText('Second')).toBeInTheDocument();
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+		});
+
+		it('Escape skips to the report without answering, and the step does not return', async () => {
+			renderModal();
+			act(() => {
+				store().enqueue('agent-1', makeReport('First'), event);
+				store().enqueue('agent-1', makeReport('Second'), event);
+			});
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+				);
+			});
+
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+			expect(screen.getByText('First')).toBeInTheDocument();
+			expect(settings().playbookTelemetryEnabled).toBe(false);
+
+			fireEvent.click(screen.getByTestId('playbook-completion-done'));
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+		});
+
+		it('is not offered without an event, for a stopped run, or when telemetry is already on', () => {
+			renderModal();
+			act(() => store().enqueue('agent-1', makeReport('Local')));
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+			act(() => store().clear());
+
+			act(() =>
+				store().enqueue('agent-1', makeReport('Stopped', 'stopped'), {
+					...event,
+					status: 'stopped',
+				})
+			);
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+			act(() => store().clear());
+
+			act(() => useSettingsStore.setState({ playbookTelemetryEnabled: true }));
+			act(() => store().enqueue('agent-1', makeReport('Opted in'), event));
+			expect(screen.queryByTestId('playbook-telemetry-consent-step')).toBeNull();
+			expect(settings().onboardingStats.playbookTelemetryPromptShownAt).toBe(0);
 		});
 	});
 

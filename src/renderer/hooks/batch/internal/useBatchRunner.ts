@@ -27,6 +27,12 @@ import {
 	type PlaybookRunReportProblem,
 } from '../../../../shared/playbookRunReport';
 import { savePlaybookRunReport } from '../../../services/playbookRunReport';
+import {
+	buildPlaybookRunCompletedEvent,
+	type PlaybookTelemetryRunCompletedEvent,
+	type PlaybookTelemetryRunEnd,
+	type PlaybookTelemetryRunStart,
+} from '../../../../shared/playbookTelemetry';
 import { authorRunReport, type AuthoredRunReport } from './batchRunReport';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -664,16 +670,20 @@ export function useBatchRunner({
 
 			// Playbook telemetry. Main drops it unless the user opted in and the
 			// playbook came from the official Exchange; never blocks the run.
-			if (config.playbook?.marketplaceId) {
-				try {
-					await window.maestro.stats.playbookRunStarted(sessionId, {
+			const playbookTelemetryStart: PlaybookTelemetryRunStart | null = config.playbook
+				?.marketplaceId
+				? {
 						playbookId: config.playbook.marketplaceId,
 						sourceVersion: config.playbook.sourceVersion,
 						sourceChannel: config.playbook.sourceChannel,
 						interaction: config.playbook.interaction,
 						launchSource: config.launchSource,
 						documentsTotal: documents.length,
-					});
+					}
+				: null;
+			if (playbookTelemetryStart) {
+				try {
+					await window.maestro.stats.playbookRunStarted(sessionId, playbookTelemetryStart);
 				} catch (telemetryError) {
 					logger.warn(
 						'[BatchProcessor] Failed to note playbook run start:',
@@ -2057,6 +2067,9 @@ export function useBatchRunner({
 			// Claim the flush state: if killBatchRun already flushed, skip the history + stats
 			// writes here to avoid clobbering recorded duration with a stale/zero value.
 			const alreadyFlushed = claimFlushState(autoRunFlushStateRefs, sessionId) === null;
+			// The `run_completed` event this run produced, for the one-time consent
+			// step on the completion modal. Null unless the playbook is official.
+			let playbookTelemetryEvent: PlaybookTelemetryRunCompletedEvent | null = null;
 
 			if (!alreadyFlushed) {
 				try {
@@ -2096,14 +2109,20 @@ export function useBatchRunner({
 
 				// Playbook telemetry: noted before endAutoRun, whose handler flushes
 				// the outbox, so this run's events ride that flush.
-				if (config.playbook?.marketplaceId) {
+				if (playbookTelemetryStart) {
+					const playbookTelemetryEnd: PlaybookTelemetryRunEnd = {
+						status: endStatus,
+						durationMs: finalTotals.totalElapsedMs,
+						documentsStalled: endOutcome.documentsStalled,
+						failures: endOutcome.failures,
+					};
+					// The same builder main uses, so the consent step shows the literal event.
+					playbookTelemetryEvent = buildPlaybookRunCompletedEvent(
+						playbookTelemetryStart,
+						playbookTelemetryEnd
+					);
 					try {
-						await window.maestro.stats.playbookRunEnded(sessionId, {
-							status: endStatus,
-							durationMs: finalTotals.totalElapsedMs,
-							documentsStalled: endOutcome.documentsStalled,
-							failures: endOutcome.failures,
-						});
+						await window.maestro.stats.playbookRunEnded(sessionId, playbookTelemetryEnd);
 					} catch (telemetryError) {
 						logger.warn(
 							'[BatchProcessor] Failed to note playbook run end:',
@@ -2172,6 +2191,7 @@ export function useBatchRunner({
 					documentsProcessed: documents.length,
 					kind: 'spec-driven',
 					...(report && { report }),
+					...(playbookTelemetryEvent && { playbookTelemetryEvent }),
 				});
 			}
 

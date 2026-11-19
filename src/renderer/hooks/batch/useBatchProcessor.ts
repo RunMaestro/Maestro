@@ -32,6 +32,7 @@ import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
 import type { AutoRunKind } from '../../../shared/stats-types';
 import type { PlaybookRunReport } from '../../../shared/playbookRunReport';
+import type { PlaybookTelemetryRunCompletedEvent } from '../../../shared/playbookTelemetry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
@@ -59,6 +60,12 @@ export interface BatchCompleteInfo {
 	 * reached its own summary: an ad-hoc run has none, and neither does a run a hard stop ended.
 	 */
 	report?: PlaybookRunReport;
+	/**
+	 * The `run_completed` telemetry event this run produced, built whether or not
+	 * telemetry is on: the completion modal shows it as the literal payload of
+	 * the one-time consent step. Present only for an official Exchange playbook.
+	 */
+	playbookTelemetryEvent?: PlaybookTelemetryRunCompletedEvent;
 }
 
 export interface PRResultInfo {
