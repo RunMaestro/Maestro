@@ -44,6 +44,10 @@ describe('isPlaceholderDefault', () => {
 		expect(isPlaceholderDefault('<UNSET - describe the market>')).toBe(true);
 		expect(isPlaceholderDefault('<UNSET>')).toBe(true);
 		expect(isPlaceholderDefault(PLACEHOLDER_PR_URL)).toBe(true);
+		// best-pr ships its second PR as .../pull/YYY
+		expect(isPlaceholderDefault('https://github.com/OWNER/REPO/pull/YYY')).toBe(true);
+		expect(isPlaceholderDefault('https://github.com/OWNER/REPO/pull/XXX/')).toBe(true);
+		expect(isPlaceholderDefault('https://github.com/OWNER/REPO/pull/12')).toBe(false);
 		expect(isPlaceholderDefault('https://github.com/acme/app/pull/12')).toBe(false);
 		expect(isPlaceholderDefault('all')).toBe(false);
 		expect(isPlaceholderDefault('')).toBe(false);
@@ -1044,6 +1048,12 @@ describe('proposeFromFacts', () => {
 		expect(
 			proposeFromFacts([spec('PROJECT_URL', 'url'), spec('PREVIEW_URL', 'url')], facts())
 		).toEqual({});
+	});
+
+	it('proposes no PR when the playbook asks for two, so best-pr never compares a PR with itself', () => {
+		expect(
+			proposeFromFacts([spec('PR_A_URL', 'url'), spec('PR_B_URL', 'url'), spec('BRANCH')], facts())
+		).toEqual({ BRANCH: { value: 'feat/x', evidence: 'Current git branch' } });
 	});
 
 	it('only proposes a PR into a url-typed parameter', () => {

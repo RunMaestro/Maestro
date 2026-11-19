@@ -59,18 +59,25 @@ export const PLAYBOOK_PARAM_NAME_REGEX = /^[A-Z][A-Z0-9_]{1,63}$/;
 
 /**
  * A shipped default that LOOKS like a value but is a placeholder. The content
- * repo uses it for `PR_URL`, `PR_A_URL`, and `PR_B_URL`; running on it means
- * running the whole chain against a 404.
+ * repo uses it for `PR_URL` and `PR_A_URL` (and `.../pull/YYY` for
+ * `PR_B_URL`); running on it means running the whole chain against a 404.
  */
 export const PLACEHOLDER_PR_URL = 'https://github.com/OWNER/REPO/pull/XXX';
 
 /**
+ * Every spelling of the placeholder PR URL: `OWNER/REPO` with a letters-only
+ * pull number (`XXX`, `YYY`), so a second PR in the same playbook is caught
+ * too. A real pull number is digits, so no real URL matches.
+ */
+const PLACEHOLDER_PR_URL_REGEX = /^https:\/\/github\.com\/OWNER\/REPO\/pull\/[A-Z]+\/?$/;
+
+/**
  * Whether a prose default is a placeholder rather than a usable value:
- * the `<UNSET ...>` sentinel or the placeholder PR URL.
+ * the `<UNSET ...>` sentinel or a placeholder PR URL.
  */
 export function isPlaceholderDefault(value: string): boolean {
 	const trimmed = value.trim();
-	return trimmed.startsWith('<UNSET') || trimmed === PLACEHOLDER_PR_URL;
+	return trimmed.startsWith('<UNSET') || PLACEHOLDER_PR_URL_REGEX.test(trimmed);
 }
 
 // `**NAME:** `default`` on its own line.
@@ -606,14 +613,26 @@ export function compactPlaybookParamValues(values: PlaybookParamValues): Playboo
  */
 const OTHER_BRANCH_SEGMENTS = new Set(['BASE', 'TARGET', 'DEFAULT', 'UPSTREAM', 'MAIN', 'PARENT']);
 
-/** The fact a parameter name obviously asks for, by its `_`-separated segments. */
+/** A `url` parameter named with a `PR` segment: one the branch's open PR can answer. */
+function isPrUrlSpec(spec: PlaybookParamSpec): boolean {
+	return spec.type === 'url' && spec.name.split('_').includes('PR');
+}
+
+/**
+ * The fact a parameter name obviously asks for, by its `_`-separated segments.
+ * `prUrlIsAmbiguous` is set when the playbook asks for more than one PR
+ * (`PR_A_URL`, `PR_B_URL`): the branch's one open PR cannot answer both, and
+ * proposing it into each would compare a PR with itself.
+ */
 function factProposalFor(
 	spec: PlaybookParamSpec,
-	facts: PlaybookFacts
+	facts: PlaybookFacts,
+	prUrlIsAmbiguous: boolean
 ): PlaybookParamProposal | null {
 	const segments = spec.name.split('_');
 	const has = (segment: string) => segments.includes(segment);
-	if (spec.type === 'url' && has('PR')) {
+	if (isPrUrlSpec(spec)) {
+		if (prUrlIsAmbiguous) return null;
 		const url = facts.openPrUrlsForBranch[0];
 		if (!url) return null;
 		return { value: url, evidence: `Open pull request for branch ${facts.gitBranch ?? 'unknown'}` };
@@ -657,7 +676,8 @@ function obsidianVaultProposal(facts: PlaybookFacts): PlaybookParamProposal | nu
 
 /**
  * Proposals the facts pack answers at zero token cost, by parameter name: a
- * `url` named with a `PR` segment gets the branch's open pull request, a
+ * `url` named with a `PR` segment gets the branch's open pull request (only
+ * when it is the playbook's one PR parameter), a
  * `string` named with `BRANCH` gets the current branch (never for
  * `BASE_BRANCH` and kin), one named `WORK_DIR`, `WORKING_DIR`, or `CWD`
  * gets the agent's working directory, and one with a `VAULT` segment gets
@@ -670,8 +690,9 @@ export function proposeFromFacts(
 	facts: PlaybookFacts
 ): PlaybookParamProposals {
 	const proposals: PlaybookParamProposals = {};
+	const prUrlIsAmbiguous = specs.filter(isPrUrlSpec).length > 1;
 	for (const spec of specs) {
-		const proposal = factProposalFor(spec, facts);
+		const proposal = factProposalFor(spec, facts, prUrlIsAmbiguous);
 		if (proposal && validatePlaybookParamValue(spec, proposal.value) === null) {
 			proposals[spec.name] = proposal;
 		}
