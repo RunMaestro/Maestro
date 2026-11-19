@@ -54,6 +54,7 @@ vi.mock('better-sqlite3', () => {
 });
 
 import { SQLITE_REGEXP_FUNCTION, sqliteRegexpTest } from '../../../shared/sqlite/filter';
+import { openWritableSqliteConnection } from '../../../main/sqlite/sqlite-connection';
 import {
 	SQLITE_BUSY_TIMEOUT_MS,
 	closeAllSqliteDatabases,
@@ -113,6 +114,17 @@ describe('openSqliteDatabase', () => {
 		const file = await writeFixture('trusted.db');
 		await openSqliteDatabase(file);
 		expect(driver.instances[0].pragmas).toEqual(['trusted_schema = OFF', 'schema_version']);
+	});
+
+	it('enforces foreign keys on a writable connection only', async () => {
+		const file = await writeFixture('writable.db');
+		openWritableSqliteConnection(file);
+		expect(driver.instances[0].options).toMatchObject({ readonly: false, fileMustExist: true });
+		expect(driver.instances[0].pragmas).toEqual([
+			'trusted_schema = OFF',
+			'foreign_keys = ON',
+			'schema_version',
+		]);
 	});
 
 	it("registers the table filter's regex function as deterministic", async () => {

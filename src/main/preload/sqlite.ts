@@ -8,7 +8,7 @@
  * read a window of a table's rows, count its rows, run a read-only statement
  * (and stop it), export a statement's result to a file, read and forget the
  * file's query history, save a BLOB to a file, turn this tab's editing on
- * and off, change one cell, close the handle.
+ * and off, change one cell, insert or delete one row, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
@@ -34,6 +34,10 @@ import type {
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
+	SqliteRowDeleteRequest,
+	SqliteRowDeleteResult,
+	SqliteRowInsertRequest,
+	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../shared/sqlite/types';
@@ -166,6 +170,22 @@ export function createSqliteApi() {
 		 */
 		updateCell: (request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> =>
 			ipcRenderer.invoke('sqlite:updateCell', request),
+
+		/**
+		 * Add one row: a single-row INSERT, columns left out taking their
+		 * DEFAULT. Needs this tab's editing token; resolves the row as stored
+		 * and its key. Rejects with SQLite's message when a constraint fails.
+		 */
+		insertRow: (request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> =>
+			ipcRenderer.invoke('sqlite:insertRow', request),
+
+		/**
+		 * Remove one row: a single-row DELETE keyed on its rowid or primary key.
+		 * Needs this tab's editing token; resolves the key removed and how many
+		 * rows foreign-key actions and triggers changed beside it.
+		 */
+		deleteRow: (request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> =>
+			ipcRenderer.invoke('sqlite:deleteRow', request),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

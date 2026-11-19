@@ -9,6 +9,7 @@ import {
 	sqliteCellEditValue,
 	sqliteCellEditValueProblem,
 	sqliteRowKeyAt,
+	sqliteRowKeyRefusal,
 } from '../../../../renderer/components/SqliteViewer/sqliteCellEdit';
 import type { SqliteEditability } from '../../../../shared/sqlite/types';
 
@@ -86,6 +87,25 @@ describe('sqliteCellEditRefusal', () => {
 			sqliteCellEditRefusal(BY_ROWID, 'body', { kind: 'text', head: 'abc', length: 5000 }, key)
 		).toBe(
 			'body holds 5,000 characters, more than the grid shows, so editing it here would cut it.'
+		);
+	});
+});
+
+describe('sqliteRowKeyRefusal', () => {
+	it('lets a row with a whole key through', () => {
+		expect(sqliteRowKeyRefusal({ kind: 'rowid', rowid: '7' })).toBeNull();
+		expect(
+			sqliteRowKeyRefusal({
+				kind: 'primary-key',
+				values: { org: { type: 'integer', text: '3' } },
+			})
+		).toBeNull();
+	});
+
+	it('refuses a row with no key, or one whose primary key holds NULL', () => {
+		expect(sqliteRowKeyRefusal(null)).toContain('came back without its key');
+		expect(sqliteRowKeyRefusal({ kind: 'primary-key', values: { org: null } })).toContain(
+			'NULL never equals anything'
 		);
 	});
 });

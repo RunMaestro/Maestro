@@ -1,6 +1,6 @@
 // Covers the sqlite_read_summary, sqlite_list_objects, sqlite_read_schema,
 // sqlite_read_rows, sqlite_count_rows, sqlite_save_blob, sqlite_run_query,
-// sqlite_export_query, sqlite_query_history, and sqlite_update_cell
+// sqlite_export_query, sqlite_query_history, sqlite_update_cell, sqlite_insert_row, and sqlite_delete_row
 // WebSocket messages that back `maestro-cli sqlite info`, `sqlite tables`,
 // `sqlite schema`, `sqlite rows`, `sqlite count`, `sqlite blob`, `sqlite query`
 // (with and without `--output`), `sqlite history`, and `sqlite set`. It opens the database through the viewer's own open path,
@@ -56,7 +56,11 @@ const editing = vi.hoisted(() => ({
 	disableSqliteEditing: vi.fn(),
 }));
 vi.mock('../../../../main/sqlite/sqlite-editing', () => editing);
-const rowEdits = vi.hoisted(() => ({ updateSqliteCell: vi.fn() }));
+const rowEdits = vi.hoisted(() => ({
+	updateSqliteCell: vi.fn(),
+	insertSqliteRow: vi.fn(),
+	deleteSqliteRow: vi.fn(),
+}));
 vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdits);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
@@ -1144,6 +1148,168 @@ describe('sqlite_update_cell handler', () => {
 			requestId: 'u1',
 			success: false,
 			error: 'Missing required "path", "name", "column", "row", or "value" for sqlite_update_cell',
+		});
+	});
+});
+
+describe('sqlite_insert_row handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const message = {
+		type: 'sqlite_insert_row',
+		requestId: 'i1',
+		path: '/data/app.db',
+		name: 'users',
+		values: { email: { type: 'text', text: 'a@b.c' } },
+		enableEditing: true,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 'cli-token' });
+	});
+
+	it('unlocks for this one call, inserts through the shared path, and locks again', async () => {
+		const result = {
+			name: 'users',
+			columns: [{ name: 'email', declaredType: 'TEXT' }],
+			row: ['a@b.c'],
+			key: { kind: 'rowid', rowid: '8' },
+			otherChanges: 0,
+			elapsedMs: 1,
+		};
+		rowEdits.insertSqliteRow.mockResolvedValue(result);
+		handler.handleMessage(client, message);
+		await flush();
+		expect(rowEdits.insertSqliteRow).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'cli-token',
+			name: 'users',
+			values: { email: { type: 'text', text: 'a@b.c' } },
+		});
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_insert_result',
+			requestId: 'i1',
+			success: true,
+			database: info,
+			result,
+		});
+	});
+
+	it('takes a message with no values as "every column takes its default"', async () => {
+		rowEdits.insertSqliteRow.mockResolvedValue({ name: 'users' });
+		handler.handleMessage(client, { ...message, values: undefined });
+		await flush();
+		expect(rowEdits.insertSqliteRow).toHaveBeenCalledWith(expect.objectContaining({ values: {} }));
+	});
+
+	it("locks again when SQLite refuses the row, and answers with SQLite's words", async () => {
+		rowEdits.insertSqliteRow.mockRejectedValue(new Error('NOT NULL constraint failed: users.name'));
+		handler.handleMessage(client, message);
+		await flush();
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_insert_result',
+			success: false,
+			error: 'NOT NULL constraint failed: users.name',
+		});
+	});
+
+	it('refuses without the per-call unlock, opening nothing', async () => {
+		handler.handleMessage(client, { ...message, enableEditing: false });
+		await flush();
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error:
+				'This changes the database. Pass --enable-editing to unlock editing for this one call.',
+		});
+	});
+
+	it('needs a path and a table, and values as an object', async () => {
+		handler.handleMessage(client, { ...message, values: ['a'] });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'i1',
+			success: false,
+			error:
+				'Missing required "path" or "name", or "values" is not an object, for sqlite_insert_row',
+		});
+		expect(rowEdits.insertSqliteRow).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_delete_row handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const message = {
+		type: 'sqlite_delete_row',
+		requestId: 'd1',
+		path: '/data/app.db',
+		name: 'users',
+		row: { kind: 'rowid', rowid: '7' },
+		enableEditing: true,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 'cli-token' });
+	});
+
+	it('unlocks for this one call, deletes through the shared path, and locks again', async () => {
+		const result = { name: 'users', key: message.row, otherChanges: 3, elapsedMs: 1 };
+		rowEdits.deleteSqliteRow.mockResolvedValue(result);
+		handler.handleMessage(client, message);
+		await flush();
+		expect(rowEdits.deleteSqliteRow).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'cli-token',
+			name: 'users',
+			row: { kind: 'rowid', rowid: '7' },
+		});
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_delete_result',
+			requestId: 'd1',
+			success: true,
+			result,
+		});
+	});
+
+	it("locks again when a foreign key refuses the delete, and answers with SQLite's words", async () => {
+		rowEdits.deleteSqliteRow.mockRejectedValue(new Error('FOREIGN KEY constraint failed'));
+		handler.handleMessage(client, message);
+		await flush();
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'FOREIGN KEY constraint failed',
+		});
+	});
+
+	it('refuses without the per-call unlock, opening nothing', async () => {
+		handler.handleMessage(client, { ...message, enableEditing: 'yes' });
+		await flush();
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+		expect(rowEdits.deleteSqliteRow).not.toHaveBeenCalled();
+	});
+
+	it('needs a path, a table, and a row', async () => {
+		handler.handleMessage(client, { ...message, row: undefined });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'd1',
+			success: false,
+			error: 'Missing required "path", "name", or "row" for sqlite_delete_row',
 		});
 	});
 });

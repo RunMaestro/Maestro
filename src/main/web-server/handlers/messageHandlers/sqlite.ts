@@ -20,6 +20,10 @@
  *     flag), and the handler enables editing for this one call, writes
  *     through `updateSqliteCell()` (same gate, same once-per-session backup),
  *     and disables it again, whatever happened.
+ *   - `sqlite_insert_row` / `sqlite_delete_row`: the table view's Insert row
+ *     and the record view's Delete row (`maestro-cli sqlite insert`,
+ *     `sqlite delete`), through `insertSqliteRow()` / `deleteSqliteRow()`
+ *     behind the same per-call unlock.
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -55,7 +59,11 @@ import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
 } from '../../../sqlite/sqlite-query-history';
-import { updateSqliteCell } from '../../../sqlite/sqlite-row-edit';
+import {
+	deleteSqliteRow,
+	insertSqliteRow,
+	updateSqliteCell,
+} from '../../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
@@ -471,24 +479,40 @@ export async function handleSqliteUpdateCell(
 		});
 		return;
 	}
+	// Key and value shapes are checked by the edit, which refuses a bad one.
+	await writeWithCliUnlock(message, filePath, reply, (handle, editToken) =>
+		updateSqliteCell({
+			handle,
+			editToken,
+			name,
+			column,
+			row: message.row as SqliteRowKey,
+			value: message.value as SqliteParameterValue,
+		})
+	);
+}
+
+/**
+ * Make one write for a CLI verb, which has no tab and so no editing grant:
+ * refuse unless the message says `enableEditing: true` (the verb's per-call
+ * unlock flag), then enable editing on the file, write, and disable it
+ * again, whatever happened. Replies with the write's result or its error.
+ */
+async function writeWithCliUnlock<T>(
+	message: WebClientMessage,
+	filePath: string,
+	reply: (payload: Record<string, unknown>) => void,
+	write: (handle: string, editToken: string) => Promise<T>
+): Promise<void> {
 	if (message.enableEditing !== true) {
 		reply({ success: false, error: SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE });
 		return;
 	}
-
 	try {
 		const database = await openSqliteDatabase(filePath);
 		const grant = await enableSqliteEditing(database.handle);
 		try {
-			// Key and value shapes are checked by the edit, which refuses a bad one.
-			const result = await updateSqliteCell({
-				handle: database.handle,
-				editToken: grant.editToken,
-				name,
-				column,
-				row: message.row as SqliteRowKey,
-				value: message.value as SqliteParameterValue,
-			});
+			const result = await write(database.handle, grant.editToken);
 			reply({ success: true, database, result });
 		} finally {
 			disableSqliteEditing(database.handle, grant.editToken);
@@ -496,4 +520,59 @@ export async function handleSqliteUpdateCell(
 	} catch (error) {
 		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
 	}
+}
+
+export async function handleSqliteInsertRow(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_insert_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const name = typeof message.name === 'string' ? message.name : '';
+	const values = message.values ?? {};
+	if (!filePath || !name || typeof values !== 'object' || Array.isArray(values)) {
+		reply({
+			success: false,
+			error:
+				'Missing required "path" or "name", or "values" is not an object, for sqlite_insert_row',
+		});
+		return;
+	}
+	// Value shapes are checked by the insert, which refuses a bad one.
+	await writeWithCliUnlock(message, filePath, reply, (handle, editToken) =>
+		insertSqliteRow({
+			handle,
+			editToken,
+			name,
+			values: values as Record<string, SqliteParameterValue>,
+		})
+	);
+}
+
+export async function handleSqliteDeleteRow(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_delete_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const name = typeof message.name === 'string' ? message.name : '';
+	if (!filePath || !name || !message.row) {
+		reply({
+			success: false,
+			error: 'Missing required "path", "name", or "row" for sqlite_delete_row',
+		});
+		return;
+	}
+	// The key's shape is checked by the delete, which refuses a bad one.
+	await writeWithCliUnlock(message, filePath, reply, (handle, editToken) =>
+		deleteSqliteRow({ handle, editToken, name, row: message.row as SqliteRowKey })
+	);
 }

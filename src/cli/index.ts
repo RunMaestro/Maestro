@@ -162,8 +162,10 @@ import {
 import {
 	sqliteBlob,
 	sqliteCount,
+	sqliteDelete,
 	sqliteHistory,
 	sqliteInfo,
+	sqliteInsert,
 	sqliteQuery,
 	sqliteRows,
 	sqliteSchema,
@@ -4013,6 +4015,61 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, table, column, options) => sqliteSet(file, table, column, options));
+
+sqliteCmd
+	.command('insert <path> <table>')
+	.description(
+		"Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option(
+		'--value <column=value>',
+		'A column value, bound as TEXT (repeatable; the column affinity must keep it as text)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--value-number <column=value>',
+		'A column value, bound as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--null <column>',
+		'Set a column to NULL (repeatable); a NULL rowid column takes the next rowid',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteInsert(file, table, options));
+
+sqliteCmd
+	.command('delete <path> <table>')
+	.description(
+		"Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteDelete(file, table, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

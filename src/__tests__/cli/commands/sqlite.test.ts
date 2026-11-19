@@ -15,7 +15,9 @@
  * by the app, over `sqlite_export_query`. And `maestro-cli sqlite history`:
  * the statements run against a database, over `sqlite_query_history`. And
  * `maestro-cli sqlite set`: one cell changed by the app, unlocked for that one
- * call, over `sqlite_update_cell`.
+ * call, over `sqlite_update_cell`. And `maestro-cli sqlite insert` / `delete`:
+ * one row added or removed the same way, over `sqlite_insert_row` and
+ * `sqlite_delete_row`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -29,8 +31,11 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 import {
 	sqliteBlob,
 	sqliteCount,
+	sqliteDelete,
 	sqliteHistory,
 	sqliteInfo,
+	sqliteInsert,
+	sqliteInsertValuesFromFlags,
 	sqliteQuery,
 	sqliteQueryParamsFromFlags,
 	sqliteRows,
@@ -1477,5 +1482,211 @@ describe('sqlite set', () => {
 		).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('NOT NULL constraint failed: users.email');
 		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+});
+
+describe('sqliteInsertValuesFromFlags', () => {
+	it('keys each value by its column, typed by its flag, split at the first =', () => {
+		expect(
+			sqliteInsertValuesFromFlags({
+				value: ['email=a=b@c', 'note='],
+				valueNumber: ['age=42'],
+				null: ['nick'],
+			})
+		).toEqual({
+			email: { type: 'text', text: 'a=b@c' },
+			note: { type: 'text', text: '' },
+			age: { type: 'number', text: '42' },
+			nick: { type: 'null', text: '' },
+		});
+		expect(sqliteInsertValuesFromFlags({})).toEqual({});
+	});
+
+	it.each([
+		[{ value: ['email'] }, '--value takes column=value (got "email")'],
+		[{ valueNumber: ['=4'] }, '--value-number takes column=value (got "=4")'],
+		[{ value: ['a=1'], null: ['a'] }, 'Column a is given more than once'],
+		[{ null: [''] }, '--null takes a column name'],
+	])('refuses %o', (options, message) => {
+		expect(() => sqliteInsertValuesFromFlags(options)).toThrow(message);
+	});
+});
+
+describe('sqlite insert and delete', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+	const database = { handle: 'h1', displayPath: DB, fileBytes: 4096 };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the values and the per-call unlock, and prints the row as stored', async () => {
+		const sent = mockReply({
+			type: 'sqlite_insert_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				columns: [
+					{ name: 'id', declaredType: 'INTEGER' },
+					{ name: 'email', declaredType: 'TEXT' },
+				],
+				row: [8, 'a@b.c'],
+				key: { kind: 'rowid', rowid: '8' },
+				otherChanges: 1,
+				backup: { path: '/data/app.maestro-backup-x.db', bytes: 2048, createdAt: 1 },
+				elapsedMs: 2,
+			},
+		});
+		await sqliteInsert(DB, 'users', { value: ['email=a@b.c'], enableEditing: true });
+		expect(sent[0]).toEqual({
+			type: 'sqlite_insert_row',
+			path: DB,
+			name: 'users',
+			values: { email: { type: 'text', text: 'a@b.c' } },
+			enableEditing: true,
+			responseType: 'sqlite_insert_result',
+		});
+		const text = logged();
+		expect(text).toContain('Inserted a row into users (rowid 8):');
+		expect(text).toContain('a@b.c');
+		expect(text).toContain("The database's triggers and foreign-key actions changed 1 other row.");
+		expect(text).toContain(
+			`Backed up ${DB} before this first change: /data/app.maestro-backup-x.db (2.0 KB).`
+		);
+	});
+
+	it('prints the inserted row as JSON under --json', async () => {
+		mockReply({
+			type: 'sqlite_insert_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				columns: [{ name: 'id', declaredType: 'INTEGER' }],
+				row: [9],
+				key: { kind: 'rowid', rowid: '9' },
+				otherChanges: 0,
+				elapsedMs: 1,
+			},
+		});
+		await sqliteInsert(DB, 'users', { enableEditing: true, json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			name: 'users',
+			columns: ['id'],
+			row: [9],
+			key: { kind: 'rowid', rowid: '9' },
+			otherChanges: 0,
+			backup: null,
+			elapsedMs: 1,
+		});
+	});
+
+	it("exits 1 with SQLite's constraint failure", async () => {
+		mockReply({
+			type: 'sqlite_insert_result',
+			success: false,
+			error: 'UNIQUE constraint failed: users.email',
+		});
+		await expect(
+			sqliteInsert(DB, 'users', { value: ['email=a@b.c'], enableEditing: true })
+		).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('UNIQUE constraint failed: users.email');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it.each([
+		[{ value: ['a=1'] }, 'Pass --enable-editing to unlock editing for this one call'],
+		[{ value: ['a'], enableEditing: true }, '--value takes column=value'],
+	])('refuses insert %o before asking the app', async (options, message) => {
+		const sent = mockReply({ type: 'sqlite_insert_result', success: true });
+		await expect(sqliteInsert(DB, 'users', options)).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		expect(sent).toEqual([]);
+	});
+
+	it('sends the row key and the per-call unlock, and says what went with it', async () => {
+		const sent = mockReply({
+			type: 'sqlite_delete_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				key: { kind: 'rowid', rowid: '7' },
+				otherChanges: 3,
+				elapsedMs: 1,
+			},
+		});
+		await sqliteDelete(DB, 'users', { rowid: '7', enableEditing: true });
+		expect(sent[0]).toEqual({
+			type: 'sqlite_delete_row',
+			path: DB,
+			name: 'users',
+			row: { kind: 'rowid', rowid: '7' },
+			enableEditing: true,
+			responseType: 'sqlite_delete_result',
+		});
+		expect(logged()).toBe(
+			[
+				'Deleted the row with rowid 7 from users.',
+				"The database's triggers and foreign-key actions changed 3 other rows.",
+			].join('\n')
+		);
+	});
+
+	it('prints the deleted key as JSON under --json', async () => {
+		mockReply({
+			type: 'sqlite_delete_result',
+			success: true,
+			database,
+			result: {
+				name: 'members',
+				key: { kind: 'primary-key', values: { org: { type: 'integer', text: '3' } } },
+				otherChanges: 0,
+				elapsedMs: 1,
+			},
+		});
+		await sqliteDelete(DB, 'members', { keyNumber: ['org=3'], enableEditing: true, json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			name: 'members',
+			key: { kind: 'primary-key', values: { org: { type: 'integer', text: '3' } } },
+			otherChanges: 0,
+			backup: null,
+			elapsedMs: 1,
+		});
+	});
+
+	it.each([
+		[{ rowid: '7' }, 'Pass --enable-editing to unlock editing for this one call'],
+		[{ enableEditing: true }, 'Name the row with --rowid <id>'],
+		[{ rowid: 'x', enableEditing: true }, '--rowid must be a whole number'],
+	])('refuses delete %o before asking the app', async (options, message) => {
+		const sent = mockReply({ type: 'sqlite_delete_result', success: true });
+		await expect(sqliteDelete(DB, 'users', options)).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		expect(sent).toEqual([]);
+	});
+
+	it("exits 1 with SQLite's FOREIGN KEY refusal", async () => {
+		mockReply({
+			type: 'sqlite_delete_result',
+			success: false,
+			error: 'FOREIGN KEY constraint failed',
+		});
+		await expect(sqliteDelete(DB, 'users', { rowid: '7', enableEditing: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.join('\n')).toContain('FOREIGN KEY constraint failed');
 	});
 });

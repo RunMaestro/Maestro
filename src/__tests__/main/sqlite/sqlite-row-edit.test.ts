@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // better-sqlite3's native binary is built for Electron's ABI and does not load
 // under vitest, so both connections are fakes that answer the statements
-// sqlite-row-edit.ts prepares: `SELECT *` for the columns, the UPDATE with its
-// RETURNING, and the read-back. The editing gate and the backup have their own
+// sqlite-row-edit.ts prepares: `SELECT *` for the columns, the UPDATE,
+// INSERT, or DELETE with its RETURNING, `total_changes()`, and the read-back. The editing gate and the backup have their own
 // tests (sqlite-editing.test.ts, sqlite-backup.test.ts), so they are mocks
 // here; the identity's key condition and the row reader's select list stay real.
 interface FakeConnection {
@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
 	returning: [] as unknown[][] | Error | ((args: unknown[]) => unknown[][]),
 	/** The row the read-back finds (value/length pairs), or none. */
 	readBack: undefined as unknown[] | undefined,
+	/** What each `SELECT total_changes()` answers, in order (0 when run out). */
+	totalChanges: [] as number[],
 	backupCreated: false,
 	locked: false,
 	beginCalls: 0,
@@ -41,6 +43,9 @@ function fakeDb(which: 'readOnly' | 'writable') {
 			connection.prepared.push(sql);
 			if (sql.startsWith('SELECT * FROM ')) {
 				return { columns: () => state.columns };
+			}
+			if (sql === 'SELECT total_changes()') {
+				return { pluck: () => ({ get: () => state.totalChanges.shift() ?? 0 }) };
 			}
 			const statement = {
 				raw: () => statement,
@@ -101,8 +106,16 @@ vi.mock('../../../main/sqlite/sqlite-identity', async (importOriginal) => ({
 		state.editability[object.name],
 }));
 
-import { updateSqliteCell } from '../../../main/sqlite/sqlite-row-edit';
-import type { SqliteCellUpdateRequest } from '../../../shared/sqlite/types';
+import {
+	deleteSqliteRow,
+	insertSqliteRow,
+	updateSqliteCell,
+} from '../../../main/sqlite/sqlite-row-edit';
+import type {
+	SqliteCellUpdateRequest,
+	SqliteRowDeleteRequest,
+	SqliteRowInsertRequest,
+} from '../../../shared/sqlite/types';
 
 function summary(name: string, kind: 'table' | 'view' = 'table') {
 	return {
@@ -167,6 +180,7 @@ beforeEach(() => {
 	];
 	state.returning = storedAsGiven(7n);
 	state.readBack = [7n, null, 'new@example.com', 15n, 'example.com', 11n];
+	state.totalChanges = [];
 	state.backupCreated = false;
 	state.locked = false;
 	state.beginCalls = 0;
@@ -433,5 +447,302 @@ describe('updateSqliteCell', () => {
 		await expect(updateSqliteCell(request({ column: '' }))).rejects.toThrow(
 			'A cell edit needs the column name.'
 		);
+	});
+});
+
+function insertRequest(extra: Partial<SqliteRowInsertRequest> = {}): SqliteRowInsertRequest {
+	return {
+		handle: 'h1',
+		editToken: 'token',
+		name: 'users',
+		values: { email: { type: 'text', text: 'new@example.com' } },
+		...extra,
+	};
+}
+
+function deleteRequest(extra: Partial<SqliteRowDeleteRequest> = {}): SqliteRowDeleteRequest {
+	return {
+		handle: 'h1',
+		editToken: 'token',
+		name: 'users',
+		row: { kind: 'rowid', rowid: '7' },
+		...extra,
+	};
+}
+
+describe('insertSqliteRow', () => {
+	it('runs one parameterised INSERT and returns the row as stored, read back by its new key', async () => {
+		state.returning = [[12n, 'text', 'new@example.com']];
+		state.readBack = [12n, null, 'new@example.com', 15n, 'example.com', 11n];
+		state.totalChanges = [4, 5];
+		const result = await insertSqliteRow(insertRequest());
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain(
+			'INSERT INTO "users" ("email") VALUES (?) RETURNING "rowid", typeof("email"), "email"'
+		);
+		expect(writable.updates).toEqual([['new@example.com']]);
+		expect(writable.reads).toEqual([[12n]]);
+		expect(writable.committed).toBe(1);
+		expect(result).toEqual({
+			name: 'users',
+			columns: [
+				{ name: 'id', declaredType: 'INTEGER' },
+				{ name: 'email', declaredType: 'TEXT' },
+				{ name: 'domain', declaredType: 'TEXT' },
+			],
+			row: [12, 'new@example.com', 'example.com'],
+			key: { kind: 'rowid', rowid: '12' },
+			otherChanges: 0,
+			elapsedMs: expect.any(Number),
+		});
+		// Nothing was written on the read-only connection; it only checked.
+		expect(state.connections.readOnly.updates).toEqual([]);
+	});
+
+	it('leaves every column to its DEFAULT when no value is given', async () => {
+		state.returning = [[13n]];
+		state.readBack = [13n, null, null, null, null, null];
+		const result = await insertSqliteRow(insertRequest({ values: {} }));
+		expect(state.connections.writable.prepared).toContain(
+			'INSERT INTO "users" DEFAULT VALUES RETURNING "rowid"'
+		);
+		expect(state.connections.writable.updates).toEqual([[]]);
+		expect(result.key).toEqual({ kind: 'rowid', rowid: '13' });
+	});
+
+	it('takes NULL in the rowid column as "assign the next rowid", and binds whole numbers as INTEGERs', async () => {
+		state.returning = (args) => [[21n, 'integer', 21n, storedType(args[1]), args[1]]];
+		state.readBack = [21n, null, null, null, null, null];
+		state.columns = [
+			{ name: 'id', type: 'INTEGER' },
+			{ name: 'score', type: null },
+		];
+		await insertSqliteRow(
+			insertRequest({
+				values: { id: { type: 'null', text: '' }, score: { type: 'number', text: '5' } },
+			})
+		);
+		expect(state.connections.writable.updates).toEqual([[null, 5n]]);
+	});
+
+	it('counts the rows its triggers and foreign-key actions changed beside it', async () => {
+		state.returning = [[12n, 'text', 'new@example.com']];
+		state.readBack = [12n, null, 'new@example.com', 15n, 'example.com', 11n];
+		state.totalChanges = [10, 13];
+		const result = await insertSqliteRow(insertRequest());
+		expect(result.otherChanges).toBe(2);
+	});
+
+	it('announces the backup only on the write that took it', async () => {
+		state.returning = [[12n, 'text', 'new@example.com']];
+		state.readBack = [12n, null, 'new@example.com', 15n, 'example.com', 11n];
+		state.backupCreated = true;
+		const result = await insertSqliteRow(insertRequest());
+		expect(result.backup?.path).toBe('/data/app.maestro-backup-x.db');
+	});
+
+	it('names the new row by its whole primary key', async () => {
+		state.columns = [
+			{ name: 'org', type: 'INTEGER' },
+			{ name: 'name', type: 'TEXT' },
+		];
+		state.returning = [[3n, 'ada', 'integer', 3n, 'text', 'ada']];
+		state.readBack = [3n, null, 'ada', 3n];
+		const result = await insertSqliteRow(
+			insertRequest({
+				name: 'members',
+				values: { org: { type: 'number', text: '3' }, name: { type: 'text', text: 'ada' } },
+			})
+		);
+		expect(state.connections.writable.prepared).toContain(
+			'INSERT INTO "members" ("org", "name") VALUES (?, ?) RETURNING "org", "name", typeof("org"), "org", typeof("name"), "name"'
+		);
+		expect(result.key).toEqual({
+			kind: 'primary-key',
+			values: { org: { type: 'integer', text: '3' }, name: { type: 'text', text: 'ada' } },
+		});
+	});
+
+	it('rolls back a new row whose primary key holds NULL, which no later edit could name', async () => {
+		state.columns = [
+			{ name: 'org', type: 'INTEGER' },
+			{ name: 'name', type: 'TEXT' },
+		];
+		state.returning = [[null, 'ada', 'text', 'ada']];
+		await expect(
+			insertSqliteRow(
+				insertRequest({ name: 'members', values: { name: { type: 'text', text: 'ada' } } })
+			)
+		).rejects.toThrow('The new row would have no key to name it by, so nothing was inserted');
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it('rolls back a value the column affinity converted', async () => {
+		state.columns = [
+			{ name: 'id', type: 'INTEGER' },
+			{ name: 'zip', type: 'INT' },
+		];
+		state.returning = [[12n, 'integer', 7n]];
+		await expect(
+			insertSqliteRow(insertRequest({ values: { zip: { type: 'text', text: '007' } } }))
+		).rejects.toThrow(
+			"zip has INTEGER affinity, so SQLite would store the text '007' as the integer 7. Nothing was inserted; to store a number, give it as a number."
+		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+		expect(state.connections.writable.reads).toEqual([]);
+	});
+
+	it('says so when a trigger dropped the row with RAISE(IGNORE)', async () => {
+		state.returning = [];
+		await expect(insertSqliteRow(insertRequest())).rejects.toThrow(
+			'A trigger on users dropped the new row (RAISE(IGNORE)), so nothing was inserted.'
+		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it("passes SQLite's constraint failure through verbatim, with nothing committed", async () => {
+		state.returning = new Error('NOT NULL constraint failed: users.email');
+		await expect(insertSqliteRow(insertRequest())).rejects.toThrow(
+			'NOT NULL constraint failed: users.email'
+		);
+		expect(state.connections.writable.committed).toBe(0);
+	});
+
+	it('refuses before the backup what it would refuse anyway', async () => {
+		await expect(insertSqliteRow(insertRequest({ name: 'active' }))).rejects.toThrow(
+			'active is a view.'
+		);
+		await expect(
+			insertSqliteRow(insertRequest({ values: { domain: { type: 'text', text: 'x' } } }))
+		).rejects.toThrow('domain is a generated column.');
+		await expect(
+			insertSqliteRow(insertRequest({ values: { nope: { type: 'text', text: 'x' } } }))
+		).rejects.toThrow('users has no column named nope.');
+		await expect(
+			insertSqliteRow(insertRequest({ values: { id: { type: 'number', text: '2.5' } } }))
+		).rejects.toThrow('2.5 is not one. Nothing was inserted.');
+		await expect(
+			insertSqliteRow(insertRequest({ values: { email: { type: 'number', text: 'abc' } } }))
+		).rejects.toThrow('email is set to Number, but "abc" is not a number.');
+		await expect(
+			insertSqliteRow(insertRequest({ values: [] as unknown as Record<string, never> }))
+		).rejects.toThrow('An insert takes its values as an object keyed by column name.');
+		await expect(insertSqliteRow(insertRequest({ name: '' }))).rejects.toThrow(
+			'An insert needs the table name.'
+		);
+		expect(state.beginCalls).toBe(0);
+		expect(state.connections.writable.prepared).toEqual([]);
+	});
+
+	it('refuses a tab that does not hold the unlock', async () => {
+		state.locked = true;
+		await expect(insertSqliteRow(insertRequest())).rejects.toThrow('Editing is not enabled.');
+		expect(state.beginCalls).toBe(0);
+	});
+});
+
+describe('deleteSqliteRow', () => {
+	it('runs one parameterised DELETE keyed on the rowid', async () => {
+		state.returning = [[7n]];
+		state.totalChanges = [2, 3];
+		const result = await deleteSqliteRow(deleteRequest());
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain('DELETE FROM "users" WHERE "rowid" = ? RETURNING "rowid"');
+		expect(writable.updates).toEqual([[7n]]);
+		expect(writable.committed).toBe(1);
+		expect(result).toEqual({
+			name: 'users',
+			key: { kind: 'rowid', rowid: '7' },
+			otherChanges: 0,
+			elapsedMs: expect.any(Number),
+		});
+		expect(state.connections.readOnly.updates).toEqual([]);
+	});
+
+	it('counts the rows ON DELETE CASCADE and triggers removed beside it', async () => {
+		state.returning = [[7n]];
+		state.totalChanges = [5, 10];
+		const result = await deleteSqliteRow(deleteRequest());
+		expect(result.otherChanges).toBe(4);
+	});
+
+	it('names a row by every primary-key column', async () => {
+		state.returning = [[3n, 'ada']];
+		const result = await deleteSqliteRow(
+			deleteRequest({
+				name: 'members',
+				row: {
+					kind: 'primary-key',
+					values: { name: { type: 'text', text: 'ada' }, org: { type: 'integer', text: '3' } },
+				},
+			})
+		);
+		expect(state.connections.writable.prepared).toContain(
+			'DELETE FROM "members" WHERE "org" = ? AND "name" = ? RETURNING "org", "name"'
+		);
+		expect(state.connections.writable.updates).toEqual([[3n, 'ada']]);
+		expect(result.key).toEqual({
+			kind: 'primary-key',
+			values: { org: { type: 'integer', text: '3' }, name: { type: 'text', text: 'ada' } },
+		});
+	});
+
+	it('rolls back, and says so, when no row has the key any more', async () => {
+		state.returning = [];
+		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow(
+			'users has no row with rowid 7: it was deleted or its key changed since it was read. Nothing was deleted; reload the table.'
+		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it('rolls back a delete that matched more than one row', async () => {
+		state.returning = [[7n], [8n]];
+		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow(
+			'matched 2 rows of users, so nothing was deleted'
+		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it("passes SQLite's FOREIGN KEY refusal through verbatim, with nothing committed", async () => {
+		state.returning = new Error('FOREIGN KEY constraint failed');
+		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow('FOREIGN KEY constraint failed');
+		expect(state.connections.writable.committed).toBe(0);
+	});
+
+	it('announces the backup only on the write that took it', async () => {
+		state.returning = [[7n]];
+		state.backupCreated = true;
+		const result = await deleteSqliteRow(deleteRequest());
+		expect(result.backup?.bytes).toBe(4096);
+	});
+
+	it('refuses before the backup what it would refuse anyway', async () => {
+		await expect(deleteSqliteRow(deleteRequest({ name: 'active' }))).rejects.toThrow(
+			'active is a view.'
+		);
+		await expect(
+			deleteSqliteRow(deleteRequest({ row: { kind: 'rowid', rowid: '7 OR 1=1' } }))
+		).rejects.toThrow('Not a rowid');
+		await expect(
+			deleteSqliteRow(
+				deleteRequest({
+					name: 'members',
+					row: { kind: 'primary-key', values: { org: null, name: { type: 'text', text: 'a' } } },
+				})
+			)
+		).rejects.toThrow("This row's primary key holds NULL in org");
+		await expect(deleteSqliteRow(deleteRequest({ name: '' }))).rejects.toThrow(
+			'A delete needs the table name.'
+		);
+		expect(state.beginCalls).toBe(0);
+		expect(state.connections.writable.prepared).toEqual([]);
+	});
+
+	it('refuses a tab that does not hold the unlock', async () => {
+		state.locked = true;
+		await expect(deleteSqliteRow(deleteRequest({ editToken: 'forged' }))).rejects.toThrow(
+			'Editing is not enabled.'
+		);
+		expect(state.beginCalls).toBe(0);
 	});
 });

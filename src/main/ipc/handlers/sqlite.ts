@@ -12,7 +12,8 @@
  * forget what ran against the file, a BLOB save writes the
  * value to disk here rather than shipping it, the editing switch hands one
  * tab a write token (sqlite-editing.ts) without writing anything, a cell edit
- * sends that token back with one single-row UPDATE (sqlite-row-edit.ts), and
+ * sends that token back with one single-row UPDATE (sqlite-row-edit.ts), an
+ * insert or a delete with one single-row INSERT or DELETE (same file), and
  * the connections stay in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
@@ -40,6 +41,10 @@ import type {
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
+	SqliteRowDeleteRequest,
+	SqliteRowDeleteResult,
+	SqliteRowInsertRequest,
+	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../../shared/sqlite/types';
@@ -55,7 +60,7 @@ import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
 } from '../../sqlite/sqlite-query-history';
-import { updateSqliteCell } from '../../sqlite/sqlite-row-edit';
+import { deleteSqliteRow, insertSqliteRow, updateSqliteCell } from '../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
@@ -209,6 +214,19 @@ export function registerSqliteHandlers(): void {
 		'sqlite:updateCell',
 		async (_event, request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> =>
 			updateSqliteCell(request)
+	);
+
+	// The table view's Insert row and the record view's Delete row: one
+	// single-row INSERT or DELETE, gated and backed up the same way.
+	ipcMain.handle(
+		'sqlite:insertRow',
+		async (_event, request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> =>
+			insertSqliteRow(request)
+	);
+	ipcMain.handle(
+		'sqlite:deleteRow',
+		async (_event, request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> =>
+			deleteSqliteRow(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are

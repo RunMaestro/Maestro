@@ -72,7 +72,8 @@ export function openReadOnlySqliteConnection(filePath: string): Database.Databas
 
 /**
  * Open `filePath` for WRITING, with every other guard the read-only open has
- * (never created, `trusted_schema = OFF`, the short busy timeout).
+ * (never created, `trusted_schema = OFF`, the short busy timeout), and with
+ * `foreign_keys = ON`, so writes keep the constraints the schema declares.
  *
  * Only the editing unlock opens one (`openSqliteWriteConnection()` in
  * sqlite-editing.ts), after the write gate and the backup. Nothing else may
@@ -96,6 +97,11 @@ function openSqliteConnection(filePath: string, readonly: boolean): Database.Dat
 
 	try {
 		db.pragma('trusted_schema = OFF');
+		// SQLite leaves foreign keys off per connection. A write enforces the
+		// ones the schema declares, as the apps that own these files do, so a
+		// delete that would orphan a child fails with SQLite's words and a
+		// declared cascade is counted, never skipped (sqlite-row-edit.ts).
+		if (!readonly) db.pragma('foreign_keys = ON');
 		// SQLite reads page 1 lazily, so an encrypted or damaged file opens
 		// "successfully". Reading the schema cookie forces that read here, where
 		// the failure can name the file, instead of on the first query.

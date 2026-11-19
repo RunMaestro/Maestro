@@ -262,6 +262,10 @@ import type {
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
+	SqliteRowDeleteRequest,
+	SqliteRowDeleteResult,
+	SqliteRowInsertRequest,
+	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../shared/sqlite/types';
@@ -2014,6 +2018,8 @@ interface MaestroAPI {
 		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
 		disableEditing: (handle: string, editToken: string) => Promise<boolean>;
 		updateCell: (request: SqliteCellUpdateRequest) => Promise<SqliteCellUpdateResult>;
+		insertRow: (request: SqliteRowInsertRequest) => Promise<SqliteRowInsertResult>;
+		deleteRow: (request: SqliteRowDeleteRequest) => Promise<SqliteRowDeleteResult>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

@@ -47,7 +47,11 @@ const history = vi.hoisted(() => ({
 	readSqliteQueryHistory: vi.fn(),
 	forgetSqliteQueryHistory: vi.fn(),
 }));
-const rowEdit = vi.hoisted(() => ({ updateSqliteCell: vi.fn() }));
+const rowEdit = vi.hoisted(() => ({
+	updateSqliteCell: vi.fn(),
+	insertSqliteRow: vi.fn(),
+	deleteSqliteRow: vi.fn(),
+}));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
@@ -79,10 +83,12 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:checkIntegrity',
 			'sqlite:close',
 			'sqlite:countRows',
+			'sqlite:deleteRow',
 			'sqlite:disableEditing',
 			'sqlite:enableEditing',
 			'sqlite:exportQuery',
 			'sqlite:forgetQueryHistory',
+			'sqlite:insertRow',
 			'sqlite:listObjects',
 			'sqlite:open',
 			'sqlite:readColumns',
@@ -297,6 +303,49 @@ describe('SQLite IPC handlers', () => {
 		rowEdit.updateSqliteCell.mockRejectedValue(new Error('UNIQUE constraint failed: users.email'));
 		await expect(invoke('sqlite:updateCell', request)).rejects.toThrow(
 			'UNIQUE constraint failed: users.email'
+		);
+	});
+
+	it('forwards an insert, token and all, to the one INSERT path', async () => {
+		const request = {
+			handle: 'h1',
+			editToken: 't1',
+			name: 'users',
+			values: { email: { type: 'text', text: 'a@b.c' } },
+		};
+		const result = {
+			name: 'users',
+			columns: [],
+			row: [8, 'a@b.c'],
+			key: { kind: 'rowid', rowid: '8' },
+			otherChanges: 0,
+			elapsedMs: 1,
+		};
+		rowEdit.insertSqliteRow.mockResolvedValue(result);
+		await expect(invoke('sqlite:insertRow', request)).resolves.toEqual(result);
+		expect(rowEdit.insertSqliteRow).toHaveBeenCalledWith(request);
+
+		rowEdit.insertSqliteRow.mockRejectedValue(new Error('NOT NULL constraint failed: users.name'));
+		await expect(invoke('sqlite:insertRow', request)).rejects.toThrow(
+			'NOT NULL constraint failed: users.name'
+		);
+	});
+
+	it('forwards a delete, token and all, to the one DELETE path', async () => {
+		const request = {
+			handle: 'h1',
+			editToken: 't1',
+			name: 'users',
+			row: { kind: 'rowid', rowid: '7' },
+		};
+		const result = { name: 'users', key: request.row, otherChanges: 2, elapsedMs: 1 };
+		rowEdit.deleteSqliteRow.mockResolvedValue(result);
+		await expect(invoke('sqlite:deleteRow', request)).resolves.toEqual(result);
+		expect(rowEdit.deleteSqliteRow).toHaveBeenCalledWith(request);
+
+		rowEdit.deleteSqliteRow.mockRejectedValue(new Error('FOREIGN KEY constraint failed'));
+		await expect(invoke('sqlite:deleteRow', request)).rejects.toThrow(
+			'FOREIGN KEY constraint failed'
 		);
 	});
 

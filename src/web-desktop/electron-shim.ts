@@ -273,9 +273,15 @@ function requestTimeoutMs(channel: string): number {
 	}
 	// Main stops an export at its own 10-minute timeout; leave room for the reply.
 	if (channel === 'sqlite:exportQuery') return SQLITE_EXPORT_TIMEOUT_MS + 60_000;
-	// The first cell edit of a session waits for the file's VACUUM INTO backup,
+	// The first write of a session (a cell edit, an insert, a delete) waits for the file's VACUUM INTO backup,
 	// which main stops at 10 minutes; leave room for the reply.
-	if (channel === 'sqlite:updateCell') return 11 * 60_000;
+	if (
+		channel === 'sqlite:updateCell' ||
+		channel === 'sqlite:insertRow' ||
+		channel === 'sqlite:deleteRow'
+	) {
+		return 11 * 60_000;
+	}
 	return isSubmissionChannel(channel) ? BRIDGE_MUTATION_TIMEOUT_MS : BRIDGE_READ_TIMEOUT_MS;
 }
 

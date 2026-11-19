@@ -122,6 +122,28 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:updateCell', request);
 	});
 
+	it('inserts and deletes one row', async () => {
+		const insert = {
+			handle: 'h1',
+			editToken: 't1',
+			name: 'users',
+			values: { age: { type: 'number' as const, text: '42' } },
+		};
+		mockInvoke.mockResolvedValue({ name: 'users', row: [9, 42] });
+		await api.insertRow(insert);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:insertRow', insert);
+
+		const remove = {
+			handle: 'h1',
+			editToken: 't1',
+			name: 'users',
+			row: { kind: 'rowid' as const, rowid: '9' },
+		};
+		mockInvoke.mockResolvedValue({ name: 'users', otherChanges: 0 });
+		await api.deleteRow(remove);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:deleteRow', remove);
+	});
+
 	it('runs a query and stops one by id', async () => {
 		const request = { handle: 'h1', sql: 'SELECT 1', queryId: 'q1' };
 		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });

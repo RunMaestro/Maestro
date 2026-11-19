@@ -62,10 +62,23 @@
  * reported in the footer with the editor still open, never written converted
  * (`sqliteCellEditValueProblem()` here, `sqliteStoredValueProblem()` in main).
  * The first save of a session announces where the file's backup went.
+ *
+ * On an editable table the footer offers Insert row: a form with one field
+ * per column, each left to its DEFAULT, given a value (bound by the same
+ * affinity rule), or NULL (SqliteInsertRowModal), sent as one INSERT
+ * (`sqlite:insertRow`). A refusal, the form's or SQLite's own words for a
+ * failed constraint, shows in the form with the values kept. After an insert
+ * the first window is read again, since where the row lands depends on the
+ * sort and filter. The record view offers Delete row, which asks once more
+ * and sends the row's key to `sqlite:deleteRow`; its outcome shows in the
+ * record view. A delete that changed only its own row drops that line in
+ * place (the record view steps to the next row); one whose triggers or
+ * foreign-key actions changed other rows reads the first window again. Either
+ * write counts the rows again from the start.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download } from 'lucide-react';
+import { Download, Plus, Trash2 } from 'lucide-react';
 
 import { formatCount, formatSize } from '../../../shared/formatters';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
@@ -78,6 +91,7 @@ import {
 	sqliteEditabilityLabel,
 } from '../../../shared/sqlite/schema';
 import type {
+	SqliteBackup,
 	SqliteCellValue,
 	SqliteCountCursor,
 	SqliteEditability,
@@ -101,6 +115,7 @@ import {
 import { RecordDetailModal, type RecordDetailField } from '../ui/RecordDetailModal';
 import { Spinner } from '../ui/Spinner';
 import { SqliteCellEditor } from './SqliteCellEditor';
+import { SqliteInsertRowModal } from './SqliteInsertRowModal';
 import {
 	sqliteCellEditDraft,
 	sqliteCellEditRefusal,
@@ -108,9 +123,11 @@ import {
 	sqliteCellEditValue,
 	sqliteCellEditValueProblem,
 	sqliteRowKeyAt,
+	sqliteRowKeyRefusal,
 	type SqliteCellDraft,
 } from './sqliteCellEdit';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
+import { sqliteInsertColumns, sqliteInsertValues, type SqliteInsertDraft } from './sqliteRowInsert';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
 const PAGE_SIZE = 300;
@@ -172,6 +189,22 @@ const BLOB_HINT = 'Double-click the row to save it to a file';
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** The first write of a session says where the file's backup went, once. */
+function announceBackup(backup: SqliteBackup | undefined): void {
+	if (!backup) return;
+	notifyToast({
+		color: 'green',
+		title: 'Database backed up before the first change',
+		message: `${formatSize(backup.bytes)} copy saved to ${backup.path}`,
+	});
+}
+
+/** ", and 3 other rows changed by triggers or foreign-key actions", or nothing. */
+function otherChangesText(otherChanges: number): string {
+	if (otherChanges <= 0) return '';
+	return `; the database's triggers and foreign-key actions changed ${formatCount(otherChanges)} other ${otherChanges === 1 ? 'row' : 'rows'}`;
 }
 
 interface SqliteTableViewProps {
@@ -241,6 +274,18 @@ export function SqliteTableView({
 	const [busy, setBusy] = useState(false);
 	/** Position of the row open in the record view, or null when it is closed. */
 	const [detailRow, setDetailRow] = useState<number | null>(null);
+	/** The Insert row form is open, what it holds, and its last refusal. */
+	const [insertOpen, setInsertOpen] = useState(false);
+	const [insertDraft, setInsertDraft] = useState<SqliteInsertDraft>({});
+	const [inserting, setInserting] = useState(false);
+	const [insertProblem, setInsertProblem] = useState<string | null>(null);
+	/** Position of the row whose Delete was clicked once and waits for the second click. */
+	const [deleteArmed, setDeleteArmed] = useState<number | null>(null);
+	const [deleting, setDeleting] = useState(false);
+	/** The last delete's outcome, shown in the record view where it was clicked. */
+	const [deleteStatus, setDeleteStatus] = useState<{ text: string; error: boolean } | null>(null);
+	/** Bumped when a write changed the row set, so the count starts over. */
+	const [countEpoch, setCountEpoch] = useState(0);
 
 	/** Bumped on every sort or filter change; a reply for an older one is dropped. */
 	const generation = useRef(0);
@@ -319,6 +364,8 @@ export function SqliteTableView({
 		if (editToken !== null) return;
 		setEditingCell(null);
 		setEditStatus(null);
+		setInsertOpen(false);
+		setDeleteArmed(null);
 	}, [editToken]);
 
 	const handleReachEnd = useCallback(() => {
@@ -329,6 +376,26 @@ export function SqliteTableView({
 	// -- Converging count ---------------------------------------------------
 
 	const countRef = useRef<CountProgress | null>(null);
+
+	/** Count the rows again from the first one: a write added or removed some. */
+	const restartCount = useCallback(() => {
+		countRef.current = null;
+		setCountEpoch((epoch) => epoch + 1);
+	}, []);
+
+	/**
+	 * Read the first window again under the same sort and filter, keeping the
+	 * footer's edit status: an insert, or a delete that changed other rows,
+	 * leaves the loaded rows stale.
+	 */
+	const reloadRows = useStableCallback(() => {
+		generation.current++;
+		setError(null);
+		setDetailRow(null);
+		setEditingCell(null);
+		restartCount();
+		void fetchWindow(0);
+	});
 	const countAll = countAllFor === appliedFilter;
 	const reportSettled = useStableCallback((rowCount: number) => {
 		onRowCountSettled?.(name, rowCount);
@@ -394,7 +461,8 @@ export function SqliteTableView({
 		return () => {
 			cancelled = true;
 		};
-	}, [handle, name, appliedFilter, countAll, reportSettled]);
+		// countEpoch: a write changed how many rows there are, so count again.
+	}, [handle, name, appliedFilter, countAll, reportSettled, countEpoch]);
 
 	useEffect(() => {
 		if (!focusFilterRequested) return;
@@ -494,13 +562,7 @@ export function SqliteTableView({
 				row: key,
 				value,
 			});
-			if (result.backup) {
-				notifyToast({
-					color: 'green',
-					title: 'Database backed up before the first change',
-					message: `${formatSize(result.backup.bytes)} copy saved to ${result.backup.path}`,
-				});
-			}
+			announceBackup(result.backup);
 			// A new sort or filter since the save started moved the rows; the
 			// next window shows the change.
 			if (token !== generation.current) return;
@@ -564,6 +626,113 @@ export function SqliteTableView({
 		},
 		[columns, strict, editDraft, commitEdit, cancelEdit, savingCell, theme]
 	);
+
+	// -- Insert row ---------------------------------------------------------
+
+	const insertColumns = useMemo(
+		() => sqliteInsertColumns(columns ?? [], editability),
+		[columns, editability]
+	);
+
+	const openInsert = useCallback(() => {
+		setEditingCell(null);
+		setInsertDraft({});
+		setInsertProblem(null);
+		setInsertOpen(true);
+	}, []);
+
+	const closeInsert = useCallback(() => {
+		if (!inserting) setInsertOpen(false);
+	}, [inserting]);
+
+	const submitInsert = useStableCallback(async () => {
+		if (inserting || !editToken) return;
+		const planned = sqliteInsertValues(insertColumns, insertDraft, strict);
+		if ('problem' in planned) {
+			// The form stays open and filled, so the value can be fixed.
+			setInsertProblem(planned.problem);
+			return;
+		}
+		setInserting(true);
+		setInsertProblem(null);
+		try {
+			const result = await window.maestro.sqlite.insertRow({
+				handle,
+				editToken,
+				name,
+				values: planned.values,
+			});
+			announceBackup(result.backup);
+			setInsertOpen(false);
+			const key =
+				result.key.kind === 'rowid'
+					? `rowid ${result.key.rowid}`
+					: `primary key (${Object.entries(result.key.values)
+							.map(([column, value]) => `${column} = ${value === null ? 'NULL' : value.text}`)
+							.join(', ')})`;
+			// Where the new row lands depends on the sort and filter: read again.
+			reloadRows();
+			setEditStatus({
+				text: `Inserted a row with ${key} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,
+				error: false,
+			});
+		} catch (failure) {
+			// SQLite's own words (a constraint), with the form still filled.
+			setInsertProblem(ipcErrorMessage(failure));
+		} finally {
+			setInserting(false);
+		}
+	});
+
+	// -- Delete row ---------------------------------------------------------
+
+	const deleteRow = useStableCallback(async (rowPosition: number) => {
+		if (deleting || !editToken) return;
+		const key = sqliteRowKeyAt(editability, rowids, rowKeys, rowPosition);
+		const refusal = sqliteRowKeyRefusal(key);
+		if (refusal || !key) {
+			setDeleteArmed(null);
+			setDeleteStatus({ text: refusal ?? 'This row cannot be named.', error: true });
+			return;
+		}
+		const token = generation.current;
+		setDeleting(true);
+		try {
+			const result = await window.maestro.sqlite.deleteRow({ handle, editToken, name, row: key });
+			announceBackup(result.backup);
+			setDeleteArmed(null);
+			const outcome = {
+				text: `Deleted row ${formatCount(rowPosition + 1)} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,
+				error: false,
+			};
+			setEditStatus(outcome);
+			setDeleteStatus(outcome);
+			if (token !== generation.current) return;
+			setEditingCell(null);
+			if (result.otherChanges > 0) {
+				// A cascade or a trigger may have changed rows on screen: read again.
+				reloadRows();
+				return;
+			}
+			// Only this row went: drop it in place, so the record view steps to the
+			// next one and the next window still starts where the loaded rows end.
+			const drop = <T,>(list: T[] | null) =>
+				list ? list.filter((_entry, position) => position !== rowPosition) : null;
+			setRows((previous) => drop(previous) ?? []);
+			setRowids(drop);
+			setRowKeys(drop);
+			if (rows.length <= 1) setDetailRow(null);
+			restartCount();
+		} catch (failure) {
+			// SQLite's own words, such as a FOREIGN KEY a child row still holds.
+			setDeleteArmed(null);
+			if (token === generation.current) {
+				setDeleteStatus({ text: ipcErrorMessage(failure), error: true });
+			}
+		} finally {
+			setDeleting(false);
+		}
+	});
 
 	// -- Record view --------------------------------------------------------
 
@@ -636,11 +805,21 @@ export function SqliteTableView({
 		(next: number) => {
 			const clamped = Math.max(0, Math.min(next, rows.length - 1));
 			setDetailRow(clamped);
+			setDeleteArmed(null);
+			setDeleteStatus(null);
 			if (clamped >= rows.length - RECORD_PREFETCH_ROWS) handleReachEnd();
 		},
 		[rows.length, handleReachEnd]
 	);
-	const closeRecord = useCallback(() => setDetailRow(null), []);
+	const openRecord = useCallback((rowPosition: number) => {
+		setDetailRow(rowPosition);
+		setDeleteArmed(null);
+		setDeleteStatus(null);
+	}, []);
+	const closeRecord = useCallback(() => {
+		setDetailRow(null);
+		setDeleteArmed(null);
+	}, []);
 
 	if (columns === null) {
 		if (error) {
@@ -708,14 +887,14 @@ export function SqliteTableView({
 					getRowLabel={getRowLabel}
 					gutterTitle={
 						canEditCells
-							? 'Row number in the current order. Double-click it to open the row; double-click a cell to edit it.'
+							? 'Row number in the current order. Double-click it to open the row (Delete row is there); double-click a cell to edit it.'
 							: 'Row number in the current order'
 					}
 					theme={theme}
 					sort={sort}
 					onSortChange={handleSortChange}
 					onReachEnd={handleReachEnd}
-					onOpenRow={setDetailRow}
+					onOpenRow={openRecord}
 					onEditCell={canEditCells ? handleEditCell : undefined}
 					editingCell={canEditCells ? editingCell : null}
 					renderCellEditor={canEditCells ? renderCellEditor : undefined}
@@ -762,6 +941,20 @@ export function SqliteTableView({
 					</span>
 				)}
 				{orderText && <span>{orderText}</span>}
+				{canEditCells && (
+					<button
+						type="button"
+						className="flex items-center gap-1 underline disabled:opacity-50"
+						onClick={openInsert}
+						disabled={inserting}
+						style={{ color: theme.colors.accentText }}
+						title={`Add a row to ${name}: each column takes its default unless you give a value`}
+						data-testid="sqlite-insert-row"
+					>
+						<Plus className="w-3 h-3" />
+						Insert row
+					</button>
+				)}
 				{editingEnabled && editability && (
 					<span
 						style={{
@@ -811,6 +1004,67 @@ export function SqliteTableView({
 					priority={MODAL_PRIORITIES.TABLE_ROW_DETAIL}
 					resizeKey="sqlite-row-detail"
 					testIdPrefix="sqlite-row-detail"
+					headerActions={
+						canEditCells ? (
+							<button
+								type="button"
+								className="flex items-center gap-1.5 px-2.5 py-1 mr-1 rounded-lg text-xs font-medium transition-colors hover:bg-white/10 disabled:opacity-50"
+								onClick={() =>
+									deleteArmed === detailIndex
+										? void deleteRow(detailIndex)
+										: setDeleteArmed(detailIndex)
+								}
+								onBlur={() => {
+									if (!deleting) setDeleteArmed(null);
+								}}
+								disabled={deleting}
+								style={{
+									color:
+										deleteArmed === detailIndex
+											? theme.colors.accentForeground
+											: theme.colors.error,
+									backgroundColor: deleteArmed === detailIndex ? theme.colors.error : undefined,
+								}}
+								title={
+									deleteArmed === detailIndex
+										? 'Click again to delete this row from the database'
+										: `Delete this row from ${name} (asks once more)`
+								}
+								data-testid="sqlite-delete-row"
+							>
+								{deleting ? <Spinner size={12} decorative /> : <Trash2 className="w-3 h-3" />}
+								{deleting
+									? 'Deleting...'
+									: deleteArmed === detailIndex
+										? 'Confirm delete'
+										: 'Delete row'}
+							</button>
+						) : undefined
+					}
+					notice={
+						deleteStatus ? (
+							<span
+								style={{ color: deleteStatus.error ? theme.colors.error : theme.colors.textDim }}
+								data-testid="sqlite-delete-status"
+							>
+								{deleteStatus.text}
+							</span>
+						) : undefined
+					}
+				/>
+			)}
+			{insertOpen && canEditCells && (
+				<SqliteInsertRowModal
+					table={name}
+					columns={insertColumns}
+					strict={strict}
+					draft={insertDraft}
+					onDraftChange={setInsertDraft}
+					onInsert={() => void submitInsert()}
+					onClose={closeInsert}
+					saving={inserting}
+					problem={insertProblem}
+					theme={theme}
 				/>
 			)}
 		</div>

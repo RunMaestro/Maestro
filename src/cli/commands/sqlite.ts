@@ -36,14 +36,25 @@
 //       -> the table view's cell edit: one single-row UPDATE keyed on the
 //          row's rowid or primary key; --enable-editing is the per-call
 //          unlock, and the session's first change backs the file up first
+//   maestro-cli sqlite insert <path> <table> [--value <col=value>]...
+//                             [--value-number <col=n>]... [--null <col>]...
+//                             --enable-editing [--json]
+//       -> the table view's Insert row: one INSERT, columns not given taking
+//          their DEFAULT; a constraint failure is reported in SQLite's words
+//   maestro-cli sqlite delete <path> <table> (--rowid <id> | --key <col=value>...)
+//                             --enable-editing [--json]
+//       -> the record view's Delete row: one single-row DELETE keyed on the
+//          row's rowid or primary key, with the rows foreign-key actions and
+//          triggers changed beside it counted
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
 // `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`,
-// `sqlite_export_query`, `sqlite_query_history`, `sqlite_update_cell`) to the running
+// `sqlite_export_query`, `sqlite_query_history`, `sqlite_update_cell`,
+// `sqlite_insert_row`, `sqlite_delete_row`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there (only
-// `set` writes, through the viewer's own editing gate and backup); a
+// `set`, `insert`, and `delete` write, through the viewer's own editing gate and backup); a
 // BLOB or an export is written to `--output` by the app, so its bytes never
 // ride the socket.
 
@@ -52,7 +63,7 @@ import { failFromError } from '../services/session-command';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatTextTable } from '../output/formatter';
 import { resolveCliPath } from '../utils/parse';
-import { formatRelativeTime, formatSize } from '../../shared/formatters';
+import { formatCount, formatRelativeTime, formatSize } from '../../shared/formatters';
 import {
 	SQLITE_OBJECT_KINDS,
 	SQLITE_OBJECT_KIND_LABELS,
@@ -97,6 +108,7 @@ import {
 } from '../../shared/sqlite/plan';
 import { formatSqliteIntegrity, sqliteSummaryFacts } from '../../shared/sqlite/summary';
 import type {
+	SqliteBackup,
 	SqliteBlobSaved,
 	SqliteCellUpdateResult,
 	SqliteDatabaseInfo,
@@ -116,6 +128,8 @@ import type {
 	SqliteQueryHistoryEntry,
 	SqliteQueryResult,
 	SqliteRowCount,
+	SqliteRowDeleteResult,
+	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteCellValue,
 	SqliteKeyValue,
@@ -1145,14 +1159,6 @@ interface SqliteSetOptions {
 	json?: boolean;
 }
 
-interface SqliteUpdateReply {
-	type: string;
-	success: boolean;
-	error?: string;
-	database?: SqliteDatabaseInfo;
-	result?: SqliteCellUpdateResult;
-}
-
 /**
  * The row a `sqlite set` names, from flags: `--rowid <id>`, or one `--key`
  * / `--key-number column=value` per primary-key column. Throws a message on
@@ -1239,32 +1245,12 @@ export async function sqliteSet(
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 
-	let reply: SqliteUpdateReply;
-	try {
-		reply = await withMaestroClient((client) =>
-			client.sendCommand<SqliteUpdateReply>(
-				{
-					type: 'sqlite_update_cell',
-					path: filePath,
-					name,
-					column,
-					row,
-					value,
-					enableEditing: true,
-				},
-				'sqlite_update_result',
-				// The first change of a session waits for the backup.
-				SQLITE_EXPORT_TIMEOUT_MS + 60_000
-			)
-		);
-	} catch (error) {
-		failFromError(error, options.json);
-	}
-	if (!reply.success || !reply.database || !reply.result) {
-		fail(reply.error || `Could not change ${column} of ${name} in ${filePath}`, options.json);
-	}
-
-	const { database, result } = reply;
+	const { database, result } = await sendSqliteWrite<SqliteCellUpdateResult>(
+		{ type: 'sqlite_update_cell', path: filePath, name, column, row, value },
+		'sqlite_update_result',
+		`Could not change ${column} of ${name} in ${filePath}`,
+		options.json
+	);
 	if (options.json) {
 		console.log(
 			JSON.stringify({
@@ -1283,20 +1269,224 @@ export async function sqliteSet(
 	}
 	const position = result.columns.findIndex((entry) => entry.name === result.column);
 	const cell = position >= 0 ? formatSqliteCell(result.row[position] ?? null).text : '';
-	const keyText =
-		result.key.kind === 'rowid'
-			? `rowid ${result.key.rowid}`
-			: Object.entries(result.key.values)
-					.map(
-						([keyColumn, keyValue]) =>
-							`${keyColumn} = ${keyValue === null ? 'NULL' : keyValue.text}`
-					)
-					.join(', ');
-	const lines = [`Set ${result.column} of ${result.name} (${keyText}) to ${cell}.`];
+	const lines = [
+		`Set ${result.column} of ${result.name} (${rowKeyText(result.key)}) to ${cell}.`,
+		...writeNoteLines(database, result),
+	];
+	console.log(lines.join('\n'));
+}
+
+/** A row's key as a line names it: `rowid 42`, or `org = acme, name = ada`. */
+function rowKeyText(key: SqliteRowKey): string {
+	return key.kind === 'rowid'
+		? `rowid ${key.rowid}`
+		: Object.entries(key.values)
+				.map(
+					([keyColumn, keyValue]) => `${keyColumn} = ${keyValue === null ? 'NULL' : keyValue.text}`
+				)
+				.join(', ');
+}
+
+/** What a write did beside its own row, and where the session's backup went. */
+function writeNoteLines(
+	database: SqliteDatabaseInfo,
+	result: { otherChanges?: number; backup?: SqliteBackup }
+): string[] {
+	const lines: string[] = [];
+	if (result.otherChanges) {
+		lines.push(
+			`The database's triggers and foreign-key actions changed ${formatCount(result.otherChanges)} other ${result.otherChanges === 1 ? 'row' : 'rows'}.`
+		);
+	}
 	if (result.backup) {
 		lines.push(
 			`Backed up ${database.displayPath} before this first change: ${result.backup.path} (${formatSize(result.backup.bytes)}).`
 		);
 	}
-	console.log(lines.join('\n'));
+	return lines;
+}
+
+/** Send one write verb's message and return its reply, or exit with its failure. */
+async function sendSqliteWrite<T>(
+	message: Record<string, unknown>,
+	replyType: string,
+	failure: string,
+	json: boolean | undefined
+): Promise<{ database: SqliteDatabaseInfo; result: T }> {
+	let reply: SqliteWriteReply<T>;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteWriteReply<T>>(
+				{ ...message, enableEditing: true },
+				replyType,
+				// The first change of a session waits for the backup.
+				SQLITE_EXPORT_TIMEOUT_MS + 60_000
+			)
+		);
+	} catch (error) {
+		failFromError(error, json);
+	}
+	if (!reply.success || !reply.database || !reply.result) fail(reply.error || failure, json);
+	return { database: reply.database, result: reply.result };
+}
+
+interface SqliteWriteReply<T> {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	result?: T;
+}
+
+interface SqliteInsertOptions {
+	/** `column=value` pairs, bound as TEXT. */
+	value?: string[];
+	/** `column=value` pairs, bound as numbers. */
+	valueNumber?: string[];
+	/** Columns set to NULL. */
+	null?: string[];
+	/** The per-call unlock: without it nothing is written. */
+	enableEditing?: boolean;
+	json?: boolean;
+}
+
+/**
+ * The values a `sqlite insert` writes, keyed by column, from its repeatable
+ * `--value`, `--value-number column=value` and `--null column` flags. Throws
+ * a message on a malformed pair or a column given twice.
+ */
+export function sqliteInsertValuesFromFlags(
+	options: Pick<SqliteInsertOptions, 'value' | 'valueNumber' | 'null'>
+): Record<string, SqliteParameterValue> {
+	const values: Record<string, SqliteParameterValue> = {};
+	const assign = (column: string, value: SqliteParameterValue) => {
+		if (Object.prototype.hasOwnProperty.call(values, column)) {
+			throw new Error(`Column ${column} is given more than once`);
+		}
+		values[column] = value;
+	};
+	const pairs = (flag: string, list: string[] | undefined, type: 'text' | 'number') => {
+		for (const pair of list ?? []) {
+			const equals = pair.indexOf('=');
+			if (equals <= 0) throw new Error(`${flag} takes column=value (got "${pair}")`);
+			assign(pair.slice(0, equals), { type, text: pair.slice(equals + 1) });
+		}
+	};
+	pairs('--value', options.value, 'text');
+	pairs('--value-number', options.valueNumber, 'number');
+	for (const column of options.null ?? []) {
+		if (!column) throw new Error('--null takes a column name');
+		assign(column, { type: 'null', text: '' });
+	}
+	return values;
+}
+
+/**
+ * `maestro-cli sqlite insert <path> <table>` - add one row the way the
+ * viewer's Insert row does: one parameterised INSERT, columns not given
+ * taking their DEFAULT, in the app, refused unless `--enable-editing`
+ * unlocks editing for this call. A constraint SQLite refuses the row on is
+ * reported in SQLite's words.
+ */
+export async function sqliteInsert(
+	file: string,
+	name: string,
+	options: SqliteInsertOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!options.enableEditing) fail(SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE, options.json);
+	let values: Record<string, SqliteParameterValue>;
+	try {
+		values = sqliteInsertValuesFromFlags(options);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	const { database, result } = await sendSqliteWrite<SqliteRowInsertResult>(
+		{ type: 'sqlite_insert_row', path: filePath, name, values },
+		'sqlite_insert_result',
+		`Could not insert a row into ${name} in ${filePath}`,
+		options.json
+	);
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				name: result.name,
+				columns: result.columns.map((entry) => entry.name),
+				row: result.row,
+				key: result.key,
+				otherChanges: result.otherChanges,
+				backup: result.backup ?? null,
+				elapsedMs: result.elapsedMs,
+			})
+		);
+		return;
+	}
+	console.log(
+		[
+			`Inserted a row into ${result.name} (${rowKeyText(result.key)}):`,
+			rowsTable(
+				result.columns.map((entry) => entry.name),
+				[result.row]
+			),
+			...writeNoteLines(database, result),
+		].join('\n')
+	);
+}
+
+interface SqliteDeleteOptions extends Pick<SqliteSetOptions, 'rowid' | 'key' | 'keyNumber'> {
+	/** The per-call unlock: without it nothing is written. */
+	enableEditing?: boolean;
+	json?: boolean;
+}
+
+/**
+ * `maestro-cli sqlite delete <path> <table>` - remove one row the way the
+ * record view's Delete row does: one parameterised DELETE of the row named by
+ * its rowid or primary key, in the app, refused unless `--enable-editing`
+ * unlocks editing for this call. Rows the database's foreign-key actions and
+ * triggers changed as a result are counted.
+ */
+export async function sqliteDelete(
+	file: string,
+	name: string,
+	options: SqliteDeleteOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!options.enableEditing) fail(SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE, options.json);
+	let row: SqliteRowKey;
+	try {
+		row = sqliteRowKeyFromFlags(options);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	const { database, result } = await sendSqliteWrite<SqliteRowDeleteResult>(
+		{ type: 'sqlite_delete_row', path: filePath, name, row },
+		'sqlite_delete_result',
+		`Could not delete the row from ${name} in ${filePath}`,
+		options.json
+	);
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				name: result.name,
+				key: result.key,
+				otherChanges: result.otherChanges,
+				backup: result.backup ?? null,
+				elapsedMs: result.elapsedMs,
+			})
+		);
+		return;
+	}
+	console.log(
+		[
+			`Deleted the row with ${rowKeyText(result.key)} from ${result.name}.`,
+			...writeNoteLines(database, result),
+		].join('\n')
+	);
 }

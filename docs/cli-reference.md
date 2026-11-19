@@ -3470,6 +3470,30 @@ Change one cell the way the viewer's table view does: one parameterised UPDATE o
 | `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                     | -       |
 | `--json`                      | Output as JSON (for scripting)                                                                                   | -       |
 
+## `maestro-cli sqlite insert <path> <table>`
+
+Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                          | Description                                                                                  | Default |
+| ------------------------------- | -------------------------------------------------------------------------------------------- | ------- |
+| `--value <column=value>`        | A column value, bound as TEXT (repeatable; the column affinity must keep it as text)         | `[]`    |
+| `--value-number <column=value>` | A column value, bound as a number (repeatable)                                               | `[]`    |
+| `--null <column>`               | Set a column to NULL (repeatable); a NULL rowid column takes the next rowid                  | `[]`    |
+| `--enable-editing`              | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
+| `--json`                        | Output as JSON (for scripting)                                                               | -       |
+
+## `maestro-cli sqlite delete <path> <table>`
+
+Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                        | Description                                                                                                      | Default |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                  | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid) | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                               | `[]`    |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                     | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                   | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

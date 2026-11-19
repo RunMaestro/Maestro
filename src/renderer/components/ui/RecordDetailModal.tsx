@@ -91,6 +91,16 @@ interface RecordDetailModalProps {
 	 * surface it opened rather than "whichever record modal is up".
 	 */
 	testIdPrefix: string;
+	/**
+	 * Controls drawn in the header before the row navigation, for what the
+	 * caller can do with the row shown (the SQLite viewer's Delete row).
+	 */
+	headerActions?: ReactNode;
+	/**
+	 * A line drawn under the filter, for the outcome of one of those actions
+	 * (a refusal, a failure), so it shows where the action was taken.
+	 */
+	notice?: ReactNode;
 }
 
 export function RecordDetailModal({
@@ -103,6 +113,8 @@ export function RecordDetailModal({
 	priority,
 	resizeKey,
 	testIdPrefix,
+	headerActions,
+	notice,
 }: RecordDetailModalProps) {
 	const [filter, setFilter] = useState('');
 	const searchRef = useRef<HTMLInputElement>(null);
@@ -134,6 +146,7 @@ export function RecordDetailModal({
 				<span style={{ color: theme.colors.textDim }}> of {total.toLocaleString()}</span>
 			</h2>
 			<div className="flex items-center gap-1 shrink-0">
+				{headerActions}
 				<GhostIconButton
 					onClick={() => canPrev && onNavigate(index - 1)}
 					disabled={!canPrev}
@@ -283,6 +296,16 @@ export function RecordDetailModal({
 						</GhostIconButton>
 					)}
 				</div>
+
+				{notice && (
+					<div
+						className="px-4 py-2 border-b shrink-0 text-xs select-text"
+						style={{ borderColor: theme.colors.border }}
+						data-testid={`${testIdPrefix}-notice`}
+					>
+						{notice}
+					</div>
+				)}
 
 				{/* Field / value pairs. tabIndex makes this the keyboard target so
 				    Up/Down scroll it and Left/Right reach the handler above. */}

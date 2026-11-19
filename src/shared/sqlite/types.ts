@@ -455,6 +455,76 @@ export interface SqliteCellUpdateResult {
 }
 
 /**
+ * Add one row (the table view's Insert row, `maestro-cli sqlite insert`): a
+ * parameterised single-row `INSERT`. Refused unless `editToken` is the tab's
+ * live editing grant.
+ */
+export interface SqliteRowInsertRequest {
+	handle: string;
+	/** The tab's grant from "Enable editing". */
+	editToken: string;
+	/** The table to add the row to. */
+	name: string;
+	/**
+	 * The value of each column given, keyed by column name, bound by the
+	 * driver as TEXT, a number, or NULL. A column left out takes its DEFAULT
+	 * (NULL when it has none; the next rowid for the rowid column).
+	 */
+	values: Record<string, SqliteParameterValue>;
+}
+
+/** What one insert added. */
+export interface SqliteRowInsertResult {
+	name: string;
+	/** The table's columns, as a rows page reports them. */
+	columns: SqliteResultColumn[];
+	/** The row as stored, cells in `columns` order, cut as a window cuts them. */
+	row: SqliteCellValue[];
+	/** The new row's key, so an edit can name it. */
+	key: SqliteRowKey;
+	/**
+	 * Rows the database changed beside this one, by its triggers or its
+	 * foreign-key actions, which the viewer does not show on its own.
+	 */
+	otherChanges: number;
+	/** Set only on the write that took this session's backup of the file. */
+	backup?: SqliteBackup;
+	/** Time SQLite spent on the change, in milliseconds. */
+	elapsedMs: number;
+}
+
+/**
+ * Remove one row (the record view's Delete row, `maestro-cli sqlite delete`):
+ * a parameterised single-row `DELETE` keyed on the row's identity. Refused
+ * unless `editToken` is the tab's live editing grant.
+ */
+export interface SqliteRowDeleteRequest {
+	handle: string;
+	/** The tab's grant from "Enable editing". */
+	editToken: string;
+	/** The table the row belongs to. */
+	name: string;
+	/** The row, by the identity its table takes. */
+	row: SqliteRowKey;
+}
+
+/** What one delete removed. */
+export interface SqliteRowDeleteResult {
+	name: string;
+	/** The key of the row removed. */
+	key: SqliteRowKey;
+	/**
+	 * Rows the database changed beside this one: rows `ON DELETE CASCADE`
+	 * removed, keys `SET NULL` cleared, and whatever its triggers wrote.
+	 */
+	otherChanges: number;
+	/** Set only on the write that took this session's backup of the file. */
+	backup?: SqliteBackup;
+	/** Time SQLite spent on the change, in milliseconds. */
+	elapsedMs: number;
+}
+
+/**
  * Where an unfinished count stopped, handed back verbatim to resume it. The
  * main process keeps no counting state between calls, so the renderer holds
  * this and the walk survives any number of interleaved row reads.

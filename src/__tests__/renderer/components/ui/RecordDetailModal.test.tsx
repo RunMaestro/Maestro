@@ -189,4 +189,20 @@ describe('RecordDetailModal', () => {
 		fireEvent.click(action);
 		expect(onClick).not.toHaveBeenCalled();
 	});
+
+	it('draws header actions before the row navigation, and a notice under the filter', () => {
+		renderModal({
+			headerActions: <button data-testid="row-action">Delete row</button>,
+			notice: <span>FOREIGN KEY constraint failed</span>,
+		});
+		expect(screen.getByTestId('row-action')).toBeInTheDocument();
+		expect(screen.getByTestId('test-record-notice')).toHaveTextContent(
+			'FOREIGN KEY constraint failed'
+		);
+	});
+
+	it('draws no notice row without a notice', () => {
+		renderModal();
+		expect(screen.queryByTestId('test-record-notice')).not.toBeInTheDocument();
+	});
 });

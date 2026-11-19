@@ -64,6 +64,15 @@ export function sqliteCellEditRefusal(
 	if (value !== null && typeof value === 'object' && value.kind === 'text') {
 		return `${column} holds ${formatCount(value.length)} characters, more than the grid shows, so editing it here would cut it.`;
 	}
+	return sqliteRowKeyRefusal(key);
+}
+
+/**
+ * Why a write cannot name this loaded row, or null when its key can: the page
+ * carried no key for it, or its primary key holds NULL, which never compares
+ * equal. Shared by a cell edit and a delete.
+ */
+export function sqliteRowKeyRefusal(key: SqliteRowKey | null): string | null {
 	if (!key)
 		return 'This row came back without its key, so an edit cannot name it. Reload the table.';
 	if (key.kind === 'primary-key' && Object.values(key.values).some((entry) => entry === null)) {

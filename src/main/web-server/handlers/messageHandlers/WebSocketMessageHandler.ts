@@ -132,7 +132,9 @@ import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import {
 	handleSqliteCountRows,
+	handleSqliteDeleteRow,
 	handleSqliteExportQuery,
+	handleSqliteInsertRow,
 	handleSqliteListObjects,
 	handleSqliteQueryHistory,
 	handleSqliteReadRows,
@@ -491,6 +493,14 @@ export class WebSocketMessageHandler {
 
 			case 'sqlite_update_cell':
 				void handleSqliteUpdateCell(this.ctx, client, message);
+				break;
+
+			case 'sqlite_insert_row':
+				void handleSqliteInsertRow(this.ctx, client, message);
+				break;
+
+			case 'sqlite_delete_row':
+				void handleSqliteDeleteRow(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':

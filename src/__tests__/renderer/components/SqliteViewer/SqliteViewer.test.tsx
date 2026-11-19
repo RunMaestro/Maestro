@@ -134,6 +134,8 @@ let forgetQueryHistory: ReturnType<typeof vi.fn>;
 let enableEditing: ReturnType<typeof vi.fn>;
 let disableEditing: ReturnType<typeof vi.fn>;
 let updateCell: ReturnType<typeof vi.fn>;
+let insertRow: ReturnType<typeof vi.fn>;
+let deleteRow: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -375,6 +377,20 @@ beforeEach(() => {
 			elapsedMs: 4,
 		};
 	});
+	insertRow = vi.fn(async () => ({
+		name: 'events',
+		columns: eventsPage({ handle: 'h1', name: 'events', offset: 0, limit: 2 }).columns,
+		row: [3, 'tap', null],
+		key: { kind: 'primary-key', values: { id: { type: 'integer', text: '3' } } },
+		otherChanges: 0,
+		elapsedMs: 2,
+	}));
+	deleteRow = vi.fn(async (request: { row: unknown }) => ({
+		name: 'events',
+		key: request.row,
+		otherChanges: 0,
+		elapsedMs: 2,
+	}));
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
@@ -396,6 +412,8 @@ beforeEach(() => {
 			enableEditing,
 			disableEditing,
 			updateCell,
+			insertRow,
+			deleteRow,
 			close,
 		},
 		dialog: { saveFile },
@@ -2399,5 +2417,158 @@ describe('SqliteViewer cell edit', () => {
 		fireEvent.click(screen.getByTestId('sqlite-editing-disable'));
 		await waitFor(() => expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument());
 		expect(updateCell).not.toHaveBeenCalled();
+	});
+});
+
+describe('SqliteViewer insert and delete row', () => {
+	async function renderEditing() {
+		const view = render(
+			<LayerStackProvider>
+				<SqliteViewer filePath="/data/app.db" fileName="app.db" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		await screen.findByTestId('sqlite-row-1');
+		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-rows-editability');
+		return view;
+	}
+
+	it('offers neither while the tab is read-only', async () => {
+		render(
+			<LayerStackProvider>
+				<SqliteViewer filePath="/data/app.db" fileName="app.db" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		await screen.findByTestId('sqlite-row-1');
+		expect(screen.queryByTestId('sqlite-insert-row')).not.toBeInTheDocument();
+		fireEvent.doubleClick(screen.getByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		expect(screen.queryByTestId('sqlite-delete-row')).not.toBeInTheDocument();
+	});
+
+	it('inserts only the columns given, then reads the first window again', async () => {
+		await renderEditing();
+		fireEvent.click(screen.getByTestId('sqlite-insert-row'));
+		const modal = await screen.findByTestId('sqlite-insert-row-modal');
+		expect(within(modal).getByText('Every column takes its default.')).toBeInTheDocument();
+		// A generated column is listed but takes no value.
+		expect(screen.queryByTestId('sqlite-insert-row-input-payload')).not.toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-insert-row-field-payload')).toHaveTextContent('generated');
+
+		// Typing switches the field from Default to a value.
+		fireEvent.change(screen.getByTestId('sqlite-insert-row-input-kind'), {
+			target: { value: 'tap' },
+		});
+		expect(within(modal).getByText(/1 of 3 columns given/)).toBeInTheDocument();
+		fireEvent.click(within(modal).getByRole('button', { name: 'Insert row' }));
+
+		await waitFor(() => expect(insertRow).toHaveBeenCalledTimes(1));
+		expect(insertRow).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'token-1',
+			name: 'events',
+			values: { kind: { type: 'text', text: 'tap' } },
+		});
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-insert-row-modal')).not.toBeInTheDocument()
+		);
+		// Where the row lands depends on the sort and filter, so the rows are read again.
+		await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
+		expect(readRows).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }));
+		expect(screen.getByTestId('sqlite-edit-status')).toHaveTextContent(
+			'Inserted a row with primary key (id = 3)'
+		);
+	});
+
+	it("keeps the form filled with SQLite's words when a constraint refuses the row", async () => {
+		insertRow.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:insertRow': SqliteError: NOT NULL constraint failed: events.id"
+			)
+		);
+		await renderEditing();
+		fireEvent.click(screen.getByTestId('sqlite-insert-row'));
+		const input = await screen.findByTestId('sqlite-insert-row-input-kind');
+		fireEvent.change(input, { target: { value: 'tap' } });
+		fireEvent.keyDown(input, { key: 'Enter' });
+		expect(await screen.findByTestId('sqlite-insert-row-problem')).toHaveTextContent(
+			'NOT NULL constraint failed: events.id'
+		);
+		expect(screen.getByTestId('sqlite-insert-row-input-kind')).toHaveValue('tap');
+		expect(readRows).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses a value the column would keep as the wrong type, before sending anything', async () => {
+		await renderEditing();
+		fireEvent.click(screen.getByTestId('sqlite-insert-row'));
+		const input = await screen.findByTestId('sqlite-insert-row-input-id');
+		fireEvent.change(input, { target: { value: 'seven' } });
+		fireEvent.keyDown(input, { key: 'Enter' });
+		expect(await screen.findByTestId('sqlite-insert-row-problem')).toHaveTextContent(
+			"id has INTEGER affinity, and 'seven' is not a number"
+		);
+		expect(insertRow).not.toHaveBeenCalled();
+	});
+
+	it('deletes from the record view only on the second click, then drops the row in place', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(screen.getByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		const button = screen.getByTestId('sqlite-delete-row');
+		expect(button).toHaveTextContent('Delete row');
+
+		fireEvent.click(button);
+		expect(button).toHaveTextContent('Confirm delete');
+		expect(deleteRow).not.toHaveBeenCalled();
+
+		fireEvent.click(button);
+		await waitFor(() => expect(deleteRow).toHaveBeenCalledTimes(1));
+		expect(deleteRow).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'token-1',
+			name: 'events',
+			row: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+		});
+		await waitFor(() => expect(screen.queryByTestId('sqlite-row-1')).not.toBeInTheDocument());
+		expect(screen.getByTestId('sqlite-row-0')).toBeInTheDocument();
+		// Only this row went, so nothing is read again; the record view says so.
+		expect(readRows).toHaveBeenCalledTimes(1);
+		expect(screen.getByTestId('sqlite-delete-status')).toHaveTextContent('Deleted row 2');
+	});
+
+	it('reads the rows again when a cascade or trigger changed other rows', async () => {
+		deleteRow.mockImplementationOnce(async (request: { row: unknown }) => ({
+			name: 'events',
+			key: request.row,
+			otherChanges: 3,
+			elapsedMs: 2,
+		}));
+		await renderEditing();
+		fireEvent.doubleClick(screen.getByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-delete-row'));
+		fireEvent.click(screen.getByTestId('sqlite-delete-row'));
+		await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
+		expect(screen.getByTestId('sqlite-edit-status')).toHaveTextContent(
+			"the database's triggers and foreign-key actions changed 3 other rows"
+		);
+	});
+
+	it("shows SQLite's FOREIGN KEY refusal in the record view and keeps the row", async () => {
+		deleteRow.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:deleteRow': SqliteError: FOREIGN KEY constraint failed"
+			)
+		);
+		await renderEditing();
+		fireEvent.doubleClick(screen.getByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-delete-row'));
+		fireEvent.click(screen.getByTestId('sqlite-delete-row'));
+		expect(await screen.findByTestId('sqlite-delete-status')).toHaveTextContent(
+			'FOREIGN KEY constraint failed'
+		);
+		expect(screen.getByTestId('sqlite-row-1')).toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-delete-row')).toHaveTextContent('Delete row');
 	});
 });
