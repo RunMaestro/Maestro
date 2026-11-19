@@ -803,8 +803,11 @@ export class VoiceSessionService {
 			// that just finished starting so it is not left open.
 			try {
 				await this.providers.stt.stop();
-			} catch {
-				// Best-effort cleanup on an aborted start.
+			} catch (error) {
+				void captureException(error as Error, {
+					context: 'acappella.abortedStart',
+					providerId: this.providers.stt.id,
+				});
 			}
 			return this.getSnapshot();
 		}

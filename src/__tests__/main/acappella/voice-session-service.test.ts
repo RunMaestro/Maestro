@@ -2955,4 +2955,32 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		expect(h.stt.stopped).toBe(true);
 		expect(vi.getTimerCount()).toBe(0);
 	});
+
+	it('reports stt.stop() failure on an aborted start without rejecting startSession', async () => {
+		const h = makeHarness();
+		const startGate = deferred();
+		const origStart = h.stt.start.bind(h.stt);
+		const stopError = new Error('device busy on abort');
+		h.stt.start = vi.fn(async (cb) => {
+			await startGate.promise;
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => {
+			throw stopError;
+		});
+
+		const starting = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const disposing = h.service.dispose();
+		startGate.resolve();
+		const snapshot = await starting;
+		await disposing;
+
+		expect(snapshot.state).toBe('idle');
+		expect(captureException).toHaveBeenCalledWith(stopError, {
+			context: 'acappella.abortedStart',
+			providerId: 'fake-stt',
+		});
+	});
 });
