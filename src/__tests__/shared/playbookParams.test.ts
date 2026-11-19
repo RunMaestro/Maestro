@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
 	PLACEHOLDER_PR_URL,
+	assertNoSurvivingParams,
+	buildResolvedConfigurationTable,
+	collectUnresolvedRequired,
 	isPlaceholderDefault,
 	mergePlaybookParams,
 	parsePlaybookParameterForm,
 	splitMultiEnumValue,
+	substitutePlaybookParams,
 	validatePlaybookParamValue,
 	type PlaybookParamOverlay,
 	type PlaybookParamSpec,
@@ -12,6 +16,7 @@ import {
 import {
 	ASSISTANTS_MESSAGE_BUS_PROMPT,
 	RESEARCH_CORPUS_PROMPT,
+	REPO_PARAM_NAMES,
 	RESEARCH_MARKET_PROMPT,
 } from './fixtures/playbookParamPrompts';
 
@@ -462,5 +467,208 @@ describe('validatePlaybookParamValue', () => {
 		);
 		expect(validatePlaybookParamValue(spec({ pattern: 'a|b' }), 'ab')).toMatch(/must match/);
 		expect(validatePlaybookParamValue(spec({ pattern: '(' }), 'x')).toMatch(/invalid pattern/);
+	});
+});
+
+function spec(name: string, extra: Partial<PlaybookParamSpec> = {}): PlaybookParamSpec {
+	return { name, type: 'string', required: false, source: 'prose', ...extra };
+}
+
+describe('substitutePlaybookParams', () => {
+	it('substitutes the answer, then the default, and leaves a value-less name in place', () => {
+		const specs = [
+			spec('MAX_ITEMS', { default: '25' }),
+			spec('BASE_BRANCH', { default: 'main' }),
+			spec('PR_URL', { required: true }),
+		];
+		const result = substitutePlaybookParams(
+			'Process [MAX_ITEMS] items on [BASE_BRANCH] for [PR_URL], then [MAX_ITEMS] more.',
+			specs,
+			{ MAX_ITEMS: '10' }
+		);
+		expect(result.text).toBe('Process 10 items on main for [PR_URL], then 10 more.');
+		expect(result.substituted).toEqual(['MAX_ITEMS', 'BASE_BRANCH']);
+		expect(result.unresolved).toEqual(['PR_URL']);
+	});
+
+	it('never substitutes an empty string: a blank or placeholder answer falls back to the default', () => {
+		const specs = [spec('SCOPE_IN', { default: 'everything' }), spec('PR_URL')];
+		const result = substitutePlaybookParams('[SCOPE_IN] / [PR_URL]', specs, {
+			SCOPE_IN: '   ',
+			PR_URL: PLACEHOLDER_PR_URL,
+		});
+		expect(result.text).toBe('everything / [PR_URL]');
+		expect(result.unresolved).toEqual(['PR_URL']);
+	});
+
+	it('trims the answer and inserts dollar sequences literally', () => {
+		const result = substitutePlaybookParams('cost: [PRICE]', [spec('PRICE')], {
+			PRICE: '  $& and $1  ',
+		});
+		expect(result.text).toBe('cost: $& and $1');
+	});
+
+	it('spares wiki links, markdown links, reference links, and undeclared names', () => {
+		const specs = [spec('NAME', { default: 'x-value' })];
+		const text = [
+			'[[NAME]] is a wiki link.',
+			'[NAME](https://example.com) is a link.',
+			'[NAME][ref] is a reference link.',
+			'[OTHER] is not declared.',
+			'[NAME] is a reference.',
+		].join('\n');
+		const result = substitutePlaybookParams(text, specs, {});
+		expect(result.text).toBe(
+			[
+				'[[NAME]] is a wiki link.',
+				'[NAME](https://example.com) is a link.',
+				'[NAME][ref] is a reference link.',
+				'[OTHER] is not declared.',
+				'x-value is a reference.',
+			].join('\n')
+		);
+		expect(result.substituted).toEqual(['NAME']);
+	});
+
+	it('is case-sensitive, so [date] in prose is untouched', () => {
+		const specs = [spec('DATE', { default: '2026-01-01' })];
+		const result = substitutePlaybookParams('Write [date] and [Date], not [DATE].', specs, {});
+		expect(result.text).toBe('Write [date] and [Date], not 2026-01-01.');
+	});
+
+	it('matches the longest name first and does not touch a prefix inside a longer reference', () => {
+		const specs = [
+			spec('PR', { default: 'short' }),
+			spec('PR_URL', { default: 'long' }),
+			spec('PR_A_URL', { default: 'longest' }),
+		];
+		const result = substitutePlaybookParams('[PR] [PR_URL] [PR_A_URL] [PR_B_URL]', specs, {});
+		expect(result.text).toBe('short long longest [PR_B_URL]');
+	});
+
+	it('never matches a task checkbox, even with every name in the repo declared', () => {
+		const specs = REPO_PARAM_NAMES.map((name) => spec(name, { default: 'VALUE' }));
+		// Single-character names are illegal; declaring them anyway must not widen the match.
+		specs.push(
+			spec('X', { default: 'VALUE' }),
+			spec('x', { default: 'VALUE' }),
+			spec(' ', { default: 'VALUE' })
+		);
+		const checklist = [
+			'- [ ] open task',
+			'- [x] done task',
+			'- [X] done task',
+			'* [ ] star task',
+			'1. [ ] numbered',
+		].join('\n');
+		const result = substitutePlaybookParams(checklist, specs, {});
+		expect(result.text).toBe(checklist);
+		expect(result.substituted).toEqual([]);
+		expect(assertNoSurvivingParams(checklist, specs)).toEqual([]);
+	});
+
+	it('does not apply {{TEMPLATE}} substitution', () => {
+		const result = substitutePlaybookParams('{{DATE}} [MAX_ITEMS]', [spec('MAX_ITEMS')], {
+			MAX_ITEMS: '{{AGENT_NAME}}',
+		});
+		expect(result.text).toBe('{{DATE}} {{AGENT_NAME}}');
+	});
+
+	it('returns the text unchanged when no name is declared', () => {
+		expect(substitutePlaybookParams('[MAX_ITEMS]', [], {})).toEqual({
+			text: '[MAX_ITEMS]',
+			substituted: [],
+			unresolved: [],
+		});
+	});
+
+	it('substitutes a parsed form across a document', () => {
+		const specs = parsePlaybookParameterForm(RESEARCH_CORPUS_PROMPT);
+		const names = specs.map((parsed) => parsed.name);
+		const document = `- [ ] Process ${names.map((name) => `[${name}]`).join(' ')}`;
+		const values = Object.fromEntries(names.map((name) => [name, `v-${name}`]));
+		const result = substitutePlaybookParams(document, specs, values);
+		expect(result.unresolved).toEqual([]);
+		expect(result.substituted).toEqual(names);
+		expect(assertNoSurvivingParams(result.text, specs)).toEqual([]);
+		expect(result.text.startsWith('- [ ] Process ')).toBe(true);
+	});
+});
+
+describe('assertNoSurvivingParams', () => {
+	it('reports each declared reference still present, once, in order', () => {
+		const specs = [spec('PR_URL'), spec('MAX_ITEMS'), spec('BASE_BRANCH')];
+		expect(
+			assertNoSurvivingParams(
+				'[MAX_ITEMS] then [PR_URL] then [MAX_ITEMS] and [[BASE_BRANCH]]',
+				specs
+			)
+		).toEqual(['MAX_ITEMS', 'PR_URL']);
+	});
+
+	it('returns nothing for clean text or no declarations', () => {
+		expect(assertNoSurvivingParams('all resolved', [spec('PR_URL')])).toEqual([]);
+		expect(assertNoSurvivingParams('[PR_URL]', [])).toEqual([]);
+	});
+});
+
+describe('collectUnresolvedRequired', () => {
+	it('returns only required specs with no answer and no default', () => {
+		const specs = [
+			spec('PR_URL', { required: true }),
+			spec('MARKET_TOPIC', { required: true }),
+			spec('BASE_BRANCH', { required: true, default: 'main' }),
+			spec('SCOPE_IN'),
+		];
+		const missing = collectUnresolvedRequired(specs, { MARKET_TOPIC: 'EV chargers', PR_URL: '  ' });
+		expect(missing.map((missingSpec) => missingSpec.name)).toEqual(['PR_URL']);
+	});
+
+	it('treats a placeholder answer as missing', () => {
+		const specs = [spec('PR_URL', { required: true })];
+		expect(collectUnresolvedRequired(specs, { PR_URL: PLACEHOLDER_PR_URL })).toHaveLength(1);
+		expect(
+			collectUnresolvedRequired(specs, { PR_URL: 'https://github.com/acme/app/pull/12' })
+		).toEqual([]);
+	});
+
+	it('flags the parsed Research/Market topic until it is answered', () => {
+		const specs = parsePlaybookParameterForm(RESEARCH_MARKET_PROMPT);
+		expect(collectUnresolvedRequired(specs, {}).map((missing) => missing.name)).toEqual([
+			'MARKET_TOPIC',
+		]);
+		expect(collectUnresolvedRequired(specs, { MARKET_TOPIC: 'EV chargers' })).toEqual([]);
+	});
+});
+
+describe('buildResolvedConfigurationTable', () => {
+	it('lists each parameter with its resolved value, UNSET when it has none', () => {
+		const specs = [
+			spec('MAX_ITEMS', { default: '25' }),
+			spec('SCOPE_IN'),
+			spec('SEARCH', { default: 'a' }),
+			spec('MAX_ITEMS', { default: 'ignored repeat' }),
+		];
+		expect(buildResolvedConfigurationTable(specs, { SEARCH: 'a | b\nc' })).toBe(
+			[
+				'## Resolved Configuration',
+				'',
+				'| Parameter | Value |',
+				'| --- | --- |',
+				'| `MAX_ITEMS` | 25 |',
+				'| `SCOPE_IN` | `<UNSET>` |',
+				'| `SEARCH` | a \\| b<br>c |',
+			].join('\n')
+		);
+	});
+
+	it('never writes a bracketed reference that would trip the assertion', () => {
+		const specs = parsePlaybookParameterForm(ASSISTANTS_MESSAGE_BUS_PROMPT);
+		const table = buildResolvedConfigurationTable(specs, {});
+		expect(assertNoSurvivingParams(table, specs)).toEqual([]);
+	});
+
+	it('returns an empty string when there are no specs', () => {
+		expect(buildResolvedConfigurationTable([], {})).toBe('');
 	});
 });

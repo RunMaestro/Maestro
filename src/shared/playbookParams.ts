@@ -400,3 +400,158 @@ export function validatePlaybookParamValue(spec: PlaybookParamSpec, value: strin
 
 	return null;
 }
+
+/**
+ * The value a spec resolves to for this run: the answer when it is set, else
+ * the author default, else `undefined`. A blank or placeholder answer is no
+ * answer. Never an empty string, because an empty answer silently widens a
+ * safety scope instead of narrowing it.
+ */
+function resolvePlaybookParamValue(
+	spec: PlaybookParamSpec,
+	values: PlaybookParamValues
+): string | undefined {
+	const answer = Object.prototype.hasOwnProperty.call(values, spec.name)
+		? values[spec.name]
+		: undefined;
+	if (typeof answer === 'string') {
+		const trimmed = answer.trim();
+		if (trimmed !== '' && !isPlaceholderDefault(trimmed)) return trimmed;
+	}
+	if (spec.default !== undefined && spec.default.trim() !== '') return spec.default;
+	return undefined;
+}
+
+/**
+ * The `[NAME]` reference regex for a set of declared names, or `null` when no
+ * name is legal. A closed alternation over the declared names only (never a
+ * general `[A-Z_]+` pattern), longest first, case-sensitive. The lookbehind
+ * spares `[[wiki]]` links; the lookahead spares `[label](url)`, `[label][ref]`,
+ * and `[[wiki]]`. Legal names are at least two uppercase characters, so
+ * `- [ ]` and `- [x]` can never match.
+ */
+function buildParamReferenceRegex(specs: PlaybookParamSpec[]): RegExp | null {
+	const names = [
+		...new Set(
+			specs.map((spec) => spec.name).filter((name) => PLAYBOOK_PARAM_NAME_REGEX.test(name))
+		),
+	];
+	if (names.length === 0) return null;
+	names.sort((a, b) => b.length - a.length || a.localeCompare(b));
+	return new RegExp(`(?<!\\[)\\[(${names.join('|')})\\](?![(\\[])`, 'g');
+}
+
+/** The result of {@link substitutePlaybookParams}. */
+export interface PlaybookParamSubstitution {
+	/** The text with every resolvable reference replaced. */
+	text: string;
+	/** Names replaced at least once, in order of first appearance. */
+	substituted: string[];
+	/** Names referenced in the text with no answer and no default, left in place. */
+	unresolved: string[];
+}
+
+/**
+ * Replace each declared `[NAME]` in `text` with its answer, or its default when
+ * there is no answer. A reference with neither stays in place and is reported
+ * in `unresolved`; it is never replaced with an empty string.
+ *
+ * In memory only: callers hand the result to the agent and never write it back
+ * to disk, so answers are never burned into the template.
+ *
+ * This does not expand `{{TEMPLATE}}` variables. The caller runs that pass
+ * first, and template-expands parameter values at resolve time; the reverse
+ * order would turn a default or an answer into a template (an injection surface).
+ */
+export function substitutePlaybookParams(
+	text: string,
+	specs: PlaybookParamSpec[],
+	values: PlaybookParamValues
+): PlaybookParamSubstitution {
+	const regex = buildParamReferenceRegex(specs);
+	if (!regex) return { text, substituted: [], unresolved: [] };
+
+	const specByName = new Map<string, PlaybookParamSpec>();
+	for (const spec of specs) {
+		if (!specByName.has(spec.name)) specByName.set(spec.name, spec);
+	}
+
+	const resolved = new Map<string, string | undefined>();
+	const substituted: string[] = [];
+	const unresolved: string[] = [];
+
+	// A replacer function, so `$&` or `$1` in an answer is inserted literally.
+	const output = text.replace(regex, (match: string, name: string) => {
+		if (!resolved.has(name)) {
+			const value = resolvePlaybookParamValue(specByName.get(name)!, values);
+			resolved.set(name, value);
+			(value === undefined ? unresolved : substituted).push(name);
+		}
+		return resolved.get(name) ?? match;
+	});
+
+	return { text: output, substituted, unresolved };
+}
+
+/**
+ * Every declared `[NAME]` still present in `text`, in order of first
+ * appearance. Both Auto Run engines run this on the substituted body as a
+ * pre-spawn check and refuse to spawn when it returns anything: zero tokens,
+ * and it catches any regression in the substitution pass. An optional
+ * parameter with no answer and no default also survives here; it is the
+ * caller's decision whether that blocks the run.
+ */
+export function assertNoSurvivingParams(text: string, specs: PlaybookParamSpec[]): string[] {
+	const regex = buildParamReferenceRegex(specs);
+	if (!regex) return [];
+	const surviving: string[] = [];
+	for (const match of text.matchAll(regex)) {
+		if (!surviving.includes(match[1])) surviving.push(match[1]);
+	}
+	return surviving;
+}
+
+/**
+ * The required specs that resolve to nothing: no answer and no default. The
+ * one shared answer to "can this run start"; a non-empty result is a
+ * precondition failure in every engine (desktop, CLI, Cue).
+ */
+export function collectUnresolvedRequired(
+	specs: PlaybookParamSpec[],
+	values: PlaybookParamValues
+): PlaybookParamSpec[] {
+	return specs.filter(
+		(spec) => spec.required && resolvePlaybookParamValue(spec, values) === undefined
+	);
+}
+
+/** Text that is safe inside one markdown table cell: pipes escaped, line breaks kept as `<br>`. */
+function escapeTableCell(text: string): string {
+	return text.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
+/**
+ * A `## Resolved Configuration` markdown table of each parameter and the value
+ * it resolves to, for appending to the outer prompt. It is the belt for
+ * documents that say "read the agent prompt for `[VAR]`" and for older Maestro
+ * versions; in-memory substitution is the mechanism. A parameter with no
+ * value reads `<UNSET>`, the content repo's own sentinel. Names are written
+ * without brackets so the table never trips {@link assertNoSurvivingParams}.
+ * Returns an empty string when there are no specs.
+ */
+export function buildResolvedConfigurationTable(
+	specs: PlaybookParamSpec[],
+	values: PlaybookParamValues
+): string {
+	if (specs.length === 0) return '';
+	const lines = ['## Resolved Configuration', '', '| Parameter | Value |', '| --- | --- |'];
+	const seen = new Set<string>();
+	for (const spec of specs) {
+		if (seen.has(spec.name)) continue;
+		seen.add(spec.name);
+		const value = resolvePlaybookParamValue(spec, values);
+		const cell = value === undefined ? '`<UNSET>`' : escapeTableCell(value);
+		lines.push(`| \`${spec.name}\` | ${cell} |`);
+	}
+	return lines.join('\n');
+}
