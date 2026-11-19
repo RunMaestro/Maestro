@@ -47,8 +47,8 @@ export interface OpenSqliteDatabase {
 	ino: number;
 	/**
 	 * Run when the connection is released (closed or reaped), before it
-	 * closes. Work that outlives a call (an integrity check on a worker
-	 * thread) registers its own stop here, so a closed tab stops it too.
+	 * closes. Work that outlives a call (an integrity check or a query run in
+	 * a child process) registers its own stop here, so a closed tab stops it too.
 	 */
 	releaseHooks: Set<() => void>;
 }

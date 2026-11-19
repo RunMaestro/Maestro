@@ -34,6 +34,7 @@ const count = vi.hoisted(() => ({ countSqliteRows: vi.fn() }));
 const blob = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
 const summary = vi.hoisted(() => ({ readSqliteDatabaseSummary: vi.fn() }));
 const integrity = vi.hoisted(() => ({ checkSqliteIntegrity: vi.fn() }));
+const query = vi.hoisted(() => ({ runSqliteQuery: vi.fn(), cancelSqliteQuery: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
@@ -42,6 +43,7 @@ vi.mock('../../../../main/sqlite/sqlite-count', () => count);
 vi.mock('../../../../main/sqlite/sqlite-blob', () => blob);
 vi.mock('../../../../main/sqlite/sqlite-summary', () => summary);
 vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
+vi.mock('../../../../main/sqlite/sqlite-query', () => query);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -56,6 +58,7 @@ describe('SQLite IPC handlers', () => {
 
 	it('registers the channels the viewer uses', () => {
 		expect([...handlers.keys()].sort()).toEqual([
+			'sqlite:cancelQuery',
 			'sqlite:checkIntegrity',
 			'sqlite:close',
 			'sqlite:countRows',
@@ -66,6 +69,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readRows',
 			'sqlite:readSchema',
 			'sqlite:readSummary',
+			'sqlite:runQuery',
 			'sqlite:saveBlob',
 		]);
 	});
@@ -159,6 +163,26 @@ describe('SQLite IPC handlers', () => {
 		blob.saveSqliteBlob.mockResolvedValue(saved);
 		await expect(invoke('sqlite:saveBlob', request)).resolves.toEqual(saved);
 		expect(blob.saveSqliteBlob).toHaveBeenCalledWith(request);
+	});
+
+	it('runs a query with the request passed through whole, and stops one by id', async () => {
+		const request = { handle: 'h1', sql: 'SELECT 1', offset: 0, limit: 500, queryId: 'q1' };
+		const result = {
+			statement: 'SELECT',
+			columns: [{ name: '1', declaredType: null }],
+			rows: [[1]],
+			offset: 0,
+			hasMore: false,
+			returnsRows: true,
+			elapsedMs: 0,
+		};
+		query.runSqliteQuery.mockResolvedValue(result);
+		await expect(invoke('sqlite:runQuery', request)).resolves.toEqual(result);
+		expect(query.runSqliteQuery).toHaveBeenCalledWith(request);
+
+		query.cancelSqliteQuery.mockReturnValue(true);
+		await expect(invoke('sqlite:cancelQuery', 'q1')).resolves.toBe(true);
+		expect(query.cancelSqliteQuery).toHaveBeenCalledWith('q1');
 	});
 
 	it('closes by handle', async () => {

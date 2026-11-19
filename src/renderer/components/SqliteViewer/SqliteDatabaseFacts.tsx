@@ -4,8 +4,8 @@
  * user_version, application_id, and the integrity flag.
  *
  * The header facts are pragmas, read once per open (`sqlite:readSummary`).
- * The integrity flag is a check that reads every page, run on a worker thread
- * in the main process (`sqlite:checkIntegrity`): a quick check starts on its
+ * The integrity flag is a check that reads every page, run in a child process
+ * of the main process (`sqlite:checkIntegrity`): a quick check starts on its
  * own for a database up to `SQLITE_AUTO_INTEGRITY_MAX_BYTES`, and a larger one
  * waits for the user to ask. After a quick check, a full check (indexes
  * against their tables) is one click away.

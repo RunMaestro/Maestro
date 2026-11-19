@@ -98,6 +98,17 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:saveBlob', request);
 	});
 
+	it('runs a query and stops one by id', async () => {
+		const request = { handle: 'h1', sql: 'SELECT 1', queryId: 'q1' };
+		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });
+		await api.runQuery(request);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:runQuery', request);
+
+		mockInvoke.mockResolvedValue(true);
+		await expect(api.cancelQuery('q1')).resolves.toBe(true);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:cancelQuery', 'q1');
+	});
+
 	it('closes a handle', async () => {
 		mockInvoke.mockResolvedValue(undefined);
 		await api.close('h1');

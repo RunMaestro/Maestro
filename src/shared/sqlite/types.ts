@@ -427,3 +427,46 @@ export interface SqliteIntegrityResult {
 	/** Wall time of the check, in milliseconds. */
 	elapsedMs: number;
 }
+
+/**
+ * Run one read-only statement a person wrote (the viewer's Query mode,
+ * `maestro-cli sqlite query`). The statement runs in a child process with a
+ * connection of its own, so it can be killed, and a window of its rows
+ * comes back; see src/main/sqlite/sqlite-query.ts.
+ */
+export interface SqliteQueryRequest {
+	handle: string;
+	/** One statement: SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA. */
+	sql: string;
+	/** Result rows to skip before the window starts. Default 0. */
+	offset?: number;
+	/** Rows to return, clamped to `SQLITE_QUERY_MAX_LIMIT`. Default `SQLITE_QUERY_PAGE_ROWS`. */
+	limit?: number;
+	/**
+	 * Names this run so `cancelQuery` can stop it. A new run under an id still
+	 * running stops the older one first.
+	 */
+	queryId?: string | null;
+}
+
+/** One window of a statement's result. */
+export interface SqliteQueryResult {
+	/** The statement's leading keyword, upper case (`SELECT`, `PRAGMA`, ...). */
+	statement: string;
+	/** Result columns in statement order. Names may repeat (`SELECT a, a`). */
+	columns: SqliteResultColumn[];
+	/** Cells in `columns` order, cut the way a table window cuts them. */
+	rows: SqliteCellValue[][];
+	/** The result row the window starts at. */
+	offset: number;
+	/** At least one result row exists past this window. */
+	hasMore: boolean;
+	/**
+	 * False for a statement that returns no rows by design (a PRAGMA that sets
+	 * a connection-only value). It ran on the query's own connection, which is
+	 * closed after it, so it changed nothing anyone else sees.
+	 */
+	returnsRows: boolean;
+	/** Time SQLite spent producing the window, in milliseconds. */
+	elapsedMs: number;
+}

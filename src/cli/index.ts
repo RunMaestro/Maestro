@@ -163,6 +163,7 @@ import {
 	sqliteBlob,
 	sqliteCount,
 	sqliteInfo,
+	sqliteQuery,
 	sqliteRows,
 	sqliteSchema,
 	sqliteTables,
@@ -3935,6 +3936,16 @@ sqliteCmd
 	.requiredOption('--output <file>', 'File to write; replaced if it exists')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, object, column, options) => sqliteBlob(file, object, column, options));
+
+sqliteCmd
+	.command('query <path> <sql>')
+	.description(
+		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused"
+	)
+	.option('--offset <n>', 'Result rows to skip', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, sql, options) => sqliteQuery(file, sql, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

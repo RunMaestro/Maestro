@@ -7,6 +7,7 @@
  *   - `sqlite_read_rows`: one window of the table view (`maestro-cli sqlite rows`).
  *   - `sqlite_count_rows`: the table view's row count, settled (`maestro-cli sqlite count`).
  *   - `sqlite_save_blob`: one BLOB cell written to a file (`maestro-cli sqlite blob`).
+ *   - `sqlite_run_query`: Query mode's Run, one read-only statement (`maestro-cli sqlite query`).
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -15,8 +16,9 @@
  * `checkSqliteIntegrity()` for the summary strip, `listSqliteObjects()` for the rail, the budgeted
  * stats reader for the row counts and sizes, `readSqliteObjectSchema()` for
  * the schema pane, `readSqliteRows()` for the table view, and the budgeted
- * row counter run to the end for the footer's count, and `saveSqliteBlob()`
- * for the record view's Save to file, so the CLI prints what the viewer shows.
+ * row counter run to the end for the footer's count, `saveSqliteBlob()`
+ * for the record view's Save to file, and `runSqliteQuery()` for Query mode's
+ * Run, so the CLI prints what the viewer shows.
  * The BLOB is written by the app, to the absolute path the CLI resolved, the
  * way `profiling_stop` writes its bundle: its bytes never ride the socket.
  *
@@ -30,6 +32,7 @@ import { countAllSqliteRows } from '../../../sqlite/sqlite-count';
 import { openSqliteDatabase } from '../../../sqlite/sqlite-database';
 import { checkSqliteIntegrity } from '../../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readAllSqliteObjectStats } from '../../../sqlite/sqlite-objects';
+import { runSqliteQuery } from '../../../sqlite/sqlite-query';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
@@ -280,6 +283,37 @@ export async function handleSqliteSaveBlob(
 			destPath,
 		});
 		reply({ success: true, database, saved });
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+export async function handleSqliteRunQuery(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_query_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const sql = typeof message.sql === 'string' ? message.sql : '';
+	if (!filePath || !sql.trim()) {
+		reply({ success: false, error: 'Missing required "path" or "sql" for sqlite_run_query' });
+		return;
+	}
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		// No queryId: a CLI run is stopped by its timeout, or by closing the app.
+		const result = await runSqliteQuery({
+			handle: database.handle,
+			sql,
+			offset: message.offset === undefined ? 0 : (message.offset as number),
+			limit: message.limit === undefined ? 50 : (message.limit as number),
+		});
+		reply({ success: true, database, result });
 	} catch (error) {
 		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
 	}

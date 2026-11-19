@@ -2,7 +2,7 @@
  * The body of a SQLite integrity check: open the file on a connection of its
  * own and run `PRAGMA quick_check` or `PRAGMA integrity_check`.
  *
- * Runs on the worker thread (sqlite-integrity-worker.ts). Both pragmas read
+ * Runs in the SQLite child process (sqlite-worker.ts). Both pragmas read
  * every page of the file and cannot be interrupted, which on the main process
  * would hold every IPC call for as long as the file takes to read. The
  * connection is opened exactly as the viewer's is (sqlite-connection.ts), so
@@ -25,11 +25,6 @@ export interface SqliteIntegrityTask {
 	filePath: string;
 	mode: SqliteIntegrityMode;
 }
-
-/** The worker's one reply: the verdict, or the error that kept it from one. */
-export type SqliteIntegrityReply =
-	| { ok: true; result: SqliteIntegrityResult }
-	| { ok: false; error: { message: string; code?: string } };
 
 /**
  * Check one database. A file damaged badly enough that SQLite throws rather

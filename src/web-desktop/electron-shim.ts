@@ -259,12 +259,14 @@ function alertsOnRejection(channel: string, args: readonly unknown[], error: str
 	);
 }
 function requestTimeoutMs(channel: string): number {
-	// Repository transfers, recursive filesystem reads, and a SQLite integrity
-	// check (every page of the file) legitimately outlast ordinary UI requests.
+	// Repository transfers, recursive filesystem reads, a SQLite integrity
+	// check (every page of the file), and a SQLite query (stopped by main at
+	// its own timeout) legitimately outlast ordinary UI requests.
 	if (
 		channel.startsWith('git:') ||
 		channel === 'fs:directorySize' ||
-		channel === 'sqlite:checkIntegrity'
+		channel === 'sqlite:checkIntegrity' ||
+		channel === 'sqlite:runQuery'
 	) {
 		return 600_000;
 	}

@@ -20,6 +20,8 @@ import type {
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteQueryRequest,
+	SqliteQueryResult,
 	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteRowsRequest,
@@ -119,6 +121,8 @@ let saveBlob: ReturnType<typeof vi.fn>;
 let saveFile: ReturnType<typeof vi.fn>;
 let readSummary: ReturnType<typeof vi.fn>;
 let checkIntegrity: ReturnType<typeof vi.fn>;
+let runQuery: ReturnType<typeof vi.fn>;
+let cancelQuery: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -239,6 +243,29 @@ const INDEX_SCHEMA: SqliteObjectSchema = {
 	},
 };
 
+/** A statement over 3 rows: `id` and `email`, one email NULL. */
+function queryWindow(request: SqliteQueryRequest): SqliteQueryResult {
+	const all = [
+		[1, 'ada@example.com'],
+		[2, null],
+		[3, ''],
+	];
+	const offset = request.offset ?? 0;
+	const limit = request.limit ?? 500;
+	return {
+		statement: 'SELECT',
+		columns: [
+			{ name: 'id', declaredType: 'INTEGER' },
+			{ name: 'id', declaredType: null },
+		],
+		rows: all.slice(offset, offset + limit),
+		offset,
+		hasMore: offset + limit < all.length,
+		returnsRows: true,
+		elapsedMs: 3,
+	};
+}
+
 const CATALOG: SqliteColumnCatalog = {
 	objects: [
 		{
@@ -277,6 +304,8 @@ beforeEach(() => {
 	readSummary = vi.fn().mockResolvedValue(SUMMARY);
 	// The check never answers unless a test says so, like the row count.
 	checkIntegrity = vi.fn(() => new Promise<SqliteIntegrityResult>(() => {}));
+	runQuery = vi.fn(async (request: SqliteQueryRequest) => queryWindow(request));
+	cancelQuery = vi.fn().mockResolvedValue(true);
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
@@ -290,6 +319,8 @@ beforeEach(() => {
 			readRows,
 			countRows,
 			saveBlob,
+			runQuery,
+			cancelQuery,
 			close,
 		},
 		dialog: { saveFile },
@@ -1248,5 +1279,125 @@ describe('SqliteViewer query editor', () => {
 		act(() => ref.current?.focusFilter());
 		expect(screen.getByTestId('sqlite-query-panel')).toBeInTheDocument();
 		expect(screen.queryByTestId('sqlite-filter-input')).not.toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer query runs', () => {
+	async function openQuery(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByRole('textbox');
+		fireEvent.change(editor, { target: { value: sql } });
+		return editor;
+	}
+
+	it('runs the statement and fills the shared grid, a repeated name and all', async () => {
+		await openQuery('SELECT id, id FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+
+		await screen.findByTestId('sqlite-query-grid');
+		expect(runQuery).toHaveBeenCalledWith(
+			expect.objectContaining({
+				handle: 'h1',
+				sql: 'SELECT id, id FROM users',
+				offset: 0,
+				limit: 500,
+			})
+		);
+		// Two result columns share a name; both are drawn.
+		expect(screen.getByTestId('sqlite-query-header-0')).toHaveTextContent('id');
+		expect(screen.getByTestId('sqlite-query-header-1')).toHaveTextContent('id');
+		const second = screen.getByTestId('sqlite-query-row-1');
+		expect(second).toHaveTextContent('NULL');
+		expect(screen.getByTestId('sqlite-query-total')).toHaveTextContent('3 rows');
+	});
+
+	it('names each call so Stop can reach it, and stops the run in flight', async () => {
+		runQuery.mockImplementation(() => new Promise(() => {}));
+		await openQuery('SELECT * FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		const queryId = runQuery.mock.calls[0][0].queryId as string;
+		expect(queryId).toEqual(expect.any(String));
+
+		fireEvent.click(await screen.findByTestId('sqlite-query-stop'));
+		expect(cancelQuery).toHaveBeenCalledWith(queryId);
+	});
+
+	it('stops the older run when Run is pressed again, and keeps only the newer reply', async () => {
+		let resolveFirst: (value: SqliteQueryResult) => void = () => {};
+		runQuery.mockImplementationOnce(
+			() =>
+				new Promise<SqliteQueryResult>((resolve) => {
+					resolveFirst = resolve;
+				})
+		);
+		await openQuery('SELECT * FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		const firstId = runQuery.mock.calls[0][0].queryId;
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(cancelQuery).toHaveBeenCalledWith(firstId);
+
+		await screen.findByTestId('sqlite-query-grid');
+		await act(async () => {
+			resolveFirst({ ...queryWindow({ handle: 'h1', sql: '' }), rows: [] });
+		});
+		// The stale reply did not replace the newer rows.
+		expect(screen.getByTestId('sqlite-query-total')).toHaveTextContent('3 rows');
+	});
+
+	it('runs on Cmd+Enter in the editor', async () => {
+		const editor = await openQuery('SELECT 1');
+		fireEvent.keyDown(editor, { key: 'Enter', metaKey: true });
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		expect(runQuery).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses a write under the editor without asking main, never as a toast', async () => {
+		await openQuery('DELETE FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent(
+			'DELETE is not a read-only statement.'
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it("shows SQLite's error under the editor", async () => {
+		runQuery.mockRejectedValue(new Error('no such table: userz'));
+		await openQuery('SELECT * FROM userz');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent(
+			'no such table: userz'
+		);
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('says when a statement returns no rows by design', async () => {
+		runQuery.mockResolvedValue({
+			statement: 'PRAGMA',
+			columns: [],
+			rows: [],
+			offset: 0,
+			hasMore: false,
+			returnsRows: false,
+			elapsedMs: 0,
+		});
+		await openQuery('PRAGMA trusted_schema = ON');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-empty')).toHaveTextContent(
+			'PRAGMA ran and returns no rows.'
+		);
+	});
+
+	it('keeps the result across a switch to Browse and back', async () => {
+		await openQuery('SELECT * FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await screen.findByTestId('sqlite-query-grid');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
+		await screen.findByTestId('sqlite-object-pane');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		expect(await screen.findByTestId('sqlite-query-grid')).toBeInTheDocument();
+		expect(runQuery).toHaveBeenCalledTimes(1);
 	});
 });

@@ -9,7 +9,9 @@
  * `maestro-cli sqlite count`: the settled row count, over `sqlite_count_rows`.
  * And `maestro-cli sqlite blob`: one BLOB cell written to `--output` by the
  * app, over `sqlite_save_blob`. And `maestro-cli sqlite info`: the header facts
- * and, with `--check`, the integrity verdict, over `sqlite_read_summary`.
+ * and, with `--check`, the integrity verdict, over `sqlite_read_summary`. And
+ * `maestro-cli sqlite query`: one read-only statement's window, over
+ * `sqlite_run_query`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -24,6 +26,7 @@ import {
 	sqliteBlob,
 	sqliteCount,
 	sqliteInfo,
+	sqliteQuery,
 	sqliteRows,
 	sqliteSchema,
 	sqliteTables,
@@ -786,5 +789,110 @@ describe('sqlite info', () => {
 		mockReply({ type: 'sqlite_summary_result', success: false, error: 'Not a SQLite database: x' });
 		await expect(sqliteInfo(DB, {})).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('Not a SQLite database: x');
+	});
+});
+
+describe('sqlite query', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+
+	const RESULT = {
+		statement: 'SELECT',
+		columns: [
+			{ name: 'id', declaredType: 'INTEGER' },
+			{ name: 'email', declaredType: 'TEXT' },
+		],
+		rows: [
+			[1, 'ada@example.com'],
+			[2, null],
+		],
+		offset: 0,
+		hasMore: true,
+		returnsRows: true,
+		elapsedMs: 4,
+	};
+
+	function respondQuery(overrides: Record<string, unknown> = {}) {
+		return mockReply({
+			type: 'sqlite_query_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+			result: { ...RESULT, ...overrides },
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the resolved path, the statement as written, and the first 50 rows', async () => {
+		const sent = respondQuery();
+		await sqliteQuery(DB, 'SELECT id, email FROM users', {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_run_query',
+			path: DB,
+			sql: 'SELECT id, email FROM users',
+			offset: 0,
+			limit: 50,
+			responseType: 'sqlite_query_result',
+		});
+	});
+
+	it('prints the rows as a table, NULL spelled out, with the next offset', async () => {
+		respondQuery();
+		await sqliteQuery(DB, 'SELECT id, email FROM users', { offset: '0', limit: '2' });
+		const out = logged();
+		expect(out).toContain(`SELECT on ${DB}`);
+		expect(out).toContain('ada@example.com');
+		expect(out).toContain('NULL');
+		expect(out).toContain('Rows 1-2; more follow (--offset 2).');
+		expect(out).toContain('4 ms.');
+	});
+
+	it('says when the statement returns no rows by design', async () => {
+		respondQuery({
+			statement: 'PRAGMA',
+			columns: [],
+			rows: [],
+			hasMore: false,
+			returnsRows: false,
+		});
+		await sqliteQuery(DB, 'PRAGMA trusted_schema = ON', {});
+		expect(logged()).toContain('The statement ran and returns no rows.');
+	});
+
+	it('prints the reply as JSON under --json', async () => {
+		respondQuery();
+		await sqliteQuery(DB, 'SELECT 1', { json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			...RESULT,
+		});
+	});
+
+	it("exits 1 with the app's refusal", async () => {
+		mockReply({
+			type: 'sqlite_query_result',
+			success: false,
+			error: 'DELETE is not a read-only statement.',
+		});
+		await expect(sqliteQuery(DB, 'DELETE FROM users', {})).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('DELETE is not a read-only statement.');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it('refuses a blank statement or a limit past the cap before asking the app', async () => {
+		const sent = respondQuery();
+		await expect(sqliteQuery(DB, '  ', {})).rejects.toThrow('__exit__');
+		await expect(sqliteQuery(DB, 'SELECT 1', { limit: '5000' })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('--limit must be at most 1000');
+		expect(sent).toHaveLength(0);
 	});
 });

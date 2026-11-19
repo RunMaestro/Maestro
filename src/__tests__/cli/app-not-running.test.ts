@@ -161,6 +161,7 @@ import {
 import {
 	sqliteCount,
 	sqliteInfo,
+	sqliteQuery,
 	sqliteRows,
 	sqliteSchema,
 	sqliteTables,
@@ -363,6 +364,7 @@ const rows: Row[] = [
 	{ name: 'sqlite schema', run: (json) => sqliteSchema('/data/app.db', 'users', j(json)) },
 	{ name: 'sqlite rows', run: (json) => sqliteRows('/data/app.db', 'users', j(json)) },
 	{ name: 'sqlite count', run: (json) => sqliteCount('/data/app.db', 'users', j(json)) },
+	{ name: 'sqlite query', run: (json) => sqliteQuery('/data/app.db', 'SELECT 1', j(json)) },
 	// special cases
 	{
 		name: 'goal-run --visible',

@@ -3429,6 +3429,16 @@ Save one BLOB cell to a file, whole, the way the viewer's record view saves it (
 | `--output <file>` | File to write; replaced if it exists                                                                    | -       |
 | `--json`          | Output as JSON (for scripting)                                                                          | -       |
 
+## `maestro-cli sqlite query <path> <sql>`
+
+Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused
+
+| Option         | Description                    | Default |
+| -------------- | ------------------------------ | ------- |
+| `--offset <n>` | Result rows to skip            | `0`     |
+| `--limit <n>`  | Rows to show (at most 1000)    | `50`    |
+| `--json`       | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

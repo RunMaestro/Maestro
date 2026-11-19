@@ -47,16 +47,9 @@ import { Download } from 'lucide-react';
 import { formatCount, formatSize } from '../../../shared/formatters';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
-import {
-	formatSqliteBlobHex,
-	formatSqliteCell,
-	formatSqliteRecordValue,
-	sqliteBlobFileName,
-} from '../../../shared/sqlite/cells';
+import { formatSqliteRecordValue, sqliteBlobFileName } from '../../../shared/sqlite/cells';
 import { formatSqliteRowCount, sqliteConvergingRowTotal } from '../../../shared/sqlite/objects';
-import { sqliteColumnAffinity } from '../../../shared/sqlite/schema';
 import type {
-	SqliteAffinity,
 	SqliteCellValue,
 	SqliteCountCursor,
 	SqliteFilterProblem,
@@ -69,12 +62,7 @@ import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { notifyToast } from '../../stores/notificationStore';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
-import {
-	DataGrid,
-	dataGridColumnWidth,
-	type DataGridCell,
-	type DataGridColumn,
-} from '../ui/DataGrid';
+import { DataGrid } from '../ui/DataGrid';
 import {
 	FilterExpressionBar,
 	type FilterExpressionBarHandle,
@@ -82,6 +70,7 @@ import {
 } from '../ui/FilterExpressionBar';
 import { RecordDetailModal, type RecordDetailField } from '../ui/RecordDetailModal';
 import { Spinner } from '../ui/Spinner';
+import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
 const PAGE_SIZE = 300;
@@ -139,36 +128,10 @@ const FOOTNOTE = (
 	</>
 );
 
-/** Typical content width for a column of each affinity. */
-const CONTENT_WIDTH: Record<SqliteAffinity, number> = {
-	INTEGER: 110,
-	REAL: 120,
-	NUMERIC: 120,
-	TEXT: 200,
-	BLOB: 160,
-};
+const BLOB_HINT = 'Double-click the row to save it to a file';
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-function toGridColumn(column: SqliteResultColumn, strict: boolean): DataGridColumn {
-	const declared = column.declaredType ?? '';
-	const affinity = sqliteColumnAffinity(declared, strict);
-	const typeText =
-		column.declaredType === null
-			? 'an expression'
-			: declared
-				? `${declared}, ${affinity} affinity`
-				: 'no declared type';
-	return {
-		key: column.name,
-		label: column.name,
-		subtitle: declared || undefined,
-		title: `${column.name} (${typeText}) - click to sort`,
-		initialWidth: dataGridColumnWidth(column.name, CONTENT_WIDTH[affinity]),
-		align: affinity === 'TEXT' || affinity === 'BLOB' ? 'left' : 'right',
-	};
 }
 
 interface SqliteTableViewProps {
@@ -379,34 +342,13 @@ export function SqliteTableView({
 
 	const strict = object.strict === true;
 	const gridColumns = useMemo(
-		() => (columns ?? []).map((column) => toGridColumn(column, strict)),
+		() => (columns ?? []).map((column) => sqliteGridColumn(column, { strict })),
 		[columns, strict]
 	);
 
 	const getCell = useCallback(
-		(rowPosition: number, columnPosition: number): DataGridCell => {
-			const value = rows[rowPosition]?.[columnPosition] ?? null;
-			const cell = formatSqliteCell(value);
-			// A NULL and an empty string differ in the cell itself (a dimmed
-			// `NULL` against a blank), and the tooltip names which one the user
-			// is pointing at, since a blank can also be whitespace.
-			if (value === null) return { ...cell, title: 'NULL (no value)' };
-			if (value === '') return { ...cell, title: 'Empty string' };
-			if (typeof value === 'object' && value.kind === 'blob') {
-				const hex = formatSqliteBlobHex(value);
-				return {
-					...cell,
-					title: `BLOB, ${formatSize(value.bytes)} (${formatCount(value.bytes)} bytes)${hex ? `\n${hex}` : ''}\nDouble-click the row to save it to a file`,
-				};
-			}
-			if (typeof value === 'object' && value.kind === 'text') {
-				return {
-					...cell,
-					title: `${cell.text}\n(${formatCount(value.length)} characters; the grid shows the first ${formatCount(value.head.length)})`,
-				};
-			}
-			return cell;
-		},
+		(rowPosition: number, columnPosition: number) =>
+			sqliteGridCell(rows[rowPosition]?.[columnPosition] ?? null, BLOB_HINT),
 		[rows]
 	);
 

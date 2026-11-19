@@ -5,8 +5,8 @@
  * check its integrity, list its schema
  * objects, measure their row counts and sizes, read one object's structure,
  * read every table's column names for SQL completion,
- * read a window of a table's rows, count its rows, save a BLOB to a file,
- * close the handle.
+ * read a window of a table's rows, count its rows, run a read-only statement
+ * (and stop it), save a BLOB to a file, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
@@ -23,6 +23,8 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteQueryRequest,
+	SqliteQueryResult,
 	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteRowsRequest,
@@ -47,7 +49,7 @@ export function createSqliteApi() {
 
 		/**
 		 * Run `PRAGMA quick_check` (`quick`) or `PRAGMA integrity_check`
-		 * (`full`) on a worker thread. Resolves with the verdict; rejects when
+		 * (`full`) in a child process. Resolves with the verdict; rejects when
 		 * the check could not run or the database closed first.
 		 */
 		checkIntegrity: (handle: string, mode: SqliteIntegrityMode): Promise<SqliteIntegrityResult> =>
@@ -98,6 +100,19 @@ export function createSqliteApi() {
 		 */
 		countRows: (request: SqliteCountRequest): Promise<SqliteRowCount> =>
 			ipcRenderer.invoke('sqlite:countRows', request),
+
+		/**
+		 * Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, read
+		 * PRAGMA) and return a window of its result. Rejects with a refusal for
+		 * anything that would write, with SQLite's message for a failure, and
+		 * when the run is stopped or times out.
+		 */
+		runQuery: (request: SqliteQueryRequest): Promise<SqliteQueryResult> =>
+			ipcRenderer.invoke('sqlite:runQuery', request),
+
+		/** Stop the run started under `queryId`. Resolves whether one was running. */
+		cancelQuery: (queryId: string): Promise<boolean> =>
+			ipcRenderer.invoke('sqlite:cancelQuery', queryId),
 
 		/**
 		 * Write one BLOB cell to `destPath`, whole. The row is named by its rowid

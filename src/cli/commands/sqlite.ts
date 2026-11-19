@@ -20,10 +20,12 @@
 //                           [--sort <column>] [--desc] [--filter <expr>]
 //                           --output <file> [--json]
 //       -> the record view's Save to file: one BLOB cell written whole
+//   maestro-cli sqlite query <path> <sql> [--offset <n>] [--limit <n>] [--json]
+//       -> Query mode's Run: one read-only statement, a window of its result
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
-// `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`) to the running
+// `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there; a
 // BLOB is written to `--output` by the app, so its bytes never ride the socket.
@@ -50,6 +52,7 @@ import {
 	sqliteMissingSqlNote,
 } from '../../shared/sqlite/schema';
 import { formatSqliteCell } from '../../shared/sqlite/cells';
+import { SQLITE_QUERY_MAX_LIMIT, SQLITE_QUERY_TIMEOUT_MS } from '../../shared/sqlite/query';
 import { formatSqliteIntegrity, sqliteSummaryFacts } from '../../shared/sqlite/summary';
 import type {
 	SqliteBlobSaved,
@@ -63,8 +66,10 @@ import type {
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteQueryResult,
 	SqliteRowCount,
 	SqliteRowsPage,
+	SqliteCellValue,
 } from '../../shared/sqlite/types';
 
 /** Counting and sizing a large database takes a while; give it room. */
@@ -405,6 +410,14 @@ function cellText(text: string): string {
 		: line;
 }
 
+/** Rows as a text table, one line per row, each cell cut to one line. */
+function rowsTable(columnNames: string[], rows: SqliteCellValue[][]): string {
+	return formatTextTable(
+		columnNames,
+		rows.map((row) => row.map((cell) => cellText(formatSqliteCell(cell).text)))
+	);
+}
+
 /**
  * Exit on filter text that did not parse or bind. The viewer underlines the
  * span; a terminal gets the span as a caret line under the text.
@@ -487,9 +500,9 @@ export async function sqliteRows(
 	} else {
 		lines.push(
 			'',
-			formatTextTable(
+			rowsTable(
 				page.columns.map((column) => column.name),
-				page.rows.map((row) => row.map((cell) => cellText(formatSqliteCell(cell).text)))
+				page.rows
 			)
 		);
 		const first = page.offset + 1;
@@ -657,4 +670,83 @@ export async function sqliteBlob(
 	console.log(
 		`Saved ${column} of ${name} (${from}) to ${saved.path}: ${formatSize(saved.bytes)} (${saved.bytes} bytes).`
 	);
+}
+
+interface SqliteQueryOptions {
+	offset?: string;
+	limit?: string;
+	json?: boolean;
+}
+
+interface SqliteQueryReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	result?: SqliteQueryResult;
+}
+
+/**
+ * `maestro-cli sqlite query <path> <sql>` - run one read-only statement the
+ * way the viewer's Query mode runs it (its own connection in a child process
+ * in the app, stopped at the same timeout) and print a window of the result.
+ * A statement that would write is refused, not run.
+ */
+export async function sqliteQuery(
+	file: string,
+	sql: string,
+	options: SqliteQueryOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!sql.trim()) fail('Give the statement to run, e.g. "SELECT * FROM users"', options.json);
+	const offset = parseCount(options.offset, '--offset', 0, options.json);
+	const limit = parseCount(options.limit, '--limit', SQLITE_ROWS_DEFAULT_LIMIT, options.json);
+	if (limit > SQLITE_QUERY_MAX_LIMIT) {
+		fail(`--limit must be at most ${SQLITE_QUERY_MAX_LIMIT} (got ${limit})`, options.json);
+	}
+
+	let reply: SqliteQueryReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteQueryReply>(
+				{ type: 'sqlite_run_query', path: filePath, sql, offset, limit },
+				'sqlite_query_result',
+				// The app stops the run at its own timeout; leave room for the reply.
+				SQLITE_QUERY_TIMEOUT_MS + 30_000
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.result) {
+		fail(reply.error || `Could not run the query on ${filePath}`, options.json);
+	}
+
+	const { database, result } = reply;
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, path: database.displayPath, ...result }));
+		return;
+	}
+
+	const lines: string[] = [`${result.statement} on ${database.displayPath}`];
+	if (!result.returnsRows) {
+		lines.push('', 'The statement ran and returns no rows.');
+	} else if (result.rows.length === 0) {
+		lines.push('', offset > 0 ? `No rows past offset ${offset}.` : 'No rows.');
+	} else {
+		lines.push(
+			'',
+			rowsTable(
+				result.columns.map((column) => column.name),
+				result.rows
+			)
+		);
+		const last = result.offset + result.rows.length;
+		lines.push(
+			'',
+			`Rows ${result.offset + 1}-${last}${result.hasMore ? `; more follow (--offset ${last})` : ''}.`
+		);
+	}
+	lines.push(`${result.elapsedMs} ms.`);
+	console.log(lines.join('\n'));
 }

@@ -39,13 +39,13 @@ import { buildSqliteFilter, type SqliteFilterBuild } from '../../shared/sqlite/f
 import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
-	SqliteCellValue,
 	SqliteObjectSummary,
 	SqliteResultColumn,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 	SqliteSortSpec,
 } from '../../shared/sqlite/types';
+import { sqliteCellFromHead } from './sqlite-cell';
 import { getSqliteDatabase } from './sqlite-database';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
 
@@ -54,10 +54,6 @@ export const SQLITE_ROWS_MAX_LIMIT = 1000;
 
 /** The names SQLite answers to for a rowid, in the order we prefer them. */
 const ROWID_ALIASES = ['rowid', '_rowid_', 'oid'] as const;
-
-function toCount(value: unknown): number {
-	return typeof value === 'bigint' ? Number(value) : Number(value ?? 0);
-}
 
 /**
  * A window bound as a non-negative integer; anything else is a caller bug.
@@ -210,25 +206,6 @@ function columnExpressions(name: string): string {
 	);
 }
 
-/** Turn one value/length pair from the statement into a wire cell. */
-function toCell(value: unknown, length: unknown): SqliteCellValue {
-	if (value === null || value === undefined) return null;
-	if (typeof value === 'bigint') {
-		return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
-			? Number(value)
-			: { kind: 'integer', text: value.toString() };
-	}
-	if (typeof value === 'number') return value;
-	if (typeof value === 'string') {
-		const full = toCount(length);
-		return full > value.length ? { kind: 'text', head: value, length: full } : value;
-	}
-	if (Buffer.isBuffer(value)) {
-		return { kind: 'blob', head: value.toString('hex'), bytes: toCount(length) };
-	}
-	return String(value);
-}
-
 /**
  * Read one window of a table's or view's rows. Throws when no table or view
  * has the name, when the sort names a column the object does not have, or
@@ -290,7 +267,9 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 	const first = rowidAlias ? 1 : 0;
 	const kept = raw.slice(0, limit);
 	const rows = kept.map((row) =>
-		columns.map((_, index) => toCell(row[first + index * 2], row[first + index * 2 + 1]))
+		columns.map((_, index) =>
+			sqliteCellFromHead(row[first + index * 2], row[first + index * 2 + 1])
+		)
 	);
 	const rowids = rowidAlias ? kept.map((row) => String(row[0])) : null;
 

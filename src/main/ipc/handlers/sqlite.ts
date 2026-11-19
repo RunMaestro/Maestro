@@ -6,7 +6,8 @@
  * the summary and integrity calls return header facts and a verdict, the
  * table-list, schema, and column-catalog calls return names, numbers, and
  * schema text,
- * the row calls return one bounded window of cells, a BLOB save writes the
+ * the row calls return one bounded window of cells, a query run returns one
+ * window of a read-only statement's result, a BLOB save writes the
  * value to disk here rather than shipping it, and the read-only
  * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
  */
@@ -26,6 +27,8 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteQueryRequest,
+	SqliteQueryResult,
 	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteRowsRequest,
@@ -35,6 +38,7 @@ import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
 import { checkSqliteIntegrity } from '../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
+import { cancelSqliteQuery, runSqliteQuery } from '../../sqlite/sqlite-query';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
@@ -55,7 +59,7 @@ export function registerSqliteHandlers(): void {
 			readSqliteDatabaseSummary(handle)
 	);
 
-	// The integrity flag. Reads every page, so it runs on a worker thread with
+	// The integrity flag. Reads every page, so it runs in a child process with
 	// its own read-only connection; this call only waits for the verdict.
 	ipcMain.handle(
 		'sqlite:checkIntegrity',
@@ -113,6 +117,21 @@ export function registerSqliteHandlers(): void {
 	ipcMain.handle(
 		'sqlite:countRows',
 		async (_event, request: SqliteCountRequest): Promise<SqliteRowCount> => countSqliteRows(request)
+	);
+
+	// Query mode's Run: one read-only statement, in a child process with its
+	// own connection, so a runaway query can time out or be killed. One
+	// window of the result comes back; the next re-runs it at an offset.
+	ipcMain.handle(
+		'sqlite:runQuery',
+		async (_event, request: SqliteQueryRequest): Promise<SqliteQueryResult> =>
+			runSqliteQuery(request)
+	);
+
+	// Query mode's Stop: terminate the run going under this id.
+	ipcMain.handle(
+		'sqlite:cancelQuery',
+		async (_event, queryId: string): Promise<boolean> => cancelSqliteQuery(queryId)
 	);
 
 	// Save one BLOB cell to a file, whole. The value is read and written in

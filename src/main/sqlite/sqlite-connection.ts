@@ -2,8 +2,9 @@
  * The one way a SQLite connection is opened on a user's database.
  *
  * Shared by the viewer's long-lived handles (sqlite-database.ts) and the
- * integrity check's worker thread (sqlite-integrity-worker.ts), so a second
- * connection on the same file is exactly as safe as the first:
+ * SQLite child process (sqlite-worker.ts: integrity checks and Query-mode
+ * runs), so a second connection on the same file is exactly as safe as the
+ * first:
  *
  *   - `readonly: true`: writes fail at the driver, whatever SQL reaches it.
  *   - `fileMustExist: true`: opening a path that vanished never creates an
@@ -11,9 +12,10 @@
  *   - `trusted_schema = OFF`: a hostile file cannot route schema-embedded SQL
  *     (views, triggers, defaults) through functions with side effects.
  *   - A short busy timeout. better-sqlite3 is synchronous, so a writer holding
- *     the lock would otherwise freeze the thread for the 5 s default.
+ *     the lock would otherwise freeze the process for the 5 s default.
  *
- * Nothing here may import `electron`: the worker thread loads this module.
+ * Nothing here may import `electron`: the SQLite child process loads this
+ * module.
  */
 
 import Database from 'better-sqlite3';

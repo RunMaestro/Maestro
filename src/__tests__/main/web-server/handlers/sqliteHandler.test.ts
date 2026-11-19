@@ -1,7 +1,7 @@
 // Covers the sqlite_read_summary, sqlite_list_objects, sqlite_read_schema,
-// sqlite_read_rows, sqlite_count_rows, and sqlite_save_blob WebSocket messages
-// that back `maestro-cli sqlite info`, `sqlite tables`, `sqlite schema`, `sqlite rows`, `sqlite count`,
-// and `sqlite blob`. It opens the database through the viewer's own open path,
+// sqlite_read_rows, sqlite_count_rows, sqlite_save_blob, and sqlite_run_query
+// WebSocket messages that back `maestro-cli sqlite info`, `sqlite tables`,
+// `sqlite schema`, `sqlite rows`, `sqlite count`, `sqlite blob`, and `sqlite query`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
 
@@ -42,6 +42,8 @@ const summaries = vi.hoisted(() => ({ readSqliteDatabaseSummary: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-summary', () => summaries);
 const integrity = vi.hoisted(() => ({ checkSqliteIntegrity: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
+const queries = vi.hoisted(() => ({ runSqliteQuery: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-query', () => queries);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -642,6 +644,103 @@ describe('sqlite_save_blob handler', () => {
 		handler.handleMessage(client, { ...base, requestId: 'b6', offset: 0, sort: { column: 1 } });
 		await flush();
 		expect(lastResponse(client)).toMatchObject({ requestId: 'b6', success: false });
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_run_query handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const result = {
+		statement: 'SELECT',
+		columns: [{ name: 'n', declaredType: null }],
+		rows: [[1]],
+		offset: 0,
+		hasMore: false,
+		returnsRows: true,
+		elapsedMs: 1,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		queries.runSqliteQuery.mockResolvedValue(result);
+	});
+
+	it("answers with one window from the viewer's own runner, 50 rows by default", async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q1',
+			path: '/data/app.db',
+			sql: 'SELECT count(*) AS n FROM users',
+		});
+		await flush();
+		expect(database.openSqliteDatabase).toHaveBeenCalledWith('/data/app.db');
+		expect(queries.runSqliteQuery).toHaveBeenCalledWith({
+			handle: 'h1',
+			sql: 'SELECT count(*) AS n FROM users',
+			offset: 0,
+			limit: 50,
+		});
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_query_result',
+			requestId: 'q1',
+			success: true,
+			database: info,
+			result,
+		});
+		// The connection may be a preview tab's: never closed here.
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('passes the window through', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q2',
+			path: '/data/app.db',
+			sql: 'SELECT 1',
+			offset: 100,
+			limit: 10,
+		});
+		await flush();
+		expect(queries.runSqliteQuery).toHaveBeenCalledWith(
+			expect.objectContaining({ offset: 100, limit: 10 })
+		);
+	});
+
+	it("reports the runner's refusal with the request id", async () => {
+		queries.runSqliteQuery.mockRejectedValue(new Error('DELETE is not a read-only statement.'));
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q3',
+			path: '/data/app.db',
+			sql: 'DELETE FROM users',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_query_result',
+			requestId: 'q3',
+			success: false,
+			error: 'DELETE is not a read-only statement.',
+		});
+	});
+
+	it('refuses a missing path or a blank statement before opening anything', async () => {
+		handler.handleMessage(client, { type: 'sqlite_run_query', requestId: 'q4', sql: 'SELECT 1' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'q4', success: false });
+
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q5',
+			path: '/data/app.db',
+			sql: '   ',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'q5', success: false });
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
 	});
 });

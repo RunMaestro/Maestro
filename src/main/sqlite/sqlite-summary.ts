@@ -6,7 +6,7 @@
  * `application_id`. Each is a header field read through a pragma, so this
  * answers at once whatever the database's size. The integrity flag beside
  * them is the one fact that is NOT cheap; it lives in sqlite-integrity.ts and
- * runs on a worker thread.
+ * runs in a child process.
  */
 
 import type { SqliteDatabaseSummary } from '../../shared/sqlite/types';
