@@ -82,7 +82,7 @@ const METHODS: Record<string, string> = {
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:
-		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
+		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs playbook-run-ended playbook-run-started record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
 	symphony:
 		'cancel checkPRStatuses clearCache cloneRepo complete createDraftPR fetchDocumentContent getActive getCompleted getIssueCounts getIssues getRegistry getState getStats manualCredit registerActive start startContribution syncContribution updateStatus',
 	tabNaming: 'generateTabName',

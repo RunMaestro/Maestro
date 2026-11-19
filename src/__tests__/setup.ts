@@ -775,6 +775,8 @@ const mockMaestro = {
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),
+		playbookRunStarted: vi.fn().mockResolvedValue(undefined),
+		playbookRunEnded: vi.fn().mockResolvedValue(undefined),
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
 		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),

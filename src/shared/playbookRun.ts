@@ -99,6 +99,10 @@ export function toBatchRunPlaybook(
 		...(playbook.provenance?.sourceVersion && {
 			sourceVersion: playbook.provenance.sourceVersion,
 		}),
+		...(playbook.provenance?.sourceChannel && {
+			sourceChannel: playbook.provenance.sourceChannel,
+		}),
+		...(playbook.interaction && { interaction: playbook.interaction }),
 		...(playbook.parameterOverlay && { parameterOverlay: playbook.parameterOverlay }),
 		...(parameterValues && { parameterValues }),
 	};

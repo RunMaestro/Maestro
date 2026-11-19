@@ -631,6 +631,10 @@ export interface UseSettingsReturn {
 	// User Journey recording
 	userJourneyEnabled: boolean;
 	setUserJourneyEnabled: (value: boolean) => void;
+
+	// Anonymous usage of official Exchange playbooks (src/main/services/playbook-telemetry.ts)
+	playbookTelemetryEnabled: boolean;
+	setPlaybookTelemetryEnabled: (value: boolean) => void;
 }
 
 // PERF: Identity selector reused across renders so the hook doesn't allocate a new

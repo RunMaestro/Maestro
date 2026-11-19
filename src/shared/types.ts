@@ -986,6 +986,10 @@ export interface BatchRunPlaybook {
 	marketplaceId?: string;
 	/** `provenance.sourceVersion`: the entry version it was imported at. */
 	sourceVersion?: string;
+	/** `provenance.sourceChannel`: telemetry is sent only for `official`. */
+	sourceChannel?: PlaybookSourceChannel;
+	/** How the playbook collects its parameters (absent means `form`). */
+	interaction?: PlaybookInteraction;
 	/**
 	 * The agent whose playbook store holds this record. A worktree run executes
 	 * in another agent, so a Resume re-reads the answers from here.

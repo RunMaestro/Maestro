@@ -133,6 +133,19 @@ Playbooks are fetched from the [Maestro-Playbooks](https://github.com/RunMaestro
 - **Cache indicator** - Shows whether data is from cache and how old it is (e.g., "Cached 2h ago" or "Live")
 - **Refresh button** - Forces a fresh fetch from GitHub, bypassing the cache
 
+### Anonymous Usage
+
+**Settings > General > Privacy > Share anonymous playbook usage** is off unless you turn it on. When it is on, Maestro sends a few events about playbooks from the official Exchange to `runmaestro.ai`, so the Exchange can show which playbooks are popular and which are broken:
+
+| Event           | Fields                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------ |
+| `install`       | playbook id, playbook version                                                                    |
+| `run_started`   | playbook id, version, where the run was launched from, `form` or `guided`                        |
+| `run_completed` | playbook id, version, status, duration, document count, stalled document count                   |
+| `run_failed`    | playbook id, version, document name, task number, failure kind, fingerprint (at most five a run) |
+
+Playbook ids are public, so they are sent as they are. Paths, parameter values, agent names, and your identity are not fields at all; the only identifier is Maestro's anonymous installation id. A stopped run sends no `run_failed` events. Playbooks from a local manifest send nothing. Events wait in a file in Maestro's data folder and go out after an Auto Run ends or when Maestro quits. Set `MAESTRO_DISABLE_PLAYBOOK_TELEMETRY=1` to turn the channel off regardless of the setting.
+
 ## Contributing Playbooks
 
 Want to share your playbooks with the community? You can contribute in two ways:

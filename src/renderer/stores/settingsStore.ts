@@ -501,6 +501,7 @@ export interface SettingsStoreState
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
 	userJourneyEnabled: boolean;
+	playbookTelemetryEnabled: boolean;
 	pianolaAutoWatchNewAgents: boolean;
 	pianolaAutoFixEnabled: boolean;
 }
@@ -628,6 +629,7 @@ export interface SettingsStoreActions
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
 	setUserJourneyEnabled: (value: boolean) => void;
+	setPlaybookTelemetryEnabled: (value: boolean) => void;
 	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
@@ -895,6 +897,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		lastSelectedPromptId: null,
 		spellCheck: false,
 		userJourneyEnabled: true,
+		playbookTelemetryEnabled: false,
 		pianolaAutoWatchNewAgents: false,
 		pianolaAutoFixEnabled: false,
 
@@ -1576,6 +1579,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUserJourneyEnabled: (value) => {
 			set({ userJourneyEnabled: value });
 			window.maestro.settings.set('userJourneyEnabled', value);
+		},
+
+		setPlaybookTelemetryEnabled: (value) => {
+			set({ playbookTelemetryEnabled: value });
+			window.maestro.settings.set('playbookTelemetryEnabled', value);
 		},
 
 		setPianolaAutoFixEnabled: async (value) => {
@@ -2843,6 +2851,9 @@ export async function loadAllSettings(): Promise<void> {
 		// On unless explicitly switched off.
 		patch.userJourneyEnabled = allSettings['userJourneyEnabled'] !== false;
 
+		// Off unless the user opted in: playbook telemetry is a new egress channel.
+		patch.playbookTelemetryEnabled = allSettings['playbookTelemetryEnabled'] === true;
+
 		patch.pianolaAutoFixEnabled = allSettings['pianolaAutoFixEnabled'] === true;
 		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
 
@@ -3121,6 +3132,7 @@ export function getSettingsActions() {
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setUserJourneyEnabled: state.setUserJourneyEnabled,
+		setPlaybookTelemetryEnabled: state.setPlaybookTelemetryEnabled,
 		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setPianolaAutoFixEnabled: state.setPianolaAutoFixEnabled,
 		setAutoRunDisabled: state.setAutoRunDisabled,

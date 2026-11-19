@@ -662,6 +662,27 @@ export function useBatchRunner({
 				logger.warn('[BatchProcessor] Failed to start stats tracking:', undefined, statsError);
 			}
 
+			// Playbook telemetry. Main drops it unless the user opted in and the
+			// playbook came from the official Exchange; never blocks the run.
+			if (config.playbook?.marketplaceId) {
+				try {
+					await window.maestro.stats.playbookRunStarted(sessionId, {
+						playbookId: config.playbook.marketplaceId,
+						sourceVersion: config.playbook.sourceVersion,
+						sourceChannel: config.playbook.sourceChannel,
+						interaction: config.playbook.interaction,
+						launchSource: config.launchSource,
+						documentsTotal: documents.length,
+					});
+				} catch (telemetryError) {
+					logger.warn(
+						'[BatchProcessor] Failed to note playbook run start:',
+						undefined,
+						telemetryError
+					);
+				}
+			}
+
 			// Work tasks hand to other agents with `maestro-cli dispatch` reports back
 			// to this run: no task starts while some of it is still running, and the
 			// next task's prompt carries what came back (services/autoRunDelegations).
@@ -2070,6 +2091,28 @@ export function useBatchRunner({
 					// Ignore history errors
 				}
 
+				const endStatus = autoRunOutcomeStatus(finalStatusText, haltRequest !== null);
+				const endOutcome = buildAutoRunEndOutcome(endStatus, runFailures);
+
+				// Playbook telemetry: noted before endAutoRun, whose handler flushes
+				// the outbox, so this run's events ride that flush.
+				if (config.playbook?.marketplaceId) {
+					try {
+						await window.maestro.stats.playbookRunEnded(sessionId, {
+							status: endStatus,
+							durationMs: finalTotals.totalElapsedMs,
+							documentsStalled: endOutcome.documentsStalled,
+							failures: endOutcome.failures,
+						});
+					} catch (telemetryError) {
+						logger.warn(
+							'[BatchProcessor] Failed to note playbook run end:',
+							undefined,
+							telemetryError
+						);
+					}
+				}
+
 				// End stats tracking for this Auto Run session
 				if (statsAutoRunId) {
 					try {
@@ -2081,10 +2124,7 @@ export function useBatchRunner({
 							finalTotals.totalElapsedMs,
 							finalTotals.totalCompletedTasks,
 							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks),
-							buildAutoRunEndOutcome(
-								autoRunOutcomeStatus(finalStatusText, haltRequest !== null),
-								runFailures
-							)
+							endOutcome
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails

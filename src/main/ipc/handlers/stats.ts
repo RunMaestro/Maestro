@@ -20,6 +20,15 @@ import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import { getStatsDB } from '../../stats';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
+import {
+	flushPlaybookTelemetry,
+	notePlaybookRunEnded,
+	notePlaybookRunStarted,
+} from '../../services/playbook-telemetry';
+import type {
+	PlaybookTelemetryRunEnd,
+	PlaybookTelemetryRunStart,
+} from '../../../shared/playbookTelemetry';
 import { exportUsageData } from '../../stats/usage-export';
 import { getDelegationByDay, getDelegationTotals } from '../../stats/usage-dashboard-reads';
 import {
@@ -42,6 +51,8 @@ import {
 	StatsFilters,
 	UsageExportFormat,
 	UsageExportResult,
+	isAutoRunFailureKind,
+	normalizeAutoRunOutcomeStatus,
 } from '../../../shared/stats-types';
 import type { DelegationDay, DelegationTotals } from '../../../shared/delegation';
 import type { TokenUsageQuery } from '../../../shared/tokenUsage';
@@ -244,8 +255,51 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 						operation: 'stats:end-autorun.flushTelemetry',
 					});
 				});
+				// Playbook telemetry rides the same quiet window. It gates itself
+				// on playbookTelemetryEnabled; nothing is sent while that is off.
+				flushPlaybookTelemetry({ reason: 'autorun' }).catch((error) => {
+					void captureException(error, {
+						operation: 'stats:end-autorun.flushPlaybookTelemetry',
+					});
+				});
 
 				return updated;
+			}
+		)
+	);
+
+	// Playbook telemetry: a playbook run began / ended on an agent. Separate
+	// from start-autorun and end-autorun because those return early when stats
+	// collection is off, and telemetry has its own opt-in. The module drops
+	// both calls unless playbookTelemetryEnabled is on and the playbook is an
+	// official Exchange playbook.
+	ipcMain.handle(
+		'stats:playbook-run-started',
+		withIpcErrorLogging(
+			handlerOpts('playbookRunStarted'),
+			async (runKey: string, start: PlaybookTelemetryRunStart) => {
+				if (typeof runKey !== 'string' || !start || typeof start !== 'object') return;
+				notePlaybookRunStarted(runKey, start);
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'stats:playbook-run-ended',
+		withIpcErrorLogging(
+			handlerOpts('playbookRunEnded'),
+			async (runKey: string, end: PlaybookTelemetryRunEnd) => {
+				if (typeof runKey !== 'string' || !end || typeof end !== 'object') return;
+				const status = normalizeAutoRunOutcomeStatus(end.status);
+				if (!status) return;
+				notePlaybookRunEnded(runKey, {
+					status,
+					durationMs: end.durationMs,
+					documentsStalled: end.documentsStalled,
+					failures: Array.isArray(end.failures)
+						? end.failures.filter((failure) => failure && isAutoRunFailureKind(failure.kind))
+						: [],
+				});
 			}
 		)
 	);

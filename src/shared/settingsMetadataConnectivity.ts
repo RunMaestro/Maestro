@@ -143,6 +143,13 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'updates',
 	},
+	playbookTelemetryEnabled: {
+		description:
+			'Send anonymous usage of official Playbook Exchange playbooks (installs, runs, outcomes, and the failing task index) to runmaestro.ai, so the Exchange can show which playbooks are popular and which are broken. Playbook ids are public; no paths, parameter values, or agent names are sent. Off unless you opt in.',
+		type: 'boolean',
+		default: false,
+		category: 'updates',
+	},
 
 	// --- Web Interface ---
 	webAuthEnabled: {

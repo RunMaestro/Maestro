@@ -131,6 +131,9 @@ export interface MaestroSettings {
 	spellCheck: boolean;
 	// Record the User Journey (src/main/user-journey-manager.ts). Off stops recording.
 	userJourneyEnabled: boolean;
+	// Send anonymous usage of official Exchange playbooks (src/main/services/playbook-telemetry.ts).
+	// Off unless the user opted in.
+	playbookTelemetryEnabled: boolean;
 	// Usage Dashboard provider quota auto-refresh cadence, keyed by provider id
 	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
 	// the main-process background scheduler (usage-refresh-scheduler.ts).

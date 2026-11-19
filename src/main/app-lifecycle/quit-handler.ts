@@ -17,6 +17,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
+import { flushPlaybookTelemetry } from '../services/playbook-telemetry';
 import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
@@ -434,6 +435,12 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			// - a network failure during shutdown shouldn't crash cleanup.
 			captureException(error, {
 				context: 'quit-handler.performCleanup.flushTelemetry',
+			});
+		});
+		// Same for playbook telemetry; unsent rows survive in its outbox file.
+		flushPlaybookTelemetry({ reason: 'app-quit' }).catch((error) => {
+			captureException(error, {
+				context: 'quit-handler.performCleanup.flushPlaybookTelemetry',
 			});
 		});
 

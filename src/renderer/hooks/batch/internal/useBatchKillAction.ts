@@ -120,6 +120,22 @@ export function useBatchKillAction({
 						{ sessionId, error: historyError }
 					);
 				}
+				// Playbook telemetry: a stop sends `run_completed` with status
+				// `stopped` and no `run_failed`. Main ignores an agent with no
+				// tracked playbook run, so a plain Auto Run costs one no-op call.
+				try {
+					await window.maestro.stats.playbookRunEnded(sessionId, {
+						status: 'stopped',
+						durationMs: finalTotals.totalElapsedMs,
+						failures: flushState.getFailures?.() ?? [],
+					});
+				} catch (telemetryError) {
+					logger.warn(
+						'[BatchProcessor:killBatchRun] Failed to note playbook run end:',
+						undefined,
+						telemetryError
+					);
+				}
 				if (flushState.statsAutoRunId) {
 					try {
 						await window.maestro.stats.endAutoRun(

@@ -229,6 +229,10 @@ import type {
 	StatsAggregation,
 } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type {
+	PlaybookTelemetryRunEnd,
+	PlaybookTelemetryRunStart,
+} from '../shared/playbookTelemetry';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
 import type { MarketplaceImportPlaybookResult } from '../shared/marketplace-types';
 import type {
@@ -4174,6 +4178,10 @@ interface MaestroAPI {
 			tasksTotal?: number,
 			outcome?: AutoRunEndOutcome
 		) => Promise<boolean>;
+		// Playbook telemetry (opt-in, official Exchange playbooks only): a
+		// playbook run began / ended on agent `runKey`
+		playbookRunStarted: (runKey: string, start: PlaybookTelemetryRunStart) => Promise<void>;
+		playbookRunEnded: (runKey: string, end: PlaybookTelemetryRunEnd) => Promise<void>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
 			autoRunSessionId: string;

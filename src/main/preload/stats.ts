@@ -37,6 +37,10 @@ export type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsa
 import type { DelegationDay, DelegationTotals } from '../../shared/delegation';
 export type { DelegationDay, DelegationTotals } from '../../shared/delegation';
 import type { StatsIndexingState } from '../../shared/statsIndexing';
+import type {
+	PlaybookTelemetryRunEnd,
+	PlaybookTelemetryRunStart,
+} from '../../shared/playbookTelemetry';
 export type { StatsIndexingState } from '../../shared/statsIndexing';
 
 /**
@@ -74,6 +78,14 @@ export function createStatsApi() {
 			outcome?: AutoRunEndOutcome
 		): Promise<boolean> =>
 			ipcRenderer.invoke('stats:end-autorun', id, duration, tasksCompleted, tasksTotal, outcome),
+
+		// Playbook telemetry: a playbook run began / ended on agent `runKey`.
+		// Main records nothing unless the user opted in and the playbook is an
+		// official Exchange playbook.
+		playbookRunStarted: (runKey: string, start: PlaybookTelemetryRunStart): Promise<void> =>
+			ipcRenderer.invoke('stats:playbook-run-started', runKey, start),
+		playbookRunEnded: (runKey: string, end: PlaybookTelemetryRunEnd): Promise<void> =>
+			ipcRenderer.invoke('stats:playbook-run-ended', runKey, end),
 
 		// Record an Auto Run task completion
 		recordAutoTask: (task: AutoRunTask): Promise<string> =>

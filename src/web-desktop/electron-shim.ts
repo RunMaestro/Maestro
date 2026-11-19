@@ -114,6 +114,8 @@ const BACKGROUND_CHANNELS = new Set([
 	'web:broadcastTabsChange',
 	'claude:usage:refresh-all',
 	'codex:usage:refresh-all',
+	'stats:playbook-run-ended',
+	'stats:playbook-run-started',
 	'stats:record-image-annotation',
 	'stats:record-query',
 	'stats:record-resilience',

@@ -18,6 +18,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { recordPlaybookInstall } from './playbook-telemetry';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type {
 	ImportPlaybookResponse,
@@ -875,6 +876,10 @@ export async function importMarketplacePlaybook(
 			{ failedDocs, failedAssets }
 		);
 	}
+
+	// Anonymous `install` event; dropped unless the user opted in and the
+	// entry came from the official manifest.
+	recordPlaybookInstall(provenance);
 
 	return { playbook: newPlaybook, importedDocs, importedAssets, failedDocs, failedAssets };
 }

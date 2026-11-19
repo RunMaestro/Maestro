@@ -83,6 +83,23 @@ describe('toBatchRunPlaybook', () => {
 		});
 	});
 
+	it('carries the source channel and interaction telemetry needs', () => {
+		const playbook = makePlaybook({
+			interaction: 'guided',
+			provenance: {
+				kind: 'marketplace',
+				marketplaceId: 'assistants-message-bus',
+				sourceChannel: 'official',
+				targetFolderName: 'message-bus',
+				importedAt: 0,
+				documentHashes: {},
+			},
+		});
+		const run = toBatchRunPlaybook(playbook, 'agent-1');
+		expect(run.sourceChannel).toBe('official');
+		expect(run.interaction).toBe('guided');
+	});
+
 	it('prefers the answers the launcher hands it over the stored ones', () => {
 		const playbook = makePlaybook({ parameterValues: { BRANCH: 'old' } });
 		expect(toBatchRunPlaybook(playbook, 'agent-1', { BRANCH: 'feat/x' }).parameterValues).toEqual({
