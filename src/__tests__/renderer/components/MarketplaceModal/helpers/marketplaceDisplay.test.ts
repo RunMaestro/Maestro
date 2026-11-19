@@ -4,6 +4,8 @@ import {
 	generateDefaultFolderName,
 	getCategoryCount,
 	getCycledDocumentFilename,
+	getInteractionBadge,
+	getScopeBadge,
 	partitionPlaybooksByCompatibility,
 } from '../../../../../renderer/components/MarketplaceModal/helpers';
 import { makePlaybook } from '../_fixtures';
@@ -66,5 +68,20 @@ describe('MarketplaceModal helpers', () => {
 
 		expect(getCycledDocumentFilename(playbook, 'missing', 'next')).toBe('');
 		expect(getCycledDocumentFilename(playbook, 'missing', 'previous')).toBe('phase-2');
+	});
+
+	it('labels the interaction mode, defaulting to Form', () => {
+		expect(getInteractionBadge(undefined).label).toBe('Form');
+		expect(getInteractionBadge('form').label).toBe('Form');
+		expect(getInteractionBadge('guided').label).toBe('Guided');
+	});
+
+	it('labels a declared scope and returns null when none is declared', () => {
+		expect(getScopeBadge('machine')).toEqual({
+			label: 'Machine',
+			title: 'This playbook configures your machine, not just this project.',
+		});
+		expect(getScopeBadge('repo')?.label).toBe('Repo');
+		expect(getScopeBadge(undefined)).toBeNull();
 	});
 });

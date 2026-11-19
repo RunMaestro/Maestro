@@ -1,5 +1,6 @@
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import { isCompatible } from '../../../../shared/marketplace-compatibility';
+import type { PlaybookInteraction, PlaybookScope } from '../../../../shared/types';
 
 export const LOADING_TILE_IDS = [
 	'tile-1',
@@ -16,6 +17,41 @@ export const INCOMPAT_BADGE_BG = '#EF4444';
 export const LOCAL_BADGE_BG = '#3b82f620';
 export const LOCAL_BADGE_FG = '#3b82f6';
 export const BADGE_FG = '#ffffff';
+
+/** Badge text and tooltip for how a playbook collects its parameters. */
+export interface PlaybookTraitBadge {
+	label: string;
+	title: string;
+}
+
+/**
+ * The interaction badge for a playbook. Absent `interaction` means `form`, so
+ * every playbook gets one.
+ */
+export function getInteractionBadge(
+	interaction: PlaybookInteraction | undefined
+): PlaybookTraitBadge {
+	return interaction === 'guided'
+		? {
+				label: 'Guided',
+				title: 'An agent interviews you to fill in the configuration before the run.',
+			}
+		: { label: 'Form', title: 'You fill in the configuration in a form before the run.' };
+}
+
+/** The scope badge for a playbook, or null when the manifest does not declare one. */
+export function getScopeBadge(scope: PlaybookScope | undefined): PlaybookTraitBadge | null {
+	if (scope === 'machine') {
+		return {
+			label: 'Machine',
+			title: 'This playbook configures your machine, not just this project.',
+		};
+	}
+	if (scope === 'repo') {
+		return { label: 'Repo', title: 'This playbook works inside one project.' };
+	}
+	return null;
+}
 
 export interface PartitionedPlaybooks {
 	compatiblePlaybooks: MarketplacePlaybook[];

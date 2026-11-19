@@ -9,5 +9,8 @@ export {
 	generateDefaultFolderName,
 	getCategoryCount,
 	getCycledDocumentFilename,
+	getInteractionBadge,
+	getScopeBadge,
 	partitionPlaybooksByCompatibility,
 } from './marketplaceDisplay';
+export type { PlaybookTraitBadge } from './marketplaceDisplay';
