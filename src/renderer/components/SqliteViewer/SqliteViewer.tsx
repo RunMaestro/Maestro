@@ -43,7 +43,10 @@
  * grant (src/main/sqlite/sqlite-editing.ts), a token this tab alone holds and
  * every write must send back. The grant is never persisted: it is released
  * when the tab locks again, opens another file, or unmounts, so a reload
- * starts read-only. The table view gets the token, and with it the cell edit.
+ * starts read-only. The table view gets the token, and with it the cell edit;
+ * so does the Query panel, which lifts its read-only assertion only while the
+ * token is live (a statement that changes the database then runs once, behind
+ * the same gate and backup; the table on screen reads again after it).
  *
  * Beside the switch, Undo takes back the tab's last write
  * (SqliteUndoControl): each write the table view makes reports its result's
@@ -52,7 +55,8 @@
  * version check (src/main/sqlite/sqlite-row-edit.ts). One level, kept per
  * editing session, not per table, so switching tables keeps it; Lock, another
  * file, or unmount drops it with the grant. A write whose triggers or
- * foreign-key actions changed other rows says it cannot be undone.
+ * foreign-key actions changed other rows says it cannot be undone, as does a
+ * statement run from Query mode.
  */
 
 import {
@@ -74,6 +78,7 @@ import type {
 	SqliteObjectStats,
 	SqliteObjectSummary,
 	SqliteParameterValues,
+	SqliteQueryWrite,
 } from '../../../shared/sqlite/types';
 import {
 	SQLITE_OBJECT_KINDS,
@@ -84,7 +89,7 @@ import {
 	sqliteObjectTags,
 } from '../../../shared/sqlite/objects';
 import { formatCount, formatSize } from '../../../shared/formatters';
-import { sqliteUndoOutcome } from '../../../shared/sqlite/undo';
+import { SQLITE_QUERY_WRITE_UNDO_MESSAGE, sqliteUndoOutcome } from '../../../shared/sqlite/undo';
 import type { Theme } from '../../types';
 import { isTextEntryTarget } from '../../utils/messageScrollNavigation';
 import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
@@ -294,6 +299,18 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const handleWrite = useCallback((write: SqliteLastWrite) => {
 		setLastWrite(write);
 		setUndoStatus(null);
+	}, []);
+
+	// A statement run from Query mode with editing on. It has no undo step,
+	// and it may have changed any table, so the one on screen reads again.
+	const handleQueryWrite = useCallback((write: SqliteQueryWrite) => {
+		setLastWrite({
+			undo: null,
+			otherChanges: write.otherChanges,
+			unavailable: SQLITE_QUERY_WRITE_UNDO_MESSAGE,
+		});
+		setUndoStatus(null);
+		setTableReload((count) => count + 1);
 	}, []);
 
 	const undoLastWrite = useCallback(() => {
@@ -560,6 +577,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							onRunChange={setQueryRun}
 							plan={queryPlan}
 							onPlanChange={setQueryPlan}
+							editToken={editGrant?.editToken ?? null}
+							onWrite={handleQueryWrite}
 							theme={theme}
 						/>
 					</div>

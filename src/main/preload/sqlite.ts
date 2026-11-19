@@ -119,7 +119,9 @@ export function createSqliteApi() {
 		 * Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, read
 		 * PRAGMA) and return a window of its result. Rejects with a refusal for
 		 * anything that would write, with SQLite's message for a failure, and
-		 * when the run is stopped or times out.
+		 * when the run is stopped or times out. With the tab's live
+		 * `editToken`, a statement that changes the database runs too, once,
+		 * behind the write gate and the backup; its result carries `write`.
 		 */
 		runQuery: (request: SqliteQueryRequest): Promise<SqliteQueryResult> =>
 			ipcRenderer.invoke('sqlite:runQuery', request),

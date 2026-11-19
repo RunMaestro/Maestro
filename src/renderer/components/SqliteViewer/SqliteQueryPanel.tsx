@@ -26,6 +26,16 @@
  * table, column, or function by its name; the keyword a refusal names), and
  * its line and column, shown before the message, put the cursor there.
  *
+ * With the tab's "Enable editing" on (`editToken`), and only then, the
+ * read-only assertion is lifted: the token rides with the run, and main
+ * sends a statement that changes the database through the write gate and the
+ * session's backup, running it once in a transaction of its own (ATTACH,
+ * DETACH, VACUUM INTO, and transaction control stay refused). Its result
+ * says how many rows it changed, shows any `RETURNING` rows, and is never
+ * paged or exported, since either would run it again. The viewer hears of
+ * each write (`onWrite`) to re-read the table on screen; the toolbar note
+ * turns to a warning while editing is on.
+ *
  * A statement with parameters (`?`, `:id`) gets one value box per parameter
  * between the toolbar and the grid (SqliteQueryParameters), read from the
  * text as it changes. The values ride with the run and are bound by the
@@ -69,7 +79,7 @@ import {
 	SQLITE_READ_ONLY_KEYWORDS,
 	sqliteQueryBinding,
 	sqliteQueryParameters,
-	sqliteReadOnlyRefusal,
+	sqliteQueryRefusal,
 } from '../../../shared/sqlite/query';
 import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
 import {
@@ -84,6 +94,7 @@ import type {
 	SqliteQueryExported,
 	SqliteQueryHistoryEntry,
 	SqliteQueryResult,
+	SqliteQueryWrite,
 } from '../../../shared/sqlite/types';
 import {
 	TABULAR_EXPORT_FILE_FILTERS,
@@ -104,6 +115,7 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { SqliteQueryHistoryRail } from './SqliteQueryHistoryRail';
 import { SqliteQueryParameters, sqliteParameterValuesFor } from './SqliteQueryParameters';
 import { SqliteQueryPlanView } from './SqliteQueryPlanView';
+import { announceSqliteBackup, sqliteOtherChangesText } from './sqliteWriteNotice';
 
 /** The last statement run in Query mode and what it returned so far. */
 export interface SqliteQueryRunState {
@@ -150,6 +162,13 @@ interface SqliteQueryPanelProps {
 	/** The Plan toggle: Run shows the statement's query plan instead of its rows. */
 	plan: boolean;
 	onPlanChange: (plan: boolean) => void;
+	/**
+	 * The tab's editing grant token while "Enable editing" is on, else null.
+	 * Only with it does a run lift the read-only assertion; main checks it.
+	 */
+	editToken: string | null;
+	/** A statement changed the database (its result's `write`). */
+	onWrite: (write: SqliteQueryWrite) => void;
 	theme: Theme;
 }
 
@@ -166,6 +185,12 @@ const RESULT_MODES = [
 
 const BLOB_HINT = 'Open the table in Browse to save a BLOB to a file';
 
+/** "DELETE changed 3 rows; the database's triggers ... changed 2 other rows". */
+function sqliteWriteSummary(statement: string, write: SqliteQueryWrite): string {
+	const rows = `${formatCount(write.changes)} ${write.changes === 1 ? 'row' : 'rows'}`;
+	return `${statement} changed ${rows}${sqliteOtherChangesText(write.otherChanges)}`;
+}
+
 export function SqliteQueryPanel({
 	handle,
 	fileName,
@@ -177,8 +202,11 @@ export function SqliteQueryPanel({
 	onRunChange,
 	plan,
 	onPlanChange,
+	editToken,
+	onWrite,
 	theme,
 }: SqliteQueryPanelProps) {
+	const editing = editToken !== null;
 	const [language, setLanguage] = useState<Extension | undefined>(undefined);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const showHistory = usePersistedToggle('sqlite-query-history', false);
@@ -219,7 +247,8 @@ export function SqliteQueryPanel({
 		const runPlan = offset === 0 ? asPlan : run?.plan === true;
 		const refusal =
 			offset === 0
-				? (sqliteReadOnlyRefusal(sql, { plan: runPlan }) ?? sqliteQueryBinding(sql, values).problem)
+				? (sqliteQueryRefusal(sql, { plan: runPlan, editing }) ??
+					sqliteQueryBinding(sql, values).problem)
 				: null;
 		if (offset === 0 && run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
 		const runId = generateId();
@@ -248,7 +277,14 @@ export function SqliteQueryPanel({
 				offset,
 				limit: runPlan ? SQLITE_QUERY_MAX_LIMIT : SQLITE_QUERY_PAGE_ROWS,
 				queryId: runId,
+				// Main lifts the read-only assertion only for a live grant.
+				editToken,
 			});
+			if (page.write) {
+				// It changed the database whether or not this run is still shown.
+				announceSqliteBackup(page.write.backup);
+				onWrite(page.write);
+			}
 			onRunChange((previous) => {
 				if (previous?.runId !== runId) return previous;
 				const result =
@@ -398,7 +434,8 @@ export function SqliteQueryPanel({
 	);
 	const getRowLabel = useCallback((rowPosition: number) => formatCount(rowPosition + 1), []);
 	const handleReachEnd = useCallback(() => {
-		if (!result?.hasMore || run?.plan || run?.running || run?.error) return;
+		// A statement that changed the database runs once: a later window would re-run it.
+		if (!result?.hasMore || result.write || run?.plan || run?.running || run?.error) return;
 		void runQuery(result.rows.length);
 	}, [result, run?.plan, run?.running, run?.error, runQuery]);
 	const ignoreSort = useCallback(() => undefined, []);
@@ -411,7 +448,9 @@ export function SqliteQueryPanel({
 		[showsPlan, result]
 	);
 	const exporting = exportState?.running === true;
-	const canExport = result?.returnsRows === true && run?.plan !== true && !running && !exporting;
+	// An export runs the statement again, so a write's result is never exported.
+	const canExport =
+		result?.returnsRows === true && !result.write && run?.plan !== true && !running && !exporting;
 	// A finished export is news only beside the result it exported.
 	const shownExport = exporting || exportState?.runId === run?.runId ? exportState : null;
 
@@ -451,7 +490,9 @@ export function SqliteQueryPanel({
 						title={
 							plan
 								? `Show the statement's query plan (${runKeys}). Reads none of its rows.`
-								: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
+								: editing
+									? `Run the statement (${runKeys}). Editing is on: a statement that changes the database runs once, in its own transaction.`
+									: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
 						}
 						data-testid="sqlite-query-run"
 					>
@@ -482,9 +523,22 @@ export function SqliteQueryPanel({
 						ariaLabel="Show the statement's rows or its query plan"
 						testId="sqlite-query-result-mode"
 					/>
-					<span className="truncate">
-						Read-only: anything that would change the database is refused.
-					</span>
+					{editing ? (
+						<span
+							className="truncate"
+							style={{ color: theme.colors.warning }}
+							title="Lock in the summary strip makes Query mode read-only again. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused."
+							data-testid="sqlite-query-editing-note"
+						>
+							Editing enabled: a statement that changes the database runs, once, in its own
+							transaction.
+						</span>
+					) : (
+						<span className="truncate" data-testid="sqlite-query-read-only-note">
+							Read-only: anything that would change the database is refused. Enable editing to
+							change it.
+						</span>
+					)}
 					<div className="ml-auto flex items-center gap-1 shrink-0">
 						<button
 							type="button"
@@ -495,7 +549,9 @@ export function SqliteQueryPanel({
 							title={
 								run?.plan
 									? 'A query plan has no rows to export; switch to Rows and run the statement'
-									: 'Write every row of the result to a CSV or JSON Lines file, whole'
+									: result?.write
+										? 'This statement changed the database; exporting would run it again'
+										: 'Write every row of the result to a CSV or JSON Lines file, whole'
 							}
 							data-testid="sqlite-query-export"
 						>
@@ -558,6 +614,8 @@ export function SqliteQueryPanel({
 									<Spinner size={16} decorative />
 									Running...
 								</>
+							) : result?.write ? (
+								`${result.statement} ran and changed the database.`
 							) : result ? (
 								`${result.statement} ran and returns no rows.`
 							) : plan ? (
@@ -594,6 +652,15 @@ export function SqliteQueryPanel({
 							{errorLocation && ' '}
 							{run.error}
 						</span>
+					) : result?.write ? (
+						<>
+							<span data-testid="sqlite-query-write">
+								{sqliteWriteSummary(result.statement, result.write)}
+								{result.returnsRows &&
+									`; returned ${formatCount(result.rows.length)} ${result.rows.length === 1 ? 'row' : 'rows'}${result.hasMore ? ' (more not shown)' : ''}`}
+							</span>
+							<span>{result.elapsedMs} ms</span>
+						</>
 					) : showsPlan && result ? (
 						<>
 							<span data-testid="sqlite-query-total">

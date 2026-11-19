@@ -160,6 +160,7 @@ function parseOutcome(value: unknown): SqliteQueryHistoryOutcome | null {
 		hasMore: value.hasMore,
 		returnsRows: value.returnsRows,
 		elapsedMs: value.elapsedMs,
+		...(typeof value.changes === 'number' ? { changes: value.changes } : {}),
 	};
 }
 
@@ -211,9 +212,14 @@ export function parseSqliteQueryHistoryStore(value: unknown): SqliteQueryHistory
 	return store;
 }
 
-/** How an entry last ended, in a few words: `12 rows`, `500+ rows`, `no rows`, `failed`. */
+/** How an entry last ended, in a few words: `12 rows`, `500+ rows`, `no rows`, `changed 3 rows`, `failed`. */
 export function formatSqliteQueryHistoryOutcome(outcome: SqliteQueryHistoryOutcome): string {
 	if (!outcome.ok) return 'failed';
+	if (outcome.changes !== undefined) {
+		// A schema change (CREATE, DROP, ALTER) changes no rows.
+		if (outcome.changes === 0) return 'changed no rows';
+		return `changed ${formatCount(outcome.changes)} ${outcome.changes === 1 ? 'row' : 'rows'}`;
+	}
 	if (!outcome.returnsRows) return 'returns no rows';
 	if (outcome.rows === 0) return 'no rows';
 	const count = `${formatCount(outcome.rows)}${outcome.hasMore ? '+' : ''}`;

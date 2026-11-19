@@ -773,7 +773,11 @@ export interface SqliteIntegrityResult {
  */
 export interface SqliteQueryRequest {
 	handle: string;
-	/** One statement: SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA. */
+	/**
+	 * One statement: SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA; with
+	 * `editToken`, also one that changes the database (see
+	 * `sqliteEditingQueryRefusal()` for what stays refused).
+	 */
 	sql: string;
 	/** Result rows to skip before the window starts. Default 0. */
 	offset?: number;
@@ -798,6 +802,25 @@ export interface SqliteQueryRequest {
 	 * running stops the older one first.
 	 */
 	queryId?: string | null;
+	/**
+	 * The tab's editing grant (`SqliteEditingGrant.editToken`). With a live
+	 * one, the read-only assertion is lifted for this run: a statement SQLite
+	 * says would write runs through the write gate and the once-per-session
+	 * backup, on a writable connection in the SQLite child process, in a
+	 * transaction of its own. A stale token is refused like any write. Without
+	 * one the run is read-only, exactly as before.
+	 */
+	editToken?: string | null;
+}
+
+/** What a Query-mode statement that changed the database did. */
+export interface SqliteQueryWrite {
+	/** Rows the statement itself inserted, updated, or deleted (SQLite's `changes()`). 0 for a schema change. */
+	changes: number;
+	/** Rows the database's triggers and foreign-key actions changed beside those. */
+	otherChanges: number;
+	/** This session's backup of the file, present only on the write that took it. */
+	backup?: SqliteBackup;
 }
 
 /**
@@ -846,12 +869,19 @@ export interface SqliteQueryResult {
 	hasMore: boolean;
 	/**
 	 * False for a statement that returns no rows by design (a PRAGMA that sets
-	 * a connection-only value). It ran on the query's own connection, which is
-	 * closed after it, so it changed nothing anyone else sees.
+	 * a connection-only value, or, with `write`, an UPDATE with no
+	 * `RETURNING`). Without `write` it ran on the query's own connection,
+	 * which is closed after it, so it changed nothing anyone else sees.
 	 */
 	returnsRows: boolean;
 	/** Time SQLite spent producing the window, in milliseconds. */
 	elapsedMs: number;
+	/**
+	 * Present when the statement changed the database (editing on). Its rows
+	 * are its `RETURNING` rows, or a PRAGMA's answer, read once: it is never
+	 * re-run for a later window.
+	 */
+	write?: SqliteQueryWrite;
 }
 
 /**
@@ -901,6 +931,8 @@ export type SqliteQueryHistoryOutcome =
 			/** False for a statement that returns no rows by design. */
 			returnsRows: boolean;
 			elapsedMs: number;
+			/** Rows it changed, when it changed the database (`SqliteQueryWrite.changes`). */
+			changes?: number;
 	  }
 	| {
 			ok: false;

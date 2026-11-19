@@ -4,6 +4,7 @@ import {
 	SQLITE_NOT_READ_ONLY_MESSAGE,
 	SQLITE_ONE_STATEMENT_MESSAGE,
 	SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
+	sqliteEditingQueryRefusal,
 	sqliteReadOnlyRefusal,
 } from '../../../shared/sqlite/query';
 import {
@@ -143,6 +144,15 @@ describe('sqliteQueryErrorLocation', () => {
 		expect(marked('SELECT 1; SELECT 2 FROM t', SQLITE_ONE_STATEMENT_MESSAGE)).toBe(
 			'SELECT 2 FROM t'
 		);
+	});
+
+	it('places the refusals that stand with editing on', () => {
+		const attach = "ATTACH 'other.db' AS o";
+		expect(marked(attach, sqliteEditingQueryRefusal(attach)!)).toBe('ATTACH');
+		const begin = '  BEGIN IMMEDIATE';
+		expect(marked(begin, sqliteEditingQueryRefusal(begin)!)).toBe('BEGIN');
+		const copy = "VACUUM INTO '/tmp/copy.db'";
+		expect(marked(copy, sqliteEditingQueryRefusal(copy)!)).toBe('VACUUM');
 	});
 
 	it('answers null for an error that names no place', () => {

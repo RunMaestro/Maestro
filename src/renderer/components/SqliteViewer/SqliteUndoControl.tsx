@@ -7,7 +7,8 @@
  * table can still be undone after switching to another. The state (the last
  * write's `undo` step, the outcome) lives in SqliteViewer; this only draws it.
  * A write that cannot be undone (its triggers or foreign-key actions changed
- * other rows) says so instead of offering a button.
+ * other rows, or it was a statement run from Query mode) says so instead of
+ * offering a button.
  */
 
 import { Undo2 } from 'lucide-react';
@@ -65,7 +66,7 @@ export function SqliteUndoControl({
 				<span
 					className="select-none"
 					style={{ color: theme.colors.textDim }}
-					title={sqliteUndoUnavailableMessage(lastWrite.otherChanges)}
+					title={lastWrite.unavailable ?? sqliteUndoUnavailableMessage(lastWrite.otherChanges)}
 					data-testid="sqlite-undo-unavailable"
 				>
 					cannot undo

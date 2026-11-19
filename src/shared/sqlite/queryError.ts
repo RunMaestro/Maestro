@@ -23,6 +23,7 @@
 import {
 	SQLITE_NOT_READ_ONLY_MESSAGE,
 	SQLITE_ONE_STATEMENT_MESSAGE,
+	sqliteEditingQueryRefusal,
 	sqliteReadOnlyRefusal,
 } from './query';
 import { sqliteTokenName, sqliteTokens, type SqliteToken } from './tokens';
@@ -216,9 +217,13 @@ export function sqliteQueryErrorLocation(
 		);
 		return write ? spanOf(sql, write) : null;
 	}
-	if (text === sqliteReadOnlyRefusal(sql) || text === sqliteReadOnlyRefusal(sql, { plan: true })) {
-		return spanOf(sql, tokens[0]);
-	}
+	// A refusal by the text alone points at the keyword it names, read-only or
+	// with editing on, as a Run or as a Plan.
+	const refusals = [sqliteReadOnlyRefusal, sqliteEditingQueryRefusal].flatMap((refusal) => [
+		refusal(sql),
+		refusal(sql, { plan: true }),
+	]);
+	if (refusals.includes(text)) return spanOf(sql, tokens[0]);
 	return null;
 }
 

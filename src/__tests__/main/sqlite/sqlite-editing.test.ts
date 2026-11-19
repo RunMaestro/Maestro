@@ -52,10 +52,12 @@ import {
 import { forgetSqliteBackups, SQLITE_BACKUP_NAME_MARKER } from '../../../main/sqlite/sqlite-backup';
 import {
 	SQLITE_EDITING_LOCKED_MESSAGE,
+	beginSqliteWorkerWrite,
 	beginSqliteWrite,
 	disableSqliteEditing,
 	enableSqliteEditing,
 	hasSqliteWriteConnection,
+	onSqliteEditingRevoked,
 	requireSqliteEditing,
 	sqliteEditingGrantCount,
 	sqliteEditingRefusal,
@@ -292,5 +294,94 @@ describe('beginSqliteWrite', () => {
 		disableSqliteEditing(handle, grant.editToken);
 		await expect(write).rejects.toThrow(SQLITE_EDITING_LOCKED_MESSAGE);
 		expect(writableConnections(file)).toHaveLength(0);
+	});
+});
+
+describe('beginSqliteWorkerWrite', () => {
+	it('passes the same gate and backup, then hands back the file instead of a connection', async () => {
+		const file = await writeFixture('worker-first.db');
+		const { handle } = await openSqliteDatabase(file);
+		await expect(beginSqliteWorkerWrite(handle, 'made-up')).rejects.toThrow(
+			SQLITE_EDITING_LOCKED_MESSAGE
+		);
+		expect(await backupsOf(file)).toEqual([]);
+
+		const grant = await enableSqliteEditing(handle);
+		const first = await beginSqliteWorkerWrite(handle, grant.editToken);
+		const stat = await fs.stat(file);
+		expect(first.target).toEqual({ filePath: file, dev: stat.dev, ino: stat.ino });
+		expect(first.backupCreated).toBe(true);
+		expect(await backupsOf(file)).toEqual([path.basename(first.backup.path)]);
+		// The child opens the file itself: main opens nothing writable.
+		expect(writableConnections(file)).toHaveLength(0);
+		expect(hasSqliteWriteConnection(handle)).toBe(false);
+
+		// One backup per session, whichever way the writes go.
+		const cell = await beginSqliteWrite(handle, grant.editToken);
+		expect(cell.backupCreated).toBe(false);
+		expect(cell.backup).toEqual(first.backup);
+	});
+
+	it('refuses a tab that locked while the backup ran', async () => {
+		const file = await writeFixture('worker-lock-midway.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		const write = beginSqliteWorkerWrite(handle, grant.editToken);
+		disableSqliteEditing(handle, grant.editToken);
+		await expect(write).rejects.toThrow(SQLITE_EDITING_LOCKED_MESSAGE);
+	});
+
+	it('refuses a file replaced since the unlock', async () => {
+		const file = await writeFixture('worker-swapped.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		await fs.rename(await writeFixture('worker-swapped.db.tmp'), file);
+		await expect(beginSqliteWorkerWrite(handle, grant.editToken)).rejects.toThrow(
+			`${file} was replaced since it was opened. Reopen the file to edit it.`
+		);
+	});
+});
+
+describe('onSqliteEditingRevoked', () => {
+	it('runs once when that tab locks, not when another tab does', async () => {
+		const file = await writeFixture('revoke-lock.db');
+		const { handle } = await openSqliteDatabase(file);
+		const a = await enableSqliteEditing(handle);
+		const b = await enableSqliteEditing(handle);
+		const hook = vi.fn();
+		onSqliteEditingRevoked(handle, a.editToken, hook);
+
+		disableSqliteEditing(handle, b.editToken);
+		expect(hook).not.toHaveBeenCalled();
+		disableSqliteEditing(handle, a.editToken);
+		expect(hook).toHaveBeenCalledTimes(1);
+		expect(hook).toHaveBeenCalledWith('locked');
+		disableSqliteEditing(handle, a.editToken);
+		expect(hook).toHaveBeenCalledTimes(1);
+	});
+
+	it('runs with "closed" when the handle is released', async () => {
+		const file = await writeFixture('revoke-release.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		const hook = vi.fn();
+		onSqliteEditingRevoked(handle, grant.editToken, hook);
+		await closeSqliteDatabase(handle);
+		expect(hook).toHaveBeenCalledWith('closed');
+	});
+
+	it('does not run once unregistered, and refuses a token that is not live', async () => {
+		const file = await writeFixture('revoke-unhook.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		const hook = vi.fn();
+		const unhook = onSqliteEditingRevoked(handle, grant.editToken, hook);
+		unhook();
+		disableSqliteEditing(handle, grant.editToken);
+		expect(hook).not.toHaveBeenCalled();
+
+		expect(() => onSqliteEditingRevoked(handle, grant.editToken, hook)).toThrow(
+			SQLITE_EDITING_LOCKED_MESSAGE
+		);
 	});
 });

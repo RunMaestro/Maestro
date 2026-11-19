@@ -30,6 +30,10 @@ export function sqliteUndoUnavailableMessage(otherChanges: number): string {
 	return `The last change cannot be undone here: the database's triggers or foreign-key actions also changed ${rows}, which putting this one row back would not restore. The backup taken before the first change has the file as it was then.`;
 }
 
+/** Why a statement run from Query mode (or `sqlite query --enable-editing`) has no undo. */
+export const SQLITE_QUERY_WRITE_UNDO_MESSAGE =
+	'A statement run as a query cannot be undone here. The backup taken before the first change has the file as it was then.';
+
 /** The outcome of an undo, as the viewer's status line and the CLI print it. */
 export function sqliteUndoOutcome(step: SqliteUndoStep, result: SqliteUndoResult): string {
 	const others =

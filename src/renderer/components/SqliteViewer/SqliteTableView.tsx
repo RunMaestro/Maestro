@@ -102,7 +102,6 @@ import {
 	sqliteEditabilityLabel,
 } from '../../../shared/sqlite/schema';
 import type {
-	SqliteBackup,
 	SqliteCellValue,
 	SqliteCountCursor,
 	SqliteEditability,
@@ -140,6 +139,7 @@ import {
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
 import { sqliteInsertColumns, sqliteInsertValues, type SqliteInsertDraft } from './sqliteRowInsert';
 import type { SqliteLastWrite } from './sqliteUndo';
+import { announceSqliteBackup, sqliteOtherChangesText } from './sqliteWriteNotice';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
 const PAGE_SIZE = 300;
@@ -201,22 +201,6 @@ const BLOB_HINT = 'Double-click the row to save it to a file';
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-/** The first write of a session says where the file's backup went, once. */
-function announceBackup(backup: SqliteBackup | undefined): void {
-	if (!backup) return;
-	notifyToast({
-		color: 'green',
-		title: 'Database backed up before the first change',
-		message: `${formatSize(backup.bytes)} copy saved to ${backup.path}`,
-	});
-}
-
-/** ", and 3 other rows changed by triggers or foreign-key actions", or nothing. */
-function otherChangesText(otherChanges: number): string {
-	if (otherChanges <= 0) return '';
-	return `; the database's triggers and foreign-key actions changed ${formatCount(otherChanges)} other ${otherChanges === 1 ? 'row' : 'rows'}`;
 }
 
 /** A write's outcome or refusal; `stale` when the row changed since it was read. */
@@ -640,7 +624,7 @@ export function SqliteTableView({
 				version: rowVersions?.[cell.row] ?? null,
 				value,
 			});
-			announceBackup(result.backup);
+			announceSqliteBackup(result.backup);
 			reportWrite({ undo: result.undo, otherChanges: result.otherChanges });
 			// A new sort or filter since the save started moved the rows; the
 			// next window shows the change.
@@ -671,7 +655,7 @@ export function SqliteTableView({
 			}
 			setEditingCell(null);
 			setEditStatus({
-				text: `Saved ${column.name} in row ${formatCount(cell.row + 1)} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,
+				text: `Saved ${column.name} in row ${formatCount(cell.row + 1)} (${result.elapsedMs} ms)${sqliteOtherChangesText(result.otherChanges)}`,
 				error: false,
 			});
 		} catch (failure) {
@@ -744,7 +728,7 @@ export function SqliteTableView({
 				name,
 				values: planned.values,
 			});
-			announceBackup(result.backup);
+			announceSqliteBackup(result.backup);
 			reportWrite({ undo: result.undo, otherChanges: result.otherChanges });
 			setInsertOpen(false);
 			const key =
@@ -756,7 +740,7 @@ export function SqliteTableView({
 			// Where the new row lands depends on the sort and filter: read again.
 			reloadRows();
 			setEditStatus({
-				text: `Inserted a row with ${key} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,
+				text: `Inserted a row with ${key} (${result.elapsedMs} ms)${sqliteOtherChangesText(result.otherChanges)}`,
 				error: false,
 			});
 		} catch (failure) {
@@ -789,11 +773,11 @@ export function SqliteTableView({
 				// Main deletes nothing if the row changed since this page read it.
 				version: rowVersions?.[rowPosition] ?? null,
 			});
-			announceBackup(result.backup);
+			announceSqliteBackup(result.backup);
 			reportWrite({ undo: result.undo, otherChanges: result.otherChanges });
 			setDeleteArmed(null);
 			const outcome = {
-				text: `Deleted row ${formatCount(rowPosition + 1)} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,
+				text: `Deleted row ${formatCount(rowPosition + 1)} (${result.elapsedMs} ms)${sqliteOtherChangesText(result.otherChanges)}`,
 				error: false,
 			};
 			setEditStatus(outcome);

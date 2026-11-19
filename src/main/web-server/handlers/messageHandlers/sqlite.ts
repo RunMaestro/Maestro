@@ -9,6 +9,10 @@
  *   - `sqlite_save_blob`: one BLOB cell written to a file (`maestro-cli sqlite blob`).
  *   - `sqlite_run_query`: Query mode's Run, one read-only statement with its
  *     parameter values, or its plan (`maestro-cli sqlite query --param`, `--plan`).
+ *     With `enableEditing: true` (`--enable-editing`) the read-only assertion
+ *     is lifted for that one run, behind the same per-call unlock as
+ *     `sqlite_update_cell`: a statement that changes the database runs once,
+ *     after the once-per-session backup, and its result carries `write`.
  *   - `sqlite_export_query`: Query mode's Export, the statement's whole result
  *     written to a file (`maestro-cli sqlite query --output`).
  *   - `sqlite_query_history`: Query mode's History rail, read, one entry
@@ -348,28 +352,45 @@ export async function handleSqliteRunQuery(
 		return;
 	}
 
-	try {
-		const database = await openSqliteDatabase(filePath);
-		// No queryId: a CLI run is stopped by its timeout, or by closing the app.
-		const result = await runSqliteQuery({
-			handle: database.handle,
+	// No queryId: a CLI run is stopped by its timeout, or by closing the app.
+	const run = (handle: string, editToken?: string) =>
+		runSqliteQuery({
+			handle,
 			sql,
 			offset: message.offset === undefined ? 0 : (message.offset as number),
 			limit: message.limit === undefined ? 50 : (message.limit as number),
 			// Shape and values are checked by the run, which refuses a bad one.
 			params: (message.params ?? undefined) as SqliteParameterValues | undefined,
 			plan: message.plan === true,
+			...(editToken ? { editToken } : {}),
 		});
+
+	// `--enable-editing`: the read-only assertion is lifted for this one run,
+	// through the same per-call unlock the CLI's other write verbs use.
+	if (message.enableEditing === true) {
+		await writeWithCliUnlock(message, filePath, reply, run);
+		return;
+	}
+	try {
+		const database = await openSqliteDatabase(filePath);
+		const result = await run(database.handle);
 		reply({ success: true, database, result });
 	} catch (error) {
-		// A syntax error's offset in `sql`, so the CLI can point at the token.
-		const offset = (error as { offset?: unknown } | null)?.offset;
-		reply({
-			success: false,
-			error: error instanceof Error ? error.message : String(error),
-			...(typeof offset === 'number' ? { errorOffset: offset } : {}),
-		});
+		reply(sqliteFailureReply(error));
 	}
+}
+
+/**
+ * A failed call's reply: the message, and a syntax error's offset in the
+ * statement (`errorOffset`), so the CLI can point at the token.
+ */
+function sqliteFailureReply(error: unknown): Record<string, unknown> {
+	const offset = (error as { offset?: unknown } | null)?.offset;
+	return {
+		success: false,
+		error: error instanceof Error ? error.message : String(error),
+		...(typeof offset === 'number' ? { errorOffset: offset } : {}),
+	};
 }
 
 export async function handleSqliteExportQuery(
@@ -528,7 +549,7 @@ async function writeWithCliUnlock<T>(
 			disableSqliteEditing(database.handle, grant.editToken);
 		}
 	} catch (error) {
-		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+		reply(sqliteFailureReply(error));
 	}
 }
 

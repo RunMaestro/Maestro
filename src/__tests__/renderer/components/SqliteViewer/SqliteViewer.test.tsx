@@ -9,6 +9,7 @@ import {
 import { AUTO_COUNT_PASSES } from '../../../../renderer/components/SqliteViewer/SqliteTableView';
 import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import { SQLITE_AUTO_INTEGRITY_MAX_BYTES } from '../../../../shared/sqlite/summary';
+import { SQLITE_QUERY_WRITE_UNDO_MESSAGE } from '../../../../shared/sqlite/undo';
 import type {
 	SqliteBlobRequest,
 	SqliteCellUpdateRequest,
@@ -2796,5 +2797,116 @@ describe('SqliteViewer undo', () => {
 		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
 		await screen.findByTestId('sqlite-editing-disable');
 		expect(screen.queryByTestId('sqlite-undo-control')).not.toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer query with editing enabled', () => {
+	const DELETED: SqliteQueryResult = {
+		statement: 'DELETE',
+		columns: [],
+		rows: [],
+		offset: 0,
+		hasMore: false,
+		returnsRows: false,
+		elapsedMs: 5,
+		write: {
+			changes: 3,
+			otherChanges: 2,
+			backup: { path: '/data/app.maestro-backup-1.db', bytes: 8192, createdAt: 1 },
+		},
+	};
+
+	async function openQuery(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByRole('textbox');
+		fireEvent.change(editor, { target: { value: sql } });
+		return editor;
+	}
+
+	async function unlock() {
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-editing-disable');
+	}
+
+	it('is read-only, and sends no grant, until editing is enabled', async () => {
+		await openQuery('SELECT 1');
+		expect(screen.getByTestId('sqlite-query-read-only-note')).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+		expect(runQuery.mock.calls[0][0].editToken).toBeNull();
+	});
+
+	it("lifts the read-only assertion with the tab's grant, and says what the statement changed", async () => {
+		runQuery.mockResolvedValue(DELETED);
+		await openQuery('DELETE FROM users WHERE id > 1');
+		await unlock();
+		expect(screen.getByTestId('sqlite-query-editing-note')).toHaveTextContent('Editing enabled');
+
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-write')).toHaveTextContent(
+			"DELETE changed 3 rows; the database's triggers and foreign-key actions changed 2 other rows"
+		);
+		expect(runQuery).toHaveBeenCalledWith(
+			expect.objectContaining({ sql: 'DELETE FROM users WHERE id > 1', editToken: 'token-1' })
+		);
+		expect(screen.getByTestId('sqlite-query-empty')).toHaveTextContent(
+			'DELETE ran and changed the database.'
+		);
+		// The backup is announced once, the way a cell edit announces it.
+		expect(notifyToastMock).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Database backed up before the first change' })
+		);
+		// A statement has no undo step: the strip says so instead of offering Undo.
+		expect(await screen.findByTestId('sqlite-undo-unavailable')).toHaveAttribute(
+			'title',
+			SQLITE_QUERY_WRITE_UNDO_MESSAGE
+		);
+		expect(screen.queryByTestId('sqlite-undo')).not.toBeInTheDocument();
+		// Exporting would run it again.
+		expect(screen.getByTestId('sqlite-query-export')).toBeDisabled();
+	});
+
+	it('still refuses transaction control under the editor without asking main', async () => {
+		await openQuery('BEGIN');
+		await unlock();
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent(
+			'BEGIN is refused here'
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+	});
+
+	it('is read-only again after Lock', async () => {
+		await openQuery('DELETE FROM users');
+		await unlock();
+		fireEvent.click(screen.getByTestId('sqlite-editing-disable'));
+		await screen.findByTestId('sqlite-editing-enable');
+		expect(screen.getByTestId('sqlite-query-read-only-note')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent(
+			'DELETE is not a read-only statement.'
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+	});
+
+	it('shows RETURNING rows, and never pages a statement that changed the database', async () => {
+		runQuery.mockResolvedValue({
+			...queryWindow({ handle: 'h1', sql: '' }),
+			statement: 'INSERT',
+			hasMore: true,
+			write: { changes: 9, otherChanges: 0 },
+		});
+		await openQuery("INSERT INTO users(email) SELECT 'x' FROM users RETURNING id, id");
+		await unlock();
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await screen.findByTestId('sqlite-query-grid');
+		expect(screen.getByTestId('sqlite-query-write')).toHaveTextContent(
+			'INSERT changed 9 rows; returned 3 rows (more not shown)'
+		);
+		// Nothing asks for a later window, however the grid scrolls.
+		await act(async () => {});
+		expect(runQuery).toHaveBeenCalledTimes(1);
 	});
 });

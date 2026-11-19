@@ -17,6 +17,11 @@ export interface SqliteLastWrite {
 	undo: SqliteUndoStep | null;
 	/** Rows the database changed beside the written one. */
 	otherChanges: number;
+	/**
+	 * Why `undo` is null, when the reason is not the other rows (a statement
+	 * run from Query mode: `SQLITE_QUERY_WRITE_UNDO_MESSAGE`).
+	 */
+	unavailable?: string;
 }
 
 /** Undo the last write: Cmd+Z (Ctrl+Z off macOS), outside a text field. */

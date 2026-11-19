@@ -16,6 +16,13 @@
  * Shared by the `sqlite:runQuery` IPC handler and the `sqlite_run_query` WS
  * handler (`maestro-cli sqlite query`), so both answer with the same rows.
  *
+ * With the tab's editing grant (`request.editToken`; the CLI's
+ * `--enable-editing`), the read-only assertion is lifted for that run, and
+ * only then: a statement SQLite says would change the database goes through
+ * the editing unlock's write gate and backup (`beginSqliteWorkerWrite()`)
+ * and runs once in the child on a writable connection, in a transaction of
+ * its own (`runWithEditing()`). Everything else still runs read-only.
+ *
  * A run of the first window is recorded in the database's query history
  * (sqlite-query-history.ts) before it answers, so the History rail read
  * right after it already lists it, whoever ran it. Recording never fails a
@@ -39,8 +46,17 @@ import {
 	SQLITE_QUERY_MAX_LIMIT,
 	SQLITE_QUERY_STOPPED_MESSAGE,
 	SQLITE_QUERY_TIMEOUT_MS,
+	SQLITE_WRITE_CLOSED_MESSAGE,
+	SQLITE_WRITE_LOCKED_MESSAGE,
+	SQLITE_WRITE_RERUN_MESSAGE,
+	SQLITE_WRITE_STOPPED_MESSAGE,
+	isSqliteWriteStatement,
+	sqliteEditingQueryRefusal,
 	sqliteExportTimeoutMessage,
+	sqliteQueryBinding,
 	sqliteQueryTimeoutMessage,
+	sqliteStatementToRun,
+	sqliteWriteTimeoutMessage,
 } from '../../shared/sqlite/query';
 import type { SqliteQueryHistoryRun } from '../../shared/sqlite/history';
 import type {
@@ -53,22 +69,37 @@ import { isTabularExportFormat, tabularExportFormatForPath } from '../../shared/
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { reportSqliteBusy } from './sqlite-connection';
-import { getSqliteDatabase } from './sqlite-database';
+import { getSqliteDatabase, type OpenSqliteDatabase } from './sqlite-database';
+import {
+	beginSqliteWorkerWrite,
+	onSqliteEditingRevoked,
+	requireSqliteEditing,
+	type SqliteWorkerWriteSession,
+} from './sqlite-editing';
 import { getSqliteQueryHistory } from './sqlite-query-history';
-import { SQLITE_QUERY_REFUSED } from './sqlite-query-task';
+import { SQLITE_QUERY_REFUSED, type SqliteQueryTask } from './sqlite-query-task';
 import { windowBound } from './sqlite-rows';
 import { startSqliteWorkerTask, type SqliteWorkerRun } from './sqlite-worker-runner';
 
-/** Runs and exports that can be stopped by id, with the words a stop rejects them with. */
-const running = new Map<string, { run: SqliteWorkerRun<unknown>; stoppedMessage: string }>();
+/**
+ * Runs and exports that can be stopped by id. `stop` rejects the caller in
+ * the run's own words; a write still waiting on its backup only marks itself
+ * stopped, and never starts.
+ */
+const running = new Map<string, { stop: () => void }>();
 
 /** Stop whatever runs under `queryId`, in its own words. */
 function stopRunning(queryId: string): boolean {
 	const entry = running.get(queryId);
 	if (!entry) return false;
 	running.delete(queryId);
-	entry.run.stop(entry.stoppedMessage);
+	entry.stop();
 	return true;
+}
+
+/** A refusal raised in main before anything ran: never recorded in the history. */
+function refused(message: string): Error {
+	return Object.assign(new Error(message), { code: SQLITE_QUERY_REFUSED });
 }
 
 /** Record one run in the history. A history that cannot be written is reported, never thrown. */
@@ -109,6 +140,7 @@ function recordedRun(
 					hasMore: value.hasMore,
 					returnsRows: value.returnsRows,
 					elapsedMs: value.elapsedMs,
+					...(value.write ? { changes: value.write.changes } : {}),
 				},
 			});
 			return value;
@@ -130,9 +162,10 @@ function tracked<R>(
 	stoppedMessage: string
 ): Promise<R> {
 	if (!queryId) return run.result;
-	running.set(queryId, { run, stoppedMessage });
+	const entry = { stop: () => run.stop(stoppedMessage) };
+	running.set(queryId, entry);
 	return run.result.finally(() => {
-		if (running.get(queryId)?.run === run) running.delete(queryId);
+		if (running.get(queryId) === entry) running.delete(queryId);
 	});
 }
 
@@ -149,6 +182,8 @@ function checkParams(params: unknown): Error | null {
  * refusal for a statement that is not read-only or a parameter with no
  * usable value, with SQLite's own message for one that fails, and with
  * `SQLITE_QUERY_STOPPED_MESSAGE` or the timeout message for one stopped.
+ * With a live `request.editToken`, a statement that changes the database
+ * runs too, once, and its result carries `write` (see `runWithEditing()`).
  */
 export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQueryResult> {
 	if (typeof request.sql !== 'string') {
@@ -169,19 +204,31 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 	const queryId = request.queryId ?? null;
 	if (queryId) stopRunning(queryId);
 
+	const task: SqliteQueryTask = {
+		filePath: database.displayPath,
+		sql: request.sql,
+		offset,
+		limit,
+		params: request.params ?? undefined,
+		plan: request.plan === true,
+	};
+	// Restated before the history records it, so the rail says the same.
+	const result =
+		request.editToken == null
+			? reportSqliteBusy('read', () => startReadRun(database, task, queryId))
+			: runWithEditing(database, request, task, queryId);
+	return offset === 0 ? recordedRun(database.displayPath, request, result) : result;
+}
+
+/** One run on a read-only connection in the child process: every run without editing, and reads with it. */
+function startReadRun(
+	database: OpenSqliteDatabase,
+	task: SqliteQueryTask,
+	queryId: string | null
+): Promise<SqliteQueryResult> {
 	const run = startSqliteWorkerTask(
 		database,
-		{
-			kind: 'query',
-			task: {
-				filePath: database.displayPath,
-				sql: request.sql,
-				offset,
-				limit,
-				params: request.params ?? undefined,
-				plan: request.plan === true,
-			},
-		},
+		{ kind: 'query', task },
 		{
 			closedMessage: `${SQLITE_QUERY_STOPPED_MESSAGE} The database was closed.`,
 			timeoutMs: SQLITE_QUERY_TIMEOUT_MS,
@@ -189,11 +236,102 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 			label: 'The query',
 		}
 	);
-	// Restated before the history records it, so the rail says the same.
-	const result = reportSqliteBusy('read', () =>
-		tracked(queryId, run, SQLITE_QUERY_STOPPED_MESSAGE)
-	);
-	return offset === 0 ? recordedRun(database.displayPath, request, result) : result;
+	return tracked(queryId, run, SQLITE_QUERY_STOPPED_MESSAGE);
+}
+
+/**
+ * Whether SQLite would change the database running `sql`
+ * (`isSqliteWriteStatement()` over `stmt.readonly`), asked of the handle's
+ * READ-ONLY connection: a prepare compiles the statement and runs none of
+ * it. A statement that does not prepare (a syntax error, a missing table,
+ * two statements) goes down the read path, whose child prepares it again
+ * and reports SQLite's own error with where it points; that is expected,
+ * not swallowed.
+ */
+function statementWrites(database: OpenSqliteDatabase, sql: string): boolean {
+	let readonly: boolean;
+	try {
+		readonly = database.db.prepare(sqliteStatementToRun(sql)).readonly;
+	} catch {
+		return false;
+	}
+	return isSqliteWriteStatement(sql, readonly);
+}
+
+/**
+ * A run from a tab with editing on: the read-only assertion lifted, and only
+ * for a live grant. The grant is checked first (a stale token is refused as
+ * a write is), then the text by the editing rules. A statement that would not
+ * change the database (and every plan) runs read-only as usual, with no
+ * backup. One that would is a write: refused past the first window (a later
+ * window re-runs it), then `beginSqliteWorkerWrite()` passes the gate and
+ * takes the backup, and the child runs it once on a writable connection in a
+ * transaction of its own (`runSqliteWriteTask()`). Lock stops it; so do Stop,
+ * a newer run under `queryId` (even while the backup is still being taken,
+ * when it never starts), the timeout, and closing the database.
+ */
+async function runWithEditing(
+	database: OpenSqliteDatabase,
+	request: SqliteQueryRequest,
+	task: SqliteQueryTask,
+	queryId: string | null
+): Promise<SqliteQueryResult> {
+	const { handle, editToken } = request;
+	try {
+		requireSqliteEditing(handle, editToken);
+	} catch (error) {
+		// Nothing ran, so the history does not record it.
+		throw refused(error instanceof Error ? error.message : String(error));
+	}
+	const refusal = sqliteEditingQueryRefusal(task.sql, { plan: task.plan });
+	if (refusal) throw refused(refusal);
+	if (task.plan || !statementWrites(database, task.sql)) {
+		return reportSqliteBusy('read', () =>
+			startReadRun(database, { ...task, editing: true }, queryId)
+		);
+	}
+	if (task.offset !== 0) throw refused(SQLITE_WRITE_RERUN_MESSAGE);
+	// Settled before the backup, so a parameter with no value costs no copy.
+	const binding = sqliteQueryBinding(task.sql, task.params);
+	if (binding.problem !== null) throw refused(binding.problem);
+
+	return reportSqliteBusy('write', async () => {
+		let stopped = false;
+		const pending = { stop: () => (stopped = true) };
+		if (queryId) running.set(queryId, pending);
+		let session: SqliteWorkerWriteSession;
+		try {
+			session = await beginSqliteWorkerWrite(handle, editToken);
+		} finally {
+			if (queryId && running.get(queryId) === pending) running.delete(queryId);
+		}
+		if (stopped) throw new Error(SQLITE_WRITE_STOPPED_MESSAGE);
+
+		// No await from the gate to here: the grant is still live.
+		const run = startSqliteWorkerTask(
+			database,
+			{ kind: 'query', task: { ...task, writeTarget: session.target } },
+			{
+				closedMessage: SQLITE_WRITE_CLOSED_MESSAGE,
+				timeoutMs: SQLITE_QUERY_TIMEOUT_MS,
+				timeoutMessage: sqliteWriteTimeoutMessage(),
+				label: 'The statement',
+			}
+		);
+		const unhook = onSqliteEditingRevoked(handle, editToken, (reason) =>
+			run.stop(reason === 'closed' ? SQLITE_WRITE_CLOSED_MESSAGE : SQLITE_WRITE_LOCKED_MESSAGE)
+		);
+		try {
+			const result = await tracked(queryId, run, SQLITE_WRITE_STOPPED_MESSAGE);
+			const write = result.write ?? { changes: 0, otherChanges: 0 };
+			return {
+				...result,
+				write: session.backupCreated ? { ...write, backup: session.backup } : write,
+			};
+		} finally {
+			unhook();
+		}
+	});
 }
 
 /**

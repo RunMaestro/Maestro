@@ -12,6 +12,7 @@ const driver = vi.hoisted(() => ({
 		pragmas: string[];
 		functions: string[];
 		prepared: string[];
+		execs: string[];
 		closed: boolean;
 	}>,
 	statement: {
@@ -30,11 +31,16 @@ const driver = vi.hoisted(() => ({
 	boundArgs: null as unknown[] | null,
 	/** A per-text prepare failure, to play SQLite's parser for a syntax error. */
 	prepareFails: null as ((sql: string) => Error | null) | null,
+	/** `SELECT changes(), total_changes()` answers, in turn: before the write, then after it. */
+	changeCounts: [] as Array<[number, number]>,
+	/** Why the statement's `run()` fails, to play a constraint failure. */
+	runError: null as Error | null,
 }));
 
 vi.mock('better-sqlite3', () => {
 	class FakeDatabase {
 		record: (typeof driver.instances)[number];
+		inTransaction = false;
 		constructor(filePath: string, options: Record<string, unknown>) {
 			this.record = {
 				path: filePath,
@@ -42,9 +48,15 @@ vi.mock('better-sqlite3', () => {
 				pragmas: [],
 				functions: [],
 				prepared: [],
+				execs: [],
 				closed: false,
 			};
 			driver.instances.push(this.record);
+		}
+		exec(sql: string) {
+			this.record.execs.push(sql);
+			if (sql.startsWith('BEGIN')) this.inTransaction = true;
+			if (sql === 'COMMIT' || sql === 'ROLLBACK') this.inTransaction = false;
 		}
 		pragma(source: string) {
 			this.record.pragmas.push(source);
@@ -54,6 +66,9 @@ vi.mock('better-sqlite3', () => {
 			this.record.functions.push(name);
 		}
 		prepare(sql: string) {
+			if (sql === 'SELECT changes(), total_changes()') {
+				return { raw: () => ({ get: () => driver.changeCounts.shift() ?? [0, 0] }) };
+			}
 			this.record.prepared.push(sql);
 			if (driver.statement.prepareError) throw driver.statement.prepareError;
 			const failure = driver.prepareFails?.(sql);
@@ -91,6 +106,7 @@ vi.mock('better-sqlite3', () => {
 				run: (...args: unknown[]) => {
 					driver.boundArgs = args;
 					driver.ran++;
+					if (driver.runError) throw driver.runError;
 					return { changes: 0 };
 				},
 			};
@@ -104,12 +120,95 @@ vi.mock('better-sqlite3', () => {
 });
 
 const releaseHooks = vi.hoisted(() => new Set<() => void>());
+/**
+ * The handle's own read-only connection, which main asks whether a statement
+ * would write (`stmt.readonly`) before an editing run picks its path.
+ */
+const handleDb = vi.hoisted(() => ({
+	readonly: true,
+	prepareError: null as Error | null,
+	prepared: [] as string[],
+}));
 vi.mock('../../../main/sqlite/sqlite-database', () => ({
 	getSqliteDatabase: (handle: string) => {
 		if (handle !== 'h1') throw new Error('SQLite database handle is no longer open.');
-		return { displayPath: '/data/app.db', releaseHooks };
+		return {
+			displayPath: '/data/app.db',
+			releaseHooks,
+			db: {
+				prepare: (sql: string) => {
+					handleDb.prepared.push(sql);
+					if (handleDb.prepareError) throw handleDb.prepareError;
+					return { readonly: handleDb.readonly };
+				},
+			},
+		};
 	},
 }));
+
+// The editing gate (sqlite-editing.test.ts covers it): a live token is
+// 'tok', the write session is handed out as set here, and the hook a write
+// registers for its grant's end is kept so a test can end the grant.
+const editing = vi.hoisted(() => ({
+	backupCreated: true,
+	begin: null as Promise<void> | null,
+	begun: 0,
+	revoked: [] as Array<(reason: 'locked' | 'closed') => void>,
+	unhooked: 0,
+	endGrantAtStart: null as 'locked' | 'closed' | null,
+	/** Called just after the write's child starts, as a Stop pressed then would be. */
+	onStart: null as (() => void) | null,
+}));
+vi.mock('../../../main/sqlite/sqlite-editing', () => {
+	const gate = (_handle: string, token: unknown) => {
+		if (token !== 'tok') {
+			throw new Error('Editing is not enabled for this database. Turn on "Enable editing" first.');
+		}
+	};
+	return {
+		requireSqliteEditing: gate,
+		beginSqliteWorkerWrite: async (handle: string, token: unknown) => {
+			gate(handle, token);
+			editing.begun++;
+			if (editing.begin) await editing.begin;
+			return {
+				database: {},
+				backup: { path: '/data/app.maestro-backup-1.db', bytes: 4096, createdAt: 1 },
+				backupCreated: editing.backupCreated,
+				target: { filePath: '/data/app.db', dev: 1, ino: 2 },
+			};
+		},
+		onSqliteEditingRevoked: (
+			handle: string,
+			token: unknown,
+			hook: (reason: 'locked' | 'closed') => void
+		) => {
+			gate(handle, token);
+			editing.revoked.push(hook);
+			const reason = editing.endGrantAtStart;
+			if (reason) queueMicrotask(() => hook(reason));
+			const onStart = editing.onStart;
+			if (onStart) queueMicrotask(onStart);
+			return () => {
+				editing.unhooked++;
+			};
+		},
+	};
+});
+
+// The child opens its write target by path; /data/app.db does not exist here,
+// so the device and inode check is sqlite-connection.test.ts's to prove.
+const targets = vi.hoisted(() => [] as unknown[]);
+vi.mock('../../../main/sqlite/sqlite-connection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/sqlite/sqlite-connection')>();
+	return {
+		...actual,
+		openWritableSqliteTarget: (target: { filePath: string }) => {
+			targets.push(target);
+			return actual.openWritableSqliteConnection(target.filePath);
+		},
+	};
+});
 
 // The history file lives in the app's data directory; here it is a recorder.
 const history = vi.hoisted(() => ({ record: vi.fn(async (..._args: unknown[]) => undefined) }));
@@ -141,6 +240,12 @@ import {
 	SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
 	SQLITE_QUERY_STOPPED_MESSAGE,
 	SQLITE_EXPORT_STOPPED_MESSAGE,
+	SQLITE_VACUUM_INTO_MESSAGE,
+	SQLITE_WRITE_CLOSED_MESSAGE,
+	SQLITE_WRITE_LOCKED_MESSAGE,
+	SQLITE_WRITE_RERUN_MESSAGE,
+	SQLITE_WRITE_STOPPED_MESSAGE,
+	sqliteTransactionRefusal,
 } from '../../../shared/sqlite/query';
 
 function numbered(count: number): unknown[][] {
@@ -702,5 +807,300 @@ describe('exportSqliteQuery', () => {
 		await expect(fs.stat(path.join(dir, 'stopped.csv'))).rejects.toMatchObject({
 			code: 'ENOENT',
 		});
+	});
+});
+
+describe('runSqliteQuery with editing on', () => {
+	beforeEach(() => {
+		driver.instances = [];
+		driver.statement = {
+			readonly: false,
+			reader: false,
+			columns: [],
+			rows: [],
+			prepareError: null,
+		};
+		driver.flags = [];
+		driver.ran = 0;
+		driver.boundArgs = null;
+		driver.prepareFails = null;
+		driver.changeCounts = [];
+		driver.runError = null;
+		handleDb.readonly = false;
+		handleDb.prepareError = null;
+		handleDb.prepared = [];
+		editing.backupCreated = true;
+		editing.begin = null;
+		editing.begun = 0;
+		editing.revoked = [];
+		editing.unhooked = 0;
+		editing.endGrantAtStart = null;
+		editing.onStart = null;
+		targets.length = 0;
+		releaseHooks.clear();
+		history.record.mockClear();
+		history.record.mockImplementation(async () => undefined);
+	});
+
+	it('runs a statement that changes the database once, on a writable connection, in its own transaction', async () => {
+		driver.changeCounts = [
+			[0, 0],
+			[2, 2],
+		];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'UPDATE users SET name = :name WHERE id > 1',
+			params: { ':name': { type: 'text', text: 'x' } },
+			editToken: 'tok',
+		});
+
+		// Main asked SQLite, on the handle's read-only connection, whether it writes.
+		expect(handleDb.prepared).toEqual(['UPDATE users SET name = :name WHERE id > 1']);
+		expect(editing.begun).toBe(1);
+		expect(targets).toEqual([{ filePath: '/data/app.db', dev: 1, ino: 2 }]);
+		expect(driver.instances).toHaveLength(1);
+		const [connection] = driver.instances;
+		expect(connection.options).toMatchObject({ readonly: false, fileMustExist: true });
+		expect(connection.pragmas).toEqual(
+			expect.arrayContaining(['trusted_schema = OFF', 'foreign_keys = ON'])
+		);
+		expect(connection.execs).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+		expect(driver.ran).toBe(1);
+		expect({ ...(driver.boundArgs?.[0] as object) }).toEqual({ name: 'x' });
+		expect(connection.closed).toBe(true);
+		expect(result).toMatchObject({
+			statement: 'UPDATE',
+			rows: [],
+			returnsRows: false,
+			write: {
+				changes: 2,
+				otherChanges: 0,
+				backup: { path: '/data/app.maestro-backup-1.db', bytes: 4096, createdAt: 1 },
+			},
+		});
+		// The Lock hook is dropped once the write settles.
+		expect(editing.revoked).toHaveLength(1);
+		expect(editing.unhooked).toBe(1);
+	});
+
+	it('counts rows changed by triggers and foreign-key actions apart, and names the backup once', async () => {
+		editing.backupCreated = false;
+		driver.changeCounts = [
+			[0, 0],
+			[1, 4],
+		];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM parents WHERE id = 1',
+			editToken: 'tok',
+		});
+		expect(result.write).toEqual({ changes: 1, otherChanges: 3 });
+	});
+
+	it('returns the first window of RETURNING rows and never reads a later one', async () => {
+		driver.statement.reader = true;
+		driver.statement.columns = [{ name: 'id', type: 'INTEGER' }];
+		driver.statement.rows = numbered(5);
+		driver.changeCounts = [
+			[0, 0],
+			[5, 5],
+		];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: "INSERT INTO t(name) SELECT 'x' FROM t RETURNING id",
+			limit: 2,
+			editToken: 'tok',
+		});
+		expect(result).toMatchObject({
+			rows: [[1], [2]],
+			hasMore: true,
+			returnsRows: true,
+			write: { changes: 5 },
+		});
+		expect(driver.instances[0].execs).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+
+		await expect(
+			runSqliteQuery({
+				handle: 'h1',
+				sql: "INSERT INTO t(name) SELECT 'x' FROM t RETURNING id",
+				offset: 2,
+				editToken: 'tok',
+			})
+		).rejects.toThrow(SQLITE_WRITE_RERUN_MESSAGE);
+		// Refused in main: no second backup, no second connection.
+		expect(editing.begun).toBe(1);
+		expect(driver.instances).toHaveLength(1);
+	});
+
+	it("rolls back and passes SQLite's own error through verbatim", async () => {
+		driver.runError = Object.assign(new Error('NOT NULL constraint failed: users.email'), {
+			code: 'SQLITE_CONSTRAINT_NOTNULL',
+		});
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'INSERT INTO users DEFAULT VALUES', editToken: 'tok' })
+		).rejects.toMatchObject({
+			message: 'NOT NULL constraint failed: users.email',
+			code: 'SQLITE_CONSTRAINT_NOTNULL',
+		});
+		expect(driver.instances[0].execs).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
+		expect(driver.instances[0].closed).toBe(true);
+		// A failed write is in the history, with its words.
+		expect(history.record).toHaveBeenCalledWith(
+			'/data/app.db',
+			expect.objectContaining({
+				outcome: { ok: false, error: 'NOT NULL constraint failed: users.email' },
+			})
+		);
+	});
+
+	it('runs VACUUM and a PRAGMA bare, since SQLite refuses them inside a transaction', async () => {
+		await runSqliteQuery({ handle: 'h1', sql: 'VACUUM', editToken: 'tok' });
+		await runSqliteQuery({ handle: 'h1', sql: 'PRAGMA user_version = 3', editToken: 'tok' });
+		expect(driver.instances.map((connection) => connection.execs)).toEqual([[], []]);
+		expect(driver.ran).toBe(2);
+	});
+
+	it('records a write in the history with the rows it changed', async () => {
+		driver.changeCounts = [
+			[0, 0],
+			[3, 3],
+		];
+		await runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'tok' });
+		expect(history.record).toHaveBeenCalledWith(
+			'/data/app.db',
+			expect.objectContaining({
+				sql: 'DELETE FROM t',
+				outcome: expect.objectContaining({ ok: true, changes: 3, returnsRows: false }),
+			})
+		);
+	});
+
+	it('refuses a stale grant before anything runs, and does not record it', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'gone' })
+		).rejects.toMatchObject({
+			message: expect.stringMatching(/Editing is not enabled/),
+			code: SQLITE_QUERY_REFUSED,
+		});
+		expect(handleDb.prepared).toEqual([]);
+		expect(editing.begun).toBe(0);
+		expect(driver.instances).toHaveLength(0);
+		expect(history.record).not.toHaveBeenCalled();
+	});
+
+	it('still refuses ATTACH, VACUUM INTO, and transaction control, before any backup', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: "ATTACH 'x.db' AS x", editToken: 'tok' })
+		).rejects.toThrow(/ATTACH opens or closes another database file/);
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: "VACUUM INTO '/tmp/c.db'", editToken: 'tok' })
+		).rejects.toThrow(SQLITE_VACUUM_INTO_MESSAGE);
+		await expect(runSqliteQuery({ handle: 'h1', sql: 'BEGIN', editToken: 'tok' })).rejects.toThrow(
+			sqliteTransactionRefusal('BEGIN')
+		);
+		expect(editing.begun).toBe(0);
+		expect(driver.instances).toHaveLength(0);
+	});
+
+	it('refuses a parameter with no usable value before the backup', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t WHERE id = ?', editToken: 'tok' })
+		).rejects.toMatchObject({ code: SQLITE_QUERY_REFUSED });
+		expect(editing.begun).toBe(0);
+	});
+
+	it('runs a statement that only reads read-only, with no backup', async () => {
+		handleDb.readonly = true;
+		driver.statement = {
+			readonly: true,
+			reader: true,
+			columns: [{ name: 'id', type: 'INTEGER' }],
+			rows: numbered(2),
+			prepareError: null,
+		};
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'SELECT id FROM t',
+			editToken: 'tok',
+		});
+		expect(result.write).toBeUndefined();
+		expect(result.rows).toEqual([[1], [2]]);
+		expect(editing.begun).toBe(0);
+		expect(driver.instances[0].options).toMatchObject({ readonly: true });
+	});
+
+	it('shows the plan of a write read-only, without a backup', async () => {
+		driver.statement = {
+			readonly: false,
+			reader: true,
+			columns: [{ name: 'detail', type: null }],
+			rows: [['SCAN t']],
+			prepareError: null,
+		};
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM t',
+			plan: true,
+			editToken: 'tok',
+		});
+		expect(result).toMatchObject({ plan: true, rows: [['SCAN t']] });
+		expect(handleDb.prepared).toEqual([]);
+		expect(editing.begun).toBe(0);
+		expect(driver.instances[0].options).toMatchObject({ readonly: true });
+		expect(driver.instances[0].prepared).toEqual(['EXPLAIN QUERY PLAN DELETE FROM t']);
+	});
+
+	it('sends a statement that does not prepare down the read path, where SQLite names the problem', async () => {
+		handleDb.prepareError = new Error('no such table: nope');
+		driver.statement.prepareError = new Error('no such table: nope');
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM nope', editToken: 'tok' })
+		).rejects.toThrow('no such table: nope');
+		expect(editing.begun).toBe(0);
+		expect(driver.instances[0].options).toMatchObject({ readonly: true });
+	});
+
+	it('stops a write when its tab locks, or when its database closes', async () => {
+		editing.endGrantAtStart = 'locked';
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'tok' })
+		).rejects.toThrow(SQLITE_WRITE_LOCKED_MESSAGE);
+		editing.endGrantAtStart = 'closed';
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'tok' })
+		).rejects.toThrow(SQLITE_WRITE_CLOSED_MESSAGE);
+		expect(editing.unhooked).toBe(2);
+	});
+
+	it('never starts a write stopped while its backup is taken', async () => {
+		let finishBackup!: () => void;
+		editing.begin = new Promise<void>((resolve) => (finishBackup = resolve));
+		const run = runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM t',
+			editToken: 'tok',
+			queryId: 'w1',
+		});
+		await vi.waitFor(() => expect(editing.begun).toBe(1));
+		expect(cancelSqliteQuery('w1')).toBe(true);
+		finishBackup();
+		await expect(run).rejects.toThrow(SQLITE_WRITE_STOPPED_MESSAGE);
+		expect(driver.instances).toHaveLength(0);
+		expect(cancelSqliteQuery('w1')).toBe(false);
+	});
+
+	it('stops a running write by id in its own words', async () => {
+		let stopped: boolean | null = null;
+		editing.onStart = () => {
+			stopped = cancelSqliteQuery('w2');
+		};
+		const run = runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM t',
+			editToken: 'tok',
+			queryId: 'w2',
+		});
+		await expect(run).rejects.toThrow(SQLITE_WRITE_STOPPED_MESSAGE);
+		expect(stopped).toBe(true);
 	});
 });

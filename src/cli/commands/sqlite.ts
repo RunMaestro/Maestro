@@ -23,10 +23,13 @@
 //   maestro-cli sqlite query <path> <sql> [--param <name=value>]...
 //                            [--param-number <name=value>]... [--param-null <name>]...
 //                            [--plan] [--offset <n>] [--limit <n>]
-//                            [--output <file> [--format <csv|jsonl>]] [--json]
+//                            [--output <file> [--format <csv|jsonl>]]
+//                            [--enable-editing] [--json]
 //       -> Query mode's Run: one read-only statement, its parameters bound, a
 //          window of its result (or, with --plan, its query plan as a tree);
-//          with --output, Query mode's Export: every row written to a file
+//          with --output, Query mode's Export: every row written to a file;
+//          with --enable-editing, a statement that changes the database runs
+//          once, behind the editing gate and the session's backup
 //   maestro-cli sqlite history <path> [--forget <id>] [--clear] [--json]
 //       -> Query mode's History rail: the statements run against the file,
 //          newest first; --forget drops one, --clear drops them all
@@ -95,6 +98,7 @@ import {
 	SQLITE_QUERY_TIMEOUT_MS,
 	sqliteQueryBinding,
 	sqliteQueryParameters,
+	sqliteQueryRefusal,
 	sqliteReadOnlyRefusal,
 } from '../../shared/sqlite/query';
 import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
@@ -144,7 +148,11 @@ import type {
 	SqliteUndoResult,
 	SqliteUndoStep,
 } from '../../shared/sqlite/types';
-import { sqliteUndoOutcome, sqliteUndoUnavailableMessage } from '../../shared/sqlite/undo';
+import {
+	SQLITE_QUERY_WRITE_UNDO_MESSAGE,
+	sqliteUndoOutcome,
+	sqliteUndoUnavailableMessage,
+} from '../../shared/sqlite/undo';
 import { sqliteNumberBindValue } from '../../shared/sqlite/filter';
 
 /** Counting and sizing a large database takes a while; give it room. */
@@ -766,6 +774,11 @@ interface SqliteQueryOptions {
 	output?: string;
 	/** `csv` or `jsonl`; default from `--output`'s extension. */
 	format?: string;
+	/**
+	 * The per-call unlock: lift the read-only assertion for this one run, the
+	 * way a tab's "Enable editing" lifts it in Query mode.
+	 */
+	enableEditing?: boolean;
 	json?: boolean;
 }
 
@@ -855,7 +868,11 @@ function failQuery(
  * statement's `EXPLAIN QUERY PLAN` is shown as a tree instead (Query mode's
  * Plan toggle); `--offset` and `--limit` do not apply, since a plan is
  * shown whole. With `--output`, every row is written to that file as CSV or
- * JSON Lines instead (Query mode's Export), whole, by the app.
+ * JSON Lines instead (Query mode's Export), whole, by the app. With
+ * `--enable-editing`, the read-only assertion is lifted for this one run, the
+ * way a tab's "Enable editing" lifts it: a statement that changes the
+ * database runs once, after the session's backup, and the reply says how
+ * many rows it changed.
  */
 export async function sqliteQuery(
 	file: string,
@@ -873,6 +890,10 @@ export async function sqliteQuery(
 	}
 	if (options.format !== undefined && !isTabularExportFormat(options.format)) {
 		fail(`--format must be csv or jsonl (got "${options.format}")`, options.json);
+	}
+	const editing = options.enableEditing === true;
+	if (editing && options.output !== undefined) {
+		fail('--output exports a read-only statement; it does not take --enable-editing', options.json);
 	}
 	// A plan is shown whole and an export writes every row: no window applies.
 	const whole = plan || options.output !== undefined;
@@ -900,14 +921,28 @@ export async function sqliteQuery(
 		return;
 	}
 
+	// Settled here, without the app, the way the panel settles it without a process.
+	const refusal = sqliteQueryRefusal(sql, { plan, editing });
+	if (refusal) failQuery(refusal, sql, undefined, options.json);
+
 	let reply: SqliteQueryReply;
 	try {
 		reply = await withMaestroClient((client) =>
 			client.sendCommand<SqliteQueryReply>(
-				{ type: 'sqlite_run_query', path: filePath, sql, offset, limit, params, plan },
+				{
+					type: 'sqlite_run_query',
+					path: filePath,
+					sql,
+					offset,
+					limit,
+					params,
+					plan,
+					...(editing ? { enableEditing: true } : {}),
+				},
 				'sqlite_query_result',
 				// The app stops the run at its own timeout; leave room for the reply.
-				SQLITE_QUERY_TIMEOUT_MS + 30_000
+				// With editing, the session's first change also waits for the backup.
+				(editing ? SQLITE_EXPORT_TIMEOUT_MS : 0) + SQLITE_QUERY_TIMEOUT_MS + 30_000
 			)
 		);
 	} catch (error) {
@@ -929,8 +964,17 @@ export async function sqliteQuery(
 	}
 
 	const lines: string[] = [`${result.statement} on ${database.displayPath}`];
+	const { write } = result;
+	if (write) {
+		lines.push(
+			'',
+			`Changed ${formatCount(write.changes)} ${write.changes === 1 ? 'row' : 'rows'}.`,
+			...writeNoteLines(database, write),
+			SQLITE_QUERY_WRITE_UNDO_MESSAGE
+		);
+	}
 	if (!result.returnsRows) {
-		lines.push('', 'The statement ran and returns no rows.');
+		if (!write) lines.push('', 'The statement ran and returns no rows.');
 	} else if (result.rows.length === 0) {
 		lines.push('', offset > 0 ? `No rows past offset ${offset}.` : 'No rows.');
 	} else {
@@ -942,10 +986,11 @@ export async function sqliteQuery(
 			)
 		);
 		const last = result.offset + result.rows.length;
-		lines.push(
-			'',
-			`Rows ${result.offset + 1}-${last}${result.hasMore ? `; more follow (--offset ${last})` : ''}.`
-		);
+		// A statement that changed the database runs once: its later rows are not read again.
+		const more = write
+			? '; it returned more, not shown (it runs once, so a later window cannot be read)'
+			: `; more follow (--offset ${last})`;
+		lines.push('', `Rows ${result.offset + 1}-${last}${result.hasMore ? more : ''}.`);
 	}
 	lines.push(`${result.elapsedMs} ms.`);
 	console.log(lines.join('\n'));

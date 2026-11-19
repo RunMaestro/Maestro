@@ -1,6 +1,9 @@
 /**
  * The body of one Query-mode run: open the file on a connection of its own,
- * prove the statement is read-only, and read one window of its result.
+ * prove the statement is read-only, and read one window of its result. With
+ * the tab's editing unlock on, a statement that changes the database runs
+ * instead through `runSqliteWriteTask()`, once main has passed the write gate
+ * and taken the backup; the read-only layers below hold for every other run.
  *
  * Runs in the SQLite child process (sqlite-worker.ts), which main kills on a
  * timeout or a Stop, because SQL a person writes can run for ever (an
@@ -12,7 +15,9 @@
  *      A write fails at the driver whatever reaches it.
  *   2. The leading keyword must be SELECT, WITH, PRAGMA, EXPLAIN, or VALUES
  *      (`sqliteReadOnlyRefusal()`), which is what refuses ATTACH and DETACH:
- *      SQLite calls them read-only, but they open other files.
+ *      SQLite calls them read-only, but they open other files. With editing
+ *      on, the editing rules apply instead (`sqliteEditingQueryRefusal()`),
+ *      which still refuse ATTACH and DETACH.
  *   3. `prepare()` takes one statement, so `SELECT 1; DELETE ...` never runs.
  *   4. `stmt.readonly` must be true, which catches a write behind a read
  *      keyword (`WITH x AS (...) DELETE ...`, `PRAGMA user_version = 2`).
@@ -56,10 +61,13 @@ import {
 	SQLITE_NOT_READ_ONLY_MESSAGE,
 	SQLITE_ONE_STATEMENT_MESSAGE,
 	SQLITE_QUERY_MAX_LIMIT,
+	SQLITE_WRITE_RERUN_MESSAGE,
+	sqliteEditingQueryRefusal,
 	sqliteLeadingKeyword,
 	sqliteQueryBinding,
-	sqliteReadOnlyRefusal,
+	sqliteQueryRefusal,
 	sqliteStatementToRun,
+	type SqliteRunOptions,
 } from '../../shared/sqlite/query';
 import type {
 	SqliteParameterValues,
@@ -70,7 +78,11 @@ import type {
 import { sqliteSyntaxErrorOffset } from '../../shared/sqlite/queryError';
 import { createTabularRowEncoder, type TabularExportFormat } from '../../shared/tabularExport';
 import { sqliteCellFromValue, sqliteExportValue } from './sqlite-cell';
-import { openReadOnlySqliteConnection } from './sqlite-connection';
+import {
+	openReadOnlySqliteConnection,
+	openWritableSqliteTarget,
+	type SqliteWriteTarget,
+} from './sqlite-connection';
 
 /** What one run's thread is handed. Bounds are already checked by the caller. */
 export interface SqliteQueryTask {
@@ -82,6 +94,20 @@ export interface SqliteQueryTask {
 	params?: SqliteParameterValues;
 	/** Run the statement's `EXPLAIN QUERY PLAN` instead of the statement. */
 	plan?: boolean;
+	/**
+	 * The tab's editing unlock is on and main sent this run down the read
+	 * path: judge the text by the editing rules (`sqliteQueryRefusal()`), and
+	 * let an EXPLAIN of a write through (it explains, never runs, and the
+	 * connection is read-only anyway).
+	 */
+	editing?: boolean;
+	/**
+	 * Main passed the write gate and took the backup for this run
+	 * (`beginSqliteWorkerWrite()`): run the statement on a writable
+	 * connection to this file, once, in a transaction of its own. See
+	 * `runSqliteWriteTask()`.
+	 */
+	writeTarget?: SqliteWriteTarget;
 }
 
 /** What one export's process is handed. The caller picks `destPath` (a temporary file) and renames it. */
@@ -159,19 +185,24 @@ function prepareOne(
  */
 function prepareReadOnlyRun(
 	task: { filePath: string; sql: string; params?: SqliteParameterValues },
-	options: { plan: boolean }
+	options: SqliteRunOptions
 ): { db: Database.Database; statement: Database.Statement; args: readonly unknown[] } {
-	const refusal = sqliteReadOnlyRefusal(task.sql, options);
+	const refusal = sqliteQueryRefusal(task.sql, options);
 	if (refusal) throw refuse(refusal);
 	const binding = sqliteQueryBinding(task.sql, task.params);
 	if (binding.problem !== null) throw refuse(binding.problem);
 
+	const plan = options.plan === true;
+	// With editing on, an EXPLAIN of a write may show: it never runs the write.
+	const explains = plan || sqliteLeadingKeyword(task.sql) === 'EXPLAIN';
 	const db = openReadOnlySqliteConnection(task.filePath);
 	try {
 		// The table view's filter speaks REGEXP through this; a query may too.
 		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
-		const statement = prepareOne(db, task.sql, options);
-		if (!statement.readonly) throw refuse(SQLITE_NOT_READ_ONLY_MESSAGE);
+		const statement = prepareOne(db, task.sql, { plan });
+		if (!statement.readonly && !(options.editing && explains)) {
+			throw refuse(SQLITE_NOT_READ_ONLY_MESSAGE);
+		}
 		return { db, statement, args: binding.args };
 	} catch (error) {
 		db.close();
@@ -186,7 +217,8 @@ function prepareReadOnlyRun(
  * (a syntax error with the `offset` it points at; see `prepareOne()`).
  */
 export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
-	const options = { plan: task.plan === true };
+	if (task.writeTarget) return runSqliteWriteTask(task, task.writeTarget);
+	const options = { plan: task.plan === true, editing: task.editing === true };
 	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);
 	const { db, statement, args } = prepareReadOnlyRun(task, options);
 	try {
@@ -222,6 +254,106 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 			returnsRows: true,
 			elapsedMs: Math.round(performance.now() - started),
 		};
+	} finally {
+		db.close();
+	}
+}
+
+/**
+ * Statements SQLite will not run inside a transaction (`VACUUM`; a PRAGMA
+ * such as `journal_mode = WAL`). They run as SQLite's own one-statement
+ * transaction instead, which is just as atomic.
+ */
+const BARE_WRITE_KEYWORDS: ReadonlySet<string> = new Set(['VACUUM', 'PRAGMA']);
+
+/** `changes()` and `total_changes()` on this connection, as plain numbers. */
+function changeCounts(db: Database.Database): { changes: number; total: number } {
+	const [changes, total] = db.prepare('SELECT changes(), total_changes()').raw().get() as [
+		number,
+		number,
+	];
+	return { changes: Number(changes), total: Number(total) };
+}
+
+/**
+ * Run one statement that changes the database, with the editing unlock's
+ * write gate and backup already passed in main (`beginSqliteWorkerWrite()`):
+ *
+ *   - Refused by text as main refuses it (`sqliteEditingQueryRefusal()`:
+ *     ATTACH, DETACH, VACUUM INTO, transaction control), and for any window
+ *     past the first: a later window would re-run the statement and make the
+ *     change twice (`SQLITE_WRITE_RERUN_MESSAGE`).
+ *   - Opened through `openWritableSqliteTarget()`, which refuses a path that
+ *     names another file now, with every guard of the handle's writable
+ *     connection (`trusted_schema = OFF`, `foreign_keys = ON`, the busy wait).
+ *   - One statement per `prepare()`, its parameters bound by the driver.
+ *   - Run ONCE, in `BEGIN IMMEDIATE` ... `COMMIT` (the write lock taken up
+ *     front, so a busy file waits and then fails before anything changes),
+ *     rolled back on any error. VACUUM and PRAGMA run bare
+ *     (`BARE_WRITE_KEYWORDS`). A child killed mid-statement (Stop, the
+ *     timeout, Lock) leaves a transaction SQLite rolls back on the next open.
+ *   - A statement that returns rows (`RETURNING`, a PRAGMA's answer) returns
+ *     its first `limit` of them; SQLite makes every change on the first step,
+ *     so stopping early never stops the write.
+ *
+ * The result carries `write`: rows the statement changed (`changes()`, 0 for
+ * a schema change) and rows its triggers and foreign-key actions changed
+ * (`total_changes()` beyond that), counted on this connection, which is the
+ * run's alone. SQLite's own errors (a constraint, a missing table) pass
+ * through verbatim.
+ */
+export function runSqliteWriteTask(
+	task: SqliteQueryTask,
+	target: SqliteWriteTarget
+): SqliteQueryResult {
+	// Main never sends a plan here: an EXPLAIN reads, so it runs read-only.
+	const refusal = task.plan ? SQLITE_NOT_READ_ONLY_MESSAGE : sqliteEditingQueryRefusal(task.sql);
+	if (refusal) throw refuse(refusal);
+	if (task.offset !== 0) throw refuse(SQLITE_WRITE_RERUN_MESSAGE);
+	const binding = sqliteQueryBinding(task.sql, task.params);
+	if (binding.problem !== null) throw refuse(binding.problem);
+	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);
+	const keyword = sqliteLeadingKeyword(task.sql);
+
+	const db = openWritableSqliteTarget(target);
+	try {
+		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
+		const statement = prepareOne(db, task.sql, { plan: false });
+		const before = changeCounts(db).total;
+		const transaction = !BARE_WRITE_KEYWORDS.has(keyword);
+		const started = performance.now();
+		if (transaction) db.exec('BEGIN IMMEDIATE');
+		try {
+			let columns: SqliteResultColumn[] = [];
+			let window: { rows: SqliteQueryResult['rows']; hasMore: boolean } = {
+				rows: [],
+				hasMore: false,
+			};
+			if (statement.reader) {
+				columns = statement
+					.columns()
+					.map((column) => ({ name: column.name, declaredType: column.type }));
+				statement.raw(true).safeIntegers(true);
+				window = readWindow(statement, binding.args, 0, limit);
+			} else {
+				statement.run(...binding.args);
+			}
+			const { changes, total } = changeCounts(db);
+			if (transaction) db.exec('COMMIT');
+			return {
+				statement: keyword,
+				columns,
+				rows: window.rows,
+				offset: 0,
+				hasMore: window.hasMore,
+				returnsRows: statement.reader,
+				elapsedMs: Math.round(performance.now() - started),
+				write: { changes, otherChanges: Math.max(0, total - before - changes) },
+			};
+		} catch (error) {
+			if (transaction && db.inTransaction) db.exec('ROLLBACK');
+			throw error;
+		}
 	} finally {
 		db.close();
 	}

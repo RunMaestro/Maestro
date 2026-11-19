@@ -823,6 +823,94 @@ describe('sqlite_run_query handler', () => {
 	});
 });
 
+describe('sqlite_run_query handler with --enable-editing', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const written = {
+		statement: 'DELETE',
+		columns: [],
+		rows: [],
+		offset: 0,
+		hasMore: false,
+		returnsRows: false,
+		elapsedMs: 2,
+		write: { changes: 3, otherChanges: 0 },
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 'cli-token' });
+		queries.runSqliteQuery.mockResolvedValue(written);
+	});
+
+	it('unlocks for this one run, passes the grant to the runner, and locks again', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'qe1',
+			path: '/data/app.db',
+			sql: 'DELETE FROM users WHERE id > 1',
+			enableEditing: true,
+		});
+		await flush();
+		expect(editing.enableSqliteEditing).toHaveBeenCalledWith('h1');
+		expect(queries.runSqliteQuery).toHaveBeenCalledWith({
+			handle: 'h1',
+			sql: 'DELETE FROM users WHERE id > 1',
+			offset: 0,
+			limit: 50,
+			plan: false,
+			editToken: 'cli-token',
+		});
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_query_result',
+			requestId: 'qe1',
+			success: true,
+			database: info,
+			result: written,
+		});
+	});
+
+	it('locks again when the run fails, keeping where a syntax error points', async () => {
+		queries.runSqliteQuery.mockRejectedValue(
+			Object.assign(new Error('near "FORM": syntax error'), { offset: 7 })
+		);
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'qe2',
+			path: '/data/app.db',
+			sql: 'DELETE FORM users',
+			enableEditing: true,
+		});
+		await flush();
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_query_result',
+			requestId: 'qe2',
+			success: false,
+			error: 'near "FORM": syntax error',
+			errorOffset: 7,
+		});
+	});
+
+	it('never unlocks a run that did not ask, and sends it no grant', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'qe3',
+			path: '/data/app.db',
+			sql: 'SELECT 1',
+			enableEditing: 'yes',
+		});
+		await flush();
+		expect(editing.enableSqliteEditing).not.toHaveBeenCalled();
+		expect(queries.runSqliteQuery.mock.calls[0][0]).not.toHaveProperty('editToken');
+	});
+});
+
 describe('sqlite_export_query handler', () => {
 	let handler: WebSocketMessageHandler;
 	let client: WebClient;

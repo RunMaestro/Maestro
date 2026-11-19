@@ -4,7 +4,14 @@ import {
 	SQLITE_MIXED_PARAMETERS_MESSAGE,
 	SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
 	SQLITE_READ_ONLY_KEYWORDS,
+	SQLITE_TRANSACTION_KEYWORDS,
+	SQLITE_VACUUM_INTO_MESSAGE,
 	isSqliteReadOnlyKeyword,
+	isSqliteWriteStatement,
+	sqliteEditingQueryRefusal,
+	sqliteQueryRefusal,
+	sqliteTransactionRefusal,
+	sqliteWriteTimeoutMessage,
 	sqliteLeadingKeyword,
 	sqliteQueryBinding,
 	sqliteQueryParameters,
@@ -235,5 +242,98 @@ describe('sqliteQueryBinding', () => {
 			args: null,
 			problem: SQLITE_MIXED_PARAMETERS_MESSAGE,
 		});
+	});
+});
+
+describe('sqliteEditingQueryRefusal', () => {
+	it('lets a statement that changes the database through', () => {
+		for (const sql of [
+			'DELETE FROM users WHERE id = 1',
+			'  update users set name = 1',
+			'INSERT INTO users DEFAULT VALUES RETURNING id',
+			'CREATE TABLE t(x)',
+			'DROP TABLE t',
+			'ALTER TABLE t ADD COLUMN y',
+			'WITH x AS (SELECT 1) DELETE FROM users',
+			'PRAGMA user_version = 3',
+			'VACUUM',
+			'REINDEX',
+			'SELECT 1',
+			'/* note */ DELETE FROM users',
+		]) {
+			expect(sqliteEditingQueryRefusal(sql)).toBeNull();
+		}
+	});
+
+	it('still refuses what reaches past this file or this run', () => {
+		expect(sqliteEditingQueryRefusal("ATTACH 'other.db' AS o")).toMatch(
+			/^ATTACH opens or closes another database file.*even with editing enabled/
+		);
+		expect(sqliteEditingQueryRefusal('detach o')).toMatch(/^DETACH opens or closes/);
+		expect(sqliteEditingQueryRefusal("VACUUM INTO '/tmp/copy.db'")).toBe(
+			SQLITE_VACUUM_INTO_MESSAGE
+		);
+		expect(sqliteEditingQueryRefusal("vacuum main into '/tmp/copy.db'")).toBe(
+			SQLITE_VACUUM_INTO_MESSAGE
+		);
+		for (const keyword of SQLITE_TRANSACTION_KEYWORDS) {
+			expect(sqliteEditingQueryRefusal(`${keyword.toLowerCase()} x`)).toBe(
+				sqliteTransactionRefusal(keyword)
+			);
+		}
+	});
+
+	it('does not read a quoted name or a comment as VACUUM INTO', () => {
+		expect(sqliteEditingQueryRefusal('VACUUM "into"')).toBeNull();
+		expect(sqliteEditingQueryRefusal('VACUUM -- into a copy')).toBeNull();
+	});
+
+	it('refuses empty text, text with no keyword, and a plan of an EXPLAIN', () => {
+		expect(sqliteEditingQueryRefusal('   ')).toBe('Write a statement to run.');
+		expect(sqliteEditingQueryRefusal("'x'")).toBe('This does not start with a statement keyword.');
+		expect(sqliteEditingQueryRefusal('EXPLAIN SELECT 1', { plan: true })).toBe(
+			SQLITE_PLAN_OF_EXPLAIN_MESSAGE
+		);
+		// The plan of a write explains it and runs none of it.
+		expect(sqliteEditingQueryRefusal('DELETE FROM users', { plan: true })).toBeNull();
+	});
+});
+
+describe('sqliteQueryRefusal', () => {
+	it('applies the read-only allowlist unless editing is on', () => {
+		expect(sqliteQueryRefusal('DELETE FROM users')).toBe(
+			sqliteReadOnlyRefusal('DELETE FROM users')
+		);
+		expect(sqliteQueryRefusal('DELETE FROM users', { editing: false })).not.toBeNull();
+		expect(sqliteQueryRefusal('DELETE FROM users', { editing: true })).toBeNull();
+		expect(sqliteQueryRefusal('BEGIN', { editing: true })).toBe(sqliteTransactionRefusal('BEGIN'));
+	});
+});
+
+describe('isSqliteWriteStatement', () => {
+	it("follows SQLite's own readonly flag", () => {
+		expect(isSqliteWriteStatement('SELECT 1', true)).toBe(false);
+		expect(isSqliteWriteStatement('DELETE FROM t', false)).toBe(true);
+		expect(isSqliteWriteStatement('WITH x AS (SELECT 1) DELETE FROM t', false)).toBe(true);
+		// SQLite calls a read PRAGMA such as journal_mode a write; it is treated as one.
+		expect(isSqliteWriteStatement('PRAGMA journal_mode', false)).toBe(true);
+		expect(isSqliteWriteStatement('PRAGMA table_info(t)', true)).toBe(false);
+	});
+
+	it('treats a statement SQLite calls read-only but whose keyword is no read keyword as a write', () => {
+		// REINDEX rewrites indexes, yet stmt.readonly is true.
+		expect(isSqliteWriteStatement('REINDEX', true)).toBe(true);
+	});
+
+	it('never treats an EXPLAIN as a write', () => {
+		expect(isSqliteWriteStatement('EXPLAIN DELETE FROM t', false)).toBe(false);
+	});
+});
+
+describe('sqliteWriteTimeoutMessage', () => {
+	it('names the time and says a stopped statement changed nothing', () => {
+		expect(sqliteWriteTimeoutMessage(60_000)).toBe(
+			'The statement was stopped after 60 s. A statement stopped before it finished changes nothing.'
+		);
 	});
 });

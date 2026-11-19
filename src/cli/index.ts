@@ -3945,7 +3945,7 @@ sqliteCmd
 sqliteCmd
 	.command('query <path> <sql>')
 	.description(
-		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused, and an error points at the line and token it is about"
+		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about"
 	)
 	.option(
 		'--param <name=value>',
@@ -3976,6 +3976,10 @@ sqliteCmd
 		"Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it"
 	)
 	.option('--format <format>', 'Export format: csv or jsonl (default: from the --output name)')
+	.option(
+		'--enable-editing',
+		"Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused"
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, sql, options) => sqliteQuery(file, sql, options));
 

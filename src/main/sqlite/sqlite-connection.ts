@@ -20,6 +20,8 @@
  * module.
  */
 
+import { statSync } from 'fs';
+
 import Database from 'better-sqlite3';
 
 import { isSqliteBusyError } from '../../shared/sqliteErrors';
@@ -143,12 +145,46 @@ export function openReadOnlySqliteConnection(filePath: string): Database.Databas
  * (never created, `trusted_schema = OFF`, the short busy timeout), and with
  * `foreign_keys = ON`, so writes keep the constraints the schema declares.
  *
- * Only the editing unlock opens one (`openSqliteWriteConnection()` in
- * sqlite-editing.ts), after the write gate and the backup. Nothing else may
- * call this: every other connection on a user's database is read-only.
+ * Only the editing unlock opens one, after the write gate and the backup:
+ * the handle's writable connection in main (`openSqliteWriteConnection()` in
+ * sqlite-editing.ts), and a Query-mode statement's own connection in the
+ * SQLite child process, through `openWritableSqliteTarget()` with the target
+ * `beginSqliteWorkerWrite()` handed out. Nothing else may call this: every
+ * other connection on a user's database is read-only.
  */
 export function openWritableSqliteConnection(filePath: string): Database.Database {
 	return openSqliteConnection(filePath, false);
+}
+
+/** Why a write was refused: the path now names another file than the one opened. */
+export function sqliteFileReplacedMessage(filePath: string): string {
+	return `${filePath} was replaced since it was opened. Reopen the file to edit it.`;
+}
+
+/**
+ * The file a write in the SQLite child process may open: the path, and the
+ * device and inode the viewer opened, so the child never writes to a file
+ * that took the path's place after the unlock and the backup.
+ */
+export interface SqliteWriteTarget {
+	filePath: string;
+	dev: number;
+	ino: number;
+}
+
+/**
+ * Open a write target handed out by `beginSqliteWorkerWrite()`
+ * (sqlite-editing.ts): refuse when the path names another file now
+ * (`sqliteFileReplacedMessage()`), else open it writable. A connection opens
+ * a PATH, so the check comes first, as it does for the handle's own writable
+ * connection.
+ */
+export function openWritableSqliteTarget(target: SqliteWriteTarget): Database.Database {
+	const stat = statSync(target.filePath);
+	if (stat.dev !== target.dev || stat.ino !== target.ino) {
+		throw new Error(sqliteFileReplacedMessage(target.filePath));
+	}
+	return openWritableSqliteConnection(target.filePath);
 }
 
 function openSqliteConnection(filePath: string, readonly: boolean): Database.Database {

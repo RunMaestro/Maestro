@@ -52,6 +52,8 @@ import {
 } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { SQLITE_QUERY_PLAN_KIND_HINTS } from '../../../shared/sqlite/plan';
+import { SQLITE_NOT_READ_ONLY_MESSAGE } from '../../../shared/sqlite/query';
+import { SQLITE_QUERY_WRITE_UNDO_MESSAGE } from '../../../shared/sqlite/undo';
 
 const DB = path.resolve('/data/app.db');
 
@@ -956,11 +958,83 @@ describe('sqlite query', () => {
 		mockReply({
 			type: 'sqlite_query_result',
 			success: false,
-			error: 'DELETE is not a read-only statement.',
+			error: SQLITE_NOT_READ_ONLY_MESSAGE,
 		});
+		await expect(sqliteQuery(DB, 'WITH x AS (SELECT 1) DELETE FROM users', {})).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.join('\n')).toContain(SQLITE_NOT_READ_ONLY_MESSAGE);
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it('refuses a write by its keyword before asking the app, unless --enable-editing', async () => {
+		const sent = respondQuery();
 		await expect(sqliteQuery(DB, 'DELETE FROM users', {})).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('DELETE is not a read-only statement.');
-		expect(process.exit).toHaveBeenCalledWith(1);
+		expect(sent).toHaveLength(0);
+	});
+
+	it('--enable-editing asks the app to unlock for this run, and prints what the statement changed', async () => {
+		const sent = respondQuery({
+			statement: 'DELETE',
+			columns: [],
+			rows: [],
+			hasMore: false,
+			returnsRows: false,
+			write: {
+				changes: 3,
+				otherChanges: 2,
+				backup: { path: '/data/app.maestro-backup-1.db', bytes: 8192, createdAt: 1 },
+			},
+		});
+		await sqliteQuery(DB, 'DELETE FROM users WHERE id > 1', { enableEditing: true });
+		expect(sent[0]).toMatchObject({
+			type: 'sqlite_run_query',
+			sql: 'DELETE FROM users WHERE id > 1',
+			enableEditing: true,
+		});
+		const out = logged();
+		expect(out).toContain(`DELETE on ${DB}`);
+		expect(out).toContain('Changed 3 rows.');
+		expect(out).toContain("The database's triggers and foreign-key actions changed 2 other rows.");
+		expect(out).toContain(
+			`Backed up ${DB} before this first change: /data/app.maestro-backup-1.db`
+		);
+		expect(out).toContain(SQLITE_QUERY_WRITE_UNDO_MESSAGE);
+		expect(out).not.toContain('returns no rows');
+	});
+
+	it('--enable-editing says RETURNING rows past the window are not read again', async () => {
+		respondQuery({
+			statement: 'INSERT',
+			hasMore: true,
+			write: { changes: 9, otherChanges: 0 },
+		});
+		await sqliteQuery(DB, "INSERT INTO users(email) SELECT 'x' FROM users RETURNING id, email", {
+			enableEditing: true,
+			limit: '2',
+		});
+		const out = logged();
+		expect(out).toContain('Changed 9 rows.');
+		expect(out).toContain('it returned more, not shown');
+		expect(out).not.toContain('--offset 2');
+	});
+
+	it('--enable-editing still refuses transaction control and --output, before asking the app', async () => {
+		const sent = respondQuery();
+		await expect(sqliteQuery(DB, 'BEGIN', { enableEditing: true })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('BEGIN is refused here');
+		await expect(
+			sqliteQuery(DB, 'SELECT 1', { enableEditing: true, output: '/tmp/out.csv' })
+		).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('it does not take --enable-editing');
+		expect(sent).toHaveLength(0);
+	});
+
+	it('never sends the unlock without --enable-editing', async () => {
+		const sent = respondQuery();
+		await sqliteQuery(DB, 'SELECT 1', {});
+		expect(sent[0]).not.toHaveProperty('enableEditing');
 	});
 
 	it('points a syntax error at the token SQLite stopped at, with a caret under it', async () => {

@@ -166,6 +166,18 @@ describe('parseSqliteQueryHistoryStore', () => {
 		expect(parseSqliteQueryHistoryStore({ files: 'no' })).toEqual(emptySqliteQueryHistoryStore());
 	});
 
+	it("keeps a write's change count, and drops one that is not a number", () => {
+		const wrote = { ...good, outcome: { ...ok, changes: 4 } };
+		const store = { version: 1, files: { '/db/app.db': { usedAt: 5, entries: [wrote] } } };
+		expect(parseSqliteQueryHistoryStore(JSON.parse(JSON.stringify(store)))).toEqual(store);
+		const odd = parseSqliteQueryHistoryStore({
+			files: {
+				'/db/app.db': { usedAt: 5, entries: [{ ...good, outcome: { ...ok, changes: 'x' } }] },
+			},
+		});
+		expect(odd.files['/db/app.db'].entries[0].outcome).toEqual(ok);
+	});
+
 	it('takes a missing usedAt from the newest entry', () => {
 		const parsed = parseSqliteQueryHistoryStore({ files: { '/db/app.db': { entries: [good] } } });
 		expect(parsed.files['/db/app.db'].usedAt).toBe(5);
@@ -182,6 +194,15 @@ describe('formatSqliteQueryHistoryOutcome', () => {
 			'returns no rows'
 		);
 		expect(formatSqliteQueryHistoryOutcome({ ok: false, error: 'boom' })).toBe('failed');
+	});
+
+	it('says how many rows a statement that changed the database changed', () => {
+		const wrote = { ...ok, rows: 0, returnsRows: false };
+		expect(formatSqliteQueryHistoryOutcome({ ...wrote, changes: 3 })).toBe('changed 3 rows');
+		expect(formatSqliteQueryHistoryOutcome({ ...wrote, changes: 1 })).toBe('changed 1 row');
+		expect(formatSqliteQueryHistoryOutcome({ ...wrote, changes: 1200 })).toBe('changed 1,200 rows');
+		// A schema change changes no rows.
+		expect(formatSqliteQueryHistoryOutcome({ ...wrote, changes: 0 })).toBe('changed no rows');
 	});
 });
 

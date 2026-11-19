@@ -91,6 +91,119 @@ export interface SqliteRunOptions {
 	 * `maestro-cli sqlite query --plan`.
 	 */
 	plan?: boolean;
+	/**
+	 * The tab's "Enable editing" unlock is on (`maestro-cli sqlite query
+	 * --enable-editing`): a statement that changes the database may run, so
+	 * the text is judged by `sqliteEditingQueryRefusal()` instead of the
+	 * read-only allowlist. Main still checks the grant itself.
+	 */
+	editing?: boolean;
+}
+
+/**
+ * Transaction control a run refuses even with editing on. Each run is its own
+ * transaction (committed when the statement succeeds, rolled back when it
+ * fails or is stopped), and its connection closes after it, so a `BEGIN`
+ * would only ever be rolled back.
+ */
+export const SQLITE_TRANSACTION_KEYWORDS: readonly string[] = [
+	'BEGIN',
+	'COMMIT',
+	'END',
+	'ROLLBACK',
+	'SAVEPOINT',
+	'RELEASE',
+];
+
+const TRANSACTION_KEYWORD_SET: ReadonlySet<string> = new Set(SQLITE_TRANSACTION_KEYWORDS);
+
+/** Why `BEGIN` / `COMMIT` and the like are refused with editing on. */
+export function sqliteTransactionRefusal(keyword: string): string {
+	return `${keyword} is refused here: each run is its own transaction, committed when the statement succeeds and rolled back when it fails or is stopped.`;
+}
+
+/** `VACUUM INTO` writes a copy of the database to another file. */
+export const SQLITE_VACUUM_INTO_MESSAGE =
+	'VACUUM INTO writes a copy of the database to another file, so it is refused here. A plain VACUUM runs.';
+
+/**
+ * Why a statement will not run with editing on, judged by its text alone, or
+ * null when it may go on to the driver. Writes are allowed; what stays
+ * refused is what reaches past this one file or this one run: `ATTACH` /
+ * `DETACH` and `VACUUM INTO` (other files, outside the backup), and
+ * transaction control (`SQLITE_TRANSACTION_KEYWORDS`). With `plan`, an
+ * EXPLAIN is refused as it is read-only.
+ */
+export function sqliteEditingQueryRefusal(
+	sql: string,
+	options: SqliteRunOptions = {}
+): string | null {
+	if (!sql.trim()) return 'Write a statement to run.';
+	const keyword = sqliteLeadingKeyword(sql);
+	if (!keyword) return 'This does not start with a statement keyword.';
+	if (keyword === 'ATTACH' || keyword === 'DETACH') {
+		return `${keyword} opens or closes another database file, so it is refused here, even with editing enabled.`;
+	}
+	if (TRANSACTION_KEYWORD_SET.has(keyword)) return sqliteTransactionRefusal(keyword);
+	if (
+		keyword === 'VACUUM' &&
+		sqliteTokens(sql).some((token) => token.kind === 'word' && token.text.toUpperCase() === 'INTO')
+	) {
+		return SQLITE_VACUUM_INTO_MESSAGE;
+	}
+	if (options.plan && keyword === 'EXPLAIN') return SQLITE_PLAN_OF_EXPLAIN_MESSAGE;
+	return null;
+}
+
+/**
+ * The text-only refusal a Query-mode run applies: the read-only allowlist
+ * (`sqliteReadOnlyRefusal()`), or, with `options.editing`, the editing rules
+ * (`sqliteEditingQueryRefusal()`). Shared by the panel (which refuses before
+ * any process starts), the CLI, and the run itself.
+ */
+export function sqliteQueryRefusal(sql: string, options: SqliteRunOptions = {}): string | null {
+	return options.editing
+		? sqliteEditingQueryRefusal(sql, options)
+		: sqliteReadOnlyRefusal(sql, options);
+}
+
+/**
+ * Whether a statement SQLite has prepared would change the database when it
+ * runs: the driver says it is not read-only (`stmt.readonly`), or its
+ * leading keyword is not a read keyword (SQLite calls `REINDEX` read-only,
+ * yet it rewrites indexes). An EXPLAIN never runs what it explains, so it
+ * never writes, whatever SQLite says of it. Main uses this to send a run
+ * with editing on to the write path (gate, backup, writable connection) or
+ * the read-only one.
+ */
+export function isSqliteWriteStatement(sql: string, statementReadonly: boolean): boolean {
+	const keyword = sqliteLeadingKeyword(sql);
+	if (keyword === 'EXPLAIN') return false;
+	return !statementReadonly || !isSqliteReadOnlyKeyword(keyword);
+}
+
+/**
+ * A later window of a statement that changed the database. A window past the
+ * first re-runs the statement, which would make the change again.
+ */
+export const SQLITE_WRITE_RERUN_MESSAGE =
+	'A statement that changes the database runs once, so its later rows cannot be read again. Run it again to see a fresh result.';
+
+/** A statement that changed the database was stopped (Stop, a newer run, the timeout). */
+export const SQLITE_WRITE_STOPPED_MESSAGE =
+	'The statement was stopped. A statement stopped before it finished changes nothing.';
+
+/** Editing was locked while a statement that changes the database ran. */
+export const SQLITE_WRITE_LOCKED_MESSAGE =
+	'Editing was locked while the statement ran, so it was stopped. A statement stopped before it finished changes nothing.';
+
+/** The database was closed (the tab closed, the idle reaper) while a statement that changes it ran. */
+export const SQLITE_WRITE_CLOSED_MESSAGE =
+	'The database was closed while the statement ran, so it was stopped. A statement stopped before it finished changes nothing.';
+
+/** A statement that changes the database outlived `SQLITE_QUERY_TIMEOUT_MS` and was stopped. */
+export function sqliteWriteTimeoutMessage(timeoutMs = SQLITE_QUERY_TIMEOUT_MS): string {
+	return `The statement was stopped after ${Math.round(timeoutMs / 1000)} s. A statement stopped before it finished changes nothing.`;
 }
 
 /** Why the Plan toggle cannot explain a statement that is already an EXPLAIN. */
@@ -132,7 +245,7 @@ export function sqliteStatementToRun(sql: string, options: SqliteRunOptions = {}
 
 /** The driver reported the statement would write (a write PRAGMA, `WITH ... DELETE`). */
 export const SQLITE_NOT_READ_ONLY_MESSAGE =
-	'This statement would change the database, so it is refused here. Queries are read-only.';
+	'This statement would change the database, so it is refused here. Queries are read-only until editing is enabled.';
 
 /** `prepare()` found a second statement after the first. */
 export const SQLITE_ONE_STATEMENT_MESSAGE =
