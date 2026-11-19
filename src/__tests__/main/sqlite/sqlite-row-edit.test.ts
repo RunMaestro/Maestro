@@ -20,8 +20,12 @@ const state = vi.hoisted(() => ({
 	objects: [] as unknown[],
 	editability: {} as Record<string, unknown>,
 	columns: [] as Array<{ name: string; type: string | null }>,
-	/** What the UPDATE's RETURNING gives, or the error SQLite raises. */
-	returning: [] as unknown[][] | Error,
+	/**
+	 * What the UPDATE's RETURNING gives (the key, then `typeof(column)` and the
+	 * column as stored), the error SQLite raises, or a function of the UPDATE's
+	 * arguments.
+	 */
+	returning: [] as unknown[][] | Error | ((args: unknown[]) => unknown[][]),
 	/** The row the read-back finds (value/length pairs), or none. */
 	readBack: undefined as unknown[] | undefined,
 	backupCreated: false,
@@ -44,6 +48,7 @@ function fakeDb(which: 'readOnly' | 'writable') {
 				all(...args: unknown[]) {
 					connection.updates.push(args);
 					if (state.returning instanceof Error) throw state.returning;
+					if (typeof state.returning === 'function') return state.returning(args);
 					return state.returning;
 				},
 				get(...args: unknown[]) {
@@ -111,6 +116,19 @@ function summary(name: string, kind: 'table' | 'view' = 'table') {
 	};
 }
 
+/** SQLite's `typeof()` of a bound value, as a column with no affinity stores it. */
+function storedType(value: unknown): string {
+	if (value === null) return 'null';
+	if (typeof value === 'bigint') return 'integer';
+	if (typeof value === 'number') return 'real';
+	return 'text';
+}
+
+/** A RETURNING that stores the bound value as given, under this key. */
+function storedAsGiven(...key: unknown[]) {
+	return (args: unknown[]) => [[...key, storedType(args[0]), args[0]]];
+}
+
 function connection(): FakeConnection {
 	return { prepared: [], updates: [], reads: [], committed: 0, rolledBack: 0 };
 }
@@ -147,7 +165,7 @@ beforeEach(() => {
 		{ name: 'email', type: 'TEXT' },
 		{ name: 'domain', type: 'TEXT' },
 	];
-	state.returning = [[7n]];
+	state.returning = storedAsGiven(7n);
 	state.readBack = [7n, null, 'new@example.com', 15n, 'example.com', 11n];
 	state.backupCreated = false;
 	state.locked = false;
@@ -160,7 +178,7 @@ describe('updateSqliteCell', () => {
 		const result = await updateSqliteCell(request());
 		const writable = state.connections.writable;
 		expect(writable.prepared).toContain(
-			'UPDATE "users" SET "email" = ? WHERE "rowid" = ? RETURNING "rowid"'
+			'UPDATE "users" SET "email" = ? WHERE "rowid" = ? RETURNING "rowid", typeof("email"), "email"'
 		);
 		expect(writable.updates).toEqual([['new@example.com', 7n]]);
 		expect(writable.reads).toEqual([[7n]]);
@@ -183,6 +201,7 @@ describe('updateSqliteCell', () => {
 	});
 
 	it('binds a number or NULL as one, never spliced into the SQL', async () => {
+		state.returning = (args) => [[args[0] ?? 7n, storedType(args[0]), args[0]]];
 		await updateSqliteCell(
 			request({ column: 'id', value: { type: 'number', text: '9007199254740993' } })
 		);
@@ -207,7 +226,7 @@ describe('updateSqliteCell', () => {
 	});
 
 	it('re-keys the row when the edit changed the INTEGER PRIMARY KEY that is its rowid', async () => {
-		state.returning = [[99n]];
+		state.returning = [[99n, 'integer', 99n]];
 		state.readBack = [99n, null, 'a@b.c', 5n, 'b.c', 3n];
 		const result = await updateSqliteCell(
 			request({ column: 'id', value: { type: 'number', text: '99' } })
@@ -224,7 +243,7 @@ describe('updateSqliteCell', () => {
 			{ name: 'name', type: 'TEXT' },
 			{ name: 'role', type: 'TEXT' },
 		];
-		state.returning = [[3n, 'ada']];
+		state.returning = [[3n, 'ada', 'text', 'admin']];
 		state.readBack = [3n, null, 'ada', 3n, 'admin', 5n];
 		const result = await updateSqliteCell(
 			request({
@@ -238,7 +257,7 @@ describe('updateSqliteCell', () => {
 			})
 		);
 		expect(state.connections.writable.prepared).toContain(
-			'UPDATE "members" SET "role" = ? WHERE "org" = ? AND "name" = ? RETURNING "org", "name"'
+			'UPDATE "members" SET "role" = ? WHERE "org" = ? AND "name" = ? RETURNING "org", "name", typeof("role"), "role"'
 		);
 		expect(state.connections.writable.updates).toEqual([['admin', 3n, 'ada']]);
 		expect(result.key).toEqual({
@@ -268,7 +287,7 @@ describe('updateSqliteCell', () => {
 			{ name: 'org', type: 'INTEGER' },
 			{ name: 'name', type: 'TEXT' },
 		];
-		state.returning = [[null, 'ada']];
+		state.returning = [[null, 'ada', 'null', null]];
 		await expect(
 			updateSqliteCell(
 				request({
@@ -283,6 +302,56 @@ describe('updateSqliteCell', () => {
 			)
 		).rejects.toThrow('would leave the row with no key to name it by, so nothing was changed');
 		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it('binds a whole number as an INTEGER, so a column with no affinity keeps it whole', async () => {
+		state.returning = storedAsGiven(20n);
+		await updateSqliteCell(request({ column: 'id', value: { type: 'number', text: ' 20 ' } }));
+		state.returning = storedAsGiven(1000n);
+		await updateSqliteCell(request({ column: 'id', value: { type: 'number', text: '1e3' } }));
+		state.returning = storedAsGiven(7n);
+		await updateSqliteCell(request({ value: { type: 'number', text: '2.5' } }));
+		expect(state.connections.writable.updates.map((args) => args[0])).toEqual([20n, 1000, 2.5]);
+	});
+
+	it('rolls back text the column affinity would have turned into a number', async () => {
+		state.columns = [
+			{ name: 'id', type: 'INTEGER' },
+			{ name: 'zip', type: 'INT' },
+		];
+		state.returning = [[7n, 'integer', 7n]];
+		await expect(
+			updateSqliteCell(request({ column: 'zip', value: { type: 'text', text: '007' } }))
+		).rejects.toThrow(
+			"zip has INTEGER affinity, so SQLite would store the text '007' as the integer 7. Nothing was changed; to store a number, give it as a number."
+		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+		expect(state.connections.writable.committed).toBe(0);
+		// The row was never read back: the change did not stand.
+		expect(state.connections.writable.reads).toEqual([]);
+	});
+
+	it('rolls back a number a TEXT column would have stored as text', async () => {
+		state.returning = [[7n, 'text', '42']];
+		await expect(
+			updateSqliteCell(request({ value: { type: 'number', text: '42' } }))
+		).rejects.toThrow(
+			"email has TEXT affinity, so SQLite would store the number 42 as the text '42'. Nothing was changed; to store text, give it as text."
+		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it('reads the affinity of a STRICT table from its declared types', async () => {
+		state.objects = [{ ...summary('users'), strict: true }];
+		state.columns = [
+			{ name: 'id', type: 'INTEGER' },
+			{ name: 'extra', type: 'ANY' },
+		];
+		state.returning = [[7n, 'integer', 7n]];
+		// ANY in a STRICT table converts nothing (BLOB affinity), and says so.
+		await expect(
+			updateSqliteCell(request({ column: 'extra', value: { type: 'text', text: '7' } }))
+		).rejects.toThrow('extra has BLOB affinity');
 	});
 
 	it("passes SQLite's own refusal through verbatim, with nothing committed", async () => {
@@ -325,6 +394,19 @@ describe('updateSqliteCell', () => {
 		await expect(
 			updateSqliteCell(request({ value: { type: 'number', text: 'abc' } }))
 		).rejects.toThrow('email is set to Number, but "abc" is not a number.');
+		await expect(
+			updateSqliteCell(request({ value: { type: 'number', text: '1e400' } }))
+		).rejects.toThrow(
+			'email is set to Number, but 1e400 is too large for SQLite to store as a number.'
+		);
+		await expect(
+			updateSqliteCell(request({ column: 'id', value: { type: 'number', text: '2.5' } }))
+		).rejects.toThrow(
+			"id is the table's INTEGER PRIMARY KEY, which is each row's rowid, so it holds only whole numbers; 2.5 is not one. Nothing was changed."
+		);
+		await expect(
+			updateSqliteCell(request({ column: 'id', value: { type: 'null', text: '' } }))
+		).rejects.toThrow('never NULL.');
 		expect(state.beginCalls).toBe(0);
 		expect(state.connections.writable.prepared).toEqual([]);
 	});

@@ -8,6 +8,7 @@ import {
 	escapeSqliteLikePattern,
 	sqliteFilterParam,
 	sqliteNumberBindValue,
+	sqliteNumberTextProblem,
 	sqliteRegexpTest,
 	type SqliteFilterColumn,
 } from '../../../shared/sqlite/filter';
@@ -203,6 +204,54 @@ describe('sqliteNumberBindValue', () => {
 		for (const text of ['', 'abc', '1,000', '0x10', '1.2.3', ' 1', 'Infinity', 'NaN']) {
 			expect(sqliteNumberBindValue(text)).toBeNull();
 		}
+	});
+});
+
+describe('sqliteNumberTextProblem', () => {
+	it('passes a number SQLite stores exactly, however it is written', () => {
+		for (const text of [
+			'42',
+			'-0',
+			'9223372036854775807',
+			'-9223372036854775808',
+			'1.5',
+			'1.50',
+			'0.1',
+			'-.25',
+			'1e3',
+			'3.0e+5',
+			'1e21',
+			'0.000',
+		]) {
+			expect(sqliteNumberTextProblem(text)).toBeNull();
+		}
+	});
+
+	it('leaves text that is not a number to the caller', () => {
+		expect(sqliteNumberTextProblem('abc')).toBeNull();
+		expect(sqliteNumberTextProblem('')).toBeNull();
+	});
+
+	it('names an integer past the signed 64-bit range', () => {
+		expect(sqliteNumberTextProblem('9223372036854775808')).toBe(
+			'9223372036854775808 is past the 64-bit integer range SQLite stores exactly.'
+		);
+		expect(sqliteNumberTextProblem('-9223372036854775809')).toMatch(/past the 64-bit/);
+	});
+
+	it('names a value too large for a REAL', () => {
+		expect(sqliteNumberTextProblem('1e400')).toBe(
+			'1e400 is too large for SQLite to store as a number.'
+		);
+	});
+
+	it('names more digits than a REAL keeps, with what would be stored', () => {
+		expect(sqliteNumberTextProblem('0.10000000000000000001')).toBe(
+			"0.10000000000000000001 has more digits than SQLite's 8-byte REAL keeps, so it would be stored as 0.1."
+		);
+		expect(sqliteNumberTextProblem('12345678901234567890.5')).toMatch(/more digits/);
+		// Too small to be anything but zero.
+		expect(sqliteNumberTextProblem('1e-400')).toMatch(/would be stored as 0\.$/);
 	});
 });
 

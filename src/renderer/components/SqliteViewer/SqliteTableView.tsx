@@ -56,7 +56,12 @@
  * the footer instead of opening, and so does a refused save, with SQLite's
  * own words. NULL is a state of the editor, set by its NULL button or
  * Alt+Cmd+Backspace and never by clearing the text, so an emptied box saves an
- * empty string and a NULL cell saved untouched stays NULL. The first save of a session announces where the file's backup went.
+ * empty string and a NULL cell saved untouched stays NULL. The column's type
+ * affinity picks how the text binds (a number in a numeric column, text in a
+ * TEXT one), and a value SQLite would convert or keep as the wrong type is
+ * reported in the footer with the editor still open, never written converted
+ * (`sqliteCellEditValueProblem()` here, `sqliteStoredValueProblem()` in main).
+ * The first save of a session announces where the file's backup went.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -67,7 +72,11 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { formatSqliteRecordValue, sqliteBlobFileName } from '../../../shared/sqlite/cells';
 import { formatSqliteRowCount, sqliteConvergingRowTotal } from '../../../shared/sqlite/objects';
-import { formatSqliteEditability, sqliteEditabilityLabel } from '../../../shared/sqlite/schema';
+import {
+	formatSqliteEditability,
+	sqliteColumnAffinity,
+	sqliteEditabilityLabel,
+} from '../../../shared/sqlite/schema';
 import type {
 	SqliteCellValue,
 	SqliteCountCursor,
@@ -95,7 +104,9 @@ import { SqliteCellEditor } from './SqliteCellEditor';
 import {
 	sqliteCellEditDraft,
 	sqliteCellEditRefusal,
+	sqliteCellEditTypeHint,
 	sqliteCellEditValue,
+	sqliteCellEditValueProblem,
 	sqliteRowKeyAt,
 	type SqliteCellDraft,
 } from './sqliteCellEdit';
@@ -450,10 +461,26 @@ export function SqliteTableView({
 		const original = rows[cell.row]?.[cell.column] ?? null;
 		const key = sqliteRowKeyAt(editability, rowids, rowKeys, cell.row);
 		if (!column || !key) return;
-		const value = sqliteCellEditValue(original, editDraft);
+		const affinity = sqliteColumnAffinity(column.declaredType ?? '', strict);
+		const value = sqliteCellEditValue(original, editDraft, affinity);
 		if (!value) {
 			// Nothing changed, so nothing is written.
 			setEditingCell(null);
+			return;
+		}
+		const identity = editability?.editable ? editability.identity : null;
+		const problem = sqliteCellEditValueProblem(
+			{
+				name: column.name,
+				affinity,
+				isRowid: identity?.kind === 'rowid' && identity.rowidColumn === column.name,
+			},
+			original,
+			value
+		);
+		if (problem) {
+			// The editor stays open with the draft, so the value can be fixed.
+			setEditStatus({ text: problem, error: true });
 			return;
 		}
 		const token = generation.current;
@@ -512,18 +539,30 @@ export function SqliteTableView({
 	});
 
 	const renderCellEditor = useCallback(
-		(_rowPosition: number, columnPosition: number) => (
-			<SqliteCellEditor
-				column={columns?.[columnPosition]?.name ?? ''}
-				draft={editDraft}
-				onDraftChange={setEditDraft}
-				onCommit={() => void commitEdit()}
-				onCancel={cancelEdit}
-				saving={savingCell}
-				theme={theme}
-			/>
-		),
-		[columns, editDraft, commitEdit, cancelEdit, savingCell, theme]
+		(_rowPosition: number, columnPosition: number) => {
+			const column = columns?.[columnPosition];
+			return (
+				<SqliteCellEditor
+					column={column?.name ?? ''}
+					typeHint={
+						column
+							? sqliteCellEditTypeHint(
+									column.name,
+									column.declaredType,
+									sqliteColumnAffinity(column.declaredType ?? '', strict)
+								)
+							: undefined
+					}
+					draft={editDraft}
+					onDraftChange={setEditDraft}
+					onCommit={() => void commitEdit()}
+					onCancel={cancelEdit}
+					saving={savingCell}
+					theme={theme}
+				/>
+			);
+		},
+		[columns, strict, editDraft, commitEdit, cancelEdit, savingCell, theme]
 	);
 
 	// -- Record view --------------------------------------------------------

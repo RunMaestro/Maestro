@@ -5,7 +5,9 @@ import {
 	sqliteCellEditDraft,
 	sqliteCellEditRefusal,
 	sqliteCellEditText,
+	sqliteCellEditTypeHint,
 	sqliteCellEditValue,
+	sqliteCellEditValueProblem,
 	sqliteRowKeyAt,
 } from '../../../../renderer/components/SqliteViewer/sqliteCellEdit';
 import type { SqliteEditability } from '../../../../shared/sqlite/types';
@@ -138,43 +140,143 @@ describe('sqliteCellEditValue', () => {
 	const NULL_DRAFT = { text: '', isNull: true };
 
 	it('writes nothing when the draft is what the editor opened with', () => {
-		expect(sqliteCellEditValue(null, NULL_DRAFT)).toBeNull();
-		expect(sqliteCellEditValue('', text(''))).toBeNull();
-		expect(sqliteCellEditValue('ada', text('ada'))).toBeNull();
-		expect(sqliteCellEditValue(42, text('42'))).toBeNull();
+		expect(sqliteCellEditValue(null, NULL_DRAFT, 'TEXT')).toBeNull();
+		expect(sqliteCellEditValue('', text(''), 'TEXT')).toBeNull();
+		expect(sqliteCellEditValue('ada', text('ada'), 'TEXT')).toBeNull();
+		expect(sqliteCellEditValue(42, text('42'), 'INTEGER')).toBeNull();
 		// NULL kept what was typed before it was set; still NULL, still nothing.
-		expect(sqliteCellEditValue(null, { text: 'typed', isNull: true })).toBeNull();
+		expect(sqliteCellEditValue(null, { text: 'typed', isNull: true }, 'TEXT')).toBeNull();
 	});
 
 	it('binds NULL only for a NULL draft, whatever text it kept', () => {
-		expect(sqliteCellEditValue('ada', NULL_DRAFT)).toEqual({ type: 'null', text: '' });
-		expect(sqliteCellEditValue('', NULL_DRAFT)).toEqual({ type: 'null', text: '' });
-		expect(sqliteCellEditValue(42, { text: '42', isNull: true })).toEqual({
+		expect(sqliteCellEditValue('ada', NULL_DRAFT, 'TEXT')).toEqual({ type: 'null', text: '' });
+		expect(sqliteCellEditValue('', NULL_DRAFT, 'TEXT')).toEqual({ type: 'null', text: '' });
+		expect(sqliteCellEditValue(42, { text: '42', isNull: true }, 'INTEGER')).toEqual({
 			type: 'null',
 			text: '',
 		});
 	});
 
 	it('writes an empty string, never NULL, for an emptied box', () => {
-		expect(sqliteCellEditValue('ada', text(''))).toEqual({ type: 'text', text: '' });
+		expect(sqliteCellEditValue('ada', text(''), 'TEXT')).toEqual({ type: 'text', text: '' });
 		// A NULL cell whose NULL was turned off (or typed over, then cleared).
-		expect(sqliteCellEditValue(null, text(''))).toEqual({ type: 'text', text: '' });
-		expect(sqliteCellEditValue(42, text(''))).toEqual({ type: 'text', text: '' });
+		expect(sqliteCellEditValue(null, text(''), 'TEXT')).toEqual({ type: 'text', text: '' });
+		expect(sqliteCellEditValue(42, text(''), 'INTEGER')).toEqual({ type: 'text', text: '' });
 	});
 
-	it('keeps a number a number while the text is still one', () => {
-		expect(sqliteCellEditValue(42, text(' 43 '))).toEqual({ type: 'number', text: '43' });
-		expect(sqliteCellEditValue({ kind: 'integer', text: '9007199254740993' }, text('1e3'))).toEqual(
-			{ type: 'number', text: '1e3' }
-		);
-		expect(sqliteCellEditValue(42, text('forty-two'))).toEqual({
+	it('binds numeric text as a number in an INTEGER, REAL, or NUMERIC column', () => {
+		expect(sqliteCellEditValue(42, text(' 43 '), 'INTEGER')).toEqual({
+			type: 'number',
+			text: '43',
+		});
+		// Even when the cell held NULL or text: the column wants numbers.
+		expect(sqliteCellEditValue(null, text('7'), 'NUMERIC')).toEqual({ type: 'number', text: '7' });
+		expect(sqliteCellEditValue('n/a', text('1.5'), 'REAL')).toEqual({
+			type: 'number',
+			text: '1.5',
+		});
+		expect(sqliteCellEditValue(42, text('forty-two'), 'INTEGER')).toEqual({
 			type: 'text',
 			text: 'forty-two',
 		});
 	});
 
-	it('binds everything else as TEXT, verbatim, for the column affinity to convert', () => {
-		expect(sqliteCellEditValue('ada', text(' grace '))).toEqual({ type: 'text', text: ' grace ' });
-		expect(sqliteCellEditValue(null, text('7'))).toEqual({ type: 'text', text: '7' });
+	it('binds everything as text, verbatim, in a TEXT column', () => {
+		expect(sqliteCellEditValue('ada', text(' grace '), 'TEXT')).toEqual({
+			type: 'text',
+			text: ' grace ',
+		});
+		// '007' stays '007'; a number would come back as '7'.
+		expect(sqliteCellEditValue('001', text('007'), 'TEXT')).toEqual({ type: 'text', text: '007' });
+	});
+
+	it('keeps the type a value already has in a column with no affinity', () => {
+		expect(
+			sqliteCellEditValue({ kind: 'integer', text: '9007199254740993' }, text('1e3'), 'BLOB')
+		).toEqual({ type: 'number', text: '1e3' });
+		expect(sqliteCellEditValue(42, text('forty-two'), 'BLOB')).toEqual({
+			type: 'text',
+			text: 'forty-two',
+		});
+		expect(sqliteCellEditValue('5', text('6'), 'BLOB')).toEqual({ type: 'text', text: '6' });
+		expect(sqliteCellEditValue(null, text('7'), 'BLOB')).toEqual({ type: 'text', text: '7' });
+	});
+});
+
+describe('sqliteCellEditValueProblem', () => {
+	const column = (affinity: 'INTEGER' | 'REAL' | 'NUMERIC' | 'TEXT' | 'BLOB', isRowid = false) => ({
+		name: 'qty',
+		affinity,
+		isRowid,
+	});
+
+	it('passes a value the column stores as entered', () => {
+		expect(
+			sqliteCellEditValueProblem(column('INTEGER'), 5, { type: 'number', text: '6' })
+		).toBeNull();
+		expect(
+			sqliteCellEditValueProblem(column('TEXT'), 'a', { type: 'text', text: '007' })
+		).toBeNull();
+		expect(sqliteCellEditValueProblem(column('BLOB'), 5, { type: 'text', text: 'x' })).toBeNull();
+		expect(sqliteCellEditValueProblem(column('INTEGER'), 5, { type: 'null', text: '' })).toBeNull();
+	});
+
+	it('refuses text that is not a number in a numeric column, an emptied box included', () => {
+		expect(sqliteCellEditValueProblem(column('INTEGER'), 5, { type: 'text', text: 'five' })).toBe(
+			"qty has INTEGER affinity, and 'five' is not a number, so SQLite would keep it as TEXT. Enter a number, or set NULL."
+		);
+		expect(sqliteCellEditValueProblem(column('REAL'), null, { type: 'text', text: '' })).toBe(
+			'qty has REAL affinity, and an empty string is not a number, so SQLite would keep it as TEXT. Enter a number, or set NULL.'
+		);
+	});
+
+	it('lets text stay text where the cell already holds text', () => {
+		expect(
+			sqliteCellEditValueProblem(column('NUMERIC'), 'n/a', { type: 'text', text: 'unknown' })
+		).toBeNull();
+		expect(
+			sqliteCellEditValueProblem(
+				column('INTEGER'),
+				{ kind: 'text', head: 'x', length: 9000 },
+				{ type: 'text', text: 'y' }
+			)
+		).toBeNull();
+	});
+
+	it('refuses a number SQLite would store rounded', () => {
+		expect(sqliteCellEditValueProblem(column('REAL'), 1, { type: 'number', text: '1e400' })).toBe(
+			'qty: 1e400 is too large for SQLite to store as a number.'
+		);
+		expect(
+			sqliteCellEditValueProblem(column('INTEGER'), 1, {
+				type: 'number',
+				text: '9223372036854775808',
+			})
+		).toMatch(/^qty: 9223372036854775808 is past the 64-bit integer range/);
+	});
+
+	it('takes only a whole number in the rowid column', () => {
+		const rowid = column('INTEGER', true);
+		expect(sqliteCellEditValueProblem(rowid, 1, { type: 'number', text: '2' })).toBeNull();
+		expect(sqliteCellEditValueProblem(rowid, 1, { type: 'number', text: '2.5' })).toMatch(
+			/only whole numbers; 2\.5 is not one\.$/
+		);
+		expect(sqliteCellEditValueProblem(rowid, 1, { type: 'null', text: '' })).toMatch(
+			/never NULL\.$/
+		);
+	});
+});
+
+describe('sqliteCellEditTypeHint', () => {
+	it('names the declared type, the affinity, and what it does to the text typed', () => {
+		expect(sqliteCellEditTypeHint('qty', 'INT', 'INTEGER')).toBe(
+			'qty (INT, INTEGER affinity): a number is stored as a number; text that is not one is refused.'
+		);
+		expect(sqliteCellEditTypeHint('name', 'VARCHAR(20)', 'TEXT')).toBe(
+			'name (VARCHAR(20), TEXT affinity): everything is stored as text, numbers included.'
+		);
+		expect(sqliteCellEditTypeHint('extra', null, 'BLOB')).toBe(
+			'extra (BLOB affinity): no conversion, so a value keeps the type it is entered as.'
+		);
 	});
 });

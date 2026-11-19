@@ -2305,6 +2305,50 @@ describe('SqliteViewer cell edit', () => {
 		expect(screen.getByTestId('sqlite-cell-editor')).toHaveValue('bogus');
 	});
 
+	it('binds by the column affinity, so a TEXT column keeps 007 as typed', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		expect(editor).toHaveAttribute(
+			'title',
+			'kind (TEXT, TEXT affinity): everything is stored as text, numbers included.'
+		);
+		fireEvent.change(editor, { target: { value: '007' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(updateCell).toHaveBeenCalledTimes(1));
+		expect(updateCell).toHaveBeenLastCalledWith(
+			expect.objectContaining({ column: 'kind', value: { type: 'text', text: '007' } })
+		);
+	});
+
+	it('reports text that is not a number in an INTEGER column, writing nothing', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'id'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		expect(editor).toHaveAttribute(
+			'title',
+			'id (INTEGER, INTEGER affinity): a number is stored as a number; text that is not one is refused.'
+		);
+		fireEvent.change(editor, { target: { value: 'twenty' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		expect(await screen.findByTestId('sqlite-edit-status')).toHaveTextContent(
+			"id has INTEGER affinity, and 'twenty' is not a number, so SQLite would keep it as TEXT. Enter a number, or set NULL."
+		);
+		// The editor stays open with the draft, so the value can be fixed.
+		expect(screen.getByTestId('sqlite-cell-editor')).toHaveValue('twenty');
+		expect(updateCell).not.toHaveBeenCalled();
+
+		// An emptied box in a numeric column is refused too: NULL is the button.
+		fireEvent.change(editor, { target: { value: '' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() =>
+			expect(screen.getByTestId('sqlite-edit-status')).toHaveTextContent(
+				'an empty string is not a number'
+			)
+		);
+		expect(updateCell).not.toHaveBeenCalled();
+	});
+
 	it('announces where the backup went on the first change', async () => {
 		updateCell.mockImplementationOnce(async () => ({
 			name: 'events',

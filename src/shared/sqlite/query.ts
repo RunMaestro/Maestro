@@ -17,7 +17,7 @@
  * types is always bound by the driver and never spliced into the text.
  */
 
-import { sqliteNumberBindValue, type SqliteBindValue } from './filter';
+import { sqliteNumberBindValue, sqliteNumberTextProblem, type SqliteBindValue } from './filter';
 import { sqliteTokens } from './tokens';
 import type { SqliteParameterValue, SqliteParameterValues, SqliteQueryParameter } from './types';
 
@@ -220,7 +220,10 @@ export function sqliteQueryParameters(sql: string): SqliteQueryParameterScan {
 
 /**
  * The value a typed value binds as, or why it cannot bind: TEXT as is, NULL,
- * or a number (an integer exactly, a `bigint` past 2^53, or a double).
+ * or a number (an integer exactly, a `bigint` past 2^53, or a double). A
+ * number SQLite could not hold as written (past the 64-bit integer range,
+ * too large, or more digits than a REAL keeps) is refused rather than bound
+ * rounded (`sqliteNumberTextProblem()`).
  * `label` names it in the problem: a parameter (`:id`) or a column. Shared by
  * the Query panel's parameters and the table view's cell edit.
  */
@@ -241,6 +244,8 @@ export function sqliteParameterBindValue(
 		const shown = value.text.trim() ? `"${value.text}" is not a number` : 'it is empty';
 		return { problem: `${label} is set to Number, but ${shown}.` };
 	}
+	const inexact = sqliteNumberTextProblem(value.text.trim());
+	if (inexact) return { problem: `${label} is set to Number, but ${inexact}` };
 	return { value: number };
 }
 

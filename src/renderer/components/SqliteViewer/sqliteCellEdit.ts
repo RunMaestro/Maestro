@@ -7,9 +7,11 @@
  * writing what nobody changed.
  */
 
-import { formatCount } from '../../../shared/formatters';
-import { sqliteNumberBindValue } from '../../../shared/sqlite/filter';
+import { formatCount, truncateAtWordBoundary } from '../../../shared/formatters';
+import { isNumericSqliteAffinity, sqliteRowidValueProblem } from '../../../shared/sqlite/affinity';
+import { sqliteNumberBindValue, sqliteNumberTextProblem } from '../../../shared/sqlite/filter';
 import type {
+	SqliteAffinity,
 	SqliteCellValue,
 	SqliteEditability,
 	SqliteKeyValue,
@@ -122,22 +124,97 @@ export function sqliteCellEditDraft(value: SqliteCellValue): SqliteCellDraft {
  * (Enter on an untouched cell writes nothing, so a NULL never turns into an
  * empty string by accident). A NULL draft binds NULL. An empty text draft is
  * an empty string, even on a cell that held NULL: getting there took typing
- * or turning NULL off, both deliberate. A number stays a number while the
- * text is still one, so a column with no affinity does not silently start
- * storing TEXT; anything else binds as TEXT, for the column's affinity to
- * convert.
+ * or turning NULL off, both deliberate.
+ *
+ * Otherwise the column's affinity picks the type, so the value is stored the
+ * way it was entered rather than converted by SQLite:
+ *
+ *   - TEXT: always text, so `007` stays `'007'`.
+ *   - INTEGER, REAL, NUMERIC: a number while the text is one (trimmed), else
+ *     text, which `sqliteCellEditValueProblem()` then judges.
+ *   - BLOB (no affinity, which converts nothing): a number stays a number
+ *     while the text is still one, so the column does not silently start
+ *     storing TEXT; anything else is text, verbatim.
  */
 export function sqliteCellEditValue(
 	original: SqliteCellValue,
-	draft: SqliteCellDraft
+	draft: SqliteCellDraft,
+	affinity: SqliteAffinity
 ): SqliteParameterValue | null {
 	if (draft.isNull) return original === null ? null : { type: 'null', text: '' };
 	if (original !== null && draft.text === sqliteCellEditText(original)) return null;
-	const numeric =
-		typeof original === 'number' ||
-		(original !== null && typeof original === 'object' && original.kind === 'integer');
-	if (numeric && sqliteNumberBindValue(draft.text.trim()) !== null) {
-		return { type: 'number', text: draft.text.trim() };
+	const trimmed = draft.text.trim();
+	const isNumber = sqliteNumberBindValue(trimmed) !== null;
+	if (affinity === 'TEXT') return { type: 'text', text: draft.text };
+	if (affinity === 'BLOB') {
+		const numeric =
+			typeof original === 'number' ||
+			(original !== null && typeof original === 'object' && original.kind === 'integer');
+		if (!numeric || !isNumber) return { type: 'text', text: draft.text };
 	}
-	return { type: 'text', text: draft.text };
+	return isNumber ? { type: 'number', text: trimmed } : { type: 'text', text: draft.text };
+}
+
+/** Whether the cell holds TEXT now, so the column demonstrably takes text here. */
+function holdsText(value: SqliteCellValue): boolean {
+	return (
+		typeof value === 'string' ||
+		(value !== null && typeof value === 'object' && value.kind === 'text')
+	);
+}
+
+/** The column an edit writes, as the value checks need it. */
+export interface SqliteCellEditColumn {
+	name: string;
+	affinity: SqliteAffinity;
+	/** The `INTEGER PRIMARY KEY` that is the row's rowid. */
+	isRowid: boolean;
+}
+
+/**
+ * Why the editor will not save this value, or null when it will. Reported
+ * under the grid with the editor left open, so the value can be fixed:
+ *
+ *   - A number SQLite could not hold as typed (past the 64-bit range, too
+ *     large, more digits than a REAL keeps): it would be stored rounded.
+ *   - Anything but a whole number in the rowid column (SQLite would say only
+ *     "datatype mismatch").
+ *   - Text that is not a number, an empty box included, in an INTEGER, REAL,
+ *     or NUMERIC column, unless the cell already holds text: SQLite would keep
+ *     it as TEXT in a numeric column, which is almost always a typo or a
+ *     cleared box meant as NULL.
+ *
+ * Main checks the stored value again (`sqliteStoredValueProblem()`), so a
+ * conversion this misses is still refused there, never written.
+ */
+export function sqliteCellEditValueProblem(
+	column: SqliteCellEditColumn,
+	original: SqliteCellValue,
+	value: SqliteParameterValue
+): string | null {
+	if (value.type === 'number') {
+		const inexact = sqliteNumberTextProblem(value.text);
+		if (inexact) return `${column.name}: ${inexact}`;
+	}
+	if (column.isRowid) return sqliteRowidValueProblem(column.name, value);
+	if (value.type !== 'text' || !isNumericSqliteAffinity(column.affinity)) return null;
+	if (holdsText(original)) return null;
+	const shown =
+		value.text === '' ? 'an empty string' : `'${truncateAtWordBoundary(value.text, 40)}'`;
+	return `${column.name} has ${column.affinity} affinity, and ${shown} is not a number, so SQLite would keep it as TEXT. Enter a number, or set NULL.`;
+}
+
+/** What the editor's box says about the column it writes, as its tooltip. */
+export function sqliteCellEditTypeHint(
+	column: string,
+	declaredType: string | null,
+	affinity: SqliteAffinity
+): string {
+	const declared = declaredType ? `${declaredType}, ` : '';
+	const rule = isNumericSqliteAffinity(affinity)
+		? 'a number is stored as a number; text that is not one is refused'
+		: affinity === 'TEXT'
+			? 'everything is stored as text, numbers included'
+			: 'no conversion, so a value keeps the type it is entered as';
+	return `${column} (${declared}${affinity} affinity): ${rule}.`;
 }

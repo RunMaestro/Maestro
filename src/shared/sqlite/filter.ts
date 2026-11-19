@@ -98,6 +98,52 @@ export function sqliteNumberBindValue(text: string): number | bigint | null {
 	return null;
 }
 
+/** SQLite's INTEGER range: a signed 64-bit integer. */
+const SQLITE_INTEGER_MIN = -(2n ** 63n);
+const SQLITE_INTEGER_MAX = 2n ** 63n - 1n;
+
+/**
+ * Decimal text as `[sign]digits e exponent` with no leading or trailing zeros
+ * in the digits, so `1.50`, `15e-1`, and `0.15e1` all read `15e-1`. Zero is
+ * `0`, whatever its sign.
+ */
+function canonicalDecimal(text: string): string {
+	const match = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text);
+	if (!match) return text;
+	const [, sign, whole, fraction = '', exponent = '0'] = match;
+	let digits = `${whole}${fraction}`.replace(/^0+/, '');
+	let power = Number(exponent) - fraction.length;
+	const trailing = /0+$/.exec(digits)?.[0].length ?? 0;
+	digits = digits.slice(0, digits.length - trailing);
+	power += trailing;
+	if (!digits) return '0';
+	return `${sign === '-' ? '-' : ''}${digits}e${power}`;
+}
+
+/**
+ * Why SQLite would not store the number this decimal text says, or null when
+ * it would store it exactly (or the text is not a number at all, which is the
+ * caller's to judge). The ways a number changes on its way in: an integer
+ * past the signed 64-bit range, a value too large for a REAL (it would become
+ * Inf), or more digits than a REAL's 8 bytes keep (`0.1000000000000000001`
+ * is stored as `0.1`). Read with `sqliteNumberBindValue()`, so an integer is
+ * judged as an integer and anything with a point or exponent as a REAL.
+ */
+export function sqliteNumberTextProblem(text: string): string | null {
+	const value = sqliteNumberBindValue(text);
+	if (value === null || INTEGER_TEXT_RE.test(text)) {
+		if (typeof value === 'bigint' && (value < SQLITE_INTEGER_MIN || value > SQLITE_INTEGER_MAX)) {
+			return `${text} is past the 64-bit integer range SQLite stores exactly.`;
+		}
+		return null;
+	}
+	if (!Number.isFinite(value)) return `${text} is too large for SQLite to store as a number.`;
+	if (canonicalDecimal(text) !== canonicalDecimal(String(value))) {
+		return `${text} has more digits than SQLite's 8-byte REAL keeps, so it would be stored as ${String(value)}.`;
+	}
+	return null;
+}
+
 /** `true` / `false` (any case) as SQLite's 1 / 0, or undefined for anything else. */
 function booleanAsInteger(text: string): number | undefined {
 	const lower = text.toLowerCase();

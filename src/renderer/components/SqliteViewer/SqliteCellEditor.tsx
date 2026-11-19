@@ -13,6 +13,9 @@
  * Alt+Cmd+Backspace, sets it. Typing leaves NULL; clearing the text leaves an
  * empty string, and the box then reads `empty string` so the two never look
  * alike. Turning NULL off brings back what was typed before it was set.
+ *
+ * The box's tooltip names the column's declared type and affinity, and what
+ * that means for the text typed (`sqliteCellEditTypeHint()`).
  */
 
 import { useRef } from 'react';
@@ -30,6 +33,8 @@ import {
 interface SqliteCellEditorProps {
 	/** The column being edited, for the box's accessible name. */
 	column: string;
+	/** The column's type and what its affinity does to a value, as the box's tooltip. */
+	typeHint?: string;
 	draft: SqliteCellDraft;
 	onDraftChange: (draft: SqliteCellDraft) => void;
 	onCommit: () => void;
@@ -41,6 +46,7 @@ interface SqliteCellEditorProps {
 
 export function SqliteCellEditor({
 	column,
+	typeHint,
 	draft,
 	onDraftChange,
 	onCommit,
@@ -85,6 +91,7 @@ export function SqliteCellEditor({
 				readOnly={saving}
 				placeholder={draft.isNull ? 'NULL' : 'empty string'}
 				aria-label={`Edit ${column}${draft.isNull ? ' (NULL)' : ''}`}
+				title={typeHint}
 				spellCheck={false}
 				className={`flex-1 min-w-0 h-full px-2 text-xs outline-none select-text bg-transparent ${
 					draft.isNull ? 'placeholder:italic' : ''

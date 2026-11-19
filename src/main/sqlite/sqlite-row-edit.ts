@@ -22,7 +22,17 @@
  *     again on the writable connection, which is what the write trusts.
  *   - **Values bound, names quoted.** The new value binds as TEXT, a number,
  *     or NULL (`sqliteParameterBindValue()`); the key binds typed and whole
- *     (`sqliteRowKeyCondition()`), never from a cut cell.
+ *     (`sqliteRowKeyCondition()`), never from a cut cell. A whole number binds
+ *     as an INTEGER (better-sqlite3 binds a JS number as a REAL, which a
+ *     column with no affinity would keep as `7.0`).
+ *   - **Stored as given, or not at all.** The column's affinity may convert
+ *     the value on the way in (src/shared/sqlite/affinity.ts): the text
+ *     `'007'` into an INTEGER column becomes 7, a number into a TEXT column
+ *     becomes text. `RETURNING` reports the column as the `UPDATE` stored it,
+ *     and a value that changed rolls back with the reason; so does a number
+ *     SQLite cannot hold as written. A value the rowid column cannot take is
+ *     refused by name before the backup, not with SQLite's bare "datatype
+ *     mismatch".
  *   - **Exactly one row.** The `UPDATE` runs in a transaction, and anything
  *     other than one changed row rolls it back: a row deleted or re-keyed
  *     since it was read changes nothing, and is reported.
@@ -38,12 +48,16 @@
  * the caller with SQLite's message.
  */
 
+import { sqliteRowidValueProblem, sqliteStoredValueProblem } from '../../shared/sqlite/affinity';
 import { sqliteParameterBindValue } from '../../shared/sqlite/query';
+import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
+	SqliteAffinity,
 	SqliteCellUpdateRequest,
 	SqliteCellUpdateResult,
 	SqliteObjectSummary,
+	SqliteParameterValue,
 	SqliteResultColumn,
 	SqliteRowIdentity,
 	SqliteRowKey,
@@ -76,20 +90,24 @@ interface SqliteCellEditPlan {
 	/** `SELECT *`'s columns, as the window reader reads them. */
 	columns: SqliteResultColumn[];
 	identity: SqliteRowIdentity;
+	/** The edited column's affinity, which converts the value on the way in. */
+	affinity: SqliteAffinity;
 	/** The edited row's `WHERE`. */
 	condition: SqliteRowKeyCondition;
 }
 
 /**
  * Check an edit against one connection: the table exists and can be edited,
- * the column exists and is not generated, and the key fits the table's
- * identity. Throws the reason otherwise. Metadata reads only.
+ * the column exists and is not generated, the value fits the rowid column
+ * when that is the one edited, and the key fits the table's identity. Throws
+ * the reason otherwise. Metadata reads only.
  */
 function planCellEdit(
 	db: Database.Database,
 	name: string,
 	column: string,
-	row: SqliteRowKey
+	row: SqliteRowKey,
+	value: SqliteParameterValue
 ): SqliteCellEditPlan {
 	// A view is found too, so it is refused with its reason, not "no table".
 	const objects = readSqliteObjectSummaries(db);
@@ -106,11 +124,16 @@ function planCellEdit(
 		.prepare(`SELECT * FROM ${source}`)
 		.columns()
 		.map((entry) => ({ name: entry.name, declaredType: entry.type }));
-	if (!columns.some((entry) => entry.name === column)) {
-		throw new Error(`${object.name} has no column named ${column}.`);
+	const edited = columns.find((entry) => entry.name === column);
+	if (!edited) throw new Error(`${object.name} has no column named ${column}.`);
+	const { identity } = editability;
+	if (identity.kind === 'rowid' && identity.rowidColumn === column) {
+		const problem = sqliteRowidValueProblem(column, value);
+		if (problem) throw new Error(`${problem} Nothing was changed.`);
 	}
-	const condition = sqliteRowKeyCondition(editability.identity, row, object.name);
-	return { object, source, columns, identity: editability.identity, condition };
+	const affinity = sqliteColumnAffinity(edited.declaredType ?? '', object.strict === true);
+	const condition = sqliteRowKeyCondition(identity, row, object.name);
+	return { object, source, columns, identity, affinity, condition };
 }
 
 /**
@@ -126,37 +149,48 @@ export async function updateSqliteCell(
 	const column = requireText(request?.column, 'column name');
 	const bound = sqliteParameterBindValue(column, request.value);
 	if ('problem' in bound) throw new Error(bound.problem);
+	// better-sqlite3 binds every JS number as a REAL; a whole number typed as
+	// one binds as an INTEGER, so a column with no affinity keeps 7, not 7.0.
+	const given =
+		typeof bound.value === 'number' && /^[+-]?\d+$/.test(request.value.text.trim())
+			? BigInt(bound.value)
+			: bound.value;
 
 	// Refuse what would be refused anyway before the backup is taken.
 	planCellEdit(
 		requireSqliteEditing(request.handle, request.editToken).db,
 		name,
 		column,
-		request.row
+		request.row,
+		request.value
 	);
 
 	const session = await beginSqliteWrite(request.handle, request.editToken);
 	// From here to the return, nothing awaits: the grant is live for all of it.
 	const { db } = session;
-	const { object, source, columns, identity, condition } = planCellEdit(
+	const { object, source, columns, identity, affinity, condition } = planCellEdit(
 		db,
 		name,
 		column,
-		request.row
+		request.row,
+		request.value
 	);
 
 	const keyColumns = sqliteRowKeyColumns(identity);
+	const quotedColumn = quoteSqliteIdentifier(column);
+	// The key, then the edited value as stored, so a converted value is seen.
 	const update = db
 		.prepare(
-			`UPDATE ${source} SET ${quoteSqliteIdentifier(column)} = ? WHERE ${condition.where} ` +
-				`RETURNING ${keyColumns.map(quoteSqliteIdentifier).join(', ')}`
+			`UPDATE ${source} SET ${quotedColumn} = ? WHERE ${condition.where} ` +
+				`RETURNING ${keyColumns.map(quoteSqliteIdentifier).join(', ')}, ` +
+				`typeof(${quotedColumn}), ${quotedColumn}`
 		)
 		.raw(true)
 		.safeIntegers(true);
 
 	const started = performance.now();
 	const row = db.transaction(() => {
-		const changed = update.all(bound.value, ...condition.params) as unknown[][];
+		const changed = update.all(given, ...condition.params) as unknown[][];
 		if (changed.length === 0) {
 			throw new Error(
 				`${object.name} has no row with ${condition.label}: it was deleted or its key changed since it was read. Nothing was changed; reload the table.`
@@ -168,6 +202,14 @@ export async function updateSqliteCell(
 				`${condition.label} matched ${changed.length} rows of ${object.name}, so nothing was changed.`
 			);
 		}
+		const storedProblem = sqliteStoredValueProblem(
+			column,
+			affinity,
+			given,
+			changed[0][keyColumns.length],
+			changed[0][keyColumns.length + 1]
+		);
+		if (storedProblem) throw new Error(storedProblem);
 
 		const key: SqliteRowKey =
 			identity.kind === 'rowid'

@@ -215,6 +215,21 @@ describe('sqliteQueryBinding', () => {
 		).toBe(':n has an unknown type; use text, number, or null.');
 	});
 
+	it('refuses a number SQLite would store rounded, rather than binding it rounded', () => {
+		expect(sqliteQueryBinding('SELECT :n', { ':n': number('1e400') }).problem).toBe(
+			':n is set to Number, but 1e400 is too large for SQLite to store as a number.'
+		);
+		expect(sqliteQueryBinding('SELECT :n', { ':n': number('9223372036854775808') }).problem).toBe(
+			':n is set to Number, but 9223372036854775808 is past the 64-bit integer range SQLite stores exactly.'
+		);
+		expect(
+			sqliteQueryBinding('SELECT :n', { ':n': number('0.10000000000000000001') }).problem
+		).toBe(
+			":n is set to Number, but 0.10000000000000000001 has more digits than SQLite's 8-byte REAL keeps, so it would be stored as 0.1."
+		);
+		expect(sqliteQueryBinding('SELECT :n', { ':n': number('1.50') }).problem).toBeNull();
+	});
+
 	it('refuses a statement that mixes ? with ?NNN before looking at values', () => {
 		expect(sqliteQueryBinding('SELECT ?, ?2', {})).toEqual({
 			args: null,
