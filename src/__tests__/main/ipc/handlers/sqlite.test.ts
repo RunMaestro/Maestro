@@ -55,6 +55,7 @@ vi.mock('../../../../main/sqlite/sqlite-query', () => query);
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => history);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
+import { splitSqliteErrorOffset } from '../../../../shared/sqlite/queryError';
 
 const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args);
 
@@ -195,6 +196,24 @@ describe('SQLite IPC handlers', () => {
 		query.cancelSqliteQuery.mockReturnValue(true);
 		await expect(invoke('sqlite:cancelQuery', 'q1')).resolves.toBe(true);
 		expect(query.cancelSqliteQuery).toHaveBeenCalledWith('q1');
+	});
+
+	it("carries a syntax error's offset on its message, since IPC keeps only the message", async () => {
+		query.runSqliteQuery.mockRejectedValueOnce(
+			Object.assign(new Error('near "=": syntax error'), { offset: 12 })
+		);
+		const failure = await Promise.resolve(
+			invoke('sqlite:runQuery', { handle: 'h1', sql: 'x' })
+		).catch((error: unknown) => error as Error);
+		expect(splitSqliteErrorOffset((failure as Error).message)).toEqual({
+			message: 'near "=": syntax error',
+			offset: 12,
+		});
+
+		// Any other error passes through as it is.
+		const plain = Object.assign(new Error('no such table: t'), { code: 'SQLITE_ERROR' });
+		query.runSqliteQuery.mockRejectedValueOnce(plain);
+		await expect(invoke('sqlite:runQuery', { handle: 'h1', sql: 'x' })).rejects.toBe(plain);
 	});
 
 	it('exports a query with the request passed through whole', async () => {

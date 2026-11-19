@@ -334,7 +334,13 @@ export async function handleSqliteRunQuery(
 		});
 		reply({ success: true, database, result });
 	} catch (error) {
-		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+		// A syntax error's offset in `sql`, so the CLI can point at the token.
+		const offset = (error as { offset?: unknown } | null)?.offset;
+		reply({
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+			...(typeof offset === 'number' ? { errorOffset: offset } : {}),
+		});
 	}
 }
 

@@ -20,7 +20,11 @@
  * stopped at a timeout or by Stop. The result fills the shared `<DataGrid>`
  * with the same cells the table view draws (sqliteGrid.ts), a window at a
  * time: scrolling near the end re-runs the statement for the next window.
- * A failure or refusal is shown under the grid, never as a toast.
+ * A failure or refusal is shown under the grid, never as a toast, against
+ * the statement: the token it points at is underlined in the editor (the one
+ * SQLite stopped at for a syntax error, found in the child process; a missing
+ * table, column, or function by its name; the keyword a refusal names), and
+ * its line and column, shown before the message, put the cursor there.
  *
  * A statement with parameters (`?`, `:id`) gets one value box per parameter
  * between the toolbar and the grid (SqliteQueryParameters), read from the
@@ -54,7 +58,7 @@
  * which holds across a remount too.
  */
 
-import { useCallback, useEffect, useMemo, useState, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { Download, History, Play, Square } from 'lucide-react';
 import type { Extension } from '@codemirror/state';
 
@@ -68,6 +72,12 @@ import {
 	sqliteReadOnlyRefusal,
 } from '../../../shared/sqlite/query';
 import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
+import {
+	formatSqliteQueryErrorPlace,
+	splitSqliteErrorOffset,
+	sqliteQueryErrorLocation,
+	type SqliteQueryErrorLocation,
+} from '../../../shared/sqlite/queryError';
 import type {
 	SqliteParameterValue,
 	SqliteParameterValues,
@@ -86,7 +96,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import { MarkdownEditor } from '../FilePreview/markdownEditor';
+import { MarkdownEditor, type MarkdownEditorHandle } from '../FilePreview/markdownEditor';
 import { DataGrid } from '../ui/DataGrid';
 import { Spinner } from '../ui/Spinner';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
@@ -111,6 +121,8 @@ export interface SqliteQueryRunState {
 	running: boolean;
 	/** Why the last call failed or was refused, verbatim. */
 	error: string | null;
+	/** The span of `sql` the error points at, when it names one. */
+	errorLocation: SqliteQueryErrorLocation | null;
 }
 
 /** An export of the shown result: in flight, written, or failed. */
@@ -173,6 +185,7 @@ export function SqliteQueryPanel({
 	/** Bumped when a run settles, so the History rail reads the history again. */
 	const [historyStamp, setHistoryStamp] = useState(0);
 	const [exportState, setExportState] = useState<SqliteQueryExportState | null>(null);
+	const editorRef = useRef<MarkdownEditorHandle | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -213,13 +226,18 @@ export function SqliteQueryPanel({
 		const fresh = { runId, sql, params: values, plan: runPlan, result: null };
 		if (refusal) {
 			// The text and the values alone settle it: no process is started.
-			onRunChange({ ...fresh, running: false, error: refusal });
+			onRunChange({
+				...fresh,
+				running: false,
+				error: refusal,
+				errorLocation: sqliteQueryErrorLocation(sql, refusal),
+			});
 			return;
 		}
 		onRunChange((previous) =>
 			offset === 0 || !previous
-				? { ...fresh, running: true, error: null }
-				: { ...previous, runId, running: true, error: null }
+				? { ...fresh, running: true, error: null, errorLocation: null }
+				: { ...previous, runId, running: true, error: null, errorLocation: null }
 		);
 		try {
 			const page = await window.maestro.sqlite.runQuery({
@@ -240,9 +258,16 @@ export function SqliteQueryPanel({
 				return { ...previous, result, running: false };
 			});
 		} catch (failure) {
+			// A syntax error carries where SQLite stopped; see `withSqliteErrorOffset()`.
+			const { message, offset: errorOffset } = splitSqliteErrorOffset(ipcErrorMessage(failure));
 			onRunChange((previous) =>
 				previous?.runId === runId
-					? { ...previous, running: false, error: ipcErrorMessage(failure) }
+					? {
+							...previous,
+							running: false,
+							error: message,
+							errorLocation: sqliteQueryErrorLocation(sql, message, errorOffset),
+						}
 					: previous
 			);
 		} finally {
@@ -322,6 +347,23 @@ export function SqliteQueryPanel({
 		if (run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
 	}, [run]);
 
+	// The error's span is drawn only over the text that ran; an edit since may
+	// have moved or fixed it, and the next run says which.
+	const errorLocation = run?.error && run.sql === value ? run.errorLocation : null;
+	const problemRange = useMemo(
+		() =>
+			errorLocation && run?.error
+				? { from: errorLocation.from, to: errorLocation.to, message: run.error }
+				: null,
+		[errorLocation, run?.error]
+	);
+	/** Put the cursor on the span the error points at. */
+	const handleJumpToError = useCallback(() => {
+		if (!errorLocation) return;
+		editorRef.current?.setSelection(errorLocation.from, errorLocation.to, true);
+		editorRef.current?.focus();
+	}, [errorLocation]);
+
 	/**
 	 * The editor's host keydown hook. Cmd+Enter runs; every other key stays
 	 * the editor's. Passing a hook at all is what lets an open completion
@@ -378,6 +420,7 @@ export function SqliteQueryPanel({
 			<div className="flex flex-col flex-1 min-w-0 min-h-0">
 				<div className="shrink-0 h-[38%] min-h-[120px]">
 					<MarkdownEditor
+						ref={editorRef}
 						value={value}
 						onChange={onChange}
 						language="sql"
@@ -389,6 +432,7 @@ export function SqliteQueryPanel({
 						wrap
 						placeholder="SELECT * FROM ... WHERE id = :id"
 						onKeyDown={handleEditorKey}
+						problemRange={problemRange}
 					/>
 				</div>
 				<div
@@ -535,6 +579,19 @@ export function SqliteQueryPanel({
 							style={{ color: theme.colors.error }}
 							data-testid="sqlite-query-error"
 						>
+							{errorLocation && (
+								<button
+									type="button"
+									onClick={handleJumpToError}
+									className="underline underline-offset-2 select-none"
+									style={{ color: theme.colors.error }}
+									title="Put the cursor on the part of the statement this error points at"
+									data-testid="sqlite-query-error-place"
+								>
+									{formatSqliteQueryErrorPlace(errorLocation)}:
+								</button>
+							)}
+							{errorLocation && ' '}
 							{run.error}
 						</span>
 					) : showsPlan && result ? (

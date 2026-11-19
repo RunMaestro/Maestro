@@ -772,6 +772,26 @@ describe('sqlite_run_query handler', () => {
 			success: false,
 			error: 'DELETE is not a read-only statement.',
 		});
+		expect(lastResponse(client)).not.toHaveProperty('errorOffset');
+	});
+
+	it("sends a syntax error's offset beside its message, for the CLI's caret", async () => {
+		queries.runSqliteQuery.mockRejectedValue(
+			Object.assign(new Error('near "FORM": syntax error'), { offset: 9 })
+		);
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q6',
+			path: '/data/app.db',
+			sql: 'SELECT * FORM users',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'q6',
+			success: false,
+			error: 'near "FORM": syntax error',
+			errorOffset: 9,
+		});
 	});
 
 	it('refuses a missing path or a blank statement before opening anything', async () => {

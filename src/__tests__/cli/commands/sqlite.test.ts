@@ -924,6 +924,52 @@ describe('sqlite query', () => {
 		expect(process.exit).toHaveBeenCalledWith(1);
 	});
 
+	it('points a syntax error at the token SQLite stopped at, with a caret under it', async () => {
+		const sql = 'SELECT id\n  FROM users\n WHERE id IN (1, 2,)';
+		mockReply({
+			type: 'sqlite_query_result',
+			success: false,
+			error: 'near ")": syntax error',
+			errorOffset: sql.lastIndexOf(')'),
+		});
+		await expect(sqliteQuery(DB, sql, {})).rejects.toThrow('__exit__');
+		expect(String(errorSpy.mock.calls[0][0]).split('\n')).toEqual([
+			'Error: near ")": syntax error',
+			'Line 3, column 20:',
+			'   WHERE id IN (1, 2,)',
+			'                     ^',
+		]);
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it('names the place in JSON, and finds a missing column by its name', async () => {
+		mockReply({
+			type: 'sqlite_query_result',
+			success: false,
+			error: 'no such column: u.emial',
+		});
+		await expect(sqliteQuery(DB, 'SELECT u.emial FROM users u', { json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: false,
+			error: 'no such column: u.emial',
+			location: { from: 7, to: 14, line: 1, column: 8 },
+		});
+	});
+
+	it('prints an error that names no place as it is', async () => {
+		mockReply({
+			type: 'sqlite_query_result',
+			success: false,
+			error: 'integer overflow',
+		});
+		await expect(sqliteQuery(DB, 'SELECT abs(-9223372036854775808)', {})).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.map((call) => call.join(' '))).toEqual(['Error: integer overflow']);
+	});
+
 	const PLAN_RESULT = {
 		statement: 'SELECT',
 		plan: true,

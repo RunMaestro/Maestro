@@ -1,6 +1,7 @@
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../../constants/themes';
 import type { CompletionActivation, CodeEditorShortcutId } from './codeEditing';
+import type { ProblemRange } from './problemMark';
 
 /** The main selection, with its 1-based line span. */
 export interface EditorSelectionDetails {
@@ -143,5 +144,11 @@ export interface MarkdownEditorProps {
 	onShortcutUsed?: (id: CodeEditorShortcutId) => void;
 	/** Right-click on selected text (see `BuildEditorExtensionsOptions`). */
 	onSelectionContextMenu?: (selection: EditorSelectionDetails, event: MouseEvent) => void;
+	/**
+	 * One span the host flags as wrong (the token a SQL error points at),
+	 * painted with a wavy underline in the error color, `message` as its
+	 * tooltip. Offsets are into `value`; null or omitted clears it.
+	 */
+	problemRange?: ProblemRange | null;
 	className?: string;
 }

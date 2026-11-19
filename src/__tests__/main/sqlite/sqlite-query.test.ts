@@ -28,6 +28,8 @@ const driver = vi.hoisted(() => ({
 	ran: 0,
 	/** Arguments the statement was last bound with (iterate or run). */
 	boundArgs: null as unknown[] | null,
+	/** A per-text prepare failure, to play SQLite's parser for a syntax error. */
+	prepareFails: null as ((sql: string) => Error | null) | null,
 }));
 
 vi.mock('better-sqlite3', () => {
@@ -54,6 +56,8 @@ vi.mock('better-sqlite3', () => {
 		prepare(sql: string) {
 			this.record.prepared.push(sql);
 			if (driver.statement.prepareError) throw driver.statement.prepareError;
+			const failure = driver.prepareFails?.(sql);
+			if (failure) throw failure;
 			const statement = {
 				readonly: driver.statement.readonly,
 				reader: driver.statement.reader,
@@ -158,6 +162,7 @@ describe('runSqliteQuery', () => {
 		driver.iteratorClosed = false;
 		driver.ran = 0;
 		driver.boundArgs = null;
+		driver.prepareFails = null;
 		releaseHooks.clear();
 		history.record.mockClear();
 		history.record.mockImplementation(async () => undefined);
@@ -267,9 +272,46 @@ describe('runSqliteQuery', () => {
 		driver.statement.prepareError = Object.assign(new Error('no such table: userz'), {
 			code: 'SQLITE_ERROR',
 		});
-		await expect(
-			runSqliteQuery({ handle: 'h1', sql: 'SELECT * FROM userz' })
-		).rejects.toMatchObject({ message: 'no such table: userz', code: 'SQLITE_ERROR' });
+		const failure = await runSqliteQuery({ handle: 'h1', sql: 'SELECT * FROM userz' }).catch(
+			(error: unknown) => error
+		);
+		expect(failure).toMatchObject({ message: 'no such table: userz', code: 'SQLITE_ERROR' });
+		// Not a syntax error, so SQLite is not asked where it stopped.
+		expect(failure).not.toHaveProperty('offset');
+		expect(driver.instances[0].prepared).toEqual(['SELECT * FROM userz']);
+	});
+
+	it('finds where a syntax error stopped by asking SQLite about the text before each candidate', async () => {
+		// Three `=`; SQLite stops at the third. Text before it parses so far
+		// (it only ends too soon); text running past it holds the error.
+		const sql = 'SELECT * FROM t WHERE a = 1 AND b = = 2';
+		const errorAt = sql.lastIndexOf('=');
+		driver.prepareFails = (text) =>
+			text.length > errorAt
+				? Object.assign(new Error('near "=": syntax error'), { code: 'SQLITE_ERROR' })
+				: new Error('incomplete input');
+		const failure = await runSqliteQuery({ handle: 'h1', sql }).catch((error: unknown) => error);
+		expect(failure).toMatchObject({
+			message: 'near "=": syntax error',
+			code: 'SQLITE_ERROR',
+			offset: errorAt,
+		});
+		const [connection] = driver.instances;
+		// The statement, then a bisection over the candidates: never one prepare each.
+		expect(connection.prepared[0]).toBe(sql);
+		expect(connection.prepared.length).toBeLessThanOrEqual(3);
+		expect(connection.closed).toBe(true);
+	});
+
+	it('places a plan run syntax error in the statement as written, not in the EXPLAIN', async () => {
+		const sql = '  SELECT a, FROM t';
+		driver.prepareFails = (text) =>
+			text.includes('FROM') ? new Error('near "FROM": syntax error') : null;
+		await expect(runSqliteQuery({ handle: 'h1', sql, plan: true })).rejects.toMatchObject({
+			message: 'near "FROM": syntax error',
+			offset: sql.indexOf('FROM'),
+		});
+		expect(driver.instances[0].prepared[0]).toBe('EXPLAIN QUERY PLAN SELECT a, FROM t');
 	});
 
 	it('runs a statement that returns no rows on its own connection, and says so', async () => {
@@ -544,6 +586,7 @@ describe('exportSqliteQuery', () => {
 		};
 		driver.flags = [];
 		driver.boundArgs = null;
+		driver.prepareFails = null;
 		releaseHooks.clear();
 		history.record.mockClear();
 	});

@@ -46,7 +46,18 @@ export interface SqliteWorkerData<K extends SqliteWorkerKind = SqliteWorkerKind>
 /** The thread's one reply: the result, or the error that kept it from one. */
 export type SqliteWorkerReply<R = unknown> =
 	| { ok: true; result: R }
-	| { ok: false; error: { message: string; code?: string } };
+	| { ok: false; error: SqliteWorkerErrorData };
+
+/**
+ * A failure as the reply carries it: its message, SQLite's code when it has
+ * one, and, for a Query-mode syntax error, where in the statement SQLite
+ * stopped (see `prepareOne()` in sqlite-query-task.ts).
+ */
+export interface SqliteWorkerErrorData {
+	message: string;
+	code?: string;
+	offset?: number;
+}
 
 const RUNNERS: {
 	[K in SqliteWorkerKind]: (task: SqliteWorkerTasks[K]['task']) => SqliteWorkerTasks[K]['result'];
@@ -66,19 +77,24 @@ export function runSqliteWorkerTask<K extends SqliteWorkerKind>(
 	return run(data.task);
 }
 
-/** An error as the reply carries it: its message, and SQLite's code when it has one. */
+/** An error as the reply carries it: its message, SQLite's code, and a syntax error's offset. */
 export function sqliteWorkerFailure(error: unknown): SqliteWorkerReply<never> {
-	const code = (error as { code?: unknown } | null)?.code;
+	const { code, offset } = (error ?? {}) as { code?: unknown; offset?: unknown };
 	return {
 		ok: false,
 		error: {
 			message: error instanceof Error ? error.message : String(error),
 			...(typeof code === 'string' ? { code } : {}),
+			...(typeof offset === 'number' ? { offset } : {}),
 		},
 	};
 }
 
-/** The reply's error as a thrown one again, code kept, on the main side. */
-export function sqliteWorkerError(error: { message: string; code?: string }): Error {
-	return Object.assign(new Error(error.message), error.code ? { code: error.code } : {});
+/** The reply's error as a thrown one again, code and offset kept, on the main side. */
+export function sqliteWorkerError(error: SqliteWorkerErrorData): Error {
+	return Object.assign(
+		new Error(error.message),
+		error.code ? { code: error.code } : {},
+		typeof error.offset === 'number' ? { offset: error.offset } : {}
+	);
 }

@@ -38,6 +38,7 @@ import type {
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../../shared/sqlite/types';
+import { withSqliteErrorOffset } from '../../../shared/sqlite/queryError';
 import { saveSqliteBlob } from '../../sqlite/sqlite-blob';
 import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
@@ -131,10 +132,19 @@ export function registerSqliteHandlers(): void {
 	// Query mode's Run: one read-only statement, in a child process with its
 	// own connection, so a runaway query can time out or be killed. One
 	// window of the result comes back; the next re-runs it at an offset.
+	// IPC keeps only an error's message, so a syntax error's offset rides on
+	// it (`withSqliteErrorOffset()`), for the panel to underline the token.
 	ipcMain.handle(
 		'sqlite:runQuery',
-		async (_event, request: SqliteQueryRequest): Promise<SqliteQueryResult> =>
-			runSqliteQuery(request)
+		async (_event, request: SqliteQueryRequest): Promise<SqliteQueryResult> => {
+			try {
+				return await runSqliteQuery(request);
+			} catch (error) {
+				const offset = (error as { offset?: unknown } | null)?.offset;
+				if (!(error instanceof Error) || typeof offset !== 'number') throw error;
+				throw new Error(withSqliteErrorOffset(error.message, offset));
+			}
+		}
 	);
 
 	// Query mode's Stop: terminate the run (or export) going under this id.

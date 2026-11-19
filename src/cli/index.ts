@@ -3941,7 +3941,7 @@ sqliteCmd
 sqliteCmd
 	.command('query <path> <sql>')
 	.description(
-		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused"
+		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused, and an error points at the line and token it is about"
 	)
 	.option(
 		'--param <name=value>',

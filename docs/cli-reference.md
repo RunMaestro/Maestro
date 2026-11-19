@@ -3431,7 +3431,7 @@ Save one BLOB cell to a file, whole, the way the viewer's record view saves it (
 
 ## `maestro-cli sqlite query <path> <sql>`
 
-Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused
+Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused, and an error points at the line and token it is about
 
 | Option                        | Description                                                                                                                                          | Default |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |

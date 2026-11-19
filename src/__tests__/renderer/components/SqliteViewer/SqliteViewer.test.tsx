@@ -1425,6 +1425,77 @@ describe('SqliteViewer query runs', () => {
 	});
 });
 
+describe('SqliteViewer query errors against the statement', () => {
+	async function failQuery(sql: string, error: Error) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		runQuery.mockRejectedValue(error);
+		renderViewer();
+		const editor = (await screen.findByRole('textbox')) as HTMLTextAreaElement;
+		fireEvent.change(editor, { target: { value: sql } });
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await screen.findByTestId('sqlite-query-error');
+		return editor;
+	}
+
+	it('underlines the token SQLite stopped at and names its line and column', async () => {
+		const sql = 'SELECT * FROM users\nWHERE id = = 1';
+		const at = sql.lastIndexOf('=');
+		// What Electron hands the renderer: its wrapper, the message, and the offset on it.
+		const editor = await failQuery(
+			sql,
+			new Error(
+				`Error invoking remote method 'sqlite:runQuery': Error: near "=": syntax error\n[at character ${at}]`
+			)
+		);
+		const error = screen.getByTestId('sqlite-query-error');
+		expect(error).toHaveTextContent('Line 2, column 12: near "=": syntax error');
+		expect(error).not.toHaveTextContent('at character');
+		expect(editor).toHaveAttribute('data-problem-from', String(at));
+		expect(editor).toHaveAttribute('data-problem-to', String(at + 1));
+		expect(editor).toHaveAttribute('data-problem-message', 'near "=": syntax error');
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('puts the cursor on the span when its place is clicked', async () => {
+		const sql = 'SELECT emial FROM users';
+		const editor = await failQuery(sql, new Error('no such column: emial'));
+		fireEvent.click(screen.getByTestId('sqlite-query-error-place'));
+		expect(editor.selectionStart).toBe(7);
+		expect(editor.selectionEnd).toBe(12);
+		expect(document.activeElement).toBe(editor);
+	});
+
+	it('places a refusal at its keyword without asking main', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByRole('textbox');
+		fireEvent.change(editor, { target: { value: '  DELETE FROM users' } });
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error-place')).toHaveTextContent(
+			'Line 1, column 3'
+		);
+		expect(editor).toHaveAttribute('data-problem-from', '2');
+		expect(runQuery).not.toHaveBeenCalled();
+	});
+
+	it('clears the underline once the text that ran is edited, and shows no place for an error without one', async () => {
+		const editor = await failQuery('SELECT * FORM users', new Error('near "FORM": syntax error'));
+		expect(editor).toHaveAttribute('data-problem-from', '9');
+		fireEvent.change(editor, { target: { value: 'SELECT * FROM users' } });
+		expect(editor).not.toHaveAttribute('data-problem-from');
+		// The error itself stays until the next run says otherwise.
+		expect(screen.getByTestId('sqlite-query-error')).toHaveTextContent('near "FORM": syntax error');
+		expect(screen.queryByTestId('sqlite-query-error-place')).not.toBeInTheDocument();
+	});
+
+	it('shows an error that names no place as it is', async () => {
+		const editor = await failQuery('SELECT 1', new Error('The query was stopped.'));
+		expect(screen.getByTestId('sqlite-query-error')).toHaveTextContent('The query was stopped.');
+		expect(screen.queryByTestId('sqlite-query-error-place')).not.toBeInTheDocument();
+		expect(editor).not.toHaveAttribute('data-problem-from');
+	});
+});
+
 describe('SqliteViewer query parameters', () => {
 	async function openQuery(sql: string) {
 		localStorage.setItem('sqlite-viewer-mode', 'query');

@@ -67,6 +67,7 @@ import type {
 	SqliteQueryResult,
 	SqliteResultColumn,
 } from '../../shared/sqlite/types';
+import { sqliteSyntaxErrorOffset } from '../../shared/sqlite/queryError';
 import { createTabularRowEncoder, type TabularExportFormat } from '../../shared/tabularExport';
 import { sqliteCellFromValue, sqliteExportValue } from './sqlite-cell';
 import { openReadOnlySqliteConnection } from './sqlite-connection';
@@ -109,22 +110,46 @@ function refuse(message: string): Error {
 	return Object.assign(new Error(message), { code: SQLITE_QUERY_REFUSED });
 }
 
-function prepareOne(db: Database.Database, sql: string): Database.Statement {
+/** SQLite's words when a text has a syntax error in it so far, rather than ending early. */
+const SYNTAX_FAILURE = /syntax error|unrecognized token/;
+
+/**
+ * Whether the text before some point holds no syntax error yet: it prepares,
+ * ends too soon (`incomplete input`), holds nothing, or fails for a reason
+ * other than syntax (a missing table). A prepare runs nothing, and this
+ * connection is the run's alone.
+ */
+function parsesSoFar(db: Database.Database, prefix: string): boolean {
 	try {
-		return db.prepare(sql);
+		db.prepare(prefix);
+		return true;
 	} catch (error) {
-		if (error instanceof Error && MULTIPLE_STATEMENTS.test(error.message)) {
-			throw refuse(SQLITE_ONE_STATEMENT_MESSAGE);
-		}
-		throw error;
+		return !(error instanceof Error && SYNTAX_FAILURE.test(error.message));
 	}
 }
 
 /**
- * Run one read-only statement and return the window of its result at
- * `offset`. Throws a refusal (`code: SQLITE_QUERY_REFUSED`) for a statement
- * that is not read-only, and SQLite's own error, verbatim, for one that fails.
+ * Prepare the statement a run runs (`sqliteStatementToRun()`). A second
+ * statement in the text is refused; a syntax error is rethrown with
+ * `offset`, where in `sql` (the text as written) SQLite stopped, found by
+ * asking SQLite itself (`sqliteSyntaxErrorOffset()`), since the driver does
+ * not report it and the token it names may appear more than once.
  */
+function prepareOne(
+	db: Database.Database,
+	sql: string,
+	options: { plan: boolean }
+): Database.Statement {
+	try {
+		return db.prepare(sqliteStatementToRun(sql, options));
+	} catch (error) {
+		if (!(error instanceof Error)) throw error;
+		if (MULTIPLE_STATEMENTS.test(error.message)) throw refuse(SQLITE_ONE_STATEMENT_MESSAGE);
+		const offset = sqliteSyntaxErrorOffset(sql, error.message, (prefix) => parsesSoFar(db, prefix));
+		throw offset === null ? error : Object.assign(error, { offset });
+	}
+}
+
 /**
  * Every read-only layer, then the statement prepared on a connection of its
  * own: refuse a statement that is not read-only or a parameter with no
@@ -145,7 +170,7 @@ function prepareReadOnlyRun(
 	try {
 		// The table view's filter speaks REGEXP through this; a query may too.
 		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
-		const statement = prepareOne(db, sqliteStatementToRun(task.sql, options));
+		const statement = prepareOne(db, task.sql, options);
 		if (!statement.readonly) throw refuse(SQLITE_NOT_READ_ONLY_MESSAGE);
 		return { db, statement, args: binding.args };
 	} catch (error) {
@@ -154,6 +179,12 @@ function prepareReadOnlyRun(
 	}
 }
 
+/**
+ * Run one read-only statement and return the window of its result at
+ * `offset`. Throws a refusal (`code: SQLITE_QUERY_REFUSED`) for a statement
+ * that is not read-only, and SQLite's own error, verbatim, for one that fails
+ * (a syntax error with the `offset` it points at; see `prepareOne()`).
+ */
 export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 	const options = { plan: task.plan === true };
 	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);

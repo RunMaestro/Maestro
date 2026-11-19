@@ -18,6 +18,7 @@
  */
 
 import { sqliteNumberBindValue, type SqliteBindValue } from './filter';
+import { sqliteTokens } from './tokens';
 import type { SqliteParameterValue, SqliteParameterValues, SqliteQueryParameter } from './types';
 
 /**
@@ -153,40 +154,6 @@ export function sqliteExportTimeoutMessage(timeoutMs = SQLITE_EXPORT_TIMEOUT_MS)
 /** An export was stopped by the user or by closing the database. */
 export const SQLITE_EXPORT_STOPPED_MESSAGE = 'The export was stopped.';
 
-/** Whether a character may sit inside a SQLite identifier or parameter name. */
-function isSqliteIdChar(char: string): boolean {
-	return /[A-Za-z0-9_$]/.test(char) || char.charCodeAt(0) >= 0x80;
-}
-
-/** Where the quoted run starting at `start` ends (past its closing quote). */
-function skipQuoted(sql: string, start: number, close: string): number {
-	let index = start + 1;
-	while (index < sql.length) {
-		if (sql[index] === close) {
-			// A doubled quote escapes itself; `[...]` has no escape.
-			if (close !== ']' && sql[index + 1] === close) {
-				index += 2;
-				continue;
-			}
-			return index + 1;
-		}
-		index++;
-	}
-	return sql.length;
-}
-
-/**
- * Where a named parameter starting at `start` (its sigil) ends: a run of
- * identifier characters, as SQLite's tokenizer reads it. Returns `start` when
- * no name follows the sigil. The bundled SQLite omits Tcl variables, so
- * `$a::b` is `$a` followed by a syntax error, not one name.
- */
-function namedParameterEnd(sql: string, start: number): number {
-	let index = start + 1;
-	while (index < sql.length && isSqliteIdChar(sql[index])) index++;
-	return index;
-}
-
 /** A statement mixed `?` with `?NNN`; see `sqliteQueryParameters()`. */
 export const SQLITE_MIXED_PARAMETERS_MESSAGE =
 	'This statement mixes ? with numbered parameters (?1, ?2), which cannot be bound reliably. Number every parameter or none.';
@@ -201,7 +168,8 @@ export interface SqliteQueryParameterScan {
 
 /**
  * The parameters a statement holds, read from its text the way SQLite's
- * tokenizer reads them: `?`, `?NNN`, and `:name`, `@name`, `$name`, `#name`,
+ * tokenizer reads them (`sqliteTokens()`, shared with the error locator):
+ * `?`, `?NNN`, and `:name`, `@name`, `$name`, `#name`,
  * skipping string literals, quoted names (`"..."`, `` `...` ``, `[...]`), and
  * comments. Shared by the Query panel (one value box per parameter, live as
  * the text changes), `maestro-cli sqlite query --param`, and the run itself,
@@ -221,59 +189,29 @@ export function sqliteQueryParameters(sql: string): SqliteQueryParameterScan {
 	const numbered = new Set<number>();
 	let anonymous = 0;
 	let hasNumbered = false;
-	let index = 0;
-	while (index < sql.length) {
-		const char = sql[index];
-		if (char === "'" || char === '"' || char === '`') {
-			index = skipQuoted(sql, index, char);
-		} else if (char === '[') {
-			index = skipQuoted(sql, index, ']');
-		} else if (char === '-' && sql[index + 1] === '-') {
-			const newline = sql.indexOf('\n', index);
-			index = newline === -1 ? sql.length : newline + 1;
-		} else if (char === '/' && sql[index + 1] === '*') {
-			const end = sql.indexOf('*/', index + 2);
-			index = end === -1 ? sql.length : end + 2;
-		} else if (char === '?') {
-			let end = index + 1;
-			while (end < sql.length && /\d/.test(sql[end])) end++;
-			if (end === index + 1) {
-				anonymous++;
-				const label = `?${anonymous}`;
-				// Taken only by a `?NNN` in a statement that is refused anyway.
-				if (!labels.has(label)) {
-					labels.add(label);
-					parameters.push({ label, anonymous: true });
-				}
-			} else {
-				const label = sql.slice(index, end);
-				const position = Number(label.slice(1));
-				hasNumbered = true;
-				if (!numbered.has(position) && !bindKeys.has(label.slice(1)) && !labels.has(label)) {
-					numbered.add(position);
-					bindKeys.add(label.slice(1));
-					labels.add(label);
-					parameters.push({ label, anonymous: false });
-				}
+	for (const token of sqliteTokens(sql)) {
+		if (token.kind !== 'parameter') continue;
+		const label = token.text;
+		if (label === '?') {
+			anonymous++;
+			const anonymousLabel = `?${anonymous}`;
+			// Taken only by a `?NNN` in a statement that is refused anyway.
+			if (!labels.has(anonymousLabel)) {
+				labels.add(anonymousLabel);
+				parameters.push({ label: anonymousLabel, anonymous: true });
 			}
-			index = end;
-		} else if (char === ':' || char === '@' || char === '$' || char === '#') {
-			const end = namedParameterEnd(sql, index);
-			if (end === index + 1) {
-				index++;
-				continue;
-			}
-			const label = sql.slice(index, end);
-			if (!bindKeys.has(label.slice(1))) {
+		} else if (label.startsWith('?')) {
+			const position = Number(label.slice(1));
+			hasNumbered = true;
+			if (!numbered.has(position) && !bindKeys.has(label.slice(1)) && !labels.has(label)) {
+				numbered.add(position);
 				bindKeys.add(label.slice(1));
+				labels.add(label);
 				parameters.push({ label, anonymous: false });
 			}
-			index = end;
-		} else if (isSqliteIdChar(char)) {
-			// A whole word, so the `$` in `price$usd` is not read as a parameter.
-			while (index < sql.length && isSqliteIdChar(sql[index])) index++;
-		} else {
-			index++;
+		} else if (!bindKeys.has(label.slice(1))) {
+			bindKeys.add(label.slice(1));
+			parameters.push({ label, anonymous: false });
 		}
 	}
 	const problem = anonymous > 0 && hasNumbered ? SQLITE_MIXED_PARAMETERS_MESSAGE : null;

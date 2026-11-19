@@ -72,6 +72,11 @@ import {
 } from '../../shared/sqlite/query';
 import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
 import {
+	formatSqliteQueryErrorExcerpt,
+	formatSqliteQueryErrorPlace,
+	sqliteQueryErrorLocation,
+} from '../../shared/sqlite/queryError';
+import {
 	isTabularExportFormat,
 	tabularExportFormatForPath,
 	type TabularExportFormat,
@@ -767,8 +772,38 @@ interface SqliteQueryReply {
 	type: string;
 	success: boolean;
 	error?: string;
+	/** Where in the statement SQLite stopped, for a syntax error. */
+	errorOffset?: number;
 	database?: SqliteDatabaseInfo;
 	result?: SqliteQueryResult;
+}
+
+/**
+ * Fail a query run with its error, pointed at the statement the way the
+ * Query panel underlines it: the line holding the error with carets under
+ * the span (text), or `location` beside `error` (JSON). An error that names
+ * no place is printed as it is.
+ */
+function failQuery(
+	message: string,
+	sql: string,
+	offset: number | undefined,
+	json: boolean | undefined
+): never {
+	const location = sqliteQueryErrorLocation(sql, message, offset);
+	if (!location) return fail(message, json);
+	if (json) {
+		console.log(JSON.stringify({ success: false, error: message, location }));
+	} else {
+		console.error(
+			[
+				`Error: ${message}`,
+				`${formatSqliteQueryErrorPlace(location)}:`,
+				...formatSqliteQueryErrorExcerpt(sql, location),
+			].join('\n')
+		);
+	}
+	return exitWith(ExitCode.GeneralError);
 }
 
 /**
@@ -819,7 +854,7 @@ export async function sqliteQuery(
 	if (problem) fail(problem, options.json);
 	if (options.output !== undefined) {
 		const refusal = sqliteReadOnlyRefusal(sql);
-		if (refusal) fail(refusal, options.json);
+		if (refusal) failQuery(refusal, sql, undefined, options.json);
 		await exportSqliteQueryResult(filePath, sql, params, options);
 		return;
 	}
@@ -838,7 +873,8 @@ export async function sqliteQuery(
 		failFromError(error, options.json);
 	}
 	if (!reply.success || !reply.database || !reply.result) {
-		fail(reply.error || `Could not run the query on ${filePath}`, options.json);
+		if (reply.error) failQuery(reply.error, sql, reply.errorOffset, options.json);
+		fail(`Could not run the query on ${filePath}`, options.json);
 	}
 
 	const { database, result } = reply;

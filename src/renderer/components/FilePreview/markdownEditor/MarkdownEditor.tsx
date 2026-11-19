@@ -4,6 +4,7 @@ import { EditorView } from '@codemirror/view';
 import { buildEditorTheme } from '../giantPreview/themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions, mainSelectionDetails } from './extensions';
+import { problemMarkExtension, setProblemRangeEffect } from './problemMark';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
 import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
 
@@ -85,6 +86,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			vimMode = false,
 			onShortcutUsed,
 			onSelectionContextMenu,
+			problemRange = null,
 			className,
 		},
 		ref
@@ -181,6 +183,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
+					problemMarkExtension(),
 					updateListener,
 				],
 			});
@@ -264,6 +267,23 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				cancelled = true;
 			};
 		}, [language, languageExtension, compartments.language]);
+
+		// Host-flagged problem span → repaint it. Keyed on the span's numbers so
+		// a host that rebuilds an equal object every render dispatches nothing.
+		const problemFrom = problemRange?.from ?? null;
+		const problemTo = problemRange?.to ?? null;
+		const problemMessage = problemRange?.message;
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			view.dispatch({
+				effects: setProblemRangeEffect.of(
+					problemFrom === null || problemTo === null
+						? null
+						: { from: problemFrom, to: problemTo, message: problemMessage }
+				),
+			});
+		}, [problemFrom, problemTo, problemMessage]);
 
 		// Toggle-able base options → reconfigure the base compartment.
 		useEffect(() => {
