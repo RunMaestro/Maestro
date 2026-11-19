@@ -13,12 +13,17 @@
 //   maestro-cli sqlite count <path> <object> [--filter <expr>] [--json]
 //       -> the table view's footer count: how many rows the filter matches,
 //          counted to the end
+//   maestro-cli sqlite blob <path> <object> <column> (--rowid <id> | --offset <n>)
+//                           [--sort <column>] [--desc] [--filter <expr>]
+//                           --output <file> [--json]
+//       -> the record view's Save to file: one BLOB cell written whole
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_list_objects`, `sqlite_read_schema`,
-// `sqlite_read_rows`, `sqlite_count_rows`) to the running app, which answers with the same
-// functions the viewer's `sqlite:*` IPC calls. The app must be running, and
-// the database is opened read-only there.
+// `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`) to the running
+// app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
+// The app must be running, and the database is opened read-only there; a
+// BLOB is written to `--output` by the app, so its bytes never ride the socket.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { failFromError } from '../services/session-command';
@@ -43,6 +48,7 @@ import {
 } from '../../shared/sqlite/schema';
 import { formatSqliteCell } from '../../shared/sqlite/cells';
 import type {
+	SqliteBlobSaved,
 	SqliteDatabaseInfo,
 	SqliteFilterProblem,
 	SqliteObjectKind,
@@ -465,5 +471,100 @@ export async function sqliteCount(
 			rowCount: count.matched,
 			rowCountCapped: !count.complete,
 		})} ${noun} (${count.elapsedMs} ms).`
+	);
+}
+
+interface SqliteBlobOptions {
+	rowid?: string;
+	offset?: string;
+	sort?: string;
+	desc?: boolean;
+	filter?: string;
+	output?: string;
+	json?: boolean;
+}
+
+interface SqliteBlobReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	saved?: SqliteBlobSaved;
+}
+
+/**
+ * `maestro-cli sqlite blob <path> <object> <column>` - write one BLOB cell to a
+ * file, whole, the way the viewer's record view saves it. The row is named by
+ * its rowid (`sqlite rows --json` lists them) or by its position, which means
+ * what `sqlite rows --offset <n> --limit 1` with the same sort and filter shows.
+ */
+export async function sqliteBlob(
+	file: string,
+	name: string,
+	column: string,
+	options: SqliteBlobOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!options.output) fail('--output <file> is required', options.json);
+	if ((options.rowid === undefined) === (options.offset === undefined)) {
+		fail('Name the row with exactly one of --rowid <id> or --offset <n>', options.json);
+	}
+	if (options.rowid !== undefined && !/^-?\d+$/.test(options.rowid)) {
+		fail(`--rowid must be a whole number (got "${options.rowid}")`, options.json);
+	}
+	if (options.rowid !== undefined && (options.sort || options.filter)) {
+		fail('--sort and --filter place a row by --offset; a --rowid needs neither', options.json);
+	}
+	if (options.desc && !options.sort) fail('--desc needs --sort <column>', options.json);
+	const offset =
+		options.offset === undefined ? null : parseCount(options.offset, '--offset', 0, options.json);
+	const sort = options.sort
+		? { column: options.sort, direction: options.desc ? ('desc' as const) : ('asc' as const) }
+		: null;
+	const destPath = resolveCliPath(options.output);
+
+	let reply: SqliteBlobReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteBlobReply>(
+				{
+					type: 'sqlite_save_blob',
+					path: filePath,
+					name,
+					column,
+					rowid: options.rowid ?? null,
+					offset,
+					sort,
+					filter: options.filter ?? null,
+					destPath,
+				},
+				'sqlite_blob_result',
+				SQLITE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.saved) {
+		fail(reply.error || `Could not save ${column} of ${name} in ${filePath}`, options.json);
+	}
+
+	const { database, saved } = reply;
+	if (options.json) {
+		// `path` is the database, as for every sqlite verb; `output` is the file written.
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				output: saved.path,
+				bytes: saved.bytes,
+				rowid: saved.rowid,
+			})
+		);
+		return;
+	}
+	const from = saved.rowid !== null ? `rowid ${saved.rowid}` : `row ${(offset ?? 0) + 1}`;
+	console.log(
+		`Saved ${column} of ${name} (${from}) to ${saved.path}: ${formatSize(saved.bytes)} (${saved.bytes} bytes).`
 	);
 }

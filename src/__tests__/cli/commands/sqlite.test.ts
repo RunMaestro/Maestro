@@ -7,6 +7,8 @@
  * CREATE SQL, over `sqlite_read_schema`. And `maestro-cli sqlite rows`: one
  * LIMIT/OFFSET window, sorted in SQLite, over `sqlite_read_rows`. And
  * `maestro-cli sqlite count`: the settled row count, over `sqlite_count_rows`.
+ * And `maestro-cli sqlite blob`: one BLOB cell written to `--output` by the
+ * app, over `sqlite_save_blob`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -17,7 +19,13 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { sqliteCount, sqliteRows, sqliteSchema, sqliteTables } from '../../../cli/commands/sqlite';
+import {
+	sqliteBlob,
+	sqliteCount,
+	sqliteRows,
+	sqliteSchema,
+	sqliteTables,
+} from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 const DB = path.resolve('/data/app.db');
@@ -555,6 +563,111 @@ describe('sqlite count', () => {
 		});
 		await expect(sqliteCount(DB, 'gone', {})).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('No table or view is named gone.');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+});
+
+describe('sqlite blob', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+	const OUT = path.resolve('/tmp/logo.png');
+
+	function respondBlob(
+		saved: Record<string, unknown> = {},
+		overrides: Record<string, unknown> = {}
+	) {
+		return mockReply({
+			type: 'sqlite_blob_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 2_000_000 },
+			saved: { path: OUT, bytes: 2048, rowid: '7', ...saved },
+			...overrides,
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the resolved paths and the rowid, and says what it wrote', async () => {
+		const sent = respondBlob();
+		await sqliteBlob(DB, 'media', 'data', { rowid: '7', output: OUT });
+		expect(sent[0]).toEqual({
+			type: 'sqlite_save_blob',
+			path: DB,
+			name: 'media',
+			column: 'data',
+			rowid: '7',
+			offset: null,
+			sort: null,
+			filter: null,
+			destPath: OUT,
+			responseType: 'sqlite_blob_result',
+		});
+		expect(logged()).toBe(`Saved data of media (rowid 7) to ${OUT}: 2.0 KB (2048 bytes).`);
+	});
+
+	it('places a row by --offset with the same --sort and --filter as sqlite rows', async () => {
+		const sent = respondBlob({ rowid: null });
+		await sqliteBlob(DB, 'thumbs', 'img', {
+			offset: '4',
+			sort: 'img',
+			desc: true,
+			filter: 'img is not null',
+			output: OUT,
+		});
+		expect(sent[0]).toMatchObject({
+			rowid: null,
+			offset: 4,
+			sort: { column: 'img', direction: 'desc' },
+			filter: 'img is not null',
+		});
+		expect(logged()).toContain('(row 5)');
+	});
+
+	it('prints what was written as JSON under --json', async () => {
+		respondBlob();
+		await sqliteBlob(DB, 'media', 'data', { rowid: '7', output: OUT, json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			output: OUT,
+			bytes: 2048,
+			rowid: '7',
+		});
+	});
+
+	it.each([
+		[{ output: OUT }, 'exactly one of --rowid <id> or --offset <n>'],
+		[{ rowid: '7', offset: '1', output: OUT }, 'exactly one of --rowid <id> or --offset <n>'],
+		[{ rowid: '7; DROP', output: OUT }, '--rowid must be a whole number'],
+		[{ rowid: '7', sort: 'img', output: OUT }, 'a --rowid needs neither'],
+		[{ offset: '0', desc: true, output: OUT }, '--desc needs --sort <column>'],
+		[{ offset: '-2', output: OUT }, '--offset must be a non-negative whole number'],
+		[{ rowid: '7' }, '--output <file> is required'],
+	])('refuses %o before asking the app', async (options, message) => {
+		const sent = respondBlob();
+		await expect(sqliteBlob(DB, 'media', 'data', options)).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		expect(sent).toEqual([]);
+	});
+
+	it("exits 1 with the app's error", async () => {
+		mockReply({
+			type: 'sqlite_blob_result',
+			success: false,
+			error: 'data holds NULL in rowid 7, not a BLOB.',
+		});
+		await expect(sqliteBlob(DB, 'media', 'data', { rowid: '7', output: OUT })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.join('\n')).toContain('data holds NULL in rowid 7, not a BLOB.');
 		expect(process.exit).toHaveBeenCalledWith(1);
 	});
 });

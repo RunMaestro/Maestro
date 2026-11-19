@@ -4,13 +4,16 @@
  * The renderer's view of a SQLite database goes through these calls. As with
  * parquet, no database bytes cross IPC: `open` returns a summary and a handle,
  * the table-list and schema calls return names, numbers, and schema text,
- * the row calls return one bounded window of cells, and the read-only
+ * the row calls return one bounded window of cells, a BLOB save writes the
+ * value to disk here rather than shipping it, and the read-only
  * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
 import { ipcMain } from 'electron';
 
 import type {
+	SqliteBlobRequest,
+	SqliteBlobSaved,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectKind,
@@ -21,6 +24,7 @@ import type {
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../../shared/sqlite/types';
+import { saveSqliteBlob } from '../../sqlite/sqlite-blob';
 import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
@@ -78,6 +82,13 @@ export function registerSqliteHandlers(): void {
 	ipcMain.handle(
 		'sqlite:countRows',
 		async (_event, request: SqliteCountRequest): Promise<SqliteRowCount> => countSqliteRows(request)
+	);
+
+	// Save one BLOB cell to a file, whole. The value is read and written in
+	// this process; only the path and the byte count come back.
+	ipcMain.handle(
+		'sqlite:saveBlob',
+		async (_event, request: SqliteBlobRequest): Promise<SqliteBlobSaved> => saveSqliteBlob(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are

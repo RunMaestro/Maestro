@@ -1,6 +1,7 @@
-// Covers the sqlite_list_objects, sqlite_read_schema, and sqlite_read_rows
-// WebSocket messages that back `maestro-cli sqlite tables`, `sqlite schema`,
-// and `sqlite rows`. It opens the database through the viewer's own open path,
+// Covers the sqlite_list_objects, sqlite_read_schema, sqlite_read_rows,
+// sqlite_count_rows, and sqlite_save_blob WebSocket messages that back
+// `maestro-cli sqlite tables`, `sqlite schema`, `sqlite rows`, `sqlite count`,
+// and `sqlite blob`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
 
@@ -35,6 +36,8 @@ const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
 const counts = vi.hoisted(() => ({ countAllSqliteRows: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-count', () => counts);
+const blobs = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-blob', () => blobs);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -428,6 +431,124 @@ describe('sqlite_count_rows handler', () => {
 			success: false,
 			error: 'filter must be a string',
 		});
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_save_blob handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+	});
+
+	it('saves through the shared saver and answers with what was written', async () => {
+		const saved = { path: '/tmp/logo.png', bytes: 2048, rowid: '7' };
+		blobs.saveSqliteBlob.mockResolvedValue(saved);
+
+		handler.handleMessage(client, {
+			type: 'sqlite_save_blob',
+			requestId: 'b1',
+			path: '/data/app.db',
+			name: 'media',
+			column: 'data',
+			rowid: '7',
+			destPath: '/tmp/logo.png',
+		});
+		await flush();
+
+		expect(blobs.saveSqliteBlob).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'media',
+			column: 'data',
+			rowid: '7',
+			offset: null,
+			sort: null,
+			filter: null,
+			destPath: '/tmp/logo.png',
+		});
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_blob_result',
+			requestId: 'b1',
+			success: true,
+			database: info,
+			saved,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('passes a position with its sort and filter through', async () => {
+		blobs.saveSqliteBlob.mockResolvedValue({ path: '/tmp/x.bin', bytes: 1, rowid: null });
+		handler.handleMessage(client, {
+			type: 'sqlite_save_blob',
+			requestId: 'b2',
+			path: '/data/app.db',
+			name: 'thumbs',
+			column: 'img',
+			offset: 4,
+			sort: { column: 'img', direction: 'desc' },
+			filter: 'img is not null',
+			destPath: '/tmp/x.bin',
+		});
+		await flush();
+		expect(blobs.saveSqliteBlob).toHaveBeenCalledWith(
+			expect.objectContaining({
+				rowid: null,
+				offset: 4,
+				sort: { column: 'img', direction: 'desc' },
+				filter: 'img is not null',
+			})
+		);
+	});
+
+	it("reports the saver's failure with the request id", async () => {
+		blobs.saveSqliteBlob.mockRejectedValue(new Error('data holds NULL in rowid 7, not a BLOB.'));
+		handler.handleMessage(client, {
+			type: 'sqlite_save_blob',
+			requestId: 'b3',
+			path: '/data/app.db',
+			name: 'media',
+			column: 'data',
+			rowid: '7',
+			destPath: '/tmp/x.bin',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_blob_result',
+			requestId: 'b3',
+			success: false,
+			error: 'data holds NULL in rowid 7, not a BLOB.',
+		});
+	});
+
+	it('refuses a missing field, no row, or a bad sort before opening anything', async () => {
+		const base = {
+			type: 'sqlite_save_blob',
+			path: '/data/app.db',
+			name: 'media',
+			column: 'data',
+			destPath: '/tmp/x.bin',
+		};
+		handler.handleMessage(client, { ...base, requestId: 'b4', column: undefined, rowid: '1' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'b4', success: false });
+
+		handler.handleMessage(client, { ...base, requestId: 'b5' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'b5',
+			success: false,
+			error: 'sqlite_save_blob needs a "rowid" or an "offset"',
+		});
+
+		handler.handleMessage(client, { ...base, requestId: 'b6', offset: 0, sort: { column: 1 } });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'b6', success: false });
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
 	});
 });

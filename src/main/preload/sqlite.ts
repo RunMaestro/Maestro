@@ -3,11 +3,14 @@
  *
  * Exposes window.maestro.sqlite: open a database read-only, list its schema
  * objects, measure their row counts and sizes, read one object's structure,
- * read a window of a table's rows, count its rows, close the handle.
+ * read a window of a table's rows, count its rows, save a BLOB to a file,
+ * close the handle.
  */
 
 import { ipcRenderer } from 'electron';
 import type {
+	SqliteBlobRequest,
+	SqliteBlobSaved,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectKind,
@@ -66,6 +69,14 @@ export function createSqliteApi() {
 		 */
 		countRows: (request: SqliteCountRequest): Promise<SqliteRowCount> =>
 			ipcRenderer.invoke('sqlite:countRows', request),
+
+		/**
+		 * Write one BLOB cell to `destPath`, whole. The row is named by its rowid
+		 * (from `readRows`) or its position; rejects when the stored value no
+		 * longer matches `expected`.
+		 */
+		saveBlob: (request: SqliteBlobRequest): Promise<SqliteBlobSaved> =>
+			ipcRenderer.invoke('sqlite:saveBlob', request),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

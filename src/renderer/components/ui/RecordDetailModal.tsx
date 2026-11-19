@@ -22,7 +22,7 @@
  * caret movement, so parking focus there would swallow the whole scheme.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { Modal } from './Modal';
@@ -52,6 +52,22 @@ export interface RecordDetailField {
 	 * shows `empty`). It still matches the filter, so typing "null" finds it.
 	 */
 	placeholder?: boolean;
+	/**
+	 * One extra thing to do with this value, drawn beside it as an icon button
+	 * that is always visible (unlike copy, which shows on hover). The SQLite
+	 * viewer uses it to save a BLOB, whose value here is only a hex preview.
+	 */
+	action?: RecordDetailFieldAction;
+}
+
+/** A per-field button: what it does is up to the caller. */
+export interface RecordDetailFieldAction {
+	icon: ReactNode;
+	/** Tooltip, and the accessible name with the field name appended. */
+	label: string;
+	onClick: () => void;
+	/** Shown dimmed and not clickable, e.g. while a save is in flight. */
+	disabled?: boolean;
 }
 
 interface RecordDetailModalProps {
@@ -338,6 +354,19 @@ export function RecordDetailModal({
 														</span>
 													)}
 												</div>
+												{field.action && (
+													<GhostIconButton
+														onClick={field.action.onClick}
+														disabled={field.action.disabled}
+														title={field.action.label}
+														ariaLabel={`${field.action.label}: ${field.key}`}
+														color={theme.colors.textDim}
+														className="shrink-0"
+														testId={`${testIdPrefix}-action`}
+													>
+														{field.action.icon}
+													</GhostIconButton>
+												)}
 												{field.value && !field.placeholder && (
 													<GhostIconButton
 														onClick={() => copyValue(field.value)}

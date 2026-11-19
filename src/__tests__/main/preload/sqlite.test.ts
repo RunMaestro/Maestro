@@ -67,6 +67,19 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:countRows', request);
 	});
 
+	it('saves a BLOB', async () => {
+		const request = {
+			handle: 'h1',
+			name: 'media',
+			column: 'data',
+			offset: 3,
+			destPath: '/tmp/x.bin',
+		};
+		mockInvoke.mockResolvedValue({ path: '/tmp/x.bin', bytes: 4, rowid: null });
+		await api.saveBlob(request);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:saveBlob', request);
+	});
+
 	it('closes a handle', async () => {
 		mockInvoke.mockResolvedValue(undefined);
 		await api.close('h1');

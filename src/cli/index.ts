@@ -159,7 +159,7 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
-import { sqliteCount, sqliteRows, sqliteSchema, sqliteTables } from './commands/sqlite';
+import { sqliteBlob, sqliteCount, sqliteRows, sqliteSchema, sqliteTables } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3899,6 +3899,23 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, object, options) => sqliteCount(file, object, options));
+
+sqliteCmd
+	.command('blob <path> <object> <column>')
+	.description(
+		"Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--offset <n>',
+		'The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter'
+	)
+	.option('--sort <column>', 'Order used to place --offset (as for `sqlite rows`)')
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option('--filter <expr>', 'Filter used to place --offset (as for `sqlite rows`)')
+	.requiredOption('--output <file>', 'File to write; replaced if it exists')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, column, options) => sqliteBlob(file, object, column, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

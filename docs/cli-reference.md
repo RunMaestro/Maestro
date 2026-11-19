@@ -3406,6 +3406,20 @@ Count a table's or view's rows, or the rows a filter matches, the way the viewer
 | `--filter <expr>` | Count only the rows this filter matches, in the viewer's filter language | -       |
 | `--json`          | Output as JSON (for scripting)                                           | -       |
 
+## `maestro-cli sqlite blob <path> <object> <column>`
+
+Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)
+
+| Option            | Description                                                                                             | Default |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`    | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                         | -       |
+| `--offset <n>`    | The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter | -       |
+| `--sort <column>` | Order used to place --offset (as for `sqlite rows`)                                                     | -       |
+| `--desc`          | Sort descending (needs --sort)                                                                          | -       |
+| `--filter <expr>` | Filter used to place --offset (as for `sqlite rows`)                                                    | -       |
+| `--output <file>` | File to write; replaced if it exists                                                                    | -       |
+| `--json`          | Output as JSON (for scripting)                                                                          | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

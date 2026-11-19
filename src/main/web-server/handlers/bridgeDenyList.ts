@@ -79,7 +79,7 @@ const METHODS: Record<string, string> = {
 	shell: 'trashItem',
 	shells: 'detect',
 	speckit: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
-	sqlite: 'close countRows listObjects open readObjectStats readRows readSchema',
+	sqlite: 'close countRows listObjects open readObjectStats readRows readSchema saveBlob',
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:

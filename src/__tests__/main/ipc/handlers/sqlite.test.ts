@@ -28,11 +28,13 @@ vi.mock('../../../../main/sqlite/sqlite-database', () => database);
 const schema = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
 const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
 const count = vi.hoisted(() => ({ countSqliteRows: vi.fn() }));
+const blob = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
 vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
 vi.mock('../../../../main/sqlite/sqlite-count', () => count);
+vi.mock('../../../../main/sqlite/sqlite-blob', () => blob);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -54,6 +56,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readObjectStats',
 			'sqlite:readRows',
 			'sqlite:readSchema',
+			'sqlite:saveBlob',
 		]);
 	});
 
@@ -110,6 +113,21 @@ describe('SQLite IPC handlers', () => {
 		await expect(invoke('sqlite:countRows', request)).resolves.toEqual(result);
 		// No budget argument: the IPC surface cannot widen how long main is held.
 		expect(count.countSqliteRows).toHaveBeenCalledWith(request);
+	});
+
+	it('saves a BLOB with the request passed through whole', async () => {
+		const request = {
+			handle: 'h1',
+			name: 'media',
+			column: 'data',
+			rowid: '7',
+			expected: { bytes: 16, head: '89504e47' },
+			destPath: '/tmp/logo.png',
+		};
+		const saved = { path: '/tmp/logo.png', bytes: 16, rowid: '7' };
+		blob.saveSqliteBlob.mockResolvedValue(saved);
+		await expect(invoke('sqlite:saveBlob', request)).resolves.toEqual(saved);
+		expect(blob.saveSqliteBlob).toHaveBeenCalledWith(request);
 	});
 
 	it('closes by handle', async () => {

@@ -11,6 +11,8 @@ interface FakeTable {
 	primaryKey?: string[];
 	/** Rows as value/length pairs, the shape the window query returns. */
 	rows: unknown[][];
+	/** Each row's rowid; the fake numbers rows from 1 when this is absent. */
+	rowids?: bigint[];
 	/** Thrown by prepare, as SQLite does for a broken view. */
 	error?: Error;
 }
@@ -57,11 +59,17 @@ function fakeDb() {
 					if (flag) state.flags.push('safeIntegers');
 					return statement;
 				},
-				// Filter bindings (if any) come first, then LIMIT and OFFSET.
+				// Filter bindings (if any) come first, then LIMIT and OFFSET. A
+				// window that selects a rowid alias first gets it ahead of the pairs.
 				all(...args: unknown[]) {
 					state.windowArgs.push(args);
 					const [limit, offset] = args.slice(-2) as [number, number];
-					return table.rows.slice(offset, offset + limit);
+					const rows = table.rows.slice(offset, offset + limit);
+					if (!/^SELECT "(rowid|_rowid_|oid)", /.test(sql)) return rows;
+					return rows.map((row, index) => [
+						table.rowids?.[offset + index] ?? BigInt(offset + index + 1),
+						...row,
+					]);
 				},
 			};
 			return statement;
@@ -390,6 +398,43 @@ describe('readSqliteRows', () => {
 		readSqliteRows({ handle: 'h1', name: 'active', offset: 0, limit: 5, filter: 'n = 3' });
 		expect(state.windowSql[0]).toContain(' WHERE "n" = ? LIMIT');
 		expect(state.windowArgs[0]).toEqual([3, 6, 0]);
+	});
+
+	it("carries each row's rowid, selected ahead of the cells with no alias", () => {
+		const page = readSqliteRows({ handle: 'h1', name: 'users', offset: 1, limit: 2 });
+		expect(state.windowSql[0]).toMatch(/^SELECT "rowid", CASE typeof\("id"\)/);
+		expect(page.rowids).toEqual(['2', '3']);
+		// The rowid does not shift the cells.
+		expect(page.rows[0]).toEqual([2, 'user2']);
+	});
+
+	it('keeps a rowid past 2^53 exact as decimal text', () => {
+		state.tables.users.rowids = [9007199254740993n, -5n];
+		const page = readSqliteRows({ handle: 'h1', name: 'users', offset: 0, limit: 2 });
+		expect(page.rowids).toEqual(['9007199254740993', '-5']);
+	});
+
+	it('selects the rowid by an alias a real column does not shadow', () => {
+		readSqliteRows({ handle: 'h1', name: 'shadowed', offset: 0, limit: 5 });
+		expect(state.windowSql[0]).toMatch(/^SELECT "_rowid_", /);
+	});
+
+	it('has no rowids for a view, a virtual table, or a WITHOUT ROWID table', () => {
+		for (const name of ['active', 'docs', 'pairs']) {
+			expect(readSqliteRows({ handle: 'h1', name, offset: 0, limit: 5 }).rowids).toBeNull();
+		}
+		expect(state.windowSql.every((sql) => !/^SELECT "(rowid|_rowid_|oid)"/.test(sql))).toBe(true);
+	});
+
+	it('returns empty rowids, not null, with a filter problem on a rowid table', () => {
+		const page = readSqliteRows({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 2,
+			filter: 'nmae = bob',
+		});
+		expect(page.rowids).toEqual([]);
 	});
 
 	it('fails on a handle that is no longer open', () => {

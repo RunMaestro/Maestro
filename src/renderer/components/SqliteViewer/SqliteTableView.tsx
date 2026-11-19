@@ -32,14 +32,27 @@
  * reads the next window, so the record view walks the whole table the way
  * scrolling does. A new sort or filter closes it: the position it showed
  * now holds a different row.
+ *
+ * A BLOB cell shows its size and first bytes in hex; the record view shows
+ * its 32-byte head and a Save to file button, which writes the value whole
+ * from the main process (src/main/sqlite/sqlite-blob.ts). The row is named by
+ * the rowid its page carried, or for a view or `WITHOUT ROWID` table by its
+ * position under the sort and filter the rows were read with; either way the
+ * save is refused if the stored value no longer matches the cell.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Download } from 'lucide-react';
 
-import { formatCount } from '../../../shared/formatters';
+import { formatCount, formatSize } from '../../../shared/formatters';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
-import { formatSqliteCell, formatSqliteRecordValue } from '../../../shared/sqlite/cells';
+import {
+	formatSqliteBlobHex,
+	formatSqliteCell,
+	formatSqliteRecordValue,
+	sqliteBlobFileName,
+} from '../../../shared/sqlite/cells';
 import { formatSqliteRowCount, sqliteConvergingRowTotal } from '../../../shared/sqlite/objects';
 import { sqliteColumnAffinity } from '../../../shared/sqlite/schema';
 import type {
@@ -54,6 +67,8 @@ import type {
 } from '../../../shared/sqlite/types';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { notifyToast } from '../../stores/notificationStore';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import {
 	DataGrid,
 	dataGridColumnWidth,
@@ -190,6 +205,12 @@ export function SqliteTableView({
 	const [lastPage, setLastPage] = useState<SqliteRowsPage | null>(null);
 	/** The applied filter the rows on screen were read with. */
 	const [rowsFilter, setRowsFilter] = useState<string | null>(null);
+	/** The sort the rows on screen were read with: a row's position means it. */
+	const [rowsSort, setRowsSort] = useState<SqliteSortSpec | null>(null);
+	/** Each loaded row's rowid, parallel to `rows`; null when the object has none. */
+	const [rowids, setRowids] = useState<string[] | null>(null);
+	/** A BLOB save is in flight; its button waits. */
+	const [savingBlob, setSavingBlob] = useState(false);
 	const [count, setCount] = useState<CountProgress | null>(null);
 	const [counting, setCounting] = useState(false);
 	const [countError, setCountError] = useState<string | null>(null);
@@ -232,11 +253,14 @@ export function SqliteTableView({
 				setFilterProblem(undefined);
 				setLastPage(page);
 				setRowsFilter(appliedFilter);
+				setRowsSort(sort);
 				if (offset === 0) {
 					setColumns(page.columns);
 					setRows(page.rows);
+					setRowids(page.rowids);
 				} else {
 					setRows((previous) => [...previous, ...page.rows]);
+					setRowids((previous) => (previous && page.rowids ? [...previous, ...page.rowids] : null));
 				}
 			} catch (failure) {
 				if (token === generation.current) setError(errorText(failure));
@@ -368,6 +392,13 @@ export function SqliteTableView({
 			// is pointing at, since a blank can also be whitespace.
 			if (value === null) return { ...cell, title: 'NULL (no value)' };
 			if (value === '') return { ...cell, title: 'Empty string' };
+			if (typeof value === 'object' && value.kind === 'blob') {
+				const hex = formatSqliteBlobHex(value);
+				return {
+					...cell,
+					title: `BLOB, ${formatSize(value.bytes)} (${formatCount(value.bytes)} bytes)${hex ? `\n${hex}` : ''}\nDouble-click the row to save it to a file`,
+				};
+			}
 			if (typeof value === 'object' && value.kind === 'text') {
 				return {
 					...cell,
@@ -383,15 +414,70 @@ export function SqliteTableView({
 
 	// -- Record view --------------------------------------------------------
 
+	const saveBlob = useStableCallback(async (rowPosition: number, columnPosition: number) => {
+		const value = rows[rowPosition]?.[columnPosition];
+		const column = columns?.[columnPosition];
+		if (!column || value === null || typeof value !== 'object' || value.kind !== 'blob') return;
+		const rowid = rowids?.[rowPosition] ?? null;
+		const destPath = await window.maestro.dialog.saveFile({
+			title: 'Save BLOB to file',
+			defaultPath: sqliteBlobFileName(name, column.name, rowid ?? String(rowPosition + 1)),
+		});
+		if (!destPath) return;
+		setSavingBlob(true);
+		try {
+			const saved = await window.maestro.sqlite.saveBlob({
+				handle,
+				name,
+				column: column.name,
+				rowid,
+				// Without a rowid the row is its position under the order and
+				// filter it was read with; the expected head guards a moved row.
+				offset: rowid === null ? rowPosition : null,
+				sort: rowsSort,
+				filter: rowsFilter || null,
+				expected: { bytes: value.bytes, head: value.head },
+				destPath,
+			});
+			notifyToast({
+				color: 'green',
+				title: 'BLOB saved',
+				message: `${formatSize(saved.bytes)} written to ${saved.path}`,
+			});
+		} catch (failure) {
+			notifyToast({
+				color: 'red',
+				title: 'Could not save the BLOB',
+				message: ipcErrorMessage(failure),
+			});
+		} finally {
+			setSavingBlob(false);
+		}
+	});
+
 	const detailIndex = detailRow === null ? -1 : Math.min(detailRow, rows.length - 1);
 	const detailFields = useMemo<RecordDetailField[]>(() => {
 		const row = detailIndex >= 0 ? rows[detailIndex] : undefined;
 		if (!row || !columns) return [];
 		return columns.map((column, position) => {
-			const { text, placeholder } = formatSqliteRecordValue(row[position] ?? null);
-			return { key: column.name || `(column ${position + 1})`, value: text, placeholder };
+			const value = row[position] ?? null;
+			const { text, placeholder } = formatSqliteRecordValue(value);
+			const field: RecordDetailField = {
+				key: column.name || `(column ${position + 1})`,
+				value: text,
+				placeholder,
+			};
+			if (value !== null && typeof value === 'object' && value.kind === 'blob') {
+				field.action = {
+					icon: <Download className="w-3 h-3" />,
+					label: 'Save BLOB to file',
+					onClick: () => void saveBlob(detailIndex, position),
+					disabled: savingBlob,
+				};
+			}
+			return field;
 		});
-	}, [detailIndex, rows, columns]);
+	}, [detailIndex, rows, columns, saveBlob, savingBlob]);
 
 	const handleRecordNavigate = useCallback(
 		(next: number) => {

@@ -244,6 +244,12 @@ export interface SqliteRowsPage {
 	columns: SqliteResultColumn[];
 	/** Cells in `columns` order. */
 	rows: SqliteCellValue[][];
+	/**
+	 * Each row's rowid as decimal text (a rowid may pass 2^53), parallel to
+	 * `rows`. Null when the object has no reachable rowid: a view, a virtual
+	 * table, a `WITHOUT ROWID` table, or one whose columns shadow every alias.
+	 */
+	rowids: string[] | null;
 	/** The offset the window starts at. */
 	offset: number;
 	/** At least one row exists past this window. */
@@ -312,4 +318,39 @@ export interface SqliteRowCount {
 	elapsedMs: number;
 	/** Set when the filter did not parse or bind. Nothing was counted. */
 	filterProblem?: SqliteFilterProblem;
+}
+
+/**
+ * Save one BLOB cell to a file, whole. The row is named by its rowid when its
+ * page carried one, which is exact; otherwise by its position in the window it
+ * was read in, which only holds while the data has not changed, so `expected`
+ * guards it.
+ */
+export interface SqliteBlobRequest {
+	handle: string;
+	/** The table or view the row belongs to. */
+	name: string;
+	/** The column holding the BLOB. */
+	column: string;
+	/** The row's rowid from `SqliteRowsPage.rowids`; wins over the position. */
+	rowid?: string | null;
+	/** Otherwise: the row's position, read with this sort and filter. */
+	offset?: number | null;
+	sort?: SqliteSortSpec | null;
+	filter?: string | null;
+	/**
+	 * What the cell showed (its size and hex head). The save is refused when
+	 * the stored value no longer matches, rather than writing another row's bytes.
+	 */
+	expected?: { bytes: number; head: string } | null;
+	/** Absolute path to write. Parent folders are created; an existing file is replaced. */
+	destPath: string;
+}
+
+/** What `saveSqliteBlob()` wrote. */
+export interface SqliteBlobSaved {
+	path: string;
+	bytes: number;
+	/** The rowid of the row it came from, when the object has one. */
+	rowid: string | null;
 }

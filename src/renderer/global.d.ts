@@ -241,6 +241,8 @@ import type {
 	ParquetSortSpec,
 } from '../shared/parquet/types';
 import type {
+	SqliteBlobRequest,
+	SqliteBlobSaved,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectKind,
@@ -1988,6 +1990,7 @@ interface MaestroAPI {
 		) => Promise<SqliteObjectSchema>;
 		readRows: (request: SqliteRowsRequest) => Promise<SqliteRowsPage>;
 		countRows: (request: SqliteCountRequest) => Promise<SqliteRowCount>;
+		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

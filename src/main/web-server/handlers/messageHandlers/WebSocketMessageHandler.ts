@@ -135,6 +135,7 @@ import {
 	handleSqliteListObjects,
 	handleSqliteReadRows,
 	handleSqliteReadSchema,
+	handleSqliteSaveBlob,
 } from './sqlite';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleDiffReviewCommand } from './diffReview';
@@ -461,6 +462,10 @@ export class WebSocketMessageHandler {
 
 			case 'sqlite_count_rows':
 				void handleSqliteCountRows(this.ctx, client, message);
+				break;
+
+			case 'sqlite_save_blob':
+				void handleSqliteSaveBlob(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':

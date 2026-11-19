@@ -9,6 +9,7 @@ import {
 import { AUTO_COUNT_PASSES } from '../../../../renderer/components/SqliteViewer/SqliteTableView';
 import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import type {
+	SqliteBlobRequest,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteObjectList,
@@ -23,6 +24,12 @@ import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackCont
 import { mockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
+
+const notifyToastMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/notificationStore')>()),
+	notifyToast: notifyToastMock,
+}));
 
 // jsdom has no layout, so the grid's virtualizer is stubbed to draw every
 // loaded row. The grid's own "is it on screen" guard (clientHeight 0) still
@@ -96,6 +103,8 @@ let close: ReturnType<typeof vi.fn>;
 let readSchema: ReturnType<typeof vi.fn>;
 let readRows: ReturnType<typeof vi.fn>;
 let countRows: ReturnType<typeof vi.fn>;
+let saveBlob: ReturnType<typeof vi.fn>;
+let saveFile: ReturnType<typeof vi.fn>;
 
 /** A count reply: settled at `matched` unless `complete` says otherwise. */
 function countReply(request: SqliteCountRequest, matched: number, complete = true): SqliteRowCount {
@@ -124,6 +133,8 @@ function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
 			index === 0 ? '' : 'click',
 			index === 0 ? null : { kind: 'blob', head: 'ff', bytes: 2048 },
 		]),
+		// events is a WITHOUT ROWID table: no rowid to name a row by.
+		rowids: null,
 		offset: request.offset,
 		hasMore: request.offset + count < total,
 		orderedBy: request.sort ? [request.sort.column, 'id'] : ['id'],
@@ -213,8 +224,25 @@ beforeEach(() => {
 	// The count never answers unless a test says so: a settled count would
 	// replace the rail's capped counts that other tests assert on.
 	countRows = vi.fn(() => new Promise<SqliteRowCount>(() => {}));
+	saveBlob = vi.fn(async (request: SqliteBlobRequest) => ({
+		path: request.destPath,
+		bytes: 2048,
+		rowid: request.rowid ?? null,
+	}));
+	saveFile = vi.fn().mockResolvedValue('/tmp/payload.bin');
+	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
-		sqlite: { open, listObjects, readObjectStats, readSchema, readRows, countRows, close },
+		sqlite: {
+			open,
+			listObjects,
+			readObjectStats,
+			readSchema,
+			readRows,
+			countRows,
+			saveBlob,
+			close,
+		},
+		dialog: { saveFile },
 	};
 });
 
@@ -473,7 +501,10 @@ describe('SqliteViewer table view', () => {
 		expect(within(first).getByTitle('Empty string')).toHaveTextContent(/^$/);
 		const second = screen.getByTestId('sqlite-row-1');
 		expect(second).toHaveTextContent('click');
-		expect(second).toHaveTextContent('BLOB 2.0 KB');
+		expect(second).toHaveTextContent('BLOB 2.0 KB · ff …');
+		// The tooltip gives the exact size and says how to save it.
+		const blob = within(second).getByTitle(/^BLOB, 2\.0 KB \(2,048 bytes\)\nff …\n/);
+		expect(blob.getAttribute('title')).toContain('Double-click the row to save it to a file');
 	});
 
 	it('shows column types from the statement and the order in the footer', async () => {
@@ -749,6 +780,109 @@ describe('SqliteViewer record view', () => {
 		fireEvent.click(screen.getByLabelText('Close modal'));
 		await waitFor(() =>
 			expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument()
+		);
+	});
+
+	it('offers Save to file only on a BLOB field', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		const actions = screen.getAllByTestId('sqlite-row-detail-action');
+		expect(actions).toHaveLength(1);
+		expect(actions[0]).toHaveAccessibleName('Save BLOB to file: payload');
+	});
+
+	it('saves a BLOB with no rowid by its position, guarded by what the cell showed', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-row-detail-action'));
+		await waitFor(() => expect(saveBlob).toHaveBeenCalledTimes(1));
+		expect(saveFile).toHaveBeenCalledWith({
+			title: 'Save BLOB to file',
+			defaultPath: 'events-payload-2.bin',
+		});
+		expect(saveBlob).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'events',
+			column: 'payload',
+			rowid: null,
+			offset: 1,
+			sort: null,
+			filter: null,
+			expected: { bytes: 2048, head: 'ff' },
+			destPath: '/tmp/payload.bin',
+		});
+		await waitFor(() =>
+			expect(notifyToastMock).toHaveBeenCalledWith({
+				color: 'green',
+				title: 'BLOB saved',
+				message: '2.0 KB written to /tmp/payload.bin',
+			})
+		);
+	});
+
+	it('saves a BLOB by the rowid its page carried, wherever the row sits', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => ({
+			...eventsPage(request),
+			rowids: ['41', '42'],
+		}));
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-row-detail-action'));
+		await waitFor(() =>
+			expect(saveBlob).toHaveBeenCalledWith(expect.objectContaining({ rowid: '42', offset: null }))
+		);
+		expect(saveFile).toHaveBeenCalledWith(
+			expect.objectContaining({ defaultPath: 'events-payload-42.bin' })
+		);
+	});
+
+	it('names the position with the sort the rows were read with', async () => {
+		renderWithLayers();
+		await screen.findByTestId('sqlite-row-1');
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ sort: { column: 'kind', direction: 'asc' } })
+			)
+		);
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-row-detail-action'));
+		await waitFor(() =>
+			expect(saveBlob).toHaveBeenCalledWith(
+				expect.objectContaining({ offset: 1, sort: { column: 'kind', direction: 'asc' } })
+			)
+		);
+	});
+
+	it('does nothing when the save dialog is cancelled', async () => {
+		saveFile.mockResolvedValue(null);
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-row-detail-action'));
+		await waitFor(() => expect(saveFile).toHaveBeenCalled());
+		expect(saveBlob).not.toHaveBeenCalled();
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('reports a refused save in a toast', async () => {
+		saveBlob.mockRejectedValue(
+			new Error('payload in row 2 changed since it was read. Reload the table and try again.')
+		);
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-row-detail-action'));
+		await waitFor(() =>
+			expect(notifyToastMock).toHaveBeenCalledWith({
+				color: 'red',
+				title: 'Could not save the BLOB',
+				message: 'payload in row 2 changed since it was read. Reload the table and try again.',
+			})
 		);
 	});
 

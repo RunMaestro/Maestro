@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatSqliteCell, formatSqliteRecordValue } from '../../../shared/sqlite/cells';
+import {
+	formatSqliteBlobHex,
+	formatSqliteCell,
+	formatSqliteRecordValue,
+	sqliteBlobFileName,
+} from '../../../shared/sqlite/cells';
 
 describe('formatSqliteCell', () => {
 	it('spells NULL out as a placeholder, distinct from an empty string', () => {
@@ -28,11 +33,39 @@ describe('formatSqliteCell', () => {
 		});
 	});
 
-	it('summarizes a BLOB by size, as a placeholder', () => {
+	it('summarizes a BLOB by size and its first bytes in hex, as a placeholder', () => {
 		expect(formatSqliteCell({ kind: 'blob', head: 'dead', bytes: 2048 })).toEqual({
-			text: 'BLOB 2.0 KB',
+			text: 'BLOB 2.0 KB · de ad …',
 			placeholder: true,
 		});
+	});
+
+	it('shows at most eight bytes of a BLOB head in the grid, and none of an empty BLOB', () => {
+		const png = '89504e470d0a1a0a0000000d49484452';
+		expect(formatSqliteCell({ kind: 'blob', head: png, bytes: 4096 }).text).toBe(
+			'BLOB 4.0 KB · 89 50 4e 47 0d 0a 1a 0a …'
+		);
+		expect(formatSqliteCell({ kind: 'blob', head: '', bytes: 0 }).text).toBe('BLOB 0 B');
+	});
+});
+
+describe('formatSqliteBlobHex', () => {
+	it('spaces the head and marks bytes past what is shown', () => {
+		expect(formatSqliteBlobHex({ head: 'cafebabe', bytes: 4 })).toBe('ca fe ba be');
+		expect(formatSqliteBlobHex({ head: 'cafebabe', bytes: 10 })).toBe('ca fe ba be …');
+		expect(formatSqliteBlobHex({ head: 'cafebabe', bytes: 4 }, 2)).toBe('ca fe …');
+		expect(formatSqliteBlobHex({ head: '', bytes: 0 })).toBe('');
+	});
+});
+
+describe('sqliteBlobFileName', () => {
+	it('names the file after the table, column, and row', () => {
+		expect(sqliteBlobFileName('media', 'data', '7')).toBe('media-data-7.bin');
+	});
+
+	it('folds characters a file system may refuse', () => {
+		expect(sqliteBlobFileName('my table/../x', 'c:"ol', '-3')).toBe('my-table-..-x-c-ol-3.bin');
+		expect(sqliteBlobFileName('***', '', '1')).toBe('blob-blob-1.bin');
 	});
 });
 

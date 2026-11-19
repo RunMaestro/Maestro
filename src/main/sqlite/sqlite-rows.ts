@@ -21,6 +21,10 @@
  *     characters and every BLOB arrive as a head plus their full length, so a
  *     page of megabyte payloads stays a page of kilobytes on the wire.
  *     Integers are read as BigInt and only narrowed when that loses nothing.
+ *   - **A row can be named again.** An ordinary table's rows come back with
+ *     their rowid (`rowids`), so a later call (saving a BLOB) reads exactly
+ *     that row whatever the order or filter. A view, a virtual table, or a
+ *     `WITHOUT ROWID` table has none to offer.
  *
  * better-sqlite3 is synchronous, so a sort on an unindexed column of a very
  * large table holds the main process while SQLite sorts, and a filter that
@@ -40,6 +44,7 @@ import type {
 	SqliteResultColumn,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteSortSpec,
 } from '../../shared/sqlite/types';
 import { getSqliteDatabase } from './sqlite-database';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
@@ -54,8 +59,11 @@ function toCount(value: unknown): number {
 	return typeof value === 'bigint' ? Number(value) : Number(value ?? 0);
 }
 
-/** A window bound as a non-negative integer; anything else is a caller bug. */
-function windowBound(value: unknown, label: string): number {
+/**
+ * A window bound as a non-negative integer; anything else is a caller bug.
+ * Shared with the BLOB reader (sqlite-blob.ts), whose row position is one.
+ */
+export function windowBound(value: unknown, label: string): number {
 	if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
 		throw new Error(`SQLite rows ${label} must be a non-negative number.`);
 	}
@@ -148,6 +156,46 @@ export function resolveSqliteRowSource(
 	return { object, source, columns, filter };
 }
 
+/** The `ORDER BY` a row statement uses, and the columns that make it up. */
+export interface SqliteRowOrder {
+	/** The sort column (if any), then the tie-break; see `SqliteRowsPage.orderedBy`. */
+	orderedBy: string[];
+	/** Quoted `ORDER BY` terms, in `orderedBy` order; empty for no order. */
+	orderTerms: string[];
+}
+
+/**
+ * The order a window is read in: the requested sort column first, then the
+ * tie-break that makes it total. Shared with the BLOB reader
+ * (sqlite-blob.ts), which re-finds a row by its position in a window and so
+ * must order exactly as the window did. Throws when the sort names a column
+ * `SELECT *` does not report, or a direction other than asc / desc.
+ */
+export function sqliteRowOrder(
+	db: Database.Database,
+	{ object, columns }: Pick<SqliteRowSource, 'object' | 'columns'>,
+	sort: SqliteSortSpec | null | undefined
+): SqliteRowOrder {
+	if (sort) {
+		if (!columns.some((column) => column.name === sort.column)) {
+			throw new Error(`${object.name} has no column named ${sort.column}.`);
+		}
+		if (sort.direction !== 'asc' && sort.direction !== 'desc') {
+			throw new Error(`Sort direction must be asc or desc.`);
+		}
+	}
+
+	const orderedBy = sort ? [sort.column] : [];
+	for (const column of tieBreakColumns(db, object, columns)) {
+		if (!orderedBy.includes(column)) orderedBy.push(column);
+	}
+	const orderTerms = orderedBy.map((column, position) => {
+		const direction = sort && position === 0 && sort.direction === 'desc' ? ' DESC' : '';
+		return `${quoteSqliteIdentifier(column)}${direction}`;
+	});
+	return { orderedBy, orderTerms };
+}
+
 /**
  * One column's two result expressions: the value (cut when it is long TEXT or
  * a BLOB) and its full length (null unless it is TEXT or a BLOB). Neither has
@@ -198,27 +246,14 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		request.filter
 	);
 
-	const sort = request.sort ?? null;
-	if (sort) {
-		if (!columns.some((column) => column.name === sort.column)) {
-			throw new Error(`${object.name} has no column named ${sort.column}.`);
-		}
-		if (sort.direction !== 'asc' && sort.direction !== 'desc') {
-			throw new Error(`Sort direction must be asc or desc.`);
-		}
-	}
+	const { orderedBy, orderTerms } = sqliteRowOrder(db, { object, columns }, request.sort);
+	// The rowid rides ahead of the cells, so a caller can name a row exactly
+	// (saving a BLOB, later an edit). Bare, with no `AS`, like the cells.
+	const rowidAlias = reachableRowidAlias(object, columns);
 
-	const orderedBy = sort ? [sort.column] : [];
-	for (const column of tieBreakColumns(db, object, columns)) {
-		if (!orderedBy.includes(column)) orderedBy.push(column);
-	}
-	const orderTerms = orderedBy.map((column, position) => {
-		const direction = sort && position === 0 && sort.direction === 'desc' ? ' DESC' : '';
-		return `${quoteSqliteIdentifier(column)}${direction}`;
-	});
-
-	const selectList =
+	const cellList =
 		columns.length > 0 ? columns.map((column) => columnExpressions(column.name)).join(', ') : '1';
+	const selectList = rowidAlias ? `${quoteSqliteIdentifier(rowidAlias)}, ${cellList}` : cellList;
 	if (filter.problem) {
 		// Text that does not parse reads nothing: the caller keeps what it shows
 		// and underlines the span.
@@ -226,6 +261,7 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 			name: object.name,
 			columns,
 			rows: [],
+			rowids: rowidAlias ? [] : null,
 			offset,
 			hasMore: false,
 			orderedBy,
@@ -251,14 +287,18 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		.all(...(where?.params ?? []), limit + 1, offset) as unknown[][];
 	const elapsedMs = Math.round(performance.now() - started);
 
-	const rows = raw
-		.slice(0, limit)
-		.map((row) => columns.map((_, index) => toCell(row[index * 2], row[index * 2 + 1])));
+	const first = rowidAlias ? 1 : 0;
+	const kept = raw.slice(0, limit);
+	const rows = kept.map((row) =>
+		columns.map((_, index) => toCell(row[first + index * 2], row[first + index * 2 + 1]))
+	);
+	const rowids = rowidAlias ? kept.map((row) => String(row[0])) : null;
 
 	return {
 		name: object.name,
 		columns,
 		rows,
+		rowids,
 		offset,
 		hasMore: raw.length > limit,
 		orderedBy,

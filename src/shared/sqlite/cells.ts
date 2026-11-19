@@ -17,6 +17,40 @@ export const SQLITE_CELL_TEXT_LIMIT = 4096;
 /** BLOB values arrive as this many leading bytes, in hex, plus their size. */
 export const SQLITE_CELL_BLOB_HEAD_BYTES = 32;
 
+/**
+ * Leading bytes a grid cell shows after a BLOB's size: enough for the magic
+ * number of most file formats (`89 50 4e 47` is a PNG, `25 50 44 46` a PDF).
+ */
+export const SQLITE_GRID_BLOB_HEAD_BYTES = 8;
+
+/**
+ * A BLOB head as spaced lowercase hex (`89 50 4e 47`), at most `maxBytes` of
+ * it, ending in an ellipsis when the value has more bytes than are shown.
+ * Empty for an empty BLOB.
+ */
+export function formatSqliteBlobHex(
+	blob: { head: string; bytes: number },
+	maxBytes = SQLITE_CELL_BLOB_HEAD_BYTES
+): string {
+	const pairs = blob.head.match(/../g)?.slice(0, maxBytes) ?? [];
+	if (pairs.length === 0) return '';
+	return `${pairs.join(' ')}${blob.bytes > pairs.length ? ' …' : ''}`;
+}
+
+/**
+ * A file name to seed the save dialog with when a BLOB is saved:
+ * `<table>-<column>-<row>.bin`, with anything a file system may refuse
+ * folded to `-`. `row` is the rowid when there is one, else the row number.
+ */
+export function sqliteBlobFileName(table: string, column: string, row: string): string {
+	const part = (text: string) =>
+		text
+			.replace(/[^A-Za-z0-9._-]+/g, '-')
+			.replace(/^[-.]+|-+$/g, '')
+			.slice(0, 60) || 'blob';
+	return `${part(table)}-${part(column)}-${part(row)}.bin`;
+}
+
 /** What one cell reads as, and whether that text stands in for a value. */
 export interface SqliteCellText {
 	text: string;
@@ -27,7 +61,8 @@ export interface SqliteCellText {
 /**
  * Display text for one cell. `NULL` is spelled out, never an empty string,
  * because an empty TEXT value is a different value. A cut TEXT value ends in
- * an ellipsis; a BLOB shows its size, since its bytes are not text.
+ * an ellipsis; a BLOB shows its size and its first bytes in hex, since its
+ * bytes are not text and its leading bytes usually say what format it holds.
  */
 export function formatSqliteCell(value: SqliteCellValue): SqliteCellText {
 	if (value === null) return { text: 'NULL', placeholder: true };
@@ -38,8 +73,13 @@ export function formatSqliteCell(value: SqliteCellValue): SqliteCellText {
 			return { text: value.text, placeholder: false };
 		case 'text':
 			return { text: `${value.head}…`, placeholder: false };
-		case 'blob':
-			return { text: `BLOB ${formatSize(value.bytes)}`, placeholder: true };
+		case 'blob': {
+			const hex = formatSqliteBlobHex(value, SQLITE_GRID_BLOB_HEAD_BYTES);
+			return {
+				text: `BLOB ${formatSize(value.bytes)}${hex ? ` · ${hex}` : ''}`,
+				placeholder: true,
+			};
+		}
 	}
 }
 
@@ -66,11 +106,9 @@ export function formatSqliteRecordValue(value: SqliteCellValue): SqliteCellText 
 				placeholder: false,
 			};
 		case 'blob': {
-			const shownBytes = Math.floor(value.head.length / 2);
-			const hex = value.head.match(/../g)?.join(' ') ?? '';
+			const hex = formatSqliteBlobHex(value);
 			const summary = `BLOB ${formatSize(value.bytes)}`;
-			const text = hex ? `${summary}\n${hex}${value.bytes > shownBytes ? ' …' : ''}` : summary;
-			return { text, placeholder: false };
+			return { text: hex ? `${summary}\n${hex}` : summary, placeholder: false };
 		}
 	}
 }

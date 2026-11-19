@@ -150,4 +150,43 @@ describe('RecordDetailModal', () => {
 		expect(screen.getByTestId('test-record-fields')).toHaveTextContent('missing');
 		expect(screen.getByTestId('test-record-fields')).not.toHaveTextContent('Ada');
 	});
+
+	it("draws a field's action beside its value and calls it on click", () => {
+		const onClick = vi.fn();
+		renderModal({
+			fields: [
+				{ key: 'name', value: 'Ada' },
+				{
+					key: 'avatar',
+					value: 'BLOB 2.0 KB',
+					action: { icon: <span>save</span>, label: 'Save BLOB to file', onClick },
+				},
+			],
+		});
+
+		const actions = screen.getAllByTestId('test-record-action');
+		expect(actions).toHaveLength(1);
+		expect(actions[0].closest('tr')).toHaveTextContent('avatar');
+		expect(actions[0]).toHaveAccessibleName('Save BLOB to file: avatar');
+		expect(actions[0]).toHaveAttribute('title', 'Save BLOB to file');
+		fireEvent.click(actions[0]);
+		expect(onClick).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not call a disabled action', () => {
+		const onClick = vi.fn();
+		renderModal({
+			fields: [
+				{
+					key: 'avatar',
+					value: 'BLOB',
+					action: { icon: <span>save</span>, label: 'Save', onClick, disabled: true },
+				},
+			],
+		});
+		const action = screen.getByTestId('test-record-action');
+		expect(action).toBeDisabled();
+		fireEvent.click(action);
+		expect(onClick).not.toHaveBeenCalled();
+	});
 });
