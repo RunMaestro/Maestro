@@ -10,6 +10,7 @@ import {
 	selectPlaybookCompletionCount,
 	usePlaybookCompletionStore,
 } from '../../../renderer/stores/playbookCompletionStore';
+import { openPlaybookReportFromHistory } from '../../../renderer/services/playbookCompletion';
 import { buildFinalSummaryFacts, type PlaybookRunReport } from '../../../shared/playbookRunReport';
 
 function report(playbookName: string): PlaybookRunReport {
@@ -97,5 +98,18 @@ describe('playbookCompletionStore', () => {
 		store().clear();
 		expect(store().queue).toEqual([]);
 		expect(modalOpen()).toBe(false);
+	});
+
+	it('queues a report opened from History behind the ones already waiting', () => {
+		store().enqueue('agent-1', report('Fresh'));
+		openPlaybookReportFromHistory('agent-2', report('From History'));
+		openPlaybookReportFromHistory(undefined, report('Orphan'));
+		expect(currentName()).toBe('Fresh');
+		expect(store().queue.map((c) => [c.sessionId, c.report.playbookName])).toEqual([
+			['agent-1', 'Fresh'],
+			['agent-2', 'From History'],
+			['', 'Orphan'],
+		]);
+		expect(modalOpen()).toBe(true);
 	});
 });

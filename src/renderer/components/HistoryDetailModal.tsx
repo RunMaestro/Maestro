@@ -25,12 +25,14 @@ import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
-import { formatTimestamp } from '../../shared/formatters';
+import { formatTimestamp, isAbsolutePath, joinPath } from '../../shared/formatters';
+import { stripLeadingPlaybookReport } from '../../shared/playbookRunReport';
 import { humanizeCueEventType } from '../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { stripMaestroMarkers } from '../../shared/goalDriven/goalMarkers';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { PlaybookReportBody } from './PlaybookCompletionModal/PlaybookReportBody';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
@@ -217,6 +219,25 @@ export function HistoryDetailModal({
 	// Strip ANSI, then the internal `<!-- maestro:... -->` control markers the Auto
 	// Run engine reads (progress/goal-complete/deadlock/halt) - users shouldn't see them.
 	const cleanResponse = stripMaestroMarkers(stripAnsiCodes(rawResponse));
+
+	// A playbook run's summary entry carries its report: draw it with the same
+	// sections as the completion modal, and keep the rest of the entry's text
+	// (the classic Auto Run summary) below it.
+	const playbookReport = entry.type === 'AUTO' ? entry.playbookReport : undefined;
+	const reportSummaryText = playbookReport
+		? stripMaestroMarkers(stripAnsiCodes(stripLeadingPlaybookReport(rawResponse, playbookReport)))
+		: '';
+	// The report's paths are relative to the folder the run worked in (the
+	// worktree when it used one), which may not be this agent's cwd.
+	const reportCwd = playbookReport?.cwd ?? cwd;
+	const reportInAgentCwd = reportCwd === cwd;
+	const handleReportFileClick = useCallback(
+		(path: string) => {
+			if (!onFileClick) return;
+			onFileClick(isAbsolutePath(path) || !reportCwd ? path : joinPath(reportCwd, path));
+		},
+		[onFileClick, reportCwd]
+	);
 	const resizableModal = useResizableModal({
 		resizeKey: 'history-detail',
 		defaultSize: { width: 960, height: 720 },
@@ -642,6 +663,46 @@ export function HistoryDetailModal({
 						<p className="text-sm italic" style={{ color: theme.colors.textDim }}>
 							This run produced no captured output.
 						</p>
+					) : playbookReport ? (
+						<>
+							<PlaybookReportBody
+								theme={theme}
+								report={playbookReport}
+								showStatus
+								fileTree={reportInAgentCwd ? fileTree : undefined}
+								cwd={reportCwd}
+								projectRoot={reportInAgentCwd ? projectRoot : reportCwd}
+								onFileClick={onFileClick ? handleReportFileClick : undefined}
+								enableBionifyReadingMode={bionifyReadingMode}
+							/>
+							{reportSummaryText && (
+								<details className="mt-4 group" data-testid="history-detail-run-summary">
+									<summary
+										className="flex items-center gap-1 cursor-pointer text-sm list-none"
+										style={{ color: theme.colors.textDim }}
+									>
+										<ChevronRight
+											className="w-3.5 h-3.5 transition-transform group-open:rotate-90"
+											aria-hidden="true"
+										/>
+										Auto Run summary
+									</summary>
+									<div className="mt-2">
+										<MarkdownRenderer
+											content={reportSummaryText}
+											theme={theme}
+											onCopy={(text) => safeClipboardWrite(text)}
+											fileTree={fileTree}
+											cwd={cwd}
+											projectRoot={projectRoot}
+											onFileClick={onFileClick}
+											enableBionifyReadingMode={bionifyReadingMode}
+											chatLineBreaks
+										/>
+									</div>
+								</details>
+							)}
+						</>
 					) : (
 						<MarkdownRenderer
 							content={cleanResponse}

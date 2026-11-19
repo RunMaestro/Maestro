@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
 	buildFinalSummaryFacts,
+	buildPlaybookRunReportProblems,
 	playbookReportFooterParts,
 	playbookReportSections,
 	playbookRunReportStatus,
 	renderFinalSummaryFactsMarkdown,
 	renderPlaybookReportMarkdown,
+	stripLeadingPlaybookReport,
 	type FinalSummaryFactsParams,
 	type PlaybookRunReport,
 	type PlaybookRunReportStatus,
@@ -306,5 +308,98 @@ describe('playbookReportSections', () => {
 		expect(parts).toContain('Tokens: 1,500 (1,200 in / 300 out)');
 		expect(parts.some((part) => part.startsWith('Cost: '))).toBe(true);
 		expect(parts.at(-1)).toBe('Finished: 2026-11-19T10:02:05.000Z');
+	});
+});
+
+describe('buildPlaybookRunReportProblems', () => {
+	it('leads with the last error, then each stall at its last recorded task', () => {
+		const problems = buildPlaybookRunReportProblems({
+			stalledDocuments: [
+				{ filename: '01-SETUP.md', reason: 'no progress in 3 runs' },
+				{ filename: '02-BUILD.md', reason: 'blocked' },
+			],
+			failures: [
+				{ kind: 'stall', documentFilename: '01-SETUP.md', taskIndex: 1 },
+				{ kind: 'error', documentFilename: '02-BUILD.md', taskIndex: 0 },
+				{ kind: 'stall', documentFilename: '01-SETUP.md', taskIndex: 2 },
+			],
+			lastError: {
+				kind: 'error',
+				document: '02-BUILD.md',
+				taskIndex: 0,
+				message: 'Context limit reached',
+			},
+		});
+		expect(problems).toEqual([
+			{ kind: 'error', document: '02-BUILD.md', taskIndex: 0, message: 'Context limit reached' },
+			{ kind: 'stall', document: '01-SETUP.md', taskIndex: 2, message: 'no progress in 3 runs' },
+			{ kind: 'stall', document: '02-BUILD.md', message: 'blocked' },
+		]);
+	});
+
+	it('is empty for a clean run', () => {
+		expect(buildPlaybookRunReportProblems({ stalledDocuments: [], lastError: null })).toEqual([]);
+	});
+});
+
+describe('What did not happen', () => {
+	it('names the document and the 1-based task of the error and each stall', () => {
+		const report = makeReport(
+			'partial',
+			{
+				narrative,
+				problems: [
+					{ kind: 'error', document: '02-BUILD.md', taskIndex: 2, message: 'Rate limited' },
+					{ kind: 'stall', document: '01-SETUP.md', taskIndex: 0, message: 'no progress' },
+				],
+			},
+			{ stalledDocuments: new Map([['01-SETUP.md', 'no progress']]) }
+		);
+		const section = playbookReportSections(report).whatDidNotHappen!;
+		expect(section).toContain('**The run hit an error** at task 3 of `02-BUILD.md`: Rate limited');
+		expect(section).toContain('- task 1 of `01-SETUP.md`: no progress');
+		expect(section.indexOf('Rate limited')).toBeLessThan(section.indexOf('no progress'));
+		// The card sits above the narrative in the copied document.
+		const markdown = renderPlaybookReportMarkdown(report);
+		expect(sectionOrder(markdown)).toEqual(['What did not happen', 'What was done']);
+	});
+
+	it('says the agent halted the run, and where', () => {
+		const section = playbookReportSections(
+			makeReport('failed', {
+				problems: [
+					{ kind: 'halt', document: '02-BUILD.md', taskIndex: 1, message: 'missing credentials' },
+				],
+			})
+		).whatDidNotHappen!;
+		expect(section).toContain(
+			'**The agent halted the run** at task 2 of `02-BUILD.md`: missing credentials'
+		);
+		expect(section).not.toContain('The run ended before every task was finished.');
+	});
+
+	it('is not rendered for completed or stopped runs, even with problems', () => {
+		const problems = [{ kind: 'error' as const, document: 'a.md', taskIndex: 0, message: 'x' }];
+		expect(playbookReportSections(makeReport('completed', { problems })).whatDidNotHappen).toBe(
+			undefined
+		);
+		expect(playbookReportSections(makeReport('stopped', { problems })).whatDidNotHappen).toBe(
+			undefined
+		);
+	});
+});
+
+describe('stripLeadingPlaybookReport', () => {
+	it('returns the History text after the report it leads with', () => {
+		const report = makeReport('completed', { narrative });
+		const text = `${renderPlaybookReportMarkdown(report).trimEnd()}\n\n**Auto Run Summary**\n- **Status:** Completed`;
+		expect(stripLeadingPlaybookReport(text, report)).toBe(
+			'**Auto Run Summary**\n- **Status:** Completed'
+		);
+	});
+
+	it('returns text that does not start with the report whole', () => {
+		const report = makeReport('completed');
+		expect(stripLeadingPlaybookReport('**Auto Run Summary**', report)).toBe('**Auto Run Summary**');
 	});
 });

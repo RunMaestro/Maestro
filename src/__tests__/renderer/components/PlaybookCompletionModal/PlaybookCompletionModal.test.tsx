@@ -158,15 +158,43 @@ describe('PlaybookCompletionModal', () => {
 		renderModal();
 		act(() => store().enqueue('agent-1', makeReport('Partial', 'partial')));
 
-		const [body, details] = markdownProps.slice(-2).map((p) => p.content);
-		expect(body.indexOf('## What did not happen')).toBeGreaterThanOrEqual(0);
-		expect(body.indexOf('## What did not happen')).toBeLessThan(body.indexOf('## What was done'));
+		const [card, body, details] = markdownProps.slice(-3).map((p) => p.content);
+		expect(card).toMatch(/^## What did not happen/);
+		expect(card).toContain('`pb/two`: No progress');
+		expect(body).toMatch(/^## What was done/);
 		expect(body).toContain('## How to use it');
 		expect(body).toContain('## Next steps');
 		expect(body).not.toContain('## Files changed');
 		expect(details).toContain('## Files changed');
 		expect(details).toContain('## Configuration');
-		expect(screen.getByTestId('playbook-completion-details')).not.toHaveAttribute('open');
+		// The card is drawn above the narrative, not merely before it in a string.
+		const cardEl = screen.getByTestId('playbook-report-not-done');
+		const mainEl = screen.getByTestId('playbook-report-main');
+		expect(cardEl.compareDocumentPosition(mainEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(screen.getByTestId('playbook-report-details')).not.toHaveAttribute('open');
+	});
+
+	it('draws the last error with its document and task in the failure card', () => {
+		renderModal();
+		act(() =>
+			store().enqueue(
+				'agent-1',
+				makeReport('Broken', 'failed', {
+					problems: [
+						{ kind: 'error', document: 'pb/one', taskIndex: 1, message: 'Context limit reached' },
+					],
+				})
+			)
+		);
+		expect(screen.getByTestId('playbook-report-not-done')).toHaveTextContent(
+			'**The run hit an error** at task 2 of `pb/one`: Context limit reached'
+		);
+	});
+
+	it('has no failure card for a completed run', () => {
+		renderModal();
+		act(() => store().enqueue('agent-1', makeReport('Fine')));
+		expect(screen.queryByTestId('playbook-report-not-done')).toBeNull();
 	});
 
 	it('offers "Report a problem" (disabled) only when the run did not complete', () => {

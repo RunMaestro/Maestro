@@ -105,6 +105,19 @@ export function openPlaybookCompletionFile(completion: PlaybookCompletion, path:
 }
 
 /**
+ * "Open report" on a History entry: show the report a playbook run's summary
+ * entry carries in the completion modal. It joins the queue like any other
+ * report, so one already on screen is never replaced. `sessionId` is the
+ * agent the run belonged to; without one, Save to project is unavailable.
+ */
+export function openPlaybookReportFromHistory(
+	sessionId: string | undefined,
+	report: PlaybookRunReport
+): void {
+	usePlaybookCompletionStore.getState().enqueue(sessionId ?? '', report);
+}
+
+/**
  * The `playbook-report` surface (`maestro-cli open playbook-report`, the
  * command palette): show the waiting reports, or, with none waiting, the
  * active agent's most recent saved one. Says so in a toast when there is

@@ -19,9 +19,11 @@ import {
 } from '../../../../shared/playbookReportAuthoring';
 import {
 	buildFinalSummaryFacts,
+	buildPlaybookRunReportProblems,
 	playbookRunReportStatus,
 	renderPlaybookReportMarkdown,
 	type PlaybookRunReport,
+	type PlaybookRunReportProblem,
 } from '../../../../shared/playbookRunReport';
 import { savePlaybookRunReport } from '../../../services/playbookRunReport';
 import { authorRunReport, type AuthoredRunReport } from './batchRunReport';
@@ -750,6 +752,19 @@ export function useBatchRunner({
 			// the same agent-driven early-exit contract. (#231)
 			let haltRequest: { document: string; reason: string } | null = null;
 
+			// The last agent error or halt, located by document and task, for the
+			// run report's "What did not happen" card.
+			let lastRunError: PlaybookRunReportProblem | null = null;
+			// The agent error a pause is waiting on, read when the run meets the
+			// pause (SET_ERROR has already landed; resolving it clears the error).
+			// A HITL gate is a planned stop, not an error.
+			const notePausedAgentError = (document: string, taskIndex: number) => {
+				const pausedError = useBatchStore.getState().batchRunStates[sessionId]?.error;
+				if (pausedError && pausedError.type !== 'hitl_gate') {
+					lastRunError = { kind: 'error', document, taskIndex, message: pausedError.message };
+				}
+			};
+
 			// Track the line of the currently-active HITL gate (null when none).
 			// Used to (a) dedupe the sticky toast on Resume-without-tick -
 			// pauseBatchOnError fires every iteration that re-detects the same
@@ -923,6 +938,7 @@ export function useBatchRunner({
 						// Pause processing until the user resolves the error state
 						const errorResolution = errorResolutionRefs.current[sessionId];
 						if (errorResolution) {
+							notePausedAgentError(docEntry.filename, docCheckedCount);
 							const action = await errorResolution.promise;
 							delete errorResolutionRefs.current[sessionId];
 
@@ -1520,6 +1536,12 @@ export function useBatchRunner({
 									reason: haltMarker.reason || 'Halted by agent',
 								};
 								noteRunFailure('halt', docEntry.filename, docCheckedCount);
+								lastRunError = {
+									kind: 'halt',
+									document: docEntry.filename,
+									taskIndex: docCheckedCount,
+									message: haltRequest.reason,
+								};
 								window.maestro.logger.autorun('Auto Run halted by agent', session.name, {
 									document: docEntry.filename,
 									reason: haltRequest.reason,
@@ -1542,6 +1564,12 @@ export function useBatchRunner({
 							});
 
 							noteRunFailure('error', docEntry.filename, docCheckedCount);
+							lastRunError = {
+								kind: 'error',
+								document: docEntry.filename,
+								taskIndex: docCheckedCount,
+								message: error instanceof Error ? error.message : String(error),
+							};
 
 							// A task that refused to spawn (a playbook token with no value)
 							// pauses the run on the Resume / Abort banner, handled below.
@@ -1554,6 +1582,8 @@ export function useBatchRunner({
 							// but processTask threw before the next loop iteration could check for it.
 							const postTaskErrorResolution = errorResolutionRefs.current[sessionId];
 							if (postTaskErrorResolution) {
+								// The AgentError itself says more than the exception it caused.
+								notePausedAgentError(docEntry.filename, docCheckedCount);
 								const action = await postTaskErrorResolution.promise;
 								delete errorResolutionRefs.current[sessionId];
 
@@ -1968,11 +1998,17 @@ export function useBatchRunner({
 			let report: PlaybookRunReport | undefined;
 			if (config.playbook) {
 				const { usageStats: _reportUsage, ...authored } = authoredReport ?? {};
+				const problems = buildPlaybookRunReportProblems({
+					stalledDocuments: finalFacts.stalledDocuments,
+					failures: runFailures,
+					lastError: lastRunError,
+				});
 				report = {
 					playbookName: config.playbook.name || 'Playbook',
 					playbookId: config.playbook.id,
 					status: playbookRunReportStatus(finalFacts, halted),
 					facts: finalFacts,
+					...(problems.length > 0 && { problems }),
 					...(evidence && { evidence }),
 					...authored,
 					parameters: buildPlaybookRunReportParameters(playbookParams),

@@ -22,6 +22,7 @@ import { formatCost, formatCount } from './formatters';
 import { narrativeToMarkdown, type DirectorNotesNarrative } from './directorNotesNarrative';
 import type { PlaybookParamProvenance } from './playbookParams';
 import { RUN_EVIDENCE_MTIME_MAX_DEPTH, RUN_EVIDENCE_MTIME_MAX_ENTRIES } from './runEvidence';
+import type { AutoRunFailureKind } from './stats-types';
 
 // ============================================================================
 // Tier A: facts
@@ -205,11 +206,36 @@ export interface PlaybookRunReportParameter {
 	source: PlaybookParamProvenance;
 }
 
+/**
+ * One thing that did not happen: a document that stalled, the last task
+ * error, or the halt that ended the run. Located by document and task so the
+ * user knows where to look.
+ */
+export interface PlaybookRunReportProblem {
+	kind: AutoRunFailureKind;
+	/** The document's filename, as the run listed it. */
+	document: string;
+	/**
+	 * The 0-based task the run was on: the document's checked-task count when
+	 * it happened. Absent when the source did not record it.
+	 */
+	taskIndex?: number;
+	/** The stall reason, the agent error's message, or the halt reason. */
+	message: string;
+}
+
 export interface PlaybookRunReport {
 	playbookName: string;
 	playbookId?: string;
 	status: PlaybookRunReportStatus;
 	facts: FinalSummaryFacts;
+	/**
+	 * What did not happen, for the card above the narrative: the last error or
+	 * halt first, then every stalled document. Built by
+	 * {@link buildPlaybookRunReportProblems}; a report without it (an older
+	 * one) falls back to `facts.stalledDocuments`.
+	 */
+	problems?: PlaybookRunReportProblem[];
 	evidence?: DiskEvidence;
 	narrative?: DirectorNotesNarrative;
 	/** Authored "How to use it" markdown, rendered verbatim. */
@@ -278,16 +304,76 @@ function demotedNarrativeMarkdown(narrative: DirectorNotesNarrative): string {
 		.replace(/^(#{1,5}) /gm, '#$1 ');
 }
 
+/** A failure the runner recorded: where it happened, without the words. */
+export interface PlaybookRunFailureLocation {
+	kind: AutoRunFailureKind;
+	documentFilename?: string;
+	taskIndex?: number;
+}
+
+/**
+ * The report's `problems`: the last error or halt (the thing that ended or
+ * broke the run, so it leads), then each stalled document with the task it
+ * stalled on. `failures` is the run's failure log in order (the same entries
+ * the stats row gets); a stalled document's task is its last `stall` entry.
+ * Pure.
+ */
+export function buildPlaybookRunReportProblems(params: {
+	stalledDocuments: FinalSummaryFacts['stalledDocuments'];
+	failures?: ReadonlyArray<PlaybookRunFailureLocation>;
+	lastError?: PlaybookRunReportProblem | null;
+}): PlaybookRunReportProblem[] {
+	const stallTask = new Map<string, number>();
+	for (const failure of params.failures ?? []) {
+		if (
+			failure.kind === 'stall' &&
+			failure.documentFilename !== undefined &&
+			failure.taskIndex !== undefined
+		) {
+			stallTask.set(failure.documentFilename, failure.taskIndex);
+		}
+	}
+	const problems: PlaybookRunReportProblem[] = [];
+	if (params.lastError) problems.push(params.lastError);
+	for (const { filename, reason } of params.stalledDocuments) {
+		const taskIndex = stallTask.get(filename);
+		problems.push({
+			kind: 'stall',
+			document: filename,
+			...(taskIndex !== undefined && { taskIndex }),
+			message: reason,
+		});
+	}
+	return problems;
+}
+
+/** `task 3 of \`doc.md\``, or just the document when the task is unknown. */
+function problemLocation(problem: PlaybookRunReportProblem): string {
+	const doc = inlineCode(problem.document);
+	return problem.taskIndex === undefined ? doc : `task ${problem.taskIndex + 1} of ${doc}`;
+}
+
 function whatDidNotHappenSection(report: PlaybookRunReport): string[] {
 	const lines = ['## What did not happen', ''];
-	const stalled = report.facts.stalledDocuments;
-	if (stalled.length === 0) {
+	const problems =
+		report.problems ??
+		buildPlaybookRunReportProblems({ stalledDocuments: report.facts.stalledDocuments });
+	const stalls = problems.filter((p) => p.kind === 'stall');
+	const ending = problems.filter((p) => p.kind !== 'stall');
+
+	if (problems.length === 0) {
 		lines.push('The run ended before every task was finished.');
 		return lines;
 	}
-	lines.push('These documents stopped making progress after multiple attempts:', '');
-	for (const { filename, reason } of stalled) {
-		lines.push(`- ${inlineCode(filename)}: ${reason}`);
+	for (const problem of ending) {
+		const what = problem.kind === 'halt' ? 'The agent halted the run' : 'The run hit an error';
+		lines.push(`**${what}** at ${problemLocation(problem)}: ${problem.message}`, '');
+	}
+	if (stalls.length > 0) {
+		lines.push('These documents stopped making progress after multiple attempts:', '');
+		for (const stall of stalls) {
+			lines.push(`- ${problemLocation(stall)}: ${stall.message}`);
+		}
 	}
 	return lines;
 }
@@ -427,6 +513,19 @@ export function playbookReportSections(report: PlaybookRunReport): PlaybookRepor
 	}
 
 	return sections;
+}
+
+/**
+ * A run summary History entry's text without the report it leads with: the
+ * entry's `fullResponse` is the rendered report followed by the classic
+ * Auto Run summary, and a view that draws the report from the entry's
+ * `playbookReport` wants only the rest. Text that does not start with the
+ * report comes back whole, so nothing is ever dropped.
+ */
+export function stripLeadingPlaybookReport(text: string, report: PlaybookRunReport): string {
+	const rendered = renderPlaybookReportMarkdown(report).trimEnd();
+	if (!text.startsWith(rendered)) return text;
+	return text.slice(rendered.length).trim();
 }
 
 /**

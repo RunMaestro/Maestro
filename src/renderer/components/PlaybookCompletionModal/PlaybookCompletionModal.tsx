@@ -20,14 +20,8 @@
  * until the `playbookReport` modal is open with a report waiting.
  */
 
-import { useCallback, useMemo, useState } from 'react';
-import { CheckCircle2, ChevronRight, StopCircle, AlertTriangle, XCircle } from 'lucide-react';
-import {
-	playbookReportFooterParts,
-	playbookReportSections,
-	playbookRunReportStatusLabel,
-	type PlaybookRunReportStatus,
-} from '../../../shared/playbookRunReport';
+import { useCallback, useState } from 'react';
+import { playbookRunReportStatusLabel } from '../../../shared/playbookRunReport';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import {
 	copyPlaybookReport,
@@ -43,11 +37,14 @@ import {
 } from '../../stores/playbookCompletionStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import type { Theme } from '../../types';
-import { safeClipboardWrite } from '../../utils/clipboard';
 import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
-import { MarkdownRenderer } from '../MarkdownRenderer';
 import { MiniBadge } from '../ui/MiniBadge';
 import { Modal, MODAL_BUTTON_BASE_CLASS, MODAL_BUTTON_SECONDARY_CLASS } from '../ui/Modal';
+import {
+	PlaybookReportBody,
+	PlaybookReportStatusIcon,
+	playbookReportStatusColor,
+} from './PlaybookReportBody';
 
 export interface PlaybookCompletionModalProps {
 	theme: Theme;
@@ -68,33 +65,6 @@ export function PlaybookCompletionModal({ theme }: PlaybookCompletionModalProps)
 			count={count}
 		/>
 	);
-}
-
-function statusColor(theme: Theme, status: PlaybookRunReportStatus): string {
-	switch (status) {
-		case 'completed':
-			return theme.colors.success;
-		case 'partial':
-			return theme.colors.warning;
-		case 'failed':
-			return theme.colors.error;
-		case 'stopped':
-			return theme.colors.textDim;
-	}
-}
-
-function StatusIcon({ status, color }: { status: PlaybookRunReportStatus; color: string }) {
-	const props = { className: 'w-4 h-4', style: { color }, 'aria-hidden': true } as const;
-	switch (status) {
-		case 'completed':
-			return <CheckCircle2 {...props} />;
-		case 'partial':
-			return <AlertTriangle {...props} />;
-		case 'failed':
-			return <XCircle {...props} />;
-		case 'stopped':
-			return <StopCircle {...props} />;
-	}
 }
 
 interface PlaybookCompletionModalBodyProps {
@@ -118,24 +88,11 @@ function PlaybookCompletionModalBody({
 	);
 	const [saving, setSaving] = useState(false);
 
-	const sections = useMemo(() => playbookReportSections(report), [report]);
-	const footerLine = useMemo(() => playbookReportFooterParts(report).join(' · '), [report]);
 	const cwd = report.cwd ?? agentCwd;
 	// The agent's file tree indexes the agent's cwd; a worktree run's paths are
 	// relative to the worktree, so they resolve by path alone.
 	const fileTree = cwd && cwd === agentCwd ? agentFileTree : undefined;
-	const color = statusColor(theme, report.status);
-
-	// What the run did, read first: a failure's card above the narrative.
-	const body = [
-		sections.whatDidNotHappen,
-		sections.whatWasDone,
-		sections.howToUse,
-		sections.nextSteps,
-	]
-		.filter(Boolean)
-		.join('\n\n');
-	const details = [sections.filesChanged, sections.configuration].filter(Boolean).join('\n\n');
+	const color = playbookReportStatusColor(theme, report.status);
 
 	const handleFileClick = useCallback(
 		(path: string) => openPlaybookCompletionFile(completion, path),
@@ -150,16 +107,6 @@ function PlaybookCompletionModalBody({
 			setSaving(false);
 		}
 	}, [completion]);
-
-	const markdownProps = {
-		theme,
-		onCopy: (text: string) => void safeClipboardWrite(text),
-		fileTree,
-		cwd,
-		projectRoot: cwd,
-		sshRemoteId,
-		onFileClick: handleFileClick,
-	};
 
 	const subtitle = (
 		<span className="flex items-center gap-2">
@@ -231,7 +178,7 @@ function PlaybookCompletionModalBody({
 			theme={theme}
 			title={report.playbookName}
 			subtitle={subtitle}
-			headerIcon={<StatusIcon status={report.status} color={color} />}
+			headerIcon={<PlaybookReportStatusIcon status={report.status} color={color} />}
 			priority={MODAL_PRIORITIES.PLAYBOOK_COMPLETION}
 			onClose={dismissCurrent}
 			width={720}
@@ -242,29 +189,14 @@ function PlaybookCompletionModalBody({
 			testId="playbook-completion-modal"
 			contentClassName="flex-1 min-h-0 overflow-y-auto px-6 py-4 select-none"
 		>
-			<div className="select-text" data-testid="playbook-completion-body">
-				<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
-					{footerLine}
-				</p>
-				<MarkdownRenderer content={body} {...markdownProps} />
-			</div>
-			{details && (
-				<details className="mt-4 group" data-testid="playbook-completion-details">
-					<summary
-						className="flex items-center gap-1 cursor-pointer text-sm list-none"
-						style={{ color: theme.colors.textDim }}
-					>
-						<ChevronRight
-							className="w-3.5 h-3.5 transition-transform group-open:rotate-90"
-							aria-hidden="true"
-						/>
-						Details
-					</summary>
-					<div className="mt-2 select-text">
-						<MarkdownRenderer content={details} {...markdownProps} />
-					</div>
-				</details>
-			)}
+			<PlaybookReportBody
+				theme={theme}
+				report={report}
+				fileTree={fileTree}
+				cwd={cwd}
+				sshRemoteId={sshRemoteId}
+				onFileClick={handleFileClick}
+			/>
 		</Modal>
 	);
 }

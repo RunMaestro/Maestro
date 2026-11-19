@@ -100,9 +100,9 @@ The "what was done" part comes from one of two places:
 - A playbook with a `report` document runs that document once, after every other document is done. It writes the narrative plus a **How to use it** and a **Next steps** section.
 - A playbook without one gets a short summary of its task synopses, written on the agent's cheapest model.
 
-A run that failed or was stopped gets no narrative, only the facts. A run that stalled on some documents lists them in **What did not happen**, above the narrative.
+A run that failed or was stopped gets no narrative, only the facts. A run that failed or stalled on some documents says what went wrong in **What did not happen**, above the narrative: the agent's last error or the halt that ended the run, and each document that stopped making progress, each with the document and the task number.
 
-When the run finishes, the report opens in a window on top of whatever you are doing. **Copy report** puts the markdown on the clipboard, **Save to project** writes it into the agent's working directory as `<playbook>-REPORT-<date>-<time>.md`, and file paths in the report open in the File Preview. If several runs finish together, their reports wait in line: the header shows "1 of 3", and **Done** (or <kbd>Esc</kbd>) moves to the next one. Closing a report loses nothing. To see the last one again, run **Open Last Playbook Report** from the command palette, or `maestro-cli open playbook-report`.
+When the run finishes, the report opens in a window on top of whatever you are doing. **Copy report** puts the markdown on the clipboard, **Save to project** writes it into the agent's working directory as `<playbook>-REPORT-<date>-<time>.md`, and file paths in the report open in the File Preview. If several runs finish together, their reports wait in line: the header shows "1 of 3", and **Done** (or <kbd>Esc</kbd>) moves to the next one. Closing a report loses nothing. To see the last one again, run **Open Last Playbook Report** from the command palette, or `maestro-cli open playbook-report`. Opening the run's entry in History shows the same report, with the classic Auto Run summary folded below it, and the entry's **Open report** button opens it in the report window again.
 
 ### Use One as Reference
 

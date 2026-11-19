@@ -557,7 +557,10 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    agent can read or copy directly. There is no verb that writes the
    `<slug>-REPORT-<timestamp>.md` project copy. The CLI engine's own report
    (PLAYBOOK-EXCHANGE-04, the CLI mirror task) is the natural home for one,
-   through `savePlaybookReportToProject()`'s shared file name.
+   through `savePlaybookReportToProject()`'s shared file name. History's
+   "Open report" on an older run has no verb either: `open playbook-report`
+   shows only the newest report, and an older one is read from its
+   `.maestro-reports/` file or the History entry's `playbookReport` field.
 
 ### Federation: remaining gaps
 
