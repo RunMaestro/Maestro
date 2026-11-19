@@ -28,6 +28,12 @@
  * Each table's or view's filter text is kept here, keyed by object, so going
  * back to a table finds its filter as it was left. Cmd+F in the file preview
  * lands in the filter box (`focusFilter()`), switching to the Data view first.
+ *
+ * A Browse / Query switch in the summary strip (remembered) trades the content
+ * pane for the SQL editor (SqliteQueryPanel), with completion from this
+ * database's tables and columns. The rail stays as a reference; picking an
+ * object in it goes back to Browse to show that object. The query text is kept
+ * here, so it survives the switch.
  */
 
 import {
@@ -64,6 +70,7 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
 import { SqliteDatabaseFacts } from './SqliteDatabaseFacts';
 import { SqliteObjectRail } from './SqliteObjectRail';
+import { SqliteQueryPanel } from './SqliteQueryPanel';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
 import { SqliteTableView } from './SqliteTableView';
 
@@ -85,6 +92,18 @@ interface SqliteViewerProps {
 export interface SqliteViewerHandle {
 	focusFilter: () => void;
 }
+
+/** What the viewer shows beside the rail: one object, or the SQL editor. */
+type ViewerMode = 'browse' | 'query';
+const VIEWER_MODES: readonly ViewerMode[] = ['browse', 'query'];
+const VIEWER_MODE_OPTIONS = [
+	{
+		value: 'browse' as const,
+		label: 'Browse',
+		title: 'Look at one table, view, index, or trigger',
+	},
+	{ value: 'query' as const, label: 'Query', title: 'Write SQL against this database' },
+];
 
 /** Key for an object's remembered filter text: a trigger may share a table's name. */
 function filterKey(object: Pick<SqliteObjectSummary, 'kind' | 'name'>): string {
@@ -113,6 +132,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const [selectedName, setSelectedName] = useState<string | null>(null);
 	const showInternal = usePersistedToggle('sqlite-show-internal', false);
 	const objectView = usePersistedChoice<ObjectView>('sqlite-object-view', OBJECT_VIEWS, 'data');
+	const viewerMode = usePersistedChoice<ViewerMode>('sqlite-viewer-mode', VIEWER_MODES, 'browse');
+	const [query, setQuery] = useState('');
 	const [filters, setFilters] = useState<ReadonlyMap<string, string>>(() => new Map());
 	const [focusFilterRequested, setFocusFilterRequested] = useState(false);
 	/**
@@ -133,6 +154,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setStatsError(null);
 		setSelectedName(null);
 		setFilters(new Map());
+		setQuery('');
 
 		window.maestro.sqlite
 			.open(filePath)
@@ -213,7 +235,15 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		return counts.filter((entry) => entry.count > 0);
 	}, [list]);
 
-	const handleSelect = useCallback((name: string) => setSelectedName(name), []);
+	const setViewerMode = viewerMode.setValue;
+	const handleSelect = useCallback(
+		(name: string) => {
+			setSelectedName(name);
+			// Picking an object is asking to see it.
+			setViewerMode('browse');
+		},
+		[setViewerMode]
+	);
 
 	const selectedFilterKey = selected ? filterKey(selected) : null;
 	const handleFilterChange = useCallback(
@@ -241,6 +271,9 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		ref,
 		() => ({
 			focusFilter: () => {
+				// In the SQL editor Cmd+F has nothing to find (the editor has no
+				// find bar), and jumping to Browse would hide what is being typed.
+				if (viewerMode.value === 'query') return;
 				// Only a table or view has rows to filter; an index or trigger
 				// shows its schema, and there is nothing for Cmd+F to find.
 				if (selected?.kind !== 'table' && selected?.kind !== 'view') return;
@@ -248,7 +281,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 				setFocusFilterRequested(true);
 			},
 		}),
-		[selected?.kind, setObjectView]
+		[selected?.kind, setObjectView, viewerMode.value]
 	);
 
 	if (openError) {
@@ -324,6 +357,16 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 						Counting stopped: {statsError}
 					</span>
 				)}
+				<div className="ml-auto select-none">
+					<SegmentedControl
+						value={viewerMode.value}
+						onChange={viewerMode.setValue}
+						options={VIEWER_MODE_OPTIONS}
+						theme={theme}
+						ariaLabel="Browse objects or write a query"
+						testId="sqlite-viewer-mode"
+					/>
+				</div>
 			</div>
 
 			<div className="flex flex-1 min-h-0">
@@ -337,86 +380,100 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 					theme={theme}
 				/>
 
-				<div className="flex-1 min-w-0 flex flex-col min-h-0" data-testid="sqlite-object-pane">
-					{selected ? (
-						<>
-							<div className="shrink-0 flex flex-col gap-2 px-4 pt-4 pb-3 select-text">
-								<div className="flex items-center gap-2 flex-wrap">
-									<span
-										className="text-sm font-mono font-semibold"
-										style={{ color: theme.colors.textMain }}
+				{viewerMode.value === 'query' ? (
+					<div className="flex-1 min-w-0 flex flex-col min-h-0">
+						<SqliteQueryPanel
+							// One mount per open database, so a catalog never carries over.
+							key={info.handle}
+							handle={info.handle}
+							value={query}
+							onChange={setQuery}
+							theme={theme}
+						/>
+					</div>
+				) : (
+					<div className="flex-1 min-w-0 flex flex-col min-h-0" data-testid="sqlite-object-pane">
+						{selected ? (
+							<>
+								<div className="shrink-0 flex flex-col gap-2 px-4 pt-4 pb-3 select-text">
+									<div className="flex items-center gap-2 flex-wrap">
+										<span
+											className="text-sm font-mono font-semibold"
+											style={{ color: theme.colors.textMain }}
+										>
+											{selected.name}
+										</span>
+										<MiniBadge label={selected.kind} theme={theme} />
+										{sqliteObjectTags(selected).map((tag) => (
+											<MiniBadge key={tag} label={tag} theme={theme} />
+										))}
+										{selected.internal && (
+											<MiniBadge label="internal" theme={theme} color={theme.colors.textDim} />
+										)}
+										{hasRows && (
+											<div className="ml-auto select-none">
+												<SegmentedControl
+													value={objectView.value}
+													onChange={objectView.setValue}
+													options={OBJECT_VIEW_OPTIONS}
+													theme={theme}
+													ariaLabel="Show the rows or the schema"
+													testId="sqlite-object-view"
+												/>
+											</div>
+										)}
+									</div>
+									<div
+										className="text-xs flex gap-4 flex-wrap"
+										style={{ color: theme.colors.textDim }}
 									>
-										{selected.name}
-									</span>
-									<MiniBadge label={selected.kind} theme={theme} />
-									{sqliteObjectTags(selected).map((tag) => (
-										<MiniBadge key={tag} label={tag} theme={theme} />
-									))}
-									{selected.internal && (
-										<MiniBadge label="internal" theme={theme} color={theme.colors.textDim} />
-									)}
-									{hasRows && (
-										<div className="ml-auto select-none">
-											<SegmentedControl
-												value={objectView.value}
-												onChange={objectView.setValue}
-												options={OBJECT_VIEW_OPTIONS}
-												theme={theme}
-												ariaLabel="Show the rows or the schema"
-												testId="sqlite-object-view"
-											/>
+										{selected.kind !== 'table' && selected.kind !== 'view' && (
+											<span>on {selected.tableName}</span>
+										)}
+										{selectedRows !== null && <span>{selectedRows} rows</span>}
+										{selectedStats?.sizeBytes !== null &&
+											selectedStats?.sizeBytes !== undefined && (
+												<span>{formatSize(selectedStats.sizeBytes)} on disk</span>
+											)}
+									</div>
+									{selectedStats?.error && (
+										<div className="text-xs" style={{ color: theme.colors.warning }}>
+											{selectedStats.error}
 										</div>
 									)}
 								</div>
-								<div
-									className="text-xs flex gap-4 flex-wrap"
-									style={{ color: theme.colors.textDim }}
-								>
-									{selected.kind !== 'table' && selected.kind !== 'view' && (
-										<span>on {selected.tableName}</span>
-									)}
-									{selectedRows !== null && <span>{selectedRows} rows</span>}
-									{selectedStats?.sizeBytes !== null && selectedStats?.sizeBytes !== undefined && (
-										<span>{formatSize(selectedStats.sizeBytes)} on disk</span>
-									)}
-								</div>
-								{selectedStats?.error && (
-									<div className="text-xs" style={{ color: theme.colors.warning }}>
-										{selectedStats.error}
+								{showData ? (
+									<div
+										className="flex-1 min-h-0"
+										style={{ borderTop: `1px solid ${theme.colors.border}` }}
+									>
+										<SqliteTableView
+											// One mount per object, so a selection change never
+											// shows the previous object's rows or sort.
+											key={`${selected.kind}:${selected.name}`}
+											handle={info.handle}
+											object={selected}
+											filter={filters.get(filterKey(selected)) ?? ''}
+											onFilterChange={handleFilterChange}
+											focusFilterRequested={focusFilterRequested}
+											onFilterFocused={handleFilterFocused}
+											onRowCountSettled={handleRowCountSettled}
+											theme={theme}
+										/>
+									</div>
+								) : (
+									<div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 select-text">
+										<SqliteSchemaPanel handle={info.handle} object={selected} theme={theme} />
 									</div>
 								)}
+							</>
+						) : (
+							<div className="p-4 text-sm" style={{ color: theme.colors.textDim }}>
+								This database has no tables, views, indexes, or triggers.
 							</div>
-							{showData ? (
-								<div
-									className="flex-1 min-h-0"
-									style={{ borderTop: `1px solid ${theme.colors.border}` }}
-								>
-									<SqliteTableView
-										// One mount per object, so a selection change never
-										// shows the previous object's rows or sort.
-										key={`${selected.kind}:${selected.name}`}
-										handle={info.handle}
-										object={selected}
-										filter={filters.get(filterKey(selected)) ?? ''}
-										onFilterChange={handleFilterChange}
-										focusFilterRequested={focusFilterRequested}
-										onFilterFocused={handleFilterFocused}
-										onRowCountSettled={handleRowCountSettled}
-										theme={theme}
-									/>
-								</div>
-							) : (
-								<div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 select-text">
-									<SqliteSchemaPanel handle={info.handle} object={selected} theme={theme} />
-								</div>
-							)}
-						</>
-					) : (
-						<div className="p-4 text-sm" style={{ color: theme.colors.textDim }}>
-							This database has no tables, views, indexes, or triggers.
-						</div>
-					)}
-				</div>
+						)}
+					</div>
+				)}
 			</div>
 		</div>
 	);

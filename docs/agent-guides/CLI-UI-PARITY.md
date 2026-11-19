@@ -620,6 +620,15 @@ why: the action is interactive by nature, sits behind a human-consent boundary,
 or is a pure view preference with nothing for an agent to read back. A new
 entry needs a stated reason, the same way a Covered row needs a verb.
 
+- **The SQLite viewer's SQL editor and its completion** (File Preview on a
+  database: the Browse / Query switch, typing SQL with table and column names
+  completed from the open database). Typing into an editor has no result to
+  read back, and the switch is a remembered view preference. The names the
+  completion offers are readable without it: `sqlite tables <path>` lists the
+  objects and `sqlite schema <path> <object>` their columns, both through the
+  same read-only open the completion catalog (`readSqliteColumnCatalog()`)
+  uses. Running a statement is an action with a result, and gets its verb
+  with the run task.
 - **Grooming on Merge Into and Send to Agent** (the modals' "clean up the
   context" checkbox). `tab merge` and `tab transfer` always move the
   transcript verbatim: context carried to another agent or provider is never

@@ -7,7 +7,11 @@ import {
 	sqliteConvergingRowTotal,
 	sqliteObjectTags,
 } from '../../../shared/sqlite/objects';
-import { quoteSqliteIdentifier } from '../../../shared/sqlite/sql';
+import {
+	isSqliteKeyword,
+	quoteSqliteIdentifier,
+	sqliteIdentifierForSql,
+} from '../../../shared/sqlite/sql';
 import type { SqliteObjectSummary } from '../../../shared/sqlite/types';
 
 function object(overrides: Partial<SqliteObjectSummary>): SqliteObjectSummary {
@@ -138,5 +142,40 @@ describe('quoteSqliteIdentifier', () => {
 	it('keeps spaces and keywords inside the quotes', () => {
 		expect(quoteSqliteIdentifier('order items')).toBe('"order items"');
 		expect(quoteSqliteIdentifier('select')).toBe('"select"');
+	});
+});
+
+describe('isSqliteKeyword', () => {
+	it('knows reserved words in any letter case', () => {
+		expect(isSqliteKeyword('select')).toBe(true);
+		expect(isSqliteKeyword('Order')).toBe(true);
+		expect(isSqliteKeyword('CURRENT_TIMESTAMP')).toBe(true);
+	});
+
+	it('does not count ordinary names', () => {
+		expect(isSqliteKeyword('users')).toBe(false);
+		expect(isSqliteKeyword('email')).toBe(false);
+		expect(isSqliteKeyword('')).toBe(false);
+	});
+});
+
+describe('sqliteIdentifierForSql', () => {
+	it('leaves a plain identifier bare', () => {
+		expect(sqliteIdentifierForSql('users')).toBe('users');
+		expect(sqliteIdentifierForSql('user_id2')).toBe('user_id2');
+		expect(sqliteIdentifierForSql('_private')).toBe('_private');
+		expect(sqliteIdentifierForSql('CamelCase')).toBe('CamelCase');
+	});
+
+	it('quotes a reserved word, a space, a leading digit, or punctuation', () => {
+		expect(sqliteIdentifierForSql('order')).toBe('"order"');
+		expect(sqliteIdentifierForSql('order items')).toBe('"order items"');
+		expect(sqliteIdentifierForSql('2fa')).toBe('"2fa"');
+		expect(sqliteIdentifierForSql('a-b')).toBe('"a-b"');
+		expect(sqliteIdentifierForSql('caf\u00e9')).toBe('"caf\u00e9"');
+	});
+
+	it('quotes through quoteSqliteIdentifier, so an embedded quote is doubled', () => {
+		expect(sqliteIdentifierForSql('we"ird')).toBe('"we""ird"');
 	});
 });

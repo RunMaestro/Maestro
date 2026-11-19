@@ -28,7 +28,10 @@ function fakeDb() {
 					get: (name: string) => (name in db.sql ? { sql: db.sql[name] } : undefined),
 				};
 			}
-			if (sql.startsWith('SELECT * FROM pragma_table_xinfo(?, ?)')) {
+			if (
+				sql.startsWith('SELECT * FROM pragma_table_xinfo(?, ?)') ||
+				sql.startsWith('SELECT name, type FROM pragma_table_xinfo(?, ?)')
+			) {
 				return {
 					all: (name: string, schema: string) => {
 						expect(schema).toBe('main');
@@ -65,7 +68,10 @@ vi.mock('../../../main/sqlite/sqlite-objects', async (importOriginal) => ({
 	readSqliteObjectSummaries: () => state.objects,
 }));
 
-import { readSqliteObjectSchema } from '../../../main/sqlite/sqlite-schema';
+import {
+	readSqliteColumnCatalog,
+	readSqliteObjectSchema,
+} from '../../../main/sqlite/sqlite-schema';
 
 function xinfo(
 	cid: number,
@@ -139,6 +145,7 @@ beforeEach(() => {
 			kv: [xinfo(0, 'k', 'TEXT'), xinfo(1, 'v', 'ANY')],
 			v1: [xinfo(0, 'id', 'INTEGER')],
 			broken: new Error('no such table: main.gone'),
+			sqlite_master: [xinfo(0, 'type', 'TEXT'), xinfo(1, 'name', 'TEXT')],
 		},
 		foreignKeys: {
 			// SQLite numbers keys from the LAST declared: id 1 was declared first.
@@ -296,5 +303,65 @@ describe('readSqliteObjectSchema', () => {
 
 	it('propagates a closed handle', () => {
 		expect(() => readSqliteObjectSchema('gone', 'users')).toThrow('no longer open');
+	});
+});
+
+describe('readSqliteColumnCatalog', () => {
+	it('lists every table and view with its column names and declared types', () => {
+		const catalog = readSqliteColumnCatalog('h1');
+		const byName = (name: string) => catalog.objects.find((object) => object.name === name);
+		expect(catalog.objects.map((object) => `${object.kind}:${object.name}`)).toEqual([
+			'table:users',
+			'table:orders',
+			'table:kv',
+			'view:v1',
+			'view:broken',
+			'table:sqlite_master',
+		]);
+		expect(byName('users')?.columns.slice(0, 4)).toEqual([
+			{ name: 'id', declaredType: 'INTEGER' },
+			{ name: 'email', declaredType: 'TEXT' },
+			{ name: 'name', declaredType: 'VARCHAR(80)' },
+			{ name: 'bio', declaredType: '' },
+		]);
+		expect(byName('v1')?.columns).toEqual([{ name: 'id', declaredType: 'INTEGER' }]);
+	});
+
+	it('skips indexes and triggers, including a trigger that shares a table name', () => {
+		const kinds = readSqliteColumnCatalog('h1').objects.map((object) => object.kind);
+		expect(kinds).not.toContain('index');
+		expect(kinds).not.toContain('trigger');
+		expect(
+			readSqliteColumnCatalog('h1').objects.filter((object) => object.name === 'orders')
+		).toHaveLength(1);
+	});
+
+	it('keeps an object whose columns cannot be read, with none', () => {
+		const broken = readSqliteColumnCatalog('h1').objects.find((object) => object.name === 'broken');
+		expect(broken).toMatchObject({ kind: 'view', columns: [] });
+	});
+
+	it('adds sqlite_master, which holds no row for itself, as an internal table', () => {
+		const master = readSqliteColumnCatalog('h1').objects.at(-1);
+		expect(master).toEqual({
+			name: 'sqlite_master',
+			kind: 'table',
+			internal: true,
+			columns: [
+				{ name: 'type', declaredType: 'TEXT' },
+				{ name: 'name', declaredType: 'TEXT' },
+			],
+		});
+	});
+
+	it('binds every name instead of splicing it into SQL', () => {
+		readSqliteColumnCatalog('h1');
+		expect(state.prepared).toEqual([
+			'SELECT name, type FROM pragma_table_xinfo(?, ?) ORDER BY cid',
+		]);
+	});
+
+	it('propagates a closed handle', () => {
+		expect(() => readSqliteColumnCatalog('gone')).toThrow('no longer open');
 	});
 });

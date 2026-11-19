@@ -4,7 +4,8 @@
  * What the viewer's content pane shows for the selected object: a table's or
  * view's columns (declared type, affinity, nullability, default, primary key
  * position, foreign-key targets), an index's key columns, and the original
- * `CREATE` statement from `sqlite_master`.
+ * `CREATE` statement from `sqlite_master`. Also the SQL editor's completion
+ * catalog: every table's and view's column names in one read.
  *
  * Everything here reads schema metadata only (`sqlite_master` and the
  * `pragma_*` table-valued functions), never a row of user data, so it is
@@ -17,6 +18,9 @@ import type Database from 'better-sqlite3';
 
 import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
 import type {
+	SqliteCatalogColumn,
+	SqliteCatalogObject,
+	SqliteColumnCatalog,
 	SqliteColumnSchema,
 	SqliteForeignKey,
 	SqliteForeignKeyTarget,
@@ -164,6 +168,53 @@ function readIndex(
 		partial: listed?.partial === 1,
 		origin: INDEX_ORIGINS[listed?.origin ?? 'c'] ?? 'create-index',
 	};
+}
+
+/**
+ * The schema table itself. `sqlite_master` holds no row for itself, so it is
+ * added by hand: it is the table people query most when exploring a file.
+ */
+const SCHEMA_TABLE = 'sqlite_master';
+
+/**
+ * Every table's and view's column names, for the SQL editor's completion.
+ * One `pragma_table_xinfo` per object, name bound, so this stays schema
+ * metadata only and instant on any size of database.
+ *
+ * An object whose columns cannot be read (a virtual table whose module this
+ * build lacks, a view over a dropped table) is still listed, with no columns:
+ * its name completes, and one broken view never empties the whole catalog.
+ */
+export function readSqliteColumnCatalog(handle: string): SqliteColumnCatalog {
+	const { db } = getSqliteDatabase(handle);
+	const columnsOf = db.prepare('SELECT name, type FROM pragma_table_xinfo(?, ?) ORDER BY cid');
+	const readColumnNames = (name: string): SqliteCatalogColumn[] => {
+		try {
+			return (columnsOf.all(name, 'main') as Array<{ name: string; type: string }>).map((row) => ({
+				name: row.name,
+				declaredType: row.type,
+			}));
+		} catch {
+			// Expected for the cases above; the name alone is still worth completing.
+			return [];
+		}
+	};
+
+	const objects: SqliteCatalogObject[] = readSqliteObjectSummaries(db)
+		.filter((object) => object.kind === 'table' || object.kind === 'view')
+		.map((object) => ({
+			name: object.name,
+			kind: object.kind as 'table' | 'view',
+			internal: object.internal,
+			columns: readColumnNames(object.name),
+		}));
+	objects.push({
+		name: SCHEMA_TABLE,
+		kind: 'table',
+		internal: true,
+		columns: readColumnNames(SCHEMA_TABLE),
+	});
+	return { objects };
 }
 
 /**

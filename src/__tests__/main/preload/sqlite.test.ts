@@ -60,6 +60,12 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('sqlite:readSchema', 'h1', 'users', undefined);
 	});
 
+	it('reads the column catalog by handle', async () => {
+		mockInvoke.mockResolvedValue({ objects: [] });
+		await api.readColumns('h1');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readColumns', 'h1');
+	});
+
 	it('reads a window of rows', async () => {
 		const request = { handle: 'h1', name: 'users', offset: 0, limit: 300, sort: null };
 		mockInvoke.mockResolvedValue({ name: 'users', rows: [], hasMore: false });

@@ -4,6 +4,7 @@
  * Exposes window.maestro.sqlite: open a database read-only, read its summary,
  * check its integrity, list its schema
  * objects, measure their row counts and sizes, read one object's structure,
+ * read every table's column names for SQL completion,
  * read a window of a table's rows, count its rows, save a BLOB to a file,
  * close the handle.
  */
@@ -12,6 +13,7 @@ import { ipcRenderer } from 'electron';
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
+	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
@@ -73,6 +75,14 @@ export function createSqliteApi() {
 			name: string,
 			kind?: SqliteObjectKind
 		): Promise<SqliteObjectSchema> => ipcRenderer.invoke('sqlite:readSchema', handle, name, kind),
+
+		/**
+		 * Every table's and view's column names, for the SQL editor's
+		 * schema-aware completion. An object whose columns cannot be read is
+		 * listed with none.
+		 */
+		readColumns: (handle: string): Promise<SqliteColumnCatalog> =>
+			ipcRenderer.invoke('sqlite:readColumns', handle),
 
 		/**
 		 * One window of a table's or view's rows (`LIMIT`/`OFFSET`), sorted in

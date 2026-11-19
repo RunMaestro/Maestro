@@ -243,6 +243,7 @@ import type {
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
+	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
@@ -1993,6 +1994,7 @@ interface MaestroAPI {
 			name: string,
 			kind?: SqliteObjectKind
 		) => Promise<SqliteObjectSchema>;
+		readColumns: (handle: string) => Promise<SqliteColumnCatalog>;
 		readRows: (request: SqliteRowsRequest) => Promise<SqliteRowsPage>;
 		countRows: (request: SqliteCountRequest) => Promise<SqliteRowCount>;
 		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;

@@ -141,11 +141,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Opening a user's SQLite database to read it:** `openSqliteDatabase()`, `getSqliteDatabase()`, `closeAllSqliteDatabases()` in `src/main/sqlite/sqlite-database.ts`; a second connection via `openReadOnlySqliteConnection()` in `src/main/sqlite/sqlite-connection.ts`
 - **A SQLite database's header facts and integrity check:** `readSqliteDatabaseSummary()` in `src/main/sqlite/sqlite-summary.ts`; `checkSqliteIntegrity()` in `src/main/sqlite/sqlite-integrity.ts`; `sqliteSummaryFacts()`, `formatSqliteIntegrity()` in `src/shared/sqlite/summary.ts`
 - **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
-- **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()` in `src/shared/sqlite/sql.ts`
+- **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()`, `sqliteIdentifierForSql()`, `isSqliteKeyword()` in `src/shared/sqlite/sql.ts`
 - **Reading a window of a SQLite table's rows (LIMIT/OFFSET, server-side sort):** `readSqliteRows()` in `src/main/sqlite/sqlite-rows.ts`; `formatSqliteCell()`, `formatSqliteRecordValue()` in `src/shared/sqlite/cells.ts`
 - **Counting a SQLite table's rows (a converging count):** `countSqliteRows()`, `countAllSqliteRows()` in `src/main/sqlite/sqlite-count.ts`; `sqliteConvergingRowTotal()` in `src/shared/sqlite/objects.ts`
 - **Filtering a SQLite table's rows (a parameterised WHERE):** `buildSqliteFilter()`, `compileSqliteFilter()`, `sqliteRegexpTest()` in `src/shared/sqlite/filter.ts`
-- **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
+- **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()`, `readSqliteColumnCatalog()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
 - **Saving a SQLite BLOB to a file:** `saveSqliteBlob()`, `readSqliteBlob()` in `src/main/sqlite/sqlite-blob.ts`; `formatSqliteBlobHex()`, `sqliteBlobFileName()` in `src/shared/sqlite/cells.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
@@ -491,6 +491,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Diagram labels on fills the AUTHOR chose:** `repairDiagramLabelContrast(svg)` in `src/renderer/utils/diagramLabelContrast.ts`, over `cssColorToHex()` in `src/shared/colorContrast.ts`
 - **Naming the OS file manager in copy:** `getFileManagerName()`, `fileManagerName()`, `getRevealLabel()`, `getOpenInLabel()` in `src/renderer/utils/platformUtils.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts`, then `getCachedAnsiHtml()` in `src/renderer/utils/textProcessing.ts`
+- **A SQL editor with completion from a SQLite database:** `buildSqliteSqlLanguage()` in `src/renderer/components/SqliteViewer/sqliteSqlLanguage.ts`, via `<MarkdownEditor languageExtension>`
 - **Previewing a parquet file:** `<ParquetViewer>` in `src/renderer/components/ParquetViewer/`, over the main-process engine in `src/main/parquet/` and the shared filter language in `src/shared/parquet/`
 - **Graphing a set of documents rather than one:** `BuildOptions.scopeFiles` / `scopeDirectory` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`, opened via `openGraphScope()` in `fileExplorerStore.ts`
 - **Sizing a Document Graph node:** `calculateNodeWidth()`, `calculateNodeHeight()` in `src/renderer/components/DocumentGraph/mindMapLayouts.ts` (never the `NODE_WIDTH` constant)

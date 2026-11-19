@@ -25,7 +25,10 @@ const objects = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../main/sqlite/sqlite-database', () => database);
-const schema = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
+const schema = vi.hoisted(() => ({
+	readSqliteObjectSchema: vi.fn(),
+	readSqliteColumnCatalog: vi.fn(),
+}));
 const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
 const count = vi.hoisted(() => ({ countSqliteRows: vi.fn() }));
 const blob = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
@@ -58,6 +61,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:countRows',
 			'sqlite:listObjects',
 			'sqlite:open',
+			'sqlite:readColumns',
 			'sqlite:readObjectStats',
 			'sqlite:readRows',
 			'sqlite:readSchema',
@@ -102,6 +106,13 @@ describe('SQLite IPC handlers', () => {
 			kind: 'table',
 		});
 		expect(schema.readSqliteObjectSchema).toHaveBeenCalledWith('h1', 'users', 'table');
+	});
+
+	it('reads the column catalog for SQL completion by handle', async () => {
+		const catalog = { objects: [{ name: 'users', kind: 'table', internal: false, columns: [] }] };
+		schema.readSqliteColumnCatalog.mockReturnValue(catalog);
+		await expect(invoke('sqlite:readColumns', 'h1')).resolves.toEqual(catalog);
+		expect(schema.readSqliteColumnCatalog).toHaveBeenCalledWith('h1');
 	});
 
 	it('reads a window of rows with the request passed through whole', async () => {

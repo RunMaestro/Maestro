@@ -11,6 +11,7 @@ import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import { SQLITE_AUTO_INTEGRITY_MAX_BYTES } from '../../../../shared/sqlite/summary';
 import type {
 	SqliteBlobRequest,
+	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
@@ -27,6 +28,13 @@ import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackCont
 import { mockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
+
+// CodeMirror cannot lay itself out in jsdom; the SQL editor renders the
+// shared textarea double instead.
+vi.mock('../../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
 
 const notifyToastMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
@@ -104,6 +112,7 @@ let listObjects: ReturnType<typeof vi.fn>;
 let readObjectStats: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
 let readSchema: ReturnType<typeof vi.fn>;
+let readColumns: ReturnType<typeof vi.fn>;
 let readRows: ReturnType<typeof vi.fn>;
 let countRows: ReturnType<typeof vi.fn>;
 let saveBlob: ReturnType<typeof vi.fn>;
@@ -230,6 +239,20 @@ const INDEX_SCHEMA: SqliteObjectSchema = {
 	},
 };
 
+const CATALOG: SqliteColumnCatalog = {
+	objects: [
+		{
+			name: 'users',
+			kind: 'table',
+			internal: false,
+			columns: [
+				{ name: 'id', declaredType: 'INTEGER' },
+				{ name: 'email', declaredType: 'TEXT' },
+			],
+		},
+	],
+};
+
 beforeEach(() => {
 	installLocalStorageMock();
 	open = vi.fn().mockResolvedValue(INFO);
@@ -240,6 +263,7 @@ beforeEach(() => {
 	readSchema = vi.fn(async (_handle: string, name: string) =>
 		name === 'users_email' ? INDEX_SCHEMA : { ...EVENTS_SCHEMA, name }
 	);
+	readColumns = vi.fn().mockResolvedValue(CATALOG);
 	readRows = vi.fn(async (request: SqliteRowsRequest) => eventsPage(request));
 	// The count never answers unless a test says so: a settled count would
 	// replace the rail's capped counts that other tests assert on.
@@ -262,6 +286,7 @@ beforeEach(() => {
 			listObjects,
 			readObjectStats,
 			readSchema,
+			readColumns,
 			readRows,
 			countRows,
 			saveBlob,
@@ -1145,5 +1170,83 @@ describe('SqliteViewer database summary', () => {
 		expect(await screen.findByTestId('sqlite-integrity-ok')).toBeInTheDocument();
 		expect(checkIntegrity).toHaveBeenCalledTimes(2);
 		expect(checkIntegrity).toHaveBeenLastCalledWith('h1', 'quick');
+	});
+});
+
+describe('SqliteViewer query editor', () => {
+	it('opens on Browse, and Query swaps the content pane for the SQL editor', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-object-pane');
+		expect(screen.queryByTestId('sqlite-query-panel')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		expect(await screen.findByTestId('sqlite-query-panel')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-object-pane')).not.toBeInTheDocument();
+		// The rail stays as a reference while writing SQL.
+		expect(screen.getByTestId('sqlite-object-rail')).toBeInTheDocument();
+		expect(localStorage.getItem('sqlite-viewer-mode')).toBe('query');
+	});
+
+	it('remembers Query across a reopen', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-query-panel')).toBeInTheDocument();
+	});
+
+	it("feeds the editor a SQL grammar built from the database's column catalog", async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByRole('textbox');
+		expect(editor).toHaveAttribute('data-language', 'sql');
+		await waitFor(() => expect(editor).toHaveAttribute('data-language-extension', 'host'));
+		expect(readColumns).toHaveBeenCalledWith('h1');
+		expect(screen.getByTestId('sqlite-query-status')).toHaveTextContent(
+			'Completes keywords, table names, and the columns of the tables a statement names.'
+		);
+	});
+
+	it('keeps keyword completion and says why when the catalog cannot be read', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		readColumns.mockRejectedValue(new Error('SQLite database handle is no longer open.'));
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-query-catalog-error')).toHaveTextContent(
+			'Completing keywords only. The table and column names could not be read: SQLite database handle is no longer open.'
+		);
+		// The plain grammar from the language loader still highlights and
+		// completes keywords.
+		expect(screen.getByRole('textbox')).toHaveAttribute('data-language-extension', 'loader');
+	});
+
+	it('keeps the query text across a switch to Browse and back', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-object-pane');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		fireEvent.change(await screen.findByRole('textbox'), {
+			target: { value: 'SELECT email FROM users' },
+		});
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
+		await screen.findByTestId('sqlite-object-pane');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		expect(await screen.findByRole('textbox')).toHaveValue('SELECT email FROM users');
+	});
+
+	it('goes back to Browse when an object is picked in the rail', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		await screen.findByTestId('sqlite-query-panel');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
+		expect(await screen.findByTestId('sqlite-object-pane')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-query-panel')).not.toBeInTheDocument();
+		expect(localStorage.getItem('sqlite-viewer-mode')).toBe('browse');
+	});
+
+	it('leaves Cmd+F alone in Query mode instead of jumping to a filter box', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		const ref = createRef<SqliteViewerHandle>();
+		render(<SqliteViewer ref={ref} filePath="/data/app.db" fileName="app.db" theme={mockTheme} />);
+		await screen.findByTestId('sqlite-query-panel');
+		act(() => ref.current?.focusFilter());
+		expect(screen.getByTestId('sqlite-query-panel')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-filter-input')).not.toBeInTheDocument();
 	});
 });

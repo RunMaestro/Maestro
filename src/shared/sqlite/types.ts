@@ -183,6 +183,31 @@ export interface SqliteObjectSchema {
 	error?: string;
 }
 
+/** One column as the SQL editor's completion offers it. */
+export interface SqliteCatalogColumn {
+	name: string;
+	/** The declared type, verbatim; empty when none was given. */
+	declaredType: string;
+}
+
+/** A table or view whose columns the SQL editor can complete. */
+export interface SqliteCatalogObject {
+	name: string;
+	kind: 'table' | 'view';
+	/** `sqlite_*` tables and shadow tables, which completion ranks below user objects. */
+	internal: boolean;
+	/** Columns in declaration order; empty when they could not be read. */
+	columns: SqliteCatalogColumn[];
+}
+
+/**
+ * Every table's and view's column names, in one read, for the SQL editor's
+ * schema-aware completion. Lighter than `SqliteObjectSchema`: no keys, no SQL.
+ */
+export interface SqliteColumnCatalog {
+	objects: SqliteCatalogObject[];
+}
+
 /** A server-side sort for the table view: one column, one direction. */
 export interface SqliteSortSpec {
 	column: string;

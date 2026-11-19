@@ -1,3 +1,4 @@
+import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../../constants/themes';
 import type { CompletionActivation, CodeEditorShortcutId } from './codeEditing';
 
@@ -88,6 +89,13 @@ export interface MarkdownEditorProps {
 	onChange: (value: string) => void;
 	/** Syntax-highlight language hint from `getLanguageFromFilename()`. */
 	language: string;
+	/**
+	 * A grammar the host built itself, used instead of the one `language`
+	 * would load. For a language configured per document, such as SQL with
+	 * the open database's tables and columns for completion. Keep the value
+	 * stable (memoize it): a new one reconfigures the editor.
+	 */
+	languageExtension?: Extension;
 	theme: Theme;
 	/** Native browser spellcheck (red squiggles on prose). */
 	spellCheck?: boolean;

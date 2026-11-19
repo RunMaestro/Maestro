@@ -4,7 +4,8 @@
  * The renderer's view of a SQLite database goes through these calls. As with
  * parquet, no database bytes cross IPC: `open` returns a summary and a handle,
  * the summary and integrity calls return header facts and a verdict, the
- * table-list and schema calls return names, numbers, and schema text,
+ * table-list, schema, and column-catalog calls return names, numbers, and
+ * schema text,
  * the row calls return one bounded window of cells, a BLOB save writes the
  * value to disk here rather than shipping it, and the read-only
  * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
@@ -15,6 +16,7 @@ import { ipcMain } from 'electron';
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
+	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
@@ -34,7 +36,7 @@ import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-dat
 import { checkSqliteIntegrity } from '../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
-import { readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
+import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
 
 export function registerSqliteHandlers(): void {
@@ -88,6 +90,13 @@ export function registerSqliteHandlers(): void {
 			name: string,
 			kind?: SqliteObjectKind
 		): Promise<SqliteObjectSchema> => readSqliteObjectSchema(handle, name, kind)
+	);
+
+	// The SQL editor's completion catalog: every table's and view's column
+	// names. Schema metadata only, one pragma per object.
+	ipcMain.handle(
+		'sqlite:readColumns',
+		async (_event, handle: string): Promise<SqliteColumnCatalog> => readSqliteColumnCatalog(handle)
 	);
 
 	// One window of a table's or view's rows for the table view: LIMIT/OFFSET
