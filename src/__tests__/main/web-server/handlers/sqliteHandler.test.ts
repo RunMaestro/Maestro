@@ -1102,6 +1102,15 @@ describe('sqlite_update_cell handler', () => {
 		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
 	});
 
+	it('forwards the row version the CLI read, for the edit to check', async () => {
+		rowEdits.updateSqliteCell.mockResolvedValue({});
+		handler.handleMessage(client, { ...message, version: 'SeenSeenSeenSeenSeen-2' });
+		await flush();
+		expect(rowEdits.updateSqliteCell).toHaveBeenCalledWith(
+			expect.objectContaining({ version: 'SeenSeenSeenSeenSeen-2' })
+		);
+	});
+
 	it("locks again when the edit fails, and answers with SQLite's words", async () => {
 		rowEdits.updateSqliteCell.mockRejectedValue(new Error('UNIQUE constraint failed: users.email'));
 		handler.handleMessage(client, message);
@@ -1283,6 +1292,15 @@ describe('sqlite_delete_row handler', () => {
 			success: true,
 			result,
 		});
+	});
+
+	it('forwards the row version the CLI read, for the delete to check', async () => {
+		rowEdits.deleteSqliteRow.mockResolvedValue({});
+		handler.handleMessage(client, { ...message, version: 'SeenSeenSeenSeenSeen-2' });
+		await flush();
+		expect(rowEdits.deleteSqliteRow).toHaveBeenCalledWith(
+			expect.objectContaining({ version: 'SeenSeenSeenSeenSeen-2' })
+		);
 	});
 
 	it("locks again when a foreign key refuses the delete, and answers with SQLite's words", async () => {

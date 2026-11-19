@@ -50,6 +50,13 @@
  *   - **Exactly one row.** The `UPDATE` runs in a transaction, and anything
  *     other than one changed row rolls it back: a row deleted or re-keyed
  *     since it was read changes nothing, and is reported.
+ *   - **Never over a change it did not see.** An `UPDATE` or `DELETE` given
+ *     the row's version (the one its page showed, sqlite-row-version.ts)
+ *     checks it in the same `WHERE` as the key, so a row another tab, another
+ *     program, or a trigger changed since the read matches nothing: the write
+ *     changes nothing and says the row changed (`sqliteStaleRowMessage()`),
+ *     where it would otherwise have overwritten that change. Each result
+ *     carries the row's new version, for the next edit to send.
  *   - **The row comes back as stored.** `RETURNING` gives the row's key
  *     after the change, which differs from the old one when the edit wrote a
  *     key column (an `INTEGER PRIMARY KEY` IS the rowid), and the row is read
@@ -65,7 +72,7 @@
 import { sqliteRowidValueProblem, sqliteStoredValueProblem } from '../../shared/sqlite/affinity';
 import type { SqliteBindValue } from '../../shared/sqlite/filter';
 import { sqliteParameterBindValue } from '../../shared/sqlite/query';
-import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
+import { sqliteColumnAffinity, sqliteStaleRowMessage } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
 	SqliteAffinity,
@@ -94,6 +101,7 @@ import {
 	type SqliteRowKeyCondition,
 } from './sqlite-identity';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
+import { sqliteRowVersionExpression, sqliteRowVersionParam } from './sqlite-row-version';
 import { sqliteRowSelectList, sqliteSelectedRow } from './sqlite-rows';
 
 function requireText(value: unknown, label: string, what = 'A cell edit'): string {
@@ -181,21 +189,69 @@ function returnedRowKey(identity: SqliteRowIdentity, returned: unknown[]): Sqlit
 
 /**
  * One row of the table, read by key the way a window reads it (cells cut as
- * a page cuts them), or undefined when no row has that key.
+ * a page cuts them) with its version, or undefined when no row has that key.
  */
 function readRowByKey(
 	db: Database.Database,
 	table: SqliteEditableTable,
 	condition: SqliteRowKeyCondition
-): SqliteCellValue[] | undefined {
+): { cells: SqliteCellValue[]; version: string } | undefined {
 	const raw = db
 		.prepare(
-			`SELECT ${sqliteRowSelectList(table.columns, null, [])} FROM ${table.source} WHERE ${condition.where}`
+			`SELECT ${sqliteRowSelectList(table.columns, null, [], true)} FROM ${table.source} WHERE ${condition.where}`
 		)
 		.raw(true)
 		.safeIntegers(true)
 		.get(...condition.params) as unknown[] | undefined;
-	return raw ? sqliteSelectedRow(raw, table.columns.length, null, []).cells : undefined;
+	if (!raw) return undefined;
+	const row = sqliteSelectedRow(raw, table.columns.length, null, [], true);
+	return { cells: row.cells, version: row.version ?? '' };
+}
+
+/**
+ * The `WHERE` a write to one existing row runs with: its key, and when the
+ * caller sent the version its page showed, that version too, so the check
+ * and the write are one statement and a row changed since the read matches
+ * nothing (sqlite-row-version.ts).
+ */
+function rowWriteCondition(
+	table: SqliteEditableTable,
+	condition: SqliteRowKeyCondition,
+	version: string | null
+): { where: string; params: unknown[] } {
+	if (version === null) return { where: condition.where, params: condition.params };
+	const expression = sqliteRowVersionExpression(table.columns.map((entry) => entry.name));
+	return {
+		where: `${condition.where} AND ${expression} = ?`,
+		params: [...condition.params, version],
+	};
+}
+
+/**
+ * Why a write to one existing row matched none: the row is gone (deleted or
+ * re-keyed), or, when the write checked a version, it is there but changed.
+ * Read inside the write's transaction, so it sees what the write saw.
+ */
+function staleRowError(
+	db: Database.Database,
+	table: SqliteEditableTable,
+	condition: SqliteRowKeyCondition,
+	version: string | null,
+	nothing: 'changed' | 'deleted'
+): Error {
+	const stillThere =
+		version !== null &&
+		db
+			.prepare(`SELECT 1 FROM ${table.source} WHERE ${condition.where}`)
+			.get(...condition.params) !== undefined;
+	return new Error(
+		sqliteStaleRowMessage(
+			stillThere ? 'changed' : 'gone',
+			table.object.name,
+			condition.label,
+			nothing
+		)
+	);
 }
 
 /**
@@ -242,8 +298,9 @@ function planCellEdit(
 /**
  * Change one cell of one row. Rejects, with nothing written, when editing is
  * not enabled for the tab, the backup fails, the table cannot be edited, the
- * column is generated or missing, the key does not name a row, the value
- * does not bind, or SQLite refuses the change (its message, verbatim).
+ * column is generated or missing, the key does not name a row, the row
+ * changed since the `version` the caller sent, the value does not bind, or
+ * SQLite refuses the change (its message, verbatim).
  */
 export async function updateSqliteCell(
 	request: SqliteCellUpdateRequest
@@ -251,6 +308,7 @@ export async function updateSqliteCell(
 	const name = requireText(request?.name, 'table name');
 	const column = requireText(request?.column, 'column name');
 	const given = sqliteWriteBindValue(column, request.value);
+	const version = sqliteRowVersionParam(request.version);
 
 	// Refuse what would be refused anyway before the backup is taken.
 	planCellEdit(
@@ -269,10 +327,11 @@ export async function updateSqliteCell(
 
 	const keyColumns = sqliteRowKeyColumns(identity);
 	const quotedColumn = quoteSqliteIdentifier(column);
+	const target = rowWriteCondition(plan, condition, version);
 	// The key, then the edited value as stored, so a converted value is seen.
 	const update = db
 		.prepare(
-			`UPDATE ${source} SET ${quotedColumn} = ? WHERE ${condition.where} ` +
+			`UPDATE ${source} SET ${quotedColumn} = ? WHERE ${target.where} ` +
 				`RETURNING ${keyColumns.map(quoteSqliteIdentifier).join(', ')}, ` +
 				`typeof(${quotedColumn}), ${quotedColumn}`
 		)
@@ -281,12 +340,8 @@ export async function updateSqliteCell(
 
 	const started = performance.now();
 	const row = db.transaction(() => {
-		const changed = update.all(given, ...condition.params) as unknown[][];
-		if (changed.length === 0) {
-			throw new Error(
-				`${object.name} has no row with ${condition.label}: it was deleted or its key changed since it was read. Nothing was changed; reload the table.`
-			);
-		}
+		const changed = update.all(given, ...target.params) as unknown[][];
+		if (changed.length === 0) throw staleRowError(db, plan, condition, version, 'changed');
 		if (changed.length > 1) {
 			// The key is unique, so this cannot happen; refuse rather than trust it.
 			throw new Error(
@@ -311,13 +366,13 @@ export async function updateSqliteCell(
 				`Setting ${column} this way would leave the row with no key to name it by, so nothing was changed. ${error instanceof Error ? error.message : String(error)}`
 			);
 		}
-		const cells = readRowByKey(db, plan, after);
-		if (!cells) {
+		const read = readRowByKey(db, plan, after);
+		if (!read) {
 			throw new Error(
 				`${object.name} has no row with ${after.label} after the change (a trigger may have removed it), so nothing was changed.`
 			);
 		}
-		return { key, cells };
+		return { key, ...read };
 	})();
 	const elapsedMs = Math.round(performance.now() - started);
 
@@ -327,6 +382,7 @@ export async function updateSqliteCell(
 		columns,
 		row: row.cells,
 		key: row.key,
+		version: row.version,
 		...(session.backupCreated ? { backup: session.backup } : {}),
 		elapsedMs,
 	};
@@ -436,13 +492,13 @@ export async function insertSqliteRow(
 				`The new row would have no key to name it by, so nothing was inserted; give every key column a value. ${error instanceof Error ? error.message : String(error)}`
 			);
 		}
-		const cells = readRowByKey(db, plan, condition);
-		if (!cells) {
+		const read = readRowByKey(db, plan, condition);
+		if (!read) {
 			throw new Error(
 				`${object.name} has no row with ${condition.label} after the insert (a trigger may have removed it), so nothing was inserted.`
 			);
 		}
-		return { key, cells, otherChanges: Math.max(0, totalChanges(db) - before - 1) };
+		return { key, ...read, otherChanges: Math.max(0, totalChanges(db) - before - 1) };
 	})();
 	const elapsedMs = Math.round(performance.now() - started);
 
@@ -451,6 +507,7 @@ export async function insertSqliteRow(
 		columns,
 		row: added.cells,
 		key: added.key,
+		version: added.version,
 		otherChanges: added.otherChanges,
 		...(session.backupCreated ? { backup: session.backup } : {}),
 		elapsedMs,
@@ -461,7 +518,8 @@ export async function insertSqliteRow(
  * Remove one row of a table, named by its rowid or whole primary key.
  * Rejects, with nothing written, when editing is not enabled for the tab, the
  * backup fails, the table cannot be edited, the key does not name exactly
- * one row (deleted or re-keyed since it was read), or SQLite refuses: a
+ * one row (deleted or re-keyed since it was read), the row changed since the
+ * `version` the caller sent, or SQLite refuses: a
  * FOREIGN KEY constraint a child row holds, in SQLite's own words. Rows the
  * database's foreign-key actions or triggers change as a result are counted
  * in `otherChanges`.
@@ -470,6 +528,7 @@ export async function deleteSqliteRow(
 	request: SqliteRowDeleteRequest
 ): Promise<SqliteRowDeleteResult> {
 	const name = requireText(request?.name, 'table name', 'A delete');
+	const version = sqliteRowVersionParam(request.version);
 	const plan = (db: Database.Database) => {
 		const table = findEditableTable(db, name);
 		return { ...table, condition: sqliteRowKeyCondition(table.identity, request.row, name) };
@@ -481,10 +540,12 @@ export async function deleteSqliteRow(
 	const session = await beginSqliteWrite(request.handle, request.editToken);
 	// From here to the return, nothing awaits: the grant is live for all of it.
 	const { db } = session;
-	const { object, source, identity, condition } = plan(db);
+	const table = plan(db);
+	const { object, source, identity, condition } = table;
+	const target = rowWriteCondition(table, condition, version);
 	const remove = db
 		.prepare(
-			`DELETE FROM ${source} WHERE ${condition.where} ` +
+			`DELETE FROM ${source} WHERE ${target.where} ` +
 				`RETURNING ${sqliteRowKeyColumns(identity).map(quoteSqliteIdentifier).join(', ')}`
 		)
 		.raw(true)
@@ -493,12 +554,8 @@ export async function deleteSqliteRow(
 	const started = performance.now();
 	const removed = db.transaction(() => {
 		const before = totalChanges(db);
-		const deleted = remove.all(...condition.params) as unknown[][];
-		if (deleted.length === 0) {
-			throw new Error(
-				`${object.name} has no row with ${condition.label}: it was deleted or its key changed since it was read. Nothing was deleted; reload the table.`
-			);
-		}
+		const deleted = remove.all(...target.params) as unknown[][];
+		if (deleted.length === 0) throw staleRowError(db, table, condition, version, 'deleted');
 		if (deleted.length > 1) {
 			// The key is unique, so this cannot happen; refuse rather than trust it.
 			throw new Error(

@@ -151,3 +151,31 @@ export function formatSqliteEditability(editability: SqliteEditability): string 
  */
 export const SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE =
 	'This changes the database. Pass --enable-editing to unlock editing for this one call.';
+
+/** How every stale-row refusal ends, so a caller can offer a reload on it. */
+export const SQLITE_STALE_ROW_SUFFIX = 'Reload the table to see it as it is now.';
+
+/**
+ * Why a write to one row changed nothing because the row is not what its page
+ * showed: `gone` when no row has its key any more (deleted, or re-keyed),
+ * `changed` when the row is there but its values differ from the version the
+ * page carried (another tab, another program, or a trigger wrote to it). The
+ * write never clobbers; the person reloads and decides again.
+ */
+export function sqliteStaleRowMessage(
+	kind: 'gone' | 'changed',
+	table: string,
+	rowLabel: string,
+	nothing: 'changed' | 'deleted'
+): string {
+	const what =
+		kind === 'gone'
+			? `${table} has no row with ${rowLabel}: it was deleted or its key changed since it was read.`
+			: `The row of ${table} with ${rowLabel} changed since it was read: another tab, another program, or a trigger wrote to it.`;
+	return `${what} Nothing was ${nothing}. ${SQLITE_STALE_ROW_SUFFIX}`;
+}
+
+/** Whether a write's error (as shown, any wrapper stripped) is a stale-row refusal. */
+export function isSqliteStaleRowMessage(message: string): boolean {
+	return message.trimEnd().endsWith(SQLITE_STALE_ROW_SUFFIX);
+}

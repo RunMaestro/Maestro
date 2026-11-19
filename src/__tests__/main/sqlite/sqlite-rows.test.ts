@@ -68,9 +68,12 @@ function fakeDb() {
 				all(...args: unknown[]) {
 					state.windowArgs.push(args);
 					const [limit, offset] = args.slice(-2) as [number, number];
+					// An editable table's window selects each row's version last.
+					const withVersion = sql.includes('maestro_row_version(');
 					const rows = table.rows
 						.slice(offset, offset + limit)
-						.map((row, index) => (table.keys ? [...row, ...table.keys[offset + index]] : row));
+						.map((row, index) => (table.keys ? [...row, ...table.keys[offset + index]] : row))
+						.map((row, index) => (withVersion ? [...row, `version-${offset + index + 1}`] : row));
 					if (!/^SELECT "(rowid|_rowid_|oid)", /.test(sql)) return rows;
 					return rows.map((row, index) => [
 						table.rowids?.[offset + index] ?? BigInt(offset + index + 1),
@@ -494,7 +497,9 @@ describe('readSqliteRows', () => {
 		state.tables.pairs.rows = [[long.slice(0, SQLITE_CELL_TEXT_LIMIT), long.length, 1n, null]];
 		state.tables.pairs.keys = [[long, 1n]];
 		const page = readSqliteRows({ handle: 'h1', name: 'pairs', offset: 0, limit: 5 });
-		expect(state.windowSql[0]).toMatch(/END, "a", "b" FROM "pairs"/);
+		expect(state.windowSql[0]).toMatch(
+			/END, "a", "b", maestro_row_version\("a", "b"\) FROM "pairs"/
+		);
 		expect(page.rows[0]).toEqual([
 			{ kind: 'text', head: long.slice(0, SQLITE_CELL_TEXT_LIMIT), length: long.length },
 			1,
@@ -515,6 +520,35 @@ describe('readSqliteRows', () => {
 			filter: 'nope = 1',
 		});
 		expect(problem.rowKeys).toEqual([]);
+	});
+
+	it("carries each row's version, over every column, only when the rows can be edited", () => {
+		const locked = readSqliteRows({ handle: 'h1', name: 'users', offset: 0, limit: 2 });
+		expect(locked.rowVersions).toBeNull();
+		expect(state.windowSql[0]).not.toContain('maestro_row_version');
+
+		state.editability.users = {
+			editable: true,
+			identity: { kind: 'rowid', alias: 'rowid', rowidColumn: 'id' },
+			readOnlyColumns: [],
+		};
+		const page = readSqliteRows({ handle: 'h1', name: 'users', offset: 1, limit: 2 });
+		expect(state.windowSql[1]).toMatch(
+			/END, maestro_row_version\("id", "name"\) FROM "users" ORDER BY "rowid" LIMIT \? OFFSET \?$/
+		);
+		expect(page.rowVersions).toEqual(['version-2', 'version-3']);
+		// The version does not shift the cells or the rowids.
+		expect(page.rows[0]).toEqual([2, 'user2']);
+		expect(page.rowids).toEqual(['2', '3']);
+
+		const problem = readSqliteRows({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 2,
+			filter: 'nmae = bob',
+		});
+		expect(problem.rowVersions).toEqual([]);
 	});
 
 	it('fails on a handle that is no longer open', () => {

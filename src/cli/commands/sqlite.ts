@@ -32,17 +32,18 @@
 //          newest first; --forget drops one, --clear drops them all
 //   maestro-cli sqlite set <path> <table> <column> (--rowid <id> | --key <col=value>...)
 //                          (--value <text> | --value-number <n> | --null)
-//                          --enable-editing [--json]
+//                          [--if-version <v>] --enable-editing [--json]
 //       -> the table view's cell edit: one single-row UPDATE keyed on the
 //          row's rowid or primary key; --enable-editing is the per-call
-//          unlock, and the session's first change backs the file up first
+//          unlock, and the session's first change backs the file up first;
+//          --if-version refuses it when the row changed since it was read
 //   maestro-cli sqlite insert <path> <table> [--value <col=value>]...
 //                             [--value-number <col=n>]... [--null <col>]...
 //                             --enable-editing [--json]
 //       -> the table view's Insert row: one INSERT, columns not given taking
 //          their DEFAULT; a constraint failure is reported in SQLite's words
 //   maestro-cli sqlite delete <path> <table> (--rowid <id> | --key <col=value>...)
-//                             --enable-editing [--json]
+//                             [--if-version <v>] --enable-editing [--json]
 //       -> the record view's Delete row: one single-row DELETE keyed on the
 //          row's rowid or primary key, with the rows foreign-key actions and
 //          triggers changed beside it counted
@@ -1154,6 +1155,8 @@ interface SqliteSetOptions {
 	valueNumber?: string;
 	/** Set the cell to NULL. */
 	null?: boolean;
+	/** The row's version from `sqlite rows --json`: change nothing if it moved on. */
+	ifVersion?: string;
 	/** The per-call unlock: without it nothing is written. */
 	enableEditing?: boolean;
 	json?: boolean;
@@ -1246,7 +1249,15 @@ export async function sqliteSet(
 	}
 
 	const { database, result } = await sendSqliteWrite<SqliteCellUpdateResult>(
-		{ type: 'sqlite_update_cell', path: filePath, name, column, row, value },
+		{
+			type: 'sqlite_update_cell',
+			path: filePath,
+			name,
+			column,
+			row,
+			value,
+			...(options.ifVersion !== undefined ? { version: options.ifVersion } : {}),
+		},
 		'sqlite_update_result',
 		`Could not change ${column} of ${name} in ${filePath}`,
 		options.json
@@ -1261,6 +1272,7 @@ export async function sqliteSet(
 				columns: result.columns.map((entry) => entry.name),
 				row: result.row,
 				key: result.key,
+				version: result.version,
 				backup: result.backup ?? null,
 				elapsedMs: result.elapsedMs,
 			})
@@ -1417,6 +1429,7 @@ export async function sqliteInsert(
 				columns: result.columns.map((entry) => entry.name),
 				row: result.row,
 				key: result.key,
+				version: result.version,
 				otherChanges: result.otherChanges,
 				backup: result.backup ?? null,
 				elapsedMs: result.elapsedMs,
@@ -1436,7 +1449,10 @@ export async function sqliteInsert(
 	);
 }
 
-interface SqliteDeleteOptions extends Pick<SqliteSetOptions, 'rowid' | 'key' | 'keyNumber'> {
+interface SqliteDeleteOptions extends Pick<
+	SqliteSetOptions,
+	'rowid' | 'key' | 'keyNumber' | 'ifVersion'
+> {
 	/** The per-call unlock: without it nothing is written. */
 	enableEditing?: boolean;
 	json?: boolean;
@@ -1464,7 +1480,13 @@ export async function sqliteDelete(
 	}
 
 	const { database, result } = await sendSqliteWrite<SqliteRowDeleteResult>(
-		{ type: 'sqlite_delete_row', path: filePath, name, row },
+		{
+			type: 'sqlite_delete_row',
+			path: filePath,
+			name,
+			row,
+			...(options.ifVersion !== undefined ? { version: options.ifVersion } : {}),
+		},
 		'sqlite_delete_result',
 		`Could not delete the row from ${name} in ${filePath}`,
 		options.json

@@ -197,6 +197,11 @@ function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
 		rowKeys: Array.from({ length: count }, (_, index) => [
 			{ type: 'integer' as const, text: String(request.offset + index + 1) },
 		]),
+		// Each row's version as main hashed it; an edit sends it back.
+		rowVersions: Array.from(
+			{ length: count },
+			(_, index) => `version-${request.offset + index + 1}`
+		),
 		offset: request.offset,
 		hasMore: request.offset + count < total,
 		orderedBy: request.sort ? [request.sort.column, 'id'] : ['id'],
@@ -374,6 +379,7 @@ beforeEach(() => {
 			columns: page.columns,
 			row,
 			key: { kind: 'primary-key', values: { id: newKey } },
+			version: `after-${request.column}`,
 			elapsedMs: 4,
 		};
 	});
@@ -2177,6 +2183,7 @@ describe('SqliteViewer cell edit', () => {
 			name: 'events',
 			column: 'kind',
 			row: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+			version: 'version-2',
 			value: { type: 'text', text: 'view' },
 		});
 		await waitFor(() => expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument());
@@ -2207,6 +2214,8 @@ describe('SqliteViewer cell edit', () => {
 		expect(updateCell).toHaveBeenLastCalledWith(
 			expect.objectContaining({
 				row: { kind: 'primary-key', values: { id: { type: 'integer', text: '20' } } },
+				// ...and by the version the first save returned, not the page's.
+				version: 'after-id',
 			})
 		);
 	});
@@ -2321,6 +2330,32 @@ describe('SqliteViewer cell edit', () => {
 			'CHECK constraint failed: kind_known'
 		);
 		expect(screen.getByTestId('sqlite-cell-editor')).toHaveValue('bogus');
+		// Not a stale row, so no Reload is offered.
+		expect(screen.queryByTestId('sqlite-edit-reload')).not.toBeInTheDocument();
+	});
+
+	it('offers Reload when the row changed since it was read, and reads the rows again', async () => {
+		updateCell.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:updateCell': Error: The row of events with primary key (id = 2) changed since it was read: another tab, another program, or a trigger wrote to it. Nothing was changed. Reload the table to see it as it is now."
+			)
+		);
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value: 'view' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		expect(await screen.findByTestId('sqlite-edit-status')).toHaveTextContent(
+			'changed since it was read'
+		);
+		// Nothing was overwritten: the editor keeps the draft until the person decides.
+		expect(screen.getByTestId('sqlite-cell-editor')).toHaveValue('view');
+
+		fireEvent.click(screen.getByTestId('sqlite-edit-reload'));
+		await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
+		expect(readRows).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }));
+		expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-edit-status')).not.toBeInTheDocument();
 	});
 
 	it('binds by the column affinity, so a TEXT column keeps 007 as typed', async () => {
@@ -2528,6 +2563,7 @@ describe('SqliteViewer insert and delete row', () => {
 			editToken: 'token-1',
 			name: 'events',
 			row: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+			version: 'version-2',
 		});
 		await waitFor(() => expect(screen.queryByTestId('sqlite-row-1')).not.toBeInTheDocument());
 		expect(screen.getByTestId('sqlite-row-0')).toBeInTheDocument();
@@ -2570,5 +2606,28 @@ describe('SqliteViewer insert and delete row', () => {
 		);
 		expect(screen.getByTestId('sqlite-row-1')).toBeInTheDocument();
 		expect(screen.getByTestId('sqlite-delete-row')).toHaveTextContent('Delete row');
+	});
+
+	it('offers Reload in the record view when the row changed since it was read', async () => {
+		deleteRow.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:deleteRow': Error: The row of events with primary key (id = 2) changed since it was read: another tab, another program, or a trigger wrote to it. Nothing was deleted. Reload the table to see it as it is now."
+			)
+		);
+		await renderEditing();
+		fireEvent.doubleClick(screen.getByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-delete-row'));
+		fireEvent.click(screen.getByTestId('sqlite-delete-row'));
+		expect(await screen.findByTestId('sqlite-delete-status')).toHaveTextContent(
+			'Nothing was deleted'
+		);
+		expect(screen.getByTestId('sqlite-row-1')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-delete-reload'));
+		await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument()
+		);
 	});
 });

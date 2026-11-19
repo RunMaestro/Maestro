@@ -24,6 +24,7 @@ import type { SqliteDatabaseInfo } from '../../shared/sqlite/types';
 import { createIdleHandleRegistry } from '../utils/idle-handle-registry';
 import { openReadOnlySqliteConnection } from './sqlite-connection';
 import { isSqliteDatabaseFile } from './sqlite-detect';
+import { registerSqliteRowVersion } from './sqlite-row-version';
 
 export { SQLITE_BUSY_TIMEOUT_MS } from './sqlite-connection';
 
@@ -88,6 +89,8 @@ export async function openSqliteDatabase(filePath: string): Promise<SqliteDataba
 	// no REGEXP of its own. Deterministic, so SQLite may evaluate it once per
 	// distinct input. Registering a function writes nothing to the file.
 	db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
+	// Each rows page carries every row's version, which an edit checks.
+	registerSqliteRowVersion(db);
 
 	const id = randomUUID();
 	const info: SqliteDatabaseInfo = {

@@ -47,9 +47,13 @@
  * With editing enabled on an editable table, a double-click on a cell opens an
  * editor over it (SqliteCellEditor) and a double-click on the row number opens
  * the record view. Saving sends the tab's edit token, the row's key from its
- * page (`rowids`, or `rowKeys` read whole for a primary key), and the new
- * value to `sqlite:updateCell`, one single-row UPDATE in main
- * (src/main/sqlite/sqlite-row-edit.ts). The saved row replaces its line in
+ * page (`rowids`, or `rowKeys` read whole for a primary key), the row's
+ * version from its page (`rowVersions`), and the new value to
+ * `sqlite:updateCell`, one single-row UPDATE in main
+ * (src/main/sqlite/sqlite-row-edit.ts), which changes nothing when the row
+ * no longer has that version: another tab, another program, or a trigger
+ * changed it since the page was read. That refusal (and the record view's,
+ * for a delete) offers Reload instead of overwriting the change. The saved row replaces its line in
  * place, with its new key when the edit changed one; the order and filter are
  * not re-applied until the next read. A cell main would refuse anyway (a
  * BLOB, a cut TEXT value, a generated column, a key holding NULL) says why in
@@ -87,6 +91,7 @@ import { formatSqliteRecordValue, sqliteBlobFileName } from '../../../shared/sql
 import { formatSqliteRowCount, sqliteConvergingRowTotal } from '../../../shared/sqlite/objects';
 import {
 	formatSqliteEditability,
+	isSqliteStaleRowMessage,
 	sqliteColumnAffinity,
 	sqliteEditabilityLabel,
 } from '../../../shared/sqlite/schema';
@@ -207,6 +212,43 @@ function otherChangesText(otherChanges: number): string {
 	return `; the database's triggers and foreign-key actions changed ${formatCount(otherChanges)} other ${otherChanges === 1 ? 'row' : 'rows'}`;
 }
 
+/** A write's outcome or refusal; `stale` when the row changed since it was read. */
+interface WriteStatus {
+	text: string;
+	error: boolean;
+	stale?: boolean;
+}
+
+/** A refused write as its status line shows it, in main's (or SQLite's) words. */
+function writeFailureStatus(failure: unknown): WriteStatus {
+	const text = ipcErrorMessage(failure);
+	return { text, error: true, stale: isSqliteStaleRowMessage(text) };
+}
+
+/** The Reload a stale-row refusal offers: the rows on screen are not the rows stored. */
+function StaleRowReload({
+	onReload,
+	theme,
+	testId,
+}: {
+	onReload: () => void;
+	theme: Theme;
+	testId: string;
+}) {
+	return (
+		<button
+			type="button"
+			className="ml-2 underline"
+			onClick={onReload}
+			style={{ color: theme.colors.accentText }}
+			title="Read the rows again as they are stored now"
+			data-testid={testId}
+		>
+			Reload
+		</button>
+	);
+}
+
 interface SqliteTableViewProps {
 	handle: string;
 	/** A table or view. */
@@ -261,8 +303,10 @@ export function SqliteTableView({
 	const [editDraft, setEditDraft] = useState<SqliteCellDraft>({ text: '', isNull: false });
 	/** A cell save is in flight. */
 	const [savingCell, setSavingCell] = useState(false);
+	/** Each loaded row's version, parallel to `rows`; an edit sends it so main refuses a stale one. */
+	const [rowVersions, setRowVersions] = useState<string[] | null>(null);
 	/** The last edit's outcome or refusal, for the footer. */
-	const [editStatus, setEditStatus] = useState<{ text: string; error: boolean } | null>(null);
+	const [editStatus, setEditStatus] = useState<WriteStatus | null>(null);
 	/** A BLOB save is in flight; its button waits. */
 	const [savingBlob, setSavingBlob] = useState(false);
 	const [count, setCount] = useState<CountProgress | null>(null);
@@ -283,7 +327,7 @@ export function SqliteTableView({
 	const [deleteArmed, setDeleteArmed] = useState<number | null>(null);
 	const [deleting, setDeleting] = useState(false);
 	/** The last delete's outcome, shown in the record view where it was clicked. */
-	const [deleteStatus, setDeleteStatus] = useState<{ text: string; error: boolean } | null>(null);
+	const [deleteStatus, setDeleteStatus] = useState<WriteStatus | null>(null);
 	/** Bumped when a write changed the row set, so the count starts over. */
 	const [countEpoch, setCountEpoch] = useState(0);
 
@@ -326,11 +370,15 @@ export function SqliteTableView({
 					setRows(page.rows);
 					setRowids(page.rowids);
 					setRowKeys(page.rowKeys);
+					setRowVersions(page.rowVersions);
 				} else {
 					setRows((previous) => [...previous, ...page.rows]);
 					setRowids((previous) => (previous && page.rowids ? [...previous, ...page.rowids] : null));
 					setRowKeys((previous) =>
 						previous && page.rowKeys ? [...previous, ...page.rowKeys] : null
+					);
+					setRowVersions((previous) =>
+						previous && page.rowVersions ? [...previous, ...page.rowVersions] : null
 					);
 				}
 			} catch (failure) {
@@ -396,6 +444,12 @@ export function SqliteTableView({
 		restartCount();
 		void fetchWindow(0);
 	});
+	/** The Reload a stale-row refusal offers: the refusal goes with the stale rows. */
+	const reloadStaleRows = useCallback(() => {
+		setEditStatus(null);
+		setDeleteStatus(null);
+		reloadRows();
+	}, [reloadRows]);
 	const countAll = countAllFor === appliedFilter;
 	const reportSettled = useStableCallback((rowCount: number) => {
 		onRowCountSettled?.(name, rowCount);
@@ -560,6 +614,8 @@ export function SqliteTableView({
 				name,
 				column: column.name,
 				row: key,
+				// Main refuses the save if the row changed since this page read it.
+				version: rowVersions?.[cell.row] ?? null,
 				value,
 			});
 			announceBackup(result.backup);
@@ -568,6 +624,11 @@ export function SqliteTableView({
 			if (token !== generation.current) return;
 			setRows((previous) =>
 				previous.map((row, position) => (position === cell.row ? result.row : row))
+			);
+			setRowVersions((previous) =>
+				previous
+					? previous.map((entry, position) => (position === cell.row ? result.version : entry))
+					: null
 			);
 			if (result.key.kind === 'rowid') {
 				const rowid = result.key.rowid;
@@ -592,9 +653,7 @@ export function SqliteTableView({
 			});
 		} catch (failure) {
 			// The editor stays open with the draft, so the value can be fixed.
-			if (token === generation.current) {
-				setEditStatus({ text: ipcErrorMessage(failure), error: true });
-			}
+			if (token === generation.current) setEditStatus(writeFailureStatus(failure));
 		} finally {
 			setSavingCell(false);
 		}
@@ -698,7 +757,14 @@ export function SqliteTableView({
 		const token = generation.current;
 		setDeleting(true);
 		try {
-			const result = await window.maestro.sqlite.deleteRow({ handle, editToken, name, row: key });
+			const result = await window.maestro.sqlite.deleteRow({
+				handle,
+				editToken,
+				name,
+				row: key,
+				// Main deletes nothing if the row changed since this page read it.
+				version: rowVersions?.[rowPosition] ?? null,
+			});
 			announceBackup(result.backup);
 			setDeleteArmed(null);
 			const outcome = {
@@ -721,14 +787,13 @@ export function SqliteTableView({
 			setRows((previous) => drop(previous) ?? []);
 			setRowids(drop);
 			setRowKeys(drop);
+			setRowVersions(drop);
 			if (rows.length <= 1) setDetailRow(null);
 			restartCount();
 		} catch (failure) {
 			// SQLite's own words, such as a FOREIGN KEY a child row still holds.
 			setDeleteArmed(null);
-			if (token === generation.current) {
-				setDeleteStatus({ text: ipcErrorMessage(failure), error: true });
-			}
+			if (token === generation.current) setDeleteStatus(writeFailureStatus(failure));
 		} finally {
 			setDeleting(false);
 		}
@@ -980,6 +1045,13 @@ export function SqliteTableView({
 						data-testid="sqlite-edit-status"
 					>
 						{editStatus.text}
+						{editStatus.stale && (
+							<StaleRowReload
+								onReload={reloadStaleRows}
+								theme={theme}
+								testId="sqlite-edit-reload"
+							/>
+						)}
 					</span>
 				)}
 				{error && (
@@ -1048,6 +1120,13 @@ export function SqliteTableView({
 								data-testid="sqlite-delete-status"
 							>
 								{deleteStatus.text}
+								{deleteStatus.stale && (
+									<StaleRowReload
+										onReload={reloadStaleRows}
+										theme={theme}
+										testId="sqlite-delete-reload"
+									/>
+								)}
 							</span>
 						) : undefined
 					}

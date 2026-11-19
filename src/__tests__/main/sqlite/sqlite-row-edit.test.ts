@@ -12,6 +12,8 @@ interface FakeConnection {
 	updates: unknown[][];
 	/** Arguments each read-back ran with. */
 	reads: unknown[][];
+	/** Arguments each "is the row still there" probe ran with. */
+	probes: unknown[][];
 	committed: number;
 	rolledBack: number;
 }
@@ -26,8 +28,10 @@ const state = vi.hoisted(() => ({
 	 * arguments.
 	 */
 	returning: [] as unknown[][] | Error | ((args: unknown[]) => unknown[][]),
-	/** The row the read-back finds (value/length pairs), or none. */
+	/** The row the read-back finds (value/length pairs), or none; its version is appended. */
 	readBack: undefined as unknown[] | undefined,
+	/** Whether a stale write's probe still finds a row by its key. */
+	stillThere: false,
 	/** What each `SELECT total_changes()` answers, in order (0 when run out). */
 	totalChanges: [] as number[],
 	backupCreated: false,
@@ -57,8 +61,13 @@ function fakeDb(which: 'readOnly' | 'writable') {
 					return state.returning;
 				},
 				get(...args: unknown[]) {
+					if (sql.startsWith('SELECT 1 FROM ')) {
+						connection.probes.push(args);
+						return state.stillThere ? [1] : undefined;
+					}
 					connection.reads.push(args);
-					return state.readBack;
+					// The read-back selects the row's version last.
+					return state.readBack ? [...state.readBack, VERSION_AFTER] : undefined;
 				},
 			};
 			return statement;
@@ -117,6 +126,13 @@ import type {
 	SqliteRowInsertRequest,
 } from '../../../shared/sqlite/types';
 
+/** The version the fake read-back reports for the row after a write. */
+const VERSION_AFTER = 'AfterAfterAfterAfter_1';
+/** A version a page carried, as a request sends it back. */
+const VERSION_SEEN = 'SeenSeenSeenSeenSeen-2';
+/** The version check a write on `users` adds, over its three columns. */
+const USERS_VERSION_CHECK = 'maestro_row_version("id", "email", "domain") = ?';
+
 function summary(name: string, kind: 'table' | 'view' = 'table') {
 	return {
 		name,
@@ -143,7 +159,7 @@ function storedAsGiven(...key: unknown[]) {
 }
 
 function connection(): FakeConnection {
-	return { prepared: [], updates: [], reads: [], committed: 0, rolledBack: 0 };
+	return { prepared: [], updates: [], reads: [], probes: [], committed: 0, rolledBack: 0 };
 }
 
 function request(extra: Partial<SqliteCellUpdateRequest> = {}): SqliteCellUpdateRequest {
@@ -181,6 +197,7 @@ beforeEach(() => {
 	state.returning = storedAsGiven(7n);
 	state.readBack = [7n, null, 'new@example.com', 15n, 'example.com', 11n];
 	state.totalChanges = [];
+	state.stillThere = false;
 	state.backupCreated = false;
 	state.locked = false;
 	state.beginCalls = 0;
@@ -207,6 +224,7 @@ describe('updateSqliteCell', () => {
 			],
 			row: [7, 'new@example.com', 'example.com'],
 			key: { kind: 'rowid', rowid: '7' },
+			version: VERSION_AFTER,
 			elapsedMs: expect.any(Number),
 		});
 		expect(result.backup).toBeUndefined();
@@ -284,10 +302,57 @@ describe('updateSqliteCell', () => {
 	it('rolls back, and says so, when no row has the key any more', async () => {
 		state.returning = [];
 		await expect(updateSqliteCell(request())).rejects.toThrow(
-			'users has no row with rowid 7: it was deleted or its key changed since it was read. Nothing was changed; reload the table.'
+			'users has no row with rowid 7: it was deleted or its key changed since it was read. Nothing was changed. Reload the table to see it as it is now.'
 		);
 		expect(state.connections.writable.rolledBack).toBe(1);
 		expect(state.connections.writable.committed).toBe(0);
+		// With no version sent there is nothing to tell apart: no probe.
+		expect(state.connections.writable.probes).toEqual([]);
+	});
+
+	it('checks the version its page showed in the same WHERE as the key', async () => {
+		const result = await updateSqliteCell(request({ version: VERSION_SEEN }));
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain(
+			`UPDATE "users" SET "email" = ? WHERE "rowid" = ? AND ${USERS_VERSION_CHECK} RETURNING "rowid", typeof("email"), "email"`
+		);
+		expect(writable.updates).toEqual([['new@example.com', 7n, VERSION_SEEN]]);
+		// The read-back reports the version after the change, for the next edit.
+		expect(
+			writable.prepared.some(
+				(sql) =>
+					sql.startsWith('SELECT ') &&
+					sql.includes(`maestro_row_version("id", "email", "domain") FROM "users"`)
+			)
+		).toBe(true);
+		expect(result.version).toBe(VERSION_AFTER);
+	});
+
+	it('changes nothing, and says the row changed, when it no longer has the version', async () => {
+		state.returning = [];
+		state.stillThere = true;
+		await expect(updateSqliteCell(request({ version: VERSION_SEEN }))).rejects.toThrow(
+			'The row of users with rowid 7 changed since it was read: another tab, another program, or a trigger wrote to it. Nothing was changed. Reload the table to see it as it is now.'
+		);
+		const writable = state.connections.writable;
+		expect(writable.probes).toEqual([[7n]]);
+		expect(writable.rolledBack).toBe(1);
+		expect(writable.committed).toBe(0);
+	});
+
+	it('says the row is gone, not changed, when no row has the key any more', async () => {
+		state.returning = [];
+		state.stillThere = false;
+		await expect(updateSqliteCell(request({ version: VERSION_SEEN }))).rejects.toThrow(
+			'users has no row with rowid 7: it was deleted or its key changed since it was read.'
+		);
+	});
+
+	it('refuses a version that is not one, before the backup', async () => {
+		await expect(updateSqliteCell(request({ version: 'nope' }))).rejects.toThrow(
+			'is not a row version'
+		);
+		expect(state.beginCalls).toBe(0);
 	});
 
 	it('rolls back a change that matched more than one row', async () => {
@@ -492,6 +557,7 @@ describe('insertSqliteRow', () => {
 			],
 			row: [12, 'new@example.com', 'example.com'],
 			key: { kind: 'rowid', rowid: '12' },
+			version: VERSION_AFTER,
 			otherChanges: 0,
 			elapsedMs: expect.any(Number),
 		});
@@ -690,8 +756,29 @@ describe('deleteSqliteRow', () => {
 	it('rolls back, and says so, when no row has the key any more', async () => {
 		state.returning = [];
 		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow(
-			'users has no row with rowid 7: it was deleted or its key changed since it was read. Nothing was deleted; reload the table.'
+			'users has no row with rowid 7: it was deleted or its key changed since it was read. Nothing was deleted. Reload the table to see it as it is now.'
 		);
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it('checks the version its page showed in the same WHERE as the key', async () => {
+		state.returning = [[7n]];
+		await deleteSqliteRow(deleteRequest({ version: VERSION_SEEN }));
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain(
+			`DELETE FROM "users" WHERE "rowid" = ? AND ${USERS_VERSION_CHECK} RETURNING "rowid"`
+		);
+		expect(writable.updates).toEqual([[7n, VERSION_SEEN]]);
+		expect(writable.committed).toBe(1);
+	});
+
+	it('deletes nothing, and says the row changed, when it no longer has the version', async () => {
+		state.returning = [];
+		state.stillThere = true;
+		await expect(deleteSqliteRow(deleteRequest({ version: VERSION_SEEN }))).rejects.toThrow(
+			'The row of users with rowid 7 changed since it was read: another tab, another program, or a trigger wrote to it. Nothing was deleted. Reload the table to see it as it is now.'
+		);
+		expect(state.connections.writable.probes).toEqual([[7n]]);
 		expect(state.connections.writable.rolledBack).toBe(1);
 	});
 

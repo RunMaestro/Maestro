@@ -55,6 +55,7 @@ vi.mock('better-sqlite3', () => {
 
 import { SQLITE_REGEXP_FUNCTION, sqliteRegexpTest } from '../../../shared/sqlite/filter';
 import { openWritableSqliteConnection } from '../../../main/sqlite/sqlite-connection';
+import { SQLITE_ROW_VERSION_FUNCTION } from '../../../main/sqlite/sqlite-row-version';
 import {
 	SQLITE_BUSY_TIMEOUT_MS,
 	closeAllSqliteDatabases,
@@ -124,14 +125,22 @@ describe('openSqliteDatabase', () => {
 			'trusted_schema = OFF',
 			'foreign_keys = ON',
 			'schema_version',
+		]); // A write checks the row version its page carried.
+		expect(driver.instances[0].functions.map((entry) => entry.name)).toEqual([
+			SQLITE_ROW_VERSION_FUNCTION,
 		]);
 	});
 
-	it("registers the table filter's regex function as deterministic", async () => {
+	it("registers the table filter's regex function and the row version an edit checks", async () => {
 		const file = await writeFixture('regexp.db');
 		await openSqliteDatabase(file);
 		expect(driver.instances[0].functions).toEqual([
 			{ name: SQLITE_REGEXP_FUNCTION, options: { deterministic: true }, fn: sqliteRegexpTest },
+			{
+				name: SQLITE_ROW_VERSION_FUNCTION,
+				options: { varargs: true, deterministic: true, directOnly: true, safeIntegers: true },
+				fn: expect.any(Function),
+			},
 		]);
 	});
 

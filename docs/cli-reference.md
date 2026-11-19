@@ -3459,16 +3459,17 @@ List the statements run against a database, newest first, as the viewer's Query 
 
 Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
 
-| Option                        | Description                                                                                                      | Default |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
-| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                  | -       |
-| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid) | `[]`    |
-| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                               | `[]`    |
-| `--value <text>`              | The new value, bound as TEXT (the column affinity converts it)                                                   | -       |
-| `--value-number <n>`          | The new value, bound as a number                                                                                 | -       |
-| `--null`                      | Set the cell to NULL                                                                                             | -       |
-| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                     | -       |
-| `--json`                      | Output as JSON (for scripting)                                                                                   | -       |
+| Option                        | Description                                                                                                                                                         | Default |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                     | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                    | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                                                                                  | `[]`    |
+| `--value <text>`              | The new value, bound as TEXT (the column affinity converts it)                                                                                                      | -       |
+| `--value-number <n>`          | The new value, bound as a number                                                                                                                                    | -       |
+| `--null`                      | Set the cell to NULL                                                                                                                                                | -       |
+| `--if-version <version>`      | Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                        | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                      | -       |
 
 ## `maestro-cli sqlite insert <path> <table>`
 
@@ -3486,13 +3487,14 @@ Add one row the way the viewer's Insert row does: one parameterised INSERT, colu
 
 Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first
 
-| Option                        | Description                                                                                                      | Default |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
-| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                  | -       |
-| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid) | `[]`    |
-| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                               | `[]`    |
-| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                     | -       |
-| `--json`                      | Output as JSON (for scripting)                                                                                   | -       |
+| Option                        | Description                                                                                                                                                     | Default |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                 | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                                                                              | `[]`    |
+| `--if-version <version>`      | Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                    | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                  | -       |
 
 ## `maestro-cli quick-chat`
 

@@ -394,6 +394,13 @@ export interface SqliteRowsPage {
 	 * rows by their primary key; null otherwise (a rowid table uses `rowids`).
 	 */
 	rowKeys: SqliteKeyValue[][] | null;
+	/**
+	 * Each row's version, parallel to `rows`: a hash of every value of the row,
+	 * whole. An edit sends it back, and main refuses the write when the row no
+	 * longer has it (changed since this page was read) instead of clobbering
+	 * it. Set only when `editability` says the rows can be edited.
+	 */
+	rowVersions: string[] | null;
 }
 
 /**
@@ -431,6 +438,12 @@ export interface SqliteCellUpdateRequest {
 	column: string;
 	/** The row, by the identity its table takes. */
 	row: SqliteRowKey;
+	/**
+	 * The row's version as its page showed it (`SqliteRowsPage.rowVersions`).
+	 * When given, the edit changes nothing if the row changed since. Omitted,
+	 * the row is named by its key alone.
+	 */
+	version?: string | null;
 	/** The new value, bound by the driver: as TEXT, as a number, or NULL. */
 	value: SqliteParameterValue;
 }
@@ -448,6 +461,8 @@ export interface SqliteCellUpdateResult {
 	 * edit wrote a key column (an `INTEGER PRIMARY KEY` changes the rowid).
 	 */
 	key: SqliteRowKey;
+	/** The row's version after the change, for the next edit to send. */
+	version: string;
 	/** Set only on the write that took this session's backup of the file. */
 	backup?: SqliteBackup;
 	/** Time SQLite spent on the change, in milliseconds. */
@@ -482,6 +497,8 @@ export interface SqliteRowInsertResult {
 	row: SqliteCellValue[];
 	/** The new row's key, so an edit can name it. */
 	key: SqliteRowKey;
+	/** The new row's version, for an edit to send. */
+	version: string;
 	/**
 	 * Rows the database changed beside this one, by its triggers or its
 	 * foreign-key actions, which the viewer does not show on its own.
@@ -506,6 +523,11 @@ export interface SqliteRowDeleteRequest {
 	name: string;
 	/** The row, by the identity its table takes. */
 	row: SqliteRowKey;
+	/**
+	 * The row's version as its page showed it. When given, nothing is deleted
+	 * if the row changed since. Omitted, the row is named by its key alone.
+	 */
+	version?: string | null;
 }
 
 /** What one delete removed. */

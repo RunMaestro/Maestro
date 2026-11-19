@@ -6,10 +6,12 @@ import {
 	formatSqliteForeignKey,
 	formatSqliteIndexColumn,
 	formatSqliteReference,
+	isSqliteStaleRowMessage,
 	sqliteColumnAffinity,
 	sqliteColumnTags,
 	sqliteEditabilityLabel,
 	sqliteMissingSqlNote,
+	sqliteStaleRowMessage,
 } from '../../../shared/sqlite/schema';
 import type { SqliteColumnSchema } from '../../../shared/sqlite/types';
 
@@ -174,5 +176,29 @@ describe('editability text', () => {
 		expect(formatSqliteEditability(editability)).toBe(
 			'Read-only. docs is a virtual table (module fts5).'
 		);
+	});
+});
+
+describe('sqliteStaleRowMessage', () => {
+	it('says a row is gone when no row has its key any more', () => {
+		expect(sqliteStaleRowMessage('gone', 'users', 'rowid 7', 'changed')).toBe(
+			'users has no row with rowid 7: it was deleted or its key changed since it was read. Nothing was changed. Reload the table to see it as it is now.'
+		);
+	});
+
+	it('says a row changed when it is there with other values', () => {
+		expect(sqliteStaleRowMessage('changed', 'users', 'rowid 7', 'deleted')).toBe(
+			'The row of users with rowid 7 changed since it was read: another tab, another program, or a trigger wrote to it. Nothing was deleted. Reload the table to see it as it is now.'
+		);
+	});
+
+	it('is recognised once any wrapper is stripped, and nothing else is', () => {
+		expect(
+			isSqliteStaleRowMessage(sqliteStaleRowMessage('changed', 't', 'rowid 1', 'changed'))
+		).toBe(true);
+		expect(
+			isSqliteStaleRowMessage(`${sqliteStaleRowMessage('gone', 't', 'rowid 1', 'deleted')} `)
+		).toBe(true);
+		expect(isSqliteStaleRowMessage('UNIQUE constraint failed: users.email')).toBe(false);
 	});
 });

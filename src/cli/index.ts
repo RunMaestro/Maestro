@@ -4010,6 +4010,10 @@ sqliteCmd
 	.option('--value-number <n>', 'The new value, bound as a number')
 	.option('--null', 'Set the cell to NULL')
 	.option(
+		'--if-version <version>',
+		"Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten"
+	)
+	.option(
 		'--enable-editing',
 		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
 	)
@@ -4063,6 +4067,10 @@ sqliteCmd
 		'A primary-key value given as a number (repeatable)',
 		(value: string, previous: string[]) => [...previous, value],
 		[]
+	)
+	.option(
+		'--if-version <version>',
+		"Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed"
 	)
 	.option(
 		'--enable-editing',

@@ -1385,6 +1385,7 @@ describe('sqlite set', () => {
 				],
 				row: [7, 'a@b.c'],
 				key: { kind: 'rowid', rowid: '7' },
+				version: 'AfterAfterAfterAfter_1',
 				elapsedMs: 2,
 				...result,
 			},
@@ -1455,8 +1456,23 @@ describe('sqlite set', () => {
 			columns: ['id', 'email'],
 			row: [7, 'a@b.c'],
 			key: { kind: 'rowid', rowid: '7' },
+			version: 'AfterAfterAfterAfter_1',
 			backup: null,
 			elapsedMs: 2,
+		});
+	});
+
+	it('sends --if-version for the edit to check, and only when given', async () => {
+		const sent = respondSet();
+		await sqliteSet(DB, 'users', 'email', {
+			rowid: '7',
+			value: 'a@b.c',
+			ifVersion: 'SeenSeenSeenSeenSeen-2',
+			enableEditing: true,
+		});
+		expect(sent[0]).toMatchObject({
+			type: 'sqlite_update_cell',
+			version: 'SeenSeenSeenSeenSeen-2',
 		});
 	});
 
@@ -1573,6 +1589,7 @@ describe('sqlite insert and delete', () => {
 				columns: [{ name: 'id', declaredType: 'INTEGER' }],
 				row: [9],
 				key: { kind: 'rowid', rowid: '9' },
+				version: 'AfterAfterAfterAfter_1',
 				otherChanges: 0,
 				elapsedMs: 1,
 			},
@@ -1585,6 +1602,7 @@ describe('sqlite insert and delete', () => {
 			columns: ['id'],
 			row: [9],
 			key: { kind: 'rowid', rowid: '9' },
+			version: 'AfterAfterAfterAfter_1',
 			otherChanges: 0,
 			backup: null,
 			elapsedMs: 1,
@@ -1641,6 +1659,21 @@ describe('sqlite insert and delete', () => {
 				"The database's triggers and foreign-key actions changed 3 other rows.",
 			].join('\n')
 		);
+	});
+
+	it('sends --if-version for the delete to check', async () => {
+		const sent = mockReply({
+			type: 'sqlite_delete_result',
+			success: true,
+			database,
+			result: { name: 'users', key: { kind: 'rowid', rowid: '7' }, otherChanges: 0, elapsedMs: 1 },
+		});
+		await sqliteDelete(DB, 'users', {
+			rowid: '7',
+			ifVersion: 'SeenSeenSeenSeenSeen-2',
+			enableEditing: true,
+		});
+		expect(sent[0]).toMatchObject({ type: 'sqlite_delete_row', version: 'SeenSeenSeenSeenSeen-2' });
 	});
 
 	it('prints the deleted key as JSON under --json', async () => {

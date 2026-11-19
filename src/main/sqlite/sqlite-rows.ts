@@ -27,7 +27,10 @@
  *     or a `WITHOUT ROWID` table has none to offer. The page also says
  *     whether the rows can be edited and by what identity
  *     (sqlite-identity.ts); a table edited by its primary key gets each row's
- *     key read whole (`rowKeys`), since a key cell may be cut.
+ *     key read whole (`rowKeys`), since a key cell may be cut, and an
+ *     editable table's rows carry their versions (`rowVersions`), a hash of
+ *     every value whole, so an edit is refused when its row changed since the
+ *     page was read (sqlite-row-version.ts).
  *
  * better-sqlite3 is synchronous, so a sort on an unindexed column of a very
  * large table holds the main process while SQLite sorts, and a filter that
@@ -58,6 +61,7 @@ import {
 	sqliteRowKeyColumns,
 } from './sqlite-identity';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
+import { sqliteRowVersionExpression } from './sqlite-row-version';
 
 /** Most rows one window may hold, whatever the caller asks for. */
 export const SQLITE_ROWS_MAX_LIMIT = 1000;
@@ -198,14 +202,16 @@ function columnExpressions(name: string): string {
 /**
  * What a row statement selects: the rowid alias (when named) first, then each
  * column's value/length pair, then the key columns (when named) bare and
- * whole. Shared by the window reader and the cell edit's read-back
- * (sqlite-row-edit.ts), so an edited row comes back exactly as a window
- * shows it. Nothing has an `AS` alias.
+ * whole, then (when asked) the row's version over every column
+ * (sqlite-row-version.ts). Shared by the window reader and the edits'
+ * read-back (sqlite-row-edit.ts), so an edited row comes back exactly as a
+ * window shows it. Nothing has an `AS` alias.
  */
 export function sqliteRowSelectList(
 	columns: readonly SqliteResultColumn[],
 	rowidAlias: string | null,
-	keyColumns: readonly string[]
+	keyColumns: readonly string[],
+	withVersion = false
 ): string {
 	const parts: string[] = [];
 	if (rowidAlias) parts.push(quoteSqliteIdentifier(rowidAlias));
@@ -213,6 +219,7 @@ export function sqliteRowSelectList(
 		columns.length > 0 ? columns.map((column) => columnExpressions(column.name)).join(', ') : '1'
 	);
 	for (const key of keyColumns) parts.push(quoteSqliteIdentifier(key));
+	if (withVersion) parts.push(sqliteRowVersionExpression(columns.map((column) => column.name)));
 	return parts.join(', ');
 }
 
@@ -223,6 +230,8 @@ export interface SqliteSelectedRow {
 	rowid: string | null;
 	/** The key values whole, when the list selected key columns. */
 	key: SqliteKeyValue[] | null;
+	/** The row's version, when the list selected it. */
+	version: string | null;
 }
 
 /** Split one raw row read with `sqliteRowSelectList()` (raw, safe integers). */
@@ -230,7 +239,8 @@ export function sqliteSelectedRow(
 	raw: readonly unknown[],
 	columnCount: number,
 	rowidAlias: string | null,
-	keyColumns: readonly string[]
+	keyColumns: readonly string[],
+	withVersion = false
 ): SqliteSelectedRow {
 	const first = rowidAlias ? 1 : 0;
 	const cells: SqliteCellValue[] = [];
@@ -246,6 +256,7 @@ export function sqliteSelectedRow(
 			keyColumns.length > 0
 				? keyColumns.map((_, index) => sqliteKeyValue(raw[keyStart + index]))
 				: null,
+		version: withVersion ? String(raw[keyStart + keyColumns.length]) : null,
 	};
 }
 
@@ -277,8 +288,11 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		editability.editable && editability.identity.kind === 'primary-key'
 			? sqliteRowKeyColumns(editability.identity)
 			: [];
+	// An editable table's rows carry their versions, which an edit sends back
+	// so main can refuse it when the row changed since this read.
+	const withVersion = editability.editable;
 
-	const selectList = sqliteRowSelectList(columns, rowidAlias, keyColumns);
+	const selectList = sqliteRowSelectList(columns, rowidAlias, keyColumns, withVersion);
 	if (filter.problem) {
 		// Text that does not parse reads nothing: the caller keeps what it shows
 		// and underlines the span.
@@ -295,6 +309,7 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 			filterProblem: filter.problem,
 			editability,
 			rowKeys: keyColumns.length > 0 ? [] : null,
+			rowVersions: withVersion ? [] : null,
 		};
 	}
 	const where = filter.compiled;
@@ -316,10 +331,11 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 
 	const kept = raw
 		.slice(0, limit)
-		.map((row) => sqliteSelectedRow(row, columns.length, rowidAlias, keyColumns));
+		.map((row) => sqliteSelectedRow(row, columns.length, rowidAlias, keyColumns, withVersion));
 	const rows = kept.map((row) => row.cells);
 	const rowids = rowidAlias ? kept.map((row) => row.rowid ?? '') : null;
 	const rowKeys = keyColumns.length > 0 ? kept.map((row) => row.key ?? []) : null;
+	const rowVersions = withVersion ? kept.map((row) => row.version ?? '') : null;
 
 	return {
 		name: object.name,
@@ -333,5 +349,6 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		filtered: where !== null,
 		editability,
 		rowKeys,
+		rowVersions,
 	};
 }

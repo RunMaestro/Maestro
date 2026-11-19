@@ -22,6 +22,8 @@
 
 import Database from 'better-sqlite3';
 
+import { registerSqliteRowVersion } from './sqlite-row-version';
+
 /**
  * How long a statement waits on a lock another process holds before failing
  * with `SQLITE_BUSY`. Long enough to ride out a writer's commit, short enough
@@ -102,6 +104,10 @@ function openSqliteConnection(filePath: string, readonly: boolean): Database.Dat
 		// delete that would orphan a child fails with SQLite's words and a
 		// declared cascade is counted, never skipped (sqlite-row-edit.ts).
 		if (!readonly) db.pragma('foreign_keys = ON');
+		// Every edit checks the row version its page carried, in its own
+		// statement (sqlite-row-version.ts). The read-only handle registers it
+		// beside the filter's REGEXP (sqlite-database.ts).
+		if (!readonly) registerSqliteRowVersion(db);
 		// SQLite reads page 1 lazily, so an encrypted or damaged file opens
 		// "successfully". Reading the schema cookie forces that read here, where
 		// the failure can name the file, instead of on the first query.

@@ -24,6 +24,8 @@
  *     and the record view's Delete row (`maestro-cli sqlite insert`,
  *     `sqlite delete`), through `insertSqliteRow()` / `deleteSqliteRow()`
  *     behind the same per-call unlock.
+ *     An update or delete may carry `version` (`--if-version`): the row's
+ *     version from `sqlite rows --json`, checked in the write's own `WHERE`.
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -487,6 +489,8 @@ export async function handleSqliteUpdateCell(
 			name,
 			column,
 			row: message.row as SqliteRowKey,
+			// The version shape is checked by the edit too (absent: key alone).
+			version: message.version as string | undefined,
 			value: message.value as SqliteParameterValue,
 		})
 	);
@@ -573,6 +577,12 @@ export async function handleSqliteDeleteRow(
 	}
 	// The key's shape is checked by the delete, which refuses a bad one.
 	await writeWithCliUnlock(message, filePath, reply, (handle, editToken) =>
-		deleteSqliteRow({ handle, editToken, name, row: message.row as SqliteRowKey })
+		deleteSqliteRow({
+			handle,
+			editToken,
+			name,
+			row: message.row as SqliteRowKey,
+			version: message.version as string | undefined,
+		})
 	);
 }
