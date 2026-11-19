@@ -57,5 +57,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+        env:
+          # Windows unit tests use plain Node; keep the native modules built by npm ci.
+          MAESTRO_SERVER_INSTALL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
       - run: npm run rebuild:node-native
+        if: matrix.os != 'windows-latest'
       - run: npm run test -- --shard=${{ matrix.shard }}/2
