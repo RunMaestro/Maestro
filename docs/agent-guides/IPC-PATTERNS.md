@@ -150,7 +150,7 @@ registerMyFeatureHandlers({
 });
 ```
 
-`src/main/ipc/handlers/index.ts` also exports `registerAllHandlers()`, which reads like the registration list but is dead: nothing calls it. It is kept as a manifest, and `src/__tests__/main/ipc/bootstrap/handler-wiring.test.ts` fails if a registrar invoked there is missing from `setupIpcHandlers()`. A registrar added to the dead list alone is never registered in a shipped build (that is how `contextTimeline:*` shipped unhandled), so add it to the bootstrap first and to the manifest second, or to the bootstrap only. If the registrar needs a dependency the bootstrap does not have yet, add it to `IpcBootstrapDependencies` in `src/main/ipc/bootstrap/types.ts` and pass it from `main/index.ts`.
+`src/main/ipc/handlers/index.ts` also exports `registerAllHandlers()`, which reads like the registration list but is dead: nothing calls it. It is kept as a manifest, and `src/__tests__/main/ipc/bootstrap/handler-wiring-and-session-window.test.ts` fails if a registrar invoked there is missing from `setupIpcHandlers()`. A registrar added to the dead list alone is never registered in a shipped build (that is how `contextTimeline:*` shipped unhandled), so add it to the bootstrap first and to the manifest second, or to the bootstrap only. If the registrar needs a dependency the bootstrap does not have yet, add it to `IpcBootstrapDependencies` in `src/main/ipc/bootstrap/types.ts` and pass it from `main/index.ts`.
 
 ### Step 3: Create the preload bridge
 
