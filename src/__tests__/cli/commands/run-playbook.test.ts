@@ -65,6 +65,7 @@ vi.mock('../../../cli/output/jsonl', () => ({
 	emitError: vi.fn((msg, code) => {
 		console.error(JSON.stringify({ type: 'error', message: msg, code }));
 	}),
+	emitJsonl: vi.fn(),
 }));
 
 // Mock the formatter
@@ -88,7 +89,7 @@ import { getSessionById } from '../../../cli/services/storage';
 import { findPlaybookById } from '../../../cli/services/playbooks';
 import { runPlaybook as executePlaybook } from '../../../cli/services/batch-processor';
 import { detectAgent } from '../../../cli/services/agent-spawner';
-import { emitError } from '../../../cli/output/jsonl';
+import { emitError, emitJsonl } from '../../../cli/output/jsonl';
 import {
 	formatRunEvent,
 	formatError,
@@ -861,6 +862,101 @@ describe('run-playbook command', () => {
 			await runPlaybook('pb-123', {});
 
 			expect(formatInfo).toHaveBeenCalledWith('Documents: 3');
+		});
+	});
+
+	describe('playbook parameters', () => {
+		// PR_URL has only the placeholder default, so it is required; MAX_ITEMS defaults to 25.
+		const PROMPT = [
+			'<!-- CONFIGURE: The pull request to review -->',
+			'**PR_URL:** `https://github.com/OWNER/REPO/pull/XXX`',
+			'',
+			'<!-- CONFIGURE: How many items to process -->',
+			'**MAX_ITEMS:** `25`',
+		].join('\n');
+
+		// process.exit is mocked to throw, and the command's outer catch turns that
+		// throw into a second exit(1); the code the command chose is the FIRST exit.
+		const firstExitCode = () => processExitSpy.mock.calls[0]?.[0];
+
+		beforeEach(() => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
+		});
+
+		it('exits 2 before detecting or spawning when a required parameter has no answer', async () => {
+			const playbook = mockPlaybook({ prompt: PROMPT });
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+			await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow();
+
+			expect(firstExitCode()).toBe(2);
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Missing required parameters: PR_URL');
+			expect(emitJsonl).toHaveBeenCalledWith({
+				type: 'error',
+				message: 'Missing required parameters: PR_URL',
+				code: 'MISSING_PARAMETERS',
+				missing: ['PR_URL'],
+			});
+			expect(detectAgent).not.toHaveBeenCalled();
+			expect(executePlaybook).not.toHaveBeenCalled();
+		});
+
+		it('prints the missing names to stderr without a JSON event in human mode', async () => {
+			const playbook = mockPlaybook({ prompt: PROMPT });
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+			await expect(runPlaybook('pb-123', {})).rejects.toThrow();
+
+			expect(firstExitCode()).toBe(2);
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Missing required parameters: PR_URL');
+			expect(emitJsonl).not.toHaveBeenCalled();
+		});
+
+		it('runs with --param answers layered over the saved ones, without saving them', async () => {
+			const playbook = mockPlaybook({
+				prompt: PROMPT,
+				parameterValues: { MAX_ITEMS: '3' },
+			});
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+			await runPlaybook('pb-123', { param: ['PR_URL=https://github.com/acme/app/pull/7'] });
+
+			const [, runRecord] = vi.mocked(executePlaybook).mock.calls[0];
+			expect(runRecord.parameterValues).toEqual({
+				MAX_ITEMS: '3',
+				PR_URL: 'https://github.com/acme/app/pull/7',
+			});
+			// The loaded record is untouched: run answers are never persisted.
+			expect(playbook.parameterValues).toEqual({ MAX_ITEMS: '3' });
+		});
+
+		it('exits 2 on a --param for a parameter the playbook does not declare', async () => {
+			const playbook = mockPlaybook({ prompt: PROMPT });
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+			await expect(
+				runPlaybook('pb-123', { json: true, param: ['PR_LINK=https://x.test'] })
+			).rejects.toThrow();
+
+			expect(firstExitCode()).toBe(2);
+			expect(emitError).toHaveBeenCalledWith(
+				expect.stringContaining('PR_LINK is not a parameter of this playbook'),
+				'INVALID_PARAMETERS'
+			);
+			expect(executePlaybook).not.toHaveBeenCalled();
+		});
+
+		it('exits 2 on a malformed --param', async () => {
+			const playbook = mockPlaybook({ prompt: PROMPT });
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+			await expect(runPlaybook('pb-123', { param: ['PR_URL'] })).rejects.toThrow();
+
+			expect(firstExitCode()).toBe(2);
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				'Error: --param expects NAME=VALUE, got "PR_URL".'
+			);
 		});
 	});
 });

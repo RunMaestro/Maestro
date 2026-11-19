@@ -128,6 +128,8 @@ export interface ErrorEvent extends JsonlEvent {
 	type: 'error';
 	message: string;
 	code?: string;
+	/** `MISSING_PARAMETERS`: the required parameter names with no answer. */
+	missing?: string[];
 }
 
 // List command events

@@ -338,9 +338,13 @@ Show detailed information about a playbook
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli playbook <playbook-id>`
+## `maestro-cli playbook`
 
-Run a playbook
+Run a playbook (`playbook <playbook-id>`), or configure its parameters
+
+## `maestro-cli playbook run <playbook-id>`
+
+Run a playbook (the default: `run` may be omitted)
 
 | Option                 | Description                                                                                                 | Default |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------- | ------- |
@@ -354,6 +358,17 @@ Run a playbook
 | `--model <model>`      | Model to use for this run only, overriding the agent's configured default                                   | -       |
 | `--effort <effort>`    | Reasoning effort for this run only, overriding the agent's configured default                               | -       |
 | `--ignore-model-hints` | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default) | -       |
+| `--param <NAME=VALUE>` | Answer a playbook parameter for this run only (repeatable; never saved)                                     | `[]`    |
+| `--params-file <path>` | JSON object of parameter answers for this run only (--param wins; never saved)                              | -       |
+
+## `maestro-cli playbook configure <playbook-id>`
+
+Show a playbook's parameters, or save answers to them with --set
+
+| Option               | Description                                                           | Default |
+| -------------------- | --------------------------------------------------------------------- | ------- |
+| `--set <NAME=VALUE>` | Save a parameter answer on the playbook (repeatable; NAME= clears it) | `[]`    |
+| `--json`             | Output as JSON (for scripting)                                        | -       |
 
 ## `maestro-cli goal-run <agent-id> <goal>`
 

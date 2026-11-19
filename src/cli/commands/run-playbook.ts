@@ -6,10 +6,17 @@ import { findPlaybookById } from '../services/playbooks';
 import { runPlaybook as executePlaybook } from '../services/batch-processor';
 import { detectAgent } from '../services/agent-spawner';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
-import { emitError, type CompleteEvent } from '../output/jsonl';
+import { emitError, emitJsonl, type CompleteEvent } from '../output/jsonl';
 import { formatRunEvent, formatError, formatInfo, RunEvent } from '../output/formatter';
 import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
 import { installInterruptHandler } from '../utils/interrupt';
+import { ExitCode, exitWith } from '../exit-codes';
+import {
+	PlaybookParamInputError,
+	resolveRunParams,
+	type RunParamResolution,
+} from '../services/playbook-params';
+import { describeMissingRequiredParams } from '../../shared/playbookParams';
 
 interface RunPlaybookOptions {
 	dryRun?: boolean;
@@ -28,6 +35,10 @@ interface RunPlaybookOptions {
 	effort?: string;
 	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
 	ignoreModelHints?: boolean;
+	/** Repeated `--param NAME=VALUE`: answers for this run only, never saved. */
+	param?: string[];
+	/** `--params-file <path>`: a JSON object of answers for this run only (`--param` wins). */
+	paramsFile?: string;
 }
 
 export async function runPlaybook(playbookId: string, options: RunPlaybookOptions): Promise<void> {
@@ -50,6 +61,45 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				console.error(formatError(message));
 			}
 			process.exit(1);
+		}
+
+		// Playbook parameters: the saved answers, overridden for this run only by
+		// --params-file and --param. Checked before anything else so a run that
+		// cannot start never detects, waits on, or spawns an agent.
+		let params: RunParamResolution;
+		try {
+			params = resolveRunParams(playbook, {
+				param: options.param,
+				paramsFile: options.paramsFile,
+			});
+		} catch (error) {
+			if (!(error instanceof PlaybookParamInputError)) throw error;
+			if (useJson) {
+				emitError(error.message, 'INVALID_PARAMETERS');
+			} else {
+				console.error(formatError(error.message));
+			}
+			exitWith(ExitCode.InvalidUsage);
+		}
+		if (params.missing.length > 0) {
+			const message = describeMissingRequiredParams(params.missing);
+			console.error(formatError(message));
+			console.error(
+				`Answer them for this run with --param NAME=VALUE, or save them with: maestro-cli playbook configure ${playbook.id} --set NAME=VALUE`
+			);
+			if (useJson) {
+				emitJsonl({
+					type: 'error',
+					message,
+					code: 'MISSING_PARAMETERS',
+					missing: params.missing.map((spec) => spec.name),
+				});
+			}
+			exitWith(ExitCode.InvalidUsage);
+		}
+		// The engine reads answers off the record; this copy is never saved.
+		if (params.specs.length > 0) {
+			playbook = { ...playbook, parameterValues: params.values };
 		}
 
 		const agent = getSessionById(agentId)!;

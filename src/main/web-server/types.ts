@@ -1235,6 +1235,20 @@ export interface WebPlaybook {
 }
 
 /**
+ * The fields an `update_playbook` message may change. `parameterValues` is
+ * the playbook's saved parameter answers by name (`maestro-cli playbook
+ * configure --set`); it replaces the whole set.
+ */
+export type WebPlaybookUpdate = Partial<{
+	name: string;
+	documents: WebPlaybookDocument[];
+	loopEnabled: boolean;
+	maxLoops?: number | null;
+	prompt: string;
+	parameterValues: Record<string, string>;
+}>;
+
+/**
  * File tree entry.
  */
 export interface FileTreeNode {
@@ -1463,13 +1477,7 @@ export type CreatePlaybookCallback = (
 export type UpdatePlaybookCallback = (
 	sessionId: string,
 	playbookId: string,
-	updates: Partial<{
-		name: string;
-		documents: WebPlaybookDocument[];
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	}>
+	updates: WebPlaybookUpdate
 ) => Promise<WebPlaybook | null>;
 export type DeletePlaybookCallback = (sessionId: string, playbookId: string) => Promise<boolean>;
 export type GetFileTreeCallback = (sessionId: string, subPath?: string) => Promise<FileTreeNode[]>;

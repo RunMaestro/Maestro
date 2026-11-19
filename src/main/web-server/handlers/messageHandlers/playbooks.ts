@@ -5,7 +5,8 @@
  * create_playbook, update_playbook, delete_playbook.
  */
 
-import type { WebPlaybookDocument } from '../../types';
+import type { WebPlaybookDocument, WebPlaybookUpdate } from '../../types';
+import { PLAYBOOK_PARAM_NAME_REGEX } from '../../../../shared/playbookParams';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -41,6 +42,22 @@ function parsePlaybookDocuments(input: unknown): WebPlaybookDocument[] | null {
 			filename: e.filename,
 			resetOnCompletion,
 		});
+	}
+	return out;
+}
+
+/**
+ * Validate the `parameterValues` field of a playbook update: an object of
+ * legal parameter names to strings. Returns null when any entry is malformed,
+ * so a buggy client is refused instead of having answers silently dropped. An
+ * empty object is valid and clears every saved answer.
+ */
+function parsePlaybookParameterValues(input: unknown): Record<string, string> | null {
+	if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+	const out: Record<string, string> = {};
+	for (const [name, value] of Object.entries(input as Record<string, unknown>)) {
+		if (!PLAYBOOK_PARAM_NAME_REGEX.test(name) || typeof value !== 'string') return null;
+		out[name] = value;
 	}
 	return out;
 }
@@ -188,6 +205,7 @@ export function handleUpdatePlaybook(
 				loopEnabled?: unknown;
 				maxLoops?: unknown;
 				prompt?: unknown;
+				parameterValues?: unknown;
 		  }
 		| undefined;
 
@@ -200,13 +218,7 @@ export function handleUpdatePlaybook(
 		return;
 	}
 
-	const sanitized: Partial<{
-		name: string;
-		documents: WebPlaybookDocument[];
-		loopEnabled: boolean;
-		maxLoops: number | null;
-		prompt: string;
-	}> = {};
+	const sanitized: WebPlaybookUpdate = {};
 
 	if (updates.name !== undefined) {
 		if (typeof updates.name !== 'string' || updates.name.trim() === '') {
@@ -248,6 +260,17 @@ export function handleUpdatePlaybook(
 			return;
 		}
 		sanitized.prompt = updates.prompt;
+	}
+	if (updates.parameterValues !== undefined) {
+		const values = parsePlaybookParameterValues(updates.parameterValues);
+		if (values === null) {
+			ctx.sendError(
+				client,
+				'parameterValues must be an object of UPPER_SNAKE_CASE names to string values'
+			);
+			return;
+		}
+		sanitized.parameterValues = values;
 	}
 
 	if (!ctx.callbacks.updatePlaybook) {

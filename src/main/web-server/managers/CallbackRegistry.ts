@@ -105,6 +105,7 @@ import type {
 	DeletePlaybookCallback,
 	WebPlaybook,
 	WebPlaybookDocument,
+	WebPlaybookUpdate,
 	GetSettingsCallback,
 	SetSettingCallback,
 	GetGroupsCallback,
@@ -953,13 +954,7 @@ export class CallbackRegistry {
 	async updatePlaybook(
 		sessionId: string,
 		playbookId: string,
-		updates: Partial<{
-			name: string;
-			documents: WebPlaybookDocument[];
-			loopEnabled: boolean;
-			maxLoops?: number | null;
-			prompt: string;
-		}>
+		updates: WebPlaybookUpdate
 	): Promise<WebPlaybook | null> {
 		if (!this.callbacks.updatePlaybook) return null;
 		return this.callbacks.updatePlaybook(sessionId, playbookId, updates);

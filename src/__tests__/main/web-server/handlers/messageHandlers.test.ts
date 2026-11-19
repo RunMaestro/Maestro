@@ -5106,6 +5106,47 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	// `maestro-cli playbook configure --set` saves parameter answers through here.
+	describe('update_playbook parameterValues', () => {
+		const update = (parameterValues: unknown) => ({
+			type: 'update_playbook' as const,
+			sessionId: 'session-1',
+			playbookId: 'pb-1',
+			updates: { parameterValues },
+		});
+
+		it('forwards a valid answer set to the callback', async () => {
+			handler.handleMessage(client, update({ MAX_ITEMS: '25', PR_URL: 'https://x.test/1' }));
+			await vi.waitFor(() => {
+				expect(callbacks.updatePlaybook).toHaveBeenCalledWith('session-1', 'pb-1', {
+					parameterValues: { MAX_ITEMS: '25', PR_URL: 'https://x.test/1' },
+				});
+			});
+		});
+
+		it('accepts an empty object, which clears every saved answer', async () => {
+			handler.handleMessage(client, update({}));
+			await vi.waitFor(() => {
+				expect(callbacks.updatePlaybook).toHaveBeenCalledWith('session-1', 'pb-1', {
+					parameterValues: {},
+				});
+			});
+		});
+
+		it.each([
+			['an array', ['A']],
+			['a non-string value', { MAX_ITEMS: 25 }],
+			['an illegal name', { max_items: '25' }],
+			['null', null],
+		])('rejects %s instead of dropping it', (_label, parameterValues) => {
+			handler.handleMessage(client, update(parameterValues));
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toMatch(/parameterValues/);
+			expect(callbacks.updatePlaybook).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Create Gist', () => {
 		it('replies with create_gist_result on success', async () => {
 			handler.handleMessage(client, {

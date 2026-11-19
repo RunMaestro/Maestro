@@ -501,10 +501,17 @@ show
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(showPlaybook);
 
-// Playbook command (lazy-loaded to keep CLI startup lean)
-program
-	.command('playbook <playbook-id>')
-	.description('Run a playbook')
+// Playbook command (lazy-loaded to keep CLI startup lean). `run` is the default
+// subcommand, so `maestro-cli playbook <playbook-id>` still runs the playbook.
+const playbookCommand = program
+	.command('playbook')
+	.description('Run a playbook (`playbook <playbook-id>`), or configure its parameters');
+
+const collectAssignment = (value: string, previous: string[]) => [...previous, value];
+
+playbookCommand
+	.command('run <playbook-id>', { isDefault: true })
+	.description('Run a playbook (the default: `run` may be omitted)')
 	.option('--dry-run', 'Show what would be executed without running')
 	.option('--no-history', 'Do not write history entries')
 	.option('--json', 'Output as JSON lines (for scripting)')
@@ -524,9 +531,34 @@ program
 		'--ignore-model-hints',
 		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
+	.option(
+		'--param <NAME=VALUE>',
+		'Answer a playbook parameter for this run only (repeatable; never saved)',
+		collectAssignment,
+		[]
+	)
+	.option(
+		'--params-file <path>',
+		'JSON object of parameter answers for this run only (--param wins; never saved)'
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
+	});
+
+playbookCommand
+	.command('configure <playbook-id>')
+	.description("Show a playbook's parameters, or save answers to them with --set")
+	.option(
+		'--set <NAME=VALUE>',
+		'Save a parameter answer on the playbook (repeatable; NAME= clears it)',
+		collectAssignment,
+		[]
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(async (playbookId: string, options: Record<string, unknown>) => {
+		const { configurePlaybook } = await import('./commands/configure-playbook');
+		return configurePlaybook(playbookId, options);
 	});
 
 // Goal-Driven Auto Run command (lazy-loaded)

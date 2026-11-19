@@ -200,8 +200,10 @@ maestro-cli show playbook <id> [--json]
 Run a playbook (batch execution of Auto Run documents).
 
 ```bash
-maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
+maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints] [--param NAME=VALUE ...] [--params-file <path>]
 ```
+
+`run` is the default subcommand of `playbook`, so `playbook run <playbook-id>` is the same command.
 
 Options:
 
@@ -213,8 +215,21 @@ Options:
 - `--wait` - Wait for agent to become available if busy
 - `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
 - `--ignore-model-hints` - Skip the documents' `MAESTRO:MODEL` markers so every task runs at the run override or the agent default
+- `--param NAME=VALUE` (repeatable) / `--params-file <path>` (a JSON object) - Answer playbook parameters for this run only. They layer over the saved answers (`--param` wins over the file) and are never written back.
+
+Before anything else (agent detection, busy checks, spawns), the command resolves the playbook's parameter specs (`resolveRunParams()` in `src/cli/services/playbook-params.ts`, over `collectUnresolvedRequired()` in `src/shared/playbookParams.ts`). A required parameter with no answer and no default prints `Missing required parameters: A, B` to stderr, emits `{ type: 'error', code: 'MISSING_PARAMETERS', missing: [...] }` with `--json`, and exits 2. A malformed `--param`, an unreadable `--params-file`, a name the playbook does not declare, or a value its spec refuses exits 2 with code `INVALID_PARAMETERS`.
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
+
+### `playbook configure <playbook-id>`
+
+Read or save a playbook's parameter answers.
+
+```bash
+maestro-cli playbook configure <playbook-id> [--set NAME=VALUE ...] [--json]
+```
+
+Without `--set` it lists each declared parameter with its saved answer or default, and the required ones still missing. With `--set` it validates the answers against the specs (undeclared or invalid answers exit 2), merges them over the saved ones (`NAME=` clears one), and saves the set through the `update_playbook` WebSocket message (`parameterValues`), which the desktop applies via `playbooks:update`; the CLI never writes the playbook store itself. Once nothing required is missing, it also removes the missing-parameters halt marker Maestro writes for an automation run (`stripMissingParamsHaltMarkers()` in `src/shared/autorunMarkers.ts`), so a configured playbook is not still refused. A halt marker a person or an agent wrote is never touched.
 
 ### `goal-run <agent-id> <goal>`
 
