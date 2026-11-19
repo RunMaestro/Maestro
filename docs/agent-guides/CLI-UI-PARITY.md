@@ -277,6 +277,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: screenshots, support package box                                                                                | `feedback submit --attach <png...> --support-package`                                            |
 | Feedback: Running as (account picker)                                                                                     | `feedback accounts [--use <key> \| --clear]`                                                     |
 | Feedback: Log in to GitHub / Check Again                                                                                  | `feedback login`, `feedback auth --fresh`                                                        |
+| Agent error: Install <provider> (CLI missing)                                                                             | `install-command <provider> [--platform] [--json]` (prints the line)                             |
 | Feedback: live self-diagnosis                                                                                             | `feedback diagnose`                                                                              |
 | Feedback: Submit now (early exit)                                                                                         | `feedback submit` (the caller supplies whatever fields it has)                                   |
 | Create Debug Package (support package)                                                                                    | `support-package -o <dir> [--no-logs ...]`                                                       |
@@ -385,6 +386,13 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     point with once it is on. The outcome it leads to, an element added to the
     message, is covered by `browser-pick <tab> --selector <css>`, which runs
     the same describe, crop, and delivery code without the overlay.
+15. **Verify whether a provider CLI is detected after installing it.**
+    `install-command <provider>` prints the install command so an agent can run
+    it in its own shell, and the desktop refreshes detection on Retry via
+    `agents:reprobe`, but there is no `maestro-cli` read verb yet that queries
+    `agents:detect` or `agents:reprobe` to report detected provider binaries.
+    Agents can check `command -v <binary>` (or `where <binary>` on Windows) in
+    their own shell.
 
 ### Audit backlog (2026-09-27)
 
