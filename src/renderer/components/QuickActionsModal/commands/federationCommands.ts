@@ -7,7 +7,7 @@ interface BuildFederationCommandsArgs {
 	peers: MirroredPeer[];
 	/** The mirrored agent the Main Window shows, if any. */
 	activeMirror: MirrorSelection | null;
-	reconnectPeer: (peerId: string) => void | Promise<void>;
+	reconnectPeer: (peerId: string) => unknown;
 	copyPeerAgentRef: (peerId: string, agentId: string) => void | Promise<void>;
 	/**
 	 * The active local SSH agent whose remote takes part (`canMoveToHost()`). `hostReady` false: the

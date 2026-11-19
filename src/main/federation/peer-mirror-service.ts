@@ -22,7 +22,9 @@
  *   and the lease restarts the forward; the service only records what they report. A remote that
  *   answered with no host (`not-installed`, `host-down`) or could not be reached is probed once,
  *   then again only after a wake, a change to the stored remotes, a reconnect, a host setup
- *   (`setupHostFromDesktop`), or the slow re-probe (`MIRROR_REPROBE_INTERVAL_MS`).
+ *   (`setupHostFromDesktop`), or the slow re-probe (`MIRROR_REPROBE_INTERVAL_MS`). A peer that
+ *   should have answered and did not (`connect-failed`, `forward-failed`, `lost`) is first tried
+ *   a few more times on a short backoff (`MIRROR_RETRY_DELAYS_MS`), in the same queue.
  *
  * Federation is opportunistic: every enabled SSH remote that has not opted out is probed, and only
  * the ones that run a host count as peers (`isPeerFederated()`). The mirror holds each host's whole
@@ -54,6 +56,7 @@ import {
 	type MirrorPush,
 	type MirrorStep,
 	type MirroredPeer,
+	type PeerMirrorConnection,
 } from '../../shared/maestro-lib/client/peer-mirror';
 import { coalesceTurnEvents, liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import {
@@ -87,6 +90,22 @@ export const MIRROR_TRANSCRIPT_DEFAULT_TAIL = 500;
  * other way (a service manager, `remote-host start`, a reboot) shows up without a click.
  */
 export const MIRROR_REPROBE_INTERVAL_MS = 15 * 60_000;
+/**
+ * When a peer that should answer did not (a boot-time attach over a busy tunnel, a dropped host),
+ * it is tried again after each of these in turn, then only by the slow re-probe. Reset once the
+ * peer connects, after a wake, and when the user reconnects it.
+ */
+export const MIRROR_RETRY_DELAYS_MS: readonly number[] = [30_000, 60_000, 2 * 60_000, 5 * 60_000];
+/**
+ * The failures a retry can fix: the host was found but did not attach, the SSH forward did not
+ * open, or a connected host dropped. Not `host-down` (nothing runs there to reach), `not-installed`
+ * or `outdated`: those wait for the slow re-probe or the user.
+ */
+const RETRYABLE_CONNECTIONS: ReadonlySet<PeerMirrorConnection> = new Set([
+	'connect-failed',
+	'forward-failed',
+	'lost',
+]);
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -110,6 +129,8 @@ export interface PeerMirrorServiceDeps {
 	clearTimer?(handle: unknown): void;
 	/** Re-probe interval for remotes with no host. Default `MIRROR_REPROBE_INTERVAL_MS`; 0 turns it off. */
 	reprobeIntervalMs?: number;
+	/** Delays of the quick retries after a failure. Default `MIRROR_RETRY_DELAYS_MS`; [] turns them off. */
+	retryDelaysMs?: readonly number[];
 }
 
 /** What `snapshot()` answers: every peer with its agents and live turns. */
@@ -180,6 +201,8 @@ export class PeerMirrorService {
 	private readonly historyCache = new Map<string, Promise<HistoryEntry[]>>();
 	private unwatchRemotes: (() => void) | null = null;
 	private reprobeTimer: ReturnType<typeof setTimeout> | null = null;
+	/** The quick retries under way, by remote id: how many ran, and the one armed. */
+	private readonly retries = new Map<string, { attempt: number; timer: unknown }>();
 	private started = false;
 	private stopped = false;
 
@@ -390,10 +413,8 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
-		const lease = entry.connection?.lease;
-		const forward = lease?.state().status;
-		if (lease && (forward === 'down' || forward === 'stopped')) lease.restart();
-		await this.enqueue(entry.remote.id, () => this.reload(entry));
+		this.resetRetry(entry);
+		await this.restartAndReload(entry);
 		const summary = summarizePeer(entry.state);
 		return summary.connection === 'connected'
 			? { ok: true, peer: summary }
@@ -412,6 +433,7 @@ export class PeerMirrorService {
 	reloadAfterWake(): void {
 		if (!this.started || this.stopped) return;
 		for (const entry of this.entries.values()) {
+			this.resetRetry(entry);
 			void this.enqueue(entry.remote.id, () => this.reload(entry));
 		}
 	}
@@ -446,6 +468,7 @@ export class PeerMirrorService {
 			clearTimeout(this.reprobeTimer);
 			this.reprobeTimer = null;
 		}
+		for (const entry of this.entries.values()) this.resetRetry(entry);
 		this.unwatchRemotes?.();
 		this.unwatchRemotes = null;
 		if (this.turnTimer !== null) {
@@ -475,6 +498,57 @@ export class PeerMirrorService {
 			if (connection === 'connecting' || connection === 'connected') continue;
 			void this.enqueue(entry.remote.id, () => this.reload(entry));
 		}
+	}
+
+	/**
+	 * Arm the next quick retry when the peer just fell into a failure a retry can fix, and forget
+	 * the count once it connects. One retry is armed at a time; it runs in the one queue.
+	 */
+	private followRetry(entry: PeerEntry): void {
+		const { connection } = entry.state;
+		if (connection === 'connected') {
+			this.resetRetry(entry);
+			return;
+		}
+		if (!RETRYABLE_CONNECTIONS.has(connection) || this.stopped || entry.dropped) return;
+		const key = entry.remote.id;
+		const retry = this.retries.get(key) ?? { attempt: 0, timer: null };
+		if (retry.timer !== null) return;
+		const delays = this.deps.retryDelaysMs ?? MIRROR_RETRY_DELAYS_MS;
+		const delay = delays[retry.attempt];
+		if (delay === undefined) return;
+		const setTimer =
+			this.deps.setTimer ??
+			((callback: () => void, ms: number) => {
+				const timer = setTimeout(callback, ms);
+				timer.unref?.();
+				return timer;
+			});
+		retry.attempt += 1;
+		retry.timer = setTimer(() => {
+			retry.timer = null;
+			if (this.stopped || entry.dropped) return;
+			void this.restartAndReload(entry);
+		}, delay);
+		this.retries.set(key, retry);
+	}
+
+	/** Restart the peer's forward when it is down, then reload the peer in the one queue. */
+	private restartAndReload(entry: PeerEntry): Promise<void> {
+		const lease = entry.connection?.lease;
+		const forward = lease?.state().status;
+		if (lease && (forward === 'down' || forward === 'stopped')) lease.restart();
+		return this.enqueue(entry.remote.id, () => this.reload(entry));
+	}
+
+	/** Disarm the peer's quick retry and start its count again. */
+	private resetRetry(entry: PeerEntry): void {
+		const retry = this.retries.get(entry.remote.id);
+		if (!retry) return;
+		if (retry.timer !== null) {
+			(this.deps.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout)))(retry.timer);
+		}
+		this.retries.delete(entry.remote.id);
 	}
 
 	private scheduleReprobe(): void {
@@ -641,7 +715,9 @@ export class PeerMirrorService {
 
 	/** Take the reducer's result: keep the state, drop stale cache lines, and push the changes. */
 	private commit(entry: PeerEntry, step: MirrorStep): void {
+		const before = entry.state.connection;
 		entry.state = step.peer;
+		if (entry.state.connection !== before) this.followRetry(entry);
 		for (const event of step.push) {
 			if (event.type === 'tab.stale') {
 				this.forgetTranscript(entry, event.agentId, event.tabId);
@@ -740,6 +816,7 @@ export class PeerMirrorService {
 
 	private async detach(entry: PeerEntry): Promise<void> {
 		entry.dropped = true;
+		this.resetRetry(entry);
 		for (const unsubscribe of entry.unsubscribes) unsubscribe();
 		entry.unsubscribes = [];
 		const connection = entry.connection;

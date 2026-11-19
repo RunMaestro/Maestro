@@ -53,10 +53,17 @@ export async function readMirrorTranscript(
 	}
 }
 
-/** Force the peer's forward or client back up and reload its agents (`federation reconnect`). */
-export async function reconnectPeer(peerId: string): Promise<void> {
+/**
+ * Force the peer's forward or client back up and reload its agents (`federation reconnect`).
+ * A failure raises a toast, unless `quiet`: a retry the user did not ask for (New Agent picking a
+ * dropped host) says nothing. Resolves to whether the host answered.
+ */
+export async function reconnectPeer(
+	peerId: string,
+	options: { quiet?: boolean } = {}
+): Promise<boolean> {
 	const api = window.maestro?.federation;
-	if (!api) return;
+	if (!api) return false;
 	let error: string | undefined;
 	try {
 		const result = await api.reconnect(peerId);
@@ -64,9 +71,10 @@ export async function reconnectPeer(peerId: string): Promise<void> {
 	} catch (caught) {
 		error = ipcErrorMessage(caught);
 	}
-	if (error) {
+	if (error && !options.quiet) {
 		notifyToast({ color: 'red', title: `Could not reconnect to ${peerId}`, message: error });
 	}
+	return !error;
 }
 
 /** Copy the `peer:agent` address maestro-cli takes for a mirrored agent. */

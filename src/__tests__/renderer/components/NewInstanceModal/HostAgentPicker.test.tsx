@@ -30,7 +30,13 @@ const listings = [
 	listing('d1', 'Docs', { toolType: 'codex', cwd: '/srv/docs' }),
 ];
 
-function Harness({ onAdd = vi.fn() }: { onAdd?: (ref: string) => void }) {
+function Harness({
+	onAdd = vi.fn(),
+	onCreateNew = vi.fn(),
+}: {
+	onAdd?: (ref: string) => void;
+	onCreateNew?: () => void;
+}) {
 	const [selected, setSelected] = useState<string | null>(null);
 	return (
 		<>
@@ -41,6 +47,7 @@ function Harness({ onAdd = vi.fn() }: { onAdd?: (ref: string) => void }) {
 				selectedRef={selected}
 				onSelectedRefChange={setSelected}
 				onAdd={onAdd}
+				onCreateNew={onCreateNew}
 			/>
 			<output data-testid="selected">{selected ?? ''}</output>
 		</>
@@ -79,5 +86,15 @@ describe('HostAgentPicker', () => {
 		expect(onAdd).toHaveBeenLastCalledWith('tome:d1');
 		fireEvent.doubleClick(screen.getAllByTestId('host-agent-row')[0]);
 		expect(onAdd).toHaveBeenLastCalledWith('tome:k1');
+	});
+
+	it('heads the list with a New agent row that leaves for the create form', () => {
+		const onCreateNew = vi.fn();
+		render(<Harness onCreateNew={onCreateNew} />);
+		expect(screen.getByText('On PedTome, not in your Left Bar (2)')).toBeInTheDocument();
+		const create = screen.getByTestId('host-agent-create-new');
+		expect(create).toHaveTextContent('New agent on PedTome');
+		fireEvent.click(create);
+		expect(onCreateNew).toHaveBeenCalledTimes(1);
 	});
 });

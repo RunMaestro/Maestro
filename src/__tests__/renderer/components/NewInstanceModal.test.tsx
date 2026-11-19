@@ -5796,21 +5796,28 @@ describe('NewInstanceModal', () => {
 			expect(onClose).toHaveBeenCalled();
 		});
 
-		it('creates a new agent on the host instead when asked', async () => {
+		it('creates a new agent on the host from the pinned row, and goes back to the list', async () => {
 			renderModal();
 			await chooseRunsOn('PedTome');
-			fireEvent.click(await screen.findByRole('radio', { name: /^New agent/ }));
+			expect(await screen.findByRole('dialog')).toHaveAttribute('aria-label', 'Add Agent');
+			fireEvent.click(await screen.findByTestId('host-agent-create-new'));
 
 			expect(screen.queryByTestId('host-agent-picker')).not.toBeInTheDocument();
 			expect(screen.getByRole('tab', { name: /^General/ })).toBeInTheDocument();
+			expect(screen.getByRole('dialog')).toHaveAttribute('aria-label', 'Create New Agent');
 			expect(screen.getByRole('button', { name: 'Runs on' })).toHaveTextContent('PedTome');
+
+			const back = screen.getByTestId('new-agent-back-to-host');
+			expect(back).toHaveTextContent("Or add one of PedTome's 2 agents");
+			fireEvent.click(back);
+			expect(screen.getByTestId('host-agent-picker')).toBeInTheDocument();
 		});
 
 		it('keeps the form for a remote that runs no host agents to add', async () => {
 			renderModal();
 			await chooseRunsOn('Plain Box');
 
-			expect(screen.queryByTestId('new-agent-host-source')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('new-agent-back-to-host')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('host-agent-picker')).not.toBeInTheDocument();
 		});
 
@@ -5819,9 +5826,65 @@ describe('NewInstanceModal', () => {
 			renderModal();
 			await chooseRunsOn('PedTome');
 
-			expect(screen.queryByTestId('new-agent-host-source')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('new-agent-back-to-host')).not.toBeInTheDocument();
 			fireEvent.click(screen.getByRole('button', { name: 'Runs on' }));
 			expect(screen.getByRole('option', { name: /^PedTome/ })).not.toHaveTextContent('to add');
+		});
+
+		it('reaches a host the mirror lost when it is picked, then opens its list', async () => {
+			const lostPeer: MirroredPeer = {
+				...createMirroredPeer({ peerId: 'PedTome', remoteId: 'remote-tome', name: 'PedTome' }),
+				connection: 'connect-failed',
+				error: 'The host on peer "PedTome" did not accept the connection',
+			};
+			usePeerMirrorStore.setState({ peers: { PedTome: lostPeer }, order: ['PedTome'] });
+			let answer: (value: { ok: boolean }) => void = () => {};
+			const reconnect = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => (answer = resolve)));
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			maestro.federation = { reconnect };
+			try {
+				renderModal();
+				await chooseRunsOn('PedTome');
+
+				expect(reconnect).toHaveBeenCalledTimes(1);
+				expect(reconnect).toHaveBeenCalledWith('PedTome');
+				expect(await screen.findByTestId('new-agent-reaching-host')).toHaveTextContent(
+					'Looking for agents on PedTome to add...'
+				);
+
+				// The host answers: the mirror fills, and the picked host opens on its list.
+				await act(async () => {
+					usePeerMirrorStore.setState({ peers: { PedTome: tomePeer() } });
+					answer({ ok: true });
+				});
+				expect(await screen.findByTestId('host-agent-picker')).toBeInTheDocument();
+				expect(screen.queryByTestId('new-agent-reaching-host')).not.toBeInTheDocument();
+			} finally {
+				delete maestro.federation;
+			}
+		});
+
+		it('does not retry a remote with no Maestro host to reach', async () => {
+			usePeerMirrorStore.setState({
+				peers: {
+					PedTome: {
+						...createMirroredPeer({ peerId: 'PedTome', remoteId: 'remote-tome', name: 'PedTome' }),
+						connection: 'not-installed',
+					},
+				},
+				order: ['PedTome'],
+			});
+			const reconnect = vi.fn(async () => ({ ok: true }));
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			maestro.federation = { reconnect };
+			try {
+				renderModal();
+				await chooseRunsOn('PedTome');
+				expect(reconnect).not.toHaveBeenCalled();
+				expect(screen.queryByTestId('new-agent-reaching-host')).not.toBeInTheDocument();
+			} finally {
+				delete maestro.federation;
+			}
 		});
 
 		it('opens on the first host with agents to add (`open add-hosted-agent`)', async () => {

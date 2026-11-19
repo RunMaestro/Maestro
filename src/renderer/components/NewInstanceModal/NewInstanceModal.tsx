@@ -63,10 +63,10 @@ import { getModalActions, selectModalData, useModalStore } from '../../stores/mo
 import { notifyToast } from '../../stores/notificationStore';
 import { addHostedAgent } from '../../services/hostedAgents';
 import type { HostedAgentListing } from '../../../shared/federationCommands';
-import { useAddableHostedAgents } from '../../hooks/federation/useAgentLift';
+import { useAddableHostedAgents, useReachPeerOnPick } from '../../hooks/federation/useAgentLift';
 import { withSshRemoteChoice } from '../shared/SshRemoteSelector';
-import { SegmentedControl } from '../ui/SegmentedControl';
 import { HostAgentPicker } from './HostAgentPicker';
+import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { isImeComposing } from '../../utils/ime';
 import type { AgentDebugInfo, AgentSeed, NewInstanceModalProps } from './types';
@@ -223,6 +223,9 @@ export function NewInstanceModal({
 	// Opened on the host source: choose the first host once the form's own load
 	// is done, since that load resets the SSH choice.
 	const hostPresetPendingRef = useRef(false);
+	// The remote just picked in "Runs on" whose host was still being reached: its list opens once
+	// the host answers, as it would have had the host been reachable at the pick.
+	const awaitingHostListRef = useRef<string | null>(null);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	// The SSH remote a group seed just switched on. The re-detection that follows
@@ -1620,6 +1623,11 @@ export function NewInstanceModal({
 	const hostListings = (currentSshRemoteId && addableByRemote.get(currentSshRemoteId)) || [];
 	// A duplicate is a new agent by definition, so it never offers the host's.
 	const offersHostAgents = !sourceSession && hostListings.length > 0;
+	// A host the mirror lost (a boot-time attach can fail) is reached again when picked here.
+	const reachingHost = useReachPeerOnPick(
+		currentSshRemoteId ?? null,
+		isOpen && !sourceSession && hostListings.length === 0
+	);
 	const pullingFromHost = offersHostAgents && hostSource === 'host';
 
 	// "Runs on": local, or a remote. A host with agents to hand over opens on its list.
@@ -1628,9 +1636,16 @@ export function NewInstanceModal({
 			handleSshRemoteConfigChange(withSshRemoteChoice(activeSshRemoteConfig, remoteId));
 			setHostSource(remoteId && addableByRemote.has(remoteId) ? 'host' : 'new');
 			setHostAgentRef(null);
+			awaitingHostListRef.current = remoteId && !addableByRemote.has(remoteId) ? remoteId : null;
 		},
 		[handleSshRemoteConfigChange, activeSshRemoteConfig, addableByRemote]
 	);
+
+	useEffect(() => {
+		if (!offersHostAgents || awaitingHostListRef.current !== currentSshRemoteId) return;
+		awaitingHostListRef.current = null;
+		setHostSource('host');
+	}, [offersHostAgents, currentSshRemoteId]);
 
 	useEffect(() => {
 		if (!isOpen || loading || readyDraftSource === undefined) return;
@@ -1779,7 +1794,7 @@ export function NewInstanceModal({
 	return (
 		<Modal
 			theme={theme}
-			title="Create New Agent"
+			title={pullingFromHost ? 'Add Agent' : 'Create New Agent'}
 			priority={MODAL_PRIORITIES.NEW_INSTANCE}
 			onClose={onClose}
 			resizable
@@ -1833,22 +1848,14 @@ export function NewInstanceModal({
 				)
 			}
 		>
-			{offersHostAgents && (
-				<div className="px-6 pt-4">
-					<SegmentedControl
-						theme={theme}
-						value={hostSource}
-						onChange={setHostSource}
-						ariaLabel="Add or create"
-						testId="new-agent-host-source"
-						options={[
-							{
-								value: 'host',
-								label: `Add from ${hostListings[0].peerName} (${hostListings.length})`,
-							},
-							{ value: 'new', label: 'New agent' },
-						]}
-					/>
+			{reachingHost && !offersHostAgents && (
+				<div
+					className="px-6 pt-4 flex items-center gap-2 text-xs"
+					style={{ color: theme.colors.textDim }}
+					data-testid="new-agent-reaching-host"
+				>
+					<Spinner size={12} />
+					Looking for agents on {sshRemoteName} to add...
 				</div>
 			)}
 			{pullingFromHost ? (
@@ -1862,11 +1869,25 @@ export function NewInstanceModal({
 						selectedRef={hostAgentRef}
 						onSelectedRefChange={setHostAgentRef}
 						onAdd={(ref) => void addHostAgent(ref)}
+						onCreateNew={() => setHostSource('new')}
 						groupPicker={groupPicker}
 					/>
 				</div>
 			) : (
 				<>
+					{offersHostAgents && (
+						<div className="px-6 pt-4">
+							<button
+								type="button"
+								onClick={() => setHostSource('host')}
+								className="text-xs hover:underline"
+								style={{ color: theme.colors.accent }}
+								data-testid="new-agent-back-to-host"
+							>
+								← Or add one of {hostListings[0].peerName}'s {hostListings.length} agents
+							</button>
+						</div>
+					)}
 					{seededFromGroup && groupSeed && (
 						<GroupSeedBanner
 							theme={theme}
