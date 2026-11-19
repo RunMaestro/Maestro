@@ -697,6 +697,18 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(runEffort && { effort: runEffort }),
 						...(ignoreModelHints && { ignoreModelHints: true }),
 						...autoResumeFields,
+						// The playbook's parameter answers resolve its `[NAME]` tokens.
+						...(loadedPlaybook && {
+							playbook: {
+								id: loadedPlaybook.id,
+								...(loadedPlaybook.parameterOverlay && {
+									parameterOverlay: loadedPlaybook.parameterOverlay,
+								}),
+								...(loadedPlaybook.parameterValues && {
+									parameterValues: loadedPlaybook.parameterValues,
+								}),
+							},
+						}),
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);

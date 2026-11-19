@@ -525,6 +525,84 @@ export function collectUnresolvedRequired(
 	);
 }
 
+/**
+ * The specs a playbook run resolves against: the prompt's prose form merged
+ * with the manifest overlay. The one place both Auto Run engines derive them.
+ */
+export function resolvePlaybookParamSpecs(
+	prompt: string,
+	overlay: PlaybookParamOverlay[] | undefined
+): PlaybookParamSpec[] {
+	return mergePlaybookParams(parsePlaybookParameterForm(prompt), overlay ?? []);
+}
+
+/** Specs and answers ready for {@link applyPlaybookParamsToTurn}. */
+export interface PlaybookParamSet {
+	specs: PlaybookParamSpec[];
+	values: PlaybookParamValues;
+}
+
+/**
+ * Expand `{{TEMPLATE}}` variables inside every default and answer, once, at
+ * resolve time, so a default such as `{{AGENT_PATH}}` resolves to the path.
+ * The expanded value is then substituted literally: running the template pass
+ * AFTER the bracket pass instead would let an answer inject a template. Each
+ * engine passes its own expander. Inputs are not mutated.
+ */
+export function expandPlaybookParamTemplates(
+	set: PlaybookParamSet,
+	expand: (text: string) => string
+): PlaybookParamSet {
+	const specs = set.specs.map((spec) =>
+		spec.default === undefined ? spec : { ...spec, default: expand(spec.default) }
+	);
+	const values: PlaybookParamValues = {};
+	for (const [name, value] of Object.entries(set.values)) values[name] = expand(value);
+	return { specs, values };
+}
+
+/** The result of {@link applyPlaybookParamsToPrompt}. */
+export interface PlaybookParamPrompt {
+	/** The task prompt with each answer substituted and the Resolved Configuration table appended. */
+	prompt: string;
+	/**
+	 * Declared `[NAME]` tokens still present in the document or the prompt after
+	 * substitution. Non-empty means the engine must not spawn.
+	 */
+	surviving: string[];
+}
+
+/**
+ * Finish one Auto Run turn's parameter pass. The engine has already
+ * substituted the document in memory (`substitutePlaybookParams`, never
+ * persisted); this substitutes the task prompt, appends the Resolved
+ * Configuration table, and reports any token that survived in either.
+ *
+ * Both engines call it after the `{{}}` pass and its write-back, and before
+ * anything that must stay literal (steering notes, delegated results) is
+ * prepended to the prompt. With no specs the prompt passes through unchanged.
+ */
+export function applyPlaybookParamsToPrompt(
+	prompt: string,
+	substitutedDocument: string,
+	set: PlaybookParamSet
+): PlaybookParamPrompt {
+	const { specs, values } = set;
+	if (specs.length === 0) return { prompt, surviving: [] };
+	const substitutedPrompt = substitutePlaybookParams(prompt, specs, values).text;
+	const surviving = assertNoSurvivingParams(substitutedDocument, specs);
+	for (const name of assertNoSurvivingParams(substitutedPrompt, specs)) {
+		if (!surviving.includes(name)) surviving.push(name);
+	}
+	const table = buildResolvedConfigurationTable(specs, values);
+	return { prompt: `${substitutedPrompt}\n\n${table}`, surviving };
+}
+
+/** The message an engine reports when it refuses to spawn because tokens survived. */
+export function describeSurvivingParams(surviving: string[]): string {
+	return `Playbook parameters have no value: ${surviving.map((name) => `[${name}]`).join(', ')}. Configure them, then resume.`;
+}
+
 /** Text that is safe inside one markdown table cell: pipes escaped, line breaks kept as `<br>`. */
 function escapeTableCell(text: string): string {
 	return text.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');

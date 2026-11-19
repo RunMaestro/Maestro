@@ -55,6 +55,7 @@ const ERROR_TITLES: Record<AgentErrorType, string> = {
 	permission_denied: 'Permission Denied',
 	session_not_found: 'Session Not Found',
 	hitl_gate: 'Review Required',
+	parameter_substitution: 'Playbook Not Configured',
 	unknown: 'Agent Error',
 };
 
@@ -69,6 +70,7 @@ const RECOVERY_HINTS: Record<AgentErrorType, string> = {
 	permission_denied: 'The agent was refused access. Check the folder permissions, then try again.',
 	session_not_found: 'Start the wizard again with a fresh conversation.',
 	hitl_gate: 'The agent is waiting on a human review step. Try again once it is cleared.',
+	parameter_substitution: 'Give every playbook parameter a value, then try again.',
 	unknown: 'Try again. If the problem persists, check the debug logs below.',
 };
 

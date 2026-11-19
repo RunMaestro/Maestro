@@ -63,11 +63,16 @@ import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 import type { UseWorktreeManagerReturn } from '../useWorktreeManager';
-import type {
-	AutoRunSpawnAgentFn,
-	DocumentRunOverrides,
-	UseDocumentProcessorReturn,
+import {
+	AutoRunPauseError,
+	type AutoRunSpawnAgentFn,
+	type DocumentRunOverrides,
+	type UseDocumentProcessorReturn,
 } from '../useDocumentProcessor';
+import {
+	resolvePlaybookParamSpecs,
+	type PlaybookParamSet,
+} from '../../../../shared/playbookParams';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -242,6 +247,15 @@ export function useBatchRunner({
 							...(config.ignoreModelHints && { ignoreModelHints: true }),
 						}
 					: undefined;
+
+			// The launching playbook's parameters, resolved once per run: specs are
+			// per playbook, not per document. An ad-hoc run has none.
+			const playbookParams: PlaybookParamSet | undefined = config.playbook
+				? {
+						specs: resolvePlaybookParamSpecs(prompt, config.playbook.parameterOverlay),
+						values: config.playbook.parameterValues ?? {},
+					}
+				: undefined;
 
 			if (documents.length === 0) {
 				window.maestro.logger.log(
@@ -1018,6 +1032,7 @@ export function useBatchRunner({
 									steeringNotes,
 									autoRunId: delegationRunId,
 									delegationResults,
+									playbookParams,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,
@@ -1412,6 +1427,12 @@ export function useBatchRunner({
 								text: error instanceof Error ? error.message : String(error),
 								success: false,
 							});
+
+							// A task that refused to spawn (a playbook token with no value)
+							// pauses the run on the Resume / Abort banner, handled below.
+							if (error instanceof AutoRunPauseError) {
+								pauseBatchOnError(sessionId, error.agentError, docIndex);
+							}
 
 							// Check if an error resolution promise was created (e.g., by onAgentError → pauseBatchOnError)
 							// This handles the case where the agent error (e.g., context limit) triggered a pause,

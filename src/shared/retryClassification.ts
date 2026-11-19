@@ -79,6 +79,7 @@ const NON_RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>
 	'permission_denied',
 	'session_not_found',
 	'hitl_gate',
+	'parameter_substitution',
 	'token_exhaustion',
 	'agent_crashed',
 	'agent_not_installed',

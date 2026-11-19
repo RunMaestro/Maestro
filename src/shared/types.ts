@@ -942,6 +942,19 @@ export interface BatchRunConfig {
 	maxAutoResumes?: number;
 	/** Presence selects goal-driven rather than document/task-driven mode. */
 	goalConfig?: import('./goalDriven/types').GoalRunConfig;
+	/**
+	 * The saved playbook this run was launched from. Its parameter overlay and
+	 * answers resolve the `[NAME]` tokens in the prompt and documents. Absent
+	 * for an ad-hoc run, which has no parameters.
+	 */
+	playbook?: BatchRunPlaybook;
+}
+
+/** The parts of a saved playbook an Auto Run needs to resolve its parameters. */
+export interface BatchRunPlaybook {
+	id: string;
+	parameterOverlay?: PlaybookParamOverlay[];
+	parameterValues?: PlaybookParamValues;
 }
 
 // ============================================================================
@@ -1057,6 +1070,7 @@ export type AgentErrorType =
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
 	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker
+	| 'parameter_substitution' // A playbook [NAME] token had no value, so the task was not sent
 	| 'unknown'; // Unrecognized error
 
 /**

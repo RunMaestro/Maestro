@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
 	PLACEHOLDER_PR_URL,
+	applyPlaybookParamsToPrompt,
 	assertNoSurvivingParams,
 	buildResolvedConfigurationTable,
 	collectUnresolvedRequired,
+	describeSurvivingParams,
+	expandPlaybookParamTemplates,
 	isPlaceholderDefault,
 	isPlaybookParamType,
 	mergePlaybookParams,
 	parsePlaybookParameterForm,
 	readPlaybookParamOverlay,
 	readPlaybookParamValues,
+	resolvePlaybookParamSpecs,
 	splitMultiEnumValue,
 	substitutePlaybookParams,
 	validatePlaybookParamValue,
@@ -762,5 +766,98 @@ describe('readPlaybookParamValues', () => {
 		expect(readPlaybookParamValues(['TOPIC'])).toBeUndefined();
 		expect(readPlaybookParamValues('TOPIC=x')).toBeUndefined();
 		expect(readPlaybookParamValues({ TOPIC: 1 })).toBeUndefined();
+	});
+});
+
+describe('resolvePlaybookParamSpecs', () => {
+	const prompt = '<!-- CONFIGURE: How many -->\n**MAX_ITEMS:** `25`\n';
+
+	it('merges the prompt prose with the overlay', () => {
+		const [spec] = resolvePlaybookParamSpecs(prompt, [{ name: 'MAX_ITEMS', type: 'number' }]);
+		expect(spec).toMatchObject({
+			name: 'MAX_ITEMS',
+			type: 'number',
+			default: '25',
+			source: 'both',
+		});
+	});
+
+	it('reads the prose alone when there is no overlay', () => {
+		const [spec] = resolvePlaybookParamSpecs(prompt, undefined);
+		expect(spec).toMatchObject({ name: 'MAX_ITEMS', type: 'string', source: 'prose' });
+	});
+});
+
+describe('expandPlaybookParamTemplates', () => {
+	const spec = (name: string, def?: string): PlaybookParamSpec => ({
+		name,
+		type: 'string',
+		required: def === undefined,
+		source: 'prose',
+		...(def !== undefined && { default: def }),
+	});
+
+	it('expands template variables in defaults and answers without mutating the inputs', () => {
+		const specs = [spec('ROOT', '{{AGENT_PATH}}/src'), spec('TOPIC')];
+		const values = { TOPIC: 'about {{AGENT_NAME}}' };
+		const expand = (text: string) =>
+			text.replace('{{AGENT_PATH}}', '/repo').replace('{{AGENT_NAME}}', 'Ada');
+
+		const expanded = expandPlaybookParamTemplates({ specs, values }, expand);
+
+		expect(expanded.specs[0].default).toBe('/repo/src');
+		expect(expanded.specs[1]).toBe(specs[1]);
+		expect(expanded.values).toEqual({ TOPIC: 'about Ada' });
+		expect(specs[0].default).toBe('{{AGENT_PATH}}/src');
+		expect(values.TOPIC).toBe('about {{AGENT_NAME}}');
+	});
+});
+
+describe('applyPlaybookParamsToPrompt', () => {
+	const specs: PlaybookParamSpec[] = [
+		{ name: 'MAX_ITEMS', type: 'string', default: '25', required: false, source: 'prose' },
+		{ name: 'PR_URL', type: 'url', required: true, source: 'prose' },
+	];
+
+	it('substitutes the prompt and appends the Resolved Configuration table', () => {
+		const result = applyPlaybookParamsToPrompt('Process [MAX_ITEMS] items for [PR_URL].', '', {
+			specs,
+			values: { PR_URL: 'https://github.com/acme/app/pull/7' },
+		});
+
+		expect(
+			result.prompt.startsWith('Process 25 items for https://github.com/acme/app/pull/7.')
+		).toBe(true);
+		expect(result.prompt).toContain('## Resolved Configuration');
+		expect(result.surviving).toEqual([]);
+	});
+
+	it('reports tokens surviving in the document or the prompt, each once', () => {
+		const result = applyPlaybookParamsToPrompt(
+			'Open [PR_URL].',
+			'Review [PR_URL] twice: [PR_URL]',
+			{
+				specs,
+				values: {},
+			}
+		);
+		expect(result.surviving).toEqual(['PR_URL']);
+	});
+
+	it('passes the prompt through unchanged when there are no specs', () => {
+		expect(applyPlaybookParamsToPrompt('Keep [MAX_ITEMS].', '', { specs: [], values: {} })).toEqual(
+			{
+				prompt: 'Keep [MAX_ITEMS].',
+				surviving: [],
+			}
+		);
+	});
+});
+
+describe('describeSurvivingParams', () => {
+	it('names every surviving token', () => {
+		expect(describeSurvivingParams(['PR_URL', 'TOPIC'])).toBe(
+			'Playbook parameters have no value: [PR_URL], [TOPIC]. Configure them, then resume.'
+		);
 	});
 });
