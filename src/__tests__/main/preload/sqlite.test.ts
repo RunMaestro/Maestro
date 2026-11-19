@@ -144,6 +144,22 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:deleteRow', remove);
 	});
 
+	it('undoes one write with the step it returned', async () => {
+		const undo = {
+			handle: 'h1',
+			editToken: 't1',
+			step: {
+				kind: 'restore-row' as const,
+				name: 'users',
+				rowid: '9',
+				values: { age: { type: 'integer' as const, text: '42' } },
+			},
+		};
+		mockInvoke.mockResolvedValue({ name: 'users', kind: 'restore-row', otherChanges: 0 });
+		await api.undoEdit(undo);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:undoEdit', undo);
+	});
+
 	it('runs a query and stops one by id', async () => {
 		const request = { handle: 'h1', sql: 'SELECT 1', queryId: 'q1' };
 		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });

@@ -60,6 +60,7 @@ const rowEdits = vi.hoisted(() => ({
 	updateSqliteCell: vi.fn(),
 	insertSqliteRow: vi.fn(),
 	deleteSqliteRow: vi.fn(),
+	undoSqliteEdit: vi.fn(),
 }));
 vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdits);
 
@@ -1329,5 +1330,88 @@ describe('sqlite_delete_row handler', () => {
 			success: false,
 			error: 'Missing required "path", "name", or "row" for sqlite_delete_row',
 		});
+	});
+});
+
+describe('sqlite_undo_edit handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const step = {
+		kind: 'restore-cell',
+		name: 'users',
+		column: 'email',
+		row: { kind: 'rowid', rowid: '7' },
+		version: 'AfterAfterAfterAfter_1',
+		value: { type: 'text', text: 'old@example.com' },
+	};
+	const message = {
+		type: 'sqlite_undo_edit',
+		requestId: 'u1',
+		path: '/data/app.db',
+		step,
+		enableEditing: true,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 'cli-token' });
+	});
+
+	it('unlocks for this one call, undoes through the shared path, and locks again', async () => {
+		const result = {
+			name: 'users',
+			kind: 'restore-cell',
+			key: step.row,
+			otherChanges: 0,
+			elapsedMs: 1,
+		};
+		rowEdits.undoSqliteEdit.mockResolvedValue(result);
+		handler.handleMessage(client, message);
+		await flush();
+		expect(rowEdits.undoSqliteEdit).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'cli-token',
+			step,
+		});
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_undo_result',
+			requestId: 'u1',
+			success: true,
+			result,
+		});
+	});
+
+	it('locks again when the undo is refused, and answers with the reason', async () => {
+		rowEdits.undoSqliteEdit.mockRejectedValue(new Error('The row of users changed since'));
+		handler.handleMessage(client, message);
+		await flush();
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'The row of users changed since',
+		});
+	});
+
+	it('refuses without the per-call unlock, opening nothing', async () => {
+		handler.handleMessage(client, { ...message, enableEditing: undefined });
+		await flush();
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+		expect(rowEdits.undoSqliteEdit).not.toHaveBeenCalled();
+	});
+
+	it('needs a path and a step object', async () => {
+		handler.handleMessage(client, { ...message, step: 'restore-cell' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'u1',
+			success: false,
+			error: 'Missing required "path" or "step" (an object) for sqlite_undo_edit',
+		});
+		expect(rowEdits.undoSqliteEdit).not.toHaveBeenCalled();
 	});
 });

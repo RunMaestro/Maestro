@@ -268,6 +268,8 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteUndoRequest,
+	SqliteUndoResult,
 } from '../shared/sqlite/types';
 import type {
 	GitWorktreeSetupResult,
@@ -2020,6 +2022,7 @@ interface MaestroAPI {
 		updateCell: (request: SqliteCellUpdateRequest) => Promise<SqliteCellUpdateResult>;
 		insertRow: (request: SqliteRowInsertRequest) => Promise<SqliteRowInsertResult>;
 		deleteRow: (request: SqliteRowDeleteRequest) => Promise<SqliteRowDeleteResult>;
+		undoEdit: (request: SqliteUndoRequest) => Promise<SqliteUndoResult>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

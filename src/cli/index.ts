@@ -171,6 +171,7 @@ import {
 	sqliteSchema,
 	sqliteSet,
 	sqliteTables,
+	sqliteUndo,
 } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
@@ -4078,6 +4079,19 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, table, options) => sqliteDelete(file, table, options));
+
+sqliteCmd
+	.command('undo <path>')
+	.description(
+		"Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing"
+	)
+	.option('--step <json>', 'The undo step as JSON, or @file holding it')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteUndo(file, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

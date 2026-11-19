@@ -3496,6 +3496,16 @@ Remove one row the way the viewer's record view does: one parameterised DELETE o
 | `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                    | -       |
 | `--json`                      | Output as JSON (for scripting)                                                                                                                                  | -       |
 
+## `maestro-cli sqlite undo <path>`
+
+Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing
+
+| Option             | Description                                                                                  | Default |
+| ------------------ | -------------------------------------------------------------------------------------------- | ------- |
+| `--step <json>`    | The undo step as JSON, or @file holding it                                                   | -       |
+| `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
+| `--json`           | Output as JSON (for scripting)                                                               | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

@@ -47,6 +47,8 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteUndoRequest,
+	SqliteUndoResult,
 } from '../../../shared/sqlite/types';
 import { withSqliteErrorOffset } from '../../../shared/sqlite/queryError';
 import { saveSqliteBlob } from '../../sqlite/sqlite-blob';
@@ -60,7 +62,12 @@ import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
 } from '../../sqlite/sqlite-query-history';
-import { deleteSqliteRow, insertSqliteRow, updateSqliteCell } from '../../sqlite/sqlite-row-edit';
+import {
+	deleteSqliteRow,
+	insertSqliteRow,
+	undoSqliteEdit,
+	updateSqliteCell,
+} from '../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
@@ -227,6 +234,13 @@ export function registerSqliteHandlers(): void {
 		'sqlite:deleteRow',
 		async (_event, request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> =>
 			deleteSqliteRow(request)
+	);
+
+	// The viewer's Undo: the step the last write returned, applied as one
+	// single-row write through the same path, gate, and backup.
+	ipcMain.handle(
+		'sqlite:undoEdit',
+		async (_event, request: SqliteUndoRequest): Promise<SqliteUndoResult> => undoSqliteEdit(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are

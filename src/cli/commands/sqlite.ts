@@ -47,17 +47,23 @@
 //       -> the record view's Delete row: one single-row DELETE keyed on the
 //          row's rowid or primary key, with the rows foreign-key actions and
 //          triggers changed beside it counted
+//   maestro-cli sqlite undo <path> --step <json | @file> --enable-editing [--json]
+//       -> the viewer's Undo: apply the `undo` step a set, insert, or delete
+//          returned (a cell back, an inserted row removed, a deleted row put
+//          back whole), refused when the row changed since
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
 // `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`,
 // `sqlite_export_query`, `sqlite_query_history`, `sqlite_update_cell`,
-// `sqlite_insert_row`, `sqlite_delete_row`) to the running
+// `sqlite_insert_row`, `sqlite_delete_row`, `sqlite_undo_edit`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there (only
-// `set`, `insert`, and `delete` write, through the viewer's own editing gate and backup); a
+// `set`, `insert`, `delete`, and `undo` write, through the viewer's own editing gate and backup); a
 // BLOB or an export is written to `--output` by the app, so its bytes never
 // ride the socket.
+
+import * as fs from 'fs';
 
 import { withMaestroClient } from '../services/maestro-client';
 import { failFromError } from '../services/session-command';
@@ -135,7 +141,10 @@ import type {
 	SqliteCellValue,
 	SqliteKeyValue,
 	SqliteRowKey,
+	SqliteUndoResult,
+	SqliteUndoStep,
 } from '../../shared/sqlite/types';
+import { sqliteUndoOutcome, sqliteUndoUnavailableMessage } from '../../shared/sqlite/undo';
 import { sqliteNumberBindValue } from '../../shared/sqlite/filter';
 
 /** Counting and sizing a large database takes a while; give it room. */
@@ -1273,6 +1282,8 @@ export async function sqliteSet(
 				row: result.row,
 				key: result.key,
 				version: result.version,
+				otherChanges: result.otherChanges,
+				undo: result.undo,
 				backup: result.backup ?? null,
 				elapsedMs: result.elapsedMs,
 			})
@@ -1299,16 +1310,24 @@ function rowKeyText(key: SqliteRowKey): string {
 				.join(', ');
 }
 
-/** What a write did beside its own row, and where the session's backup went. */
+/**
+ * What a write did beside its own row, where the session's backup went, and
+ * how to undo it: the step `sqlite undo --step` takes, or why there is none.
+ */
 function writeNoteLines(
 	database: SqliteDatabaseInfo,
-	result: { otherChanges?: number; backup?: SqliteBackup }
+	result: { otherChanges?: number; backup?: SqliteBackup; undo?: SqliteUndoStep | null }
 ): string[] {
 	const lines: string[] = [];
 	if (result.otherChanges) {
 		lines.push(
 			`The database's triggers and foreign-key actions changed ${formatCount(result.otherChanges)} other ${result.otherChanges === 1 ? 'row' : 'rows'}.`
 		);
+	}
+	if (result.undo) {
+		lines.push(`Undo step (give it to sqlite undo --step): ${JSON.stringify(result.undo)}`);
+	} else if (result.undo === null) {
+		lines.push(sqliteUndoUnavailableMessage(result.otherChanges ?? 0));
 	}
 	if (result.backup) {
 		lines.push(
@@ -1431,6 +1450,7 @@ export async function sqliteInsert(
 				key: result.key,
 				version: result.version,
 				otherChanges: result.otherChanges,
+				undo: result.undo,
 				backup: result.backup ?? null,
 				elapsedMs: result.elapsedMs,
 			})
@@ -1499,6 +1519,7 @@ export async function sqliteDelete(
 				name: result.name,
 				key: result.key,
 				otherChanges: result.otherChanges,
+				undo: result.undo,
 				backup: result.backup ?? null,
 				elapsedMs: result.elapsedMs,
 			})
@@ -1509,6 +1530,95 @@ export async function sqliteDelete(
 		[
 			`Deleted the row with ${rowKeyText(result.key)} from ${result.name}.`,
 			...writeNoteLines(database, result),
+		].join('\n')
+	);
+}
+
+interface SqliteUndoOptions {
+	/** The step a write returned (`undo` in its `--json`), as JSON, or `@file` holding it. */
+	step?: string;
+	/** The per-call unlock: without it nothing is written. */
+	enableEditing?: boolean;
+	json?: boolean;
+}
+
+/**
+ * The step a `sqlite undo` applies, from `--step`: the JSON itself, or
+ * `@path` naming a file that holds it. Throws a message when it is missing,
+ * unreadable, or not a JSON object; main checks the rest.
+ */
+export function sqliteUndoStepFromFlag(step: string | undefined): SqliteUndoStep {
+	if (!step) {
+		throw new Error(
+			'Give the undo step with --step: the `undo` a write printed with --json, or @file holding it'
+		);
+	}
+	let text = step;
+	if (step.startsWith('@')) {
+		const stepPath = resolveCliPath(step.slice(1));
+		try {
+			text = fs.readFileSync(stepPath, 'utf8');
+		} catch (error) {
+			throw new Error(
+				`Could not read the undo step from ${stepPath}: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		throw new Error('--step is not JSON: give the `undo` object a write printed with --json');
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		throw new Error('--step must be a JSON object: the `undo` a write printed with --json');
+	}
+	return parsed as SqliteUndoStep;
+}
+
+/**
+ * `maestro-cli sqlite undo <path>` - take back one write the way the viewer's
+ * Undo does: apply the `undo` step that `sqlite set`, `insert`, or `delete`
+ * returned, as one single-row write in the app, refused unless
+ * `--enable-editing` unlocks editing for this call. A row changed since the
+ * write is refused, never overwritten.
+ */
+export async function sqliteUndo(file: string, options: SqliteUndoOptions): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!options.enableEditing) fail(SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE, options.json);
+	let step: SqliteUndoStep;
+	try {
+		step = sqliteUndoStepFromFlag(options.step);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	const { database, result } = await sendSqliteWrite<SqliteUndoResult>(
+		{ type: 'sqlite_undo_edit', path: filePath, step },
+		'sqlite_undo_result',
+		`Could not undo the change to ${filePath}`,
+		options.json
+	);
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				name: result.name,
+				kind: result.kind,
+				key: result.key,
+				otherChanges: result.otherChanges,
+				backup: result.backup ?? null,
+				elapsedMs: result.elapsedMs,
+			})
+		);
+		return;
+	}
+	console.log(
+		[
+			`${sqliteUndoOutcome(step, result)}: ${rowKeyText(result.key)}.`,
+			// The outcome already counts the other rows.
+			...writeNoteLines(database, { backup: result.backup }),
 		].join('\n')
 	);
 }

@@ -64,6 +64,19 @@
  *     page in place and keeps naming the row correctly. A change that would
  *     leave the row's key holding NULL is rolled back, since no later edit
  *     could name it.
+ *   - **Undoable exactly, or said not to be.** Each write captures its own
+ *     inverse inside its transaction and returns it as `undo`
+ *     (`SqliteUndoStep`): the cell's old value read whole just before the
+ *     `UPDATE`, the inserted row's key and version, every value of the
+ *     deleted row (from the `DELETE`'s `RETURNING`, whole) with its rowid.
+ *     `undoSqliteEdit()` applies a step through the SAME update, insert, or
+ *     delete path (`writeCell()`, `writeRow()`, `removeRow()`), so the gate,
+ *     the backup, the version check, and the readback hold for an undo too;
+ *     a value put back must be stored exactly as it was. A write whose
+ *     triggers or foreign-key actions changed other rows (`otherChanges`)
+ *     returns no step, since its own row alone cannot be put back honestly.
+ *     Main keeps no undo state: the step travels with the result, so the
+ *     viewer and the CLI undo the same way.
  *
  * SQLite's own failures (a constraint, a STRICT type) reach the caller with
  * SQLite's message. A busy database (another process held the lock past the
@@ -80,9 +93,11 @@ import { sqliteColumnAffinity, sqliteStaleRowMessage } from '../../shared/sqlite
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
 	SqliteAffinity,
+	SqliteBackup,
 	SqliteCellUpdateRequest,
 	SqliteCellUpdateResult,
 	SqliteCellValue,
+	SqliteKeyValue,
 	SqliteObjectSummary,
 	SqliteParameterValue,
 	SqliteReadOnlyColumn,
@@ -93,14 +108,18 @@ import type {
 	SqliteRowInsertRequest,
 	SqliteRowInsertResult,
 	SqliteRowKey,
+	SqliteUndoRequest,
+	SqliteUndoResult,
+	SqliteUndoStep,
 } from '../../shared/sqlite/types';
 import type Database from 'better-sqlite3';
 
 import { sqliteKeyValue } from './sqlite-cell';
 import { reportSqliteBusy } from './sqlite-connection';
-import { beginSqliteWrite, requireSqliteEditing } from './sqlite-editing';
+import { beginSqliteWrite, requireSqliteEditing, type SqliteWriteSession } from './sqlite-editing';
 import {
 	resolveSqliteEditability,
+	sqliteKeyBindValue,
 	sqliteRowKeyColumns,
 	sqliteRowKeyCondition,
 	type SqliteRowKeyCondition,
@@ -268,6 +287,89 @@ function totalChanges(db: Database.Database): number {
 	return Number(db.prepare('SELECT total_changes()').pluck().get());
 }
 
+/** A value as a write binds it: a typed parameter, or a stored value put back whole. */
+type SqliteWriteValue = SqliteBindValue | Buffer;
+
+/**
+ * One value a write stores, ready to bind: the value a person gave (an edit,
+ * an insert) or the value a row held before (an undo). It says how the rowid
+ * column's check reads it, and whether the value as stored is the one meant.
+ */
+interface SqliteValueWrite {
+	column: string;
+	/** The value as the rowid column's check reads it. */
+	asParameter: SqliteParameterValue;
+	given: SqliteWriteValue;
+	/**
+	 * Why the value as stored (`typeof` and the value, from `RETURNING`) is not
+	 * the one meant, or null when it is.
+	 */
+	storedProblem: (affinity: SqliteAffinity, storedType: unknown, stored: unknown) => string | null;
+}
+
+/**
+ * A value a person gave, bound by its type (`sqliteWriteBindValue()`). A
+ * value the column's affinity converted is refused (`sqliteStoredValueProblem()`).
+ */
+function givenValueWrite(
+	column: string,
+	value: SqliteParameterValue,
+	nothing: 'changed' | 'inserted'
+): SqliteValueWrite {
+	const given = sqliteWriteBindValue(column, value);
+	return {
+		column,
+		asParameter: value,
+		given,
+		storedProblem: (affinity, storedType, stored) => {
+			const problem = sqliteStoredValueProblem(column, affinity, given, storedType, stored);
+			return problem && nothing === 'inserted'
+				? problem.replace('Nothing was changed', 'Nothing was inserted')
+				: problem;
+		},
+	};
+}
+
+/** Whether two whole stored values are the same value of the same storage class. */
+function sameKeyValue(left: SqliteKeyValue, right: SqliteKeyValue): boolean {
+	if (left === null || right === null) return left === right;
+	return left.type === right.type && left.text === right.text;
+}
+
+/**
+ * A value a row held before, as an undo puts it back: bound whole in its own
+ * storage class (`sqliteKeyBindValue()`), and refused unless it is stored
+ * exactly as it was, which fails only when the table changed in between.
+ */
+function restoredValueWrite(column: string, value: SqliteKeyValue): SqliteValueWrite {
+	let given: SqliteWriteValue;
+	try {
+		given = sqliteKeyBindValue(value, column);
+	} catch {
+		throw new Error(`The undo step's value for ${column} is not a stored value.`);
+	}
+	return {
+		column,
+		// Only the rowid column's check reads this, and a rowid is never a BLOB.
+		asParameter:
+			value === null
+				? { type: 'null', text: '' }
+				: value.type === 'integer' || value.type === 'real'
+					? { type: 'number', text: value.text }
+					: { type: 'text', text: value.text },
+		given,
+		storedProblem: (_affinity, _storedType, stored) =>
+			sameKeyValue(sqliteKeyValue(stored), value)
+				? null
+				: `${column} would not hold its old value as it was (the table may have changed since the write), so nothing was undone.`,
+	};
+}
+
+/** The backup a write took, on its result only when this write took it. */
+function backupField(session: SqliteWriteSession): { backup?: SqliteBackup } {
+	return session.backupCreated ? { backup: session.backup } : {};
+}
+
 /** Everything an edit needs to know about its table, checked. */
 interface SqliteCellEditPlan extends SqliteEditableTable {
 	/** The edited column's affinity, which converts the value on the way in. */
@@ -300,44 +402,51 @@ function planCellEdit(
 	return { ...table, affinity, condition };
 }
 
-/**
- * Change one cell of one row. Rejects, with nothing written, when editing is
- * not enabled for the tab, the backup fails, the table cannot be edited, the
- * column is generated or missing, the key does not name a row, the row
- * changed since the `version` the caller sent, the value does not bind, or
- * SQLite refuses the change (its message, verbatim).
- */
-export function updateSqliteCell(
-	request: SqliteCellUpdateRequest
-): Promise<SqliteCellUpdateResult> {
-	return reportSqliteBusy('write', () => updateCell(request));
+/** What one cell write did, for an edit's result or an undo's. */
+interface SqliteCellWriteDone {
+	plan: SqliteCellEditPlan;
+	key: SqliteRowKey;
+	cells: SqliteCellValue[];
+	version: string;
+	/** The value the cell held before, whole. */
+	before: SqliteKeyValue;
+	otherChanges: number;
+	backup?: SqliteBackup;
+	elapsedMs: number;
 }
 
-/** `updateSqliteCell()`'s work; a busy database is restated by the caller. */
-async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> {
-	const name = requireText(request?.name, 'table name');
-	const column = requireText(request?.column, 'column name');
-	const given = sqliteWriteBindValue(column, request.value);
-	const version = sqliteRowVersionParam(request.version);
+/**
+ * The one UPDATE path: set one cell of the row `row` names to `write`'s
+ * value, checking `version` in the same `WHERE` when given. A cell edit and
+ * the undo of one both run it.
+ */
+async function writeCell(
+	handle: string,
+	editToken: string,
+	name: string,
+	row: SqliteRowKey,
+	version: string | null,
+	write: SqliteValueWrite
+): Promise<SqliteCellWriteDone> {
+	const { column, given } = write;
 
 	// Refuse what would be refused anyway before the backup is taken.
-	planCellEdit(
-		requireSqliteEditing(request.handle, request.editToken).db,
-		name,
-		column,
-		request.row,
-		request.value
-	);
+	planCellEdit(requireSqliteEditing(handle, editToken).db, name, column, row, write.asParameter);
 
-	const session = await beginSqliteWrite(request.handle, request.editToken);
+	const session = await beginSqliteWrite(handle, editToken);
 	// From here to the return, nothing awaits: the grant is live for all of it.
 	const { db } = session;
-	const plan = planCellEdit(db, name, column, request.row, request.value);
-	const { object, source, columns, identity, affinity, condition } = plan;
+	const plan = planCellEdit(db, name, column, row, write.asParameter);
+	const { object, source, identity, affinity, condition } = plan;
 
 	const keyColumns = sqliteRowKeyColumns(identity);
 	const quotedColumn = quoteSqliteIdentifier(column);
 	const target = rowWriteCondition(plan, condition, version);
+	// The value before, whole, so the edit can be undone exactly.
+	const readBefore = db
+		.prepare(`SELECT ${quotedColumn} FROM ${source} WHERE ${target.where}`)
+		.raw(true)
+		.safeIntegers(true);
 	// The key, then the edited value as stored, so a converted value is seen.
 	const update = db
 		.prepare(
@@ -349,7 +458,10 @@ async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellU
 		.safeIntegers(true);
 
 	const started = performance.now();
-	const row = db.transaction(() => {
+	const done = db.transaction(() => {
+		const changesBefore = totalChanges(db);
+		const old = readBefore.get(...target.params) as unknown[] | undefined;
+		if (!old) throw staleRowError(db, plan, condition, version, 'changed');
 		const changed = update.all(given, ...target.params) as unknown[][];
 		if (changed.length === 0) throw staleRowError(db, plan, condition, version, 'changed');
 		if (changed.length > 1) {
@@ -358,10 +470,8 @@ async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellU
 				`${condition.label} matched ${changed.length} rows of ${object.name}, so nothing was changed.`
 			);
 		}
-		const storedProblem = sqliteStoredValueProblem(
-			column,
+		const storedProblem = write.storedProblem(
 			affinity,
-			given,
 			changed[0][keyColumns.length],
 			changed[0][keyColumns.length + 1]
 		);
@@ -382,81 +492,162 @@ async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellU
 				`${object.name} has no row with ${after.label} after the change (a trigger may have removed it), so nothing was changed.`
 			);
 		}
-		return { key, ...read };
+		return {
+			key,
+			...read,
+			before: sqliteKeyValue(old[0]),
+			otherChanges: Math.max(0, totalChanges(db) - changesBefore - 1),
+		};
 	})();
-	const elapsedMs = Math.round(performance.now() - started);
 
+	return {
+		plan,
+		key: done.key,
+		cells: done.cells,
+		version: done.version,
+		before: done.before,
+		otherChanges: done.otherChanges,
+		...backupField(session),
+		elapsedMs: Math.round(performance.now() - started),
+	};
+}
+
+/**
+ * Change one cell of one row. Rejects, with nothing written, when editing is
+ * not enabled for the tab, the backup fails, the table cannot be edited, the
+ * column is generated or missing, the key does not name a row, the row
+ * changed since the `version` the caller sent, the value does not bind, or
+ * SQLite refuses the change (its message, verbatim). The result carries the
+ * step that puts the old value back (`undo`), unless the database's triggers
+ * or foreign-key actions changed other rows too.
+ */
+export function updateSqliteCell(
+	request: SqliteCellUpdateRequest
+): Promise<SqliteCellUpdateResult> {
+	return reportSqliteBusy('write', () => updateCell(request));
+}
+
+/** `updateSqliteCell()`'s work; a busy database is restated by the caller. */
+async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> {
+	const name = requireText(request?.name, 'table name');
+	const column = requireText(request?.column, 'column name');
+	const write = givenValueWrite(column, request.value, 'changed');
+	const version = sqliteRowVersionParam(request.version);
+
+	const done = await writeCell(
+		request.handle,
+		request.editToken,
+		name,
+		request.row,
+		version,
+		write
+	);
+	const { object, columns } = done.plan;
 	return {
 		name: object.name,
 		column,
 		columns,
-		row: row.cells,
-		key: row.key,
-		version: row.version,
-		...(session.backupCreated ? { backup: session.backup } : {}),
-		elapsedMs,
+		row: done.cells,
+		key: done.key,
+		version: done.version,
+		otherChanges: done.otherChanges,
+		undo:
+			done.otherChanges === 0
+				? {
+						kind: 'restore-cell',
+						name: object.name,
+						column,
+						row: done.key,
+						version: done.version,
+						value: done.before,
+					}
+				: null,
+		...(done.backup ? { backup: done.backup } : {}),
+		elapsedMs: done.elapsedMs,
 	};
 }
 
 /** One column an insert sets, checked and bound. */
-interface SqliteInsertEntry {
-	column: string;
+interface SqliteInsertEntry extends SqliteValueWrite {
 	affinity: SqliteAffinity;
-	given: SqliteBindValue;
 }
 
 /**
  * Check an insert against one connection: the table exists and can be
- * edited, every column given exists and is not generated, and every value
- * binds (a NULL in the rowid column is fine: SQLite assigns the next rowid).
+ * edited, every column given exists and is not generated, and the rowid
+ * column's value is a whole number (a NULL there is fine: SQLite assigns the
+ * next rowid). A row an undo restores keeps its old rowid: when the table has
+ * no `INTEGER PRIMARY KEY` holding it, `rowid` is set through the alias.
  * Throws the reason otherwise. Metadata reads only.
  */
 function planInsert(
 	db: Database.Database,
 	name: string,
-	values: Record<string, SqliteParameterValue>
-): SqliteEditableTable & { entries: SqliteInsertEntry[] } {
+	fields: SqliteValueWrite[],
+	rowid: string | null
+): SqliteEditableTable & {
+	entries: SqliteInsertEntry[];
+	keepRowid: { alias: string; given: SqliteWriteValue } | null;
+} {
 	const table = findEditableTable(db, name);
 	const { identity } = table;
-	const entries = Object.entries(values).map(([column, value]): SqliteInsertEntry => {
-		const affinity = writableColumnAffinity(table, column);
-		if (identity.kind === 'rowid' && identity.rowidColumn === column && value?.type !== 'null') {
-			const problem = sqliteRowidValueProblem(column, value);
+	const entries = fields.map((field): SqliteInsertEntry => {
+		const affinity = writableColumnAffinity(table, field.column);
+		if (
+			identity.kind === 'rowid' &&
+			identity.rowidColumn === field.column &&
+			field.asParameter.type !== 'null'
+		) {
+			const problem = sqliteRowidValueProblem(field.column, field.asParameter);
 			if (problem) throw new Error(`${problem} Nothing was inserted.`);
 		}
-		return { column, affinity, given: sqliteWriteBindValue(column, value) };
+		return { ...field, affinity };
 	});
-	return { ...table, entries };
+	let keepRowid: { alias: string; given: SqliteWriteValue } | null = null;
+	if (rowid !== null && identity.kind === 'rowid' && identity.rowidColumn === null) {
+		try {
+			keepRowid = {
+				alias: identity.alias,
+				given: sqliteKeyBindValue({ type: 'integer', text: rowid }, 'rowid'),
+			};
+		} catch {
+			throw new Error(`"${rowid}" is not a rowid.`);
+		}
+	}
+	return { ...table, entries, keepRowid };
+}
+
+/** What one insert did, for an insert's result or an undo's. */
+interface SqliteRowWriteDone {
+	table: SqliteEditableTable;
+	key: SqliteRowKey;
+	cells: SqliteCellValue[];
+	version: string;
+	otherChanges: number;
+	backup?: SqliteBackup;
+	elapsedMs: number;
 }
 
 /**
- * Add one row to a table. Columns left out of `values` take their DEFAULT.
- * Rejects, with nothing written, when editing is not enabled for the tab, the
- * backup fails, the table cannot be edited, a column is generated or
- * missing, a value does not bind or would be stored converted, the new row's
- * key would hold NULL (no edit could name it), or SQLite refuses the row: a
- * NOT NULL, UNIQUE, CHECK, or FOREIGN KEY constraint, in SQLite's own words.
+ * The one INSERT path: add one row with `fields` (the other columns take
+ * their DEFAULT), and `rowid` when an undo restores a deleted row. An insert
+ * and the undo of a delete both run it.
  */
-export function insertSqliteRow(request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> {
-	return reportSqliteBusy('write', () => insertRow(request));
-}
-
-/** `insertSqliteRow()`'s work; a busy database is restated by the caller. */
-async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> {
-	const name = requireText(request?.name, 'table name', 'An insert');
-	const values = request.values ?? {};
-	if (typeof values !== 'object' || Array.isArray(values)) {
-		throw new Error('An insert takes its values as an object keyed by column name.');
-	}
-
+async function writeRow(
+	handle: string,
+	editToken: string,
+	name: string,
+	fields: SqliteValueWrite[],
+	rowid: string | null
+): Promise<SqliteRowWriteDone> {
 	// Refuse what would be refused anyway before the backup is taken.
-	planInsert(requireSqliteEditing(request.handle, request.editToken).db, name, values);
+	planInsert(requireSqliteEditing(handle, editToken).db, name, fields, rowid);
 
-	const session = await beginSqliteWrite(request.handle, request.editToken);
+	const session = await beginSqliteWrite(handle, editToken);
 	// From here to the return, nothing awaits: the grant is live for all of it.
 	const { db } = session;
-	const plan = planInsert(db, name, values);
-	const { object, source, columns, identity, entries } = plan;
+	const plan = planInsert(db, name, fields, rowid);
+	const { object, source, identity, entries, keepRowid } = plan;
 
 	const keyColumns = sqliteRowKeyColumns(identity);
 	// The key, then each given value as stored, so a converted value is seen.
@@ -467,20 +658,22 @@ async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInse
 			return [`typeof(${quoted})`, quoted];
 		}),
 	].join(', ');
+	const targets = [...(keepRowid ? [keepRowid.alias] : []), ...entries.map(({ column }) => column)];
 	const insert = db
 		.prepare(
-			entries.length === 0
+			targets.length === 0
 				? `INSERT INTO ${source} DEFAULT VALUES RETURNING ${returning}`
-				: `INSERT INTO ${source} (${entries.map(({ column }) => quoteSqliteIdentifier(column)).join(', ')}) ` +
-						`VALUES (${entries.map(() => '?').join(', ')}) RETURNING ${returning}`
+				: `INSERT INTO ${source} (${targets.map(quoteSqliteIdentifier).join(', ')}) ` +
+						`VALUES (${targets.map(() => '?').join(', ')}) RETURNING ${returning}`
 		)
 		.raw(true)
 		.safeIntegers(true);
+	const params = [...(keepRowid ? [keepRowid.given] : []), ...entries.map(({ given }) => given)];
 
 	const started = performance.now();
 	const added = db.transaction(() => {
 		const before = totalChanges(db);
-		const returned = insert.all(...entries.map(({ given }) => given)) as unknown[][];
+		const returned = insert.all(...params) as unknown[][];
 		if (returned.length !== 1) {
 			// INSERT adds one row or fails; none means a trigger's RAISE(IGNORE).
 			throw new Error(
@@ -490,10 +683,10 @@ async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInse
 			);
 		}
 		const [first] = returned;
-		entries.forEach(({ column, affinity, given }, index) => {
+		entries.forEach((entry, index) => {
 			const at = keyColumns.length + index * 2;
-			const problem = sqliteStoredValueProblem(column, affinity, given, first[at], first[at + 1]);
-			if (problem) throw new Error(problem.replace('Nothing was changed', 'Nothing was inserted'));
+			const problem = entry.storedProblem(entry.affinity, first[at], first[at + 1]);
+			if (problem) throw new Error(problem);
 		});
 
 		const key = returnedRowKey(identity, first);
@@ -513,56 +706,109 @@ async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInse
 		}
 		return { key, ...read, otherChanges: Math.max(0, totalChanges(db) - before - 1) };
 	})();
-	const elapsedMs = Math.round(performance.now() - started);
 
 	return {
-		name: object.name,
-		columns,
-		row: added.cells,
+		table: plan,
 		key: added.key,
+		cells: added.cells,
 		version: added.version,
 		otherChanges: added.otherChanges,
-		...(session.backupCreated ? { backup: session.backup } : {}),
-		elapsedMs,
+		...backupField(session),
+		elapsedMs: Math.round(performance.now() - started),
 	};
 }
 
 /**
- * Remove one row of a table, named by its rowid or whole primary key.
+ * Add one row to a table. Columns left out of `values` take their DEFAULT.
  * Rejects, with nothing written, when editing is not enabled for the tab, the
- * backup fails, the table cannot be edited, the key does not name exactly
- * one row (deleted or re-keyed since it was read), the row changed since the
- * `version` the caller sent, or SQLite refuses: a
- * FOREIGN KEY constraint a child row holds, in SQLite's own words. Rows the
- * database's foreign-key actions or triggers change as a result are counted
- * in `otherChanges`.
+ * backup fails, the table cannot be edited, a column is generated or
+ * missing, a value does not bind or would be stored converted, the new row's
+ * key would hold NULL (no edit could name it), or SQLite refuses the row: a
+ * NOT NULL, UNIQUE, CHECK, or FOREIGN KEY constraint, in SQLite's own words.
+ * The result carries the step that removes the row again (`undo`), unless the
+ * database's triggers or foreign-key actions changed other rows too.
  */
-export function deleteSqliteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
-	return reportSqliteBusy('write', () => deleteRow(request));
+export function insertSqliteRow(request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> {
+	return reportSqliteBusy('write', () => insertRow(request));
 }
 
-/** `deleteSqliteRow()`'s work; a busy database is restated by the caller. */
-async function deleteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
-	const name = requireText(request?.name, 'table name', 'A delete');
-	const version = sqliteRowVersionParam(request.version);
+/** `insertSqliteRow()`'s work; a busy database is restated by the caller. */
+async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> {
+	const name = requireText(request?.name, 'table name', 'An insert');
+	const values = request.values ?? {};
+	if (typeof values !== 'object' || Array.isArray(values)) {
+		throw new Error('An insert takes its values as an object keyed by column name.');
+	}
+	const fields = Object.entries(values).map(([column, value]) =>
+		givenValueWrite(column, value, 'inserted')
+	);
+
+	const done = await writeRow(request.handle, request.editToken, name, fields, null);
+	const { object, columns } = done.table;
+	return {
+		name: object.name,
+		columns,
+		row: done.cells,
+		key: done.key,
+		version: done.version,
+		otherChanges: done.otherChanges,
+		undo:
+			done.otherChanges === 0
+				? { kind: 'remove-row', name: object.name, row: done.key, version: done.version }
+				: null,
+		...(done.backup ? { backup: done.backup } : {}),
+		elapsedMs: done.elapsedMs,
+	};
+}
+
+/** What one delete did, for a delete's result or an undo's. */
+interface SqliteRowRemoveDone {
+	table: SqliteEditableTable;
+	key: SqliteRowKey;
+	/** The row's rowid, decimal text, when the table names rows by it. */
+	rowid: string | null;
+	/** Every column the row had that an insert can set (generated ones excepted), whole. */
+	values: Record<string, SqliteKeyValue>;
+	otherChanges: number;
+	backup?: SqliteBackup;
+	elapsedMs: number;
+}
+
+/**
+ * The one DELETE path: remove the row `row` names, checking `version` in the
+ * same `WHERE` when given, and hand back every value it held so the row can
+ * be put back whole. A delete and the undo of an insert both run it.
+ */
+async function removeRow(
+	handle: string,
+	editToken: string,
+	name: string,
+	row: SqliteRowKey,
+	version: string | null
+): Promise<SqliteRowRemoveDone> {
 	const plan = (db: Database.Database) => {
 		const table = findEditableTable(db, name);
-		return { ...table, condition: sqliteRowKeyCondition(table.identity, request.row, name) };
+		return { ...table, condition: sqliteRowKeyCondition(table.identity, row, name) };
 	};
 
 	// Refuse what would be refused anyway before the backup is taken.
-	plan(requireSqliteEditing(request.handle, request.editToken).db);
+	plan(requireSqliteEditing(handle, editToken).db);
 
-	const session = await beginSqliteWrite(request.handle, request.editToken);
+	const session = await beginSqliteWrite(handle, editToken);
 	// From here to the return, nothing awaits: the grant is live for all of it.
 	const { db } = session;
 	const table = plan(db);
-	const { object, source, identity, condition } = table;
+	const { object, source, identity, condition, columns, readOnlyColumns } = table;
+	const keyColumns = sqliteRowKeyColumns(identity);
+	// Generated columns are computed again when the row is put back.
+	const restorable = columns
+		.map((entry) => entry.name)
+		.filter((column) => !readOnlyColumns.some((entry) => entry.name === column));
 	const target = rowWriteCondition(table, condition, version);
 	const remove = db
 		.prepare(
 			`DELETE FROM ${source} WHERE ${target.where} ` +
-				`RETURNING ${sqliteRowKeyColumns(identity).map(quoteSqliteIdentifier).join(', ')}`
+				`RETURNING ${[...keyColumns, ...restorable].map(quoteSqliteIdentifier).join(', ')}`
 		)
 		.raw(true)
 		.safeIntegers(true);
@@ -578,18 +824,142 @@ async function deleteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDele
 				`${condition.label} matched ${deleted.length} rows of ${object.name}, so nothing was deleted.`
 			);
 		}
+		const [first] = deleted;
 		return {
-			key: returnedRowKey(identity, deleted[0]),
+			key: returnedRowKey(identity, first),
+			values: Object.fromEntries(
+				restorable.map((column, index) => [
+					column,
+					sqliteKeyValue(first[keyColumns.length + index]),
+				])
+			),
 			otherChanges: Math.max(0, totalChanges(db) - before - 1),
 		};
 	})();
-	const elapsedMs = Math.round(performance.now() - started);
 
 	return {
-		name: object.name,
+		table,
 		key: removed.key,
+		rowid: removed.key.kind === 'rowid' ? removed.key.rowid : null,
+		values: removed.values,
 		otherChanges: removed.otherChanges,
-		...(session.backupCreated ? { backup: session.backup } : {}),
-		elapsedMs,
+		...backupField(session),
+		elapsedMs: Math.round(performance.now() - started),
 	};
+}
+
+/**
+ * Remove one row of a table, named by its rowid or whole primary key.
+ * Rejects, with nothing written, when editing is not enabled for the tab, the
+ * backup fails, the table cannot be edited, the key does not name exactly
+ * one row (deleted or re-keyed since it was read), the row changed since the
+ * `version` the caller sent, or SQLite refuses: a
+ * FOREIGN KEY constraint a child row holds, in SQLite's own words. Rows the
+ * database's foreign-key actions or triggers change as a result are counted
+ * in `otherChanges`. The result carries the step that puts the row back
+ * (`undo`), unless `otherChanges` is not 0.
+ */
+export function deleteSqliteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
+	return reportSqliteBusy('write', () => deleteRow(request));
+}
+
+/** `deleteSqliteRow()`'s work; a busy database is restated by the caller. */
+async function deleteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
+	const name = requireText(request?.name, 'table name', 'A delete');
+	const version = sqliteRowVersionParam(request.version);
+	const done = await removeRow(request.handle, request.editToken, name, request.row, version);
+	return {
+		name: done.table.object.name,
+		key: done.key,
+		otherChanges: done.otherChanges,
+		undo:
+			done.otherChanges === 0
+				? {
+						kind: 'restore-row',
+						name: done.table.object.name,
+						rowid: done.rowid,
+						values: done.values,
+					}
+				: null,
+		...(done.backup ? { backup: done.backup } : {}),
+		elapsedMs: done.elapsedMs,
+	};
+}
+
+/** The version an undo step must carry: the row's, after the write it undoes. */
+function undoStepVersion(version: unknown): string {
+	const checked = sqliteRowVersionParam(version);
+	if (checked === null) {
+		throw new Error("An undo step needs the row's version after the write it undoes.");
+	}
+	return checked;
+}
+
+/**
+ * Take back one write: apply the `undo` step its result returned, as one
+ * single-row write through the same path, gate, and backup as the write
+ * itself. A cell goes back to its old value, an inserted row is deleted, a
+ * deleted row is inserted again whole (with its old rowid). Rejects, with
+ * nothing written, when editing is not enabled for the tab, the step is
+ * malformed, the row changed since the write (another tab, another program,
+ * a trigger: refused like a stale edit), the table no longer stores the old
+ * value as it was, or SQLite refuses (a UNIQUE constraint when the restored
+ * row's key was taken since, in SQLite's own words).
+ */
+export function undoSqliteEdit(request: SqliteUndoRequest): Promise<SqliteUndoResult> {
+	return reportSqliteBusy('write', () => undoEdit(request));
+}
+
+/** `undoSqliteEdit()`'s work; a busy database is restated by the caller. */
+async function undoEdit(request: SqliteUndoRequest): Promise<SqliteUndoResult> {
+	const step = request?.step as SqliteUndoStep | undefined;
+	if (!step || typeof step !== 'object') {
+		throw new Error('An undo needs the step its write returned.');
+	}
+	const name = requireText(step.name, 'table name', 'An undo');
+	const { handle, editToken } = request;
+	const result = (
+		done: { key: SqliteRowKey; otherChanges: number; backup?: SqliteBackup; elapsedMs: number },
+		table: string
+	): SqliteUndoResult => ({
+		name: table,
+		kind: step.kind,
+		key: done.key,
+		otherChanges: done.otherChanges,
+		...(done.backup ? { backup: done.backup } : {}),
+		elapsedMs: done.elapsedMs,
+	});
+
+	switch (step.kind) {
+		case 'restore-cell': {
+			const column = requireText(step.column, 'column name', 'An undo');
+			const write = restoredValueWrite(column, step.value);
+			const version = undoStepVersion(step.version);
+			const done = await writeCell(handle, editToken, name, step.row, version, write);
+			return result(done, done.plan.object.name);
+		}
+		case 'remove-row': {
+			const version = undoStepVersion(step.version);
+			const done = await removeRow(handle, editToken, name, step.row, version);
+			return result(done, done.table.object.name);
+		}
+		case 'restore-row': {
+			const values = step.values;
+			if (!values || typeof values !== 'object' || Array.isArray(values)) {
+				throw new Error("An undo step that restores a row needs the row's values by column name.");
+			}
+			if (step.rowid !== null && typeof step.rowid !== 'string') {
+				throw new Error(`"${String(step.rowid)}" is not a rowid.`);
+			}
+			const fields = Object.entries(values).map(([column, value]) =>
+				restoredValueWrite(column, value)
+			);
+			const done = await writeRow(handle, editToken, name, fields, step.rowid ?? null);
+			return result(done, done.table.object.name);
+		}
+		default:
+			throw new Error(
+				`"${String((step as { kind?: unknown }).kind)}" is not an undo step: it names restore-cell, remove-row, or restore-row.`
+			);
+	}
 }

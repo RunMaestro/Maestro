@@ -26,6 +26,10 @@
  *     behind the same per-call unlock.
  *     An update or delete may carry `version` (`--if-version`): the row's
  *     version from `sqlite rows --json`, checked in the write's own `WHERE`.
+ *   - `sqlite_undo_edit`: the viewer's Undo (`maestro-cli sqlite undo`): the
+ *     `undo` step a write's result returned, applied through
+ *     `undoSqliteEdit()` behind the same per-call unlock. Main keeps no undo
+ *     state, so a step from an earlier CLI write undoes it just as well.
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -64,6 +68,7 @@ import {
 import {
 	deleteSqliteRow,
 	insertSqliteRow,
+	undoSqliteEdit,
 	updateSqliteCell,
 } from '../../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
@@ -76,6 +81,7 @@ import type {
 	SqliteParameterValues,
 	SqliteRowKey,
 	SqliteSortSpec,
+	SqliteUndoStep,
 } from '../../../../shared/sqlite/types';
 import { SQLITE_OBJECT_KINDS } from '../../../../shared/sqlite/objects';
 import { SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE } from '../../../../shared/sqlite/schema';
@@ -584,5 +590,29 @@ export async function handleSqliteDeleteRow(
 			row: message.row as SqliteRowKey,
 			version: message.version as string | undefined,
 		})
+	);
+}
+
+export async function handleSqliteUndoEdit(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_undo_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const step = message.step;
+	if (!filePath || !step || typeof step !== 'object' || Array.isArray(step)) {
+		reply({
+			success: false,
+			error: 'Missing required "path" or "step" (an object) for sqlite_undo_edit',
+		});
+		return;
+	}
+	// The step's shape is checked by the undo, which refuses a bad one.
+	await writeWithCliUnlock(message, filePath, reply, (handle, editToken) =>
+		undoSqliteEdit({ handle, editToken, step: step as SqliteUndoStep })
 	);
 }

@@ -79,6 +79,12 @@
  * place (the record view steps to the next row); one whose triggers or
  * foreign-key actions changed other rows reads the first window again. Either
  * write counts the rows again from the start.
+ *
+ * Every write reports its result's `undo` step upward (`onWrite`): the
+ * viewer keeps the tab's last write and offers Undo in its summary strip
+ * (SqliteUndoControl), since an undo may come after switching tables. When an
+ * undo changed this table, the viewer bumps `reloadSignal` and the first
+ * window is read again.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -133,6 +139,7 @@ import {
 } from './sqliteCellEdit';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
 import { sqliteInsertColumns, sqliteInsertValues, type SqliteInsertDraft } from './sqliteRowInsert';
+import type { SqliteLastWrite } from './sqliteUndo';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
 const PAGE_SIZE = 300;
@@ -266,6 +273,10 @@ interface SqliteTableViewProps {
 	 * whether this object's rows can be edited, and its cells can be.
 	 */
 	editToken?: string | null;
+	/** Each write that landed, with the step that takes it back, for the viewer's Undo. */
+	onWrite?: (write: SqliteLastWrite) => void;
+	/** Bumped when something outside (an undo) changed this table: read the first window again. */
+	reloadSignal?: number;
 	theme: Theme;
 }
 
@@ -278,6 +289,8 @@ export function SqliteTableView({
 	onFilterFocused,
 	onRowCountSettled,
 	editToken = null,
+	onWrite,
+	reloadSignal = 0,
 	theme,
 }: SqliteTableViewProps) {
 	const editingEnabled = editToken !== null;
@@ -450,6 +463,15 @@ export function SqliteTableView({
 		setDeleteStatus(null);
 		reloadRows();
 	}, [reloadRows]);
+	// An undo changed this table: what is on screen may no longer be stored.
+	const seenReloadSignal = useRef(reloadSignal);
+	useEffect(() => {
+		if (seenReloadSignal.current === reloadSignal) return;
+		seenReloadSignal.current = reloadSignal;
+		setDeleteStatus(null);
+		reloadRows();
+	}, [reloadSignal, reloadRows]);
+	const reportWrite = useStableCallback((write: SqliteLastWrite) => onWrite?.(write));
 	const countAll = countAllFor === appliedFilter;
 	const reportSettled = useStableCallback((rowCount: number) => {
 		onRowCountSettled?.(name, rowCount);
@@ -619,6 +641,7 @@ export function SqliteTableView({
 				value,
 			});
 			announceBackup(result.backup);
+			reportWrite({ undo: result.undo, otherChanges: result.otherChanges });
 			// A new sort or filter since the save started moved the rows; the
 			// next window shows the change.
 			if (token !== generation.current) return;
@@ -648,7 +671,7 @@ export function SqliteTableView({
 			}
 			setEditingCell(null);
 			setEditStatus({
-				text: `Saved ${column.name} in row ${formatCount(cell.row + 1)} (${result.elapsedMs} ms)`,
+				text: `Saved ${column.name} in row ${formatCount(cell.row + 1)} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,
 				error: false,
 			});
 		} catch (failure) {
@@ -722,6 +745,7 @@ export function SqliteTableView({
 				values: planned.values,
 			});
 			announceBackup(result.backup);
+			reportWrite({ undo: result.undo, otherChanges: result.otherChanges });
 			setInsertOpen(false);
 			const key =
 				result.key.kind === 'rowid'
@@ -766,6 +790,7 @@ export function SqliteTableView({
 				version: rowVersions?.[rowPosition] ?? null,
 			});
 			announceBackup(result.backup);
+			reportWrite({ undo: result.undo, otherChanges: result.otherChanges });
 			setDeleteArmed(null);
 			const outcome = {
 				text: `Deleted row ${formatCount(rowPosition + 1)} (${result.elapsedMs} ms)${otherChangesText(result.otherChanges)}`,

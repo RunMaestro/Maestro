@@ -136,6 +136,7 @@ let disableEditing: ReturnType<typeof vi.fn>;
 let updateCell: ReturnType<typeof vi.fn>;
 let insertRow: ReturnType<typeof vi.fn>;
 let deleteRow: ReturnType<typeof vi.fn>;
+let undoEdit: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -380,6 +381,15 @@ beforeEach(() => {
 			row,
 			key: { kind: 'primary-key', values: { id: newKey } },
 			version: `after-${request.column}`,
+			otherChanges: 0,
+			undo: {
+				kind: 'restore-cell',
+				name: 'events',
+				column: request.column,
+				row: { kind: 'primary-key', values: { id: newKey } },
+				version: `after-${request.column}`,
+				value: { type: 'text', text: String(page.rows[position][index]) },
+			},
 			elapsedMs: 4,
 		};
 	});
@@ -389,13 +399,27 @@ beforeEach(() => {
 		row: [3, 'tap', null],
 		key: { kind: 'primary-key', values: { id: { type: 'integer', text: '3' } } },
 		otherChanges: 0,
+		undo: {
+			kind: 'remove-row',
+			name: 'events',
+			row: { kind: 'primary-key', values: { id: { type: 'integer', text: '3' } } },
+			version: 'after-insert',
+		},
 		elapsedMs: 2,
 	}));
 	deleteRow = vi.fn(async (request: { row: unknown }) => ({
 		name: 'events',
 		key: request.row,
 		otherChanges: 0,
+		undo: { kind: 'restore-row', name: 'events', rowid: null, values: {} },
 		elapsedMs: 2,
+	}));
+	undoEdit = vi.fn(async (request: { step: { kind: string; name: string } }) => ({
+		name: request.step.name,
+		kind: request.step.kind,
+		key: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+		otherChanges: 0,
+		elapsedMs: 3,
 	}));
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
@@ -420,6 +444,7 @@ beforeEach(() => {
 			updateCell,
 			insertRow,
 			deleteRow,
+			undoEdit,
 			close,
 		},
 		dialog: { saveFile },
@@ -2629,5 +2654,147 @@ describe('SqliteViewer insert and delete row', () => {
 		await waitFor(() =>
 			expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument()
 		);
+	});
+});
+
+describe('SqliteViewer undo', () => {
+	/** The grid cell at a row and column: the row's children are the gutter, then the cells. */
+	function kindCell(row: number): HTMLElement {
+		return screen.getByTestId(`sqlite-row-${row}`).children[2] as HTMLElement;
+	}
+
+	async function renderEditing() {
+		const view = render(
+			<LayerStackProvider>
+				<SqliteViewer filePath="/data/app.db" fileName="app.db" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		await screen.findByTestId('sqlite-row-1');
+		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-rows-editability');
+		return view;
+	}
+
+	async function editKind(row: number, value: string) {
+		fireEvent.doubleClick(kindCell(row));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument());
+	}
+
+	it('offers nothing to undo before the first write', async () => {
+		await renderEditing();
+		expect(screen.queryByTestId('sqlite-undo-control')).not.toBeInTheDocument();
+	});
+
+	it("sends the last write's own undo step, then reads the table again", async () => {
+		await renderEditing();
+		await editKind(1, 'view');
+		const button = await screen.findByTestId('sqlite-undo');
+		expect(button).toHaveAttribute(
+			'title',
+			expect.stringContaining('Undo the edit of kind in events')
+		);
+
+		fireEvent.click(button);
+		await waitFor(() => expect(undoEdit).toHaveBeenCalledTimes(1));
+		expect(undoEdit).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'token-1',
+			step: {
+				kind: 'restore-cell',
+				name: 'events',
+				column: 'kind',
+				row: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+				version: 'after-kind',
+				value: { type: 'text', text: 'click' },
+			},
+		});
+		expect(await screen.findByTestId('sqlite-undo-status')).toHaveTextContent(
+			'Undid the edit of kind in events (3 ms)'
+		);
+		// One level: the undo itself is not offered for undoing.
+		expect(screen.queryByTestId('sqlite-undo')).not.toBeInTheDocument();
+		// The table on screen changed, so its rows are read again.
+		await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
+	});
+
+	it('undoes on Cmd+Z outside a text field, never while typing in one', async () => {
+		await renderEditing();
+		await editKind(1, 'view');
+		await screen.findByTestId('sqlite-undo');
+
+		fireEvent.keyDown(screen.getByTestId('sqlite-filter-input'), { key: 'z', metaKey: true });
+		expect(undoEdit).not.toHaveBeenCalled();
+		fireEvent.keyDown(kindCell(1), { key: 'z', metaKey: true, shiftKey: true });
+		expect(undoEdit).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(kindCell(1), { key: 'z', metaKey: true });
+		await waitFor(() => expect(undoEdit).toHaveBeenCalledTimes(1));
+	});
+
+	it('undoes a delete and an insert with the steps they returned', async () => {
+		await renderEditing();
+		fireEvent.click(screen.getByTestId('sqlite-insert-row'));
+		const input = await screen.findByTestId('sqlite-insert-row-input-kind');
+		fireEvent.change(input, { target: { value: 'tap' } });
+		fireEvent.keyDown(input, { key: 'Enter' });
+		fireEvent.click(await screen.findByTestId('sqlite-undo'));
+		await waitFor(() =>
+			expect(undoEdit).toHaveBeenLastCalledWith(
+				expect.objectContaining({ step: expect.objectContaining({ kind: 'remove-row' }) })
+			)
+		);
+		expect(await screen.findByTestId('sqlite-undo-status')).toHaveTextContent(
+			'Undid the insert into events'
+		);
+	});
+
+	it('says a write cannot be undone when its triggers changed other rows', async () => {
+		updateCell.mockImplementationOnce(async (request: SqliteCellUpdateRequest) => ({
+			name: 'events',
+			column: request.column,
+			columns: eventsPage({ handle: 'h1', name: 'events', offset: 0, limit: 10 }).columns,
+			row: [2, 'view', null],
+			key: request.row,
+			version: 'after-kind',
+			otherChanges: 2,
+			undo: null,
+			elapsedMs: 4,
+		}));
+		await renderEditing();
+		await editKind(1, 'view');
+		const note = await screen.findByTestId('sqlite-undo-unavailable');
+		expect(note).toHaveAttribute('title', expect.stringContaining('also changed 2 other rows'));
+		expect(screen.queryByTestId('sqlite-undo')).not.toBeInTheDocument();
+	});
+
+	it('keeps the step and shows the reason when the undo is refused', async () => {
+		undoEdit.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:undoEdit': Error: The row of events with id 2 changed since it was read"
+			)
+		);
+		await renderEditing();
+		await editKind(1, 'view');
+		fireEvent.click(await screen.findByTestId('sqlite-undo'));
+		expect(await screen.findByTestId('sqlite-undo-status')).toHaveTextContent(
+			'Could not undo: The row of events with id 2 changed since it was read'
+		);
+		expect(screen.getByTestId('sqlite-undo')).toBeInTheDocument();
+	});
+
+	it('drops the last write when the tab locks', async () => {
+		await renderEditing();
+		await editKind(1, 'view');
+		await screen.findByTestId('sqlite-undo');
+		fireEvent.click(screen.getByTestId('sqlite-editing-disable'));
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-undo-control')).not.toBeInTheDocument()
+		);
+		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-editing-disable');
+		expect(screen.queryByTestId('sqlite-undo-control')).not.toBeInTheDocument();
 	});
 });

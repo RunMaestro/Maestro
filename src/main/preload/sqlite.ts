@@ -40,6 +40,8 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteUndoRequest,
+	SqliteUndoResult,
 } from '../../shared/sqlite/types';
 
 export function createSqliteApi() {
@@ -186,6 +188,14 @@ export function createSqliteApi() {
 		 */
 		deleteRow: (request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> =>
 			ipcRenderer.invoke('sqlite:deleteRow', request),
+
+		/**
+		 * Take back one write: the `undo` step its result returned, applied as
+		 * one single-row write. Needs this tab's editing token; rejects, with
+		 * nothing written, when the row changed since the write.
+		 */
+		undoEdit: (request: SqliteUndoRequest): Promise<SqliteUndoResult> =>
+			ipcRenderer.invoke('sqlite:undoEdit', request),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

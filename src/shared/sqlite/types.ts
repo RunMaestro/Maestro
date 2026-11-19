@@ -463,6 +463,89 @@ export interface SqliteCellUpdateResult {
 	key: SqliteRowKey;
 	/** The row's version after the change, for the next edit to send. */
 	version: string;
+	/**
+	 * Rows the database changed beside this one, by its triggers or its
+	 * foreign-key actions (`ON UPDATE CASCADE`), which the viewer does not
+	 * show on its own.
+	 */
+	otherChanges: number;
+	/** How to put the cell back as it was; null when `otherChanges` is not 0. */
+	undo: SqliteUndoStep | null;
+	/** Set only on the write that took this session's backup of the file. */
+	backup?: SqliteBackup;
+	/** Time SQLite spent on the change, in milliseconds. */
+	elapsedMs: number;
+}
+
+/**
+ * How to take back one write, as the write returned it (`undo` on its
+ * result): the exact inverse, every value whole and typed, so nothing is
+ * taken from a cut cell.
+ *
+ *   - `restore-cell` undoes a cell edit: the old value goes back into the
+ *     column, the row named by its key after the edit.
+ *   - `remove-row` undoes an insert: the new row is deleted.
+ *   - `restore-row` undoes a delete: the row is inserted again with every
+ *     column it had (generated ones excepted), and with its old rowid, so it
+ *     is the same row to anything that refers to it.
+ *
+ * `restore-cell` and `remove-row` carry the row's version after the write,
+ * so an undo over a change made since (another tab, another program, a
+ * trigger) is refused the way a stale edit is. A write whose triggers or
+ * foreign-key actions changed other rows returns no step: undoing its own row
+ * alone would leave the database in a state it never had.
+ */
+export type SqliteUndoStep =
+	| {
+			kind: 'restore-cell';
+			name: string;
+			column: string;
+			/** The row's key after the edit. */
+			row: SqliteRowKey;
+			/** The row's version after the edit. */
+			version: string;
+			/** The value the cell held before the edit, whole. */
+			value: SqliteKeyValue;
+	  }
+	| {
+			kind: 'remove-row';
+			name: string;
+			/** The inserted row's key. */
+			row: SqliteRowKey;
+			/** The inserted row's version. */
+			version: string;
+	  }
+	| {
+			kind: 'restore-row';
+			name: string;
+			/** The deleted row's rowid, decimal text, or null when it had none to keep. */
+			rowid: string | null;
+			/** Each column the row had (generated ones excepted), whole, keyed by name. */
+			values: Record<string, SqliteKeyValue>;
+	  };
+
+/**
+ * Take back one write (the viewer's Undo, `maestro-cli sqlite undo`): its
+ * `undo` step, applied as one single-row write. Refused unless `editToken`
+ * is the tab's live editing grant.
+ */
+export interface SqliteUndoRequest {
+	handle: string;
+	/** The tab's grant from "Enable editing". */
+	editToken: string;
+	/** The step the write returned. */
+	step: SqliteUndoStep;
+}
+
+/** What one undo changed. */
+export interface SqliteUndoResult {
+	name: string;
+	/** The step that was applied. */
+	kind: SqliteUndoStep['kind'];
+	/** The row's key: after the cell went back, as removed, or as restored. */
+	key: SqliteRowKey;
+	/** Rows the database's triggers or foreign-key actions changed beside this one. */
+	otherChanges: number;
 	/** Set only on the write that took this session's backup of the file. */
 	backup?: SqliteBackup;
 	/** Time SQLite spent on the change, in milliseconds. */
@@ -504,6 +587,8 @@ export interface SqliteRowInsertResult {
 	 * foreign-key actions, which the viewer does not show on its own.
 	 */
 	otherChanges: number;
+	/** How to remove the row again; null when `otherChanges` is not 0. */
+	undo: SqliteUndoStep | null;
 	/** Set only on the write that took this session's backup of the file. */
 	backup?: SqliteBackup;
 	/** Time SQLite spent on the change, in milliseconds. */
@@ -540,6 +625,8 @@ export interface SqliteRowDeleteResult {
 	 * removed, keys `SET NULL` cleared, and whatever its triggers wrote.
 	 */
 	otherChanges: number;
+	/** How to put the row back; null when `otherChanges` is not 0. */
+	undo: SqliteUndoStep | null;
 	/** Set only on the write that took this session's backup of the file. */
 	backup?: SqliteBackup;
 	/** Time SQLite spent on the change, in milliseconds. */

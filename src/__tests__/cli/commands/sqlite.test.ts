@@ -17,10 +17,13 @@
  * `maestro-cli sqlite set`: one cell changed by the app, unlocked for that one
  * call, over `sqlite_update_cell`. And `maestro-cli sqlite insert` / `delete`:
  * one row added or removed the same way, over `sqlite_insert_row` and
- * `sqlite_delete_row`.
+ * `sqlite_delete_row`. And `maestro-cli sqlite undo`: the `undo` step a write
+ * printed, applied by the app, over `sqlite_undo_edit`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
@@ -44,6 +47,8 @@ import {
 	sqliteSchema,
 	sqliteSet,
 	sqliteTables,
+	sqliteUndo,
+	sqliteUndoStepFromFlag,
 } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { SQLITE_QUERY_PLAN_KIND_HINTS } from '../../../shared/sqlite/plan';
@@ -1721,5 +1726,156 @@ describe('sqlite insert and delete', () => {
 			'__exit__'
 		);
 		expect(errorSpy.mock.calls.join('\n')).toContain('FOREIGN KEY constraint failed');
+	});
+});
+
+describe('sqlite undo', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+	const database = { handle: 'h1', displayPath: DB, fileBytes: 4096 };
+	const step = {
+		kind: 'restore-cell',
+		name: 'users',
+		column: 'email',
+		row: { kind: 'rowid', rowid: '7' },
+		version: 'AfterAfterAfterAfter_1',
+		value: { type: 'text', text: 'old@example.com' },
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the step and the per-call unlock, and says what it undid', async () => {
+		const sent = mockReply({
+			type: 'sqlite_undo_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				kind: 'restore-cell',
+				key: { kind: 'rowid', rowid: '7' },
+				otherChanges: 0,
+				elapsedMs: 2,
+			},
+		});
+		await sqliteUndo(DB, { step: JSON.stringify(step), enableEditing: true });
+		expect(sent[0]).toEqual({
+			type: 'sqlite_undo_edit',
+			path: DB,
+			step,
+			enableEditing: true,
+			responseType: 'sqlite_undo_result',
+		});
+		expect(logged()).toBe('Undid the edit of email in users (2 ms): rowid 7.');
+	});
+
+	it('prints the result as JSON under --json', async () => {
+		mockReply({
+			type: 'sqlite_undo_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				kind: 'remove-row',
+				key: { kind: 'rowid', rowid: '12' },
+				otherChanges: 0,
+				elapsedMs: 1,
+			},
+		});
+		await sqliteUndo(DB, { step: JSON.stringify(step), enableEditing: true, json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			name: 'users',
+			kind: 'remove-row',
+			key: { kind: 'rowid', rowid: '12' },
+			otherChanges: 0,
+			backup: null,
+			elapsedMs: 1,
+		});
+	});
+
+	it.each([
+		[{ step: JSON.stringify(step) }, 'Pass --enable-editing to unlock editing for this one call'],
+		[{ enableEditing: true }, 'Give the undo step with --step'],
+		[{ step: '{nope', enableEditing: true }, '--step is not JSON'],
+		[{ step: '[1]', enableEditing: true }, '--step must be a JSON object'],
+	])('refuses undo %o before asking the app', async (options, message) => {
+		const sent = mockReply({ type: 'sqlite_undo_result', success: true });
+		await expect(sqliteUndo(DB, options)).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		expect(sent).toEqual([]);
+	});
+
+	it('exits 1 with the reason the app refused the undo', async () => {
+		mockReply({
+			type: 'sqlite_undo_result',
+			success: false,
+			error: 'The row of users with rowid 7 changed since it was read',
+		});
+		await expect(
+			sqliteUndo(DB, { step: JSON.stringify(step), enableEditing: true })
+		).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('changed since it was read');
+	});
+
+	it('reads the step from @file', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-undo-'));
+		try {
+			const file = path.join(dir, 'step.json');
+			fs.writeFileSync(file, JSON.stringify(step));
+			expect(sqliteUndoStepFromFlag(`@${file}`)).toEqual(step);
+			expect(() => sqliteUndoStepFromFlag(`@${path.join(dir, 'missing.json')}`)).toThrow(
+				'Could not read the undo step from'
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('prints the undo step after a write, or why there is none', async () => {
+		mockReply({
+			type: 'sqlite_delete_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				key: { kind: 'rowid', rowid: '7' },
+				otherChanges: 0,
+				undo: { kind: 'restore-row', name: 'users', rowid: '7', values: {} },
+				elapsedMs: 1,
+			},
+		});
+		await sqliteDelete(DB, 'users', { rowid: '7', enableEditing: true });
+		expect(logged()).toContain(
+			'Undo step (give it to sqlite undo --step): {"kind":"restore-row","name":"users","rowid":"7","values":{}}'
+		);
+
+		logSpy.mockClear();
+		mockReply({
+			type: 'sqlite_delete_result',
+			success: true,
+			database,
+			result: {
+				name: 'users',
+				key: { kind: 'rowid', rowid: '7' },
+				otherChanges: 2,
+				undo: null,
+				elapsedMs: 1,
+			},
+		});
+		await sqliteDelete(DB, 'users', { rowid: '7', enableEditing: true, json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({ undo: null });
+
+		logSpy.mockClear();
+		await sqliteDelete(DB, 'users', { rowid: '7', enableEditing: true });
+		expect(logged()).toContain('The last change cannot be undone here');
 	});
 });

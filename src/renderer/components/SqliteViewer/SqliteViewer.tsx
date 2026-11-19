@@ -44,6 +44,15 @@
  * every write must send back. The grant is never persisted: it is released
  * when the tab locks again, opens another file, or unmounts, so a reload
  * starts read-only. The table view gets the token, and with it the cell edit.
+ *
+ * Beside the switch, Undo takes back the tab's last write
+ * (SqliteUndoControl): each write the table view makes reports its result's
+ * `undo` step here, and Undo (or Cmd+Z outside a text field) sends it to
+ * `sqlite:undoEdit`, one single-row write through the same gate, backup, and
+ * version check (src/main/sqlite/sqlite-row-edit.ts). One level, kept per
+ * editing session, not per table, so switching tables keeps it; Lock, another
+ * file, or unmount drops it with the grant. A write whose triggers or
+ * foreign-key actions changed other rows says it cannot be undone.
  */
 
 import {
@@ -54,6 +63,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	type KeyboardEvent,
 } from 'react';
 import { AlertTriangle, Database } from 'lucide-react';
 
@@ -74,7 +84,9 @@ import {
 	sqliteObjectTags,
 } from '../../../shared/sqlite/objects';
 import { formatCount, formatSize } from '../../../shared/formatters';
+import { sqliteUndoOutcome } from '../../../shared/sqlite/undo';
 import type { Theme } from '../../types';
+import { isTextEntryTarget } from '../../utils/messageScrollNavigation';
 import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
@@ -87,6 +99,8 @@ import { SqliteObjectRail } from './SqliteObjectRail';
 import { SqliteQueryPanel, type SqliteQueryRunState } from './SqliteQueryPanel';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
 import { SqliteTableView } from './SqliteTableView';
+import { SqliteUndoControl, type SqliteUndoStatus } from './SqliteUndoControl';
+import { isSqliteUndoChord, type SqliteLastWrite } from './sqliteUndo';
 
 /** What the content pane shows for a table or view. */
 type ObjectView = 'data' | 'schema';
@@ -158,6 +172,12 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const [editGrant, setEditGrant] = useState<SqliteEditingGrant | null>(null);
 	const [editingBusy, setEditingBusy] = useState(false);
 	const [editingError, setEditingError] = useState<string | null>(null);
+	/** The tab's last write while editing is on, with the step that takes it back. */
+	const [lastWrite, setLastWrite] = useState<SqliteLastWrite | null>(null);
+	const [undoing, setUndoing] = useState(false);
+	const [undoStatus, setUndoStatus] = useState<SqliteUndoStatus | null>(null);
+	/** Bumped when an undo changed the table on screen, so it reads its rows again. */
+	const [tableReload, setTableReload] = useState(0);
 	/**
 	 * Bumped whenever an enable request in flight stops being wanted (another
 	 * file, Lock, unmount), so its grant is released instead of applied.
@@ -223,7 +243,10 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 
 	// Release the grant whenever it stops being this tab's: Lock clears it,
 	// another file replaces it, unmount drops it. One place, so no path forgets.
+	// The last write's undo belongs to the grant: it goes with it.
 	useEffect(() => {
+		setLastWrite(null);
+		setUndoStatus(null);
 		if (!editGrant) return;
 		return () => {
 			void window.maestro.sqlite.disableEditing(editGrant.handle, editGrant.editToken);
@@ -265,6 +288,46 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setEditGrant(null);
 		setEditingBusy(false);
 	}, []);
+
+	// -- Undo the last write ------------------------------------------------
+
+	const handleWrite = useCallback((write: SqliteLastWrite) => {
+		setLastWrite(write);
+		setUndoStatus(null);
+	}, []);
+
+	const undoLastWrite = useCallback(() => {
+		const step = lastWrite?.undo;
+		if (!editGrant || !step || undoing) return;
+		setUndoing(true);
+		window.maestro.sqlite
+			.undoEdit({ handle: editGrant.handle, editToken: editGrant.editToken, step })
+			.then((result) => {
+				// One level: the undo itself is not undone.
+				setLastWrite(null);
+				setUndoStatus({ text: sqliteUndoOutcome(step, result), error: false });
+				// The table view on screen shows that table: its rows changed.
+				if (selectedName === result.name) setTableReload((count) => count + 1);
+			})
+			.catch((error: unknown) => {
+				// The step stays, so a busy database can be tried again.
+				setUndoStatus({ text: `Could not undo: ${ipcErrorMessage(error)}`, error: true });
+			})
+			.finally(() => setUndoing(false));
+	}, [editGrant, lastWrite, undoing, selectedName]);
+
+	const handleViewerKeyDown = useCallback(
+		(event: KeyboardEvent) => {
+			// Inside a text field (the cell editor, the filter, the SQL editor)
+			// Cmd+Z undoes typing, never a write.
+			if (!isSqliteUndoChord(event) || isTextEntryTarget(event.target)) return;
+			if (!editGrant || !lastWrite?.undo) return;
+			event.preventDefault();
+			event.stopPropagation();
+			undoLastWrite();
+		},
+		[editGrant, lastWrite, undoLastWrite]
+	);
 
 	// -- Measure row counts and sizes, batch by batch -----------------------
 
@@ -401,7 +464,11 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const showData = hasRows && objectView.value === 'data';
 
 	return (
-		<div className="flex flex-col h-full min-h-0" data-testid="sqlite-viewer">
+		<div
+			className="flex flex-col h-full min-h-0"
+			onKeyDown={handleViewerKeyDown}
+			data-testid="sqlite-viewer"
+		>
 			{/* Database summary */}
 			<div
 				className="shrink-0 flex items-center gap-3 px-3 py-2 flex-wrap"
@@ -429,6 +496,15 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 					onDisable={disableEditing}
 					theme={theme}
 				/>
+				{editGrant && (
+					<SqliteUndoControl
+						lastWrite={lastWrite}
+						undoing={undoing}
+						status={undoStatus}
+						onUndo={undoLastWrite}
+						theme={theme}
+					/>
+				)}
 				<SqliteDatabaseFacts
 					// One mount per open database, so the auto-check rule and the
 					// verdict never carry over from another file.
@@ -555,6 +631,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 											onFilterFocused={handleFilterFocused}
 											onRowCountSettled={handleRowCountSettled}
 											editToken={editGrant?.editToken ?? null}
+											onWrite={handleWrite}
+											reloadSignal={tableReload}
 											theme={theme}
 										/>
 									</div>

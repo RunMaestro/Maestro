@@ -51,6 +51,7 @@ const rowEdit = vi.hoisted(() => ({
 	updateSqliteCell: vi.fn(),
 	insertSqliteRow: vi.fn(),
 	deleteSqliteRow: vi.fn(),
+	undoSqliteEdit: vi.fn(),
 }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
@@ -99,6 +100,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readSummary',
 			'sqlite:runQuery',
 			'sqlite:saveBlob',
+			'sqlite:undoEdit',
 			'sqlite:updateCell',
 		]);
 	});
@@ -346,6 +348,34 @@ describe('SQLite IPC handlers', () => {
 		rowEdit.deleteSqliteRow.mockRejectedValue(new Error('FOREIGN KEY constraint failed'));
 		await expect(invoke('sqlite:deleteRow', request)).rejects.toThrow(
 			'FOREIGN KEY constraint failed'
+		);
+	});
+
+	it('forwards an undo, token and step, to the one undo path', async () => {
+		const request = {
+			handle: 'h1',
+			editToken: 't1',
+			step: {
+				kind: 'remove-row',
+				name: 'users',
+				row: { kind: 'rowid', rowid: '9' },
+				version: 'AfterAfterAfterAfter_1',
+			},
+		};
+		const result = {
+			name: 'users',
+			kind: 'remove-row',
+			key: request.step.row,
+			otherChanges: 0,
+			elapsedMs: 1,
+		};
+		rowEdit.undoSqliteEdit.mockResolvedValue(result);
+		await expect(invoke('sqlite:undoEdit', request)).resolves.toEqual(result);
+		expect(rowEdit.undoSqliteEdit).toHaveBeenCalledWith(request);
+
+		rowEdit.undoSqliteEdit.mockRejectedValue(new Error('UNIQUE constraint failed: users.id'));
+		await expect(invoke('sqlite:undoEdit', request)).rejects.toThrow(
+			'UNIQUE constraint failed: users.id'
 		);
 	});
 

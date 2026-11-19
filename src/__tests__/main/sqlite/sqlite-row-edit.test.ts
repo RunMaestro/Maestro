@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // better-sqlite3's native binary is built for Electron's ABI and does not load
 // under vitest, so both connections are fakes that answer the statements
 // sqlite-row-edit.ts prepares: `SELECT *` for the columns, the UPDATE,
-// INSERT, or DELETE with its RETURNING, `total_changes()`, and the read-back. The editing gate and the backup have their own
+// INSERT, or DELETE with its RETURNING, `total_changes()`, the read of a
+// cell's old value before an UPDATE, and the read-back. The editing gate and the backup have their own
 // tests (sqlite-editing.test.ts, sqlite-backup.test.ts), so they are mocks
 // here; the identity's key condition and the row reader's select list stay real.
 interface FakeConnection {
@@ -12,6 +13,8 @@ interface FakeConnection {
 	updates: unknown[][];
 	/** Arguments each read-back ran with. */
 	reads: unknown[][];
+	/** Arguments each read of a cell's old value (before an UPDATE) ran with. */
+	befores: unknown[][];
 	/** Arguments each "is the row still there" probe ran with. */
 	probes: unknown[][];
 	committed: number;
@@ -30,6 +33,8 @@ const state = vi.hoisted(() => ({
 	returning: [] as unknown[][] | Error | ((args: unknown[]) => unknown[][]),
 	/** The row the read-back finds (value/length pairs), or none; its version is appended. */
 	readBack: undefined as unknown[] | undefined,
+	/** What the read of the edited cell's old value finds (one column), or none. */
+	before: undefined as unknown[] | undefined,
 	/** Whether a stale write's probe still finds a row by its key. */
 	stillThere: false,
 	/** What each `SELECT total_changes()` answers, in order (0 when run out). */
@@ -63,6 +68,11 @@ function fakeDb(which: 'readOnly' | 'writable') {
 					return state.returning;
 				},
 				get(...args: unknown[]) {
+					// The old value of the one column an UPDATE is about to change.
+					if (/^SELECT "(?:[^"]|"")*" FROM /.test(sql)) {
+						connection.befores.push(args);
+						return state.before;
+					}
 					if (sql.startsWith('SELECT 1 FROM ')) {
 						connection.probes.push(args);
 						return state.stillThere ? [1] : undefined;
@@ -122,12 +132,14 @@ import { describeSqliteBusy } from '../../../main/sqlite/sqlite-connection';
 import {
 	deleteSqliteRow,
 	insertSqliteRow,
+	undoSqliteEdit,
 	updateSqliteCell,
 } from '../../../main/sqlite/sqlite-row-edit';
 import type {
 	SqliteCellUpdateRequest,
 	SqliteRowDeleteRequest,
 	SqliteRowInsertRequest,
+	SqliteUndoStep,
 } from '../../../shared/sqlite/types';
 
 /** The version the fake read-back reports for the row after a write. */
@@ -163,7 +175,15 @@ function storedAsGiven(...key: unknown[]) {
 }
 
 function connection(): FakeConnection {
-	return { prepared: [], updates: [], reads: [], probes: [], committed: 0, rolledBack: 0 };
+	return {
+		prepared: [],
+		updates: [],
+		reads: [],
+		befores: [],
+		probes: [],
+		committed: 0,
+		rolledBack: 0,
+	};
 }
 
 function request(extra: Partial<SqliteCellUpdateRequest> = {}): SqliteCellUpdateRequest {
@@ -200,6 +220,7 @@ beforeEach(() => {
 	];
 	state.returning = storedAsGiven(7n);
 	state.readBack = [7n, null, 'new@example.com', 15n, 'example.com', 11n];
+	state.before = ['old@example.com'];
 	state.totalChanges = [];
 	state.stillThere = false;
 	state.backupCreated = false;
@@ -216,6 +237,9 @@ describe('updateSqliteCell', () => {
 		expect(writable.prepared).toContain(
 			'UPDATE "users" SET "email" = ? WHERE "rowid" = ? RETURNING "rowid", typeof("email"), "email"'
 		);
+		// The old value is read whole first, in the same transaction, for the undo.
+		expect(writable.prepared).toContain('SELECT "email" FROM "users" WHERE "rowid" = ?');
+		expect(writable.befores).toEqual([[7n]]);
 		expect(writable.updates).toEqual([['new@example.com', 7n]]);
 		expect(writable.reads).toEqual([[7n]]);
 		expect(writable.committed).toBe(1);
@@ -230,11 +254,48 @@ describe('updateSqliteCell', () => {
 			row: [7, 'new@example.com', 'example.com'],
 			key: { kind: 'rowid', rowid: '7' },
 			version: VERSION_AFTER,
+			otherChanges: 0,
+			undo: {
+				kind: 'restore-cell',
+				name: 'users',
+				column: 'email',
+				row: { kind: 'rowid', rowid: '7' },
+				version: VERSION_AFTER,
+				value: { type: 'text', text: 'old@example.com' },
+			},
 			elapsedMs: expect.any(Number),
 		});
 		expect(result.backup).toBeUndefined();
 		// Nothing was written on the read-only connection; it only checked.
 		expect(state.connections.readOnly.updates).toEqual([]);
+	});
+
+	it('keeps the old value whole and typed for the undo, a BLOB and a big INTEGER included', async () => {
+		state.before = [Buffer.from([0, 255])];
+		const blob = await updateSqliteCell(request());
+		expect(blob.undo).toMatchObject({ value: { type: 'blob', text: '00ff' } });
+		state.before = [9007199254740993n];
+		const big = await updateSqliteCell(request());
+		expect(big.undo).toMatchObject({ value: { type: 'integer', text: '9007199254740993' } });
+		state.before = [null];
+		const nulled = await updateSqliteCell(request());
+		expect(nulled.undo).toMatchObject({ value: null });
+	});
+
+	it('offers no undo when its triggers or foreign-key actions changed other rows', async () => {
+		state.totalChanges = [3, 5];
+		const result = await updateSqliteCell(request());
+		expect(result.otherChanges).toBe(1);
+		expect(result.undo).toBeNull();
+	});
+
+	it('runs no UPDATE when the read of the old value finds no row', async () => {
+		state.before = undefined;
+		await expect(updateSqliteCell(request())).rejects.toThrow(
+			'users has no row with rowid 7: it was deleted or its key changed since it was read.'
+		);
+		expect(state.connections.writable.updates).toEqual([]);
+		expect(state.connections.writable.rolledBack).toBe(1);
 	});
 
 	it('binds a number or NULL as one, never spliced into the SQL', async () => {
@@ -594,6 +655,12 @@ describe('insertSqliteRow', () => {
 			key: { kind: 'rowid', rowid: '12' },
 			version: VERSION_AFTER,
 			otherChanges: 0,
+			undo: {
+				kind: 'remove-row',
+				name: 'users',
+				row: { kind: 'rowid', rowid: '12' },
+				version: VERSION_AFTER,
+			},
 			elapsedMs: expect.any(Number),
 		});
 		// Nothing was written on the read-only connection; it only checked.
@@ -632,6 +699,8 @@ describe('insertSqliteRow', () => {
 		state.totalChanges = [10, 13];
 		const result = await insertSqliteRow(insertRequest());
 		expect(result.otherChanges).toBe(2);
+		// Removing the row alone would not take back what the triggers did.
+		expect(result.undo).toBeNull();
 	});
 
 	it('announces the backup only on the write that took it', async () => {
@@ -753,18 +822,27 @@ describe('insertSqliteRow', () => {
 });
 
 describe('deleteSqliteRow', () => {
-	it('runs one parameterised DELETE keyed on the rowid', async () => {
-		state.returning = [[7n]];
+	it('runs one parameterised DELETE keyed on the rowid, returning the row whole for the undo', async () => {
+		state.returning = [[7n, 7n, 'a@b.c']];
 		state.totalChanges = [2, 3];
 		const result = await deleteSqliteRow(deleteRequest());
 		const writable = state.connections.writable;
-		expect(writable.prepared).toContain('DELETE FROM "users" WHERE "rowid" = ? RETURNING "rowid"');
+		// Every column an insert can set comes back whole; the generated one does not.
+		expect(writable.prepared).toContain(
+			'DELETE FROM "users" WHERE "rowid" = ? RETURNING "rowid", "id", "email"'
+		);
 		expect(writable.updates).toEqual([[7n]]);
 		expect(writable.committed).toBe(1);
 		expect(result).toEqual({
 			name: 'users',
 			key: { kind: 'rowid', rowid: '7' },
 			otherChanges: 0,
+			undo: {
+				kind: 'restore-row',
+				name: 'users',
+				rowid: '7',
+				values: { id: { type: 'integer', text: '7' }, email: { type: 'text', text: 'a@b.c' } },
+			},
 			elapsedMs: expect.any(Number),
 		});
 		expect(state.connections.readOnly.updates).toEqual([]);
@@ -775,10 +853,16 @@ describe('deleteSqliteRow', () => {
 		state.totalChanges = [5, 10];
 		const result = await deleteSqliteRow(deleteRequest());
 		expect(result.otherChanges).toBe(4);
+		// The cascaded rows are gone too: putting this one back would not restore them.
+		expect(result.undo).toBeNull();
 	});
 
 	it('names a row by every primary-key column', async () => {
-		state.returning = [[3n, 'ada']];
+		state.columns = [
+			{ name: 'org', type: 'INTEGER' },
+			{ name: 'name', type: 'TEXT' },
+		];
+		state.returning = [[3n, 'ada', 3n, 'ada']];
 		const result = await deleteSqliteRow(
 			deleteRequest({
 				name: 'members',
@@ -789,7 +873,7 @@ describe('deleteSqliteRow', () => {
 			})
 		);
 		expect(state.connections.writable.prepared).toContain(
-			'DELETE FROM "members" WHERE "org" = ? AND "name" = ? RETURNING "org", "name"'
+			'DELETE FROM "members" WHERE "org" = ? AND "name" = ? RETURNING "org", "name", "org", "name"'
 		);
 		expect(state.connections.writable.updates).toEqual([[3n, 'ada']]);
 		expect(result.key).toEqual({
@@ -811,7 +895,7 @@ describe('deleteSqliteRow', () => {
 		await deleteSqliteRow(deleteRequest({ version: VERSION_SEEN }));
 		const writable = state.connections.writable;
 		expect(writable.prepared).toContain(
-			`DELETE FROM "users" WHERE "rowid" = ? AND ${USERS_VERSION_CHECK} RETURNING "rowid"`
+			`DELETE FROM "users" WHERE "rowid" = ? AND ${USERS_VERSION_CHECK} RETURNING "rowid", "id", "email"`
 		);
 		expect(writable.updates).toEqual([[7n, VERSION_SEEN]]);
 		expect(writable.committed).toBe(1);
@@ -881,6 +965,181 @@ describe('deleteSqliteRow', () => {
 	it('refuses a tab that does not hold the unlock', async () => {
 		state.locked = true;
 		await expect(deleteSqliteRow(deleteRequest({ editToken: 'forged' }))).rejects.toThrow(
+			'Editing is not enabled.'
+		);
+		expect(state.beginCalls).toBe(0);
+	});
+});
+
+function undoRequest(step: SqliteUndoStep, editToken = 'token') {
+	return { handle: 'h1', editToken, step };
+}
+
+describe('undoSqliteEdit', () => {
+	const restoreEmail: SqliteUndoStep = {
+		kind: 'restore-cell',
+		name: 'users',
+		column: 'email',
+		row: { kind: 'rowid', rowid: '7' },
+		version: VERSION_SEEN,
+		value: { type: 'text', text: 'old@example.com' },
+	};
+
+	it('puts a cell back through the UPDATE path, checking the version the edit left', async () => {
+		const result = await undoSqliteEdit(undoRequest(restoreEmail));
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain(
+			`UPDATE "users" SET "email" = ? WHERE "rowid" = ? AND ${USERS_VERSION_CHECK} RETURNING "rowid", typeof("email"), "email"`
+		);
+		expect(writable.updates).toEqual([['old@example.com', 7n, VERSION_SEEN]]);
+		expect(writable.committed).toBe(1);
+		expect(result).toEqual({
+			name: 'users',
+			kind: 'restore-cell',
+			key: { kind: 'rowid', rowid: '7' },
+			otherChanges: 0,
+			elapsedMs: expect.any(Number),
+		});
+	});
+
+	it('binds the old value in its own storage class, whole', async () => {
+		state.returning = (args) => [[args[0], 'integer', args[0]]];
+		await undoSqliteEdit(
+			undoRequest({
+				...restoreEmail,
+				column: 'id',
+				value: { type: 'integer', text: '9007199254740993' },
+			})
+		);
+		state.returning = (args) => [[7n, 'blob', args[0]]];
+		await undoSqliteEdit(undoRequest({ ...restoreEmail, value: { type: 'blob', text: '00ff' } }));
+		const [first, second] = state.connections.writable.updates.map((args) => args[0]);
+		expect(first).toBe(9007199254740993n);
+		expect(Buffer.isBuffer(second) && (second as Buffer).toString('hex')).toBe('00ff');
+	});
+
+	it('refuses, changing nothing, when the column would not store the old value as it was', async () => {
+		state.returning = [[7n, 'integer', 5n]];
+		await expect(
+			undoSqliteEdit(undoRequest({ ...restoreEmail, value: { type: 'text', text: '5' } }))
+		).rejects.toThrow('email would not hold its old value as it was');
+		expect(state.connections.writable.rolledBack).toBe(1);
+	});
+
+	it('refuses an undo over a change made since the edit, like a stale edit', async () => {
+		// The version the edit left no longer matches: neither read finds the row.
+		state.before = undefined;
+		state.stillThere = true;
+		await expect(undoSqliteEdit(undoRequest(restoreEmail))).rejects.toThrow(
+			'The row of users with rowid 7 changed since it was read'
+		);
+		expect(state.connections.writable.updates).toEqual([]);
+	});
+
+	it('removes an inserted row through the DELETE path, checking its version', async () => {
+		state.returning = [[12n, 12n, 'new@example.com']];
+		const result = await undoSqliteEdit(
+			undoRequest({
+				kind: 'remove-row',
+				name: 'users',
+				row: { kind: 'rowid', rowid: '12' },
+				version: VERSION_SEEN,
+			})
+		);
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain(
+			`DELETE FROM "users" WHERE "rowid" = ? AND ${USERS_VERSION_CHECK} RETURNING "rowid", "id", "email"`
+		);
+		expect(writable.updates).toEqual([[12n, VERSION_SEEN]]);
+		expect(result).toMatchObject({ kind: 'remove-row', key: { kind: 'rowid', rowid: '12' } });
+	});
+
+	it('puts a deleted row back whole through the INSERT path, its INTEGER PRIMARY KEY included', async () => {
+		state.returning = [[7n, 'integer', 7n, 'text', 'a@b.c']];
+		state.readBack = [7n, null, 'a@b.c', 5n, 'b.c', 3n];
+		const result = await undoSqliteEdit(
+			undoRequest({
+				kind: 'restore-row',
+				name: 'users',
+				rowid: '7',
+				values: { id: { type: 'integer', text: '7' }, email: { type: 'text', text: 'a@b.c' } },
+			})
+		);
+		const writable = state.connections.writable;
+		// The rowid IS the id column, so it is not set a second time through the alias.
+		expect(writable.prepared).toContain(
+			'INSERT INTO "users" ("id", "email") VALUES (?, ?) RETURNING "rowid", typeof("id"), "id", typeof("email"), "email"'
+		);
+		expect(writable.updates).toEqual([[7n, 'a@b.c']]);
+		expect(result).toMatchObject({ kind: 'restore-row', key: { kind: 'rowid', rowid: '7' } });
+	});
+
+	it('keeps the old rowid of a table with no INTEGER PRIMARY KEY, and a BLOB whole', async () => {
+		state.objects = [...state.objects, summary('logs')];
+		state.editability.logs = {
+			editable: true,
+			identity: { kind: 'rowid', alias: 'rowid', rowidColumn: null },
+			readOnlyColumns: [],
+		};
+		state.columns = [
+			{ name: 'msg', type: 'TEXT' },
+			{ name: 'data', type: 'BLOB' },
+		];
+		const bytes = Buffer.from('00ff', 'hex');
+		state.returning = [[42n, 'text', 'hi', 'blob', bytes]];
+		state.readBack = ['hi', 2n, bytes, 2n];
+		await undoSqliteEdit(
+			undoRequest({
+				kind: 'restore-row',
+				name: 'logs',
+				rowid: '42',
+				values: { msg: { type: 'text', text: 'hi' }, data: { type: 'blob', text: '00ff' } },
+			})
+		);
+		const writable = state.connections.writable;
+		expect(writable.prepared).toContain(
+			'INSERT INTO "logs" ("rowid", "msg", "data") VALUES (?, ?, ?) RETURNING "rowid", typeof("msg"), "msg", typeof("data"), "data"'
+		);
+		expect(writable.updates).toEqual([[42n, 'hi', bytes]]);
+	});
+
+	it("passes SQLite's UNIQUE refusal through when the row's key was taken since", async () => {
+		state.returning = new Error('UNIQUE constraint failed: users.id');
+		await expect(
+			undoSqliteEdit(
+				undoRequest({
+					kind: 'restore-row',
+					name: 'users',
+					rowid: '7',
+					values: { id: { type: 'integer', text: '7' } },
+				})
+			)
+		).rejects.toThrow('UNIQUE constraint failed: users.id');
+		expect(state.connections.writable.committed).toBe(0);
+	});
+
+	it('refuses a malformed step before the backup', async () => {
+		await expect(
+			undoSqliteEdit(undoRequest({ ...restoreEmail, value: { type: 'blob', text: 'zz' } }))
+		).rejects.toThrow("The undo step's value for email is not a stored value.");
+		await expect(
+			undoSqliteEdit(undoRequest({ ...restoreEmail, version: undefined as unknown as string }))
+		).rejects.toThrow("An undo step needs the row's version after the write it undoes.");
+		await expect(
+			undoSqliteEdit(undoRequest({ ...restoreEmail, kind: 'redo' } as unknown as SqliteUndoStep))
+		).rejects.toThrow('"redo" is not an undo step');
+		await expect(
+			undoSqliteEdit(undoRequest({ kind: 'restore-row', name: 'users', rowid: 'x', values: {} }))
+		).rejects.toThrow('"x" is not a rowid.');
+		await expect(undoSqliteEdit({ handle: 'h1', editToken: 'token' } as never)).rejects.toThrow(
+			'An undo needs the step its write returned.'
+		);
+		expect(state.beginCalls).toBe(0);
+	});
+
+	it('refuses a tab that does not hold the unlock', async () => {
+		state.locked = true;
+		await expect(undoSqliteEdit(undoRequest(restoreEmail, 'forged'))).rejects.toThrow(
 			'Editing is not enabled.'
 		);
 		expect(state.beginCalls).toBe(0);
