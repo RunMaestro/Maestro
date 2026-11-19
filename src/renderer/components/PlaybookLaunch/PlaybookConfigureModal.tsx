@@ -26,7 +26,7 @@ import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { Modal } from '../ui/Modal';
 import { ModalBackButton } from '../ui/ModalBackButton';
 import { Spinner } from '../ui/Spinner';
-import { ParameterSheet } from './ParameterSheet';
+import { PlaybookConfigureFlow } from './PlaybookConfigureFlow';
 
 export interface PlaybookConfigureModalProps {
 	theme: Theme;
@@ -110,7 +110,7 @@ function PlaybookConfigureModalBody({
 		body = <Notice theme={theme} text="This playbook no longer exists." />;
 	} else if (selected) {
 		body = (
-			<ParameterSheet
+			<PlaybookConfigureFlow
 				theme={theme}
 				sessionId={sessionId}
 				playbook={selected}

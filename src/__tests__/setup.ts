@@ -536,6 +536,8 @@ const mockMaestro = {
 		delete: vi.fn().mockResolvedValue({ success: true }),
 		export: vi.fn().mockResolvedValue({ success: true }),
 		import: vi.fn().mockResolvedValue({ success: true, playbook: {} }),
+		// No facts by default: the configure flow then proposes nothing and never interviews.
+		gatherFacts: vi.fn().mockResolvedValue({ success: false, error: 'not mocked' }),
 		onChanged: vi.fn().mockReturnValue(() => {}),
 	},
 	plugins: {

@@ -74,6 +74,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Inline wizard iteration generation',
 		category: 'inline-wizard',
 	},
+	// Playbooks
+	{
+		id: 'playbook-concierge',
+		filename: 'playbook-concierge.md',
+		description:
+			'Guided interview that fills the parameters of a playbook before it runs (Playbook Exchange configure step)',
+		category: 'playbooks',
+	},
 	// AutoRun
 	{
 		id: 'autorun-default',
@@ -448,6 +456,8 @@ export const PROMPT_IDS = {
 	WIZARD_INLINE_ITERATE: 'wizard-inline-iterate',
 	WIZARD_INLINE_NEW: 'wizard-inline-new',
 	WIZARD_INLINE_ITERATE_GENERATION: 'wizard-inline-iterate-generation',
+	// Playbooks
+	PLAYBOOK_CONCIERGE: 'playbook-concierge',
 	// AutoRun
 	AUTORUN_DEFAULT: 'autorun-default',
 	AUTORUN_GOAL: 'autorun-goal',

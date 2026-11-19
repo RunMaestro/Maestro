@@ -1,7 +1,7 @@
 import { Check, CheckCircle2 } from 'lucide-react';
 import type { Playbook } from '../../../../shared/types';
 import type { Theme } from '../../../types';
-import { ParameterSheet } from '../../PlaybookLaunch/ParameterSheet';
+import { PlaybookConfigureFlow } from '../../PlaybookLaunch/PlaybookConfigureFlow';
 import { EscCloseButton } from '../../ui/EscCloseButton';
 
 export interface PlaybookConfigureStepProps {
@@ -10,20 +10,24 @@ export interface PlaybookConfigureStepProps {
 	playbook: Playbook;
 	/** The agent whose playbook store holds the record. */
 	sessionId: string;
+	/** The marketplace README, handed to the guided interview. */
+	readmeContent?: string | null;
 	onClose: () => void;
 }
 
 /**
  * The step the Playbook Exchange moves to after Install and Run: the
  * playbook is installed and stored, and its parameters are answered here
- * (`ParameterSheet`, saved to the record as they are typed) before it runs on
- * the current agent. There is no way back to the detail view from here; the
+ * (`PlaybookConfigureFlow`: the guided interview when it can earn its tokens,
+ * then the `ParameterSheet`, saved to the record as they are typed) before it
+ * runs on the current agent. There is no way back to the detail view from here; the
  * install already happened, so going back would only invite a second copy.
  */
 export function PlaybookConfigureStep({
 	theme,
 	playbook,
 	sessionId,
+	readmeContent,
 	onClose,
 }: PlaybookConfigureStepProps) {
 	const documentCount = playbook.documents.length;
@@ -68,10 +72,11 @@ export function PlaybookConfigureStep({
 			</div>
 
 			<div className="flex-1 min-h-0">
-				<ParameterSheet
+				<PlaybookConfigureFlow
 					theme={theme}
 					sessionId={sessionId}
 					playbook={playbook}
+					readme={readmeContent}
 					runLabel="Save and Close"
 					runIcon={<Check className="w-3.5 h-3.5" aria-hidden="true" />}
 					onRun={onClose}

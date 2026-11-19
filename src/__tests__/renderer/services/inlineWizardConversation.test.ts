@@ -30,6 +30,8 @@ import {
 	startInlineWizardConversation,
 	endInlineWizardConversation,
 	sendWizardMessage,
+	createWizardConversationSession,
+	wizardAgentConfigFromSession,
 } from '../../../renderer/services/inlineWizardConversation';
 import {
 	getAgentDefinition,
@@ -748,6 +750,112 @@ describe('inlineWizardConversation', () => {
 			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
 			exitCallback(session.sessionId, 0);
 			await messagePromise;
+		});
+	});
+
+	describe('createWizardConversationSession', () => {
+		it('names the process with the given prefix and keeps the system prompt as given', () => {
+			const session = createWizardConversationSession(
+				{ agentType: 'claude-code', directoryPath: '/repo', projectName: 'Repo' },
+				'SYSTEM PROMPT',
+				'playbook-concierge'
+			);
+			expect(session.sessionId).toMatch(/^playbook-concierge-/);
+			expect(session.systemPrompt).toBe('SYSTEM PROMPT');
+			expect(session.isActive).toBe(true);
+		});
+
+		it('drops an SSH config that is not enabled', () => {
+			const session = createWizardConversationSession(
+				{
+					agentType: 'claude-code',
+					directoryPath: '/repo',
+					projectName: 'Repo',
+					sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' },
+				},
+				''
+			);
+			expect(session.sessionSshRemoteConfig).toBeUndefined();
+			expect(session.sessionId).toMatch(/^inline-wizard-/);
+		});
+	});
+
+	describe('wizardAgentConfigFromSession', () => {
+		it("maps an agent's own settings, preferring the project root as the directory", () => {
+			const config = wizardAgentConfigFromSession({
+				toolType: 'codex',
+				cwd: '/repo/sub',
+				projectRoot: '/repo',
+				name: 'Backend',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				customPath: '/bin/codex',
+				customArgs: '--x',
+				customEnvVars: { A: '1' },
+				customModel: 'gpt',
+				customEffort: 'high',
+				enableMaestroP: true,
+				maestroPMode: 'dynamic',
+				maestroPPath: '/bin/maestro-p',
+			});
+			expect(config).toEqual({
+				agentType: 'codex',
+				directoryPath: '/repo',
+				projectName: 'Backend',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				sessionCustomPath: '/bin/codex',
+				sessionCustomArgs: '--x',
+				sessionCustomEnvVars: { A: '1' },
+				sessionCustomModel: 'gpt',
+				sessionCustomEffort: 'high',
+				sessionClaudeTokenSource: {
+					enableMaestroP: true,
+					maestroPMode: 'dynamic',
+					maestroPPath: '/bin/maestro-p',
+				},
+			});
+		});
+	});
+
+	describe('sendWizardMessage with turn options', () => {
+		it('uses the caller suffix in the prompt and the caller parser on the reply', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue({ success: true });
+			const session = createWizardConversationSession(
+				{ agentType: 'claude-code', directoryPath: '/repo', projectName: 'Repo' },
+				'SYSTEM',
+				'playbook-concierge'
+			);
+			const parseResponse = vi.fn().mockReturnValue({
+				confidence: 90,
+				ready: true,
+				message: 'parsed',
+				extra: 42,
+			});
+
+			const pending = sendWizardMessage(session, 'Hello', [], undefined, {
+				structuredOutputSuffix: '\n\nCUSTOM SUFFIX',
+				parseResponse,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.prompt).toContain('Hello\n\nCUSTOM SUFFIX');
+			expect(spawnCall.prompt).not.toContain('This is a discovery conversation');
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			dataCallback(session.sessionId, '{"type":"result","result":"agent text"}\n');
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+
+			const result = await pending;
+			expect(parseResponse).toHaveBeenCalledWith('agent text', false);
+			expect(result.success).toBe(true);
+			expect(result.response).toMatchObject({ message: 'parsed', extra: 42 });
 		});
 	});
 });

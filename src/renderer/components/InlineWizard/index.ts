@@ -18,7 +18,11 @@ export {
 	type WizardMessageBubbleProps,
 	type WizardMessageBubbleMessage,
 } from './WizardMessageBubble';
-export { WizardConversationView, type WizardConversationViewProps } from './WizardConversationView';
+export {
+	WizardConversationView,
+	WizardErrorDisplay,
+	type WizardConversationViewProps,
+} from './WizardConversationView';
 export { WizardExitConfirmDialog } from './WizardExitConfirmDialog';
 export { DocumentGenerationView, type DocumentGenerationViewProps } from './DocumentGenerationView';
 export { AustinFactsDisplay } from './AustinFactsDisplay';

@@ -74,6 +74,10 @@ Many playbooks ask a few questions before they run, such as a pull request URL o
 - **Default** - the playbook author's default
 - **Unresolved** - no value yet. A required parameter in this state blocks the run
 
+Some playbooks are **guided**: instead of the form, they open on a short chat where your agent reads the project, proposes what it can find, and asks only for the rest. It asks at most one question per open parameter, plus one. When it has what it needs, or when you click **Skip to form** (always visible), you land on the form with its values marked **Detected**, so you confirm every value before anything runs. A guided playbook skips the chat when every parameter already has a value, or when the agent cannot run (no agent, or offline).
+
+On a form playbook, **Help me fill this in** starts the same chat. It shows only when a parameter is still empty and is the kind of thing the project can answer (a test command, a path, a repository detail). For a question only you can answer, such as a research topic, the form is faster, so the button does not show. The chat runs read-only and its prompt is editable in **Settings > Maestro Prompts > Playbooks**.
+
 Answers are saved to the playbook as you type, so you can close the form and come back. To change them later, open **Configure Playbook** (`Opt+Cmd+Shift+P`, the command palette, or the Left Bar menu), or click the sliders icon next to a playbook in the **Load Playbook** dropdown. When a run pauses because a required parameter has no value, the pause banner offers **Configure** too: answer the parameters, then click **Resume**.
 
 From the command line, `maestro-cli playbook configure <id> --set NAME=VALUE` saves an answer, and `maestro-cli playbook configure <id>` reads the answers back.

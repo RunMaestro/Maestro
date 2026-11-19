@@ -232,6 +232,7 @@ export function MarketplaceModal({
 						theme={theme}
 						playbook={configuringPlaybook}
 						sessionId={sessionId}
+						readmeContent={readmeContent}
 						onClose={onClose}
 					/>
 				) : showDetailView && selectedPlaybook ? (

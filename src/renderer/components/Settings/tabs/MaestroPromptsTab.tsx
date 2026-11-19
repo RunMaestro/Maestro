@@ -134,6 +134,7 @@ const CATEGORY_INFO: Record<string, { label: string }> = {
 	'inline-wizard': { label: 'Inline Wizard' },
 	'maestro-run': { label: 'MaestroRun' },
 	pianola: { label: 'Pianola' },
+	playbooks: { label: 'Playbooks' },
 	[PLUGIN_PROMPT_CATEGORY]: { label: 'Plugin Prompts' },
 	system: { label: 'System' },
 	wizard: { label: 'Wizard' },
@@ -159,6 +160,8 @@ const CATEGORY_HELP: Record<string, string> = {
 		'System-level prompts - the Maestro system context injected into agents, tab naming, feedback, and cross-fleet synopsis generation.',
 	[PLUGIN_PROMPT_CATEGORY]:
 		'Read-only prompts contributed by installed plugins. Their content is owned by the plugin and cannot be edited here.',
+	playbooks:
+		'Prompts for running playbooks from the Playbook Exchange - the guided interview that fills the parameters of a playbook before it runs.',
 	pianola: 'The manager instructions appended to the system prompt of the pinned Pianola agent.',
 	'computer-history':
 		'The section appended to every local agent system prompt while Computer History is on.',

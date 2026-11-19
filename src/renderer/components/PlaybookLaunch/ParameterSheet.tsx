@@ -11,7 +11,7 @@
  * and Run, and the standalone `PlaybookConfigureModal`.
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Play } from 'lucide-react';
 import {
 	collectUnresolvedRequired,
@@ -46,6 +46,11 @@ export interface ParameterSheetProps {
 	runIcon?: ReactNode;
 	/** Rendered at the left of the footer, such as a Back button. */
 	secondaryAction?: ReactNode;
+	/**
+	 * Called with the user's answers (blank answers included) on mount and on
+	 * every change, so a parent that unmounts the sheet can remount it on them.
+	 */
+	onAnswersChange?: (answers: PlaybookParamValues) => void;
 	/**
 	 * Called with the answers the run uses (stored answers plus proposals),
 	 * after every pending save has been written.
@@ -127,6 +132,7 @@ export function ParameterSheet({
 	runLabel = 'Run',
 	runIcon,
 	secondaryAction,
+	onAnswersChange,
 	onRun,
 }: ParameterSheetProps) {
 	const specs = useMemo(
@@ -138,6 +144,9 @@ export function ParameterSheet({
 		playbookId: playbook.id,
 		initialAnswers: playbook.parameterValues,
 	});
+	useEffect(() => {
+		onAnswersChange?.(answers);
+	}, [answers, onAnswersChange]);
 	// A required row says it is empty only once the user has been in it; until
 	// then its Unresolved badge carries that news without shouting.
 	const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
