@@ -22,6 +22,12 @@
  *   - it outlives `timeoutMs`, when one is given;
  *   - the caller calls `stop()` (a Stop button, a newer run replacing it).
  *
+ * A SESSION (`startSqliteWorkerSession()`: Query mode's explicit transaction)
+ * keeps its child across requests instead: it answers its opening, then one
+ * request at a time, each with its own timeout, until a reply says it is
+ * closed. Stopping it kills the child, which ends whatever it held (a killed
+ * transaction is rolled back by SQLite's journal).
+ *
  * Under vitest the sources are `.ts` and no compiled entry sits beside this
  * file, so the task runs inline there, on the calling thread, where it cannot
  * be interrupted: `stop()` still rejects the caller at once and the result is
@@ -35,11 +41,19 @@ import path from 'path';
 
 import type { OpenSqliteDatabase } from './sqlite-database';
 import {
+	answerSqliteWorkerSession,
+	openSqliteWorkerSession,
 	runSqliteWorkerTask,
 	sqliteWorkerError,
+	sqliteWorkerFailure,
 	type SqliteWorkerData,
 	type SqliteWorkerKind,
 	type SqliteWorkerReply,
+	type SqliteWorkerSessionData,
+	type SqliteWorkerSessionKind,
+	type SqliteWorkerSessionOpened,
+	type SqliteWorkerSessionReply,
+	type SqliteWorkerSessions,
 	type SqliteWorkerTasks,
 } from './sqlite-worker-task';
 
@@ -144,4 +158,146 @@ export function startSqliteWorkerTask<K extends SqliteWorkerKind>(
 	}
 
 	return { result, stop };
+}
+
+/** What a session runs with, beside what a single run takes. */
+export interface SqliteWorkerSessionOptions {
+	/** The error a caller sees when the database is released mid-session. */
+	closedMessage: string;
+	/** What the session is called in an unexpected-exit error ("The transaction"). */
+	label: string;
+	/**
+	 * Runs once when the session ends, however it ends: with no error and the
+	 * child's last reply when the child closed it (`closed`), else with the
+	 * error that ended it (a stop, the database released, the child gone).
+	 * Runs before the caller of the closing request hears its reply.
+	 */
+	onEnd: (error: Error | null, reply: SqliteWorkerSessionReply | null) => void;
+}
+
+/** One SQLite session in flight: its opening, then one request at a time. */
+export interface SqliteWorkerSession<K extends SqliteWorkerSessionKind> {
+	/** What opening it answered; rejects when it could not open. */
+	opened: Promise<SqliteWorkerSessions[K]['opened']>;
+	/**
+	 * Send one request; resolves its reply. Refused while another is in
+	 * flight or once the session ended. The caller times it: `stop()` ends
+	 * the whole session, the only way to stop a request.
+	 */
+	request(op: SqliteWorkerSessions[K]['op']): Promise<SqliteWorkerSessions[K]['result']>;
+	/** Whether a request (or the opening) is in flight. */
+	readonly busy: boolean;
+	/** Stop it: kill the child, reject what is in flight with `message`. Does nothing once ended. */
+	stop(message: string): void;
+}
+
+/**
+ * Start one session in a child process of its own (see the module comment).
+ * The child stays until a reply says the session closed, or it is stopped.
+ */
+export function startSqliteWorkerSession<K extends SqliteWorkerSessionKind>(
+	database: RunDatabase,
+	data: SqliteWorkerSessionData<K>,
+	options: SqliteWorkerSessionOptions
+): SqliteWorkerSession<K> {
+	type Sessions = SqliteWorkerSessions[K];
+	let child: ChildProcess | null = null;
+	let inline: SqliteWorkerSessionOpened<K>['host'] | null = null;
+	let ended = false;
+	/** The reply awaited now: the opening's, then each request's. */
+	let pending: {
+		resolve: (reply: SqliteWorkerSessionReply) => void;
+		reject: (error: Error) => void;
+	} | null = null;
+
+	const end = (error: Error | null, reply: SqliteWorkerSessionReply | null) => {
+		if (ended) return;
+		ended = true;
+		database.releaseHooks.delete(onRelease);
+		const waiting = pending;
+		pending = null;
+		options.onEnd(error, reply);
+		if (error) waiting?.reject(error);
+	};
+	const stop = (message: string) => {
+		if (ended) return;
+		end(new Error(message), null);
+		child?.kill('SIGKILL');
+		inline?.abort();
+	};
+	function onRelease() {
+		stop(options.closedMessage);
+	}
+	database.releaseHooks.add(onRelease);
+
+	/** Settle the request in flight with `reply`; a closed session ends first. */
+	const deliver = (reply: SqliteWorkerSessionReply) => {
+		if (ended) return;
+		const waiting = pending;
+		pending = null;
+		if (reply.closed) end(null, reply);
+		waiting?.resolve(reply);
+	};
+	const awaitReply = () =>
+		new Promise<SqliteWorkerSessionReply>((resolve, reject) => {
+			pending = { resolve, reject };
+		});
+	const unwrap = <R>(reply: SqliteWorkerSessionReply): R => {
+		if (reply.ok) return reply.result as R;
+		throw sqliteWorkerError(reply.error);
+	};
+
+	let opened: Promise<Sessions['opened']>;
+	if (existsSync(WORKER_SCRIPT)) {
+		const started = forkWorker();
+		child = started;
+		started.on('message', (reply: SqliteWorkerSessionReply) => deliver(reply));
+		started.once('error', (error) => end(error, null));
+		started.once('exit', (code, signal) =>
+			end(
+				new Error(
+					`${options.label} ended (${signal ? `signal ${signal}` : `exit code ${code}`}) without a result.`
+				),
+				null
+			)
+		);
+		opened = awaitReply().then((reply) => unwrap<Sessions['opened']>(reply));
+		started.send(data);
+	} else {
+		opened = awaitReply().then((reply) => unwrap<Sessions['opened']>(reply));
+		void Promise.resolve().then(() => {
+			if (ended) return;
+			let reply: SqliteWorkerSessionReply;
+			try {
+				const session = openSqliteWorkerSession(data);
+				inline = session.host;
+				reply = { ok: true, result: session.opened, closed: false };
+			} catch (error) {
+				reply = { ...sqliteWorkerFailure(error), closed: true };
+			}
+			deliver(reply);
+		});
+	}
+
+	return {
+		opened,
+		get busy() {
+			return pending !== null;
+		},
+		request(op) {
+			if (ended) return Promise.reject(new Error(`${options.label} has ended.`));
+			if (pending) return Promise.reject(new Error(`${options.label} is still answering.`));
+			const reply = awaitReply();
+			if (child) {
+				child.send(op);
+			} else {
+				void Promise.resolve().then(() => {
+					if (ended || !inline) return;
+					deliver(answerSqliteWorkerSession(inline, op));
+				});
+			}
+			return reply.then((answer) => unwrap<Sessions['result']>(answer));
+		},
+		stop,
+	};
 }

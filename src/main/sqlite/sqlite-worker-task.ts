@@ -14,6 +14,13 @@
  *   - `backup`: `VACUUM INTO` a copy beside the file, taken before the app
  *     first writes to it (sqlite-backup-task.ts).
  *
+ * And one SESSION kind, a child that answers request after request until it
+ * is done (`startSqliteWorkerSession()`, `serveSqliteWorkerSession()`):
+ *
+ *   - `transaction`: Query mode's explicit transaction, `BEGIN IMMEDIATE`
+ *     held open across statements until Commit or Roll back
+ *     (`openSqliteTransactionTask()` in sqlite-query-task.ts).
+ *
  * Nothing here, or reachable from here, may import `electron`.
  */
 
@@ -30,9 +37,15 @@ import {
 import { runSqliteIntegrityCheck, type SqliteIntegrityTask } from './sqlite-integrity-task';
 import {
 	exportSqliteQueryTask,
+	openSqliteTransactionTask,
 	runSqliteQueryTask,
 	type SqliteQueryExportTask,
 	type SqliteQueryTask,
+	type SqliteTransactionOp,
+	type SqliteTransactionReply,
+	type SqliteTransactionTask,
+	type SqliteTransactionTotals,
+	type SqliteWorkerSessionHost,
 } from './sqlite-query-task';
 
 /** Each kind's task and result. */
@@ -106,4 +119,66 @@ export function sqliteWorkerError(error: SqliteWorkerErrorData): Error {
 		error.code ? { code: error.code } : {},
 		typeof error.offset === 'number' ? { offset: error.offset } : {}
 	);
+}
+
+/** Each session kind's task, what opening it answers, one request, and its reply. */
+export interface SqliteWorkerSessions {
+	transaction: {
+		task: SqliteTransactionTask;
+		opened: SqliteTransactionTotals;
+		op: SqliteTransactionOp;
+		result: SqliteTransactionReply;
+	};
+}
+
+export type SqliteWorkerSessionKind = keyof SqliteWorkerSessions;
+
+/** What a session's child is started with: the first IPC message. */
+export interface SqliteWorkerSessionData<
+	K extends SqliteWorkerSessionKind = SqliteWorkerSessionKind,
+> {
+	session: K;
+	task: SqliteWorkerSessions[K]['task'];
+}
+
+/** A session's reply to its opening or to one request: the reply, and whether the session is over. */
+export type SqliteWorkerSessionReply<R = unknown> = SqliteWorkerReply<R> & { closed: boolean };
+
+/** A session, opened where it is called: what opening answered, and the host for its requests. */
+export interface SqliteWorkerSessionOpened<K extends SqliteWorkerSessionKind> {
+	opened: SqliteWorkerSessions[K]['opened'];
+	host: SqliteWorkerSessionHost<SqliteWorkerSessions[K]['op'], SqliteWorkerSessions[K]['result']>;
+}
+
+const SESSION_OPENERS: {
+	[K in SqliteWorkerSessionKind]: (
+		task: SqliteWorkerSessions[K]['task']
+	) => SqliteWorkerSessionOpened<K>;
+} = {
+	transaction: openSqliteTransactionTask,
+};
+
+/** Whether a child's first message opens a session rather than running one task. */
+export function isSqliteWorkerSessionData(data: unknown): data is SqliteWorkerSessionData {
+	return typeof (data as { session?: unknown } | null)?.session === 'string';
+}
+
+/** Open one session where it is called. The child process calls this; so does the inline fallback. */
+export function openSqliteWorkerSession<K extends SqliteWorkerSessionKind>(
+	data: SqliteWorkerSessionData<K>
+): SqliteWorkerSessionOpened<K> {
+	return SESSION_OPENERS[data.session](data.task) as SqliteWorkerSessionOpened<K>;
+}
+
+/** Answer one request on an open session, as its reply. */
+export function answerSqliteWorkerSession<Op, R>(
+	host: SqliteWorkerSessionHost<Op, R>,
+	op: Op
+): SqliteWorkerSessionReply<R> {
+	try {
+		const result = host.handle(op);
+		return { ok: true, result, closed: host.closed };
+	} catch (error) {
+		return { ...sqliteWorkerFailure(error), closed: host.closed };
+	}
 }

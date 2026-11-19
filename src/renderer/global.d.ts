@@ -268,6 +268,11 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteTransactionEnd,
+	SqliteTransactionEndRequest,
+	SqliteTransactionRequest,
+	SqliteTransactionState,
+	SqliteTransactionStatus,
 	SqliteUndoRequest,
 	SqliteUndoResult,
 } from '../shared/sqlite/types';
@@ -2023,6 +2028,9 @@ interface MaestroAPI {
 		insertRow: (request: SqliteRowInsertRequest) => Promise<SqliteRowInsertResult>;
 		deleteRow: (request: SqliteRowDeleteRequest) => Promise<SqliteRowDeleteResult>;
 		undoEdit: (request: SqliteUndoRequest) => Promise<SqliteUndoResult>;
+		beginTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionState>;
+		readTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionStatus>;
+		endTransaction: (request: SqliteTransactionEndRequest) => Promise<SqliteTransactionEnd>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

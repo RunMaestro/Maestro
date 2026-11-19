@@ -65,6 +65,12 @@ vi.mock('../../../../main/sqlite/sqlite-query', () => query);
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => history);
 vi.mock('../../../../main/sqlite/sqlite-editing', () => editing);
 vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdit);
+const transaction = vi.hoisted(() => ({
+	beginSqliteTransaction: vi.fn(),
+	readSqliteTransaction: vi.fn(),
+	endSqliteTransaction: vi.fn(),
+}));
+vi.mock('../../../../main/sqlite/sqlite-transaction', () => transaction);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 import { splitSqliteErrorOffset } from '../../../../shared/sqlite/queryError';
@@ -80,6 +86,7 @@ describe('SQLite IPC handlers', () => {
 
 	it('registers the channels the viewer uses', () => {
 		expect([...handlers.keys()].sort()).toEqual([
+			'sqlite:beginTransaction',
 			'sqlite:cancelQuery',
 			'sqlite:checkIntegrity',
 			'sqlite:close',
@@ -87,6 +94,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:deleteRow',
 			'sqlite:disableEditing',
 			'sqlite:enableEditing',
+			'sqlite:endTransaction',
 			'sqlite:exportQuery',
 			'sqlite:forgetQueryHistory',
 			'sqlite:insertRow',
@@ -98,6 +106,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readRows',
 			'sqlite:readSchema',
 			'sqlite:readSummary',
+			'sqlite:readTransaction',
 			'sqlite:runQuery',
 			'sqlite:saveBlob',
 			'sqlite:undoEdit',
@@ -376,6 +385,46 @@ describe('SQLite IPC handlers', () => {
 		rowEdit.undoSqliteEdit.mockRejectedValue(new Error('UNIQUE constraint failed: users.id'));
 		await expect(invoke('sqlite:undoEdit', request)).rejects.toThrow(
 			'UNIQUE constraint failed: users.id'
+		);
+	});
+
+	it("forwards Query mode's transaction calls: begin, read, and end", async () => {
+		const grant = { handle: 'h1', editToken: 't1' };
+		const state = {
+			transactionId: 'x1',
+			startedAt: 1,
+			expiresAt: 2,
+			statements: 0,
+			changes: 0,
+			otherChanges: 0,
+			schemaChanges: [],
+		};
+		transaction.beginSqliteTransaction.mockResolvedValue(state);
+		await expect(invoke('sqlite:beginTransaction', grant)).resolves.toEqual(state);
+		expect(transaction.beginSqliteTransaction).toHaveBeenCalledWith(grant);
+
+		transaction.readSqliteTransaction.mockReturnValue({ transaction: state, lastEnd: null });
+		await expect(invoke('sqlite:readTransaction', grant)).resolves.toEqual({
+			transaction: state,
+			lastEnd: null,
+		});
+		expect(transaction.readSqliteTransaction).toHaveBeenCalledWith(grant);
+
+		const end = {
+			transactionId: 'x1',
+			outcome: 'committed',
+			reason: 'Committed 0 statements: 0 rows changed. These changes are now in the file.',
+			transaction: state,
+			endedAt: 3,
+		};
+		const request = { ...grant, transactionId: 'x1', action: 'commit' };
+		transaction.endSqliteTransaction.mockResolvedValue(end);
+		await expect(invoke('sqlite:endTransaction', request)).resolves.toEqual(end);
+		expect(transaction.endSqliteTransaction).toHaveBeenCalledWith(request);
+
+		transaction.endSqliteTransaction.mockRejectedValue(new Error('FOREIGN KEY constraint failed'));
+		await expect(invoke('sqlite:endTransaction', request)).rejects.toThrow(
+			'FOREIGN KEY constraint failed'
 		);
 	});
 

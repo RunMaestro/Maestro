@@ -171,6 +171,7 @@ import {
 	sqliteSchema,
 	sqliteSet,
 	sqliteTables,
+	sqliteTransaction,
 	sqliteUndo,
 } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
@@ -4100,6 +4101,21 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, options) => sqliteUndo(file, options));
+
+sqliteCmd
+	.command('transaction <path> <sql...>')
+	.description(
+		"Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing"
+	)
+	.option('--commit', 'Commit at the end, when every statement ran')
+	.option('--rollback', 'Roll back at the end: see what the statements do, keep nothing')
+	.option('--limit <n>', 'Rows to show per statement that returns rows (at most 1000)', '50')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); the session\'s first change backs the file up beside itself first'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, statements, options) => sqliteTransaction(file, statements, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

@@ -3508,6 +3508,18 @@ Take back one write the way the viewer's Undo does: apply the `undo` step that s
 | `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
 | `--json`           | Output as JSON (for scripting)                                                               | -       |
 
+## `maestro-cli sqlite transaction <path> <sql...>`
+
+Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing
+
+| Option             | Description                                                                                                                     | Default |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--commit`         | Commit at the end, when every statement ran                                                                                     | -       |
+| `--rollback`       | Roll back at the end: see what the statements do, keep nothing                                                                  | -       |
+| `--limit <n>`      | Rows to show per statement that returns rows (at most 1000)                                                                     | `50`    |
+| `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); the session's first change backs the file up beside itself first | -       |
+| `--json`           | Output as JSON (for scripting)                                                                                                  | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

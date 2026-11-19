@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	SQLITE_DRY_RUN_IN_TRANSACTION_MESSAGE,
 	SQLITE_DRY_RUN_NEEDS_EDITING_MESSAGE,
 	SQLITE_DRY_RUN_PLAN_MESSAGE,
 	SQLITE_DRY_RUN_READ_MESSAGE,
@@ -11,6 +12,7 @@ import {
 	sqliteDryRunTried,
 	sqliteDryRunUntransactedMessage,
 	sqliteSchemaChanges,
+	sqliteSchemaChangesText,
 	sqliteStatementKindLabel,
 } from '../../../shared/sqlite/dryRun';
 
@@ -98,6 +100,36 @@ describe('sqliteDryRunRefusal', () => {
 		);
 		expect(sqliteDryRunRefusal({ editing: true, plan: true })).toBe(SQLITE_DRY_RUN_PLAN_MESSAGE);
 		expect(sqliteDryRunRefusal({ editing: true, plan: false })).toBeNull();
+	});
+
+	it('refuses inside an open transaction, whose write lock a trial would wait on', () => {
+		expect(sqliteDryRunRefusal({ editing: true, plan: false, transaction: true })).toBe(
+			SQLITE_DRY_RUN_IN_TRANSACTION_MESSAGE
+		);
+		expect(sqliteDryRunRefusal({ editing: true, plan: false, transaction: false })).toBeNull();
+	});
+});
+
+describe('sqliteSchemaChangesText', () => {
+	const changes = [
+		{ change: 'created' as const, type: 'index', name: 'logs_at' },
+		{ change: 'created' as const, type: 'table', name: 'logs' },
+		{ change: 'dropped' as const, type: 'view', name: 'v' },
+	];
+
+	it('says what a dry run would do, one part per kind of change', () => {
+		expect(sqliteSchemaChangesText(changes)).toEqual([
+			'create index logs_at, table logs',
+			'drop view v',
+		]);
+	});
+
+	it('says what an open transaction did in the past tense', () => {
+		expect(sqliteSchemaChangesText(changes, true)).toEqual([
+			'created index logs_at, table logs',
+			'dropped view v',
+		]);
+		expect(sqliteSchemaChangesText([], true)).toEqual([]);
 	});
 });
 

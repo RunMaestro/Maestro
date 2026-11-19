@@ -60,10 +60,10 @@
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
 // `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`,
 // `sqlite_export_query`, `sqlite_query_history`, `sqlite_update_cell`,
-// `sqlite_insert_row`, `sqlite_delete_row`, `sqlite_undo_edit`) to the running
+// `sqlite_insert_row`, `sqlite_delete_row`, `sqlite_undo_edit`, `sqlite_run_transaction`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there (only
-// `set`, `insert`, `delete`, and `undo` write, through the viewer's own editing gate and backup); a
+// `set`, `insert`, `delete`, `undo`, `transaction`, and `query --enable-editing` write, through the viewer's own editing gate and backup); a
 // BLOB or an export is written to `--output` by the app, so its bytes never
 // ride the socket.
 
@@ -104,6 +104,7 @@ import {
 } from '../../shared/sqlite/query';
 import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
 import { formatSqliteDryRun } from '../../shared/sqlite/dryRun';
+import { formatSqliteTransactionChanges } from '../../shared/sqlite/transaction';
 import {
 	formatSqliteQueryErrorExcerpt,
 	formatSqliteQueryErrorPlace,
@@ -148,6 +149,7 @@ import type {
 	SqliteCellValue,
 	SqliteKeyValue,
 	SqliteRowKey,
+	SqliteTransactionScript,
 	SqliteUndoResult,
 	SqliteUndoStep,
 } from '../../shared/sqlite/types';
@@ -1445,7 +1447,9 @@ async function sendSqliteWrite<T>(
 	message: Record<string, unknown>,
 	replyType: string,
 	failure: string,
-	json: boolean | undefined
+	json: boolean | undefined,
+	// The first change of a session waits for the backup.
+	timeoutMs = SQLITE_EXPORT_TIMEOUT_MS + 60_000
 ): Promise<{ database: SqliteDatabaseInfo; result: T }> {
 	let reply: SqliteWriteReply<T>;
 	try {
@@ -1453,8 +1457,7 @@ async function sendSqliteWrite<T>(
 			client.sendCommand<SqliteWriteReply<T>>(
 				{ ...message, enableEditing: true },
 				replyType,
-				// The first change of a session waits for the backup.
-				SQLITE_EXPORT_TIMEOUT_MS + 60_000
+				timeoutMs
 			)
 		);
 	} catch (error) {
@@ -1724,4 +1727,135 @@ export async function sqliteUndo(file: string, options: SqliteUndoOptions): Prom
 			...writeNoteLines(database, { backup: result.backup }),
 		].join('\n')
 	);
+}
+
+interface SqliteTransactionOptions {
+	/** Commit when every statement ran (the default is to roll back). */
+	commit?: boolean;
+	/** Roll back at the end, whatever ran: see what the statements do, keep nothing. */
+	rollback?: boolean;
+	/** Rows to show per statement that returns rows. */
+	limit?: string;
+	/** The per-call unlock: without it nothing is written. */
+	enableEditing?: boolean;
+	json?: boolean;
+}
+
+/**
+ * `maestro-cli sqlite transaction <path> <sql...>` - Query mode's explicit
+ * transaction in one call, since the CLI has no tab to keep one open in:
+ * Begin (the session's backup first), each statement in order inside it,
+ * reads seeing the writes before them, then `--commit` or `--rollback`
+ * (one of the two is required, so keeping the change is always a choice).
+ * The first statement that fails stops it, and the transaction is rolled
+ * back, as it is when SQLite refuses the Commit. Prints each statement's
+ * outcome, any rows it returned, and how the transaction ended
+ * (`sqliteTransactionEndReason()`); exits non-zero when anything failed.
+ */
+export async function sqliteTransaction(
+	file: string,
+	statements: string[],
+	options: SqliteTransactionOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!options.enableEditing) fail(SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE, options.json);
+	if (options.commit === options.rollback) {
+		fail(
+			'Say how the transaction ends: --commit keeps what it changed, --rollback discards it',
+			options.json
+		);
+	}
+	if (statements.length === 0 || statements.some((sql) => !sql.trim())) {
+		fail(
+			'Give each statement to run as its own argument, e.g. "UPDATE ..." "SELECT ..."',
+			options.json
+		);
+	}
+	const limit = parseCount(options.limit, '--limit', SQLITE_ROWS_DEFAULT_LIMIT, options.json);
+	if (limit > SQLITE_QUERY_MAX_LIMIT) {
+		fail(`--limit must be at most ${SQLITE_QUERY_MAX_LIMIT} (got ${limit})`, options.json);
+	}
+	// Settled here, without the app, the way the panel settles a run without a process.
+	for (const [index, sql] of statements.entries()) {
+		const refusal =
+			sqliteQueryRefusal(sql, { editing: true }) ?? sqliteQueryBinding(sql, {}).problem;
+		if (refusal) {
+			if (!options.json) console.error(`Statement ${index + 1} is refused; nothing ran.`);
+			failQuery(refusal, sql, undefined, options.json);
+		}
+	}
+
+	const { database, result } = await sendSqliteWrite<SqliteTransactionScript>(
+		{
+			type: 'sqlite_run_transaction',
+			path: filePath,
+			statements,
+			end: options.commit ? 'commit' : 'rollback',
+			limit,
+		},
+		'sqlite_transaction_result',
+		`Could not run the transaction on ${filePath}`,
+		options.json,
+		// The backup, then each statement at most the query timeout, then the end.
+		SQLITE_EXPORT_TIMEOUT_MS + (statements.length + 1) * SQLITE_QUERY_TIMEOUT_MS + 60_000
+	);
+	if (options.json) {
+		console.log(
+			JSON.stringify({ success: result.failed === null, path: database.displayPath, ...result })
+		);
+		if (result.failed) exitWith(ExitCode.GeneralError);
+		return;
+	}
+
+	const lines: string[] = [`Transaction on ${database.displayPath}`];
+	for (const [index, step] of result.steps.entries()) {
+		lines.push('', `${index + 1}. ${sqliteTransactionStepText(step)}`);
+		if (step.returnsRows && step.rows.length > 0) {
+			lines.push(
+				rowsTable(
+					step.columns.map((column) => column.name),
+					step.rows
+				)
+			);
+			if (step.hasMore) lines.push('More rows followed, not shown.');
+		}
+	}
+	const { failed } = result;
+	if (failed) {
+		const sql = failed.index === null ? 'COMMIT' : statements[failed.index];
+		const label = failed.index === null ? 'The Commit' : `Statement ${failed.index + 1}`;
+		const location =
+			failed.index === null
+				? null
+				: sqliteQueryErrorLocation(sql, failed.error, failed.errorOffset);
+		lines.push('', `${label} failed: ${failed.error}`);
+		if (location) {
+			lines.push(
+				`${formatSqliteQueryErrorPlace(location)}:`,
+				...formatSqliteQueryErrorExcerpt(sql, location)
+			);
+		}
+	}
+	lines.push('', result.end.reason, ...writeNoteLines(database, { backup: result.begun.backup }));
+	if (failed) {
+		console.error(lines.join('\n'));
+		exitWith(ExitCode.GeneralError);
+	}
+	console.log(lines.join('\n'));
+}
+
+/** "UPDATE changed 3 rows (and 2 other rows by triggers ...)", "SELECT returned 4 rows". */
+function sqliteTransactionStepText(step: SqliteQueryResult): string {
+	const inTransaction = step.inTransaction;
+	if (inTransaction?.writes) {
+		const others = inTransaction.otherChanges;
+		return `${step.statement} changed ${formatCount(inTransaction.changes)} ${inTransaction.changes === 1 ? 'row' : 'rows'}${
+			others > 0
+				? `, and ${formatCount(others)} other ${others === 1 ? 'row' : 'rows'} by triggers and foreign-key actions`
+				: ''
+		}. Held so far: ${formatSqliteTransactionChanges(inTransaction.transaction)}.`;
+	}
+	if (!step.returnsRows) return `${step.statement} ran and returns no rows.`;
+	const count = step.rows.length;
+	return `${step.statement} returned ${formatCount(count)}${step.hasMore ? '+' : ''} ${count === 1 && !step.hasMore ? 'row' : 'rows'}.`;
 }

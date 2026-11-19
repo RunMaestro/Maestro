@@ -117,9 +117,13 @@ export const SQLITE_TRANSACTION_KEYWORDS: readonly string[] = [
 
 const TRANSACTION_KEYWORD_SET: ReadonlySet<string> = new Set(SQLITE_TRANSACTION_KEYWORDS);
 
-/** Why `BEGIN` / `COMMIT` and the like are refused with editing on. */
+/**
+ * Why `BEGIN` / `COMMIT` and the like are refused with editing on. The
+ * transaction is the viewer's to open and end (Begin transaction, Commit,
+ * Roll back; `maestro-cli sqlite transaction`), so it always knows one is open.
+ */
 export function sqliteTransactionRefusal(keyword: string): string {
-	return `${keyword} is refused here: each run is its own transaction, committed when the statement succeeds and rolled back when it fails or is stopped.`;
+	return `${keyword} is refused here: each run is its own transaction, committed when the statement succeeds and rolled back when it fails or is stopped. To run several statements in one transaction, use Begin transaction, then Commit or Roll back.`;
 }
 
 /** `VACUUM INTO` writes a copy of the database to another file. */

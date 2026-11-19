@@ -34,6 +34,13 @@
  * file check and no backup: it runs in a transaction that is always rolled
  * back, so it never commits a change.
  *
+ * While a tab holds an explicit transaction open in Query mode
+ * (sqlite-transaction.ts, `holdSqliteTransaction()`), that transaction holds
+ * the file's write lock, so every other write to the file, from any tab and
+ * any path, is refused at the file check with
+ * `SQLITE_TRANSACTION_OPEN_MESSAGE` instead of waiting on the lock and
+ * failing as "busy".
+ *
  * The CLI has no tab. Its write verbs take a per-call unlock flag that
  * enables editing for that one call and disables it after, through these
  * same functions.
@@ -45,6 +52,7 @@ import path from 'path';
 
 import type Database from 'better-sqlite3';
 
+import { SQLITE_TRANSACTION_OPEN_MESSAGE } from '../../shared/sqlite/transaction';
 import type { SqliteBackup, SqliteEditingGrant } from '../../shared/sqlite/types';
 import { ensureSqliteBackup } from './sqlite-backup';
 import {
@@ -73,6 +81,12 @@ const writeConnections = new Map<string, Database.Database>();
  * that tab may land (see `onSqliteEditingRevoked()`).
  */
 const revocationHooks = new Map<string, Set<(reason: SqliteGrantEndReason) => void>>();
+
+/**
+ * The edit token holding an explicit transaction open, per handle (one file,
+ * one write lock). Set by `holdSqliteTransaction()`, cleared by its release.
+ */
+const transactionHolders = new Map<string, string>();
 
 /** How a grant ended: its tab locked, or its handle was released (tab closed, idle reaper, quit). */
 export type SqliteGrantEndReason = 'locked' | 'closed';
@@ -271,9 +285,13 @@ export async function beginSqliteWrite(
 	return { database, db, backup, backupCreated };
 }
 
-/** Steps 1-2 of a write: the grant is live, and the file is still the one opened and still writable. */
+/**
+ * Steps 1-2 of a write: the grant is live, no transaction holds the file's
+ * write lock, and the file is still the one opened and still writable.
+ */
 async function passSqliteFileGate(handle: string, editToken: unknown): Promise<OpenSqliteDatabase> {
 	const database = requireSqliteEditing(handle, editToken);
+	if (transactionHolders.has(handle)) throw new Error(SQLITE_TRANSACTION_OPEN_MESSAGE);
 	const refusal = await sqliteEditingRefusal(database);
 	if (refusal) throw new Error(refusal);
 	return database;
@@ -344,6 +362,23 @@ export async function beginSqliteWorkerTrial(
 	// A tab that locked, or a handle that closed, during the check gets no trial.
 	const database = requireSqliteEditing(handle, editToken);
 	return { database, target: workerWriteTarget(database) };
+}
+
+/**
+ * Mark the file's write lock as held by `editToken`'s explicit transaction,
+ * after it passed `beginSqliteWorkerWrite()`: from here every other write to
+ * the file is refused at the gate. Throws when a transaction already holds
+ * it (two tabs racing to begin), or when the grant is not live. Resolves the
+ * release, safe to call more than once.
+ */
+export function holdSqliteTransaction(handle: string, editToken: unknown): () => void {
+	requireSqliteEditing(handle, editToken);
+	if (transactionHolders.has(handle)) throw new Error(SQLITE_TRANSACTION_OPEN_MESSAGE);
+	const token = editToken as string;
+	transactionHolders.set(handle, token);
+	return () => {
+		if (transactionHolders.get(handle) === token) transactionHolders.delete(handle);
+	};
 }
 
 /** Test seam: whether the handle's writable connection is open. */

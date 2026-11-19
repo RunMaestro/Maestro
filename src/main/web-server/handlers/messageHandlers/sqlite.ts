@@ -15,6 +15,11 @@
  *     after the once-per-session backup, and its result carries `write`.
  *     With `dryRun: true` as well (`--dry-run`), it is tried and rolled back
  *     instead, and its result carries `dryRun`.
+ *   - `sqlite_run_transaction`: Query mode's Begin transaction, statements
+ *     run in it, and Commit or Roll back, as ONE call
+ *     (`maestro-cli sqlite transaction`): the CLI has no tab to keep a
+ *     transaction open in. Behind the same per-call unlock; the first
+ *     statement that fails stops it and rolls it back.
  *   - `sqlite_export_query`: Query mode's Export, the statement's whole result
  *     written to a file (`maestro-cli sqlite query --output`).
  *   - `sqlite_query_history`: Query mode's History rail, read, one entry
@@ -68,6 +73,11 @@ import { checkSqliteIntegrity } from '../../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readAllSqliteObjectStats } from '../../../sqlite/sqlite-objects';
 import { exportSqliteQuery, runSqliteQuery } from '../../../sqlite/sqlite-query';
 import {
+	beginSqliteTransaction,
+	endSqliteTransaction,
+	readSqliteTransaction,
+} from '../../../sqlite/sqlite-transaction';
+import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
 } from '../../../sqlite/sqlite-query-history';
@@ -87,6 +97,8 @@ import type {
 	SqliteParameterValues,
 	SqliteRowKey,
 	SqliteSortSpec,
+	SqliteTransactionEnd,
+	SqliteTransactionScript,
 	SqliteUndoStep,
 } from '../../../../shared/sqlite/types';
 import { SQLITE_OBJECT_KINDS } from '../../../../shared/sqlite/objects';
@@ -384,17 +396,102 @@ export async function handleSqliteRunQuery(
 	}
 }
 
+export async function handleSqliteRunTransaction(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, {
+			type: 'sqlite_transaction_result',
+			...payload,
+			requestId: message.requestId,
+		});
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const statements = Array.isArray(message.statements) ? message.statements : [];
+	const action = message.end;
+	if (
+		!filePath ||
+		statements.length === 0 ||
+		!statements.every((sql) => typeof sql === 'string' && sql.trim() !== '')
+	) {
+		reply({
+			success: false,
+			error:
+				'Missing required "path" or "statements" (non-empty statement texts) for sqlite_run_transaction',
+		});
+		return;
+	}
+	if (action !== 'commit' && action !== 'rollback') {
+		reply({ success: false, error: 'end must be "commit" or "rollback"' });
+		return;
+	}
+	const limit = message.limit === undefined ? 50 : (message.limit as number);
+
+	await writeWithCliUnlock(
+		message,
+		filePath,
+		reply,
+		async (handle, editToken): Promise<SqliteTransactionScript> => {
+			const begun = await beginSqliteTransaction({ handle, editToken });
+			const { transactionId } = begun;
+			const steps: SqliteTransactionScript['steps'] = [];
+			let failed: SqliteTransactionScript['failed'] = null;
+			for (const [index, sql] of (statements as string[]).entries()) {
+				try {
+					steps.push(await runSqliteQuery({ handle, editToken, sql, limit, transactionId }));
+				} catch (error) {
+					failed = { index, ...failureOf(error) };
+					break;
+				}
+			}
+			// SQLite may have rolled it back with the failure already.
+			const ended = (): SqliteTransactionEnd | null =>
+				readSqliteTransaction({ handle, editToken }).lastEnd;
+			if (!readSqliteTransaction({ handle, editToken }).transaction) {
+				const end = ended();
+				if (!end) throw new Error('The transaction ended without a record of how.');
+				return { begun, steps, failed, end };
+			}
+			const end = failed ? 'rollback' : action;
+			try {
+				return {
+					begun,
+					steps,
+					failed,
+					end: await endSqliteTransaction({ handle, editToken, transactionId, action: end }),
+				};
+			} catch (error) {
+				// A Commit SQLite refused (a deferred foreign key) kept the transaction: discard it.
+				const rolledBack = await endSqliteTransaction({
+					handle,
+					editToken,
+					transactionId,
+					action: 'rollback',
+				});
+				return { begun, steps, failed: { index: null, ...failureOf(error) }, end: rolledBack };
+			}
+		}
+	);
+}
+
+/** A failure's message, and a syntax error's offset in its statement. */
+function failureOf(error: unknown): { error: string; errorOffset?: number } {
+	const offset = (error as { offset?: unknown } | null)?.offset;
+	return {
+		error: error instanceof Error ? error.message : String(error),
+		...(typeof offset === 'number' ? { errorOffset: offset } : {}),
+	};
+}
+
 /**
  * A failed call's reply: the message, and a syntax error's offset in the
  * statement (`errorOffset`), so the CLI can point at the token.
  */
 function sqliteFailureReply(error: unknown): Record<string, unknown> {
-	const offset = (error as { offset?: unknown } | null)?.offset;
-	return {
-		success: false,
-		error: error instanceof Error ? error.message : String(error),
-		...(typeof offset === 'number' ? { errorOffset: offset } : {}),
-	};
+	return { success: false, ...failureOf(error) };
 }
 
 export async function handleSqliteExportQuery(

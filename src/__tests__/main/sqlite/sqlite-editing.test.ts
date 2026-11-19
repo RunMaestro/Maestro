@@ -58,11 +58,13 @@ import {
 	disableSqliteEditing,
 	enableSqliteEditing,
 	hasSqliteWriteConnection,
+	holdSqliteTransaction,
 	onSqliteEditingRevoked,
 	requireSqliteEditing,
 	sqliteEditingGrantCount,
 	sqliteEditingRefusal,
 } from '../../../main/sqlite/sqlite-editing';
+import { SQLITE_TRANSACTION_OPEN_MESSAGE } from '../../../shared/sqlite/transaction';
 
 const MAGIC = Buffer.from('SQLite format 3\0', 'latin1');
 let dir: string;
@@ -421,5 +423,55 @@ describe('onSqliteEditingRevoked', () => {
 		expect(() => onSqliteEditingRevoked(handle, grant.editToken, hook)).toThrow(
 			SQLITE_EDITING_LOCKED_MESSAGE
 		);
+	});
+});
+
+describe('holdSqliteTransaction', () => {
+	it('refuses every other write to the file while a transaction holds its write lock', async () => {
+		const { handle } = await openSqliteDatabase(await writeFixture('held.db'));
+		const holder = await enableSqliteEditing(handle);
+		const other = await enableSqliteEditing(handle);
+		const release = holdSqliteTransaction(handle, holder.editToken);
+
+		// Any tab, any path: the table view's writes, Query mode's writes, a dry run's trial.
+		for (const grant of [holder, other]) {
+			await expect(beginSqliteWrite(handle, grant.editToken)).rejects.toThrow(
+				SQLITE_TRANSACTION_OPEN_MESSAGE
+			);
+			await expect(beginSqliteWorkerWrite(handle, grant.editToken)).rejects.toThrow(
+				SQLITE_TRANSACTION_OPEN_MESSAGE
+			);
+			await expect(beginSqliteWorkerTrial(handle, grant.editToken)).rejects.toThrow(
+				SQLITE_TRANSACTION_OPEN_MESSAGE
+			);
+		}
+		// Refused at the gate: no backup was taken for any of them.
+		expect(writableConnections(getSqliteDatabase(handle).displayPath)).toHaveLength(0);
+
+		// A second transaction on the same file is refused too.
+		expect(() => holdSqliteTransaction(handle, other.editToken)).toThrow(
+			SQLITE_TRANSACTION_OPEN_MESSAGE
+		);
+
+		release();
+		release();
+		await expect(beginSqliteWorkerTrial(handle, other.editToken)).resolves.toMatchObject({
+			target: { filePath: getSqliteDatabase(handle).displayPath },
+		});
+	});
+
+	it('refuses a tab without a live grant', async () => {
+		const { handle } = await openSqliteDatabase(await writeFixture('held-locked.db'));
+		expect(() => holdSqliteTransaction(handle, 'nope')).toThrow(SQLITE_EDITING_LOCKED_MESSAGE);
+	});
+
+	it("leaves another file's writes alone", async () => {
+		const held = await openSqliteDatabase(await writeFixture('held-a.db'));
+		const free = await openSqliteDatabase(await writeFixture('held-b.db'));
+		const heldGrant = await enableSqliteEditing(held.handle);
+		const freeGrant = await enableSqliteEditing(free.handle);
+		const release = holdSqliteTransaction(held.handle, heldGrant.editToken);
+		await expect(beginSqliteWorkerTrial(free.handle, freeGrant.editToken)).resolves.toBeTruthy();
+		release();
 	});
 });

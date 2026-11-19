@@ -160,6 +160,27 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:undoEdit', undo);
 	});
 
+	it("begins, reads, and ends Query mode's transaction, and runs a statement in it", async () => {
+		const grant = { handle: 'h1', editToken: 't1' };
+		mockInvoke.mockResolvedValue({ transactionId: 'x1' });
+		await api.beginTransaction(grant);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:beginTransaction', grant);
+
+		mockInvoke.mockResolvedValue({ transaction: null, lastEnd: null });
+		await api.readTransaction(grant);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readTransaction', grant);
+
+		const end = { ...grant, transactionId: 'x1', action: 'rollback' as const };
+		mockInvoke.mockResolvedValue({ outcome: 'rolled-back' });
+		await api.endTransaction(end);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:endTransaction', end);
+
+		const run = { ...grant, sql: 'SELECT 1', transactionId: 'x1' };
+		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });
+		await api.runQuery(run);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:runQuery', run);
+	});
+
 	it('runs a query and stops one by id', async () => {
 		const request = { handle: 'h1', sql: 'SELECT 1', queryId: 'q1' };
 		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });

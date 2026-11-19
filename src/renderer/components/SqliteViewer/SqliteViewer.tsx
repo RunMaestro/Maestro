@@ -57,6 +57,14 @@
  * file, or unmount drops it with the grant. A write whose triggers or
  * foreign-key actions changed other rows says it cannot be undone, as does a
  * statement run from Query mode.
+ *
+ * The tab's explicit transaction (Query mode's Begin transaction, Commit,
+ * Roll back) is kept here too (`useSqliteTransaction()`), with the grant it
+ * belongs to, because the Query panel unmounts in Browse: while one is open
+ * the strip shows a "Transaction open" pill that goes back to Query mode,
+ * since it holds the file's write lock and every edit in Browse is refused
+ * until it ends. A Commit counts as a Query-mode write: no undo, and the
+ * table on screen reads again.
  */
 
 import {
@@ -79,6 +87,7 @@ import type {
 	SqliteObjectSummary,
 	SqliteParameterValues,
 	SqliteQueryWrite,
+	SqliteTransactionEnd,
 } from '../../../shared/sqlite/types';
 import {
 	SQLITE_OBJECT_KINDS,
@@ -105,6 +114,7 @@ import { SqliteQueryPanel, type SqliteQueryRunState } from './SqliteQueryPanel';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
 import { SqliteTableView } from './SqliteTableView';
 import { SqliteUndoControl, type SqliteUndoStatus } from './SqliteUndoControl';
+import { useSqliteTransaction } from './useSqliteTransaction';
 import { isSqliteUndoChord, type SqliteLastWrite } from './sqliteUndo';
 
 /** What the content pane shows for a table or view. */
@@ -313,6 +323,17 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setTableReload((count) => count + 1);
 	}, []);
 
+	// A Commit wrote everything the transaction held, as one Query-mode write.
+	const handleTransactionCommitted = useCallback(
+		(end: SqliteTransactionEnd) =>
+			handleQueryWrite({
+				changes: end.transaction.changes,
+				otherChanges: end.transaction.otherChanges,
+			}),
+		[handleQueryWrite]
+	);
+	const transaction = useSqliteTransaction(editGrant, handleTransactionCommitted);
+
 	const undoLastWrite = useCallback(() => {
 		const step = lastWrite?.undo;
 		if (!editGrant || !step || undoing) return;
@@ -513,6 +534,18 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 					onDisable={disableEditing}
 					theme={theme}
 				/>
+				{transaction.state && viewerMode.value !== 'query' && (
+					<button
+						type="button"
+						onClick={() => viewerMode.setValue('query')}
+						className="text-xs-plus px-1.5 py-0.5 rounded select-none"
+						style={{ color: theme.colors.warning, border: `1px solid ${theme.colors.warning}` }}
+						title="A transaction is open in Query mode and holds this file's write lock: edits here are refused until it is committed or rolled back. Go to Query mode."
+						data-testid="sqlite-transaction-pill"
+					>
+						Transaction open
+					</button>
+				)}
 				{editGrant && (
 					<SqliteUndoControl
 						lastWrite={lastWrite}
@@ -579,6 +612,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							onPlanChange={setQueryPlan}
 							editToken={editGrant?.editToken ?? null}
 							onWrite={handleQueryWrite}
+							transaction={transaction}
 							theme={theme}
 						/>
 					</div>

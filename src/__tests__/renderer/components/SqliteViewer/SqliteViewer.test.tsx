@@ -138,6 +138,9 @@ let updateCell: ReturnType<typeof vi.fn>;
 let insertRow: ReturnType<typeof vi.fn>;
 let deleteRow: ReturnType<typeof vi.fn>;
 let undoEdit: ReturnType<typeof vi.fn>;
+let beginTransaction: ReturnType<typeof vi.fn>;
+let readTransaction: ReturnType<typeof vi.fn>;
+let endTransaction: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -149,6 +152,20 @@ const SUMMARY: SqliteDatabaseSummary = {
 	applicationId: 0,
 	sqliteVersion: '3.53.2',
 };
+
+/** An open transaction as main reports it. */
+function transactionState(overrides: Record<string, unknown> = {}) {
+	return {
+		transactionId: 'x1',
+		startedAt: 1,
+		expiresAt: Date.now() + 10 * 60_000,
+		statements: 0,
+		changes: 0,
+		otherChanges: 0,
+		schemaChanges: [],
+		...overrides,
+	};
+}
 
 function integrityResult(overrides: Partial<SqliteIntegrityResult> = {}): SqliteIntegrityResult {
 	return { mode: 'quick', ok: true, problems: [], truncated: false, elapsedMs: 5, ...overrides };
@@ -422,6 +439,20 @@ beforeEach(() => {
 		otherChanges: 0,
 		elapsedMs: 3,
 	}));
+	beginTransaction = vi.fn(async () => transactionState());
+	readTransaction = vi.fn(async () => ({ transaction: null, lastEnd: null }));
+	endTransaction = vi.fn(
+		async (request: { transactionId: string; action: 'commit' | 'rollback' }) => ({
+			transactionId: request.transactionId,
+			outcome: request.action === 'commit' ? 'committed' : 'rolled-back',
+			reason:
+				request.action === 'commit'
+					? 'Committed 1 statement: 3 rows changed. These changes are now in the file.'
+					: 'Rolled back. Nothing it held was kept (1 statement: 3 rows changed).',
+			transaction: transactionState({ statements: 1, changes: 3 }),
+			endedAt: 3,
+		})
+	);
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
@@ -446,6 +477,9 @@ beforeEach(() => {
 			insertRow,
 			deleteRow,
 			undoEdit,
+			beginTransaction,
+			readTransaction,
+			endTransaction,
 			close,
 		},
 		dialog: { saveFile },
@@ -2967,5 +3001,148 @@ describe('SqliteViewer query with editing enabled', () => {
 		await waitFor(() =>
 			expect(screen.queryByTestId('sqlite-query-dry-run')).not.toBeInTheDocument()
 		);
+	});
+});
+
+describe('SqliteViewer query in an explicit transaction', () => {
+	const UPDATED: SqliteQueryResult = {
+		statement: 'UPDATE',
+		columns: [],
+		rows: [],
+		offset: 0,
+		hasMore: false,
+		returnsRows: false,
+		elapsedMs: 4,
+		inTransaction: {
+			writes: true,
+			changes: 3,
+			otherChanges: 0,
+			transaction: transactionState({ statements: 1, changes: 3 }),
+		},
+	};
+
+	async function openUnlockedQuery(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByRole('textbox');
+		fireEvent.change(editor, { target: { value: sql } });
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-editing-disable');
+		return editor;
+	}
+
+	it('offers Begin transaction only with editing on', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		await screen.findByRole('textbox');
+		expect(screen.queryByTestId('sqlite-transaction-begin')).not.toBeInTheDocument();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		expect(await screen.findByTestId('sqlite-transaction-begin')).toBeInTheDocument();
+	});
+
+	it('runs statements in the open transaction, shows what it holds, and commits', async () => {
+		runQuery.mockResolvedValue(UPDATED);
+		await openUnlockedQuery('UPDATE users SET age = age + 1');
+		fireEvent.click(screen.getByTestId('sqlite-transaction-begin'));
+		expect(await screen.findByTestId('sqlite-transaction-summary')).toHaveTextContent(
+			'Transaction open, 0 statements: 0 rows changed. Nothing is in the file until Commit.'
+		);
+		expect(beginTransaction).toHaveBeenCalledWith({ handle: 'h1', editToken: 'token-1' });
+		// Begin is the only way in now; a dry run would wait on its own lock.
+		expect(screen.queryByTestId('sqlite-transaction-begin')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-query-dry-run')).not.toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-query-editing-note')).toHaveTextContent('In a transaction');
+
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-transaction-step')).toHaveTextContent(
+			'UPDATE changed 3 rows in the transaction (not committed)'
+		);
+		expect(runQuery).toHaveBeenCalledWith(
+			expect.objectContaining({ editToken: 'token-1', transactionId: 'x1' })
+		);
+		expect(screen.getByTestId('sqlite-transaction-summary')).toHaveTextContent(
+			'Transaction open, 1 statement: 3 rows changed.'
+		);
+		// Not a committed write: no undo note yet, and the result is not exported.
+		expect(screen.queryByTestId('sqlite-undo-unavailable')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-transaction-commit'));
+		expect(await screen.findByTestId('sqlite-transaction-end')).toHaveTextContent(
+			'Committed 1 statement: 3 rows changed. These changes are now in the file.'
+		);
+		expect(endTransaction).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'token-1',
+			transactionId: 'x1',
+			action: 'commit',
+		});
+		// A Commit counts as a Query-mode write: no undo.
+		expect(await screen.findByTestId('sqlite-undo-unavailable')).toHaveAttribute(
+			'title',
+			SQLITE_QUERY_WRITE_UNDO_MESSAGE
+		);
+		expect(screen.getByTestId('sqlite-transaction-begin')).toBeInTheDocument();
+	});
+
+	it('rolls back, keeping the file as it was', async () => {
+		await openUnlockedQuery('UPDATE users SET age = age + 1');
+		fireEvent.click(screen.getByTestId('sqlite-transaction-begin'));
+		fireEvent.click(await screen.findByTestId('sqlite-transaction-rollback'));
+		expect(await screen.findByTestId('sqlite-transaction-end')).toHaveTextContent(
+			'Rolled back. Nothing it held was kept'
+		);
+		expect(endTransaction).toHaveBeenCalledWith(expect.objectContaining({ action: 'rollback' }));
+		expect(screen.queryByTestId('sqlite-undo-unavailable')).not.toBeInTheDocument();
+	});
+
+	it('asks main how the transaction ended when a statement in it fails', async () => {
+		runQuery.mockRejectedValue(
+			new Error(
+				'UNIQUE constraint failed: users.id SQLite rolled the whole transaction back when the statement failed.'
+			)
+		);
+		readTransaction.mockResolvedValue({
+			transaction: null,
+			lastEnd: {
+				transactionId: 'x1',
+				outcome: 'rolled-back',
+				reason: 'SQLite rolled the whole transaction back when the statement failed.',
+				transaction: transactionState(),
+				endedAt: 3,
+			},
+		});
+		await openUnlockedQuery('INSERT OR ROLLBACK INTO users(id) VALUES (1)');
+		fireEvent.click(screen.getByTestId('sqlite-transaction-begin'));
+		await screen.findByTestId('sqlite-transaction-summary');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-transaction-end')).toHaveTextContent(
+			'SQLite rolled the whole transaction back'
+		);
+		expect(readTransaction).toHaveBeenCalledWith({ handle: 'h1', editToken: 'token-1' });
+		expect(screen.queryByTestId('sqlite-transaction-summary')).not.toBeInTheDocument();
+	});
+
+	it('says why Begin was refused', async () => {
+		beginTransaction.mockRejectedValue(
+			new Error(
+				'A transaction is open on this database in Query mode and holds its write lock. Commit it or roll it back first.'
+			)
+		);
+		await openUnlockedQuery('SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-transaction-begin'));
+		expect(await screen.findByTestId('sqlite-transaction-error')).toHaveTextContent(
+			'holds its write lock'
+		);
+	});
+
+	it('shows a Transaction open pill in Browse that goes back to Query', async () => {
+		await openUnlockedQuery('SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-transaction-begin'));
+		await screen.findByTestId('sqlite-transaction-summary');
+		expect(screen.queryByTestId('sqlite-transaction-pill')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
+		fireEvent.click(await screen.findByTestId('sqlite-transaction-pill'));
+		expect(await screen.findByTestId('sqlite-transaction-summary')).toBeInTheDocument();
 	});
 });

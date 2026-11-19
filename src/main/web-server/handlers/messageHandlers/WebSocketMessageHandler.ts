@@ -141,6 +141,7 @@ import {
 	handleSqliteReadSchema,
 	handleSqliteReadSummary,
 	handleSqliteRunQuery,
+	handleSqliteRunTransaction,
 	handleSqliteSaveBlob,
 	handleSqliteUndoEdit,
 	handleSqliteUpdateCell,
@@ -506,6 +507,10 @@ export class WebSocketMessageHandler {
 
 			case 'sqlite_undo_edit':
 				void handleSqliteUndoEdit(this.ctx, client, message);
+				break;
+
+			case 'sqlite_run_transaction':
+				void handleSqliteRunTransaction(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':

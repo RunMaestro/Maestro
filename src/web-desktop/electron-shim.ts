@@ -275,13 +275,15 @@ function requestTimeoutMs(channel: string): number {
 	if (channel === 'sqlite:runQuery') return 12 * 60_000;
 	// Main stops an export at its own 10-minute timeout; leave room for the reply.
 	if (channel === 'sqlite:exportQuery') return SQLITE_EXPORT_TIMEOUT_MS + 60_000;
-	// The first write of a session (a cell edit, an insert, a delete, an undo) waits for the file's VACUUM INTO backup,
+	// The first write of a session (a cell edit, an insert, a delete, an undo, a
+	// transaction's Begin) waits for the file's VACUUM INTO backup,
 	// which main stops at 10 minutes; leave room for the reply.
 	if (
 		channel === 'sqlite:updateCell' ||
 		channel === 'sqlite:insertRow' ||
 		channel === 'sqlite:deleteRow' ||
-		channel === 'sqlite:undoEdit'
+		channel === 'sqlite:undoEdit' ||
+		channel === 'sqlite:beginTransaction'
 	) {
 		return 11 * 60_000;
 	}

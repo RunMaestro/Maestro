@@ -40,6 +40,11 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteTransactionEnd,
+	SqliteTransactionEndRequest,
+	SqliteTransactionRequest,
+	SqliteTransactionState,
+	SqliteTransactionStatus,
 	SqliteUndoRequest,
 	SqliteUndoResult,
 } from '../../shared/sqlite/types';
@@ -198,6 +203,26 @@ export function createSqliteApi() {
 		 */
 		undoEdit: (request: SqliteUndoRequest): Promise<SqliteUndoResult> =>
 			ipcRenderer.invoke('sqlite:undoEdit', request),
+
+		/**
+		 * Begin an explicit transaction for this tab (needs its editing token):
+		 * the write gate and backup, then `BEGIN IMMEDIATE` held open. Run
+		 * statements in it with `runQuery({ transactionId })`. Resolves its state,
+		 * with `backup` when Begin took the session's backup.
+		 */
+		beginTransaction: (request: SqliteTransactionRequest): Promise<SqliteTransactionState> =>
+			ipcRenderer.invoke('sqlite:beginTransaction', request),
+
+		/** This tab's open transaction, if any, and how its last one ended. */
+		readTransaction: (request: SqliteTransactionRequest): Promise<SqliteTransactionStatus> =>
+			ipcRenderer.invoke('sqlite:readTransaction', request),
+
+		/**
+		 * Commit or roll back this tab's open transaction. Resolves how it ended;
+		 * a Commit SQLite refuses rejects with its words, the transaction kept.
+		 */
+		endTransaction: (request: SqliteTransactionEndRequest): Promise<SqliteTransactionEnd> =>
+			ipcRenderer.invoke('sqlite:endTransaction', request),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

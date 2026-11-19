@@ -18,7 +18,9 @@
  * call, over `sqlite_update_cell`. And `maestro-cli sqlite insert` / `delete`:
  * one row added or removed the same way, over `sqlite_insert_row` and
  * `sqlite_delete_row`. And `maestro-cli sqlite undo`: the `undo` step a write
- * printed, applied by the app, over `sqlite_undo_edit`.
+ * printed, applied by the app, over `sqlite_undo_edit`. And
+ * `maestro-cli sqlite transaction`: several statements in one transaction,
+ * committed or rolled back, over `sqlite_run_transaction`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -47,6 +49,7 @@ import {
 	sqliteSchema,
 	sqliteSet,
 	sqliteTables,
+	sqliteTransaction,
 	sqliteUndo,
 	sqliteUndoStepFromFlag,
 } from '../../../cli/commands/sqlite';
@@ -2000,5 +2003,185 @@ describe('sqlite undo', () => {
 		logSpy.mockClear();
 		await sqliteDelete(DB, 'users', { rowid: '7', enableEditing: true });
 		expect(logged()).toContain('The last change cannot be undone here');
+	});
+});
+
+describe('sqlite transaction', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+	const database = { handle: 'h1', displayPath: DB, fileBytes: 4096 };
+	const state = (overrides: Record<string, unknown> = {}) => ({
+		transactionId: 'x1',
+		startedAt: 1,
+		expiresAt: 2,
+		statements: 0,
+		changes: 0,
+		otherChanges: 0,
+		schemaChanges: [],
+		...overrides,
+	});
+	const update = {
+		statement: 'UPDATE',
+		columns: [],
+		rows: [],
+		offset: 0,
+		hasMore: false,
+		returnsRows: false,
+		elapsedMs: 1,
+		inTransaction: {
+			writes: true,
+			changes: 3,
+			otherChanges: 1,
+			transaction: state({ statements: 1, changes: 3, otherChanges: 1 }),
+		},
+	};
+	const select = {
+		statement: 'SELECT',
+		columns: [{ name: 'age', declaredType: 'INTEGER' }],
+		rows: [[41], [42]],
+		offset: 0,
+		hasMore: false,
+		returnsRows: true,
+		elapsedMs: 1,
+		inTransaction: {
+			writes: false,
+			changes: 0,
+			otherChanges: 0,
+			transaction: state({ statements: 2, changes: 3, otherChanges: 1 }),
+		},
+	};
+	const statements = ['UPDATE users SET age = age + 1', 'SELECT age FROM users'];
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the statements, the end, and the per-call unlock, and prints each outcome', async () => {
+		const sent = mockReply({
+			type: 'sqlite_transaction_result',
+			success: true,
+			database,
+			result: {
+				begun: state({
+					backup: { path: '/data/app.maestro-backup-1.db', bytes: 4096, createdAt: 1 },
+				}),
+				steps: [update, select],
+				failed: null,
+				end: {
+					transactionId: 'x1',
+					outcome: 'committed',
+					reason: 'Committed 2 statements: 3 rows changed. These changes are now in the file.',
+					transaction: state({ statements: 2, changes: 3 }),
+					endedAt: 3,
+				},
+			},
+		});
+		await sqliteTransaction(DB, statements, { commit: true, enableEditing: true });
+		expect(sent[0]).toEqual({
+			type: 'sqlite_run_transaction',
+			path: DB,
+			statements,
+			end: 'commit',
+			limit: 50,
+			enableEditing: true,
+			responseType: 'sqlite_transaction_result',
+		});
+		const out = logged();
+		expect(out).toContain(`Transaction on ${DB}`);
+		expect(out).toContain(
+			'1. UPDATE changed 3 rows, and 1 other row by triggers and foreign-key actions. Held so far: 1 statement: 3 rows changed, and 1 other row by triggers and foreign-key actions.'
+		);
+		expect(out).toContain('2. SELECT returned 2 rows.');
+		expect(out).toContain(
+			'Committed 2 statements: 3 rows changed. These changes are now in the file.'
+		);
+		expect(out).toContain('Backed up');
+	});
+
+	it('exits 1 naming the statement that failed, pointed at its token', async () => {
+		mockReply({
+			type: 'sqlite_transaction_result',
+			success: true,
+			database,
+			result: {
+				begun: state(),
+				steps: [update],
+				failed: { index: 1, error: 'no such table: userz' },
+				end: {
+					transactionId: 'x1',
+					outcome: 'rolled-back',
+					reason: 'Rolled back. Nothing it held was kept (1 statement: 3 rows changed).',
+					transaction: state({ statements: 1, changes: 3 }),
+					endedAt: 3,
+				},
+			},
+		});
+		await expect(
+			sqliteTransaction(DB, ['UPDATE users SET age = age + 1', 'SELECT age FROM userz'], {
+				commit: true,
+				enableEditing: true,
+			})
+		).rejects.toThrow('__exit__');
+		const out = errorSpy.mock.calls.join('\n');
+		expect(out).toContain('Statement 2 failed: no such table: userz');
+		expect(out).toContain('Line 1, column 17:');
+		expect(out).toContain('Rolled back. Nothing it held was kept');
+	});
+
+	it('prints the whole result as JSON under --json, success false when anything failed', async () => {
+		const result = {
+			begun: state(),
+			steps: [],
+			failed: { index: null, error: 'FOREIGN KEY constraint failed' },
+			end: {
+				transactionId: 'x1',
+				outcome: 'rolled-back',
+				reason: 'Rolled back.',
+				transaction: state(),
+				endedAt: 3,
+			},
+		};
+		mockReply({ type: 'sqlite_transaction_result', success: true, database, result });
+		await expect(
+			sqliteTransaction(DB, statements, { commit: true, enableEditing: true, json: true })
+		).rejects.toThrow('__exit__');
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: false,
+			path: DB,
+			...result,
+		});
+	});
+
+	it.each([
+		[{ commit: true }, statements, 'Pass --enable-editing to unlock editing for this one call'],
+		[{ enableEditing: true }, statements, 'Say how the transaction ends'],
+		[
+			{ enableEditing: true, commit: true, rollback: true },
+			statements,
+			'Say how the transaction ends',
+		],
+		[{ enableEditing: true, rollback: true }, ['UPDATE t SET a = 1', ' '], 'Give each statement'],
+		[{ enableEditing: true, rollback: true }, ['BEGIN'], 'BEGIN is refused here'],
+		[
+			{ enableEditing: true, rollback: true },
+			['ATTACH ? AS other'],
+			'ATTACH opens or closes another database file',
+		],
+		[
+			{ enableEditing: true, rollback: true, limit: '5000' },
+			statements,
+			'--limit must be at most 1000',
+		],
+	])('refuses %o before asking the app', async (options, given, message) => {
+		const sent = mockReply({ type: 'sqlite_transaction_result', success: true });
+		await expect(sqliteTransaction(DB, given, options)).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		expect(sent).toEqual([]);
 	});
 });

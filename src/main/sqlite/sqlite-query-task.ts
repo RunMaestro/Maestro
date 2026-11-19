@@ -48,6 +48,13 @@
  * lowercase hex. The rows go from SQLite to the file inside this process, so
  * an export of millions of rows never crosses IPC or sits in memory.
  *
+ * An explicit transaction (`openSqliteTransactionTask()`, Query mode's Begin
+ * transaction) is the one task that outlives a request: its child holds
+ * `BEGIN IMMEDIATE` on a writable connection and runs statement after
+ * statement in it, reads included, until Commit or Roll back. It shares the
+ * write run's body (`runPrepared()`, `changesSince()`), so a statement counts
+ * the same inside a transaction as alone.
+ *
  * Nothing here, or reachable from here, may import `electron`.
  */
 
@@ -64,12 +71,14 @@ import {
 	type SqliteSchemaEntry,
 } from '../../shared/sqlite/dryRun';
 import { SQLITE_REGEXP_FUNCTION, sqliteRegexpTest } from '../../shared/sqlite/filter';
+import { SQLITE_TRANSACTION_GONE_MESSAGE } from '../../shared/sqlite/transaction';
 import {
 	SQLITE_NOT_READ_ONLY_MESSAGE,
 	SQLITE_ONE_STATEMENT_MESSAGE,
 	SQLITE_QUERY_MAX_LIMIT,
 	SQLITE_WRITE_RERUN_MESSAGE,
 	isSqliteUntransactedStatement,
+	isSqliteWriteStatement,
 	sqliteEditingQueryRefusal,
 	sqliteLeadingKeyword,
 	sqliteQueryBinding,
@@ -81,7 +90,9 @@ import type {
 	SqliteParameterValues,
 	SqliteQueryExported,
 	SqliteQueryResult,
+	SqliteQueryWrite,
 	SqliteResultColumn,
+	SqliteSchemaChange,
 } from '../../shared/sqlite/types';
 import { sqliteSyntaxErrorOffset } from '../../shared/sqlite/queryError';
 import { createTabularRowEncoder, type TabularExportFormat } from '../../shared/tabularExport';
@@ -242,30 +253,13 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 			offset: task.offset,
 		};
 		const started = performance.now();
-		if (!statement.reader) {
-			// A PRAGMA that sets a value on this connection, which closes below.
-			statement.run(...args);
-			return {
-				...base,
-				columns: [],
-				rows: [],
-				hasMore: false,
-				returnsRows: false,
-				elapsedMs: Math.round(performance.now() - started),
-			};
-		}
-
-		const columns: SqliteResultColumn[] = statement
-			.columns()
-			.map((column) => ({ name: column.name, declaredType: column.type }));
-		statement.raw(true).safeIntegers(true);
-		const { rows, hasMore } = readWindow(statement, args, task.offset, limit);
+		// A statement that is not a reader is a PRAGMA that sets a value on
+		// this connection, which closes below.
+		const output = runPrepared(statement, args, task.offset, limit);
 		return {
 			...base,
-			columns,
-			rows,
-			hasMore,
-			returnsRows: true,
+			...output,
+			returnsRows: statement.reader,
 			elapsedMs: Math.round(performance.now() - started),
 		};
 	} finally {
@@ -280,6 +274,43 @@ function changeCounts(db: Database.Database): { changes: number; total: number }
 		number,
 	];
 	return { changes: Number(changes), total: Number(total) };
+}
+
+/**
+ * Rows the statement just run changed itself, and rows its triggers and
+ * foreign-key actions changed beside them, from `total_changes()` taken just
+ * before it. `changes()` keeps the last INSERT, UPDATE, or DELETE's count
+ * through any later statement that is not one (a CREATE, a SELECT), so on a
+ * connection that ran other statements first (an open transaction) it is
+ * capped at what this statement moved in total.
+ */
+function changesSince(db: Database.Database, before: number): Omit<SqliteQueryWrite, 'backup'> {
+	const { changes, total } = changeCounts(db);
+	const moved = Math.max(0, total - before);
+	const own = Math.min(changes, moved);
+	return { changes: own, otherChanges: moved - own };
+}
+
+/**
+ * Run a prepared statement once: a reader's window of rows at `offset`
+ * (its columns, the rows, whether more follow), or, for a statement that
+ * returns none, just run.
+ */
+function runPrepared(
+	statement: Database.Statement,
+	args: readonly unknown[],
+	offset: number,
+	limit: number
+): Pick<SqliteQueryResult, 'columns' | 'rows' | 'hasMore'> {
+	if (!statement.reader) {
+		statement.run(...args);
+		return { columns: [], rows: [], hasMore: false };
+	}
+	const columns: SqliteResultColumn[] = statement
+		.columns()
+		.map((column) => ({ name: column.name, declaredType: column.type }));
+	statement.raw(true).safeIntegers(true);
+	return { columns, ...readWindow(statement, args, offset, limit) };
 }
 
 /** Every object in the file's schema, as a dry run compares it before and after its trial. */
@@ -350,28 +381,12 @@ export function runSqliteWriteTask(
 		if (transaction) db.exec('BEGIN IMMEDIATE');
 		try {
 			const schemaBefore = dryRun ? readSchemaEntries(db) : [];
-			let columns: SqliteResultColumn[] = [];
-			let window: { rows: SqliteQueryResult['rows']; hasMore: boolean } = {
-				rows: [],
-				hasMore: false,
-			};
-			if (statement.reader) {
-				columns = statement
-					.columns()
-					.map((column) => ({ name: column.name, declaredType: column.type }));
-				statement.raw(true).safeIntegers(true);
-				window = readWindow(statement, binding.args, 0, limit);
-			} else {
-				statement.run(...binding.args);
-			}
-			const { changes, total } = changeCounts(db);
-			const otherChanges = Math.max(0, total - before - changes);
+			const output = runPrepared(statement, binding.args, 0, limit);
+			const { changes, otherChanges } = changesSince(db, before);
 			const base = {
 				statement: keyword,
-				columns,
-				rows: window.rows,
+				...output,
 				offset: 0,
-				hasMore: window.hasMore,
 				returnsRows: statement.reader,
 			};
 			if (dryRun) {
@@ -402,6 +417,193 @@ export function runSqliteWriteTask(
 		db.close();
 	}
 }
+
+/** What an explicit transaction's child is handed when it starts. */
+export interface SqliteTransactionTask {
+	/** The file to open writable, from `beginSqliteWorkerWrite()` (gate and backup passed). */
+	target: SqliteWriteTarget;
+}
+
+/** One statement run inside the open transaction. Bounds are already checked by the caller. */
+export interface SqliteTransactionRunTask {
+	sql: string;
+	offset: number;
+	limit: number;
+	params?: SqliteParameterValues;
+	plan?: boolean;
+}
+
+/** One request to an open transaction's child. */
+export type SqliteTransactionOp =
+	| { op: 'run'; task: SqliteTransactionRunTask }
+	| { op: 'commit' }
+	| { op: 'rollback' };
+
+/** What the transaction holds so far, sent with every reply. */
+export interface SqliteTransactionTotals {
+	statements: number;
+	changes: number;
+	otherChanges: number;
+	schemaChanges: SqliteSchemaChange[];
+}
+
+/** The child's answer to one request: a run's result and counts, or the totals an end left. */
+export interface SqliteTransactionReply {
+	totals: SqliteTransactionTotals;
+	/** For a run: one window of its result (main adds `inTransaction`). */
+	result?: SqliteQueryResult;
+	/** For a run: SQLite says it changes the database. */
+	writes?: boolean;
+	/** For a run: rows it changed itself, and beside it. */
+	changes?: number;
+	otherChanges?: number;
+}
+
+/**
+ * A conversation with one SQLite child process that outlives one request
+ * (see `startSqliteWorkerSession()`): it answers each request in turn until
+ * it is `closed`, then the child exits.
+ */
+export interface SqliteWorkerSessionHost<Op, R> {
+	/** Answer one request. A throw is the reply's error; `closed` may have turned true either way. */
+	handle(op: Op): R;
+	/** The session is over: no further request is answered. */
+	readonly closed: boolean;
+	/** End it now with no reply: its parent went away or stopped it. Never throws. */
+	abort(): void;
+}
+
+/**
+ * Begin an explicit transaction (Query mode's Begin transaction) on the file
+ * main passed the write gate and took the backup for, and keep it open:
+ * `BEGIN IMMEDIATE` takes the write lock up front, so a busy file waits and
+ * then fails before anything is held. The schema is read at the start, so
+ * every reply can say what the transaction created, dropped, or altered.
+ *
+ * Each `run` is one statement, read or write, on this connection, inside the
+ * transaction, by the same text rules as a write run
+ * (`sqliteEditingQueryRefusal()`: ATTACH, DETACH, VACUUM INTO, and typed
+ * transaction control stay refused), its parameters bound by the driver, one
+ * statement per `prepare()`. A write runs once (a later window is refused,
+ * `SQLITE_WRITE_RERUN_MESSAGE`); a read's later window reads inside the
+ * transaction again. A statement SQLite refuses (a constraint) is undone on
+ * its own and the transaction stays open, unless SQLite rolled the whole
+ * transaction back (`INSERT OR ROLLBACK`, a trigger's `RAISE(ROLLBACK)`, a
+ * full disk), which closes the session.
+ *
+ * `commit` ends it with `COMMIT`; when that fails (a deferred foreign key, a
+ * busy file) and SQLite kept the transaction, it stays open for another try
+ * or a Roll back. `rollback` ends it with `ROLLBACK`. Closing the connection
+ * (`abort()`, or the child killed) rolls back too: SQLite never commits a
+ * transaction nobody committed.
+ */
+export function openSqliteTransactionTask(task: SqliteTransactionTask): {
+	opened: SqliteTransactionTotals;
+	host: SqliteWorkerSessionHost<SqliteTransactionOp, SqliteTransactionReply>;
+} {
+	const db = openWritableSqliteTarget(task.target);
+	let closed = false;
+	const totals: SqliteTransactionTotals = {
+		statements: 0,
+		changes: 0,
+		otherChanges: 0,
+		schemaChanges: [],
+	};
+	// Closing the connection rolls back whatever it still holds.
+	const finish = () => {
+		if (closed) return;
+		closed = true;
+		db.close();
+	};
+	let schemaAtBegin: SqliteSchemaEntry[];
+	try {
+		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
+		db.exec('BEGIN IMMEDIATE');
+		schemaAtBegin = readSchemaEntries(db);
+	} catch (error) {
+		finish();
+		throw error;
+	}
+	const snapshot = (): SqliteTransactionTotals => ({
+		...totals,
+		schemaChanges: [...totals.schemaChanges],
+	});
+
+	const run = (runTask: SqliteTransactionRunTask): SqliteTransactionReply => {
+		const plan = runTask.plan === true;
+		const refusal = sqliteEditingQueryRefusal(runTask.sql, { plan });
+		if (refusal) throw refuse(refusal);
+		const binding = sqliteQueryBinding(runTask.sql, runTask.params);
+		if (binding.problem !== null) throw refuse(binding.problem);
+		const statement = prepareOne(db, runTask.sql, { plan });
+		const writes = !plan && isSqliteWriteStatement(runTask.sql, statement.readonly);
+		if (writes && runTask.offset !== 0) throw refuse(SQLITE_WRITE_RERUN_MESSAGE);
+		const limit = Math.min(runTask.limit, SQLITE_QUERY_MAX_LIMIT);
+		const before = changeCounts(db).total;
+		const started = performance.now();
+		let output: Pick<SqliteQueryResult, 'columns' | 'rows' | 'hasMore'>;
+		try {
+			output = runPrepared(statement, binding.args, runTask.offset, limit);
+		} catch (error) {
+			// SQLite undid this statement alone, or the whole transaction.
+			if (!db.inTransaction) finish();
+			throw error;
+		}
+		const elapsedMs = Math.round(performance.now() - started);
+		const { changes, otherChanges } = writes ? changesSince(db, before) : NO_CHANGES;
+		totals.statements += 1;
+		totals.changes += changes;
+		totals.otherChanges += otherChanges;
+		if (writes) totals.schemaChanges = sqliteSchemaChanges(schemaAtBegin, readSchemaEntries(db));
+		return {
+			totals: snapshot(),
+			result: {
+				statement: sqliteLeadingKeyword(runTask.sql),
+				...(plan ? { plan: true } : {}),
+				...output,
+				offset: runTask.offset,
+				returnsRows: statement.reader,
+				elapsedMs,
+			},
+			writes,
+			changes,
+			otherChanges,
+		};
+	};
+
+	return {
+		opened: snapshot(),
+		host: {
+			get closed() {
+				return closed;
+			},
+			handle(op) {
+				if (closed) throw refuse(SQLITE_TRANSACTION_GONE_MESSAGE);
+				if (op.op === 'run') return run(op.task);
+				if (op.op === 'commit') {
+					try {
+						db.exec('COMMIT');
+					} catch (error) {
+						// A deferred foreign key or a busy file: SQLite keeps the transaction.
+						if (!db.inTransaction) finish();
+						throw error;
+					}
+					finish();
+					return { totals: snapshot() };
+				}
+				try {
+					if (db.inTransaction) db.exec('ROLLBACK');
+				} finally {
+					finish();
+				}
+				return { totals: snapshot() };
+			},
+			abort: finish,
+		},
+	};
+}
+
+const NO_CHANGES = { changes: 0, otherChanges: 0 } as const;
 
 /**
  * Run one read-only statement and write all of its rows to `task.destPath`

@@ -30,6 +30,12 @@
  * file check, no backup) and rolled back (`runDryRun()`). Not recorded in
  * the history: nothing ran against the file.
  *
+ * With `request.transactionId` (editing only), the statement runs inside the
+ * tab's open explicit transaction instead, read or write, on that
+ * transaction's connection (`runInSqliteTransaction()` in
+ * sqlite-transaction.ts): nothing it changes is committed until Commit, and
+ * stopping it rolls the whole transaction back.
+ *
  * A run of the first window is recorded in the database's query history
  * (sqlite-query-history.ts) before it answers, so the History rail read
  * right after it already lists it, whoever ran it. Recording never fails a
@@ -75,6 +81,7 @@ import {
 	sqliteWriteTimeoutMessage,
 } from '../../shared/sqlite/query';
 import type { SqliteQueryHistoryRun } from '../../shared/sqlite/history';
+import { SQLITE_TRANSACTION_STOPPED_MESSAGE } from '../../shared/sqlite/transaction';
 import type {
 	SqliteQueryExported,
 	SqliteQueryExportRequest,
@@ -95,6 +102,7 @@ import {
 } from './sqlite-editing';
 import type { SqliteWriteTarget } from './sqlite-connection';
 import { getSqliteQueryHistory } from './sqlite-query-history';
+import { runInSqliteTransaction } from './sqlite-transaction';
 import { SQLITE_QUERY_REFUSED, type SqliteQueryTask } from './sqlite-query-task';
 import { windowBound } from './sqlite-rows';
 import { startSqliteWorkerTask, type SqliteWorkerRun } from './sqlite-worker-runner';
@@ -159,6 +167,7 @@ function recordedRun(
 					returnsRows: value.returnsRows,
 					elapsedMs: value.elapsedMs,
 					...(value.write ? { changes: value.write.changes } : {}),
+					...(value.inTransaction?.writes ? { changes: value.inTransaction.changes } : {}),
 				},
 			});
 			return value;
@@ -176,7 +185,7 @@ function recordedRun(
 /** Track `run` under `queryId` until it settles, so `cancelSqliteQuery()` can stop it. */
 function tracked<R>(
 	queryId: string | null,
-	run: SqliteWorkerRun<R>,
+	run: Pick<SqliteWorkerRun<R>, 'result' | 'stop'>,
 	stoppedMessage: string
 ): Promise<R> {
 	if (!queryId) return run.result;
@@ -217,11 +226,16 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 	if (request.dryRun != null && typeof request.dryRun !== 'boolean') {
 		return Promise.reject(new Error('SQLite query dryRun must be true or false.'));
 	}
+	if (request.transactionId != null && typeof request.transactionId !== 'string') {
+		return Promise.reject(new Error('SQLite query transactionId must be a string.'));
+	}
 	const dryRun = request.dryRun === true;
+	const inTransaction = request.transactionId != null;
 	if (dryRun) {
 		const refusal = sqliteDryRunRefusal({
 			editing: request.editToken != null,
 			plan: request.plan === true,
+			transaction: inTransaction,
 		});
 		if (refusal) return Promise.reject(refused(refusal));
 	}
@@ -244,8 +258,20 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 		plan: request.plan === true,
 	};
 	// Restated before the history records it, so the rail says the same.
-	const result =
-		request.editToken == null
+	const result = inTransaction
+		? tracked(
+				queryId,
+				runInSqliteTransaction(request, {
+					sql: task.sql,
+					offset,
+					limit,
+					params: task.params,
+					plan: task.plan,
+				}),
+				// Never seen: a stopped statement rejects in the transaction's own words.
+				SQLITE_TRANSACTION_STOPPED_MESSAGE
+			)
+		: request.editToken == null
 			? reportSqliteBusy('read', () => startReadRun(database, task, queryId))
 			: runWithEditing(database, request, task, queryId);
 	// A dry run changed nothing, so the history does not record it.

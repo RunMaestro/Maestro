@@ -13,7 +13,9 @@
  * value to disk here rather than shipping it, the editing switch hands one
  * tab a write token (sqlite-editing.ts) without writing anything, a cell edit
  * sends that token back with one single-row UPDATE (sqlite-row-edit.ts), an
- * insert or a delete with one single-row INSERT or DELETE (same file), and
+ * insert or a delete with one single-row INSERT or DELETE (same file), the
+ * transaction calls begin, read, and end Query mode's explicit transaction
+ * (sqlite-transaction.ts), and
  * the connections stay in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
@@ -47,6 +49,11 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteTransactionEnd,
+	SqliteTransactionEndRequest,
+	SqliteTransactionRequest,
+	SqliteTransactionState,
+	SqliteTransactionStatus,
 	SqliteUndoRequest,
 	SqliteUndoResult,
 } from '../../../shared/sqlite/types';
@@ -58,6 +65,11 @@ import { disableSqliteEditing, enableSqliteEditing } from '../../sqlite/sqlite-e
 import { checkSqliteIntegrity } from '../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
 import { cancelSqliteQuery, exportSqliteQuery, runSqliteQuery } from '../../sqlite/sqlite-query';
+import {
+	beginSqliteTransaction,
+	endSqliteTransaction,
+	readSqliteTransaction,
+} from '../../sqlite/sqlite-transaction';
 import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
@@ -241,6 +253,25 @@ export function registerSqliteHandlers(): void {
 	ipcMain.handle(
 		'sqlite:undoEdit',
 		async (_event, request: SqliteUndoRequest): Promise<SqliteUndoResult> => undoSqliteEdit(request)
+	);
+
+	// Query mode's explicit transaction: Begin (gate, backup, BEGIN IMMEDIATE
+	// held in a child), its status, and Commit or Roll back. Statements run in
+	// it through `sqlite:runQuery` with `transactionId`.
+	ipcMain.handle(
+		'sqlite:beginTransaction',
+		async (_event, request: SqliteTransactionRequest): Promise<SqliteTransactionState> =>
+			beginSqliteTransaction(request)
+	);
+	ipcMain.handle(
+		'sqlite:readTransaction',
+		async (_event, request: SqliteTransactionRequest): Promise<SqliteTransactionStatus> =>
+			readSqliteTransaction(request)
+	);
+	ipcMain.handle(
+		'sqlite:endTransaction',
+		async (_event, request: SqliteTransactionEndRequest): Promise<SqliteTransactionEnd> =>
+			endSqliteTransaction(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are

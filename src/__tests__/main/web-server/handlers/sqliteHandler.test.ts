@@ -63,6 +63,12 @@ const rowEdits = vi.hoisted(() => ({
 	undoSqliteEdit: vi.fn(),
 }));
 vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdits);
+const transactions = vi.hoisted(() => ({
+	beginSqliteTransaction: vi.fn(),
+	readSqliteTransaction: vi.fn(),
+	endSqliteTransaction: vi.fn(),
+}));
+vi.mock('../../../../main/sqlite/sqlite-transaction', () => transactions);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -1528,5 +1534,180 @@ describe('sqlite_undo_edit handler', () => {
 			error: 'Missing required "path" or "step" (an object) for sqlite_undo_edit',
 		});
 		expect(rowEdits.undoSqliteEdit).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_run_transaction handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const begun = {
+		transactionId: 'x1',
+		startedAt: 1,
+		expiresAt: 2,
+		statements: 0,
+		changes: 0,
+		otherChanges: 0,
+		schemaChanges: [],
+		backup: { path: '/data/app.maestro-backup-1.db', bytes: 4096, createdAt: 1 },
+	};
+	const message = {
+		type: 'sqlite_run_transaction',
+		requestId: 't1',
+		path: '/data/app.db',
+		statements: ['UPDATE users SET age = 1', 'SELECT age FROM users'],
+		end: 'commit',
+		enableEditing: true,
+	};
+	const step = (statement: string) => ({ statement, rows: [], inTransaction: { writes: true } });
+	const ended = (outcome: 'committed' | 'rolled-back') => ({
+		transactionId: 'x1',
+		outcome,
+		reason: outcome === 'committed' ? 'Committed ...' : 'Rolled back ...',
+		transaction: begun,
+		endedAt: 3,
+	});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 'cli-token' });
+		transactions.beginSqliteTransaction.mockResolvedValue(begun);
+		transactions.readSqliteTransaction.mockReturnValue({ transaction: begun, lastEnd: null });
+		queries.runSqliteQuery.mockImplementation(async (request: { sql: string }) =>
+			step(request.sql.split(' ')[0])
+		);
+	});
+
+	it('begins, runs each statement in the transaction in order, commits, and locks again', async () => {
+		transactions.endSqliteTransaction.mockResolvedValue(ended('committed'));
+		handler.handleMessage(client, message);
+		await flush();
+		await flush();
+
+		expect(transactions.beginSqliteTransaction).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'cli-token',
+		});
+		expect(queries.runSqliteQuery.mock.calls.map(([request]) => request)).toEqual([
+			{
+				handle: 'h1',
+				editToken: 'cli-token',
+				sql: 'UPDATE users SET age = 1',
+				limit: 50,
+				transactionId: 'x1',
+			},
+			{
+				handle: 'h1',
+				editToken: 'cli-token',
+				sql: 'SELECT age FROM users',
+				limit: 50,
+				transactionId: 'x1',
+			},
+		]);
+		expect(transactions.endSqliteTransaction).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'cli-token',
+			transactionId: 'x1',
+			action: 'commit',
+		});
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_transaction_result',
+			requestId: 't1',
+			success: true,
+			database: info,
+			result: {
+				begun,
+				steps: [step('UPDATE'), step('SELECT')],
+				failed: null,
+				end: ended('committed'),
+			},
+		});
+	});
+
+	it('stops at the first failure and rolls back, even when Commit was asked for', async () => {
+		queries.runSqliteQuery
+			.mockResolvedValueOnce(step('UPDATE'))
+			.mockRejectedValueOnce(Object.assign(new Error('near "SELEC": syntax error'), { offset: 0 }));
+		transactions.endSqliteTransaction.mockResolvedValue(ended('rolled-back'));
+		handler.handleMessage(client, {
+			...message,
+			statements: [...message.statements, 'DELETE FROM users'],
+		});
+		await flush();
+		await flush();
+
+		expect(queries.runSqliteQuery).toHaveBeenCalledTimes(2);
+		expect(transactions.endSqliteTransaction).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'rollback' })
+		);
+		expect(lastResponse(client)).toMatchObject({
+			success: true,
+			result: {
+				steps: [step('UPDATE')],
+				failed: { index: 1, error: 'near "SELEC": syntax error', errorOffset: 0 },
+				end: { outcome: 'rolled-back' },
+			},
+		});
+	});
+
+	it('reports how SQLite ended a transaction it rolled back itself, without ending it again', async () => {
+		queries.runSqliteQuery.mockRejectedValueOnce(new Error('UNIQUE constraint failed: users.id'));
+		transactions.readSqliteTransaction.mockReturnValue({
+			transaction: null,
+			lastEnd: ended('rolled-back'),
+		});
+		handler.handleMessage(client, message);
+		await flush();
+		await flush();
+
+		expect(transactions.endSqliteTransaction).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({
+			success: true,
+			result: {
+				failed: { index: 0, error: 'UNIQUE constraint failed: users.id' },
+				end: { outcome: 'rolled-back' },
+			},
+		});
+	});
+
+	it('rolls back a Commit SQLite refused, and says the Commit failed', async () => {
+		transactions.endSqliteTransaction
+			.mockRejectedValueOnce(new Error('FOREIGN KEY constraint failed'))
+			.mockResolvedValueOnce(ended('rolled-back'));
+		handler.handleMessage(client, message);
+		await flush();
+		await flush();
+
+		expect(transactions.endSqliteTransaction).toHaveBeenLastCalledWith(
+			expect.objectContaining({ action: 'rollback' })
+		);
+		expect(lastResponse(client)).toMatchObject({
+			success: true,
+			result: {
+				failed: { index: null, error: 'FOREIGN KEY constraint failed' },
+				end: { outcome: 'rolled-back' },
+			},
+		});
+	});
+
+	it('refuses without the unlock, without statements, or without an end, opening nothing', async () => {
+		handler.handleMessage(client, { ...message, enableEditing: undefined });
+		handler.handleMessage(client, { ...message, statements: ['UPDATE t SET a = 1', '  '] });
+		handler.handleMessage(client, { ...message, end: 'save' });
+		await flush();
+		const replies = (client.socket.send as ReturnType<typeof vi.fn>).mock.calls.map(
+			([raw]) => JSON.parse(raw as string).error
+		);
+		expect(replies).toEqual([
+			expect.stringContaining('--enable-editing'),
+			'Missing required "path" or "statements" (non-empty statement texts) for sqlite_run_transaction',
+			'end must be "commit" or "rollback"',
+		]);
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+		expect(transactions.beginSqliteTransaction).not.toHaveBeenCalled();
 	});
 });

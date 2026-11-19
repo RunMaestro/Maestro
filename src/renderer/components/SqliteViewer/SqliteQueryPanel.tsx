@@ -45,6 +45,19 @@
  * not run; VACUUM and a writing PRAGMA are not tried. Never paged, exported,
  * or announced as a write; Run applies the statement.
  *
+ * Begin transaction (editing on) opens an explicit transaction the viewer
+ * keeps (`useSqliteTransaction()`, main's sqlite-transaction.ts): from then
+ * on every Run goes into it, reads included, so a SELECT sees what the
+ * UPDATE before it changed, and each result says what the statement changed
+ * there. A strip under the toolbar says what the transaction holds so far
+ * (`formatSqliteTransaction()`) beside Commit and Roll back; nothing is in
+ * the file until Commit. Dry run is refused while it is open (it would wait
+ * on the transaction's own write lock), Run waits for the statement in
+ * flight instead of stopping it (Stop rolls the whole transaction back), and
+ * Export is refused for a result read inside it (Export reads the file as
+ * committed). When main ends it on its own (idle, SQLite rolling it back),
+ * the strip says how.
+ *
  * A statement with parameters (`?`, `:id`) gets one value box per parameter
  * between the toolbar and the grid (SqliteQueryParameters), read from the
  * text as it changes. The values ride with the run and are bound by the
@@ -78,7 +91,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
-import { Download, FlaskConical, History, Play, Square } from 'lucide-react';
+import { Check, Download, FlaskConical, History, Layers, Play, Square, Undo2 } from 'lucide-react';
 import type { Extension } from '@codemirror/state';
 
 import { formatCount } from '../../../shared/formatters';
@@ -92,6 +105,10 @@ import {
 } from '../../../shared/sqlite/query';
 import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
 import { formatSqliteDryRun, sqliteDryRunRefusal } from '../../../shared/sqlite/dryRun';
+import {
+	SQLITE_TRANSACTION_IDLE_MS,
+	formatSqliteTransaction,
+} from '../../../shared/sqlite/transaction';
 import {
 	formatSqliteQueryErrorPlace,
 	splitSqliteErrorOffset,
@@ -126,6 +143,7 @@ import { SqliteQueryHistoryRail } from './SqliteQueryHistoryRail';
 import { SqliteQueryParameters, sqliteParameterValuesFor } from './SqliteQueryParameters';
 import { SqliteQueryPlanView } from './SqliteQueryPlanView';
 import { announceSqliteBackup, sqliteOtherChangesText } from './sqliteWriteNotice';
+import type { SqliteTransactionControl } from './useSqliteTransaction';
 
 /** The last statement run in Query mode and what it returned so far. */
 export interface SqliteQueryRunState {
@@ -139,6 +157,8 @@ export interface SqliteQueryRunState {
 	plan: boolean;
 	/** It was a dry run: tried and rolled back, or only classified. Never paged. */
 	dryRun: boolean;
+	/** The open transaction it ran in, so a later window reads in the same one; else null. */
+	transactionId: string | null;
 	/** Columns and every row loaded so far; null until the first window lands. */
 	result: SqliteQueryResult | null;
 	/** A call (the first window or a later one) is in flight. */
@@ -181,6 +201,8 @@ interface SqliteQueryPanelProps {
 	editToken: string | null;
 	/** A statement changed the database (its result's `write`). */
 	onWrite: (write: SqliteQueryWrite) => void;
+	/** The tab's explicit transaction (kept by the viewer): Begin, its state, Commit, Roll back. */
+	transaction: SqliteTransactionControl;
 	theme: Theme;
 }
 
@@ -198,7 +220,10 @@ const RESULT_MODES = [
 const BLOB_HINT = 'Open the table in Browse to save a BLOB to a file';
 
 /** "DELETE changed 3 rows; the database's triggers ... changed 2 other rows". */
-function sqliteWriteSummary(statement: string, write: SqliteQueryWrite): string {
+function sqliteWriteSummary(
+	statement: string,
+	write: Pick<SqliteQueryWrite, 'changes' | 'otherChanges'>
+): string {
 	const rows = `${formatCount(write.changes)} ${write.changes === 1 ? 'row' : 'rows'}`;
 	return `${statement} changed ${rows}${sqliteOtherChangesText(write.otherChanges)}`;
 }
@@ -223,9 +248,11 @@ export function SqliteQueryPanel({
 	onPlanChange,
 	editToken,
 	onWrite,
+	transaction,
 	theme,
 }: SqliteQueryPanelProps) {
 	const editing = editToken !== null;
+	const openTransaction = editing ? transaction.state : null;
 	const [language, setLanguage] = useState<Extension | undefined>(undefined);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const showHistory = usePersistedToggle('sqlite-query-history', false);
@@ -267,15 +294,29 @@ export function SqliteQueryPanel({
 				offset === 0 ? sqliteParameterValuesFor(scan.parameters, params) : (run?.params ?? {});
 			const runPlan = offset === 0 ? asPlan : run?.plan === true;
 			const dryRun = offset === 0 && asDryRun;
+			const transactionId =
+				offset === 0 ? (openTransaction?.transactionId ?? null) : (run?.transactionId ?? null);
+			// Stopping a statement in a transaction would roll the whole transaction back.
+			if (offset === 0 && transactionId && run?.running) return;
 			const refusal =
 				offset === 0
-					? ((dryRun ? sqliteDryRunRefusal({ editing, plan: runPlan }) : null) ??
+					? ((dryRun
+							? sqliteDryRunRefusal({ editing, plan: runPlan, transaction: transactionId !== null })
+							: null) ??
 						sqliteQueryRefusal(sql, { plan: runPlan, editing }) ??
 						sqliteQueryBinding(sql, values).problem)
 					: null;
 			if (offset === 0 && run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
 			const runId = generateId();
-			const fresh = { runId, sql, params: values, plan: runPlan, dryRun, result: null };
+			const fresh = {
+				runId,
+				sql,
+				params: values,
+				plan: runPlan,
+				dryRun,
+				transactionId,
+				result: null,
+			};
 			if (refusal) {
 				// The text and the values alone settle it: no process is started.
 				onRunChange({
@@ -303,7 +344,9 @@ export function SqliteQueryPanel({
 					queryId: runId,
 					// Main lifts the read-only assertion only for a live grant.
 					editToken,
+					...(transactionId ? { transactionId } : {}),
 				});
+				if (page.inTransaction) transaction.noteStep(page.inTransaction);
 				if (page.write) {
 					// It changed the database whether or not this run is still shown.
 					announceSqliteBackup(page.write.backup);
@@ -318,6 +361,8 @@ export function SqliteQueryPanel({
 					return { ...previous, result, running: false };
 				});
 			} catch (failure) {
+				// SQLite may have rolled the transaction back with the failure.
+				if (transactionId) transaction.resync();
 				// A syntax error carries where SQLite stopped; see `withSqliteErrorOffset()`.
 				const { message, offset: errorOffset } = splitSqliteErrorOffset(ipcErrorMessage(failure));
 				onRunChange((previous) =>
@@ -462,7 +507,7 @@ export function SqliteQueryPanel({
 	const handleReachEnd = useCallback(() => {
 		// A statement that changed the database runs once: a later window would re-run it.
 		// Nor is a dry run, whose trial is rolled back each time.
-		if (!result?.hasMore || result.write || result.dryRun) return;
+		if (!result?.hasMore || result.write || result.dryRun || result.inTransaction?.writes) return;
 		if (run?.plan || run?.running || run?.error) return;
 		void runQuery(result.rows.length);
 	}, [result, run?.plan, run?.running, run?.error, runQuery]);
@@ -476,11 +521,13 @@ export function SqliteQueryPanel({
 		[showsPlan, result]
 	);
 	const exporting = exportState?.running === true;
-	// An export runs the statement again, so a write's result is never exported.
+	// An export runs the statement again, so a write's result is never exported;
+	// it reads the file as committed, so neither is a result read inside a transaction.
 	const canExport =
 		result?.returnsRows === true &&
 		!result.write &&
 		!result.dryRun &&
+		!result.inTransaction &&
 		run?.plan !== true &&
 		!running &&
 		!exporting;
@@ -518,14 +565,17 @@ export function SqliteQueryPanel({
 					<button
 						type="button"
 						onClick={handleRun}
-						className="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium"
+						disabled={openTransaction !== null && running}
+						className="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium disabled:opacity-50"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						title={
 							plan
 								? `Show the statement's query plan (${runKeys}). Reads none of its rows.`
-								: editing
-									? `Run the statement (${runKeys}). Editing is on: a statement that changes the database runs once, in its own transaction.`
-									: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
+								: openTransaction
+									? `Run the statement in the open transaction (${runKeys}). Reads see its changes; nothing is in the file until Commit.`
+									: editing
+										? `Run the statement (${runKeys}). Editing is on: a statement that changes the database runs once, in its own transaction.`
+										: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
 						}
 						data-testid="sqlite-query-run"
 					>
@@ -535,7 +585,7 @@ export function SqliteQueryPanel({
 							{runKeys}
 						</span>
 					</button>
-					{editing && !plan && (
+					{editing && !plan && !openTransaction && (
 						<button
 							type="button"
 							onClick={handleDryRun}
@@ -548,13 +598,35 @@ export function SqliteQueryPanel({
 							Dry run
 						</button>
 					)}
+					{editing && !openTransaction && (
+						<button
+							type="button"
+							onClick={transaction.begin}
+							disabled={transaction.pending !== null}
+							className="flex items-center gap-1.5 px-2.5 py-1 rounded disabled:opacity-50"
+							style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
+							title="Begin a transaction: every Run then goes into it, reads included, and nothing reaches the file until Commit. Roll back discards it all. It holds the file's write lock while open."
+							data-testid="sqlite-transaction-begin"
+						>
+							{transaction.pending === 'begin' ? (
+								<Spinner size={10} decorative />
+							) : (
+								<Layers className="w-3 h-3" />
+							)}
+							Begin transaction
+						</button>
+					)}
 					{running && (
 						<button
 							type="button"
 							onClick={handleStop}
 							className="flex items-center gap-1.5 px-2.5 py-1 rounded"
 							style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
-							title="Stop the statement"
+							title={
+								run?.transactionId
+									? 'Stop the statement. This rolls back the whole transaction: a statement can only be stopped by ending the process that holds it.'
+									: 'Stop the statement'
+							}
 							data-testid="sqlite-query-stop"
 						>
 							<Square className="w-3 h-3" />
@@ -569,11 +641,20 @@ export function SqliteQueryPanel({
 						ariaLabel="Show the statement's rows or its query plan"
 						testId="sqlite-query-result-mode"
 					/>
-					{editing ? (
+					{openTransaction ? (
 						<span
 							className="truncate"
 							style={{ color: theme.colors.warning }}
-							title="Lock in the summary strip makes Query mode read-only again. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused."
+							title="Commit or Roll back in the strip below ends it. Lock, closing the file, and a stopped statement roll it back."
+							data-testid="sqlite-query-editing-note"
+						>
+							In a transaction: every statement runs inside it, reads included.
+						</span>
+					) : editing ? (
+						<span
+							className="truncate"
+							style={{ color: theme.colors.warning }}
+							title="Lock in the summary strip makes Query mode read-only again. ATTACH, DETACH, VACUUM INTO, and typed BEGIN/COMMIT stay refused: Begin transaction holds several statements in one."
 							data-testid="sqlite-query-editing-note"
 						>
 							Editing enabled: a statement that changes the database runs, once, in its own
@@ -597,9 +678,11 @@ export function SqliteQueryPanel({
 									? 'A query plan has no rows to export; switch to Rows and run the statement'
 									: result?.write
 										? 'This statement changed the database; exporting would run it again'
-										: result?.dryRun
-											? 'A dry run changes nothing and exports nothing; Run the statement to export its rows'
-											: 'Write every row of the result to a CSV or JSON Lines file, whole'
+										: result?.inTransaction
+											? 'Export reads the file as committed, not this transaction; Commit, then run it again to export'
+											: result?.dryRun
+												? 'A dry run changes nothing and exports nothing; Run the statement to export its rows'
+												: 'Write every row of the result to a CSV or JSON Lines file, whole'
 							}
 							data-testid="sqlite-query-export"
 						>
@@ -623,6 +706,91 @@ export function SqliteQueryPanel({
 						</button>
 					</div>
 				</div>
+				{editing && (openTransaction || transaction.lastEnd || transaction.error) && (
+					<div
+						className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-xs-plus select-none"
+						style={{
+							borderBottom: `1px solid ${theme.colors.border}`,
+							color: theme.colors.textDim,
+						}}
+						data-testid="sqlite-transaction-strip"
+					>
+						{openTransaction ? (
+							<>
+								<span
+									className="select-text truncate"
+									style={{ color: theme.colors.warning }}
+									title={`It holds the file's write lock, so other writers wait. Rolled back by itself after ${Math.round(SQLITE_TRANSACTION_IDLE_MS / 60_000)} minutes with nothing run in it.`}
+									data-testid="sqlite-transaction-summary"
+								>
+									{formatSqliteTransaction(openTransaction)}
+								</span>
+								<div className="ml-auto flex items-center gap-1 shrink-0">
+									<button
+										type="button"
+										onClick={transaction.commit}
+										disabled={transaction.pending !== null || running}
+										className="flex items-center gap-1 px-2 py-0.5 rounded font-medium disabled:opacity-50"
+										style={{
+											backgroundColor: theme.colors.accent,
+											color: theme.colors.accentForeground,
+										}}
+										title="Commit: write everything the transaction holds to the file, as one change"
+										data-testid="sqlite-transaction-commit"
+									>
+										{transaction.pending === 'commit' ? (
+											<Spinner size={10} decorative />
+										) : (
+											<Check className="w-3 h-3" />
+										)}
+										Commit
+									</button>
+									<button
+										type="button"
+										onClick={transaction.rollBack}
+										disabled={transaction.pending !== null || running}
+										className="flex items-center gap-1 px-2 py-0.5 rounded disabled:opacity-50"
+										style={{
+											border: `1px solid ${theme.colors.border}`,
+											color: theme.colors.textMain,
+										}}
+										title="Roll back: discard everything the transaction holds; the file stays as it was"
+										data-testid="sqlite-transaction-rollback"
+									>
+										{transaction.pending === 'rollback' ? (
+											<Spinner size={10} decorative />
+										) : (
+											<Undo2 className="w-3 h-3" />
+										)}
+										Roll back
+									</button>
+								</div>
+							</>
+						) : transaction.lastEnd ? (
+							<span
+								className="select-text"
+								style={{
+									color:
+										transaction.lastEnd.outcome === 'committed'
+											? theme.colors.success
+											: theme.colors.textDim,
+								}}
+								data-testid="sqlite-transaction-end"
+							>
+								{transaction.lastEnd.reason}
+							</span>
+						) : null}
+						{transaction.error && (
+							<span
+								className="select-text"
+								style={{ color: theme.colors.error }}
+								data-testid="sqlite-transaction-error"
+							>
+								{transaction.error}
+							</span>
+						)}
+					</div>
+				)}
 				{(scan.parameters.length > 0 || scan.problem) && (
 					<SqliteQueryParameters
 						parameters={scan.parameters}
@@ -666,6 +834,8 @@ export function SqliteQueryPanel({
 								`Dry run of ${result.statement}: the database was not changed.`
 							) : result?.write ? (
 								`${result.statement} ran and changed the database.`
+							) : result?.inTransaction?.writes ? (
+								`${result.statement} ran in the open transaction. Nothing is in the file until Commit.`
 							) : result ? (
 								`${result.statement} ran and returns no rows.`
 							) : plan ? (
@@ -713,6 +883,16 @@ export function SqliteQueryPanel({
 								{result.returnsRows && ` ${sqliteDryRunReturnedText(result)}`}
 							</span>
 							{result.dryRun.tried && <span>{result.elapsedMs} ms</span>}
+						</>
+					) : result?.inTransaction?.writes ? (
+						<>
+							<span data-testid="sqlite-query-transaction-step">
+								{sqliteWriteSummary(result.statement, result.inTransaction)} in the transaction (not
+								committed)
+								{result.returnsRows &&
+									`; returned ${formatCount(result.rows.length)} ${result.rows.length === 1 ? 'row' : 'rows'}${result.hasMore ? ' (more not shown)' : ''}`}
+							</span>
+							<span>{result.elapsedMs} ms</span>
 						</>
 					) : result?.write ? (
 						<>

@@ -58,14 +58,24 @@ export function sqliteDryRunUntransactedMessage(keyword: string): string {
 	return `SQLite runs ${keyword} outside any transaction, so a dry run cannot try it and roll it back. Run applies it.`;
 }
 
+/** A dry run was asked for inside an open transaction, which holds the file's write lock. */
+export const SQLITE_DRY_RUN_IN_TRANSACTION_MESSAGE =
+	'A transaction is open, so a dry run cannot take the write lock it needs. Run the statement in the transaction instead: Roll back takes it back.';
+
 /**
  * Why a dry run cannot start, judged before any process does, or null. The
  * statement's own text is judged as a run judges it, by the editing rules
- * (`sqliteEditingQueryRefusal()`).
+ * (`sqliteEditingQueryRefusal()`). `transaction`: the tab has a transaction
+ * open, whose write lock a trial would wait on.
  */
-export function sqliteDryRunRefusal(options: { editing: boolean; plan: boolean }): string | null {
+export function sqliteDryRunRefusal(options: {
+	editing: boolean;
+	plan: boolean;
+	transaction?: boolean;
+}): string | null {
 	if (!options.editing) return SQLITE_DRY_RUN_NEEDS_EDITING_MESSAGE;
 	if (options.plan) return SQLITE_DRY_RUN_PLAN_MESSAGE;
+	if (options.transaction) return SQLITE_DRY_RUN_IN_TRANSACTION_MESSAGE;
 	return null;
 }
 
@@ -286,13 +296,18 @@ function rowsText(count: number): string {
 	return `${formatCount(count)} ${count === 1 ? 'row' : 'rows'}`;
 }
 
-/** "create table logs, index logs_at and drop view v": the schema part of a dry run's sentence. */
-function schemaChangesText(changes: readonly SqliteSchemaChange[]): string[] {
-	const words: Record<SqliteSchemaChange['change'], string> = {
-		created: 'create',
-		dropped: 'drop',
-		altered: 'alter',
-	};
+/**
+ * "create table logs, index logs_at", "drop view v": the schema part of a
+ * dry run's sentence, one part per kind of change. With `past`, "created
+ * ...", as an open transaction reports what it did.
+ */
+export function sqliteSchemaChangesText(
+	changes: readonly SqliteSchemaChange[],
+	past = false
+): string[] {
+	const words: Record<SqliteSchemaChange['change'], string> = past
+		? { created: 'created', dropped: 'dropped', altered: 'altered' }
+		: { created: 'create', dropped: 'drop', altered: 'alter' };
 	const parts: string[] = [];
 	for (const change of ['created', 'dropped', 'altered'] as const) {
 		const objects = changes.filter((entry) => entry.change === change);
@@ -318,7 +333,7 @@ export function formatSqliteDryRun(dryRun: SqliteDryRun): string {
 	const others = dryRun.otherChanges ?? 0;
 	const parts: string[] = [];
 	if (dryRun.kind !== 'schema' || changes > 0) parts.push(`change ${rowsText(changes)}`);
-	parts.push(...schemaChangesText(dryRun.schemaChanges));
+	parts.push(...sqliteSchemaChangesText(dryRun.schemaChanges));
 	const what = parts.length > 0 ? parts.join(' and ') : 'change nothing';
 	const triggered =
 		others > 0

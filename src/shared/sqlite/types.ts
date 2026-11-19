@@ -820,6 +820,14 @@ export interface SqliteQueryRequest {
 	 * is committed) and is not recorded in the query history.
 	 */
 	dryRun?: boolean;
+	/**
+	 * Run inside this tab's open transaction (`SqliteTransactionState.transactionId`;
+	 * needs `editToken`): the statement, read or write, runs on the
+	 * transaction's own connection, so it sees every change made in it so
+	 * far, and nothing it does is committed until Commit. The result carries
+	 * `inTransaction` and never `write`. Never with `dryRun`.
+	 */
+	transactionId?: string | null;
 }
 
 /**
@@ -870,6 +878,94 @@ export interface SqliteQueryWrite {
 	otherChanges: number;
 	/** This session's backup of the file, present only on the write that took it. */
 	backup?: SqliteBackup;
+}
+
+/**
+ * Begin, read, or end a tab's explicit transaction in Query mode (see
+ * src/main/sqlite/sqlite-transaction.ts). Needs the tab's live editing grant.
+ */
+export interface SqliteTransactionRequest {
+	handle: string;
+	editToken: string;
+}
+
+/** Commit or roll back the tab's open transaction. */
+export interface SqliteTransactionEndRequest extends SqliteTransactionRequest {
+	/** The transaction to end; a stale id is refused, so a click never ends a newer one. */
+	transactionId: string;
+	action: 'commit' | 'rollback';
+}
+
+/**
+ * An explicit transaction held open in Query mode, as it stands: what every
+ * statement run in it changed so far, none of it committed. While it is open
+ * the file's write lock is held, so no other connection (another tab's edit,
+ * another program) can write to it.
+ */
+export interface SqliteTransactionState {
+	transactionId: string;
+	/** When it began, epoch ms. */
+	startedAt: number;
+	/** When it is rolled back unless a statement, Commit, or Roll back comes first, epoch ms. */
+	expiresAt: number;
+	/** Statements that ran in it without an error, reads included. */
+	statements: number;
+	/** Rows its statements themselves inserted, updated, or deleted, summed. */
+	changes: number;
+	/** Rows the database's triggers and foreign-key actions changed beside those. */
+	otherChanges: number;
+	/** Schema objects created, dropped, or altered since it began. */
+	schemaChanges: SqliteSchemaChange[];
+	/** This session's backup of the file, present only when Begin took it. */
+	backup?: SqliteBackup;
+}
+
+/** One statement run inside an open transaction: what it changed, and the transaction after it. */
+export interface SqliteTransactionStep {
+	/** SQLite says it changes the database; false for a read. */
+	writes: boolean;
+	/** Rows the statement itself changed (SQLite's `changes()`); 0 for a read or a schema change. */
+	changes: number;
+	/** Rows its triggers and foreign-key actions changed beside those. */
+	otherChanges: number;
+	transaction: SqliteTransactionState;
+}
+
+/** How a transaction ended, and what it held when it did. */
+export interface SqliteTransactionEnd {
+	transactionId: string;
+	outcome: 'committed' | 'rolled-back';
+	/** One sentence: why and how it ended ("Committed: ...", "Rolled back after 10 minutes idle: ..."). */
+	reason: string;
+	/** The transaction as it stood when it ended. */
+	transaction: SqliteTransactionState;
+	endedAt: number;
+}
+
+/**
+ * A whole transaction run in one call (`maestro-cli sqlite transaction`,
+ * which has no tab to keep one open in): Begin, each statement in order,
+ * then Commit or Roll back. The first statement that fails stops it, and the
+ * transaction is rolled back whatever end was asked for.
+ */
+export interface SqliteTransactionScript {
+	begun: SqliteTransactionState;
+	/** Each statement that ran, in order, as Query mode shows it. */
+	steps: SqliteQueryResult[];
+	/**
+	 * What failed, if anything: the statement at `index` (from 0), or the
+	 * Commit when `index` is null. `errorOffset` points into that statement
+	 * for a syntax error.
+	 */
+	failed: { index: number | null; error: string; errorOffset?: number } | null;
+	end: SqliteTransactionEnd;
+}
+
+/** A tab's transaction now: the open one, and how the last one ended. */
+export interface SqliteTransactionStatus {
+	transaction: SqliteTransactionState | null;
+	/** The tab's most recent ended transaction, null when none ended under this grant. */
+	lastEnd: SqliteTransactionEnd | null;
 }
 
 /**
@@ -936,6 +1032,13 @@ export interface SqliteQueryResult {
 	 * nothing. Its rows are the trial's `RETURNING` rows, read once.
 	 */
 	dryRun?: SqliteDryRun;
+	/**
+	 * Present for a statement run inside an open transaction
+	 * (`SqliteQueryRequest.transactionId`): nothing it did is committed yet.
+	 * A write's rows are read once, as for `write`; a read's later windows
+	 * read inside the transaction again.
+	 */
+	inTransaction?: SqliteTransactionStep;
 }
 
 /**
