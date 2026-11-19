@@ -19,6 +19,7 @@ import type {
 	SqliteRowsPage,
 	SqliteRowsRequest,
 } from '../../../../shared/sqlite/types';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
@@ -654,6 +655,89 @@ describe('SqliteViewer table view', () => {
 		expect(await screen.findByTestId('sqlite-schema')).toBeInTheDocument();
 		expect(screen.queryByTestId('sqlite-object-view')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('sqlite-table-view')).not.toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer record view', () => {
+	// The record view is a modal on the layer stack, which the app provides.
+	function renderWithLayers() {
+		return render(
+			<LayerStackProvider>
+				<SqliteViewer filePath="/data/app.db" fileName="app.db" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+	}
+
+	/** The field list of the open record, as `key value` pairs in display order. */
+	function recordRows(): string[] {
+		const fields = screen.getByTestId('sqlite-row-detail-fields');
+		return Array.from(fields.querySelectorAll('tr')).map((row) =>
+			Array.from(row.querySelectorAll('td'))
+				.map((cell) => cell.textContent ?? '')
+				.join(' ')
+		);
+	}
+
+	it('opens a row on double-click, one field per line', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		expect(await screen.findByTestId('sqlite-row-detail-modal')).toHaveTextContent('Row 2 of 2');
+		expect(recordRows()).toEqual(['id 2', 'kind click', 'payload BLOB 2.0 KB\nff …']);
+	});
+
+	it('keeps NULL apart from an empty string', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-0'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		expect(recordRows()).toEqual(['id 1', 'kind empty', 'payload NULL']);
+	});
+
+	it('steps through the loaded rows with Left and Right', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-0'));
+		const fields = await screen.findByTestId('sqlite-row-detail-fields');
+		fireEvent.keyDown(fields, { key: 'ArrowRight' });
+		expect(screen.getByTestId('sqlite-row-detail-modal')).toHaveTextContent('Row 2 of 2');
+		expect(recordRows()[0]).toBe('id 2');
+		fireEvent.keyDown(fields, { key: 'ArrowLeft' });
+		expect(recordRows()[0]).toBe('id 1');
+	});
+
+	it('reads the next window when stepping near the last loaded row', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 400));
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-290'));
+		const fields = await screen.findByTestId('sqlite-row-detail-fields');
+		expect(readRows).toHaveBeenCalledTimes(1);
+		fireEvent.keyDown(fields, { key: 'ArrowRight' });
+		expect(readRows).not.toHaveBeenCalledWith(expect.objectContaining({ offset: 300 }));
+		for (let step = 0; step < 4; step++) fireEvent.keyDown(fields, { key: 'ArrowRight' });
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 300 }))
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId('sqlite-row-detail-modal')).toHaveTextContent('Row 296 of 400')
+		);
+	});
+
+	it('closes from its close control', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByLabelText('Close modal'));
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument()
+		);
+	});
+
+	it('closes on a new sort, whose row at that position is a different row', async () => {
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-1'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument()
+		);
 	});
 });
 

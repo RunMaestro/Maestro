@@ -25,6 +25,13 @@
  * `AUTO_COUNT_PASSES` calls on a very large table (a "Count all" link
  * continues it from where it stopped), and starts over on a new filter, not
  * on a new sort, which leaves the row set the same.
+ *
+ * A double-click on a row opens it in the shared `<RecordDetailModal>`, one
+ * field per line (`formatSqliteRecordValue()`). Left/Right there step through
+ * the loaded rows in the grid's order, and stepping near the last loaded row
+ * reads the next window, so the record view walks the whole table the way
+ * scrolling does. A new sort or filter closes it: the position it showed
+ * now holds a different row.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -32,7 +39,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatCount } from '../../../shared/formatters';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
-import { formatSqliteCell } from '../../../shared/sqlite/cells';
+import { formatSqliteCell, formatSqliteRecordValue } from '../../../shared/sqlite/cells';
 import { formatSqliteRowCount, sqliteConvergingRowTotal } from '../../../shared/sqlite/objects';
 import { sqliteColumnAffinity } from '../../../shared/sqlite/schema';
 import type {
@@ -46,6 +53,7 @@ import type {
 	SqliteSortSpec,
 } from '../../../shared/sqlite/types';
 import type { Theme } from '../../types';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import {
 	DataGrid,
 	dataGridColumnWidth,
@@ -57,6 +65,7 @@ import {
 	type FilterExpressionBarHandle,
 	type FilterExpressionExample,
 } from '../ui/FilterExpressionBar';
+import { RecordDetailModal, type RecordDetailField } from '../ui/RecordDetailModal';
 import { Spinner } from '../ui/Spinner';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
@@ -71,6 +80,12 @@ const FILTER_DEBOUNCE_MS = 250;
  * main-process time: every ordinary table settles well inside it.
  */
 export const AUTO_COUNT_PASSES = 40;
+
+/**
+ * How close to the last loaded row the record view gets before it reads the
+ * next window, so Right never stops at a window boundary.
+ */
+const RECORD_PREFETCH_ROWS = 5;
 
 /** How long the count waits for a window read in flight before trying again. */
 const COUNT_WAIT_MS = 120;
@@ -182,6 +197,8 @@ export function SqliteTableView({
 	const [countAllFor, setCountAllFor] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	/** Position of the row open in the record view, or null when it is closed. */
+	const [detailRow, setDetailRow] = useState<number | null>(null);
 
 	/** Bumped on every sort or filter change; a reply for an older one is dropped. */
 	const generation = useRef(0);
@@ -240,6 +257,7 @@ export function SqliteTableView({
 	useEffect(() => {
 		generation.current++;
 		setError(null);
+		setDetailRow(null);
 		void fetchWindow(0);
 	}, [fetchWindow]);
 
@@ -358,6 +376,28 @@ export function SqliteTableView({
 
 	const getRowLabel = useCallback((rowPosition: number) => formatCount(rowPosition + 1), []);
 
+	// -- Record view --------------------------------------------------------
+
+	const detailIndex = detailRow === null ? -1 : Math.min(detailRow, rows.length - 1);
+	const detailFields = useMemo<RecordDetailField[]>(() => {
+		const row = detailIndex >= 0 ? rows[detailIndex] : undefined;
+		if (!row || !columns) return [];
+		return columns.map((column, position) => ({
+			key: column.name || `(column ${position + 1})`,
+			value: formatSqliteRecordValue(row[position] ?? null),
+		}));
+	}, [detailIndex, rows, columns]);
+
+	const handleRecordNavigate = useCallback(
+		(next: number) => {
+			const clamped = Math.max(0, Math.min(next, rows.length - 1));
+			setDetailRow(clamped);
+			if (clamped >= rows.length - RECORD_PREFETCH_ROWS) handleReachEnd();
+		},
+		[rows.length, handleReachEnd]
+	);
+	const closeRecord = useCallback(() => setDetailRow(null), []);
+
 	if (columns === null) {
 		if (error) {
 			return (
@@ -427,6 +467,7 @@ export function SqliteTableView({
 					sort={sort}
 					onSortChange={handleSortChange}
 					onReachEnd={handleReachEnd}
+					onOpenRow={setDetailRow}
 					loadingMore={busy && rows.length > 0}
 					emptyMessage={`${name} has no columns.`}
 					testIdPrefix="sqlite"
@@ -482,6 +523,19 @@ export function SqliteTableView({
 					</span>
 				)}
 			</div>
+			{detailFields.length > 0 && (
+				<RecordDetailModal
+					fields={detailFields}
+					index={detailIndex}
+					total={rows.length}
+					onNavigate={handleRecordNavigate}
+					onClose={closeRecord}
+					theme={theme}
+					priority={MODAL_PRIORITIES.TABLE_ROW_DETAIL}
+					resizeKey="sqlite-row-detail"
+					testIdPrefix="sqlite-row-detail"
+				/>
+			)}
 		</div>
 	);
 }

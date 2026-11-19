@@ -6,10 +6,11 @@
  * one field per line, values wrapped and rendered with their newlines intact.
  *
  * Shared by every tabular preview (CSV/TSV via CsvRowDetailModal, parquet via
- * the ParquetViewer) so they cannot drift on keyboard model, copy affordance,
- * or filtering. Callers hand it a flat field list, which is the only shape all
- * of them agree on: a CSV row is positional strings, a parquet row is typed
- * values that have already been formatted for display.
+ * the ParquetViewer, SQLite via SqliteTableView) so they cannot drift on
+ * keyboard model, copy affordance, or filtering. Callers hand it a flat field
+ * list, which is the only shape all of them agree on: a CSV row is positional
+ * strings, a parquet or SQLite row is typed values that have already been
+ * formatted for display.
  *
  * Includes a field/value filter and prev/next navigation through the rows the
  * table is currently displaying (i.e. after its own sort and filter).

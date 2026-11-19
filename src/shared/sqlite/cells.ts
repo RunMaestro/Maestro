@@ -5,9 +5,10 @@
  * values down to these limits before they cross IPC; the viewer's grid and
  * `maestro-cli sqlite rows` both turn a cell into text through
  * `formatSqliteCell()`, so the two never disagree about what a cell says.
+ * The record view's longer form is `formatSqliteRecordValue()`.
  */
 
-import { formatSize } from '../formatters';
+import { formatCount, formatSize } from '../formatters';
 import type { SqliteCellValue } from './types';
 
 /** TEXT values longer than this many characters arrive cut to it. */
@@ -39,5 +40,29 @@ export function formatSqliteCell(value: SqliteCellValue): SqliteCellText {
 			return { text: `${value.head}…`, placeholder: false };
 		case 'blob':
 			return { text: `BLOB ${formatSize(value.bytes)}`, placeholder: true };
+	}
+}
+
+/**
+ * Text for one value in the record view, where a value has a whole line or
+ * more to itself. It says more than the grid's one-line cell: a cut TEXT value
+ * names its full length and how much of it arrived, and a BLOB shows the bytes
+ * that arrived as spaced hex under its size. Anything the grid shows whole is
+ * the same text here.
+ */
+export function formatSqliteRecordValue(value: SqliteCellValue): string {
+	if (value === null || typeof value !== 'object') return formatSqliteCell(value).text;
+	switch (value.kind) {
+		case 'integer':
+			return value.text;
+		case 'text':
+			return `${value.head}…\n\n(${formatCount(value.length)} characters; the first ${formatCount(value.head.length)} are shown)`;
+		case 'blob': {
+			const shownBytes = Math.floor(value.head.length / 2);
+			const hex = value.head.match(/../g)?.join(' ') ?? '';
+			const summary = `BLOB ${formatSize(value.bytes)}`;
+			if (!hex) return summary;
+			return `${summary}\n${hex}${value.bytes > shownBytes ? ' …' : ''}`;
+		}
 	}
 }
