@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react';
 import { selectModalData, useModalStore } from '../../stores/modalStore';
 import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { notifyToast } from '../../stores/notificationStore';
 import type {
 	Theme,
 	Session,
@@ -182,17 +183,42 @@ export const AppAgentModals = memo(function AppAgentModals({
 		if (!providerInstallData) return;
 		const { sessionId, tabId } = providerInstallData;
 		closeReauthModal('providerInstall');
-		// Read live session/tab state: the user may have closed the agent or tab
-		// while the install was running.
-		const liveSession = selectSessionById(sessionId)(useSessionStore.getState());
-		if (!liveSession) return;
+		const initialSession = selectSessionById(sessionId)(useSessionStore.getState());
+		if (!initialSession) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message:
+					'The agent where the message failed was closed. Send it again in an open tab to continue.',
+			});
+			return;
+		}
 		// Refresh agent detection so a cached "not found" result does not survive
 		// into the retried spawn.
-		await window.maestro?.agents?.reprobe?.(liveSession.toolType)?.catch(() => undefined);
-		useAgentStore.getState().clearAgentError(sessionId);
-		if (tabId && liveSession.aiTabs?.some((t) => t.id === tabId)) {
-			replayAfterAuth(sessionId, [tabId], 'install');
+		await window.maestro?.agents?.reprobe?.(initialSession.toolType)?.catch(() => undefined);
+		// Re-read live session/tab state after the await: the user may have closed
+		// the agent or tab while reprobe was running.
+		const liveSession = selectSessionById(sessionId)(useSessionStore.getState());
+		if (!liveSession) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message:
+					'The agent where the message failed was closed. Send it again in an open tab to continue.',
+			});
+			return;
 		}
+		useAgentStore.getState().clearAgentError(sessionId);
+		if (!tabId || !liveSession.aiTabs?.some((t) => t.id === tabId)) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message:
+					'The tab where the message failed was closed. Send it again in an open tab to continue.',
+			});
+			return;
+		}
+		replayAfterAuth(sessionId, [tabId], 'install');
 	}, [providerInstallData, closeReauthModal]);
 
 	return (

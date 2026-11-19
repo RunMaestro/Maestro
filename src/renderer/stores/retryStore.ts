@@ -979,14 +979,6 @@ function dispatchReplay(
 	// outcome back after this call is deterministic - and it is the only honest
 	// answer, because the decision depends on live state this caller cannot see.
 	updateSessionWith(sessionId, (session) => {
-		const tabStillExists =
-			!item.tabId ||
-			session.aiTabs?.some((t) => t.id === item.tabId) ||
-			session.orphanedThinkingTabs?.some((t) => t.id === item.tabId);
-		if (!tabStillExists) {
-			outcome = 'no-target-tab';
-			return session;
-		}
 		const result = applyReplayDispatch(session, item, REPLAY_NOTES[reason]);
 		outcome = result.blocked ?? 'dispatched';
 		return result.session;

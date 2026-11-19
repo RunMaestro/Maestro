@@ -1259,12 +1259,16 @@ describe('replayAfterAuth', () => {
 		);
 	});
 
-	it('does not throw or send into another tab when the original tab was closed while installing', () => {
+	it('falls back to the active tab on auth replay when the original tab was closed', () => {
 		setupSession('sess-closed-tab', 'tab-other');
 		seedSnapshot('sess-closed-tab', 'tab-closed');
 
-		expect(() => replayAfterAuth('sess-closed-tab', ['tab-closed'], 'install')).not.toThrow();
-		expect(processQueuedItem).not.toHaveBeenCalled();
+		replayAfterAuth('sess-closed-tab', ['tab-closed']);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+		expect(tab.id).toBe('tab-other');
+		expect(tab.logs.some((l: any) => l.text === 'Re-sent after re-authentication.')).toBe(true);
 	});
 });
 
