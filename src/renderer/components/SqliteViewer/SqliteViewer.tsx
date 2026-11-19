@@ -37,6 +37,13 @@
  * here, so all survive the switch; opening another file clears them. The
  * Query panel's History rail and Export are its own (the history is kept
  * per file by the main process).
+ *
+ * The strip also holds the tab's "Enable editing" switch (SqliteEditingSwitch).
+ * Read-only is the default; turning editing on asks the main process for a
+ * grant (src/main/sqlite/sqlite-editing.ts), a token this tab alone holds and
+ * every write must send back. The grant is never persisted: it is released
+ * when the tab locks again, opens another file, or unmounts, so a reload
+ * starts read-only.
  */
 
 import {
@@ -52,6 +59,7 @@ import { AlertTriangle, Database } from 'lucide-react';
 
 import type {
 	SqliteDatabaseInfo,
+	SqliteEditingGrant,
 	SqliteObjectList,
 	SqliteObjectStats,
 	SqliteObjectSummary,
@@ -68,11 +76,13 @@ import {
 import { formatCount, formatSize } from '../../../shared/formatters';
 import type { Theme } from '../../types';
 import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MiniBadge } from '../ui/MiniBadge';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
 import { SqliteDatabaseFacts } from './SqliteDatabaseFacts';
+import { SqliteEditingSwitch } from './SqliteEditingSwitch';
 import { SqliteObjectRail } from './SqliteObjectRail';
 import { SqliteQueryPanel, type SqliteQueryRunState } from './SqliteQueryPanel';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
@@ -144,6 +154,15 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const [queryPlan, setQueryPlan] = useState(false);
 	const [filters, setFilters] = useState<ReadonlyMap<string, string>>(() => new Map());
 	const [focusFilterRequested, setFocusFilterRequested] = useState(false);
+	/** This tab's write grant, while "Enable editing" is on. Null is read-only. */
+	const [editGrant, setEditGrant] = useState<SqliteEditingGrant | null>(null);
+	const [editingBusy, setEditingBusy] = useState(false);
+	const [editingError, setEditingError] = useState<string | null>(null);
+	/**
+	 * Bumped whenever an enable request in flight stops being wanted (another
+	 * file, Lock, unmount), so its grant is released instead of applied.
+	 */
+	const editRequest = useRef(0);
 	/**
 	 * Exact row counts the table view settled. A stats batch that lands later
 	 * carries the capped count, so it must not overwrite these.
@@ -166,6 +185,10 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setQueryParams({});
 		setQueryRun(null);
 		setQueryPlan(false);
+		editRequest.current += 1;
+		setEditGrant(null);
+		setEditingBusy(false);
+		setEditingError(null);
 
 		window.maestro.sqlite
 			.open(filePath)
@@ -195,6 +218,53 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 			void window.maestro.sqlite.close(handle);
 		};
 	}, [handle]);
+
+	// -- Editing unlock ----------------------------------------------------
+
+	// Release the grant whenever it stops being this tab's: Lock clears it,
+	// another file replaces it, unmount drops it. One place, so no path forgets.
+	useEffect(() => {
+		if (!editGrant) return;
+		return () => {
+			void window.maestro.sqlite.disableEditing(editGrant.handle, editGrant.editToken);
+		};
+	}, [editGrant]);
+
+	// An enable request still in flight at unmount must not leave a grant behind.
+	useEffect(
+		() => () => {
+			editRequest.current += 1;
+		},
+		[]
+	);
+
+	const enableEditing = useCallback(() => {
+		if (!handle) return;
+		const request = ++editRequest.current;
+		setEditingBusy(true);
+		setEditingError(null);
+		window.maestro.sqlite
+			.enableEditing(handle)
+			.then((grant) => {
+				if (request !== editRequest.current) {
+					void window.maestro.sqlite.disableEditing(grant.handle, grant.editToken);
+					return;
+				}
+				setEditGrant(grant);
+				setEditingBusy(false);
+			})
+			.catch((error: unknown) => {
+				if (request !== editRequest.current) return;
+				setEditingError(ipcErrorMessage(error));
+				setEditingBusy(false);
+			});
+	}, [handle]);
+
+	const disableEditing = useCallback(() => {
+		editRequest.current += 1;
+		setEditGrant(null);
+		setEditingBusy(false);
+	}, []);
 
 	// -- Measure row counts and sizes, batch by batch -----------------------
 
@@ -349,8 +419,16 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 						: 'Empty database'}
 				</span>
 				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
-					{formatSize(info.fileBytes)} - read-only
+					{formatSize(info.fileBytes)}
 				</span>
+				<SqliteEditingSwitch
+					enabled={editGrant !== null}
+					busy={editingBusy}
+					error={editingError}
+					onEnable={enableEditing}
+					onDisable={disableEditing}
+					theme={theme}
+				/>
 				<SqliteDatabaseFacts
 					// One mount per open database, so the auto-check rule and the
 					// verdict never carry over from another file.

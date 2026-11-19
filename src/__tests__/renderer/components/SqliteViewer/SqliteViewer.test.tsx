@@ -129,6 +129,8 @@ let cancelQuery: ReturnType<typeof vi.fn>;
 let exportQuery: ReturnType<typeof vi.fn>;
 let readQueryHistory: ReturnType<typeof vi.fn>;
 let forgetQueryHistory: ReturnType<typeof vi.fn>;
+let enableEditing: ReturnType<typeof vi.fn>;
+let disableEditing: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -326,6 +328,8 @@ beforeEach(() => {
 	forgetQueryHistory = vi.fn(
 		async (): Promise<SqliteQueryHistory> => ({ path: '/data/app.db', entries: [] })
 	);
+	enableEditing = vi.fn(async (handle: string) => ({ handle, editToken: 'token-1' }));
+	disableEditing = vi.fn().mockResolvedValue(true);
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
@@ -344,6 +348,8 @@ beforeEach(() => {
 			exportQuery,
 			readQueryHistory,
 			forgetQueryHistory,
+			enableEditing,
+			disableEditing,
 			close,
 		},
 		dialog: { saveFile },
@@ -1224,6 +1230,80 @@ describe('SqliteViewer database summary', () => {
 		expect(await screen.findByTestId('sqlite-integrity-ok')).toBeInTheDocument();
 		expect(checkIntegrity).toHaveBeenCalledTimes(2);
 		expect(checkIntegrity).toHaveBeenLastCalledWith('h1', 'quick');
+	});
+});
+
+describe('SqliteViewer editing unlock', () => {
+	it('opens read-only and asks for nothing until editing is enabled', async () => {
+		renderViewer();
+		const strip = await screen.findByTestId('sqlite-editing');
+		expect(strip).toHaveTextContent('read-only');
+		expect(screen.getByTestId('sqlite-editing-enable')).toHaveTextContent('Enable editing');
+		expect(enableEditing).not.toHaveBeenCalled();
+	});
+
+	it('enables editing for this tab in one click, and Lock releases the grant', async () => {
+		renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		expect(enableEditing).toHaveBeenCalledWith('h1');
+		expect(await screen.findByTestId('sqlite-editing-disable')).toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-editing')).toHaveTextContent('editing enabled');
+		expect(disableEditing).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTestId('sqlite-editing-disable'));
+		expect(await screen.findByTestId('sqlite-editing-enable')).toBeInTheDocument();
+		expect(disableEditing).toHaveBeenCalledWith('h1', 'token-1');
+		expect(disableEditing).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows why editing was refused, and stays read-only', async () => {
+		enableEditing.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:enableEditing': Error: You do not have permission to write /data/app.db."
+			)
+		);
+		renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		expect(await screen.findByTestId('sqlite-editing-error')).toHaveTextContent(
+			'You do not have permission to write /data/app.db.'
+		);
+		expect(screen.getByTestId('sqlite-editing')).toHaveTextContent('read-only');
+		expect(screen.getByTestId('sqlite-editing-enable')).not.toBeDisabled();
+	});
+
+	it('releases the grant when the tab goes away', async () => {
+		const view = renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-editing-disable');
+		view.unmount();
+		expect(disableEditing).toHaveBeenCalledWith('h1', 'token-1');
+	});
+
+	it('starts read-only on another file and releases the old grant', async () => {
+		const view = renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-editing-disable');
+
+		open.mockResolvedValue({ ...INFO, handle: 'h2', displayPath: '/data/other.db' });
+		view.rerender(<SqliteViewer filePath="/data/other.db" fileName="other.db" theme={mockTheme} />);
+		expect(disableEditing).toHaveBeenCalledWith('h1', 'token-1');
+		expect(await screen.findByTestId('sqlite-editing-enable')).toBeInTheDocument();
+	});
+
+	it('releases a grant that arrives after the tab went away', async () => {
+		let resolveGrant: (grant: { handle: string; editToken: string }) => void = () => {};
+		enableEditing.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveGrant = resolve;
+			})
+		);
+		const view = renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		view.unmount();
+		await act(async () => {
+			resolveGrant({ handle: 'h1', editToken: 'late' });
+		});
+		expect(disableEditing).toHaveBeenCalledWith('h1', 'late');
 	});
 });
 

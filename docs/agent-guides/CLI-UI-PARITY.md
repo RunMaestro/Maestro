@@ -559,6 +559,16 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    reachable without it: an agent reads the file, quotes `path:lines` itself,
    and hands the text over with `dispatch` / `send`; replacing text is an edit
    to the file on disk, which an agent makes directly and `open-file` shows.
+5. **The SQLite viewer's "Enable editing" unlock** (File Preview on a
+   database: the summary strip's per-tab switch, off by default). The tab's
+   grant is a token only that tab holds (`enableSqliteEditing()` in
+   `src/main/sqlite/sqlite-editing.ts`), so a CLI call never inherits or flips
+   a tab's unlock: the click is the person's consent for that tab. The CLI
+   mirror is a per-call unlock flag on each `maestro-cli sqlite` WRITE verb,
+   which enables editing for that one call and disables it after through the
+   same two functions. No write verb exists yet, so there is nothing for a
+   CLI call to unlock; the flag lands with the first one (the Phase 3 cell
+   edit).
 
 ### Federation: remaining gaps
 

@@ -7,7 +7,8 @@
  * read every table's column names for SQL completion,
  * read a window of a table's rows, count its rows, run a read-only statement
  * (and stop it), export a statement's result to a file, read and forget the
- * file's query history, save a BLOB to a file, close the handle.
+ * file's query history, save a BLOB to a file, turn this tab's editing on
+ * and off, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
@@ -18,6 +19,7 @@ import type {
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
+	SqliteEditingGrant,
 	SqliteIntegrityMode,
 	SqliteIntegrityResult,
 	SqliteObjectKind,
@@ -142,6 +144,17 @@ export function createSqliteApi() {
 		 */
 		saveBlob: (request: SqliteBlobRequest): Promise<SqliteBlobSaved> =>
 			ipcRenderer.invoke('sqlite:saveBlob', request),
+
+		/**
+		 * Turn editing on for this tab. Resolves the tab's grant; rejects with
+		 * the reason when the file cannot be written.
+		 */
+		enableEditing: (handle: string): Promise<SqliteEditingGrant> =>
+			ipcRenderer.invoke('sqlite:enableEditing', handle),
+
+		/** Turn this tab's editing off again. Resolves whether a live grant was revoked. */
+		disableEditing: (handle: string, editToken: string): Promise<boolean> =>
+			ipcRenderer.invoke('sqlite:disableEditing', handle, editToken),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

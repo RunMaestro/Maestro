@@ -247,6 +247,7 @@ import type {
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
+	SqliteEditingGrant,
 	SqliteIntegrityMode,
 	SqliteIntegrityResult,
 	SqliteObjectKind,
@@ -2008,6 +2009,8 @@ interface MaestroAPI {
 		readQueryHistory: (handle: string) => Promise<SqliteQueryHistory>;
 		forgetQueryHistory: (handle: string, entryId: string | null) => Promise<SqliteQueryHistory>;
 		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
+		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
+		disableEditing: (handle: string, editToken: string) => Promise<boolean>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

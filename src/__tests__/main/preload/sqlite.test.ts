@@ -98,6 +98,16 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:saveBlob', request);
 	});
 
+	it('turns editing on and off', async () => {
+		mockInvoke.mockResolvedValue({ handle: 'h1', editToken: 't1' });
+		await expect(api.enableEditing('h1')).resolves.toEqual({ handle: 'h1', editToken: 't1' });
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:enableEditing', 'h1');
+
+		mockInvoke.mockResolvedValue(true);
+		await expect(api.disableEditing('h1', 't1')).resolves.toBe(true);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:disableEditing', 'h1', 't1');
+	});
+
 	it('runs a query and stops one by id', async () => {
 		const request = { handle: 'h1', sql: 'SELECT 1', queryId: 'q1' };
 		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });

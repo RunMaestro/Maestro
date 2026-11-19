@@ -29,6 +29,18 @@ export interface SqliteDatabaseInfo {
 	fileBytes: number;
 }
 
+/**
+ * One tab's permission to write to an open database: what "Enable editing"
+ * returns (src/main/sqlite/sqlite-editing.ts). Every write sends `editToken`
+ * back. It dies when the tab locks again or closes, or the handle is released;
+ * other tabs on the same file never share it.
+ */
+export interface SqliteEditingGrant {
+	handle: string;
+	/** Opaque. */
+	editToken: string;
+}
+
 /** The four kinds of schema object the table-list rail shows, in rail order. */
 export type SqliteObjectKind = 'table' | 'view' | 'index' | 'trigger';
 

@@ -39,6 +39,10 @@ const query = vi.hoisted(() => ({
 	cancelSqliteQuery: vi.fn(),
 	exportSqliteQuery: vi.fn(),
 }));
+const editing = vi.hoisted(() => ({
+	enableSqliteEditing: vi.fn(),
+	disableSqliteEditing: vi.fn(),
+}));
 const history = vi.hoisted(() => ({
 	readSqliteQueryHistory: vi.fn(),
 	forgetSqliteQueryHistory: vi.fn(),
@@ -53,6 +57,7 @@ vi.mock('../../../../main/sqlite/sqlite-summary', () => summary);
 vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
 vi.mock('../../../../main/sqlite/sqlite-query', () => query);
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => history);
+vi.mock('../../../../main/sqlite/sqlite-editing', () => editing);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 import { splitSqliteErrorOffset } from '../../../../shared/sqlite/queryError';
@@ -72,6 +77,8 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:checkIntegrity',
 			'sqlite:close',
 			'sqlite:countRows',
+			'sqlite:disableEditing',
+			'sqlite:enableEditing',
 			'sqlite:exportQuery',
 			'sqlite:forgetQueryHistory',
 			'sqlite:listObjects',
@@ -248,6 +255,19 @@ describe('SQLite IPC handlers', () => {
 		expect(history.forgetSqliteQueryHistory).toHaveBeenCalledWith('h1', 'id-1');
 		await invoke('sqlite:forgetQueryHistory', 'h1', undefined);
 		expect(history.forgetSqliteQueryHistory).toHaveBeenLastCalledWith('h1', null);
+	});
+
+	it("turns a tab's editing on by handle and off by its token", async () => {
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 't1' });
+		await expect(invoke('sqlite:enableEditing', 'h1')).resolves.toEqual({
+			handle: 'h1',
+			editToken: 't1',
+		});
+		expect(editing.enableSqliteEditing).toHaveBeenCalledWith('h1');
+
+		editing.disableSqliteEditing.mockReturnValue(true);
+		await expect(invoke('sqlite:disableEditing', 'h1', 't1')).resolves.toBe(true);
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 't1');
 	});
 
 	it('closes by handle', async () => {

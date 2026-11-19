@@ -10,7 +10,8 @@
  * window of a read-only statement's result, an export writes a statement's
  * whole result to a file in a child process, the history calls read and
  * forget what ran against the file, a BLOB save writes the
- * value to disk here rather than shipping it, and the read-only
+ * value to disk here rather than shipping it, the editing switch hands one
+ * tab a write token (sqlite-editing.ts) without writing anything, and the read-only
  * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
@@ -23,6 +24,7 @@ import type {
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
+	SqliteEditingGrant,
 	SqliteIntegrityMode,
 	SqliteIntegrityResult,
 	SqliteObjectKind,
@@ -42,6 +44,7 @@ import { withSqliteErrorOffset } from '../../../shared/sqlite/queryError';
 import { saveSqliteBlob } from '../../sqlite/sqlite-blob';
 import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
+import { disableSqliteEditing, enableSqliteEditing } from '../../sqlite/sqlite-editing';
 import { checkSqliteIntegrity } from '../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
 import { cancelSqliteQuery, exportSqliteQuery, runSqliteQuery } from '../../sqlite/sqlite-query';
@@ -180,6 +183,19 @@ export function registerSqliteHandlers(): void {
 	ipcMain.handle(
 		'sqlite:saveBlob',
 		async (_event, request: SqliteBlobRequest): Promise<SqliteBlobSaved> => saveSqliteBlob(request)
+	);
+
+	// The tab's "Enable editing" switch. Off by default; turning it on checks
+	// that the file could be written and hands this tab alone a token every
+	// write must send back. Nothing is written by either call.
+	ipcMain.handle(
+		'sqlite:enableEditing',
+		async (_event, handle: string): Promise<SqliteEditingGrant> => enableSqliteEditing(handle)
+	);
+	ipcMain.handle(
+		'sqlite:disableEditing',
+		async (_event, handle: string, editToken: string): Promise<boolean> =>
+			disableSqliteEditing(handle, editToken)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are
