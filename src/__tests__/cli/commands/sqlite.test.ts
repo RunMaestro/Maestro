@@ -208,6 +208,11 @@ const USERS_SCHEMA = {
 	foreignKeys: [
 		{ table: 'users', from: ['uid'], to: [null], onUpdate: 'NO ACTION', onDelete: 'CASCADE' },
 	],
+	editability: {
+		editable: true,
+		identity: { kind: 'rowid', alias: 'rowid', rowidColumn: 'id' },
+		readOnlyColumns: [],
+	},
 };
 
 function respondSchema(schema: Record<string, unknown> = USERS_SCHEMA) {
@@ -259,6 +264,9 @@ describe('sqlite schema', () => {
 		expect(out).toMatch(/uid\s+INTEGER\s+INTEGER\s+0\s+users \(primary key\)\s+not null/);
 		expect(out).toContain('Foreign keys (1)');
 		expect(out).toContain('(uid) -> users (primary key) ON DELETE CASCADE');
+		expect(out).toContain(
+			'Editing\n  Editable. An edit names its row by rowid, which is the column id.'
+		);
 		expect(out).toContain('  CREATE TABLE orders (');
 		expect(out).toContain('    uid INTEGER REFERENCES users');
 	});
@@ -288,6 +296,22 @@ describe('sqlite schema', () => {
 		expect(out).toMatch(/email\s+ASC\s+BINARY/);
 		expect(out).toMatch(/<expression>\s+DESC\s+NOCASE/);
 		expect(out).toContain('no CREATE statement of its own');
+		expect(out).not.toContain('Editing');
+	});
+
+	it('prints why a table is read-only', async () => {
+		respondSchema({
+			...USERS_SCHEMA,
+			editability: {
+				editable: false,
+				code: 'no-identity',
+				reason: 'orders has no primary key, so an edit cannot name one row.',
+			},
+		});
+		await sqliteSchema(DB, 'orders', {});
+		expect(logged()).toContain(
+			'Editing\n  Read-only. orders has no primary key, so an edit cannot name one row.'
+		);
 	});
 
 	it('prints the schema merged with the path under --json', async () => {

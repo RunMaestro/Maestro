@@ -89,6 +89,17 @@ vi.mock('../../../main/sqlite/sqlite-objects', async (importOriginal) => ({
 	readSqliteObjectSummaries: () => state.objects,
 }));
 
+// Editability has its own tests (sqlite-identity.test.ts); here it only has
+// to reach the page. reachableRowidAlias stays real.
+vi.mock('../../../main/sqlite/sqlite-identity', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-identity')>()),
+	resolveSqliteEditability: (_db: unknown, object: { name: string }) => ({
+		editable: false,
+		code: 'no-identity',
+		reason: `resolved for ${object.name}`,
+	}),
+}));
+
 import { SQLITE_ROWS_MAX_LIMIT, readSqliteRows } from '../../../main/sqlite/sqlite-rows';
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../../shared/sqlite/cells';
 
@@ -391,6 +402,23 @@ describe('readSqliteRows', () => {
 			end: 4,
 			suggestion: 'name',
 		});
+	});
+
+	it('says whether the rows can be edited, also when the filter does not parse', () => {
+		const page = readSqliteRows({ handle: 'h1', name: 'users', offset: 0, limit: 2 });
+		expect(page.editability).toEqual({
+			editable: false,
+			code: 'no-identity',
+			reason: 'resolved for users',
+		});
+		const problem = readSqliteRows({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 2,
+			filter: 'nmae = bob',
+		});
+		expect(problem.editability).toMatchObject({ reason: 'resolved for users' });
 	});
 
 	it("binds a filter literal by the column's affinity", () => {

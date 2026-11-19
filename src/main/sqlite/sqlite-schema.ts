@@ -29,6 +29,7 @@ import type {
 	SqliteObjectSchema,
 } from '../../shared/sqlite/types';
 import { getSqliteDatabase } from './sqlite-database';
+import { resolveSqliteEditability } from './sqlite-identity';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
 
 interface TableXinfoRow {
@@ -218,7 +219,8 @@ export function readSqliteColumnCatalog(handle: string): SqliteColumnCatalog {
 }
 
 /**
- * Read the structure of one schema object. Throws when no object has that
+ * Read the structure of one schema object, and for a table or view whether
+ * its rows can be edited (sqlite-identity.ts). Throws when no object has that
  * name; a failure to read the columns themselves (a virtual-table module this
  * build lacks, a view over a dropped table) is reported on `error` instead, so
  * the `CREATE` SQL still reaches the reader.
@@ -260,6 +262,11 @@ export function readSqliteObjectSchema(
 		// Expected for a virtual table whose module is not in this build, or a
 		// view whose source table was dropped. The SQL still explains the object.
 		schema.error = error instanceof Error ? error.message : String(error);
+	}
+	if (object.kind === 'table' || object.kind === 'view') {
+		// Outside the try: it never throws, and a table whose columns cannot be
+		// read still deserves the reason it is read-only.
+		schema.editability = resolveSqliteEditability(db, object);
 	}
 	return schema;
 }

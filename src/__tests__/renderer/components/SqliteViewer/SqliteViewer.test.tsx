@@ -15,6 +15,7 @@ import type {
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
+	SqliteEditability,
 	SqliteIntegrityResult,
 	SqliteObjectList,
 	SqliteObjectSchema,
@@ -160,6 +161,18 @@ function countReply(request: SqliteCountRequest, matched: number, complete = tru
 }
 
 /** A page of `count` rows of events, starting at `offset`. */
+/** events is WITHOUT ROWID, keyed by id, with a generated payload column. */
+const EVENTS_EDITABILITY: SqliteEditability = {
+	editable: true,
+	identity: { kind: 'primary-key', columns: ['id'], keyMayBeNull: false },
+	readOnlyColumns: [
+		{
+			name: 'payload',
+			reason: 'payload is a generated column: SQLite calculates its value from other columns.',
+		},
+	],
+};
+
 function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
 	const count = Math.max(0, Math.min(request.limit, total - request.offset));
 	return {
@@ -181,6 +194,7 @@ function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
 		orderedBy: request.sort ? [request.sort.column, 'id'] : ['id'],
 		elapsedMs: 3,
 		filtered: Boolean(request.filter),
+		editability: EVENTS_EDITABILITY,
 	};
 }
 
@@ -231,6 +245,7 @@ const EVENTS_SCHEMA: SqliteObjectSchema = {
 	foreignKeys: [
 		{ table: 'users', from: ['user_id'], to: [null], onUpdate: 'NO ACTION', onDelete: 'CASCADE' },
 	],
+	editability: EVENTS_EDITABILITY,
 };
 
 const INDEX_SCHEMA: SqliteObjectSchema = {
@@ -524,6 +539,40 @@ describe('SqliteViewer schema pane', () => {
 		expect(screen.getByTestId('sqlite-schema-foreign-key')).toHaveTextContent(
 			'(user_id) -> users (primary key) ON DELETE CASCADE'
 		);
+	});
+
+	it('says how an edit names a row, and which columns it cannot write', async () => {
+		renderViewer();
+		const editing = await screen.findByTestId('sqlite-schema-editability');
+		expect(editing).toHaveTextContent('rows keyed by primary key');
+		expect(editing).toHaveTextContent(
+			'Editable. An edit names its row by the primary key (id). Generated columns cannot be edited: payload.'
+		);
+	});
+
+	it('says why a view is read-only, and nothing for an index', async () => {
+		readSchema.mockImplementation(async (_handle: string, name: string) =>
+			name === 'users_email'
+				? INDEX_SCHEMA
+				: {
+						...EVENTS_SCHEMA,
+						name,
+						editability: {
+							editable: false,
+							code: 'view',
+							reason: `${name} is a view: it has no rows of its own.`,
+						},
+					}
+		);
+		renderViewer();
+		const editing = await screen.findByTestId('sqlite-schema-editability');
+		expect(editing).toHaveTextContent('read-only: view');
+		expect(editing).toHaveTextContent('Read-only. events is a view: it has no rows of its own.');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
+		await waitFor(() =>
+			expect(screen.getAllByTestId('sqlite-schema-index-column')).toHaveLength(2)
+		);
+		expect(screen.queryByTestId('sqlite-schema-editability')).not.toBeInTheDocument();
 	});
 
 	it('shows the original CREATE statement', async () => {
@@ -1288,6 +1337,41 @@ describe('SqliteViewer editing unlock', () => {
 		view.rerender(<SqliteViewer filePath="/data/other.db" fileName="other.db" theme={mockTheme} />);
 		expect(disableEditing).toHaveBeenCalledWith('h1', 'token-1');
 		expect(await screen.findByTestId('sqlite-editing-enable')).toBeInTheDocument();
+	});
+
+	it('says in the rows footer how an edit names a row, only once editing is enabled', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-row-0');
+		expect(screen.queryByTestId('sqlite-rows-editability')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
+		const label = await screen.findByTestId('sqlite-rows-editability');
+		expect(label).toHaveTextContent('rows keyed by primary key');
+		expect(label).toHaveAttribute(
+			'title',
+			'Editable. An edit names its row by the primary key (id). Generated columns cannot be edited: payload.'
+		);
+
+		fireEvent.click(screen.getByTestId('sqlite-editing-disable'));
+		await screen.findByTestId('sqlite-editing-enable');
+		expect(screen.queryByTestId('sqlite-rows-editability')).not.toBeInTheDocument();
+	});
+
+	it('shows why the rows are read-only, in the warning color', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => ({
+			...eventsPage(request),
+			editability: {
+				editable: false,
+				code: 'virtual-table',
+				reason: 'events is a virtual table (module fts5).',
+			},
+		}));
+		renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		const label = await screen.findByTestId('sqlite-rows-editability');
+		expect(label).toHaveTextContent('read-only: virtual table');
+		expect(label).toHaveAttribute('title', 'Read-only. events is a virtual table (module fts5).');
+		expect(label).toHaveStyle({ color: mockTheme.colors.warning });
 	});
 
 	it('releases a grant that arrives after the tab went away', async () => {

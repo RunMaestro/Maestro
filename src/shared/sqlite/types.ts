@@ -180,6 +180,68 @@ export interface SqliteIndexColumnSchema {
 /** How an index came to exist, as `PRAGMA index_list` reports it. */
 export type SqliteIndexOrigin = 'create-index' | 'unique' | 'primary-key';
 
+/**
+ * How an edit names the one row it changes (src/main/sqlite/sqlite-identity.ts).
+ * The rowid comes first; a table that has none reachable falls back to its
+ * primary key.
+ */
+export type SqliteRowIdentity =
+	| {
+			kind: 'rowid';
+			/** The name a statement reads the rowid by: `rowid`, `_rowid_`, or `oid`. */
+			alias: string;
+			/**
+			 * The `INTEGER PRIMARY KEY` column that IS the rowid, or null when the
+			 * table has none. Editing this column changes the row's rowid.
+			 */
+			rowidColumn: string | null;
+	  }
+	| {
+			kind: 'primary-key';
+			/** The key columns, in key order. */
+			columns: string[];
+			/**
+			 * A rowid table's primary key allows NULL (a SQLite quirk) unless every
+			 * key column is NOT NULL. NULLs never compare equal, so a row whose key
+			 * holds one cannot be named. Always false for a `WITHOUT ROWID` table.
+			 */
+			keyMayBeNull: boolean;
+	  };
+
+/** Why a table or view cannot be edited at all. */
+export type SqliteReadOnlyCode =
+	| 'view'
+	| 'virtual-table'
+	| 'shadow-table'
+	| 'internal-table'
+	| 'no-identity'
+	| 'unreadable';
+
+/** One column an edit may not write, though its row can be edited. */
+export interface SqliteReadOnlyColumn {
+	name: string;
+	reason: string;
+}
+
+/**
+ * Whether the rows of a table or view can be edited, and if so how an edit
+ * names its row. Resolved in main by `resolveSqliteEditability()`; a write
+ * resolves it again there and never trusts the renderer's copy.
+ */
+export type SqliteEditability =
+	| {
+			editable: true;
+			identity: SqliteRowIdentity;
+			/** Columns no edit may write (generated columns), in table order. */
+			readOnlyColumns: SqliteReadOnlyColumn[];
+	  }
+	| {
+			editable: false;
+			code: SqliteReadOnlyCode;
+			/** A full sentence for the reader, naming the object. */
+			reason: string;
+	  };
+
 /** The structure of one schema object, read on demand for the content pane. */
 export interface SqliteObjectSchema {
 	name: string;
@@ -209,6 +271,8 @@ export interface SqliteObjectSchema {
 	 * `CREATE` SQL is still returned.
 	 */
 	error?: string;
+	/** Set for a table or view: whether its rows can be edited, and by what identity. */
+	editability?: SqliteEditability;
 }
 
 /** One column as the SQL editor's completion offers it. */
@@ -322,6 +386,8 @@ export interface SqliteRowsPage {
 	 * empty and `filtered` is false, so a caller keeps showing what it had.
 	 */
 	filterProblem?: SqliteFilterProblem;
+	/** Whether the object's rows can be edited, and how an edit names a row. */
+	editability: SqliteEditability;
 }
 
 /**

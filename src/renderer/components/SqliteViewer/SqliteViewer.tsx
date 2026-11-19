@@ -554,6 +554,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 											focusFilterRequested={focusFilterRequested}
 											onFilterFocused={handleFilterFocused}
 											onRowCountSettled={handleRowCountSettled}
+											editingEnabled={editGrant !== null}
 											theme={theme}
 										/>
 									</div>

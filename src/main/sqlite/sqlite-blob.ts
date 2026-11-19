@@ -31,12 +31,8 @@ import * as path from 'path';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type { SqliteBlobRequest, SqliteBlobSaved } from '../../shared/sqlite/types';
 import { getSqliteDatabase } from './sqlite-database';
-import {
-	reachableRowidAlias,
-	resolveSqliteRowSource,
-	sqliteRowOrder,
-	windowBound,
-} from './sqlite-rows';
+import { reachableRowidAlias } from './sqlite-identity';
+import { resolveSqliteRowSource, sqliteRowOrder, windowBound } from './sqlite-rows';
 
 /** A rowid as the wire carries it: decimal text, signed, up to 64 bits. */
 const ROWID_TEXT = /^-?\d{1,19}$/;

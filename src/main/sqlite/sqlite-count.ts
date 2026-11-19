@@ -41,7 +41,8 @@ import type {
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import { yieldToEventLoop } from '../utils/concurrency';
 import { getSqliteDatabase } from './sqlite-database';
-import { reachableRowidAlias, resolveSqliteRowSource } from './sqlite-rows';
+import { reachableRowidAlias } from './sqlite-identity';
+import { resolveSqliteRowSource } from './sqlite-rows';
 
 /** Rows walked by one counting statement. */
 export const SQLITE_COUNT_CHUNK_ROWS = 20_000;

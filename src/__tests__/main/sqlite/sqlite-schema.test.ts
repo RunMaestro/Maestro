@@ -68,6 +68,16 @@ vi.mock('../../../main/sqlite/sqlite-objects', async (importOriginal) => ({
 	readSqliteObjectSummaries: () => state.objects,
 }));
 
+// Editability has its own tests (sqlite-identity.test.ts); here it only has
+// to reach the schema of a table or view.
+vi.mock('../../../main/sqlite/sqlite-identity', () => ({
+	resolveSqliteEditability: (_db: unknown, object: { name: string }) => ({
+		editable: false,
+		code: 'no-identity',
+		reason: `resolved for ${object.name}`,
+	}),
+}));
+
 import {
 	readSqliteColumnCatalog,
 	readSqliteObjectSchema,
@@ -174,6 +184,17 @@ beforeEach(() => {
 });
 
 describe('readSqliteObjectSchema', () => {
+	it('says whether a table or view can be edited, even when its columns cannot be read', () => {
+		expect(readSqliteObjectSchema('h1', 'users').editability).toMatchObject({
+			reason: 'resolved for users',
+		});
+		expect(readSqliteObjectSchema('h1', 'broken').editability).toMatchObject({
+			reason: 'resolved for broken',
+		});
+		expect(readSqliteObjectSchema('h1', 'orders_note').editability).toBeUndefined();
+		expect(readSqliteObjectSchema('h1', 'audit').editability).toBeUndefined();
+	});
+
 	it('reads a table: declared type, affinity, nullability, default, PK, generated', () => {
 		const schema = readSqliteObjectSchema('h1', 'users');
 		expect(schema).toMatchObject({

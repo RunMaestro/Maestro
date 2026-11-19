@@ -56,6 +56,7 @@ import {
 import {
 	SQLITE_INDEX_ORIGIN_LABELS,
 	formatSqliteColumnReferences,
+	formatSqliteEditability,
 	formatSqliteForeignKey,
 	formatSqliteIndexColumn,
 	sqliteColumnTags,
@@ -333,6 +334,10 @@ function formatSchemaText(database: SqliteDatabaseInfo, schema: SqliteObjectSche
 	if (schema.foreignKeys.length > 0) {
 		lines.push('', `Foreign keys (${schema.foreignKeys.length})`);
 		lines.push(...schema.foreignKeys.map((key) => `  ${formatSqliteForeignKey(key)}`));
+	}
+
+	if (schema.editability) {
+		lines.push('', 'Editing', `  ${formatSqliteEditability(schema.editability)}`);
 	}
 
 	if (schema.index) {

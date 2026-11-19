@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 
 import {
 	formatSqliteColumnReferences,
+	formatSqliteEditability,
 	formatSqliteForeignKey,
 	formatSqliteIndexColumn,
 	formatSqliteReference,
 	sqliteColumnAffinity,
 	sqliteColumnTags,
+	sqliteEditabilityLabel,
 	sqliteMissingSqlNote,
 } from '../../../shared/sqlite/schema';
 import type { SqliteColumnSchema } from '../../../shared/sqlite/types';
@@ -128,5 +130,49 @@ describe('column and index labels', () => {
 	it('explains a missing CREATE statement only when there is none', () => {
 		expect(sqliteMissingSqlNote({ kind: 'table', sql: 'CREATE TABLE t(a)' })).toBeNull();
 		expect(sqliteMissingSqlNote({ kind: 'index', sql: null })).toMatch(/UNIQUE or PRIMARY KEY/);
+	});
+});
+
+describe('editability text', () => {
+	it('says a rowid table is keyed by rowid, naming the column that is the rowid', () => {
+		const editability = {
+			editable: true as const,
+			identity: { kind: 'rowid' as const, alias: 'rowid', rowidColumn: 'id' },
+			readOnlyColumns: [],
+		};
+		expect(sqliteEditabilityLabel(editability)).toBe('rows keyed by rowid');
+		expect(formatSqliteEditability(editability)).toBe(
+			'Editable. An edit names its row by rowid, which is the column id.'
+		);
+		expect(
+			formatSqliteEditability({
+				...editability,
+				identity: { ...editability.identity, rowidColumn: null },
+			})
+		).toBe('Editable. An edit names its row by rowid.');
+	});
+
+	it('names the primary key, warns about a NULL key, and lists generated columns', () => {
+		const editability = {
+			editable: true as const,
+			identity: { kind: 'primary-key' as const, columns: ['a', 'b'], keyMayBeNull: true },
+			readOnlyColumns: [{ name: 'full', reason: 'generated' }],
+		};
+		expect(sqliteEditabilityLabel(editability)).toBe('rows keyed by primary key');
+		expect(formatSqliteEditability(editability)).toBe(
+			'Editable. An edit names its row by the primary key (a, b). A row whose key holds NULL cannot be edited. Generated columns cannot be edited: full.'
+		);
+	});
+
+	it('gives the short code and the whole reason for a read-only object', () => {
+		const editability = {
+			editable: false as const,
+			code: 'virtual-table' as const,
+			reason: 'docs is a virtual table (module fts5).',
+		};
+		expect(sqliteEditabilityLabel(editability)).toBe('read-only: virtual table');
+		expect(formatSqliteEditability(editability)).toBe(
+			'Read-only. docs is a virtual table (module fts5).'
+		);
 	});
 });

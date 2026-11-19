@@ -1,17 +1,19 @@
 /**
  * Pure helpers over a schema object's structure, shared by the main-process
  * schema reader, the viewer's schema pane, and `maestro-cli sqlite schema`, so
- * affinity is derived once and references and defaults read the same
- * everywhere.
+ * affinity is derived once and references, defaults, and editability read the
+ * same everywhere.
  */
 
 import type {
 	SqliteAffinity,
 	SqliteColumnSchema,
+	SqliteEditability,
 	SqliteForeignKey,
 	SqliteIndexColumnSchema,
 	SqliteIndexOrigin,
 	SqliteObjectSchema,
+	SqliteReadOnlyCode,
 } from './types';
 
 /**
@@ -96,4 +98,48 @@ export function sqliteMissingSqlNote(
 	return schema.kind === 'index'
 		? "SQLite created this index to enforce a UNIQUE or PRIMARY KEY constraint, so it has no CREATE statement of its own. The constraint is in the table's CREATE TABLE."
 		: 'SQLite stores no CREATE statement for this object.';
+}
+
+/** Why an object is read-only, in two or three words (the table view's footer). */
+export const SQLITE_READ_ONLY_LABELS: Record<SqliteReadOnlyCode, string> = {
+	view: 'view',
+	'virtual-table': 'virtual table',
+	'shadow-table': 'shadow table',
+	'internal-table': 'internal table',
+	'no-identity': 'no row identity',
+	unreadable: 'columns unreadable',
+};
+
+/** Short: `rows keyed by rowid`, `rows keyed by primary key`, or `read-only: view`. */
+export function sqliteEditabilityLabel(editability: SqliteEditability): string {
+	if (!editability.editable) return `read-only: ${SQLITE_READ_ONLY_LABELS[editability.code]}`;
+	return editability.identity.kind === 'rowid'
+		? 'rows keyed by rowid'
+		: 'rows keyed by primary key';
+}
+
+/**
+ * In full: how an edit names a row and which columns it may not write, or the
+ * whole reason the object is read-only.
+ */
+export function formatSqliteEditability(editability: SqliteEditability): string {
+	if (!editability.editable) return `Read-only. ${editability.reason}`;
+	const { identity, readOnlyColumns } = editability;
+	const sentences =
+		identity.kind === 'rowid'
+			? [
+					identity.rowidColumn
+						? `Editable. An edit names its row by rowid, which is the column ${identity.rowidColumn}.`
+						: 'Editable. An edit names its row by rowid.',
+				]
+			: [
+					`Editable. An edit names its row by the primary key (${identity.columns.join(', ')}).`,
+					...(identity.keyMayBeNull ? ['A row whose key holds NULL cannot be edited.'] : []),
+				];
+	if (readOnlyColumns.length > 0) {
+		sentences.push(
+			`Generated columns cannot be edited: ${readOnlyColumns.map((column) => column.name).join(', ')}.`
+		);
+	}
+	return sentences.join(' ');
 }

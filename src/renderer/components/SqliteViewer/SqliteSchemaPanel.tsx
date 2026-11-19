@@ -7,6 +7,8 @@
  * STRICT), nullability, default, primary key position, and the foreign keys
  * each column takes part in. An index shows its key columns. Every object
  * ends with its original `CREATE` statement from `sqlite_master`, verbatim.
+ * A table or view also says whether its rows can be edited: how an edit
+ * names a row (rowid, else the primary key), or why it is read-only.
  *
  * The schema is read on selection over `sqlite:readSchema`. It is metadata
  * only, so it answers at once; a stale reply from an earlier selection is
@@ -24,8 +26,10 @@ import type {
 import {
 	SQLITE_INDEX_ORIGIN_LABELS,
 	formatSqliteColumnReferences,
+	formatSqliteEditability,
 	formatSqliteForeignKey,
 	formatSqliteIndexColumn,
+	sqliteEditabilityLabel,
 	sqliteMissingSqlNote,
 } from '../../../shared/sqlite/schema';
 import type { Theme } from '../../types';
@@ -185,6 +189,23 @@ function SchemaBody({ schema, theme }: { schema: SqliteObjectSchema; theme: Them
 							</li>
 						))}
 					</ul>
+				</Section>
+			)}
+
+			{schema.editability && (
+				<Section title="Editing" theme={theme}>
+					<div
+						className="flex items-start gap-2 text-xs"
+						style={{ color: theme.colors.textMain }}
+						data-testid="sqlite-schema-editability"
+					>
+						<MiniBadge
+							label={sqliteEditabilityLabel(schema.editability)}
+							theme={theme}
+							color={schema.editability.editable ? undefined : theme.colors.textDim}
+						/>
+						<span>{formatSqliteEditability(schema.editability)}</span>
+					</div>
 				</Section>
 			)}
 

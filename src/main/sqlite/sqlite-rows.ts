@@ -24,7 +24,8 @@
  *   - **A row can be named again.** An ordinary table's rows come back with
  *     their rowid (`rowids`), so a later call (saving a BLOB) reads exactly
  *     that row whatever the order or filter. A view, a virtual table, or a
- *     `WITHOUT ROWID` table has none to offer.
+ *     `WITHOUT ROWID` table has none to offer. The page also says whether
+ *     the rows can be edited and by what identity (sqlite-identity.ts).
  *
  * better-sqlite3 is synchronous, so a sort on an unindexed column of a very
  * large table holds the main process while SQLite sorts, and a filter that
@@ -47,13 +48,11 @@ import type {
 } from '../../shared/sqlite/types';
 import { sqliteCellFromHead } from './sqlite-cell';
 import { getSqliteDatabase } from './sqlite-database';
+import { reachableRowidAlias, resolveSqliteEditability } from './sqlite-identity';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
 
 /** Most rows one window may hold, whatever the caller asks for. */
 export const SQLITE_ROWS_MAX_LIMIT = 1000;
-
-/** The names SQLite answers to for a rowid, in the order we prefer them. */
-const ROWID_ALIASES = ['rowid', '_rowid_', 'oid'] as const;
 
 /**
  * A window bound as a non-negative integer; anything else is a caller bug.
@@ -64,24 +63,6 @@ export function windowBound(value: unknown, label: string): number {
 		throw new Error(`SQLite rows ${label} must be a non-negative number.`);
 	}
 	return Math.floor(value);
-}
-
-/**
- * The rowid alias a statement over this object can use, or null when it has
- * none: views, virtual tables, and `WITHOUT ROWID` tables have no rowid, and a
- * real column named `rowid` hides that alias, so the first name still free
- * wins. A table whose columns take all three names has no reachable rowid.
- * Shared with the row counter (sqlite-count.ts), which walks a table by it.
- */
-export function reachableRowidAlias(
-	object: SqliteObjectSummary,
-	columns: readonly SqliteResultColumn[]
-): string | null {
-	if (object.kind !== 'table' || object.tableType === 'virtual' || object.withoutRowid) {
-		return null;
-	}
-	const taken = new Set(columns.map((column) => column.name.toLowerCase()));
-	return ROWID_ALIASES.find((candidate) => !taken.has(candidate)) ?? null;
 }
 
 /**
@@ -227,6 +208,7 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 	// The rowid rides ahead of the cells, so a caller can name a row exactly
 	// (saving a BLOB, later an edit). Bare, with no `AS`, like the cells.
 	const rowidAlias = reachableRowidAlias(object, columns);
+	const editability = resolveSqliteEditability(db, object);
 
 	const cellList =
 		columns.length > 0 ? columns.map((column) => columnExpressions(column.name)).join(', ') : '1';
@@ -245,6 +227,7 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 			elapsedMs: 0,
 			filtered: false,
 			filterProblem: filter.problem,
+			editability,
 		};
 	}
 	const where = filter.compiled;
@@ -283,5 +266,6 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		orderedBy,
 		elapsedMs,
 		filtered: where !== null,
+		editability,
 	};
 }

@@ -39,6 +39,10 @@
  * the rowid its page carried, or for a view or `WITHOUT ROWID` table by its
  * position under the sort and filter the rows were read with; either way the
  * save is refused if the stored value no longer matches the cell.
+ *
+ * While the tab has editing enabled, the footer says how an edit would name a
+ * row (rowid, else the primary key) or why this object is read-only, from the
+ * `editability` each page carries (src/main/sqlite/sqlite-identity.ts).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -49,9 +53,11 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { formatSqliteRecordValue, sqliteBlobFileName } from '../../../shared/sqlite/cells';
 import { formatSqliteRowCount, sqliteConvergingRowTotal } from '../../../shared/sqlite/objects';
+import { formatSqliteEditability, sqliteEditabilityLabel } from '../../../shared/sqlite/schema';
 import type {
 	SqliteCellValue,
 	SqliteCountCursor,
+	SqliteEditability,
 	SqliteFilterProblem,
 	SqliteObjectSummary,
 	SqliteResultColumn,
@@ -146,6 +152,8 @@ interface SqliteTableViewProps {
 	onFilterFocused: () => void;
 	/** The unfiltered count settled: the rail can replace its capped count. */
 	onRowCountSettled?: (name: string, rowCount: number) => void;
+	/** This tab holds the editing unlock: say whether this object's rows can be edited. */
+	editingEnabled?: boolean;
 	theme: Theme;
 }
 
@@ -157,6 +165,7 @@ export function SqliteTableView({
 	focusFilterRequested,
 	onFilterFocused,
 	onRowCountSettled,
+	editingEnabled = false,
 	theme,
 }: SqliteTableViewProps) {
 	const [sort, setSort] = useState<SqliteSortSpec | null>(null);
@@ -166,6 +175,8 @@ export function SqliteTableView({
 	const [columns, setColumns] = useState<SqliteResultColumn[] | null>(null);
 	const [rows, setRows] = useState<SqliteCellValue[][]>([]);
 	const [lastPage, setLastPage] = useState<SqliteRowsPage | null>(null);
+	/** Whether this object's rows can be edited; every reply carries it, even a filter problem. */
+	const [editability, setEditability] = useState<SqliteEditability | null>(null);
 	/** The applied filter the rows on screen were read with. */
 	const [rowsFilter, setRowsFilter] = useState<string | null>(null);
 	/** The sort the rows on screen were read with: a row's position means it. */
@@ -205,6 +216,7 @@ export function SqliteTableView({
 					filter: appliedFilter || null,
 				});
 				if (token !== generation.current) return;
+				setEditability(page.editability);
 				if (page.filterProblem) {
 					// Nothing was read: keep the last good rows and underline the text.
 					// A filter restored on mount can fail before any rows arrived, so
@@ -544,6 +556,17 @@ export function SqliteTableView({
 					</span>
 				)}
 				{orderText && <span>{orderText}</span>}
+				{editingEnabled && editability && (
+					<span
+						style={{
+							color: editability.editable ? theme.colors.textDim : theme.colors.warning,
+						}}
+						title={formatSqliteEditability(editability)}
+						data-testid="sqlite-rows-editability"
+					>
+						{sqliteEditabilityLabel(editability)}
+					</span>
+				)}
 				{lastPage && <span>{lastPage.elapsedMs} ms</span>}
 				{error && (
 					<span style={{ color: theme.colors.warning }} data-testid="sqlite-rows-error">
