@@ -8,7 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { PlaybookStatus } from '../../shared/types';
+import type { PlaybookStatus, PlaybookUpdate, Playbook as SavedPlaybook } from '../../shared/types';
 import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
 
 /**
@@ -39,6 +39,12 @@ export interface Playbook {
 	prompt: string;
 	taskSelectionMode?: 'task' | 'document';
 	worktreeSettings?: WorktreeSettings;
+	parameterValues?: SavedPlaybook['parameterValues'];
+	parameterOverlay?: SavedPlaybook['parameterOverlay'];
+	interaction?: SavedPlaybook['interaction'];
+	scope?: SavedPlaybook['scope'];
+	report?: SavedPlaybook['report'];
+	provenance?: SavedPlaybook['provenance'];
 }
 
 /**
@@ -184,11 +190,8 @@ export function createPlaybooksApi() {
 		create: (sessionId: string, playbook: Playbook) =>
 			ipcRenderer.invoke('playbooks:create', sessionId, playbook),
 
-		update: (
-			sessionId: string,
-			playbookId: string,
-			updates: Partial<Playbook & { updatedAt: number }>
-		) => ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
+		update: (sessionId: string, playbookId: string, updates: PlaybookUpdate) =>
+			ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
 
 		delete: (sessionId: string, playbookId: string) =>
 			ipcRenderer.invoke('playbooks:delete', sessionId, playbookId),

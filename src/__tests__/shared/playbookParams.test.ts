@@ -5,8 +5,11 @@ import {
 	buildResolvedConfigurationTable,
 	collectUnresolvedRequired,
 	isPlaceholderDefault,
+	isPlaybookParamType,
 	mergePlaybookParams,
 	parsePlaybookParameterForm,
+	readPlaybookParamOverlay,
+	readPlaybookParamValues,
 	splitMultiEnumValue,
 	substitutePlaybookParams,
 	validatePlaybookParamValue,
@@ -670,5 +673,94 @@ describe('buildResolvedConfigurationTable', () => {
 
 	it('returns an empty string when there are no specs', () => {
 		expect(buildResolvedConfigurationTable([], {})).toBe('');
+	});
+});
+
+describe('isPlaybookParamType', () => {
+	it('accepts the four declared types only', () => {
+		for (const type of ['string', 'url', 'number', 'multi-enum']) {
+			expect(isPlaybookParamType(type)).toBe(true);
+		}
+		for (const type of ['String', 'enum', 'decimal', '', undefined, 1]) {
+			expect(isPlaybookParamType(type)).toBe(false);
+		}
+	});
+});
+
+describe('readPlaybookParamOverlay', () => {
+	it('keeps well-formed entries field by field', () => {
+		expect(
+			readPlaybookParamOverlay([
+				{
+					name: 'SCOPE',
+					type: 'multi-enum',
+					required: false,
+					options: ['repo', 'org'],
+					pattern: '[a-z,]+',
+					min: 1,
+					max: 3,
+					default: 'repo',
+					help: 'ignored: prose owns it',
+				},
+			])
+		).toEqual([
+			{
+				name: 'SCOPE',
+				type: 'multi-enum',
+				required: false,
+				options: ['repo', 'org'],
+				pattern: '[a-z,]+',
+				min: 1,
+				max: 3,
+			},
+		]);
+	});
+
+	it('drops illegal names and malformed fields instead of storing them', () => {
+		expect(
+			readPlaybookParamOverlay([
+				null,
+				'TOPIC',
+				{ name: 'x' },
+				{ name: 42 },
+				{
+					name: 'DEPTH',
+					type: 'decimal',
+					required: 'yes',
+					options: ['a', 2],
+					pattern: /x/,
+					min: Number.NaN,
+					max: '5',
+				},
+			])
+		).toEqual([{ name: 'DEPTH' }]);
+	});
+
+	it('returns undefined for a non-array or an overlay with nothing usable', () => {
+		expect(readPlaybookParamOverlay(undefined)).toBeUndefined();
+		expect(readPlaybookParamOverlay({ name: 'TOPIC' })).toBeUndefined();
+		expect(readPlaybookParamOverlay([{ name: 'bad' }])).toBeUndefined();
+	});
+});
+
+describe('readPlaybookParamValues', () => {
+	it('keeps legal names with string values, numbers included as text', () => {
+		expect(readPlaybookParamValues({ TOPIC: 'EV chargers', DEPTH: '3' })).toEqual({
+			TOPIC: 'EV chargers',
+			DEPTH: '3',
+		});
+	});
+
+	it('drops non-string values and illegal names', () => {
+		expect(readPlaybookParamValues({ TOPIC: 42, lower: 'x', A: 'one char', GOOD: 'kept' })).toEqual(
+			{ GOOD: 'kept' }
+		);
+	});
+
+	it('returns undefined for a non-object or nothing usable', () => {
+		expect(readPlaybookParamValues(undefined)).toBeUndefined();
+		expect(readPlaybookParamValues(['TOPIC'])).toBeUndefined();
+		expect(readPlaybookParamValues('TOPIC=x')).toBeUndefined();
+		expect(readPlaybookParamValues({ TOPIC: 1 })).toBeUndefined();
 	});
 });

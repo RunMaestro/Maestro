@@ -6,7 +6,8 @@
  * and the local cache.
  */
 
-import type { TaskSelectionMode } from './types';
+import type { PlaybookParamOverlay } from './playbookParams';
+import type { PlaybookInteraction, PlaybookScope, TaskSelectionMode } from './types';
 
 // ============================================================================
 // Marketplace Manifest Types (fetched from GitHub)
@@ -86,6 +87,17 @@ export interface MarketplacePlaybook {
 	 * value (false, "yes", 1, absent) is treated as not-beta. Does not affect install.
 	 */
 	beta?: boolean;
+	/**
+	 * Typed declarations for the parameters the prompt's prose form names. They
+	 * own type and validation only; defaults and help stay in the prose.
+	 */
+	parameters?: PlaybookParamOverlay[];
+	/** How parameters are collected: a plain `form` (the default) or a `guided` interview. */
+	interaction?: PlaybookInteraction;
+	/** What the playbook changes: the user's `machine` or one `repo`. A hint only. */
+	scope?: PlaybookScope;
+	/** A document filename (without `.md`) run once at the end as the report author. */
+	report?: string;
 }
 
 /**

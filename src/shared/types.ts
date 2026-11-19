@@ -8,6 +8,7 @@ import type { LiftedToPointer } from './maestro-lib/agents/lift-pointer';
 import type { CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { NativeSessionBinding } from './maestro-lib/agents/providerSwap';
+import type { PlaybookParamOverlay, PlaybookParamValues } from './playbookParams';
 
 /**
  * Union type of all valid agent IDs.
@@ -718,6 +719,47 @@ export function isTaskSelectionMode(value: unknown): value is TaskSelectionMode 
 	return value === 'task' || value === 'document';
 }
 
+/**
+ * How a playbook collects its parameters before a run: a plain `form`, or a
+ * `guided` interview that fills the same form. Absent means `form`.
+ */
+export type PlaybookInteraction = 'form' | 'guided';
+
+export function isPlaybookInteraction(value: unknown): value is PlaybookInteraction {
+	return value === 'form' || value === 'guided';
+}
+
+/**
+ * What a playbook changes: the user's `machine` (an installer) or one `repo`.
+ * A hint for a notice on the confirm sheet only; it never picks the agent.
+ */
+export type PlaybookScope = 'machine' | 'repo';
+
+export function isPlaybookScope(value: unknown): value is PlaybookScope {
+	return value === 'machine' || value === 'repo';
+}
+
+/**
+ * Where an imported playbook came from. Without it a saved playbook has no
+ * link back to its marketplace entry, so update detection, failure reports,
+ * and telemetry cannot name it. `documentHashes` hashes each document as it
+ * was fetched (sha256 hex, keyed by document filename without `.md`), before
+ * any run mutates it.
+ */
+export interface PlaybookSourceProvenance {
+	kind: 'marketplace' | 'zip' | 'local';
+	/** The manifest entry `id`. The one field everything downstream keys on. */
+	marketplaceId?: string;
+	/** The manifest entry `lastUpdated` at import time. */
+	sourceVersion?: string;
+	sourceChannel?: 'official' | 'local';
+	/** A local manifest folder or the imported ZIP file. */
+	sourcePath?: string;
+	targetFolderName: string;
+	importedAt: number;
+	documentHashes: Record<string, string>;
+}
+
 // A saved Playbook configuration
 export interface Playbook {
 	id: string;
@@ -734,7 +776,19 @@ export interface Playbook {
 		createPROnCompletion: boolean;
 		prTargetBranch?: string;
 	};
+	/** The user's answers to the playbook's parameter form, by parameter name. */
+	parameterValues?: PlaybookParamValues;
+	/** The manifest's typed parameter declarations, merged over the prompt's prose form. */
+	parameterOverlay?: PlaybookParamOverlay[];
+	interaction?: PlaybookInteraction;
+	scope?: PlaybookScope;
+	/** A document filename (without `.md`) run once at the end as the report author. */
+	report?: string;
+	provenance?: PlaybookSourceProvenance;
 }
+
+/** The fields a `playbooks:update` call may change. */
+export type PlaybookUpdate = Partial<Omit<Playbook, 'id' | 'createdAt'>>;
 
 /**
  * Playbook status file contract (`.maestro/STATUS.json`).

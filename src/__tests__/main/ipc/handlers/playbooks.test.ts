@@ -68,12 +68,29 @@ vi.mock('../../../../main/utils/zip-archive', () => ({
 	})),
 }));
 
-// Mock crypto
-vi.mock('crypto', () => ({
-	default: {
-		randomUUID: vi.fn(),
-	},
-}));
+// Mock crypto: a fixed randomUUID, the real createHash (import hashes documents)
+vi.mock('crypto', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('crypto')>();
+	return {
+		default: {
+			randomUUID: vi.fn(),
+			createHash: actual.createHash,
+		},
+	};
+});
+
+/** sha256 hex of a string, computed independently of the handler. */
+async function sha256(text: string): Promise<string> {
+	const actual = await vi.importActual<typeof import('crypto')>('crypto');
+	return actual.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/** The JSON appended to the archive as `manifest.json`. */
+function appendedManifest(append: ReturnType<typeof vi.fn>): Record<string, any> {
+	const call = append.mock.calls.find(([, opts]) => opts?.name === 'manifest.json');
+	expect(call).toBeDefined();
+	return JSON.parse(call![0] as string);
+}
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -337,6 +354,42 @@ describe('playbooks IPC handlers', () => {
 			expect(result.playbook.prompt).toBe('keep this');
 			expect(result.playbook.loopEnabled).toBe(true);
 		});
+
+		it('should accept and persist the Exchange fields', async () => {
+			const provenance = {
+				kind: 'marketplace',
+				marketplaceId: 'research-market',
+				targetFolderName: 'Research-Market',
+				importedAt: 1,
+				documentHashes: { '1_SCOPE': 'abc' },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ playbooks: [{ id: 'pb-1', name: 'Original', provenance }] })
+			);
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:update');
+			const result = await handler!({} as any, 'session-123', 'pb-1', {
+				parameterValues: { TOPIC: 'EV chargers' },
+				parameterOverlay: [{ name: 'DEPTH', type: 'number', min: 1, max: 5 }],
+				interaction: 'guided',
+				scope: 'repo',
+				report: 'REPORT',
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.playbook).toMatchObject({
+				parameterValues: { TOPIC: 'EV chargers' },
+				parameterOverlay: [{ name: 'DEPTH', type: 'number', min: 1, max: 5 }],
+				interaction: 'guided',
+				scope: 'repo',
+				report: 'REPORT',
+				provenance,
+			});
+			const written = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0][1] as string);
+			expect(written.playbooks[0].parameterValues).toEqual({ TOPIC: 'EV chargers' });
+		});
 	});
 
 	describe('playbooks:delete', () => {
@@ -450,6 +503,71 @@ describe('playbooks IPC handlers', () => {
 			expect(result.success).toBe(true);
 			expect(result.filePath).toBe('/export/path/Export_Me.maestro-playbook.zip');
 			expect(mockArchive.append).toHaveBeenCalled();
+			expect(appendedManifest(mockArchive.append).version).toBe(2);
+		});
+
+		it('should write the Exchange fields and only the marketplace link of provenance', async () => {
+			const existingPlaybooks = [
+				{
+					id: 'pb-1',
+					name: 'Export Me',
+					documents: [],
+					loopEnabled: false,
+					prompt: 'Test prompt',
+					parameterValues: { TOPIC: 'EV chargers' },
+					parameterOverlay: [{ name: 'DEPTH', type: 'number', min: 1 }],
+					interaction: 'guided',
+					scope: 'machine',
+					report: 'REPORT',
+					provenance: {
+						kind: 'marketplace',
+						marketplaceId: 'research-market',
+						sourceVersion: '2026-09-01',
+						sourceChannel: 'official',
+						sourcePath: '/Users/someone/local-playbooks/market',
+						targetFolderName: 'Research-Market',
+						importedAt: 123,
+						documentHashes: { '1_SCOPE': 'abc' },
+					},
+				},
+			];
+			vi.mocked(fs.readFile).mockResolvedValueOnce(
+				JSON.stringify({ playbooks: existingPlaybooks })
+			);
+			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+				canceled: false,
+				filePath: '/export/path/Export_Me.maestro-playbook.zip',
+			});
+			const mockArchive = {
+				pipe: vi.fn(),
+				append: vi.fn(),
+				finalize: vi.fn().mockResolvedValue(undefined),
+				on: vi.fn(),
+			};
+			vi.mocked(archiver).mockReturnValue(mockArchive as any);
+			const mockStream = new PassThrough();
+			vi.mocked(createWriteStream).mockReturnValue(mockStream as any);
+			setTimeout(() => mockStream.emit('close'), 10);
+
+			const handler = handlers.get('playbooks:export');
+			const result = await handler!({} as any, 'session-123', 'pb-1', '/autorun/path');
+
+			expect(result.success).toBe(true);
+			const manifest = appendedManifest(mockArchive.append);
+			expect(manifest).toMatchObject({
+				version: 2,
+				parameterValues: { TOPIC: 'EV chargers' },
+				parameterOverlay: [{ name: 'DEPTH', type: 'number', min: 1 }],
+				interaction: 'guided',
+				scope: 'machine',
+				report: 'REPORT',
+			});
+			expect(manifest.provenance).toEqual({
+				kind: 'marketplace',
+				marketplaceId: 'research-market',
+				sourceVersion: '2026-09-01',
+				sourceChannel: 'official',
+			});
 		});
 
 		it('should return error when playbook not found', async () => {
@@ -576,6 +694,160 @@ describe('playbooks IPC handlers', () => {
 			expect(result.playbook.name).toBe('Imported Playbook');
 			expect(result.playbook.id).toBe('test-uuid-123');
 			expect(result.importedDocs).toEqual(['doc1']);
+		});
+
+		it('should still read a version 1 manifest and stamp zip provenance', async () => {
+			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+				canceled: false,
+				filePaths: ['/import/path/playbook.zip'],
+			});
+			const mockManifest = {
+				version: 1,
+				name: 'Old Playbook',
+				documents: [{ filename: 'doc1', resetOnCompletion: false }],
+				loopEnabled: false,
+				prompt: 'Old prompt',
+			};
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => [
+					{
+						entryName: 'manifest.json',
+						getData: () => Buffer.from(JSON.stringify(mockManifest)),
+					},
+					{
+						entryName: 'documents/doc1.md',
+						getData: () => Buffer.from('# Document content'),
+					},
+				],
+				getEntry: () => undefined,
+			} as any);
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:import');
+			const result = await handler!({} as any, 'session-123', '/autorun/My-Folder');
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.prompt).toBe('Old prompt');
+			for (const field of [
+				'parameterValues',
+				'parameterOverlay',
+				'interaction',
+				'scope',
+				'report',
+			]) {
+				expect(result.playbook).not.toHaveProperty(field);
+			}
+			expect(result.playbook.provenance).toEqual({
+				kind: 'zip',
+				sourcePath: '/import/path/playbook.zip',
+				targetFolderName: 'My-Folder',
+				importedAt: result.playbook.createdAt,
+				documentHashes: { doc1: await sha256('# Document content') },
+			});
+		});
+
+		it('should round-trip the version 2 Exchange fields and keep the marketplace link', async () => {
+			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+				canceled: false,
+				filePaths: ['/import/path/playbook.zip'],
+			});
+			const mockManifest = {
+				version: 2,
+				name: 'New Playbook',
+				documents: [],
+				loopEnabled: false,
+				prompt: 'p',
+				parameterValues: { TOPIC: 'EV chargers' },
+				parameterOverlay: [{ name: 'DEPTH', type: 'number', min: 1, max: 5 }],
+				interaction: 'guided',
+				scope: 'machine',
+				report: 'REPORT',
+				provenance: {
+					kind: 'marketplace',
+					marketplaceId: 'research-market',
+					sourceVersion: '2026-09-01',
+					sourceChannel: 'official',
+				},
+			};
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => [
+					{
+						entryName: 'manifest.json',
+						getData: () => Buffer.from(JSON.stringify(mockManifest)),
+					},
+				],
+				getEntry: () => undefined,
+			} as any);
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:import');
+			const result = await handler!({} as any, 'session-123', '/autorun/path');
+
+			expect(result.success).toBe(true);
+			expect(result.playbook).toMatchObject({
+				parameterValues: { TOPIC: 'EV chargers' },
+				parameterOverlay: [{ name: 'DEPTH', type: 'number', min: 1, max: 5 }],
+				interaction: 'guided',
+				scope: 'machine',
+				report: 'REPORT',
+			});
+			expect(result.playbook.provenance).toMatchObject({
+				kind: 'zip',
+				marketplaceId: 'research-market',
+				sourceVersion: '2026-09-01',
+				sourceChannel: 'official',
+				sourcePath: '/import/path/playbook.zip',
+			});
+		});
+
+		it('should drop malformed Exchange fields from a hand-edited manifest', async () => {
+			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+				canceled: false,
+				filePaths: ['/import/path/playbook.zip'],
+			});
+			const mockManifest = {
+				version: 2,
+				name: 'Edited Playbook',
+				documents: [],
+				parameterValues: { TOPIC: 42, lower_case: 'x', GOOD: 'kept' },
+				parameterOverlay: [
+					{ name: 'x', type: 'string' },
+					{ name: 'DEPTH', type: 'decimal', min: 'one', options: [1, 2], required: 'yes' },
+				],
+				interaction: 'wizard',
+				scope: 'everything',
+				report: 'REPORT.md',
+				provenance: { kind: 'marketplace', marketplaceId: 7, sourceChannel: 'evil' },
+			};
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => [
+					{
+						entryName: 'manifest.json',
+						getData: () => Buffer.from(JSON.stringify(mockManifest)),
+					},
+				],
+				getEntry: () => undefined,
+			} as any);
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:import');
+			const result = await handler!({} as any, 'session-123', '/autorun/path');
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.parameterValues).toEqual({ GOOD: 'kept' });
+			expect(result.playbook.parameterOverlay).toEqual([{ name: 'DEPTH' }]);
+			expect(result.playbook).not.toHaveProperty('interaction');
+			expect(result.playbook).not.toHaveProperty('scope');
+			expect(result.playbook.report).toBe('REPORT');
+			expect(result.playbook.provenance.kind).toBe('zip');
+			expect(result.playbook.provenance).not.toHaveProperty('marketplaceId');
+			expect(result.playbook.provenance).not.toHaveProperty('sourceChannel');
 		});
 
 		it('should return error when main window not available', async () => {

@@ -3253,20 +3253,7 @@ interface MaestroAPI {
 		update: (
 			sessionId: string,
 			playbookId: string,
-			updates: Partial<{
-				name: string;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-				taskSelectionMode?: 'task' | 'document';
-				updatedAt: number;
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}>
+			updates: import('../shared/types').PlaybookUpdate
 		) => Promise<{ success: boolean; playbook?: any; error?: string }>;
 		delete: (
 			sessionId: string,

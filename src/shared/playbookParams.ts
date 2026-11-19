@@ -555,3 +555,58 @@ export function buildResolvedConfigurationTable(
 	}
 	return lines.join('\n');
 }
+
+const PLAYBOOK_PARAM_TYPES: readonly PlaybookParamType[] = [
+	'string',
+	'url',
+	'number',
+	'multi-enum',
+];
+
+export function isPlaybookParamType(value: unknown): value is PlaybookParamType {
+	return (PLAYBOOK_PARAM_TYPES as readonly unknown[]).includes(value);
+}
+
+/**
+ * Read a `parameters[]` overlay out of untrusted JSON (a marketplace manifest
+ * or a ZIP `manifest.json`). Each entry needs a legal name; every other field
+ * is kept only when it has the right shape, so a malformed field reads as
+ * undeclared instead of reaching the merge. Returns `undefined` when the
+ * input is not an array or no entry survives.
+ */
+export function readPlaybookParamOverlay(raw: unknown): PlaybookParamOverlay[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	const overlay: PlaybookParamOverlay[] = [];
+	for (const item of raw) {
+		if (!item || typeof item !== 'object') continue;
+		const entry = item as Record<string, unknown>;
+		if (typeof entry.name !== 'string' || !PLAYBOOK_PARAM_NAME_REGEX.test(entry.name)) continue;
+		const clean: PlaybookParamOverlay = { name: entry.name };
+		if (isPlaybookParamType(entry.type)) clean.type = entry.type;
+		if (typeof entry.required === 'boolean') clean.required = entry.required;
+		if (Array.isArray(entry.options) && entry.options.every((o) => typeof o === 'string')) {
+			clean.options = [...(entry.options as string[])];
+		}
+		if (typeof entry.pattern === 'string') clean.pattern = entry.pattern;
+		if (typeof entry.min === 'number' && Number.isFinite(entry.min)) clean.min = entry.min;
+		if (typeof entry.max === 'number' && Number.isFinite(entry.max)) clean.max = entry.max;
+		overlay.push(clean);
+	}
+	return overlay.length > 0 ? overlay : undefined;
+}
+
+/**
+ * Read saved parameter answers out of untrusted JSON. Keeps only legal names
+ * with string values. Returns `undefined` when nothing survives.
+ */
+export function readPlaybookParamValues(raw: unknown): PlaybookParamValues | undefined {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+	const values: PlaybookParamValues = {};
+	let kept = 0;
+	for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (!PLAYBOOK_PARAM_NAME_REGEX.test(name) || typeof value !== 'string') continue;
+		values[name] = value;
+		kept++;
+	}
+	return kept > 0 ? values : undefined;
+}
