@@ -148,6 +148,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()`, `readSqliteColumnCatalog()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
 - **Saving a SQLite BLOB to a file:** `saveSqliteBlob()`, `readSqliteBlob()` in `src/main/sqlite/sqlite-blob.ts`; `formatSqliteBlobHex()`, `sqliteBlobFileName()` in `src/shared/sqlite/cells.ts`
 - **Running a read-only SQL statement a person wrote:** `runSqliteQuery()`, `cancelSqliteQuery()` in `src/main/sqlite/sqlite-query.ts`; `sqliteReadOnlyRefusal()`, `sqliteQueryParameters()`, `sqliteQueryBinding()` in `src/shared/sqlite/query.ts`; `startSqliteWorkerTask()` in `src/main/sqlite/sqlite-worker-runner.ts`
+- **Reading a SQLite query plan (`EXPLAIN QUERY PLAN` as a tree):** `sqliteQueryPlanSteps()`, `formatSqliteQueryPlan()`, `sqliteQueryPlanStepKind()` in `src/shared/sqlite/plan.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`

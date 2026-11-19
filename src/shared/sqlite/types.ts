@@ -450,6 +450,13 @@ export interface SqliteQueryRequest {
 	 */
 	params?: SqliteParameterValues;
 	/**
+	 * Run `EXPLAIN QUERY PLAN <sql>` instead, so the rows are the statement's
+	 * plan (`id`, `parent`, `notused`, `detail`) and none of its own rows are
+	 * read. The statement is still judged read-only as written; one that is
+	 * already an EXPLAIN is refused. See `sqliteQueryPlanSteps()`.
+	 */
+	plan?: boolean;
+	/**
 	 * Names this run so `cancelQuery` can stop it. A new run under an id still
 	 * running stops the older one first.
 	 */
@@ -490,6 +497,8 @@ export interface SqliteQueryParameter {
 export interface SqliteQueryResult {
 	/** The statement's leading keyword, upper case (`SELECT`, `PRAGMA`, ...). */
 	statement: string;
+	/** The rows are the statement's `EXPLAIN QUERY PLAN`, not its result. */
+	plan?: boolean;
 	/** Result columns in statement order. Names may repeat (`SELECT a, a`). */
 	columns: SqliteResultColumn[];
 	/** Cells in `columns` order, cut the way a table window cuts them. */

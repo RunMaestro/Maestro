@@ -29,6 +29,13 @@
  * is refused here, before any process starts, with the same words the run
  * would use.
  *
+ * The Rows / Plan switch in the toolbar runs the statement's
+ * `EXPLAIN QUERY PLAN` instead (the same run, `plan: true`), and the result
+ * is drawn as the plan's tree (SqliteQueryPlanView): which tables are read
+ * whole, which are reached through an index, where SQLite sorts in a
+ * temporary b-tree. A plan reads none of the statement's rows, so switching
+ * to Plan runs the editor's statement at once; switching back waits for Run.
+ *
  * The query text and the run are owned by the viewer (`value` / `run`), so
  * switching to Browse and back keeps both. Every call carries a fresh id; a
  * reply under any other id than the run's current one is stale and dropped,
@@ -41,12 +48,14 @@ import type { Extension } from '@codemirror/state';
 
 import { formatCount } from '../../../shared/formatters';
 import {
+	SQLITE_QUERY_MAX_LIMIT,
 	SQLITE_QUERY_PAGE_ROWS,
 	SQLITE_READ_ONLY_KEYWORDS,
 	sqliteQueryBinding,
 	sqliteQueryParameters,
 	sqliteReadOnlyRefusal,
 } from '../../../shared/sqlite/query';
+import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
 import type {
 	SqliteParameterValue,
 	SqliteParameterValues,
@@ -61,7 +70,9 @@ import { MarkdownEditor } from '../FilePreview/markdownEditor';
 import { DataGrid } from '../ui/DataGrid';
 import { Spinner } from '../ui/Spinner';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import { SqliteQueryParameters, sqliteParameterValuesFor } from './SqliteQueryParameters';
+import { SqliteQueryPlanView } from './SqliteQueryPlanView';
 
 /** The last statement run in Query mode and what it returned so far. */
 export interface SqliteQueryRunState {
@@ -71,6 +82,8 @@ export interface SqliteQueryRunState {
 	sql: string;
 	/** The parameter values it ran with, so a later window binds the same ones. */
 	params: SqliteParameterValues;
+	/** It ran as `EXPLAIN QUERY PLAN`: the rows are its plan, shown whole. */
+	plan: boolean;
 	/** Columns and every row loaded so far; null until the first window lands. */
 	result: SqliteQueryResult | null;
 	/** A call (the first window or a later one) is in flight. */
@@ -88,8 +101,22 @@ interface SqliteQueryPanelProps {
 	onParamsChange: (update: SetStateAction<SqliteParameterValues>) => void;
 	run: SqliteQueryRunState | null;
 	onRunChange: (update: SetStateAction<SqliteQueryRunState | null>) => void;
+	/** The Plan toggle: Run shows the statement's query plan instead of its rows. */
+	plan: boolean;
+	onPlanChange: (plan: boolean) => void;
 	theme: Theme;
 }
+
+type ResultMode = 'rows' | 'plan';
+const RESULT_MODES = [
+	{ value: 'rows' as const, label: 'Rows', title: "Run shows the statement's rows" },
+	{
+		value: 'plan' as const,
+		label: 'Plan',
+		title:
+			"Run shows the statement's EXPLAIN QUERY PLAN: full scans, index searches, temporary sorts. Reads none of its rows.",
+	},
+];
 
 const BLOB_HINT = 'Open the table in Browse to save a BLOB to a file';
 
@@ -101,6 +128,8 @@ export function SqliteQueryPanel({
 	onParamsChange,
 	run,
 	onRunChange,
+	plan,
+	onPlanChange,
 	theme,
 }: SqliteQueryPanelProps) {
 	const [language, setLanguage] = useState<Extension | undefined>(undefined);
@@ -127,25 +156,30 @@ export function SqliteQueryPanel({
 
 	/**
 	 * Run a statement. Offset 0 runs the editor's text afresh (stopping a run
-	 * still in flight); a later offset re-runs the statement already shown, for
-	 * the next window, and appends it.
+	 * still in flight), as a plan when `asPlan`; a later offset re-runs the
+	 * statement already shown, for the next window, and appends it. A plan is
+	 * read whole in one call.
 	 */
-	const runQuery = useStableCallback(async (offset: number) => {
+	const runQuery = useStableCallback(async (offset: number, asPlan: boolean = plan) => {
 		const sql = offset === 0 ? value : (run?.sql ?? '');
 		const values =
 			offset === 0 ? sqliteParameterValuesFor(scan.parameters, params) : (run?.params ?? {});
+		const runPlan = offset === 0 ? asPlan : run?.plan === true;
 		const refusal =
-			offset === 0 ? (sqliteReadOnlyRefusal(sql) ?? sqliteQueryBinding(sql, values).problem) : null;
+			offset === 0
+				? (sqliteReadOnlyRefusal(sql, { plan: runPlan }) ?? sqliteQueryBinding(sql, values).problem)
+				: null;
 		if (offset === 0 && run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
 		const runId = generateId();
+		const fresh = { runId, sql, params: values, plan: runPlan, result: null };
 		if (refusal) {
 			// The text and the values alone settle it: no process is started.
-			onRunChange({ runId, sql, params: values, result: null, running: false, error: refusal });
+			onRunChange({ ...fresh, running: false, error: refusal });
 			return;
 		}
 		onRunChange((previous) =>
 			offset === 0 || !previous
-				? { runId, sql, params: values, result: null, running: true, error: null }
+				? { ...fresh, running: true, error: null }
 				: { ...previous, runId, running: true, error: null }
 		);
 		try {
@@ -153,8 +187,9 @@ export function SqliteQueryPanel({
 				handle,
 				sql,
 				params: values,
+				plan: runPlan,
 				offset,
-				limit: SQLITE_QUERY_PAGE_ROWS,
+				limit: runPlan ? SQLITE_QUERY_MAX_LIMIT : SQLITE_QUERY_PAGE_ROWS,
 				queryId: runId,
 			});
 			onRunChange((previous) => {
@@ -175,6 +210,16 @@ export function SqliteQueryPanel({
 	});
 
 	const handleRun = useCallback(() => void runQuery(0), [runQuery]);
+	const handleResultModeChange = useCallback(
+		(mode: ResultMode) => {
+			const next = mode === 'plan';
+			if (next === plan) return;
+			onPlanChange(next);
+			// A plan reads no rows, so it is safe to show at once; rows wait for Run.
+			if (next && value.trim()) void runQuery(0, true);
+		},
+		[plan, onPlanChange, value, runQuery]
+	);
 	const handleParamChange = useCallback(
 		(label: string, next: SqliteParameterValue) =>
 			onParamsChange((previous) => ({ ...previous, [label]: next })),
@@ -218,13 +263,18 @@ export function SqliteQueryPanel({
 	);
 	const getRowLabel = useCallback((rowPosition: number) => formatCount(rowPosition + 1), []);
 	const handleReachEnd = useCallback(() => {
-		if (!result?.hasMore || run?.running || run?.error) return;
+		if (!result?.hasMore || run?.plan || run?.running || run?.error) return;
 		void runQuery(result.rows.length);
-	}, [result, run?.running, run?.error, runQuery]);
+	}, [result, run?.plan, run?.running, run?.error, runQuery]);
 	const ignoreSort = useCallback(() => undefined, []);
 
 	const runKeys = formatShortcutKeys(['Meta', 'Enter']);
 	const running = run?.running === true;
+	const showsPlan = run?.plan === true && result?.returnsRows === true;
+	const planSteps = useMemo(
+		() => (showsPlan && result ? sqliteQueryPlanSteps(result.rows) : []),
+		[showsPlan, result]
+	);
 
 	return (
 		<div className="flex flex-col h-full min-h-0" data-testid="sqlite-query-panel">
@@ -256,7 +306,11 @@ export function SqliteQueryPanel({
 					onClick={handleRun}
 					className="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium"
 					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-					title={`Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`}
+					title={
+						plan
+							? `Show the statement's query plan (${runKeys}). Reads none of its rows.`
+							: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
+					}
 					data-testid="sqlite-query-run"
 				>
 					<Play className="w-3 h-3" />
@@ -278,6 +332,14 @@ export function SqliteQueryPanel({
 						Stop
 					</button>
 				)}
+				<SegmentedControl<ResultMode>
+					value={plan ? 'plan' : 'rows'}
+					onChange={handleResultModeChange}
+					options={RESULT_MODES}
+					theme={theme}
+					ariaLabel="Show the statement's rows or its query plan"
+					testId="sqlite-query-result-mode"
+				/>
 				<span>Read-only: anything that would change the database is refused.</span>
 			</div>
 			{(scan.parameters.length > 0 || scan.problem) && (
@@ -291,7 +353,9 @@ export function SqliteQueryPanel({
 				/>
 			)}
 			<div className="flex-1 min-h-0" data-testid="sqlite-query-results">
-				{result && result.returnsRows ? (
+				{showsPlan ? (
+					<SqliteQueryPlanView steps={planSteps} theme={theme} />
+				) : result && result.returnsRows ? (
 					<DataGrid
 						columns={gridColumns}
 						rowCount={result.rows.length}
@@ -319,6 +383,8 @@ export function SqliteQueryPanel({
 							</>
 						) : result ? (
 							`${result.statement} ran and returns no rows.`
+						) : plan ? (
+							`Write a statement and press Run (${runKeys}) to see its query plan.`
 						) : (
 							`Write a statement and press Run (${runKeys}).`
 						)}
@@ -338,6 +404,15 @@ export function SqliteQueryPanel({
 					>
 						{run.error}
 					</span>
+				) : showsPlan && result ? (
+					<>
+						<span data-testid="sqlite-query-total">
+							Query plan of {result.statement}: {formatCount(planSteps.length)}{' '}
+							{planSteps.length === 1 ? 'step' : 'steps'}
+							{result.hasMore ? ' (the first ones only)' : ''}
+						</span>
+						<span>{result.elapsedMs} ms</span>
+					</>
 				) : result?.returnsRows ? (
 					<>
 						<span data-testid="sqlite-query-total">

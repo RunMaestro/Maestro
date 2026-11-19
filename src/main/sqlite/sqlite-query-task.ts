@@ -17,6 +17,12 @@
  *   4. `stmt.readonly` must be true, which catches a write behind a read
  *      keyword (`WITH x AS (...) DELETE ...`, `PRAGMA user_version = 2`).
  *
+ * With `task.plan` the statement runs behind `EXPLAIN QUERY PLAN`
+ * (`sqliteStatementToRun()`): the rows are its plan and none of its own rows
+ * are read. Every layer above still applies, to the statement as written
+ * (layer 2) and to the EXPLAIN (layers 1, 3, 4: SQLite marks the plan of a
+ * write as not read-only, so it is refused like the write).
+ *
  * Parameters (`?`, `:id`) are bound by the driver from `task.params`
  * (`sqliteQueryBinding()`); a value is never spliced into the text, and a
  * parameter with no usable value is refused before the file is opened.
@@ -45,6 +51,7 @@ import {
 	sqliteLeadingKeyword,
 	sqliteQueryBinding,
 	sqliteReadOnlyRefusal,
+	sqliteStatementToRun,
 } from '../../shared/sqlite/query';
 import type {
 	SqliteParameterValues,
@@ -62,6 +69,8 @@ export interface SqliteQueryTask {
 	limit: number;
 	/** Values for the statement's parameters, keyed by label. */
 	params?: SqliteParameterValues;
+	/** Run the statement's `EXPLAIN QUERY PLAN` instead of the statement. */
+	plan?: boolean;
 }
 
 /** better-sqlite3's wording when the text holds a second statement. */
@@ -91,7 +100,8 @@ function prepareOne(db: Database.Database, sql: string): Database.Statement {
  * that is not read-only, and SQLite's own error, verbatim, for one that fails.
  */
 export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
-	const refusal = sqliteReadOnlyRefusal(task.sql);
+	const options = { plan: task.plan === true };
+	const refusal = sqliteReadOnlyRefusal(task.sql, options);
 	if (refusal) throw refuse(refusal);
 	const binding = sqliteQueryBinding(task.sql, task.params);
 	if (binding.problem !== null) throw refuse(binding.problem);
@@ -101,11 +111,12 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 	try {
 		// The table view's filter speaks REGEXP through this; a query may too.
 		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
-		const statement = prepareOne(db, task.sql.trim());
+		const statement = prepareOne(db, sqliteStatementToRun(task.sql, options));
 		if (!statement.readonly) throw refuse(SQLITE_NOT_READ_ONLY_MESSAGE);
 
 		const base = {
 			statement: sqliteLeadingKeyword(task.sql),
+			...(options.plan ? { plan: true } : {}),
 			offset: task.offset,
 		};
 		const started = performance.now();

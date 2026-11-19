@@ -33,8 +33,8 @@
  * pane for the SQL editor (SqliteQueryPanel), with completion from this
  * database's tables and columns. The rail stays as a reference; picking an
  * object in it goes back to Browse to show that object. The query text, its
- * parameter values, and the last run's result are kept here, so all survive
- * the switch; opening another file clears them.
+ * parameter values, the Plan toggle, and the last run's result are kept
+ * here, so all survive the switch; opening another file clears them.
  */
 
 import {
@@ -138,6 +138,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const [query, setQuery] = useState('');
 	const [queryParams, setQueryParams] = useState<SqliteParameterValues>({});
 	const [queryRun, setQueryRun] = useState<SqliteQueryRunState | null>(null);
+	/** Query mode's Plan toggle: Run shows the statement's query plan instead of its rows. */
+	const [queryPlan, setQueryPlan] = useState(false);
 	const [filters, setFilters] = useState<ReadonlyMap<string, string>>(() => new Map());
 	const [focusFilterRequested, setFocusFilterRequested] = useState(false);
 	/**
@@ -161,6 +163,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setQuery('');
 		setQueryParams({});
 		setQueryRun(null);
+		setQueryPlan(false);
 
 		window.maestro.sqlite
 			.open(filePath)
@@ -398,6 +401,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							onParamsChange={setQueryParams}
 							run={queryRun}
 							onRunChange={setQueryRun}
+							plan={queryPlan}
+							onPlanChange={setQueryPlan}
 							theme={theme}
 						/>
 					</div>

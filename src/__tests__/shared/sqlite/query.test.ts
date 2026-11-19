@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	SQLITE_MIXED_PARAMETERS_MESSAGE,
+	SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
 	SQLITE_READ_ONLY_KEYWORDS,
 	isSqliteReadOnlyKeyword,
 	sqliteLeadingKeyword,
@@ -9,6 +10,7 @@ import {
 	sqliteQueryParameters,
 	sqliteQueryTimeoutMessage,
 	sqliteReadOnlyRefusal,
+	sqliteStatementToRun,
 } from '../../../shared/sqlite/query';
 
 describe('sqliteLeadingKeyword', () => {
@@ -57,6 +59,53 @@ describe('sqliteReadOnlyRefusal', () => {
 	it('asks for a statement when there is none', () => {
 		expect(sqliteReadOnlyRefusal('   ')).toBe('Write a statement to run.');
 		expect(sqliteReadOnlyRefusal('-- nothing yet')).toMatch(/does not start with a statement/);
+	});
+});
+
+describe('sqliteReadOnlyRefusal with plan', () => {
+	it('lets a read through, judged as written', () => {
+		expect(sqliteReadOnlyRefusal('SELECT * FROM t', { plan: true })).toBeNull();
+		expect(
+			sqliteReadOnlyRefusal('-- note\nWITH x AS (SELECT 1) SELECT 1', { plan: true })
+		).toBeNull();
+	});
+
+	it('refuses to plan a write, by its own keyword', () => {
+		expect(sqliteReadOnlyRefusal('DELETE FROM t', { plan: true })).toMatch(
+			/^DELETE is not a read-only statement/
+		);
+		expect(sqliteReadOnlyRefusal("ATTACH 'x.db' AS x", { plan: true })).toMatch(/^ATTACH/);
+	});
+
+	it('refuses to plan a statement that is already an EXPLAIN', () => {
+		expect(sqliteReadOnlyRefusal('explain query plan select 1', { plan: true })).toBe(
+			SQLITE_PLAN_OF_EXPLAIN_MESSAGE
+		);
+		expect(sqliteReadOnlyRefusal('/* x */ EXPLAIN SELECT 1', { plan: true })).toBe(
+			SQLITE_PLAN_OF_EXPLAIN_MESSAGE
+		);
+		// Without the toggle an EXPLAIN runs as written.
+		expect(sqliteReadOnlyRefusal('EXPLAIN SELECT 1')).toBeNull();
+	});
+
+	it('still asks for a statement when there is none', () => {
+		expect(sqliteReadOnlyRefusal('  ', { plan: true })).toBe('Write a statement to run.');
+	});
+});
+
+describe('sqliteStatementToRun', () => {
+	it('trims the statement and leaves it as written by default', () => {
+		expect(sqliteStatementToRun('  SELECT 1  ')).toBe('SELECT 1');
+		expect(sqliteStatementToRun('SELECT 1', { plan: false })).toBe('SELECT 1');
+	});
+
+	it('puts EXPLAIN QUERY PLAN in front for a plan, keeping comments and parameters', () => {
+		expect(sqliteStatementToRun(' SELECT * FROM t WHERE id = :id ', { plan: true })).toBe(
+			'EXPLAIN QUERY PLAN SELECT * FROM t WHERE id = :id'
+		);
+		expect(sqliteStatementToRun('-- note\nSELECT 1', { plan: true })).toBe(
+			'EXPLAIN QUERY PLAN -- note\nSELECT 1'
+		);
 	});
 });
 

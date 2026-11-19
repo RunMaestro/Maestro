@@ -22,9 +22,9 @@
 //       -> the record view's Save to file: one BLOB cell written whole
 //   maestro-cli sqlite query <path> <sql> [--param <name=value>]...
 //                            [--param-number <name=value>]... [--param-null <name>]...
-//                            [--offset <n>] [--limit <n>] [--json]
+//                            [--plan] [--offset <n>] [--limit <n>] [--json]
 //       -> Query mode's Run: one read-only statement, its parameters bound, a
-//          window of its result
+//          window of its result (or, with --plan, its query plan as a tree)
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
@@ -61,6 +61,11 @@ import {
 	sqliteQueryBinding,
 	sqliteQueryParameters,
 } from '../../shared/sqlite/query';
+import {
+	SQLITE_QUERY_PLAN_KIND_HINTS,
+	formatSqliteQueryPlan,
+	sqliteQueryPlanSteps,
+} from '../../shared/sqlite/plan';
 import { formatSqliteIntegrity, sqliteSummaryFacts } from '../../shared/sqlite/summary';
 import type {
 	SqliteBlobSaved,
@@ -691,6 +696,8 @@ interface SqliteQueryOptions {
 	paramNumber?: string[];
 	/** Names bound as NULL. */
 	paramNull?: string[];
+	/** Show the statement's `EXPLAIN QUERY PLAN` instead of its rows. */
+	plan?: boolean;
 	json?: boolean;
 }
 
@@ -746,7 +753,10 @@ interface SqliteQueryReply {
  * `maestro-cli sqlite query <path> <sql>` - run one read-only statement the
  * way the viewer's Query mode runs it (its own connection in a child process
  * in the app, stopped at the same timeout) and print a window of the result.
- * A statement that would write is refused, not run.
+ * A statement that would write is refused, not run. With `--plan`, the
+ * statement's `EXPLAIN QUERY PLAN` is shown as a tree instead (Query mode's
+ * Plan toggle); `--offset` and `--limit` do not apply, since a plan is
+ * shown whole.
  */
 export async function sqliteQuery(
 	file: string,
@@ -755,8 +765,11 @@ export async function sqliteQuery(
 ): Promise<void> {
 	const filePath = resolveCliPath(file);
 	if (!sql.trim()) fail('Give the statement to run, e.g. "SELECT * FROM users"', options.json);
-	const offset = parseCount(options.offset, '--offset', 0, options.json);
-	const limit = parseCount(options.limit, '--limit', SQLITE_ROWS_DEFAULT_LIMIT, options.json);
+	const plan = options.plan === true;
+	const offset = plan ? 0 : parseCount(options.offset, '--offset', 0, options.json);
+	const limit = plan
+		? SQLITE_QUERY_MAX_LIMIT
+		: parseCount(options.limit, '--limit', SQLITE_ROWS_DEFAULT_LIMIT, options.json);
 	if (limit > SQLITE_QUERY_MAX_LIMIT) {
 		fail(`--limit must be at most ${SQLITE_QUERY_MAX_LIMIT} (got ${limit})`, options.json);
 	}
@@ -775,7 +788,7 @@ export async function sqliteQuery(
 	try {
 		reply = await withMaestroClient((client) =>
 			client.sendCommand<SqliteQueryReply>(
-				{ type: 'sqlite_run_query', path: filePath, sql, offset, limit, params },
+				{ type: 'sqlite_run_query', path: filePath, sql, offset, limit, params, plan },
 				'sqlite_query_result',
 				// The app stops the run at its own timeout; leave room for the reply.
 				SQLITE_QUERY_TIMEOUT_MS + 30_000
@@ -789,6 +802,10 @@ export async function sqliteQuery(
 	}
 
 	const { database, result } = reply;
+	if (plan) {
+		printSqliteQueryPlan(database, result, options.json);
+		return;
+	}
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, path: database.displayPath, ...result }));
 		return;
@@ -814,5 +831,36 @@ export async function sqliteQuery(
 		);
 	}
 	lines.push(`${result.elapsedMs} ms.`);
+	console.log(lines.join('\n'));
+}
+
+/**
+ * A `--plan` reply: the tree the `sqlite3` shell draws, then one line on
+ * each kind of costly step it holds (a full scan, a temporary sort). `--json`
+ * adds the steps, tree guides included, beside the raw plan rows.
+ */
+function printSqliteQueryPlan(
+	database: SqliteDatabaseInfo,
+	result: SqliteQueryResult,
+	json: boolean | undefined
+): void {
+	const steps = sqliteQueryPlanSteps(result.rows);
+	if (json) {
+		console.log(JSON.stringify({ success: true, path: database.displayPath, ...result, steps }));
+		return;
+	}
+	const lines: string[] = [
+		`Plan of ${result.statement} on ${database.displayPath}`,
+		'',
+		formatSqliteQueryPlan(steps),
+	];
+	const costly = (['scan', 'sort'] as const).filter((kind) =>
+		steps.some((step) => step.kind === kind)
+	);
+	if (costly.length > 0) {
+		lines.push('', ...costly.map((kind) => SQLITE_QUERY_PLAN_KIND_HINTS[kind]));
+	}
+	if (result.hasMore) lines.push('', `Only the first ${result.rows.length} steps are shown.`);
+	lines.push('', `${result.elapsedMs} ms.`);
 	console.log(lines.join('\n'));
 }

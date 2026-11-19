@@ -33,6 +33,7 @@ import {
 	sqliteTables,
 } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { SQLITE_QUERY_PLAN_KIND_HINTS } from '../../../shared/sqlite/plan';
 
 const DB = path.resolve('/data/app.db');
 
@@ -842,6 +843,7 @@ describe('sqlite query', () => {
 			offset: 0,
 			limit: 50,
 			params: {},
+			plan: false,
 			responseType: 'sqlite_query_result',
 		});
 	});
@@ -917,6 +919,68 @@ describe('sqlite query', () => {
 		await expect(sqliteQuery(DB, 'DELETE FROM users', {})).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('DELETE is not a read-only statement.');
 		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	const PLAN_RESULT = {
+		statement: 'SELECT',
+		plan: true,
+		columns: ['id', 'parent', 'notused', 'detail'].map((name) => ({ name, declaredType: null })),
+		rows: [
+			[4, 0, 0, 'SCAN u'],
+			[6, 0, 0, 'SEARCH t USING INTEGER PRIMARY KEY (rowid=?)'],
+			[18, 0, 0, 'USE TEMP B-TREE FOR ORDER BY'],
+		],
+		offset: 0,
+		hasMore: false,
+		returnsRows: true,
+		elapsedMs: 1,
+	};
+
+	it('sends --plan with the whole plan asked for, ignoring --offset and --limit', async () => {
+		const sent = respondQuery(PLAN_RESULT);
+		await sqliteQuery(DB, 'SELECT * FROM t JOIN u ON u.x = t.a ORDER BY y', {
+			plan: true,
+			offset: '7',
+			limit: '5000',
+		});
+		expect(sent[0]).toMatchObject({ type: 'sqlite_run_query', plan: true, offset: 0, limit: 1000 });
+	});
+
+	it('prints a plan as the sqlite3 shell tree, with a line on each costly kind of step', async () => {
+		respondQuery(PLAN_RESULT);
+		await sqliteQuery(DB, 'SELECT * FROM t JOIN u ON u.x = t.a ORDER BY y', { plan: true });
+		const out = logged();
+		expect(out).toContain(`Plan of SELECT on ${DB}`);
+		expect(out).toContain(
+			[
+				'QUERY PLAN',
+				'|--SCAN u',
+				'|--SEARCH t USING INTEGER PRIMARY KEY (rowid=?)',
+				'`--USE TEMP B-TREE FOR ORDER BY',
+			].join('\n')
+		);
+		expect(out).toContain(SQLITE_QUERY_PLAN_KIND_HINTS.scan);
+		expect(out).toContain(SQLITE_QUERY_PLAN_KIND_HINTS.sort);
+		expect(out).not.toContain(SQLITE_QUERY_PLAN_KIND_HINTS.search);
+	});
+
+	it('prints a plan as JSON with its steps under --json', async () => {
+		respondQuery(PLAN_RESULT);
+		await sqliteQuery(DB, 'SELECT 1', { plan: true, json: true });
+		const printed = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(printed).toMatchObject({ success: true, path: DB, plan: true, rows: PLAN_RESULT.rows });
+		expect(printed.steps.map((step: { prefix: string; detail: string }) => step.prefix)).toEqual([
+			'|--',
+			'|--',
+			'`--',
+		]);
+		expect(printed.steps[0]).toMatchObject({ id: 4, parent: 0, kind: 'scan', depth: 0 });
+	});
+
+	it('says when a plan has no steps', async () => {
+		respondQuery({ ...PLAN_RESULT, statement: 'PRAGMA', rows: [] });
+		await sqliteQuery(DB, 'PRAGMA user_version', { plan: true });
+		expect(logged()).toContain('SQLite reports no steps for this statement');
 	});
 
 	it('refuses a blank statement or a limit past the cap before asking the app', async () => {

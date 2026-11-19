@@ -3433,14 +3433,15 @@ Save one BLOB cell to a file, whole, the way the viewer's record view saves it (
 
 Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused
 
-| Option                        | Description                                                                                                | Default |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------- | ------- |
-| `--param <name=value>`        | Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL | `[]`    |
-| `--param-number <name=value>` | Bind a parameter as a number (repeatable)                                                                  | `[]`    |
-| `--param-null <name>`         | Bind a parameter as NULL (repeatable)                                                                      | `[]`    |
-| `--offset <n>`                | Result rows to skip                                                                                        | `0`     |
-| `--limit <n>`                 | Rows to show (at most 1000)                                                                                | `50`    |
-| `--json`                      | Output as JSON (for scripting)                                                                             | -       |
+| Option                        | Description                                                                                                                                          | Default |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--param <name=value>`        | Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL                                           | `[]`    |
+| `--param-number <name=value>` | Bind a parameter as a number (repeatable)                                                                                                            | `[]`    |
+| `--param-null <name>`         | Bind a parameter as NULL (repeatable)                                                                                                                | `[]`    |
+| `--plan`                      | Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables | -       |
+| `--offset <n>`                | Result rows to skip (not with --plan)                                                                                                                | `0`     |
+| `--limit <n>`                 | Rows to show (at most 1000; not with --plan)                                                                                                         | `50`    |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                       | -       |
 
 ## `maestro-cli quick-chat`
 

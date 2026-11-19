@@ -684,6 +684,7 @@ describe('sqlite_run_query handler', () => {
 			sql: 'SELECT count(*) AS n FROM users',
 			offset: 0,
 			limit: 50,
+			plan: false,
 		});
 		expect(lastResponse(client)).toEqual({
 			type: 'sqlite_query_result',
@@ -722,6 +723,31 @@ describe('sqlite_run_query handler', () => {
 		});
 		await flush();
 		expect(queries.runSqliteQuery).toHaveBeenCalledWith(expect.objectContaining({ params }));
+	});
+
+	it('passes --plan through as a boolean, and nothing else as one', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q2plan',
+			path: '/data/app.db',
+			sql: 'SELECT * FROM users',
+			plan: true,
+		});
+		await flush();
+		expect(queries.runSqliteQuery).toHaveBeenLastCalledWith(
+			expect.objectContaining({ plan: true })
+		);
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q2plan2',
+			path: '/data/app.db',
+			sql: 'SELECT * FROM users',
+			plan: 'yes',
+		});
+		await flush();
+		expect(queries.runSqliteQuery).toHaveBeenLastCalledWith(
+			expect.objectContaining({ plan: false })
+		);
 	});
 
 	it("reports the runner's refusal with the request id", async () => {

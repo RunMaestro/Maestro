@@ -1492,3 +1492,146 @@ describe('SqliteViewer query parameters', () => {
 		expect(await screen.findByTestId('sqlite-query-parameter-input-:a')).toHaveValue('kept');
 	});
 });
+
+describe('SqliteViewer query plan', () => {
+	const PLAN: SqliteQueryResult = {
+		statement: 'SELECT',
+		plan: true,
+		columns: ['id', 'parent', 'notused', 'detail'].map((name) => ({ name, declaredType: null })),
+		rows: [
+			[2, 0, 0, 'CO-ROUTINE r'],
+			[5, 2, 0, 'SCAN users'],
+			[9, 0, 0, 'SEARCH events USING INDEX events_user (user_id=?)'],
+			[18, 0, 0, 'USE TEMP B-TREE FOR ORDER BY'],
+		],
+		offset: 0,
+		hasMore: false,
+		returnsRows: true,
+		elapsedMs: 1,
+	};
+
+	async function openQuery(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const panel = await screen.findByTestId('sqlite-query-panel');
+		fireEvent.change(within(panel).getAllByRole('textbox')[0], { target: { value: sql } });
+	}
+
+	it('starts on Rows, and runs a plan of the statement as written once switched to Plan', async () => {
+		runQuery.mockResolvedValue(PLAN);
+		await openQuery('SELECT * FROM users WHERE id = :id');
+		expect(screen.getByTestId('sqlite-query-result-mode-rows')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+
+		// A plan reads no rows, so switching to Plan runs it at once.
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+		expect(runQuery.mock.calls[0][0]).toMatchObject({
+			sql: 'SELECT * FROM users WHERE id = :id',
+			plan: true,
+			offset: 0,
+			limit: 1000,
+			params: { ':id': { type: 'text', text: '' } },
+		});
+		expect(await screen.findByTestId('sqlite-query-plan')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-query-grid')).not.toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-query-total')).toHaveTextContent(
+			'Query plan of SELECT: 4 steps'
+		);
+	});
+
+	it('draws the plan as a tree, each step marked by what it costs, with a legend', async () => {
+		runQuery.mockResolvedValue(PLAN);
+		await openQuery('SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		await screen.findByTestId('sqlite-query-plan');
+
+		const steps = screen.getAllByTestId('sqlite-query-plan-step');
+		expect(steps.map((step) => step.textContent)).toEqual([
+			'|--CO-ROUTINE r',
+			'|  `--SCAN users',
+			'|--SEARCH events USING INDEX events_user (user_id=?)',
+			'`--USE TEMP B-TREE FOR ORDER BY',
+		]);
+		expect(steps.map((step) => step.getAttribute('data-kind'))).toEqual([
+			'other',
+			'scan',
+			'search',
+			'sort',
+		]);
+		expect(steps[1]).toHaveAttribute('aria-level', '2');
+		const legend = screen.getByTestId('sqlite-query-plan-legend');
+		expect(legend).toHaveTextContent('SCAN reads every row');
+		expect(legend).toHaveTextContent('USE TEMP B-TREE');
+		expect(legend).toHaveTextContent('SEARCH reaches rows');
+	});
+
+	it('keeps Plan on for the next Run, and switching back to Rows waits for Run', async () => {
+		runQuery.mockResolvedValue(PLAN);
+		await openQuery('SELECT * FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2));
+		expect(runQuery.mock.calls[1][0].plan).toBe(true);
+
+		runQuery.mockImplementation(async (request: SqliteQueryRequest) => queryWindow(request));
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-rows'));
+		expect(runQuery).toHaveBeenCalledTimes(2);
+		// The plan stays on screen until the rows are asked for.
+		expect(screen.getByTestId('sqlite-query-plan')).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-grid')).toBeInTheDocument();
+		expect(runQuery.mock.calls[2][0]).toMatchObject({ plan: false, limit: 500 });
+	});
+
+	it('does not run when switched to Plan with an empty editor', async () => {
+		await openQuery('   ');
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		expect(screen.getByTestId('sqlite-query-empty')).toHaveTextContent('to see its query plan');
+		expect(runQuery).not.toHaveBeenCalled();
+	});
+
+	it('refuses to plan an EXPLAIN or a write under the editor, without asking main', async () => {
+		await openQuery('EXPLAIN SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent('already an EXPLAIN');
+		const panel = screen.getByTestId('sqlite-query-panel');
+		fireEvent.change(within(panel).getAllByRole('textbox')[0], {
+			target: { value: 'DELETE FROM users' },
+		});
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await waitFor(() =>
+			expect(screen.getByTestId('sqlite-query-error')).toHaveTextContent(
+				'DELETE is not a read-only statement.'
+			)
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('says when SQLite reports no plan steps', async () => {
+		runQuery.mockResolvedValue({ ...PLAN, statement: 'PRAGMA', rows: [] });
+		await openQuery('PRAGMA user_version');
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		expect(await screen.findByTestId('sqlite-query-plan-empty')).toBeInTheDocument();
+	});
+
+	it('keeps Plan and the plan across a switch to Browse and back', async () => {
+		runQuery.mockResolvedValue(PLAN);
+		await openQuery('SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		await screen.findByTestId('sqlite-query-plan');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
+		await screen.findByTestId('sqlite-object-pane');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		expect(await screen.findByTestId('sqlite-query-plan')).toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-query-result-mode-plan')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+		expect(runQuery).toHaveBeenCalledTimes(1);
+	});
+});

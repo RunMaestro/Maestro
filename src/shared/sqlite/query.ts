@@ -75,15 +75,35 @@ export function isSqliteReadOnlyKeyword(keyword: string): boolean {
 	return READ_ONLY_KEYWORD_SET.has(keyword.toUpperCase());
 }
 
+/** How one run treats the statement it is given. */
+export interface SqliteRunOptions {
+	/**
+	 * Run `EXPLAIN QUERY PLAN <statement>` instead of the statement: SQLite
+	 * reports how it would find the rows (which indexes, which full scans,
+	 * which temporary sorts) and reads none of them. Query mode's Plan toggle,
+	 * `maestro-cli sqlite query --plan`.
+	 */
+	plan?: boolean;
+}
+
+/** Why the Plan toggle cannot explain a statement that is already an EXPLAIN. */
+export const SQLITE_PLAN_OF_EXPLAIN_MESSAGE =
+	'This statement is already an EXPLAIN, so it has no plan of its own. Turn Plan off to run it as written.';
+
 /**
  * Why a statement will not run read-only, judged by its text alone, or null
  * when the text may go on to the driver. The driver can still refuse it
  * (`stmt.readonly` false, two statements); see `SQLITE_NOT_READ_ONLY_MESSAGE`.
+ * With `plan`, the statement is judged as written (so planning a DELETE is
+ * refused as a DELETE), and one that is already an EXPLAIN is refused too,
+ * since SQLite cannot explain an EXPLAIN.
  */
-export function sqliteReadOnlyRefusal(sql: string): string | null {
+export function sqliteReadOnlyRefusal(sql: string, options: SqliteRunOptions = {}): string | null {
 	if (!sql.trim()) return 'Write a statement to run.';
 	const keyword = sqliteLeadingKeyword(sql);
-	if (isSqliteReadOnlyKeyword(keyword)) return null;
+	if (isSqliteReadOnlyKeyword(keyword)) {
+		return options.plan && keyword === 'EXPLAIN' ? SQLITE_PLAN_OF_EXPLAIN_MESSAGE : null;
+	}
 	const allowed = SQLITE_READ_ONLY_KEYWORDS.join(', ');
 	if (keyword === 'ATTACH' || keyword === 'DETACH') {
 		return `${keyword} opens or closes another database file, so it is refused here. Queries are read-only: ${allowed}.`;
@@ -91,6 +111,16 @@ export function sqliteReadOnlyRefusal(sql: string): string | null {
 	if (!keyword)
 		return `This does not start with a statement keyword. Queries start with ${allowed}.`;
 	return `${keyword} is not a read-only statement. Queries here are read-only: ${allowed}.`;
+}
+
+/**
+ * The text a run prepares: the statement, trimmed, behind
+ * `EXPLAIN QUERY PLAN` when `plan` is set. Its parameters are the
+ * statement's own, so they bind the same way either way.
+ */
+export function sqliteStatementToRun(sql: string, options: SqliteRunOptions = {}): string {
+	const statement = sql.trim();
+	return options.plan ? `EXPLAIN QUERY PLAN ${statement}` : statement;
 }
 
 /** The driver reported the statement would write (a write PRAGMA, `WITH ... DELETE`). */

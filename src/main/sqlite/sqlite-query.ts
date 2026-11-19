@@ -34,7 +34,8 @@ const running = new Map<string, SqliteWorkerRun<SqliteQueryResult>>();
 
 /**
  * Run one read-only statement and return the window of its result at
- * `offset`, its parameters bound from `request.params`. Rejects with a
+ * `offset`, its parameters bound from `request.params` (or, with
+ * `request.plan`, the statement's `EXPLAIN QUERY PLAN`). Rejects with a
  * refusal for a statement that is not read-only or a parameter with no
  * usable value, with SQLite's own message for one that fails, and with
  * `SQLITE_QUERY_STOPPED_MESSAGE` or the timeout message for one stopped.
@@ -48,6 +49,9 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 		(typeof request.params !== 'object' || Array.isArray(request.params))
 	) {
 		return Promise.reject(new Error('SQLite query params must be an object keyed by parameter.'));
+	}
+	if (request.plan != null && typeof request.plan !== 'boolean') {
+		return Promise.reject(new Error('SQLite query plan must be true or false.'));
 	}
 	const database = getSqliteDatabase(request.handle);
 	const offset = windowBound(request.offset ?? 0, 'offset');
@@ -69,6 +73,7 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 				offset,
 				limit,
 				params: request.params ?? undefined,
+				plan: request.plan === true,
 			},
 		},
 		{

@@ -115,6 +115,7 @@ import { SQLITE_REGEXP_FUNCTION } from '../../../shared/sqlite/filter';
 import {
 	SQLITE_NOT_READ_ONLY_MESSAGE,
 	SQLITE_ONE_STATEMENT_MESSAGE,
+	SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
 	SQLITE_QUERY_STOPPED_MESSAGE,
 } from '../../../shared/sqlite/query';
 
@@ -308,6 +309,64 @@ describe('runSqliteQuery', () => {
 			})
 		).rejects.toMatchObject({ code: SQLITE_QUERY_REFUSED });
 		expect(driver.instances).toHaveLength(0);
+	});
+
+	it("runs a plan as the statement's EXPLAIN QUERY PLAN, binding the statement's parameters", async () => {
+		driver.statement.columns = [
+			{ name: 'id', type: null },
+			{ name: 'parent', type: null },
+			{ name: 'notused', type: null },
+			{ name: 'detail', type: null },
+		];
+		driver.statement.rows = [[BigInt(2), BigInt(0), BigInt(0), 'SEARCH t USING INDEX tb (b=?)']];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: '  SELECT * FROM t WHERE b = :b  ',
+			params: { ':b': { type: 'text', text: 'x' } },
+			plan: true,
+		});
+		expect(driver.instances[0].prepared).toEqual([
+			'EXPLAIN QUERY PLAN SELECT * FROM t WHERE b = :b',
+		]);
+		expect({ ...(driver.boundArgs?.[0] as object) }).toEqual({ b: 'x' });
+		expect(result).toMatchObject({
+			statement: 'SELECT',
+			plan: true,
+			rows: [[2, 0, 0, 'SEARCH t USING INDEX tb (b=?)']],
+		});
+		expect(driver.instances[0].closed).toBe(true);
+	});
+
+	it('leaves the plan flag off a plain run', async () => {
+		const result = await runSqliteQuery({ handle: 'h1', sql: 'SELECT 1', plan: false });
+		expect(result.plan).toBeUndefined();
+		expect(driver.instances[0].prepared).toEqual(['SELECT 1']);
+	});
+
+	it('refuses to plan a write or an EXPLAIN without opening a connection', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM users', plan: true })
+		).rejects.toMatchObject({ code: SQLITE_QUERY_REFUSED });
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'EXPLAIN SELECT 1', plan: true })
+		).rejects.toMatchObject({
+			message: SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
+			code: SQLITE_QUERY_REFUSED,
+		});
+		expect(driver.instances).toHaveLength(0);
+	});
+
+	it('refuses the plan of a write behind a read keyword when the driver says so', async () => {
+		driver.statement.readonly = false;
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'WITH x AS (SELECT 1) DELETE FROM users', plan: true })
+		).rejects.toMatchObject({ message: SQLITE_NOT_READ_ONLY_MESSAGE });
+	});
+
+	it('rejects a plan flag that is not a boolean', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'SELECT 1', plan: 'yes' as unknown as boolean })
+		).rejects.toThrow('SQLite query plan must be true or false.');
 	});
 
 	it('rejects params that are not an object keyed by parameter', async () => {

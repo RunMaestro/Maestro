@@ -3960,8 +3960,12 @@ sqliteCmd
 		(value: string, previous: string[]) => [...previous, value],
 		[]
 	)
-	.option('--offset <n>', 'Result rows to skip', '0')
-	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
+	.option(
+		'--plan',
+		"Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables"
+	)
+	.option('--offset <n>', 'Result rows to skip (not with --plan)', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000; not with --plan)', '50')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, sql, options) => sqliteQuery(file, sql, options));
 
