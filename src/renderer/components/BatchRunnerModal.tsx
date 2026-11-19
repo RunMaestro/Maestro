@@ -36,6 +36,7 @@ import {
 	clampAutoResumeMinutes,
 	clampMaxAutoResumes,
 } from '../../shared/autorunAutoResume';
+import { toBatchRunPlaybook } from '../../shared/playbookRun';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -702,24 +703,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						launchSource: 'panel',
 						// The playbook's parameter answers resolve its `[NAME]` tokens.
 						// Its provenance names it in the stats row.
-						...(loadedPlaybook && {
-							playbook: {
-								id: loadedPlaybook.id,
-								ownerSessionId: sessionId,
-								...(loadedPlaybook.provenance?.marketplaceId && {
-									marketplaceId: loadedPlaybook.provenance.marketplaceId,
-								}),
-								...(loadedPlaybook.provenance?.sourceVersion && {
-									sourceVersion: loadedPlaybook.provenance.sourceVersion,
-								}),
-								...(loadedPlaybook.parameterOverlay && {
-									parameterOverlay: loadedPlaybook.parameterOverlay,
-								}),
-								...(loadedPlaybook.parameterValues && {
-									parameterValues: loadedPlaybook.parameterValues,
-								}),
-							},
-						}),
+						...(loadedPlaybook && { playbook: toBatchRunPlaybook(loadedPlaybook, sessionId) }),
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);

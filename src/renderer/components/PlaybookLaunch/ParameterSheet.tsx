@@ -46,6 +46,13 @@ export interface ParameterSheetProps {
 	runIcon?: ReactNode;
 	/** Rendered at the left of the footer, such as a Back button. */
 	secondaryAction?: ReactNode;
+	/** Rendered between the rows and the footer, such as the run's cost row. */
+	summary?: ReactNode;
+	/**
+	 * A reason Run cannot start that is not about the answers (an Auto Run
+	 * already going on the agent). Shown like the sheet's own reasons, after them.
+	 */
+	blockedReason?: string | null;
 	/**
 	 * Called with the user's answers (blank answers included) on mount and on
 	 * every change, so a parent that unmounts the sheet can remount it on them.
@@ -132,6 +139,8 @@ export function ParameterSheet({
 	runLabel = 'Run',
 	runIcon,
 	secondaryAction,
+	summary,
+	blockedReason = null,
 	onAnswersChange,
 	onRun,
 }: ParameterSheetProps) {
@@ -170,7 +179,7 @@ export function ParameterSheet({
 			? describeMissingRequiredParams(missing)
 			: invalidCount > 0
 				? `Fix ${invalidCount === 1 ? 'the highlighted parameter' : `${invalidCount} highlighted parameters`} first.`
-				: null;
+				: blockedReason;
 
 	const change = (name: string, value: string) => {
 		setAnswer(name, value);
@@ -207,6 +216,8 @@ export function ParameterSheet({
 					))
 				)}
 			</div>
+
+			{summary}
 
 			<div
 				className="flex items-center gap-3 px-4 py-3 border-t shrink-0"

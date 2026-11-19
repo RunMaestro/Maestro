@@ -82,6 +82,14 @@ Answers are saved to the playbook as you type, so you can close the form and com
 
 From the command line, `maestro-cli playbook configure <id> --set NAME=VALUE` saves an answer, and `maestro-cli playbook configure <id>` reads the answers back.
 
+### Running It
+
+Above **Run**, one row says what the click starts: how many documents, how many loops, and which agent it runs on with that agent's model. The run always goes to the agent you opened the Exchange from. A playbook marked as machine-wide adds one line: "This playbook configures your machine, not just this project."
+
+A looping playbook whose manifest asks for unlimited loops is capped at 10 when you install it, so one click cannot start a run that never ends. The row says so and has a slider to raise the cap before you run.
+
+**Run** saves your answers (including the **Detected** ones) and the loop cap to the playbook, then starts it exactly as **Go** in the Auto Run panel would. The Exchange closes once the run has started, and the Auto Run panel opens on its running state. **Run** is disabled while another Auto Run is going on the same agent, or when Auto Run is turned off in Settings.
+
 ### Use One as Reference
 
 A playbook does not have to be run as-is. Importing one pulls it down locally, so you can also treat it as reference material: tell your agent what you actually want, point it at the imported document, and let it adapt the structure to your project. Customize it to your desire.

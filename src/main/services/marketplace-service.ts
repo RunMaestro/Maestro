@@ -37,6 +37,7 @@ import {
 	type PlaybookSourceProvenance,
 } from '../../shared/types';
 import { readPlaybookParamOverlay } from '../../shared/playbookParams';
+import { clampImportedMaxLoops } from '../../shared/playbookRun';
 import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
 import { hashPlaybookDocument } from '../utils/playbook-document-hash';
@@ -810,7 +811,9 @@ export async function importMarketplacePlaybook(
 				resetOnCompletion: d.resetOnCompletion,
 			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
-		maxLoops: marketplacePlaybook.maxLoops,
+		// An unlimited loop (`maxLoops: null`) is capped so one click never starts an
+		// unbounded run; the Exchange's Run row says so and lets the user raise it.
+		maxLoops: clampImportedMaxLoops(marketplacePlaybook.loopEnabled, marketplacePlaybook.maxLoops),
 		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
 		// The manifest is someone else's JSON: only a value Auto Run knows is kept. Absent means
 		// per task, so a playbook that never declared one imports exactly as it always has.

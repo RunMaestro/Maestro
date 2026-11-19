@@ -82,6 +82,7 @@ function renderMarketplace(
 	mocks.marketplaceState = createMarketplaceState(stateOverrides);
 	const onClose = vi.fn();
 	const onImportComplete = vi.fn();
+	const onRunPlaybook = vi.fn().mockResolvedValue(true);
 	const renderResult = render(
 		<MarketplaceModal
 			theme={mockTheme}
@@ -90,6 +91,7 @@ function renderMarketplace(
 			autoRunFolderPath="/autorun"
 			sessionId="session-1"
 			onImportComplete={onImportComplete}
+			onRunPlaybook={onRunPlaybook}
 			{...props}
 		/>
 	);
@@ -98,6 +100,7 @@ function renderMarketplace(
 		...renderResult,
 		onClose,
 		onImportComplete,
+		onRunPlaybook,
 		state: mocks.marketplaceState,
 	};
 }
@@ -121,6 +124,7 @@ describe('MarketplaceModal', () => {
 				autoRunFolderPath="/autorun"
 				sessionId="session-1"
 				onImportComplete={vi.fn()}
+				onRunPlaybook={vi.fn()}
 			/>
 		);
 
@@ -180,6 +184,7 @@ describe('MarketplaceModal', () => {
 				autoRunFolderPath="/autorun"
 				sessionId="session-1"
 				onImportComplete={vi.fn()}
+				onRunPlaybook={vi.fn()}
 			/>
 		);
 		expect(screen.getByText('Failed to load marketplace')).toBeTruthy();
@@ -198,6 +203,7 @@ describe('MarketplaceModal', () => {
 				autoRunFolderPath="/autorun"
 				sessionId="session-1"
 				onImportComplete={vi.fn()}
+				onRunPlaybook={vi.fn()}
 			/>
 		);
 		expect(screen.getByText('No results found')).toBeTruthy();

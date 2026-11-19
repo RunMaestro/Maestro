@@ -231,5 +231,35 @@ describe('ParameterSheet', () => {
 			expect(screen.getByTestId('parameter-sheet-run')).toHaveTextContent('Done');
 			expect(screen.getByTestId('done-icon')).toBeInTheDocument();
 		});
+
+		it('renders the summary between the rows and the footer', () => {
+			renderSheet({ summary: <div data-testid="cost-row">2 documents</div> });
+			const summary = screen.getByTestId('cost-row');
+			const run = screen.getByTestId('parameter-sheet-run');
+			expect(summary.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		});
+
+		it('blocks Run on an outside reason once the answers are complete', () => {
+			const onRun = vi.fn();
+			renderSheet({
+				onRun,
+				blockedReason: 'An Auto Run is already going on Backend.',
+				proposals: { PR_URL: { value: 'https://github.com/a/b/pull/7' } },
+			});
+			const run = screen.getByTestId('parameter-sheet-run') as HTMLButtonElement;
+			expect(run.disabled).toBe(true);
+			expect(screen.getByTestId('parameter-sheet-blocked')).toHaveTextContent(
+				'An Auto Run is already going on Backend.'
+			);
+			fireEvent.click(run);
+			expect(onRun).not.toHaveBeenCalled();
+		});
+
+		it('names a missing answer before an outside reason', () => {
+			renderSheet({ blockedReason: 'Auto Run is disabled in Settings.' });
+			expect(screen.getByTestId('parameter-sheet-blocked').textContent).not.toBe(
+				'Auto Run is disabled in Settings.'
+			);
+		});
 	});
 });

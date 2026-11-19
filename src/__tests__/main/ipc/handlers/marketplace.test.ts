@@ -22,6 +22,7 @@ import {
 import { rebaseAssetReferences } from '../../../../main/services/marketplace-service';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { IMPORTED_MAX_LOOPS_CEILING } from '../../../../shared/playbookRun';
 import { logger } from '../../../../main/utils/logger';
 
 // Mock electron's ipcMain
@@ -833,6 +834,42 @@ describe('marketplace IPC handlers', () => {
 			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
 			expect(writtenData.playbooks).toHaveLength(1);
 			expect(writtenData.playbooks[0].id).toBe('test-uuid-123');
+			// A finite loop bound is kept as it shipped.
+			expect(writtenData.playbooks[0].maxLoops).toBe(3);
+		});
+
+		it('caps an unlimited loop at the import ceiling', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: {
+					...sampleManifest,
+					playbooks: [
+						{
+							...sampleManifest.playbooks[1],
+							id: 'loop-forever',
+							loopEnabled: true,
+							maxLoops: null,
+						},
+					],
+				},
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({ ok: true, text: () => Promise.resolve('# Content') });
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			await handler!({} as any, 'loop-forever', 'Loop', '/autorun', 'session-123');
+
+			const playbooksWriteCall = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find((call) => (call[0] as string).includes('session-123.json'));
+			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
+			expect(writtenData.playbooks[0].loopEnabled).toBe(true);
+			expect(writtenData.playbooks[0].maxLoops).toBe(IMPORTED_MAX_LOOPS_CEILING);
 		});
 
 		it('should append to existing playbooks', async () => {

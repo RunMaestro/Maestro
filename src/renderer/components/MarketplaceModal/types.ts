@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
-import type { Theme } from '../../types';
+import type { BatchRunConfig, Theme } from '../../types';
 
 export interface MarketplaceModalProps {
 	theme: Theme;
@@ -11,6 +11,11 @@ export interface MarketplaceModalProps {
 	/** SSH remote ID for importing to remote hosts */
 	sshRemoteId?: string;
 	onImportComplete: (folderName: string) => void;
+	/**
+	 * Starts an installed playbook's run on an agent (the configure step's
+	 * Run). Resolves true once the run is running; the modal closes only then.
+	 */
+	onRunPlaybook: (sessionId: string, config: BatchRunConfig) => Promise<boolean>;
 }
 
 export interface PlaybookTileProps {

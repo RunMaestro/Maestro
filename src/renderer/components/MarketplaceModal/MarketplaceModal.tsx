@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
+import { isUnboundedLoop } from '../../../shared/playbookRun';
 import type { Playbook } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
@@ -36,6 +37,7 @@ export function MarketplaceModal({
 	sessionId,
 	sshRemoteId,
 	onImportComplete,
+	onRunPlaybook,
 }: MarketplaceModalProps) {
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -233,6 +235,12 @@ export function MarketplaceModal({
 						playbook={configuringPlaybook}
 						sessionId={sessionId}
 						readmeContent={readmeContent}
+						importCappedLoops={
+							selectedPlaybook
+								? isUnboundedLoop(selectedPlaybook.loopEnabled, selectedPlaybook.maxLoops)
+								: false
+						}
+						onRunPlaybook={onRunPlaybook}
 						onClose={onClose}
 					/>
 				) : showDetailView && selectedPlaybook ? (
