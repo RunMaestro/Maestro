@@ -443,10 +443,47 @@ export interface SqliteQueryRequest {
 	/** Rows to return, clamped to `SQLITE_QUERY_MAX_LIMIT`. Default `SQLITE_QUERY_PAGE_ROWS`. */
 	limit?: number;
 	/**
+	 * Values for the statement's parameters (`?`, `?3`, `:id`), keyed by
+	 * `SqliteQueryParameter.label`. Every parameter the statement holds needs
+	 * one; extra keys are ignored. Bound by the driver, never spliced into the
+	 * text (see `sqliteQueryBinding()` in src/shared/sqlite/query.ts).
+	 */
+	params?: SqliteParameterValues;
+	/**
 	 * Names this run so `cancelQuery` can stop it. A new run under an id still
 	 * running stops the older one first.
 	 */
 	queryId?: string | null;
+}
+
+/**
+ * How a parameter's text binds: as TEXT, as a number (an integer exactly, a
+ * `bigint` past 2^53, or a double), or as NULL (the text is ignored).
+ */
+export type SqliteParameterType = 'text' | 'number' | 'null';
+
+/** The value a person gave one parameter. */
+export interface SqliteParameterValue {
+	type: SqliteParameterType;
+	text: string;
+}
+
+/** Parameter values keyed by `SqliteQueryParameter.label`. */
+export type SqliteParameterValues = Record<string, SqliteParameterValue>;
+
+/**
+ * One parameter a statement binds, as `sqliteQueryParameters()` finds it in
+ * the text. A name used twice (`:id ... :id`) is one parameter.
+ */
+export interface SqliteQueryParameter {
+	/**
+	 * What the parameter is called and its value is keyed by: `:id`, `@id`,
+	 * `$id`, or `?3` as first written, and `?1`, `?2`, ... by order for a bare
+	 * `?`.
+	 */
+	label: string;
+	/** A bare `?`, bound by position rather than by name. */
+	anonymous: boolean;
 }
 
 /** One window of a statement's result. */

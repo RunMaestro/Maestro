@@ -3942,6 +3942,24 @@ sqliteCmd
 	.description(
 		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused"
 	)
+	.option(
+		'--param <name=value>',
+		'Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-number <name=value>',
+		'Bind a parameter as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-null <name>',
+		'Bind a parameter as NULL (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
 	.option('--offset <n>', 'Result rows to skip', '0')
 	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
 	.option('--json', 'Output as JSON (for scripting)')

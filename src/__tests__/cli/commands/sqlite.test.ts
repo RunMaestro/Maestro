@@ -27,6 +27,7 @@ import {
 	sqliteCount,
 	sqliteInfo,
 	sqliteQuery,
+	sqliteQueryParamsFromFlags,
 	sqliteRows,
 	sqliteSchema,
 	sqliteTables,
@@ -840,8 +841,38 @@ describe('sqlite query', () => {
 			sql: 'SELECT id, email FROM users',
 			offset: 0,
 			limit: 50,
+			params: {},
 			responseType: 'sqlite_query_result',
 		});
+	});
+
+	it('sends --param, --param-number, and --param-null values keyed by the parameter', async () => {
+		const sent = respondQuery();
+		await sqliteQuery(DB, 'SELECT * FROM users WHERE email = ? AND id > :min OR note IS @note', {
+			param: ['?1=a=b@example.com'],
+			paramNumber: ['min=10'],
+			paramNull: ['@note'],
+		});
+		expect(sent[0].params).toEqual({
+			'?1': { type: 'text', text: 'a=b@example.com' },
+			':min': { type: 'number', text: '10' },
+			'@note': { type: 'null', text: '' },
+		});
+	});
+
+	it('refuses a parameter with no value, or a --param-number that is no number, before asking the app', async () => {
+		const sent = respondQuery();
+		await expect(sqliteQuery(DB, 'SELECT * FROM users WHERE id = :id', {})).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.join('\n')).toContain('Give :id a value.');
+		await expect(sqliteQuery(DB, 'SELECT :id', { paramNumber: ['id=ten'] })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.join('\n')).toContain(
+			':id is set to Number, but "ten" is not a number.'
+		);
+		expect(sent).toHaveLength(0);
 	});
 
 	it('prints the rows as a table, NULL spelled out, with the next offset', async () => {
@@ -894,5 +925,44 @@ describe('sqlite query', () => {
 		await expect(sqliteQuery(DB, 'SELECT 1', { limit: '5000' })).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('--limit must be at most 1000');
 		expect(sent).toHaveLength(0);
+	});
+});
+
+describe('sqliteQueryParamsFromFlags', () => {
+	it('matches a name with or without its sigil, and splits only at the first =', () => {
+		expect(
+			sqliteQueryParamsFromFlags('SELECT ?, ?, :name', {
+				param: ['?1=x', '2=y=z'],
+				paramNumber: ['name=1.5'],
+			})
+		).toEqual({
+			'?1': { type: 'text', text: 'x' },
+			'?2': { type: 'text', text: 'y=z' },
+			':name': { type: 'number', text: '1.5' },
+		});
+		expect(sqliteQueryParamsFromFlags('SELECT ?', { param: ['?1='] })).toEqual({
+			'?1': { type: 'text', text: '' },
+		});
+	});
+
+	it('refuses a name the statement lacks, listing the ones it has', () => {
+		expect(() => sqliteQueryParamsFromFlags('SELECT :a, ?', { param: ['b=1'] })).toThrow(
+			'--param b: the statement has no such parameter (it has: :a, ?1)'
+		);
+		expect(() => sqliteQueryParamsFromFlags('SELECT 1', { paramNull: ['x'] })).toThrow(
+			'(it has: none)'
+		);
+	});
+
+	it('refuses a pair with no name, and a parameter given twice', () => {
+		expect(() => sqliteQueryParamsFromFlags('SELECT :a', { param: ['=1'] })).toThrow(
+			'--param takes name=value (got "=1")'
+		);
+		expect(() => sqliteQueryParamsFromFlags('SELECT :a', { param: ['nothing'] })).toThrow(
+			'takes name=value'
+		);
+		expect(() =>
+			sqliteQueryParamsFromFlags('SELECT :a', { param: ['a=1'], paramNull: [':a'] })
+		).toThrow(':a is given more than once');
 	});
 });

@@ -1401,3 +1401,94 @@ describe('SqliteViewer query runs', () => {
 		expect(runQuery).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('SqliteViewer query parameters', () => {
+	async function openQuery(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByTestId('sqlite-query-panel');
+		fireEvent.change(within(editor).getAllByRole('textbox')[0], { target: { value: sql } });
+	}
+
+	it('shows no parameter boxes for a statement without parameters', async () => {
+		await openQuery("SELECT ':not' FROM users -- ?");
+		expect(screen.queryByTestId('sqlite-query-parameters')).not.toBeInTheDocument();
+	});
+
+	it('shows one box per parameter as the statement is typed, a repeated name once', async () => {
+		await openQuery('SELECT * FROM users WHERE id = ? OR email = :email OR name = :email');
+		expect(screen.getByTestId('sqlite-query-parameter-?1')).toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-query-parameter-:email')).toBeInTheDocument();
+		expect(screen.getAllByTestId(/^sqlite-query-parameter-input-/)).toHaveLength(2);
+	});
+
+	it('sends the values with the run, typed, an untouched box as empty text', async () => {
+		await openQuery('SELECT * FROM users WHERE id = ? AND email = :email AND note IS @note');
+		fireEvent.change(screen.getByTestId('sqlite-query-parameter-input-?1'), {
+			target: { value: '42' },
+		});
+		fireEvent.click(screen.getByTestId('sqlite-query-parameter-type-?1-number'));
+		fireEvent.click(screen.getByTestId('sqlite-query-parameter-type-@note-null'));
+		expect(screen.getByTestId('sqlite-query-parameter-input-@note')).toBeDisabled();
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+		expect(runQuery.mock.calls[0][0].params).toEqual({
+			'?1': { type: 'number', text: '42' },
+			':email': { type: 'text', text: '' },
+			'@note': { type: 'null', text: '' },
+		});
+	});
+
+	it('runs on Enter in a parameter box', async () => {
+		await openQuery('SELECT :a');
+		const box = screen.getByTestId('sqlite-query-parameter-input-:a');
+		fireEvent.change(box, { target: { value: 'x' } });
+		fireEvent.keyDown(box, { key: 'Enter' });
+		await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+		expect(runQuery.mock.calls[0][0].params).toEqual({ ':a': { type: 'text', text: 'x' } });
+	});
+
+	it('refuses a Number box that holds no number under the editor, without asking main', async () => {
+		await openQuery('SELECT :n');
+		fireEvent.change(screen.getByTestId('sqlite-query-parameter-input-:n'), {
+			target: { value: 'ten' },
+		});
+		fireEvent.click(screen.getByTestId('sqlite-query-parameter-type-:n-number'));
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent(
+			':n is set to Number, but "ten" is not a number.'
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('warns about ? mixed with ?NNN as it is typed, and refuses to run it', async () => {
+		await openQuery('SELECT ?, ?2');
+		expect(screen.getByTestId('sqlite-query-parameters-problem')).toHaveTextContent(
+			'mixes ? with numbered parameters'
+		);
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-error')).toHaveTextContent(
+			'Number every parameter or none.'
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+	});
+
+	it('keeps a value when its parameter goes and comes back, and across Browse', async () => {
+		await openQuery('SELECT :a');
+		fireEvent.change(screen.getByTestId('sqlite-query-parameter-input-:a'), {
+			target: { value: 'kept' },
+		});
+		const editor = within(screen.getByTestId('sqlite-query-panel')).getAllByRole('textbox')[0];
+		fireEvent.change(editor, { target: { value: 'SELECT 1' } });
+		expect(screen.queryByTestId('sqlite-query-parameters')).not.toBeInTheDocument();
+		fireEvent.change(editor, { target: { value: 'SELECT :a' } });
+		expect(screen.getByTestId('sqlite-query-parameter-input-:a')).toHaveValue('kept');
+
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
+		await screen.findByTestId('sqlite-object-pane');
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		expect(await screen.findByTestId('sqlite-query-parameter-input-:a')).toHaveValue('kept');
+	});
+});

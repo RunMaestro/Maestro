@@ -7,7 +7,8 @@
  *   - `sqlite_read_rows`: one window of the table view (`maestro-cli sqlite rows`).
  *   - `sqlite_count_rows`: the table view's row count, settled (`maestro-cli sqlite count`).
  *   - `sqlite_save_blob`: one BLOB cell written to a file (`maestro-cli sqlite blob`).
- *   - `sqlite_run_query`: Query mode's Run, one read-only statement (`maestro-cli sqlite query`).
+ *   - `sqlite_run_query`: Query mode's Run, one read-only statement with its
+ *     parameter values (`maestro-cli sqlite query --param`).
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -39,6 +40,7 @@ import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
 import type {
 	SqliteIntegrityMode,
 	SqliteObjectKind,
+	SqliteParameterValues,
 	SqliteSortSpec,
 } from '../../../../shared/sqlite/types';
 import { SQLITE_OBJECT_KINDS } from '../../../../shared/sqlite/objects';
@@ -312,6 +314,8 @@ export async function handleSqliteRunQuery(
 			sql,
 			offset: message.offset === undefined ? 0 : (message.offset as number),
 			limit: message.limit === undefined ? 50 : (message.limit as number),
+			// Shape and values are checked by the run, which refuses a bad one.
+			params: (message.params ?? undefined) as SqliteParameterValues | undefined,
 		});
 		reply({ success: true, database, result });
 	} catch (error) {

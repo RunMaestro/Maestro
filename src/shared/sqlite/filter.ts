@@ -81,6 +81,23 @@ export const SQLITE_REGEXP_FUNCTION = 'maestro_regexp';
 const INTEGER_TEXT_RE = /^[+-]?\d+$/;
 const NUMBER_TEXT_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 
+/**
+ * Decimal text as the number SQLite should see: an integer exactly (a
+ * `bigint` past 2^53, so a 64-bit rowid survives), anything else with a
+ * point or an exponent as a double. Null when the text is not a number.
+ * Shared by the filter (a literal on a column with no affinity) and Query
+ * mode's parameters (a value set to Number).
+ */
+export function sqliteNumberBindValue(text: string): number | bigint | null {
+	if (INTEGER_TEXT_RE.test(text)) {
+		const exact = BigInt(text);
+		const narrow = Number(exact);
+		return Number.isSafeInteger(narrow) ? narrow : exact;
+	}
+	if (NUMBER_TEXT_RE.test(text)) return Number(text);
+	return null;
+}
+
 /** `true` / `false` (any case) as SQLite's 1 / 0, or undefined for anything else. */
 function booleanAsInteger(text: string): number | undefined {
 	const lower = text.toLowerCase();
@@ -104,13 +121,7 @@ export function sqliteFilterParam(
 	const asBoolean = booleanAsInteger(text);
 	if (asBoolean !== undefined) return asBoolean;
 	if (affinity !== 'BLOB') return text;
-	if (INTEGER_TEXT_RE.test(text)) {
-		const exact = BigInt(text);
-		const narrow = Number(exact);
-		return Number.isSafeInteger(narrow) ? narrow : exact;
-	}
-	if (NUMBER_TEXT_RE.test(text)) return Number(text);
-	return text;
+	return sqliteNumberBindValue(text) ?? text;
 }
 
 /** Escape `LIKE`'s wildcards (and the escape character itself) in a needle. */

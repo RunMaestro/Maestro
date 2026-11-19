@@ -22,6 +22,13 @@
  * time: scrolling near the end re-runs the statement for the next window.
  * A failure or refusal is shown under the grid, never as a toast.
  *
+ * A statement with parameters (`?`, `:id`) gets one value box per parameter
+ * between the toolbar and the grid (SqliteQueryParameters), read from the
+ * text as it changes. The values ride with the run and are bound by the
+ * driver; a parameter that cannot bind (a Number box that holds no number)
+ * is refused here, before any process starts, with the same words the run
+ * would use.
+ *
  * The query text and the run are owned by the viewer (`value` / `run`), so
  * switching to Browse and back keeps both. Every call carries a fresh id; a
  * reply under any other id than the run's current one is stale and dropped,
@@ -36,9 +43,15 @@ import { formatCount } from '../../../shared/formatters';
 import {
 	SQLITE_QUERY_PAGE_ROWS,
 	SQLITE_READ_ONLY_KEYWORDS,
+	sqliteQueryBinding,
+	sqliteQueryParameters,
 	sqliteReadOnlyRefusal,
 } from '../../../shared/sqlite/query';
-import type { SqliteQueryResult } from '../../../shared/sqlite/types';
+import type {
+	SqliteParameterValue,
+	SqliteParameterValues,
+	SqliteQueryResult,
+} from '../../../shared/sqlite/types';
 import type { Theme } from '../../types';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { generateId } from '../../utils/ids';
@@ -48,6 +61,7 @@ import { MarkdownEditor } from '../FilePreview/markdownEditor';
 import { DataGrid } from '../ui/DataGrid';
 import { Spinner } from '../ui/Spinner';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
+import { SqliteQueryParameters, sqliteParameterValuesFor } from './SqliteQueryParameters';
 
 /** The last statement run in Query mode and what it returned so far. */
 export interface SqliteQueryRunState {
@@ -55,6 +69,8 @@ export interface SqliteQueryRunState {
 	runId: string;
 	/** The text that ran; the editor may have moved on since. */
 	sql: string;
+	/** The parameter values it ran with, so a later window binds the same ones. */
+	params: SqliteParameterValues;
 	/** Columns and every row loaded so far; null until the first window lands. */
 	result: SqliteQueryResult | null;
 	/** A call (the first window or a later one) is in flight. */
@@ -67,6 +83,9 @@ interface SqliteQueryPanelProps {
 	handle: string;
 	value: string;
 	onChange: (value: string) => void;
+	/** Values typed for the statement's parameters, keyed by label. */
+	params: SqliteParameterValues;
+	onParamsChange: (update: SetStateAction<SqliteParameterValues>) => void;
 	run: SqliteQueryRunState | null;
 	onRunChange: (update: SetStateAction<SqliteQueryRunState | null>) => void;
 	theme: Theme;
@@ -78,6 +97,8 @@ export function SqliteQueryPanel({
 	handle,
 	value,
 	onChange,
+	params,
+	onParamsChange,
 	run,
 	onRunChange,
 	theme,
@@ -101,6 +122,9 @@ export function SqliteQueryPanel({
 		};
 	}, [handle]);
 
+	// Re-read on every edit: one linear pass, cheaper than the editor's own parse.
+	const scan = useMemo(() => sqliteQueryParameters(value), [value]);
+
 	/**
 	 * Run a statement. Offset 0 runs the editor's text afresh (stopping a run
 	 * still in flight); a later offset re-runs the statement already shown, for
@@ -108,23 +132,27 @@ export function SqliteQueryPanel({
 	 */
 	const runQuery = useStableCallback(async (offset: number) => {
 		const sql = offset === 0 ? value : (run?.sql ?? '');
-		const refusal = offset === 0 ? sqliteReadOnlyRefusal(sql) : null;
+		const values =
+			offset === 0 ? sqliteParameterValuesFor(scan.parameters, params) : (run?.params ?? {});
+		const refusal =
+			offset === 0 ? (sqliteReadOnlyRefusal(sql) ?? sqliteQueryBinding(sql, values).problem) : null;
 		if (offset === 0 && run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
 		const runId = generateId();
 		if (refusal) {
-			// The text alone settles it: no process is started.
-			onRunChange({ runId, sql, result: null, running: false, error: refusal });
+			// The text and the values alone settle it: no process is started.
+			onRunChange({ runId, sql, params: values, result: null, running: false, error: refusal });
 			return;
 		}
 		onRunChange((previous) =>
 			offset === 0 || !previous
-				? { runId, sql, result: null, running: true, error: null }
+				? { runId, sql, params: values, result: null, running: true, error: null }
 				: { ...previous, runId, running: true, error: null }
 		);
 		try {
 			const page = await window.maestro.sqlite.runQuery({
 				handle,
 				sql,
+				params: values,
 				offset,
 				limit: SQLITE_QUERY_PAGE_ROWS,
 				queryId: runId,
@@ -147,6 +175,11 @@ export function SqliteQueryPanel({
 	});
 
 	const handleRun = useCallback(() => void runQuery(0), [runQuery]);
+	const handleParamChange = useCallback(
+		(label: string, next: SqliteParameterValue) =>
+			onParamsChange((previous) => ({ ...previous, [label]: next })),
+		[onParamsChange]
+	);
 	const handleStop = useCallback(() => {
 		if (run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
 	}, [run]);
@@ -206,7 +239,7 @@ export function SqliteQueryPanel({
 					completion="typing"
 					showLineNumbers
 					wrap
-					placeholder="SELECT * FROM ..."
+					placeholder="SELECT * FROM ... WHERE id = :id"
 					onKeyDown={handleEditorKey}
 				/>
 			</div>
@@ -247,6 +280,16 @@ export function SqliteQueryPanel({
 				)}
 				<span>Read-only: anything that would change the database is refused.</span>
 			</div>
+			{(scan.parameters.length > 0 || scan.problem) && (
+				<SqliteQueryParameters
+					parameters={scan.parameters}
+					values={params}
+					onChange={handleParamChange}
+					problem={scan.problem}
+					onRun={handleRun}
+					theme={theme}
+				/>
+			)}
 			<div className="flex-1 min-h-0" data-testid="sqlite-query-results">
 				{result && result.returnsRows ? (
 					<DataGrid

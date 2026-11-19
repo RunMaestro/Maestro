@@ -711,6 +711,19 @@ describe('sqlite_run_query handler', () => {
 		);
 	});
 
+	it('passes the parameter values through for the runner to bind', async () => {
+		const params = { ':id': { type: 'number', text: '7' } };
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'q2p',
+			path: '/data/app.db',
+			sql: 'SELECT * FROM users WHERE id = :id',
+			params,
+		});
+		await flush();
+		expect(queries.runSqliteQuery).toHaveBeenCalledWith(expect.objectContaining({ params }));
+	});
+
 	it("reports the runner's refusal with the request id", async () => {
 		queries.runSqliteQuery.mockRejectedValue(new Error('DELETE is not a read-only statement.'));
 		handler.handleMessage(client, {

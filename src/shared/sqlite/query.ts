@@ -11,7 +11,14 @@
  * files, and it turns a write into a plain refusal before the driver sees
  * it. The driver's own checks (a `readonly` connection, one statement per
  * `prepare()`, `stmt.readonly`) still stand behind it.
+ *
+ * Parameters (`?`, `:id`) are found and bound here too
+ * (`sqliteQueryParameters()`, `sqliteQueryBinding()`), so a value a person
+ * types is always bound by the driver and never spliced into the text.
  */
+
+import { sqliteNumberBindValue, type SqliteBindValue } from './filter';
+import type { SqliteParameterValue, SqliteParameterValues, SqliteQueryParameter } from './types';
 
 /**
  * Statement kinds a read-only run accepts, in the order a refusal lists them.
@@ -101,3 +108,191 @@ export function sqliteQueryTimeoutMessage(timeoutMs = SQLITE_QUERY_TIMEOUT_MS): 
 
 /** The run was stopped by the user, by a newer run, or by closing the database. */
 export const SQLITE_QUERY_STOPPED_MESSAGE = 'The query was stopped.';
+
+/** Whether a character may sit inside a SQLite identifier or parameter name. */
+function isSqliteIdChar(char: string): boolean {
+	return /[A-Za-z0-9_$]/.test(char) || char.charCodeAt(0) >= 0x80;
+}
+
+/** Where the quoted run starting at `start` ends (past its closing quote). */
+function skipQuoted(sql: string, start: number, close: string): number {
+	let index = start + 1;
+	while (index < sql.length) {
+		if (sql[index] === close) {
+			// A doubled quote escapes itself; `[...]` has no escape.
+			if (close !== ']' && sql[index + 1] === close) {
+				index += 2;
+				continue;
+			}
+			return index + 1;
+		}
+		index++;
+	}
+	return sql.length;
+}
+
+/**
+ * Where a named parameter starting at `start` (its sigil) ends: a run of
+ * identifier characters, as SQLite's tokenizer reads it. Returns `start` when
+ * no name follows the sigil. The bundled SQLite omits Tcl variables, so
+ * `$a::b` is `$a` followed by a syntax error, not one name.
+ */
+function namedParameterEnd(sql: string, start: number): number {
+	let index = start + 1;
+	while (index < sql.length && isSqliteIdChar(sql[index])) index++;
+	return index;
+}
+
+/** A statement mixed `?` with `?NNN`; see `sqliteQueryParameters()`. */
+export const SQLITE_MIXED_PARAMETERS_MESSAGE =
+	'This statement mixes ? with numbered parameters (?1, ?2), which cannot be bound reliably. Number every parameter or none.';
+
+/** The parameters a statement binds and anything that stops them binding. */
+export interface SqliteQueryParameterScan {
+	/** In order of first appearance, one per name. */
+	parameters: SqliteQueryParameter[];
+	/** Why the parameters cannot be bound as written, or null. */
+	problem: string | null;
+}
+
+/**
+ * The parameters a statement holds, read from its text the way SQLite's
+ * tokenizer reads them: `?`, `?NNN`, and `:name`, `@name`, `$name`, `#name`,
+ * skipping string literals, quoted names (`"..."`, `` `...` ``, `[...]`), and
+ * comments. Shared by the Query panel (one value box per parameter, live as
+ * the text changes), `maestro-cli sqlite query --param`, and the run itself,
+ * which binds what this finds; the driver still checks the count, so a
+ * statement this misreads fails with SQLite's own error rather than binding
+ * the wrong value.
+ *
+ * A name used twice is one parameter. So are `:id` and `@id`: better-sqlite3
+ * binds both from the same key. A bare `?` mixed with `?NNN` is reported as a
+ * problem, because the driver binds bare values by position into the gaps
+ * the numbered ones leave and would put a value where it was not meant.
+ */
+export function sqliteQueryParameters(sql: string): SqliteQueryParameterScan {
+	const parameters: SqliteQueryParameter[] = [];
+	const bindKeys = new Set<string>();
+	const labels = new Set<string>();
+	const numbered = new Set<number>();
+	let anonymous = 0;
+	let hasNumbered = false;
+	let index = 0;
+	while (index < sql.length) {
+		const char = sql[index];
+		if (char === "'" || char === '"' || char === '`') {
+			index = skipQuoted(sql, index, char);
+		} else if (char === '[') {
+			index = skipQuoted(sql, index, ']');
+		} else if (char === '-' && sql[index + 1] === '-') {
+			const newline = sql.indexOf('\n', index);
+			index = newline === -1 ? sql.length : newline + 1;
+		} else if (char === '/' && sql[index + 1] === '*') {
+			const end = sql.indexOf('*/', index + 2);
+			index = end === -1 ? sql.length : end + 2;
+		} else if (char === '?') {
+			let end = index + 1;
+			while (end < sql.length && /\d/.test(sql[end])) end++;
+			if (end === index + 1) {
+				anonymous++;
+				const label = `?${anonymous}`;
+				// Taken only by a `?NNN` in a statement that is refused anyway.
+				if (!labels.has(label)) {
+					labels.add(label);
+					parameters.push({ label, anonymous: true });
+				}
+			} else {
+				const label = sql.slice(index, end);
+				const position = Number(label.slice(1));
+				hasNumbered = true;
+				if (!numbered.has(position) && !bindKeys.has(label.slice(1)) && !labels.has(label)) {
+					numbered.add(position);
+					bindKeys.add(label.slice(1));
+					labels.add(label);
+					parameters.push({ label, anonymous: false });
+				}
+			}
+			index = end;
+		} else if (char === ':' || char === '@' || char === '$' || char === '#') {
+			const end = namedParameterEnd(sql, index);
+			if (end === index + 1) {
+				index++;
+				continue;
+			}
+			const label = sql.slice(index, end);
+			if (!bindKeys.has(label.slice(1))) {
+				bindKeys.add(label.slice(1));
+				parameters.push({ label, anonymous: false });
+			}
+			index = end;
+		} else if (isSqliteIdChar(char)) {
+			// A whole word, so the `$` in `price$usd` is not read as a parameter.
+			while (index < sql.length && isSqliteIdChar(sql[index])) index++;
+		} else {
+			index++;
+		}
+	}
+	const problem = anonymous > 0 && hasNumbered ? SQLITE_MIXED_PARAMETERS_MESSAGE : null;
+	return { parameters, problem };
+}
+
+/** The value one parameter binds as, or why it cannot bind. */
+function parameterBindValue(
+	parameter: SqliteQueryParameter,
+	value: SqliteParameterValue | undefined
+): { value: SqliteBindValue } | { problem: string } {
+	if (!value || typeof value !== 'object' || typeof value.text !== 'string') {
+		return { problem: `Give ${parameter.label} a value.` };
+	}
+	if (value.type === 'null') return { value: null };
+	if (value.type === 'text') return { value: value.text };
+	if (value.type !== 'number') {
+		return { problem: `${parameter.label} has an unknown type; use text, number, or null.` };
+	}
+	const number = sqliteNumberBindValue(value.text.trim());
+	if (number === null) {
+		const shown = value.text.trim() ? `"${value.text}" is not a number` : 'it is empty';
+		return { problem: `${parameter.label} is set to Number, but ${shown}.` };
+	}
+	return { value: number };
+}
+
+/** What a statement's parameters bind as: driver arguments, or why they cannot bind. */
+export type SqliteQueryBinding =
+	| { args: Array<SqliteBindValue[] | Record<string, SqliteBindValue>>; problem: null }
+	| { args: null; problem: string };
+
+/**
+ * The arguments that bind `values` to the parameters of `sql`, in the shape
+ * better-sqlite3 takes them: an array for bare `?` values in order, an
+ * object for named and numbered ones keyed by the name without its sigil.
+ * Never splices a value into the text. `problem` is set, and nothing binds,
+ * when a parameter has no value, a Number value is not a number, or the
+ * statement mixes `?` with `?NNN`. Used by the run (which refuses on a
+ * problem) and by the Query panel (which shows the problem without starting
+ * a process).
+ */
+export function sqliteQueryBinding(
+	sql: string,
+	values: SqliteParameterValues | null | undefined
+): SqliteQueryBinding {
+	const scan = sqliteQueryParameters(sql);
+	if (scan.problem) return { args: null, problem: scan.problem };
+	const source = values && typeof values === 'object' ? values : {};
+	const positional: SqliteBindValue[] = [];
+	// No prototype, so a parameter called `:__proto__` is just a key.
+	const named: Record<string, SqliteBindValue> = Object.create(null);
+	for (const parameter of scan.parameters) {
+		const given = Object.prototype.hasOwnProperty.call(source, parameter.label)
+			? source[parameter.label]
+			: undefined;
+		const bound = parameterBindValue(parameter, given);
+		if ('problem' in bound) return { args: null, problem: bound.problem };
+		if (parameter.anonymous) positional.push(bound.value);
+		else named[parameter.label.slice(1)] = bound.value;
+	}
+	const args: Array<SqliteBindValue[] | Record<string, SqliteBindValue>> = [];
+	if (positional.length > 0) args.push(positional);
+	if (Object.keys(named).length > 0) args.push(named);
+	return { args, problem: null };
+}

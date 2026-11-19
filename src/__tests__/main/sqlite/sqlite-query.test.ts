@@ -26,6 +26,8 @@ const driver = vi.hoisted(() => ({
 	produced: 0,
 	iteratorClosed: false,
 	ran: 0,
+	/** Arguments the statement was last bound with (iterate or run). */
+	boundArgs: null as unknown[] | null,
 }));
 
 vi.mock('better-sqlite3', () => {
@@ -64,7 +66,8 @@ vi.mock('better-sqlite3', () => {
 					if (flag) driver.flags.push('safeIntegers');
 					return statement;
 				},
-				iterate() {
+				iterate(...args: unknown[]) {
+					driver.boundArgs = args;
 					const rows = driver.statement.rows;
 					let index = 0;
 					const iterator: IterableIterator<unknown[]> = {
@@ -81,7 +84,8 @@ vi.mock('better-sqlite3', () => {
 					};
 					return iterator;
 				},
-				run: () => {
+				run: (...args: unknown[]) => {
+					driver.boundArgs = args;
 					driver.ran++;
 					return { changes: 0 };
 				},
@@ -132,6 +136,7 @@ describe('runSqliteQuery', () => {
 		driver.produced = 0;
 		driver.iteratorClosed = false;
 		driver.ran = 0;
+		driver.boundArgs = null;
 		releaseHooks.clear();
 	});
 
@@ -256,6 +261,63 @@ describe('runSqliteQuery', () => {
 		});
 		expect(driver.ran).toBe(1);
 		expect(driver.instances[0].closed).toBe(true);
+	});
+
+	it('binds parameter values through the driver, never into the text', async () => {
+		const sql = 'SELECT * FROM users WHERE id = ? OR name = :name';
+		await runSqliteQuery({
+			handle: 'h1',
+			sql,
+			params: {
+				'?1': { type: 'number', text: '9007199254740993' },
+				':name': { type: 'text', text: "o'brien" },
+			},
+		});
+		expect(driver.instances[0].prepared).toEqual([sql]);
+		expect(driver.boundArgs?.[0]).toEqual([9007199254740993n]);
+		expect({ ...(driver.boundArgs?.[1] as object) }).toEqual({ name: "o'brien" });
+	});
+
+	it('binds the same values again for a later window', async () => {
+		const params = { ':n': { type: 'null' as const, text: '' } };
+		driver.statement.rows = numbered(4);
+		await runSqliteQuery({ handle: 'h1', sql: 'SELECT :n', params, offset: 2, limit: 1 });
+		expect({ ...(driver.boundArgs?.[0] as object) }).toEqual({ n: null });
+	});
+
+	it('binds values to a statement that returns no rows too', async () => {
+		driver.statement.reader = false;
+		await runSqliteQuery({
+			handle: 'h1',
+			sql: 'PRAGMA cache_size = :size',
+			params: { ':size': { type: 'number', text: '10' } },
+		});
+		expect(driver.ran).toBe(1);
+		expect({ ...(driver.boundArgs?.[0] as object) }).toEqual({ size: 10 });
+	});
+
+	it('refuses a parameter with no usable value without opening a connection', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'SELECT * FROM t WHERE id = :id' })
+		).rejects.toMatchObject({ message: 'Give :id a value.', code: SQLITE_QUERY_REFUSED });
+		await expect(
+			runSqliteQuery({
+				handle: 'h1',
+				sql: 'SELECT ?',
+				params: { '?1': { type: 'number', text: 'ten' } },
+			})
+		).rejects.toMatchObject({ code: SQLITE_QUERY_REFUSED });
+		expect(driver.instances).toHaveLength(0);
+	});
+
+	it('rejects params that are not an object keyed by parameter', async () => {
+		await expect(
+			runSqliteQuery({
+				handle: 'h1',
+				sql: 'SELECT ?',
+				params: ['x'] as unknown as Record<string, never>,
+			})
+		).rejects.toThrow('SQLite query params must be an object keyed by parameter.');
 	});
 
 	it('clamps the limit and refuses a bad window or a closed handle', async () => {

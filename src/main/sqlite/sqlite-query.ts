@@ -34,13 +34,20 @@ const running = new Map<string, SqliteWorkerRun<SqliteQueryResult>>();
 
 /**
  * Run one read-only statement and return the window of its result at
- * `offset`. Rejects with a refusal for a statement that is not read-only,
- * with SQLite's own message for one that fails, and with
+ * `offset`, its parameters bound from `request.params`. Rejects with a
+ * refusal for a statement that is not read-only or a parameter with no
+ * usable value, with SQLite's own message for one that fails, and with
  * `SQLITE_QUERY_STOPPED_MESSAGE` or the timeout message for one stopped.
  */
 export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQueryResult> {
 	if (typeof request.sql !== 'string') {
 		return Promise.reject(new Error('SQLite query sql must be a string.'));
+	}
+	if (
+		request.params != null &&
+		(typeof request.params !== 'object' || Array.isArray(request.params))
+	) {
+		return Promise.reject(new Error('SQLite query params must be an object keyed by parameter.'));
 	}
 	const database = getSqliteDatabase(request.handle);
 	const offset = windowBound(request.offset ?? 0, 'offset');
@@ -54,7 +61,16 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 
 	const run = startSqliteWorkerTask(
 		database,
-		{ kind: 'query', task: { filePath: database.displayPath, sql: request.sql, offset, limit } },
+		{
+			kind: 'query',
+			task: {
+				filePath: database.displayPath,
+				sql: request.sql,
+				offset,
+				limit,
+				params: request.params ?? undefined,
+			},
+		},
 		{
 			closedMessage: `${SQLITE_QUERY_STOPPED_MESSAGE} The database was closed.`,
 			timeoutMs: SQLITE_QUERY_TIMEOUT_MS,

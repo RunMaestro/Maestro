@@ -17,6 +17,10 @@
  *   4. `stmt.readonly` must be true, which catches a write behind a read
  *      keyword (`WITH x AS (...) DELETE ...`, `PRAGMA user_version = 2`).
  *
+ * Parameters (`?`, `:id`) are bound by the driver from `task.params`
+ * (`sqliteQueryBinding()`); a value is never spliced into the text, and a
+ * parameter with no usable value is refused before the file is opened.
+ *
  * The connection is the run's alone and is closed when the run ends, so a
  * PRAGMA that sets a connection-only value (`PRAGMA trusted_schema = ON`)
  * dies with it and never reaches the viewer's own connection.
@@ -39,9 +43,14 @@ import {
 	SQLITE_ONE_STATEMENT_MESSAGE,
 	SQLITE_QUERY_MAX_LIMIT,
 	sqliteLeadingKeyword,
+	sqliteQueryBinding,
 	sqliteReadOnlyRefusal,
 } from '../../shared/sqlite/query';
-import type { SqliteQueryResult, SqliteResultColumn } from '../../shared/sqlite/types';
+import type {
+	SqliteParameterValues,
+	SqliteQueryResult,
+	SqliteResultColumn,
+} from '../../shared/sqlite/types';
 import { sqliteCellFromValue } from './sqlite-cell';
 import { openReadOnlySqliteConnection } from './sqlite-connection';
 
@@ -51,6 +60,8 @@ export interface SqliteQueryTask {
 	sql: string;
 	offset: number;
 	limit: number;
+	/** Values for the statement's parameters, keyed by label. */
+	params?: SqliteParameterValues;
 }
 
 /** better-sqlite3's wording when the text holds a second statement. */
@@ -82,6 +93,8 @@ function prepareOne(db: Database.Database, sql: string): Database.Statement {
 export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 	const refusal = sqliteReadOnlyRefusal(task.sql);
 	if (refusal) throw refuse(refusal);
+	const binding = sqliteQueryBinding(task.sql, task.params);
+	if (binding.problem !== null) throw refuse(binding.problem);
 	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);
 
 	const db = openReadOnlySqliteConnection(task.filePath);
@@ -98,7 +111,7 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 		const started = performance.now();
 		if (!statement.reader) {
 			// A PRAGMA that sets a value on this connection, which closes below.
-			statement.run();
+			statement.run(...binding.args);
 			return {
 				...base,
 				columns: [],
@@ -113,7 +126,7 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 			.columns()
 			.map((column) => ({ name: column.name, declaredType: column.type }));
 		statement.raw(true).safeIntegers(true);
-		const { rows, hasMore } = readWindow(statement, task.offset, limit);
+		const { rows, hasMore } = readWindow(statement, binding.args, task.offset, limit);
 		return {
 			...base,
 			columns,
@@ -132,11 +145,16 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
  * whether more follow. The iterator is closed as soon as that is known, so
  * SQLite stops producing rows nobody will see.
  */
-function readWindow(statement: Database.Statement, offset: number, limit: number) {
+function readWindow(
+	statement: Database.Statement,
+	args: readonly unknown[],
+	offset: number,
+	limit: number
+) {
 	const rows: SqliteQueryResult['rows'] = [];
 	let position = 0;
 	let hasMore = false;
-	const iterator = statement.iterate() as IterableIterator<unknown[]>;
+	const iterator = statement.iterate(...args) as IterableIterator<unknown[]>;
 	try {
 		for (const row of iterator) {
 			if (position++ < offset) continue;

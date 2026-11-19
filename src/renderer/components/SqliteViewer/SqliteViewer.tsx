@@ -32,9 +32,9 @@
  * A Browse / Query switch in the summary strip (remembered) trades the content
  * pane for the SQL editor (SqliteQueryPanel), with completion from this
  * database's tables and columns. The rail stays as a reference; picking an
- * object in it goes back to Browse to show that object. The query text and the
- * last run's result are kept here, so both survive the switch; opening
- * another file clears them.
+ * object in it goes back to Browse to show that object. The query text, its
+ * parameter values, and the last run's result are kept here, so all survive
+ * the switch; opening another file clears them.
  */
 
 import {
@@ -53,6 +53,7 @@ import type {
 	SqliteObjectList,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteParameterValues,
 } from '../../../shared/sqlite/types';
 import {
 	SQLITE_OBJECT_KINDS,
@@ -135,6 +136,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const objectView = usePersistedChoice<ObjectView>('sqlite-object-view', OBJECT_VIEWS, 'data');
 	const viewerMode = usePersistedChoice<ViewerMode>('sqlite-viewer-mode', VIEWER_MODES, 'browse');
 	const [query, setQuery] = useState('');
+	const [queryParams, setQueryParams] = useState<SqliteParameterValues>({});
 	const [queryRun, setQueryRun] = useState<SqliteQueryRunState | null>(null);
 	const [filters, setFilters] = useState<ReadonlyMap<string, string>>(() => new Map());
 	const [focusFilterRequested, setFocusFilterRequested] = useState(false);
@@ -157,6 +159,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setSelectedName(null);
 		setFilters(new Map());
 		setQuery('');
+		setQueryParams({});
 		setQueryRun(null);
 
 		window.maestro.sqlite
@@ -391,6 +394,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							handle={info.handle}
 							value={query}
 							onChange={setQuery}
+							params={queryParams}
+							onParamsChange={setQueryParams}
 							run={queryRun}
 							onRunChange={setQueryRun}
 							theme={theme}

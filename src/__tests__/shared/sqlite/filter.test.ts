@@ -7,6 +7,7 @@ import {
 	compileSqliteFilter,
 	escapeSqliteLikePattern,
 	sqliteFilterParam,
+	sqliteNumberBindValue,
 	sqliteRegexpTest,
 	type SqliteFilterColumn,
 } from '../../../shared/sqlite/filter';
@@ -185,6 +186,23 @@ describe('compileSqliteFilter: text matching', () => {
 		expect(() => compileSqliteFilter(bound.node!, [{ name: 'other', affinity: 'TEXT' }])).toThrow(
 			'The filter names a column this object lacks: id'
 		);
+	});
+});
+
+describe('sqliteNumberBindValue', () => {
+	it('reads integers exactly, a bigint past 2^53, and decimals as doubles', () => {
+		expect(sqliteNumberBindValue('42')).toBe(42);
+		expect(sqliteNumberBindValue('-0')).toBe(-0);
+		expect(sqliteNumberBindValue('+7')).toBe(7);
+		expect(sqliteNumberBindValue('9007199254740993')).toBe(9007199254740993n);
+		expect(sqliteNumberBindValue('.5')).toBe(0.5);
+		expect(sqliteNumberBindValue('1e3')).toBe(1000);
+	});
+
+	it('is null for anything that is not a decimal number', () => {
+		for (const text of ['', 'abc', '1,000', '0x10', '1.2.3', ' 1', 'Infinity', 'NaN']) {
+			expect(sqliteNumberBindValue(text)).toBeNull();
+		}
 	});
 });
 

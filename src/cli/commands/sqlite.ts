@@ -20,8 +20,11 @@
 //                           [--sort <column>] [--desc] [--filter <expr>]
 //                           --output <file> [--json]
 //       -> the record view's Save to file: one BLOB cell written whole
-//   maestro-cli sqlite query <path> <sql> [--offset <n>] [--limit <n>] [--json]
-//       -> Query mode's Run: one read-only statement, a window of its result
+//   maestro-cli sqlite query <path> <sql> [--param <name=value>]...
+//                            [--param-number <name=value>]... [--param-null <name>]...
+//                            [--offset <n>] [--limit <n>] [--json]
+//       -> Query mode's Run: one read-only statement, its parameters bound, a
+//          window of its result
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
@@ -52,7 +55,12 @@ import {
 	sqliteMissingSqlNote,
 } from '../../shared/sqlite/schema';
 import { formatSqliteCell } from '../../shared/sqlite/cells';
-import { SQLITE_QUERY_MAX_LIMIT, SQLITE_QUERY_TIMEOUT_MS } from '../../shared/sqlite/query';
+import {
+	SQLITE_QUERY_MAX_LIMIT,
+	SQLITE_QUERY_TIMEOUT_MS,
+	sqliteQueryBinding,
+	sqliteQueryParameters,
+} from '../../shared/sqlite/query';
 import { formatSqliteIntegrity, sqliteSummaryFacts } from '../../shared/sqlite/summary';
 import type {
 	SqliteBlobSaved,
@@ -66,6 +74,8 @@ import type {
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteParameterValue,
+	SqliteParameterValues,
 	SqliteQueryResult,
 	SqliteRowCount,
 	SqliteRowsPage,
@@ -675,7 +685,53 @@ export async function sqliteBlob(
 interface SqliteQueryOptions {
 	offset?: string;
 	limit?: string;
+	/** `name=value` pairs bound as TEXT. */
+	param?: string[];
+	/** `name=value` pairs bound as numbers. */
+	paramNumber?: string[];
+	/** Names bound as NULL. */
+	paramNull?: string[];
 	json?: boolean;
+}
+
+/**
+ * The Query panel's value boxes, from flags: `--param name=value` (TEXT),
+ * `--param-number name=value`, `--param-null name`. A name is a parameter's
+ * label as the panel shows it (`:id`, `?1`) or the same without its sigil
+ * (`id`, `1`). Throws a message naming the statement's parameters when a
+ * flag names none of them, or names one twice.
+ */
+export function sqliteQueryParamsFromFlags(
+	sql: string,
+	options: Pick<SqliteQueryOptions, 'param' | 'paramNumber' | 'paramNull'>
+): SqliteParameterValues {
+	const { parameters } = sqliteQueryParameters(sql);
+	const known = parameters.map((parameter) => parameter.label).join(', ') || 'none';
+	const values: SqliteParameterValues = {};
+	const assign = (name: string, value: SqliteParameterValue, flag: string) => {
+		const parameter = parameters.find(
+			(candidate) => candidate.label === name || candidate.label.slice(1) === name
+		);
+		if (!parameter) {
+			throw new Error(`${flag} ${name}: the statement has no such parameter (it has: ${known})`);
+		}
+		if (values[parameter.label]) {
+			throw new Error(`${parameter.label} is given more than once`);
+		}
+		values[parameter.label] = value;
+	};
+	const pairs = (flag: string, list: string[] | undefined, type: 'text' | 'number') => {
+		for (const pair of list ?? []) {
+			const equals = pair.indexOf('=');
+			if (equals <= 0) throw new Error(`${flag} takes name=value (got "${pair}")`);
+			assign(pair.slice(0, equals), { type, text: pair.slice(equals + 1) }, flag);
+		}
+	};
+	pairs('--param', options.param, 'text');
+	pairs('--param-number', options.paramNumber, 'number');
+	for (const name of options.paramNull ?? [])
+		assign(name, { type: 'null', text: '' }, '--param-null');
+	return values;
 }
 
 interface SqliteQueryReply {
@@ -704,12 +760,22 @@ export async function sqliteQuery(
 	if (limit > SQLITE_QUERY_MAX_LIMIT) {
 		fail(`--limit must be at most ${SQLITE_QUERY_MAX_LIMIT} (got ${limit})`, options.json);
 	}
+	let params: SqliteParameterValues;
+	try {
+		params = sqliteQueryParamsFromFlags(sql, options);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+	// A parameter with no value (or a Number that is not one) is settled here,
+	// without the app, the way the panel settles it without a process.
+	const { problem } = sqliteQueryBinding(sql, params);
+	if (problem) fail(problem, options.json);
 
 	let reply: SqliteQueryReply;
 	try {
 		reply = await withMaestroClient((client) =>
 			client.sendCommand<SqliteQueryReply>(
-				{ type: 'sqlite_run_query', path: filePath, sql, offset, limit },
+				{ type: 'sqlite_run_query', path: filePath, sql, offset, limit, params },
 				'sqlite_query_result',
 				// The app stops the run at its own timeout; leave room for the reply.
 				SQLITE_QUERY_TIMEOUT_MS + 30_000
