@@ -14,6 +14,9 @@
  *  - Row counts and sizes are measured afterwards in budgeted batches (the main
  *    process is synchronous while SQLite runs), and the rail fills in as each
  *    batch lands. Visible objects are measured before internal ones.
+ *
+ * The content pane shows the selected object: its counts, then its schema
+ * (SqliteSchemaPanel), read on selection.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -39,6 +42,7 @@ import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MiniBadge } from '../ui/MiniBadge';
 import { Spinner } from '../ui/Spinner';
 import { SqliteObjectRail } from './SqliteObjectRail';
+import { SqliteSchemaPanel } from './SqliteSchemaPanel';
 
 interface SqliteViewerProps {
 	filePath: string;
@@ -229,36 +233,42 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 
 				<div className="flex-1 min-w-0 overflow-y-auto p-4" data-testid="sqlite-object-pane">
 					{selected ? (
-						<div className="flex flex-col gap-2 select-text">
-							<div className="flex items-center gap-2 flex-wrap">
-								<span
-									className="text-sm font-mono font-semibold"
-									style={{ color: theme.colors.textMain }}
-								>
-									{selected.name}
-								</span>
-								<MiniBadge label={selected.kind} theme={theme} />
-								{sqliteObjectTags(selected).map((tag) => (
-									<MiniBadge key={tag} label={tag} theme={theme} />
-								))}
-								{selected.internal && (
-									<MiniBadge label="internal" theme={theme} color={theme.colors.textDim} />
-								)}
-							</div>
-							<div className="text-xs flex gap-4 flex-wrap" style={{ color: theme.colors.textDim }}>
-								{selected.kind !== 'table' && selected.kind !== 'view' && (
-									<span>on {selected.tableName}</span>
-								)}
-								{selectedRows !== null && <span>{selectedRows} rows</span>}
-								{selectedStats?.sizeBytes !== null && selectedStats?.sizeBytes !== undefined && (
-									<span>{formatSize(selectedStats.sizeBytes)} on disk</span>
-								)}
-							</div>
-							{selectedStats?.error && (
-								<div className="text-xs" style={{ color: theme.colors.warning }}>
-									{selectedStats.error}
+						<div className="flex flex-col gap-4 select-text">
+							<div className="flex flex-col gap-2">
+								<div className="flex items-center gap-2 flex-wrap">
+									<span
+										className="text-sm font-mono font-semibold"
+										style={{ color: theme.colors.textMain }}
+									>
+										{selected.name}
+									</span>
+									<MiniBadge label={selected.kind} theme={theme} />
+									{sqliteObjectTags(selected).map((tag) => (
+										<MiniBadge key={tag} label={tag} theme={theme} />
+									))}
+									{selected.internal && (
+										<MiniBadge label="internal" theme={theme} color={theme.colors.textDim} />
+									)}
 								</div>
-							)}
+								<div
+									className="text-xs flex gap-4 flex-wrap"
+									style={{ color: theme.colors.textDim }}
+								>
+									{selected.kind !== 'table' && selected.kind !== 'view' && (
+										<span>on {selected.tableName}</span>
+									)}
+									{selectedRows !== null && <span>{selectedRows} rows</span>}
+									{selectedStats?.sizeBytes !== null && selectedStats?.sizeBytes !== undefined && (
+										<span>{formatSize(selectedStats.sizeBytes)} on disk</span>
+									)}
+								</div>
+								{selectedStats?.error && (
+									<div className="text-xs" style={{ color: theme.colors.warning }}>
+										{selectedStats.error}
+									</div>
+								)}
+							</div>
+							<SqliteSchemaPanel handle={info.handle} object={selected} theme={theme} />
 						</div>
 					) : (
 						<div className="text-sm" style={{ color: theme.colors.textDim }}>

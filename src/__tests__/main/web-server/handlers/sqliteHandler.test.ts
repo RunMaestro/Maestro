@@ -1,5 +1,5 @@
-// Covers the sqlite_list_objects WebSocket message that backs `maestro-cli
-// sqlite tables`. It opens the database through the viewer's own open path,
+// Covers the sqlite_list_objects and sqlite_read_schema WebSocket messages that
+// back `maestro-cli sqlite tables` and `maestro-cli sqlite schema`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
 
@@ -26,7 +26,10 @@ const objects = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../main/sqlite/sqlite-database', () => database);
+const schemas = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
+
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
+vi.mock('../../../../main/sqlite/sqlite-schema', () => schemas);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -115,6 +118,95 @@ describe('sqlite_list_objects handler', () => {
 		await flush();
 
 		expect(lastResponse(client)).toMatchObject({ requestId: 'r3', success: false });
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_read_schema handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+	});
+
+	it('answers with the database and the object schema', async () => {
+		const schema = { name: 'users', kind: 'table', columns: [], foreignKeys: [], sql: 'CREATE' };
+		schemas.readSqliteObjectSchema.mockReturnValue(schema);
+
+		handler.handleMessage(client, {
+			type: 'sqlite_read_schema',
+			requestId: 's1',
+			path: '/data/app.db',
+			name: 'users',
+			kind: 'table',
+		});
+		await flush();
+
+		expect(schemas.readSqliteObjectSchema).toHaveBeenCalledWith('h1', 'users', 'table');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_schema_result',
+			requestId: 's1',
+			success: true,
+			database: info,
+			schema,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('passes no kind when none was sent', async () => {
+		schemas.readSqliteObjectSchema.mockReturnValue({ name: 'users' });
+		handler.handleMessage(client, {
+			type: 'sqlite_read_schema',
+			requestId: 's2',
+			path: '/data/app.db',
+			name: 'users',
+		});
+		await flush();
+		expect(schemas.readSqliteObjectSchema).toHaveBeenCalledWith('h1', 'users', undefined);
+	});
+
+	it('reports a missing object with the request id', async () => {
+		schemas.readSqliteObjectSchema.mockImplementation(() => {
+			throw new Error('No table, view, index, or trigger is named nope.');
+		});
+		handler.handleMessage(client, {
+			type: 'sqlite_read_schema',
+			requestId: 's3',
+			path: '/data/app.db',
+			name: 'nope',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_schema_result',
+			requestId: 's3',
+			success: false,
+			error: 'No table, view, index, or trigger is named nope.',
+		});
+	});
+
+	it('refuses a missing name or an unknown kind before opening anything', async () => {
+		handler.handleMessage(client, { type: 'sqlite_read_schema', requestId: 's4', path: '/x.db' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 's4', success: false });
+
+		handler.handleMessage(client, {
+			type: 'sqlite_read_schema',
+			requestId: 's5',
+			path: '/x.db',
+			name: 'users',
+			kind: 'column',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 's5',
+			success: false,
+			error: 'Unknown object kind: column',
+		});
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
 	});
 });

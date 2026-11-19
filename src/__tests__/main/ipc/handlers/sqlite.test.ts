@@ -25,7 +25,10 @@ const objects = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../main/sqlite/sqlite-database', () => database);
+const schema = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
+
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
+vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -38,12 +41,13 @@ describe('SQLite IPC handlers', () => {
 		registerSqliteHandlers();
 	});
 
-	it('registers the four channels the viewer uses', () => {
+	it('registers the channels the viewer uses', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'sqlite:close',
 			'sqlite:listObjects',
 			'sqlite:open',
 			'sqlite:readObjectStats',
+			'sqlite:readSchema',
 		]);
 	});
 
@@ -60,6 +64,15 @@ describe('SQLite IPC handlers', () => {
 		await invoke('sqlite:readObjectStats', 'h1', ['users']);
 		expect(objects.listSqliteObjects).toHaveBeenCalledWith('h1');
 		expect(objects.readSqliteObjectStats).toHaveBeenCalledWith('h1', ['users']);
+	});
+
+	it('reads one object schema by handle, name, and kind', async () => {
+		schema.readSqliteObjectSchema.mockReturnValue({ name: 'users', kind: 'table' });
+		await expect(invoke('sqlite:readSchema', 'h1', 'users', 'table')).resolves.toEqual({
+			name: 'users',
+			kind: 'table',
+		});
+		expect(schema.readSqliteObjectSchema).toHaveBeenCalledWith('h1', 'users', 'table');
 	});
 
 	it('closes by handle', async () => {

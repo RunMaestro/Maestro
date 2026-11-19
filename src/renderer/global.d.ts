@@ -242,7 +242,9 @@ import type {
 } from '../shared/parquet/types';
 import type {
 	SqliteDatabaseInfo,
+	SqliteObjectKind,
 	SqliteObjectList,
+	SqliteObjectSchema,
 	SqliteObjectStats,
 } from '../shared/sqlite/types';
 import type {
@@ -1975,6 +1977,11 @@ interface MaestroAPI {
 		open: (filePath: string) => Promise<SqliteDatabaseInfo>;
 		listObjects: (handle: string) => Promise<SqliteObjectList>;
 		readObjectStats: (handle: string, names: string[]) => Promise<SqliteObjectStats[]>;
+		readSchema: (
+			handle: string,
+			name: string,
+			kind?: SqliteObjectKind
+		) => Promise<SqliteObjectSchema>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

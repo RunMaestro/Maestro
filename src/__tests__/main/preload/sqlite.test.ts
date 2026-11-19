@@ -40,6 +40,14 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readObjectStats', 'h1', ['users', 'orders']);
 	});
 
+	it('reads one object schema, passing the kind through', async () => {
+		mockInvoke.mockResolvedValue({ name: 'users', kind: 'table' });
+		await api.readSchema('h1', 'users', 'table');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readSchema', 'h1', 'users', 'table');
+		await api.readSchema('h1', 'users');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sqlite:readSchema', 'h1', 'users', undefined);
+	});
+
 	it('closes a handle', async () => {
 		mockInvoke.mockResolvedValue(undefined);
 		await api.close('h1');

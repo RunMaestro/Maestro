@@ -3375,6 +3375,15 @@ List the tables, views, indexes, and triggers in a SQLite database, with row cou
 | `--internal` | Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables) | -       |
 | `--json`     | Output as JSON (for scripting)                                               | -       |
 
+## `maestro-cli sqlite schema <path> <object>`
+
+Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL
+
+| Option          | Description                                                                          | Default |
+| --------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--kind <kind>` | Pick table, view, index, or trigger when a trigger shares a name with another object | -       |
+| `--json`        | Output as JSON (for scripting)                                                       | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

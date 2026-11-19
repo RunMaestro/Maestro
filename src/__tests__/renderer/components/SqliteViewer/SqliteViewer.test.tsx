@@ -6,6 +6,7 @@ import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import type {
 	SqliteDatabaseInfo,
 	SqliteObjectList,
+	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
 } from '../../../../shared/sqlite/types';
@@ -64,6 +65,74 @@ let open: ReturnType<typeof vi.fn>;
 let listObjects: ReturnType<typeof vi.fn>;
 let readObjectStats: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
+let readSchema: ReturnType<typeof vi.fn>;
+
+const EVENTS_SCHEMA: SqliteObjectSchema = {
+	name: 'events',
+	kind: 'table',
+	tableName: 'events',
+	sql: "CREATE TABLE events (id INTEGER, user_id INTEGER REFERENCES users, kind TEXT NOT NULL DEFAULT 'click', PRIMARY KEY (id)) WITHOUT ROWID",
+	columns: [
+		{
+			name: 'id',
+			declaredType: 'INTEGER',
+			affinity: 'INTEGER',
+			notNull: true,
+			defaultValue: null,
+			primaryKeyPosition: 1,
+			references: [],
+		},
+		{
+			name: 'user_id',
+			declaredType: 'INTEGER',
+			affinity: 'INTEGER',
+			notNull: false,
+			defaultValue: null,
+			primaryKeyPosition: 0,
+			references: [{ table: 'users', column: null }],
+		},
+		{
+			name: 'kind',
+			declaredType: 'TEXT',
+			affinity: 'TEXT',
+			notNull: true,
+			defaultValue: "'click'",
+			primaryKeyPosition: 0,
+			references: [],
+		},
+		{
+			name: 'payload',
+			declaredType: '',
+			affinity: 'BLOB',
+			notNull: false,
+			defaultValue: null,
+			primaryKeyPosition: 0,
+			generated: 'stored',
+			references: [],
+		},
+	],
+	foreignKeys: [
+		{ table: 'users', from: ['user_id'], to: [null], onUpdate: 'NO ACTION', onDelete: 'CASCADE' },
+	],
+};
+
+const INDEX_SCHEMA: SqliteObjectSchema = {
+	name: 'users_email',
+	kind: 'index',
+	tableName: 'users',
+	sql: null,
+	columns: [],
+	foreignKeys: [],
+	index: {
+		columns: [
+			{ name: 'email', descending: false, collation: 'BINARY' },
+			{ name: null, descending: true, collation: 'NOCASE' },
+		],
+		unique: true,
+		partial: true,
+		origin: 'unique',
+	},
+};
 
 beforeEach(() => {
 	installLocalStorageMock();
@@ -72,8 +141,11 @@ beforeEach(() => {
 	// Answer one name per call, the way a tight main-process budget would.
 	readObjectStats = vi.fn(async (_handle: string, names: string[]) => [STATS[names[0]]]);
 	close = vi.fn().mockResolvedValue(undefined);
+	readSchema = vi.fn(async (_handle: string, name: string) =>
+		name === 'users_email' ? INDEX_SCHEMA : { ...EVENTS_SCHEMA, name }
+	);
 	(window as unknown as { maestro: unknown }).maestro = {
-		sqlite: { open, listObjects, readObjectStats, close },
+		sqlite: { open, listObjects, readObjectStats, readSchema, close },
 	};
 });
 
@@ -212,5 +284,93 @@ describe('SqliteViewer', () => {
 		await screen.findByTestId('sqlite-object-rail');
 		unmount();
 		expect(close).toHaveBeenCalledWith('h1');
+	});
+});
+
+describe('SqliteViewer schema pane', () => {
+	it('reads the selected object schema by handle, name, and kind', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-schema');
+		expect(readSchema).toHaveBeenCalledWith('h1', 'events', 'table');
+	});
+
+	it('lists columns with declared type, affinity, nullability, default, PK, and references', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-schema');
+		const rows = screen.getAllByTestId('sqlite-schema-column');
+		expect(rows).toHaveLength(4);
+		expect(rows[0]).toHaveTextContent('id');
+		expect(rows[0]).toHaveTextContent('NOT NULL');
+		expect(screen.getByLabelText('Primary key, position 1')).toBeInTheDocument();
+		expect(rows[1]).toHaveTextContent('users (primary key)');
+		expect(rows[1]).toHaveTextContent('nullable');
+		expect(rows[2]).toHaveTextContent("'click'");
+		// No declared type reads "none", not an empty cell; affinity still shows.
+		expect(rows[3]).toHaveTextContent('none');
+		expect(rows[3]).toHaveTextContent('BLOB');
+		expect(rows[3]).toHaveTextContent('generated stored');
+		expect(screen.getByTestId('sqlite-schema-foreign-key')).toHaveTextContent(
+			'(user_id) -> users (primary key) ON DELETE CASCADE'
+		);
+	});
+
+	it('shows the original CREATE statement', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-schema');
+		expect(screen.getByTestId('sqlite-schema')).toHaveTextContent('WITHOUT ROWID');
+	});
+
+	it('shows an index as key columns and explains a missing CREATE statement', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-object-rail');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
+		await waitFor(() =>
+			expect(screen.getAllByTestId('sqlite-schema-index-column')).toHaveLength(2)
+		);
+		const keys = screen.getAllByTestId('sqlite-schema-index-column');
+		expect(keys[0]).toHaveTextContent('email');
+		expect(keys[1]).toHaveTextContent('<expression>');
+		expect(keys[1]).toHaveTextContent('DESC');
+		expect(screen.getByTestId('sqlite-schema')).toHaveTextContent('from UNIQUE constraint');
+		expect(screen.getByTestId('sqlite-schema')).toHaveTextContent('no CREATE statement of its own');
+		expect(screen.queryByTestId('sqlite-schema-column')).not.toBeInTheDocument();
+	});
+
+	it('keeps the SQL when the columns could not be read', async () => {
+		readSchema.mockResolvedValue({
+			...EVENTS_SCHEMA,
+			columns: [],
+			foreignKeys: [],
+			error: 'no such module: fts5',
+		});
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-schema')).toHaveTextContent(
+			'Columns could not be read: no such module: fts5'
+		);
+		expect(screen.getByTestId('sqlite-schema')).toHaveTextContent('CREATE TABLE events');
+	});
+
+	it('reports a schema read failure in the pane', async () => {
+		readSchema.mockRejectedValue(new Error('SQLite database handle is no longer open.'));
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-schema-error')).toHaveTextContent(
+			'Could not read the schema of events: SQLite database handle is no longer open.'
+		);
+	});
+
+	it('drops a stale reply from an earlier selection', async () => {
+		let resolveFirst: (schema: SqliteObjectSchema) => void = () => {};
+		readSchema.mockImplementationOnce(
+			() => new Promise<SqliteObjectSchema>((resolve) => (resolveFirst = resolve))
+		);
+		renderViewer();
+		await screen.findByTestId('sqlite-schema-loading');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
+		await waitFor(() =>
+			expect(screen.getAllByTestId('sqlite-schema-index-column')).toHaveLength(2)
+		);
+		resolveFirst(EVENTS_SCHEMA);
+		await Promise.resolve();
+		expect(screen.queryByTestId('sqlite-schema-column')).not.toBeInTheDocument();
 	});
 });

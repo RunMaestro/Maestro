@@ -102,8 +102,12 @@ function readTableFlavours(db: Database.Database, rows: MasterRow[]): Map<string
 	return flavours;
 }
 
-/** Every object in the main schema, unordered (callers group and sort). */
-function readObjects(db: Database.Database): SqliteObjectSummary[] {
+/**
+ * Every object in the main schema, unordered (callers group and sort). Shared
+ * with the schema reader (sqlite-schema.ts), so both agree on what an object
+ * is and whether its table is STRICT.
+ */
+export function readSqliteObjectSummaries(db: Database.Database): SqliteObjectSummary[] {
 	const rows = (
 		db.prepare('SELECT type, name, tbl_name, sql FROM sqlite_master').all() as MasterRow[]
 	).filter((row) => OBJECT_KINDS.has(row.type));
@@ -150,7 +154,7 @@ function hasDbstat(db: Database.Database): boolean {
 /** List the tables, views, indexes, and triggers of an open database. */
 export function listSqliteObjects(handle: string): SqliteObjectList {
 	const { db, info } = getSqliteDatabase(handle);
-	const objects = readObjects(db);
+	const objects = readSqliteObjectSummaries(db);
 	if (info.fileBytes > SQLITE_SIZE_SCAN_MAX_BYTES) {
 		return {
 			objects,
@@ -242,7 +246,7 @@ export function readSqliteObjectStats(
 	budgetMs: number = SQLITE_STATS_BUDGET_MS
 ): SqliteObjectStats[] {
 	const { db, info } = getSqliteDatabase(handle);
-	const byName = new Map(readObjects(db).map((object) => [object.name, object]));
+	const byName = new Map(readSqliteObjectSummaries(db).map((object) => [object.name, object]));
 	const measureSizes = info.fileBytes <= SQLITE_SIZE_SCAN_MAX_BYTES && hasDbstat(db);
 
 	const started = Date.now();

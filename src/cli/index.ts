@@ -159,7 +159,7 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
-import { sqliteTables } from './commands/sqlite';
+import { sqliteSchema, sqliteTables } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3856,6 +3856,18 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, options) => sqliteTables(file, options));
+
+sqliteCmd
+	.command('schema <path> <object>')
+	.description(
+		"Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL"
+	)
+	.option(
+		'--kind <kind>',
+		'Pick table, view, index, or trigger when a trigger shares a name with another object'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteSchema(file, object, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

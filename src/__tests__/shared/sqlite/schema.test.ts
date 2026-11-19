@@ -1,0 +1,132 @@
+import { describe, it, expect } from 'vitest';
+
+import {
+	formatSqliteColumnReferences,
+	formatSqliteForeignKey,
+	formatSqliteIndexColumn,
+	formatSqliteReference,
+	sqliteColumnAffinity,
+	sqliteColumnTags,
+	sqliteMissingSqlNote,
+} from '../../../shared/sqlite/schema';
+import type { SqliteColumnSchema } from '../../../shared/sqlite/types';
+
+function column(overrides: Partial<SqliteColumnSchema> = {}): SqliteColumnSchema {
+	return {
+		name: 'id',
+		declaredType: 'INTEGER',
+		affinity: 'INTEGER',
+		notNull: false,
+		defaultValue: null,
+		primaryKeyPosition: 0,
+		references: [],
+		...overrides,
+	};
+}
+
+describe('sqliteColumnAffinity', () => {
+	it.each([
+		['INT', 'INTEGER'],
+		['integer', 'INTEGER'],
+		['TINYINT', 'INTEGER'],
+		['UNSIGNED BIG INT', 'INTEGER'],
+		['VARCHAR(255)', 'TEXT'],
+		['NCHAR(55)', 'TEXT'],
+		['CLOB', 'TEXT'],
+		['text', 'TEXT'],
+		['BLOB', 'BLOB'],
+		['', 'BLOB'],
+		['   ', 'BLOB'],
+		['REAL', 'REAL'],
+		['DOUBLE PRECISION', 'REAL'],
+		['FLOAT', 'REAL'],
+		['NUMERIC', 'NUMERIC'],
+		['DECIMAL(10,5)', 'NUMERIC'],
+		['BOOLEAN', 'NUMERIC'],
+		['DATETIME', 'NUMERIC'],
+	])('gives %j the %s affinity', (declared, affinity) => {
+		expect(sqliteColumnAffinity(declared)).toBe(affinity);
+	});
+
+	it('applies the rules in order and by substring, as SQLite does', () => {
+		// Rule 1 beats rule 2: CHARINT holds both INT and CHAR.
+		expect(sqliteColumnAffinity('CHARINT')).toBe('INTEGER');
+		// POINT contains INT.
+		expect(sqliteColumnAffinity('FLOATING POINT')).toBe('INTEGER');
+		// STRING matches no rule's substring.
+		expect(sqliteColumnAffinity('STRING')).toBe('NUMERIC');
+	});
+
+	it('treats ANY as no conversion in a STRICT table and as NUMERIC elsewhere', () => {
+		expect(sqliteColumnAffinity('ANY', true)).toBe('BLOB');
+		expect(sqliteColumnAffinity('ANY')).toBe('NUMERIC');
+		expect(sqliteColumnAffinity('INT', true)).toBe('INTEGER');
+	});
+});
+
+describe('reference formatting', () => {
+	it('names the parent column, or the primary key when the key names none', () => {
+		expect(formatSqliteReference({ table: 'users', column: 'email' })).toBe('users.email');
+		expect(formatSqliteReference({ table: 'users', column: null })).toBe('users (primary key)');
+	});
+
+	it('joins every reference a column makes', () => {
+		expect(
+			formatSqliteColumnReferences(
+				column({
+					references: [
+						{ table: 'a', column: 'x' },
+						{ table: 'b', column: null },
+					],
+				})
+			)
+		).toBe('a.x, b (primary key)');
+		expect(formatSqliteColumnReferences(column())).toBe('');
+	});
+
+	it('spells a whole foreign key with its non-default actions', () => {
+		expect(
+			formatSqliteForeignKey({
+				table: 'pairs',
+				from: ['a', 'b'],
+				to: ['x', 'y'],
+				onUpdate: 'SET NULL',
+				onDelete: 'NO ACTION',
+			})
+		).toBe('(a, b) -> pairs(x, y) ON UPDATE SET NULL');
+		expect(
+			formatSqliteForeignKey({
+				table: 'users',
+				from: ['uid'],
+				to: [null],
+				onUpdate: 'NO ACTION',
+				onDelete: 'CASCADE',
+			})
+		).toBe('(uid) -> users (primary key) ON DELETE CASCADE');
+	});
+});
+
+describe('column and index labels', () => {
+	it('tags constraints a column carries', () => {
+		expect(sqliteColumnTags(column({ notNull: true, generated: 'stored', hidden: true }))).toEqual([
+			'not null',
+			'generated (stored)',
+			'hidden',
+		]);
+		expect(sqliteColumnTags(column())).toEqual([]);
+	});
+
+	it('labels an indexed expression', () => {
+		expect(formatSqliteIndexColumn({ name: 'email', descending: false, collation: 'BINARY' })).toBe(
+			'email'
+		);
+		expect(formatSqliteIndexColumn({ name: null, descending: false, collation: 'NOCASE' })).toBe(
+			'<expression>'
+		);
+	});
+
+	it('explains a missing CREATE statement only when there is none', () => {
+		expect(sqliteMissingSqlNote({ kind: 'table', sql: 'CREATE TABLE t(a)' })).toBeNull();
+		expect(sqliteMissingSqlNote({ kind: 'index', sql: null })).toMatch(/UNIQUE or PRIMARY KEY/);
+	});
+});

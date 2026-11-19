@@ -3,6 +3,8 @@
  * @description Tests for `maestro-cli sqlite tables`: it sends the resolved path
  * on `sqlite_list_objects`, prints the rail's groups with row counts and sizes,
  * hides internal objects unless `--internal`, and reports failures with exit 1.
+ * Also `maestro-cli sqlite schema`: columns, foreign keys, index keys, and the
+ * CREATE SQL, over `sqlite_read_schema`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -13,7 +15,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { sqliteTables } from '../../../cli/commands/sqlite';
+import { sqliteSchema, sqliteTables } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 const DB = path.resolve('/data/app.db');
@@ -154,6 +156,142 @@ describe('sqlite tables', () => {
 		mockReply({ type: 'sqlite_objects_result', success: false, error: 'Not a SQLite database: x' });
 		await expect(sqliteTables(DB, {})).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('Not a SQLite database: x');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+});
+
+const USERS_SCHEMA = {
+	name: 'orders',
+	kind: 'table',
+	tableName: 'orders',
+	sql: 'CREATE TABLE orders (\n  id INTEGER PRIMARY KEY,\n  uid INTEGER REFERENCES users\n)',
+	columns: [
+		{
+			name: 'id',
+			declaredType: 'INTEGER',
+			affinity: 'INTEGER',
+			notNull: false,
+			defaultValue: null,
+			primaryKeyPosition: 1,
+			references: [],
+		},
+		{
+			name: 'uid',
+			declaredType: 'INTEGER',
+			affinity: 'INTEGER',
+			notNull: true,
+			defaultValue: '0',
+			primaryKeyPosition: 0,
+			references: [{ table: 'users', column: null }],
+		},
+	],
+	foreignKeys: [
+		{ table: 'users', from: ['uid'], to: [null], onUpdate: 'NO ACTION', onDelete: 'CASCADE' },
+	],
+};
+
+function respondSchema(schema: Record<string, unknown> = USERS_SCHEMA) {
+	return mockReply({
+		type: 'sqlite_schema_result',
+		success: true,
+		database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+		schema,
+	});
+}
+
+describe('sqlite schema', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the resolved path, the name, and a kind only when given', async () => {
+		const sent = respondSchema();
+		await sqliteSchema(DB, 'orders', {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_read_schema',
+			path: DB,
+			name: 'orders',
+			responseType: 'sqlite_schema_result',
+		});
+
+		const again = respondSchema();
+		await sqliteSchema(DB, 'orders', { kind: 'trigger' });
+		expect(again[0]).toMatchObject({ kind: 'trigger' });
+	});
+
+	it('prints columns with affinity, PK, default, references, then FKs and the SQL', async () => {
+		respondSchema();
+		await sqliteSchema(DB, 'orders', {});
+		const out = logged();
+		expect(out).toContain(`orders (table) in ${DB}`);
+		expect(out).toContain('Columns (2)');
+		expect(out).toMatch(/NAME\s+TYPE\s+AFFINITY\s+PK\s+DEFAULT\s+REFERENCES\s+CONSTRAINTS/);
+		expect(out).toMatch(/id\s+INTEGER\s+INTEGER\s+1/);
+		expect(out).toMatch(/uid\s+INTEGER\s+INTEGER\s+0\s+users \(primary key\)\s+not null/);
+		expect(out).toContain('Foreign keys (1)');
+		expect(out).toContain('(uid) -> users (primary key) ON DELETE CASCADE');
+		expect(out).toContain('  CREATE TABLE orders (');
+		expect(out).toContain('    uid INTEGER REFERENCES users');
+	});
+
+	it('prints an index as key columns and explains a missing CREATE statement', async () => {
+		respondSchema({
+			name: 'sqlite_autoindex_users_1',
+			kind: 'index',
+			tableName: 'users',
+			sql: null,
+			columns: [],
+			foreignKeys: [],
+			index: {
+				columns: [
+					{ name: 'email', descending: false, collation: 'BINARY' },
+					{ name: null, descending: true, collation: 'NOCASE' },
+				],
+				unique: true,
+				partial: false,
+				origin: 'unique',
+			},
+		});
+		await sqliteSchema(DB, 'sqlite_autoindex_users_1', {});
+		const out = logged();
+		expect(out).toContain('on users');
+		expect(out).toContain('Key columns (2): unique, from UNIQUE constraint');
+		expect(out).toMatch(/email\s+ASC\s+BINARY/);
+		expect(out).toMatch(/<expression>\s+DESC\s+NOCASE/);
+		expect(out).toContain('no CREATE statement of its own');
+	});
+
+	it('prints the schema merged with the path under --json', async () => {
+		respondSchema();
+		await sqliteSchema(DB, 'orders', { json: true });
+		const json = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(json).toMatchObject({ success: true, path: DB, name: 'orders', kind: 'table' });
+		expect(json.columns[1].references).toEqual([{ table: 'users', column: null }]);
+	});
+
+	it('refuses an unknown --kind without contacting the app', async () => {
+		await expect(sqliteSchema(DB, 'orders', { kind: 'column' })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('--kind must be one of');
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+
+	it('exits 1 with the app error when the object is missing', async () => {
+		mockReply({
+			type: 'sqlite_schema_result',
+			success: false,
+			error: 'No table, view, index, or trigger is named nope.',
+		});
+		await expect(sqliteSchema(DB, 'nope', {})).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('is named nope');
 		expect(process.exit).toHaveBeenCalledWith(1);
 	});
 });

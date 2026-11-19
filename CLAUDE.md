@@ -141,6 +141,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Opening a user's SQLite database to read it:** `openSqliteDatabase()`, `getSqliteDatabase()`, `closeAllSqliteDatabases()` in `src/main/sqlite/sqlite-database.ts`
 - **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
 - **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()` in `src/shared/sqlite/sql.ts`
+- **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`

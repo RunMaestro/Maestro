@@ -158,7 +158,7 @@ import {
 	dataviewTrusted,
 	dataviewUntrust,
 } from '../../cli/commands/dataview';
-import { sqliteTables } from '../../cli/commands/sqlite';
+import { sqliteSchema, sqliteTables } from '../../cli/commands/sqlite';
 import {
 	tabClose,
 	tabClosed,
@@ -353,6 +353,7 @@ const rows: Row[] = [
 	{ name: 'dataview untrust', run: (json) => dataviewUntrust('/vault', j(json)) },
 	{ name: 'dataview trusted', run: (json) => dataviewTrusted(j(json)) },
 	{ name: 'sqlite tables', run: (json) => sqliteTables('/data/app.db', j(json)) },
+	{ name: 'sqlite schema', run: (json) => sqliteSchema('/data/app.db', 'users', j(json)) },
 	// special cases
 	{
 		name: 'goal-run --visible',

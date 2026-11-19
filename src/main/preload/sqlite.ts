@@ -2,13 +2,16 @@
  * Preload API for SQLite previews
  *
  * Exposes window.maestro.sqlite: open a database read-only, list its schema
- * objects, measure their row counts and sizes, close the handle.
+ * objects, measure their row counts and sizes, read one object's structure,
+ * close the handle.
  */
 
 import { ipcRenderer } from 'electron';
 import type {
 	SqliteDatabaseInfo,
+	SqliteObjectKind,
 	SqliteObjectList,
+	SqliteObjectSchema,
 	SqliteObjectStats,
 } from '../../shared/sqlite/types';
 
@@ -33,6 +36,17 @@ export function createSqliteApi() {
 		 */
 		readObjectStats: (handle: string, names: string[]): Promise<SqliteObjectStats[]> =>
 			ipcRenderer.invoke('sqlite:readObjectStats', handle, names),
+
+		/**
+		 * One object's columns (type, affinity, nullability, default, primary
+		 * key, foreign-key targets), index key columns, and CREATE SQL. `kind`
+		 * picks between a trigger and a table that share a name.
+		 */
+		readSchema: (
+			handle: string,
+			name: string,
+			kind?: SqliteObjectKind
+		): Promise<SqliteObjectSchema> => ipcRenderer.invoke('sqlite:readSchema', handle, name, kind),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

@@ -84,3 +84,92 @@ export interface SqliteObjectStats {
 	/** Why the count or the size failed, verbatim from SQLite. */
 	error?: string;
 }
+
+/**
+ * A column's type affinity: the storage class SQLite prefers for its values.
+ * Affinity is a preference, not a constraint, unless the table is `STRICT`:
+ * an `INTEGER` column in an ordinary table will still store `'banana'`.
+ */
+export type SqliteAffinity = 'INTEGER' | 'REAL' | 'NUMERIC' | 'TEXT' | 'BLOB';
+
+/** Where one foreign-key column points. */
+export interface SqliteForeignKeyTarget {
+	table: string;
+	/** The parent column, or null when the key names the parent's primary key. */
+	column: string | null;
+}
+
+/** One column of a table or view, from `PRAGMA table_xinfo`. */
+export interface SqliteColumnSchema {
+	name: string;
+	/** The type as written in the `CREATE` statement; empty when none was given. */
+	declaredType: string;
+	/** The affinity SQLite derives from `declaredType`. */
+	affinity: SqliteAffinity;
+	notNull: boolean;
+	/** The default as SQL text (`'draft'`, `0`, `CURRENT_TIMESTAMP`), or null. */
+	defaultValue: string | null;
+	/** 1-based position in the primary key, or 0 when not part of it. */
+	primaryKeyPosition: number;
+	/** A generated column, and whether its value is stored or computed on read. */
+	generated?: 'virtual' | 'stored';
+	/** A virtual table's hidden column (FTS5's table-named column, `rank`). */
+	hidden?: boolean;
+	/** Foreign keys this column takes part in, in declaration order. */
+	references: SqliteForeignKeyTarget[];
+}
+
+/** One `FOREIGN KEY` (or `REFERENCES` clause), possibly over several columns. */
+export interface SqliteForeignKey {
+	/** The parent table. */
+	table: string;
+	/** Child columns, in key order. */
+	from: string[];
+	/** Parent columns, aligned with `from`; null entries mean the parent's primary key. */
+	to: Array<string | null>;
+	/** `NO ACTION`, `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`. */
+	onUpdate: string;
+	onDelete: string;
+}
+
+/** One key column of an index, from `PRAGMA index_xinfo`. */
+export interface SqliteIndexColumnSchema {
+	/** The indexed column, or null for an expression (`lower(email)`). */
+	name: string | null;
+	descending: boolean;
+	collation: string;
+}
+
+/** How an index came to exist, as `PRAGMA index_list` reports it. */
+export type SqliteIndexOrigin = 'create-index' | 'unique' | 'primary-key';
+
+/** The structure of one schema object, read on demand for the content pane. */
+export interface SqliteObjectSchema {
+	name: string;
+	kind: SqliteObjectKind;
+	/** The table an index or trigger belongs to; the object's own name otherwise. */
+	tableName: string;
+	/**
+	 * The original `CREATE` statement from `sqlite_master`, verbatim. Null for an
+	 * index SQLite made itself to back a `UNIQUE` or `PRIMARY KEY` constraint.
+	 */
+	sql: string | null;
+	/** Columns of a table or view, in declaration order. Empty for an index or trigger. */
+	columns: SqliteColumnSchema[];
+	/** A table's foreign keys. Empty for anything else. */
+	foreignKeys: SqliteForeignKey[];
+	/** Set for `kind: 'index'`: the key columns in index order. */
+	index?: {
+		columns: SqliteIndexColumnSchema[];
+		unique: boolean;
+		/** Has a `WHERE` clause, so it covers only some rows. */
+		partial: boolean;
+		origin: SqliteIndexOrigin;
+	};
+	/**
+	 * Why the columns could not be read, verbatim from SQLite: a virtual table
+	 * whose module this build lacks, or a view over a table that is gone. The
+	 * `CREATE` SQL is still returned.
+	 */
+	error?: string;
+}
