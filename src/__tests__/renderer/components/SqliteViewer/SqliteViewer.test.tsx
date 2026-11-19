@@ -2909,4 +2909,63 @@ describe('SqliteViewer query with editing enabled', () => {
 		await act(async () => {});
 		expect(runQuery).toHaveBeenCalledTimes(1);
 	});
+
+	it('offers Dry run only with editing on, and says what the statement would change', async () => {
+		runQuery.mockResolvedValue({
+			...DELETED,
+			write: undefined,
+			elapsedMs: 4,
+			dryRun: {
+				kind: 'data',
+				verb: 'DELETE',
+				target: 'users',
+				tried: true,
+				untriedReason: null,
+				changes: 3,
+				otherChanges: 2,
+				schemaChanges: [],
+			},
+		});
+		await openQuery('DELETE FROM users WHERE id > 1');
+		expect(screen.queryByTestId('sqlite-query-dry-run')).not.toBeInTheDocument();
+		await unlock();
+
+		fireEvent.click(screen.getByTestId('sqlite-query-dry-run'));
+		expect(await screen.findByTestId('sqlite-query-dry-run-summary')).toHaveTextContent(
+			'Dry run: DELETE on users (changes rows) would change 3 rows; its triggers and foreign-key actions would change 2 other rows. Tried in a transaction and rolled back: nothing was changed.'
+		);
+		expect(runQuery).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sql: 'DELETE FROM users WHERE id > 1',
+				editToken: 'token-1',
+				dryRun: true,
+				plan: false,
+			})
+		);
+		expect(screen.getByTestId('sqlite-query-empty')).toHaveTextContent(
+			'Dry run of DELETE: the database was not changed.'
+		);
+		// Nothing changed: no backup toast, no last write in the strip, nothing to export.
+		expect(notifyToastMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Database backed up before the first change' })
+		);
+		expect(screen.queryByTestId('sqlite-undo-unavailable')).not.toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-query-export')).toBeDisabled();
+
+		// Run sends no dry run.
+		runQuery.mockResolvedValue(DELETED);
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await screen.findByTestId('sqlite-query-write');
+		expect(runQuery.mock.calls[1][0]).not.toHaveProperty('dryRun');
+	});
+
+	it('hides Dry run in Plan mode', async () => {
+		await openQuery('DELETE FROM users');
+		await unlock();
+		expect(screen.getByTestId('sqlite-query-dry-run')).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-query-dry-run')).not.toBeInTheDocument()
+		);
+	});
 });

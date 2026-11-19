@@ -23,6 +23,13 @@
  * and runs once in the child on a writable connection, in a transaction of
  * its own (`runWithEditing()`). Everything else still runs read-only.
  *
+ * A dry run (`request.dryRun`, editing only) changes nothing: a read is
+ * classified and not run, VACUUM and a writing PRAGMA are classified and not
+ * tried (SQLite runs them outside any transaction), and any other write is
+ * tried once in the child through `beginSqliteWorkerTrial()` (the gate and
+ * file check, no backup) and rolled back (`runDryRun()`). Not recorded in
+ * the history: nothing ran against the file.
+ *
  * A run of the first window is recorded in the database's query history
  * (sqlite-query-history.ts) before it answers, so the History rail read
  * right after it already lists it, whoever ran it. Recording never fails a
@@ -40,6 +47,13 @@ import { mkdirSync, promises as fs } from 'fs';
 import path from 'path';
 
 import {
+	SQLITE_DRY_RUN_READ_MESSAGE,
+	classifySqliteStatement,
+	sqliteDryRunNotTried,
+	sqliteDryRunRefusal,
+	sqliteDryRunUntransactedMessage,
+} from '../../shared/sqlite/dryRun';
+import {
 	SQLITE_EXPORT_STOPPED_MESSAGE,
 	SQLITE_EXPORT_TIMEOUT_MS,
 	SQLITE_QUERY_PAGE_ROWS,
@@ -50,9 +64,11 @@ import {
 	SQLITE_WRITE_LOCKED_MESSAGE,
 	SQLITE_WRITE_RERUN_MESSAGE,
 	SQLITE_WRITE_STOPPED_MESSAGE,
+	isSqliteUntransactedStatement,
 	isSqliteWriteStatement,
 	sqliteEditingQueryRefusal,
 	sqliteExportTimeoutMessage,
+	sqliteLeadingKeyword,
 	sqliteQueryBinding,
 	sqliteQueryTimeoutMessage,
 	sqliteStatementToRun,
@@ -64,6 +80,7 @@ import type {
 	SqliteQueryExportRequest,
 	SqliteQueryRequest,
 	SqliteQueryResult,
+	SqliteQueryWrite,
 } from '../../shared/sqlite/types';
 import { isTabularExportFormat, tabularExportFormatForPath } from '../../shared/tabularExport';
 import { logger } from '../utils/logger';
@@ -71,11 +88,12 @@ import { captureException } from '../utils/sentry';
 import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase, type OpenSqliteDatabase } from './sqlite-database';
 import {
+	beginSqliteWorkerTrial,
 	beginSqliteWorkerWrite,
 	onSqliteEditingRevoked,
 	requireSqliteEditing,
-	type SqliteWorkerWriteSession,
 } from './sqlite-editing';
+import type { SqliteWriteTarget } from './sqlite-connection';
 import { getSqliteQueryHistory } from './sqlite-query-history';
 import { SQLITE_QUERY_REFUSED, type SqliteQueryTask } from './sqlite-query-task';
 import { windowBound } from './sqlite-rows';
@@ -183,7 +201,9 @@ function checkParams(params: unknown): Error | null {
  * usable value, with SQLite's own message for one that fails, and with
  * `SQLITE_QUERY_STOPPED_MESSAGE` or the timeout message for one stopped.
  * With a live `request.editToken`, a statement that changes the database
- * runs too, once, and its result carries `write` (see `runWithEditing()`).
+ * runs too, once, and its result carries `write` (see `runWithEditing()`);
+ * with `request.dryRun` as well, nothing is changed and the result carries
+ * `dryRun` instead.
  */
 export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQueryResult> {
 	if (typeof request.sql !== 'string') {
@@ -193,6 +213,17 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 	if (paramsError) return Promise.reject(paramsError);
 	if (request.plan != null && typeof request.plan !== 'boolean') {
 		return Promise.reject(new Error('SQLite query plan must be true or false.'));
+	}
+	if (request.dryRun != null && typeof request.dryRun !== 'boolean') {
+		return Promise.reject(new Error('SQLite query dryRun must be true or false.'));
+	}
+	const dryRun = request.dryRun === true;
+	if (dryRun) {
+		const refusal = sqliteDryRunRefusal({
+			editing: request.editToken != null,
+			plan: request.plan === true,
+		});
+		if (refusal) return Promise.reject(refused(refusal));
 	}
 	const database = getSqliteDatabase(request.handle);
 	const offset = windowBound(request.offset ?? 0, 'offset');
@@ -217,7 +248,8 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 		request.editToken == null
 			? reportSqliteBusy('read', () => startReadRun(database, task, queryId))
 			: runWithEditing(database, request, task, queryId);
-	return offset === 0 ? recordedRun(database.displayPath, request, result) : result;
+	// A dry run changed nothing, so the history does not record it.
+	return offset === 0 && !dryRun ? recordedRun(database.displayPath, request, result) : result;
 }
 
 /** One run on a read-only connection in the child process: every run without editing, and reads with it. */
@@ -243,19 +275,33 @@ function startReadRun(
  * Whether SQLite would change the database running `sql`
  * (`isSqliteWriteStatement()` over `stmt.readonly`), asked of the handle's
  * READ-ONLY connection: a prepare compiles the statement and runs none of
- * it. A statement that does not prepare (a syntax error, a missing table,
- * two statements) goes down the read path, whose child prepares it again
- * and reports SQLite's own error with where it points; that is expected,
- * not swallowed.
+ * it. Null for a statement that does not prepare (a syntax error, a missing
+ * table, two statements): it goes down the read path, whose child prepares
+ * it again and reports SQLite's own error with where it points; that is
+ * expected, not swallowed.
  */
-function statementWrites(database: OpenSqliteDatabase, sql: string): boolean {
+function statementWrites(database: OpenSqliteDatabase, sql: string): boolean | null {
 	let readonly: boolean;
 	try {
 		readonly = database.db.prepare(sqliteStatementToRun(sql)).readonly;
 	} catch {
-		return false;
+		return null;
 	}
 	return isSqliteWriteStatement(sql, readonly);
+}
+
+/** A dry run that ran nothing: an empty result carrying what the statement is and why. */
+function untriedDryRun(sql: string, writes: boolean, reason: string): SqliteQueryResult {
+	return {
+		statement: sqliteLeadingKeyword(sql),
+		columns: [],
+		rows: [],
+		offset: 0,
+		hasMore: false,
+		returnsRows: false,
+		elapsedMs: 0,
+		dryRun: sqliteDryRunNotTried(classifySqliteStatement(sql, writes), reason),
+	};
 }
 
 /**
@@ -266,9 +312,14 @@ function statementWrites(database: OpenSqliteDatabase, sql: string): boolean {
  * backup. One that would is a write: refused past the first window (a later
  * window re-runs it), then `beginSqliteWorkerWrite()` passes the gate and
  * takes the backup, and the child runs it once on a writable connection in a
- * transaction of its own (`runSqliteWriteTask()`). Lock stops it; so do Stop,
- * a newer run under `queryId` (even while the backup is still being taken,
- * when it never starts), the timeout, and closing the database.
+ * transaction of its own (`runSqliteWriteTask()`, through `runInWriteChild()`).
+ *
+ * With `request.dryRun`, nothing is changed: a read is classified and not
+ * run, a statement SQLite runs outside any transaction (VACUUM, a writing
+ * PRAGMA) is classified and not tried, and any other write passes
+ * `beginSqliteWorkerTrial()` (the gate and file check, no backup) and is
+ * tried in the child and rolled back. One that does not prepare still goes
+ * down the read path, so the child reports SQLite's error and where it points.
  */
 async function runWithEditing(
 	database: OpenSqliteDatabase,
@@ -285,7 +336,14 @@ async function runWithEditing(
 	}
 	const refusal = sqliteEditingQueryRefusal(task.sql, { plan: task.plan });
 	if (refusal) throw refused(refusal);
-	if (task.plan || !statementWrites(database, task.sql)) {
+	const dryRun = request.dryRun === true;
+	const writes = task.plan ? false : statementWrites(database, task.sql);
+	// A dry run of a read changes nothing, so it is not run at all.
+	if (dryRun && writes === false) {
+		return untriedDryRun(task.sql, false, SQLITE_DRY_RUN_READ_MESSAGE);
+	}
+	if (writes !== true) {
+		// With a dry run, only a statement that does not prepare: the child says why.
 		return reportSqliteBusy('read', () =>
 			startReadRun(database, { ...task, editing: true }, queryId)
 		);
@@ -294,14 +352,50 @@ async function runWithEditing(
 	// Settled before the backup, so a parameter with no value costs no copy.
 	const binding = sqliteQueryBinding(task.sql, task.params);
 	if (binding.problem !== null) throw refused(binding.problem);
+	if (dryRun) {
+		// SQLite runs these outside any transaction: there is nothing to roll back.
+		if (isSqliteUntransactedStatement(task.sql)) {
+			return untriedDryRun(
+				task.sql,
+				true,
+				sqliteDryRunUntransactedMessage(sqliteLeadingKeyword(task.sql))
+			);
+		}
+		return runInWriteChild(database, request, task, queryId, async () => ({
+			target: (await beginSqliteWorkerTrial(handle, editToken)).target,
+		}));
+	}
 
+	return runInWriteChild(database, request, task, queryId, async () => {
+		const session = await beginSqliteWorkerWrite(handle, editToken);
+		return { target: session.target, backup: session.backupCreated ? session.backup : undefined };
+	});
+}
+
+/**
+ * Run `task` once in the SQLite child on the file `open()` hands back after
+ * passing its gate: a write (`beginSqliteWorkerWrite()`, with the backup) or
+ * a dry run's trial (`beginSqliteWorkerTrial()`). Lock stops it; so do Stop,
+ * a newer run under `queryId` (even while the gate is still being passed,
+ * when it never starts), the timeout, and closing the database. A busy file
+ * is reported in the write's words.
+ */
+function runInWriteChild(
+	database: OpenSqliteDatabase,
+	request: SqliteQueryRequest,
+	task: SqliteQueryTask,
+	queryId: string | null,
+	open: () => Promise<{ target: SqliteWriteTarget; backup?: SqliteQueryWrite['backup'] }>
+): Promise<SqliteQueryResult> {
+	const { handle, editToken } = request;
+	const dryRun = request.dryRun === true;
 	return reportSqliteBusy('write', async () => {
 		let stopped = false;
 		const pending = { stop: () => (stopped = true) };
 		if (queryId) running.set(queryId, pending);
-		let session: SqliteWorkerWriteSession;
+		let opened: { target: SqliteWriteTarget; backup?: SqliteQueryWrite['backup'] };
 		try {
-			session = await beginSqliteWorkerWrite(handle, editToken);
+			opened = await open();
 		} finally {
 			if (queryId && running.get(queryId) === pending) running.delete(queryId);
 		}
@@ -310,7 +404,10 @@ async function runWithEditing(
 		// No await from the gate to here: the grant is still live.
 		const run = startSqliteWorkerTask(
 			database,
-			{ kind: 'query', task: { ...task, writeTarget: session.target } },
+			{
+				kind: 'query',
+				task: { ...task, writeTarget: opened.target, ...(dryRun ? { dryRun: true } : {}) },
+			},
 			{
 				closedMessage: SQLITE_WRITE_CLOSED_MESSAGE,
 				timeoutMs: SQLITE_QUERY_TIMEOUT_MS,
@@ -323,11 +420,9 @@ async function runWithEditing(
 		);
 		try {
 			const result = await tracked(queryId, run, SQLITE_WRITE_STOPPED_MESSAGE);
+			if (dryRun) return result;
 			const write = result.write ?? { changes: 0, otherChanges: 0 };
-			return {
-				...result,
-				write: session.backupCreated ? { ...write, backup: session.backup } : write,
-			};
+			return { ...result, write: opened.backup ? { ...write, backup: opened.backup } : write };
 		} finally {
 			unhook();
 		}

@@ -36,6 +36,15 @@
  * each write (`onWrite`) to re-read the table on screen; the toolbar note
  * turns to a warning while editing is on.
  *
+ * Dry run (editing on, Rows mode) asks first: main says what kind of
+ * statement it is (`classifySqliteStatement()`) and, for a write, tries it
+ * once in a transaction in the child and rolls it back, so the status line
+ * reads what it would change (rows, rows its triggers and foreign-key actions
+ * would change, schema objects it would create, drop, or alter) and the grid
+ * shows any `RETURNING` rows, while the database stays as it was. A read is
+ * not run; VACUUM and a writing PRAGMA are not tried. Never paged, exported,
+ * or announced as a write; Run applies the statement.
+ *
  * A statement with parameters (`?`, `:id`) gets one value box per parameter
  * between the toolbar and the grid (SqliteQueryParameters), read from the
  * text as it changes. The values ride with the run and are bound by the
@@ -69,7 +78,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
-import { Download, History, Play, Square } from 'lucide-react';
+import { Download, FlaskConical, History, Play, Square } from 'lucide-react';
 import type { Extension } from '@codemirror/state';
 
 import { formatCount } from '../../../shared/formatters';
@@ -82,6 +91,7 @@ import {
 	sqliteQueryRefusal,
 } from '../../../shared/sqlite/query';
 import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
+import { formatSqliteDryRun, sqliteDryRunRefusal } from '../../../shared/sqlite/dryRun';
 import {
 	formatSqliteQueryErrorPlace,
 	splitSqliteErrorOffset,
@@ -127,6 +137,8 @@ export interface SqliteQueryRunState {
 	params: SqliteParameterValues;
 	/** It ran as `EXPLAIN QUERY PLAN`: the rows are its plan, shown whole. */
 	plan: boolean;
+	/** It was a dry run: tried and rolled back, or only classified. Never paged. */
+	dryRun: boolean;
 	/** Columns and every row loaded so far; null until the first window lands. */
 	result: SqliteQueryResult | null;
 	/** A call (the first window or a later one) is in flight. */
@@ -191,6 +203,13 @@ function sqliteWriteSummary(statement: string, write: SqliteQueryWrite): string 
 	return `${statement} changed ${rows}${sqliteOtherChangesText(write.otherChanges)}`;
 }
 
+/** "It would return 3 rows." / "...at least 501 rows.": a dry run's RETURNING rows, first window only. */
+function sqliteDryRunReturnedText(result: SqliteQueryResult): string {
+	const count = result.rows.length;
+	if (result.hasMore) return `It would return more than ${formatCount(count)} rows.`;
+	return `It would return ${formatCount(count)} ${count === 1 ? 'row' : 'rows'}.`;
+}
+
 export function SqliteQueryPanel({
 	handle,
 	fileName,
@@ -238,79 +257,85 @@ export function SqliteQueryPanel({
 	 * Run a statement. Offset 0 runs the editor's text afresh (stopping a run
 	 * still in flight), as a plan when `asPlan`; a later offset re-runs the
 	 * statement already shown, for the next window, and appends it. A plan is
-	 * read whole in one call.
+	 * read whole in one call. `asDryRun` asks main for a dry run instead
+	 * (editing only): tried and rolled back, its first window only.
 	 */
-	const runQuery = useStableCallback(async (offset: number, asPlan: boolean = plan) => {
-		const sql = offset === 0 ? value : (run?.sql ?? '');
-		const values =
-			offset === 0 ? sqliteParameterValuesFor(scan.parameters, params) : (run?.params ?? {});
-		const runPlan = offset === 0 ? asPlan : run?.plan === true;
-		const refusal =
-			offset === 0
-				? (sqliteQueryRefusal(sql, { plan: runPlan, editing }) ??
-					sqliteQueryBinding(sql, values).problem)
-				: null;
-		if (offset === 0 && run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
-		const runId = generateId();
-		const fresh = { runId, sql, params: values, plan: runPlan, result: null };
-		if (refusal) {
-			// The text and the values alone settle it: no process is started.
-			onRunChange({
-				...fresh,
-				running: false,
-				error: refusal,
-				errorLocation: sqliteQueryErrorLocation(sql, refusal),
-			});
-			return;
-		}
-		onRunChange((previous) =>
-			offset === 0 || !previous
-				? { ...fresh, running: true, error: null, errorLocation: null }
-				: { ...previous, runId, running: true, error: null, errorLocation: null }
-		);
-		try {
-			const page = await window.maestro.sqlite.runQuery({
-				handle,
-				sql,
-				params: values,
-				plan: runPlan,
-				offset,
-				limit: runPlan ? SQLITE_QUERY_MAX_LIMIT : SQLITE_QUERY_PAGE_ROWS,
-				queryId: runId,
-				// Main lifts the read-only assertion only for a live grant.
-				editToken,
-			});
-			if (page.write) {
-				// It changed the database whether or not this run is still shown.
-				announceSqliteBackup(page.write.backup);
-				onWrite(page.write);
+	const runQuery = useStableCallback(
+		async (offset: number, asPlan: boolean = plan, asDryRun: boolean = false) => {
+			const sql = offset === 0 ? value : (run?.sql ?? '');
+			const values =
+				offset === 0 ? sqliteParameterValuesFor(scan.parameters, params) : (run?.params ?? {});
+			const runPlan = offset === 0 ? asPlan : run?.plan === true;
+			const dryRun = offset === 0 && asDryRun;
+			const refusal =
+				offset === 0
+					? ((dryRun ? sqliteDryRunRefusal({ editing, plan: runPlan }) : null) ??
+						sqliteQueryRefusal(sql, { plan: runPlan, editing }) ??
+						sqliteQueryBinding(sql, values).problem)
+					: null;
+			if (offset === 0 && run?.running) void window.maestro.sqlite.cancelQuery(run.runId);
+			const runId = generateId();
+			const fresh = { runId, sql, params: values, plan: runPlan, dryRun, result: null };
+			if (refusal) {
+				// The text and the values alone settle it: no process is started.
+				onRunChange({
+					...fresh,
+					running: false,
+					error: refusal,
+					errorLocation: sqliteQueryErrorLocation(sql, refusal),
+				});
+				return;
 			}
-			onRunChange((previous) => {
-				if (previous?.runId !== runId) return previous;
-				const result =
-					offset > 0 && previous.result
-						? { ...page, offset: 0, rows: [...previous.result.rows, ...page.rows] }
-						: page;
-				return { ...previous, result, running: false };
-			});
-		} catch (failure) {
-			// A syntax error carries where SQLite stopped; see `withSqliteErrorOffset()`.
-			const { message, offset: errorOffset } = splitSqliteErrorOffset(ipcErrorMessage(failure));
 			onRunChange((previous) =>
-				previous?.runId === runId
-					? {
-							...previous,
-							running: false,
-							error: message,
-							errorLocation: sqliteQueryErrorLocation(sql, message, errorOffset),
-						}
-					: previous
+				offset === 0 || !previous
+					? { ...fresh, running: true, error: null, errorLocation: null }
+					: { ...previous, runId, running: true, error: null, errorLocation: null }
 			);
-		} finally {
-			// Main records a first window's run before it answers.
-			if (offset === 0) setHistoryStamp((stamp) => stamp + 1);
+			try {
+				const page = await window.maestro.sqlite.runQuery({
+					handle,
+					sql,
+					params: values,
+					plan: runPlan,
+					...(dryRun ? { dryRun: true } : {}),
+					offset,
+					limit: runPlan ? SQLITE_QUERY_MAX_LIMIT : SQLITE_QUERY_PAGE_ROWS,
+					queryId: runId,
+					// Main lifts the read-only assertion only for a live grant.
+					editToken,
+				});
+				if (page.write) {
+					// It changed the database whether or not this run is still shown.
+					announceSqliteBackup(page.write.backup);
+					onWrite(page.write);
+				}
+				onRunChange((previous) => {
+					if (previous?.runId !== runId) return previous;
+					const result =
+						offset > 0 && previous.result
+							? { ...page, offset: 0, rows: [...previous.result.rows, ...page.rows] }
+							: page;
+					return { ...previous, result, running: false };
+				});
+			} catch (failure) {
+				// A syntax error carries where SQLite stopped; see `withSqliteErrorOffset()`.
+				const { message, offset: errorOffset } = splitSqliteErrorOffset(ipcErrorMessage(failure));
+				onRunChange((previous) =>
+					previous?.runId === runId
+						? {
+								...previous,
+								running: false,
+								error: message,
+								errorLocation: sqliteQueryErrorLocation(sql, message, errorOffset),
+							}
+						: previous
+				);
+			} finally {
+				// Main records a first window's run before it answers.
+				if (offset === 0) setHistoryStamp((stamp) => stamp + 1);
+			}
 		}
-	});
+	);
 
 	/** Write every row of the statement shown to a file the person picks. */
 	const handleExport = useStableCallback(async () => {
@@ -364,6 +389,7 @@ export function SqliteQueryPanel({
 	);
 
 	const handleRun = useCallback(() => void runQuery(0), [runQuery]);
+	const handleDryRun = useCallback(() => void runQuery(0, false, true), [runQuery]);
 	const handleResultModeChange = useCallback(
 		(mode: ResultMode) => {
 			const next = mode === 'plan';
@@ -435,7 +461,9 @@ export function SqliteQueryPanel({
 	const getRowLabel = useCallback((rowPosition: number) => formatCount(rowPosition + 1), []);
 	const handleReachEnd = useCallback(() => {
 		// A statement that changed the database runs once: a later window would re-run it.
-		if (!result?.hasMore || result.write || run?.plan || run?.running || run?.error) return;
+		// Nor is a dry run, whose trial is rolled back each time.
+		if (!result?.hasMore || result.write || result.dryRun) return;
+		if (run?.plan || run?.running || run?.error) return;
 		void runQuery(result.rows.length);
 	}, [result, run?.plan, run?.running, run?.error, runQuery]);
 	const ignoreSort = useCallback(() => undefined, []);
@@ -450,7 +478,12 @@ export function SqliteQueryPanel({
 	const exporting = exportState?.running === true;
 	// An export runs the statement again, so a write's result is never exported.
 	const canExport =
-		result?.returnsRows === true && !result.write && run?.plan !== true && !running && !exporting;
+		result?.returnsRows === true &&
+		!result.write &&
+		!result.dryRun &&
+		run?.plan !== true &&
+		!running &&
+		!exporting;
 	// A finished export is news only beside the result it exported.
 	const shownExport = exporting || exportState?.runId === run?.runId ? exportState : null;
 
@@ -502,6 +535,19 @@ export function SqliteQueryPanel({
 							{runKeys}
 						</span>
 					</button>
+					{editing && !plan && (
+						<button
+							type="button"
+							onClick={handleDryRun}
+							className="flex items-center gap-1.5 px-2.5 py-1 rounded"
+							style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
+							title="Dry run: say what kind of statement this is and what it would change, then change nothing. A write is tried once in a transaction and rolled back; a read is not run."
+							data-testid="sqlite-query-dry-run"
+						>
+							<FlaskConical className="w-3 h-3" />
+							Dry run
+						</button>
+					)}
 					{running && (
 						<button
 							type="button"
@@ -551,7 +597,9 @@ export function SqliteQueryPanel({
 									? 'A query plan has no rows to export; switch to Rows and run the statement'
 									: result?.write
 										? 'This statement changed the database; exporting would run it again'
-										: 'Write every row of the result to a CSV or JSON Lines file, whole'
+										: result?.dryRun
+											? 'A dry run changes nothing and exports nothing; Run the statement to export its rows'
+											: 'Write every row of the result to a CSV or JSON Lines file, whole'
 							}
 							data-testid="sqlite-query-export"
 						>
@@ -614,6 +662,8 @@ export function SqliteQueryPanel({
 									<Spinner size={16} decorative />
 									Running...
 								</>
+							) : result?.dryRun ? (
+								`Dry run of ${result.statement}: the database was not changed.`
 							) : result?.write ? (
 								`${result.statement} ran and changed the database.`
 							) : result ? (
@@ -652,6 +702,18 @@ export function SqliteQueryPanel({
 							{errorLocation && ' '}
 							{run.error}
 						</span>
+					) : result?.dryRun ? (
+						<>
+							<span
+								className="select-text"
+								style={{ color: theme.colors.textMain }}
+								data-testid="sqlite-query-dry-run-summary"
+							>
+								Dry run: {formatSqliteDryRun(result.dryRun)}
+								{result.returnsRows && ` ${sqliteDryRunReturnedText(result)}`}
+							</span>
+							{result.dryRun.tried && <span>{result.elapsedMs} ms</span>}
+						</>
 					) : result?.write ? (
 						<>
 							<span data-testid="sqlite-query-write">

@@ -909,6 +909,33 @@ describe('sqlite_run_query handler with --enable-editing', () => {
 		expect(editing.enableSqliteEditing).not.toHaveBeenCalled();
 		expect(queries.runSqliteQuery.mock.calls[0][0]).not.toHaveProperty('editToken');
 	});
+
+	it('forwards a dry run behind the same per-call unlock, and nothing else as one', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'qe4',
+			path: '/data/app.db',
+			sql: 'DELETE FROM users',
+			enableEditing: true,
+			dryRun: true,
+		});
+		await flush();
+		expect(queries.runSqliteQuery).toHaveBeenCalledWith(
+			expect.objectContaining({ editToken: 'cli-token', dryRun: true })
+		);
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+
+		handler.handleMessage(client, {
+			type: 'sqlite_run_query',
+			requestId: 'qe5',
+			path: '/data/app.db',
+			sql: 'DELETE FROM users',
+			enableEditing: true,
+			dryRun: 'yes',
+		});
+		await flush();
+		expect(queries.runSqliteQuery.mock.calls[1][0]).not.toHaveProperty('dryRun');
+	});
 });
 
 describe('sqlite_export_query handler', () => {

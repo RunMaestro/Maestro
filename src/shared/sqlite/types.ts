@@ -811,6 +811,55 @@ export interface SqliteQueryRequest {
 	 * one the run is read-only, exactly as before.
 	 */
 	editToken?: string | null;
+	/**
+	 * Dry run (needs `editToken`; never with `plan`): say what the statement
+	 * is and what it would change, and change nothing. A statement that would
+	 * change the database is tried once in the SQLite child process, in
+	 * `BEGIN IMMEDIATE`, counted, and ROLLED BACK; a read is not run at all.
+	 * The result carries `dryRun` and never `write`. Takes no backup (nothing
+	 * is committed) and is not recorded in the query history.
+	 */
+	dryRun?: boolean;
+}
+
+/**
+ * What kind of statement a dry run found: one that only reads, one that
+ * changes rows (INSERT, REPLACE, UPDATE, DELETE), one that changes the schema
+ * (CREATE, DROP, ALTER), a database setting (a PRAGMA that sets one), or
+ * maintenance (VACUUM, REINDEX, ANALYZE).
+ */
+export type SqliteStatementKind = 'read' | 'data' | 'schema' | 'setting' | 'maintenance';
+
+/** One schema object a dry run's trial created, dropped, or changed the SQL of. */
+export interface SqliteSchemaChange {
+	change: 'created' | 'dropped' | 'altered';
+	/** `table`, `index`, `view`, or `trigger`, as `sqlite_schema` names it. */
+	type: string;
+	name: string;
+}
+
+/**
+ * What a dry run found (`SqliteQueryRequest.dryRun`): the statement's kind
+ * from its text and SQLite's own prepare, and, when it was tried, what the
+ * trial changed before it was rolled back. The counts are the database as it
+ * was at the dry run; a change made after it can make the real run differ.
+ */
+export interface SqliteDryRun {
+	kind: SqliteStatementKind;
+	/** The statement's verb, upper case, after any `WITH` clause: `DELETE`, `CREATE INDEX`, `PRAGMA`. */
+	verb: string;
+	/** The table or object the text names (`users`, `main.users`), or null when it names none. */
+	target: string | null;
+	/** The statement ran in a transaction that was then rolled back. */
+	tried: boolean;
+	/** Why it was not tried, when `tried` is false. */
+	untriedReason: string | null;
+	/** Rows the statement itself would change (SQLite's `changes()`). Null when not tried. */
+	changes: number | null;
+	/** Rows the database's triggers and foreign-key actions would change beside those. Null when not tried. */
+	otherChanges: number | null;
+	/** Schema objects the trial created, dropped, or changed, by name. Empty when not tried. */
+	schemaChanges: SqliteSchemaChange[];
 }
 
 /** What a Query-mode statement that changed the database did. */
@@ -882,6 +931,11 @@ export interface SqliteQueryResult {
 	 * re-run for a later window.
 	 */
 	write?: SqliteQueryWrite;
+	/**
+	 * Present for a dry run (`SqliteQueryRequest.dryRun`), which changed
+	 * nothing. Its rows are the trial's `RETURNING` rows, read once.
+	 */
+	dryRun?: SqliteDryRun;
 }
 
 /**

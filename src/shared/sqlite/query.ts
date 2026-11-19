@@ -183,6 +183,21 @@ export function isSqliteWriteStatement(sql: string, statementReadonly: boolean):
 }
 
 /**
+ * Statements SQLite will not run inside a transaction (`VACUUM`; a PRAGMA
+ * such as `journal_mode = WAL`). A write runs them as SQLite's own
+ * one-statement transaction instead, which is just as atomic; a dry run
+ * cannot try them and roll them back.
+ */
+export const SQLITE_UNTRANSACTED_KEYWORDS: readonly string[] = ['VACUUM', 'PRAGMA'];
+
+const UNTRANSACTED_KEYWORD_SET: ReadonlySet<string> = new Set(SQLITE_UNTRANSACTED_KEYWORDS);
+
+/** Whether `sql` is a statement SQLite runs outside any transaction (`SQLITE_UNTRANSACTED_KEYWORDS`). */
+export function isSqliteUntransactedStatement(sql: string): boolean {
+	return UNTRANSACTED_KEYWORD_SET.has(sqliteLeadingKeyword(sql));
+}
+
+/**
  * A later window of a statement that changed the database. A window past the
  * first re-runs the statement, which would make the change again.
  */

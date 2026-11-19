@@ -35,6 +35,8 @@ const driver = vi.hoisted(() => ({
 	changeCounts: [] as Array<[number, number]>,
 	/** Why the statement's `run()` fails, to play a constraint failure. */
 	runError: null as Error | null,
+	/** `sqlite_master` reads a dry run makes, in turn: before its trial, then after it. */
+	schemaReads: [] as Array<Array<{ type: string; name: string; sql: string | null }>>,
 }));
 
 vi.mock('better-sqlite3', () => {
@@ -68,6 +70,9 @@ vi.mock('better-sqlite3', () => {
 		prepare(sql: string) {
 			if (sql === 'SELECT changes(), total_changes()') {
 				return { raw: () => ({ get: () => driver.changeCounts.shift() ?? [0, 0] }) };
+			}
+			if (sql === 'SELECT type, name, sql FROM main.sqlite_master') {
+				return { all: () => driver.schemaReads.shift() ?? [] };
 			}
 			this.record.prepared.push(sql);
 			if (driver.statement.prepareError) throw driver.statement.prepareError;
@@ -158,6 +163,8 @@ const editing = vi.hoisted(() => ({
 	endGrantAtStart: null as 'locked' | 'closed' | null,
 	/** Called just after the write's child starts, as a Stop pressed then would be. */
 	onStart: null as (() => void) | null,
+	/** Dry runs that passed the trial gate (no backup). */
+	trials: 0,
 }));
 vi.mock('../../../main/sqlite/sqlite-editing', () => {
 	const gate = (_handle: string, token: unknown) => {
@@ -177,6 +184,11 @@ vi.mock('../../../main/sqlite/sqlite-editing', () => {
 				backupCreated: editing.backupCreated,
 				target: { filePath: '/data/app.db', dev: 1, ino: 2 },
 			};
+		},
+		beginSqliteWorkerTrial: async (handle: string, token: unknown) => {
+			gate(handle, token);
+			editing.trials++;
+			return { database: {}, target: { filePath: '/data/app.db', dev: 1, ino: 2 } };
 		},
 		onSqliteEditingRevoked: (
 			handle: string,
@@ -247,6 +259,12 @@ import {
 	SQLITE_WRITE_STOPPED_MESSAGE,
 	sqliteTransactionRefusal,
 } from '../../../shared/sqlite/query';
+import {
+	SQLITE_DRY_RUN_NEEDS_EDITING_MESSAGE,
+	SQLITE_DRY_RUN_PLAN_MESSAGE,
+	SQLITE_DRY_RUN_READ_MESSAGE,
+	sqliteDryRunUntransactedMessage,
+} from '../../../shared/sqlite/dryRun';
 
 function numbered(count: number): unknown[][] {
 	return Array.from({ length: count }, (_, index) => [BigInt(index + 1)]);
@@ -1102,5 +1120,214 @@ describe('runSqliteQuery with editing on', () => {
 		});
 		await expect(run).rejects.toThrow(SQLITE_WRITE_STOPPED_MESSAGE);
 		expect(stopped).toBe(true);
+	});
+});
+
+describe('runSqliteQuery dry run', () => {
+	beforeEach(() => {
+		driver.instances = [];
+		driver.statement = {
+			readonly: false,
+			reader: false,
+			columns: [],
+			rows: [],
+			prepareError: null,
+		};
+		driver.flags = [];
+		driver.ran = 0;
+		driver.boundArgs = null;
+		driver.prepareFails = null;
+		driver.changeCounts = [];
+		driver.runError = null;
+		driver.schemaReads = [];
+		handleDb.readonly = false;
+		handleDb.prepareError = null;
+		handleDb.prepared = [];
+		editing.backupCreated = true;
+		editing.begin = null;
+		editing.begun = 0;
+		editing.trials = 0;
+		editing.revoked = [];
+		editing.unhooked = 0;
+		editing.endGrantAtStart = null;
+		editing.onStart = null;
+		targets.length = 0;
+		releaseHooks.clear();
+		history.record.mockClear();
+		history.record.mockImplementation(async () => undefined);
+	});
+
+	it('tries a write in a transaction, counts it, and always rolls it back, with no backup', async () => {
+		driver.changeCounts = [
+			[0, 0],
+			[3, 5],
+		];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM users WHERE id > :id',
+			params: { ':id': { type: 'number', text: '1' } },
+			editToken: 'tok',
+			dryRun: true,
+		});
+
+		// The trial gate, never the write gate with its backup.
+		expect(editing.trials).toBe(1);
+		expect(editing.begun).toBe(0);
+		expect(targets).toEqual([{ filePath: '/data/app.db', dev: 1, ino: 2 }]);
+		const [connection] = driver.instances;
+		expect(connection.options).toMatchObject({ readonly: false });
+		expect(connection.execs).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
+		expect(connection.closed).toBe(true);
+		expect(driver.ran).toBe(1);
+		expect(result.write).toBeUndefined();
+		expect(result.dryRun).toEqual({
+			kind: 'data',
+			verb: 'DELETE',
+			target: 'users',
+			tried: true,
+			untriedReason: null,
+			changes: 3,
+			otherChanges: 2,
+			schemaChanges: [],
+		});
+		// Nothing ran against the file, so the history does not record it.
+		expect(history.record).not.toHaveBeenCalled();
+		// Lock stops a trial as it stops a write.
+		expect(editing.revoked).toHaveLength(1);
+		expect(editing.unhooked).toBe(1);
+	});
+
+	it('reports the schema objects a trial created, dropped, or altered', async () => {
+		driver.schemaReads = [
+			[{ type: 'table', name: 'users', sql: 'CREATE TABLE users (id)' }],
+			[
+				{ type: 'table', name: 'users', sql: 'CREATE TABLE users (id)' },
+				{ type: 'index', name: 'users_id', sql: 'CREATE INDEX users_id ON users (id)' },
+			],
+		];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'CREATE INDEX users_id ON users (id)',
+			editToken: 'tok',
+			dryRun: true,
+		});
+		expect(result.dryRun).toMatchObject({
+			kind: 'schema',
+			verb: 'CREATE INDEX',
+			target: 'users_id',
+			tried: true,
+			schemaChanges: [{ change: 'created', type: 'index', name: 'users_id' }],
+		});
+		expect(driver.instances[0].execs).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
+	});
+
+	it('returns the RETURNING rows the trial gave, first window only', async () => {
+		driver.statement.reader = true;
+		driver.statement.columns = [{ name: 'id', type: 'INTEGER' }];
+		driver.statement.rows = numbered(4);
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM t RETURNING id',
+			limit: 2,
+			editToken: 'tok',
+			dryRun: true,
+		});
+		expect(result).toMatchObject({ rows: [[1], [2]], hasMore: true, returnsRows: true });
+		expect(driver.instances[0].execs).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
+	});
+
+	it("rolls back a trial that fails and passes SQLite's own error through", async () => {
+		driver.runError = Object.assign(new Error('FOREIGN KEY constraint failed'), {
+			code: 'SQLITE_CONSTRAINT_FOREIGNKEY',
+		});
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM parents', editToken: 'tok', dryRun: true })
+		).rejects.toMatchObject({ message: 'FOREIGN KEY constraint failed' });
+		expect(driver.instances[0].execs).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
+		expect(history.record).not.toHaveBeenCalled();
+	});
+
+	it('classifies a read and runs nothing', async () => {
+		handleDb.readonly = true;
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'SELECT * FROM users',
+			editToken: 'tok',
+			dryRun: true,
+		});
+		expect(result.dryRun).toMatchObject({
+			kind: 'read',
+			verb: 'SELECT',
+			tried: false,
+			untriedReason: SQLITE_DRY_RUN_READ_MESSAGE,
+			changes: null,
+		});
+		expect(driver.instances).toHaveLength(0);
+		expect(editing.trials).toBe(0);
+	});
+
+	it('does not try VACUUM or a writing PRAGMA, which SQLite runs outside any transaction', async () => {
+		const vacuum = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'VACUUM',
+			editToken: 'tok',
+			dryRun: true,
+		});
+		expect(vacuum.dryRun).toMatchObject({
+			kind: 'maintenance',
+			tried: false,
+			untriedReason: sqliteDryRunUntransactedMessage('VACUUM'),
+		});
+		const pragma = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'PRAGMA user_version = 3',
+			editToken: 'tok',
+			dryRun: true,
+		});
+		expect(pragma.dryRun).toMatchObject({ kind: 'setting', target: 'user_version', tried: false });
+		expect(driver.instances).toHaveLength(0);
+		expect(editing.trials).toBe(0);
+	});
+
+	it('sends a statement that does not prepare down the read path, so SQLite says why', async () => {
+		handleDb.prepareError = new Error('no such table: nope');
+		driver.statement.prepareError = new Error('no such table: nope');
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM nope', editToken: 'tok', dryRun: true })
+		).rejects.toThrow('no such table: nope');
+		expect(driver.instances[0].options).toMatchObject({ readonly: true });
+		expect(editing.trials).toBe(0);
+	});
+
+	it('refuses a dry run without editing, with Plan, or as a bad flag, before anything runs', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', dryRun: true })
+		).rejects.toMatchObject({
+			message: SQLITE_DRY_RUN_NEEDS_EDITING_MESSAGE,
+			code: SQLITE_QUERY_REFUSED,
+		});
+		await expect(
+			runSqliteQuery({
+				handle: 'h1',
+				sql: 'DELETE FROM t',
+				plan: true,
+				editToken: 'tok',
+				dryRun: true,
+			})
+		).rejects.toThrow(SQLITE_DRY_RUN_PLAN_MESSAGE);
+		await expect(
+			runSqliteQuery({
+				handle: 'h1',
+				sql: 'DELETE FROM t',
+				editToken: 'tok',
+				dryRun: 'yes' as unknown as boolean,
+			})
+		).rejects.toThrow('SQLite query dryRun must be true or false.');
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'gone', dryRun: true })
+		).rejects.toThrow('Editing is not enabled');
+		expect(driver.instances).toHaveLength(0);
+		expect(editing.trials).toBe(0);
+		expect(history.record).not.toHaveBeenCalled();
 	});
 });

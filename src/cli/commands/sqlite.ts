@@ -24,12 +24,13 @@
 //                            [--param-number <name=value>]... [--param-null <name>]...
 //                            [--plan] [--offset <n>] [--limit <n>]
 //                            [--output <file> [--format <csv|jsonl>]]
-//                            [--enable-editing] [--json]
+//                            [--enable-editing [--dry-run]] [--json]
 //       -> Query mode's Run: one read-only statement, its parameters bound, a
 //          window of its result (or, with --plan, its query plan as a tree);
 //          with --output, Query mode's Export: every row written to a file;
 //          with --enable-editing, a statement that changes the database runs
-//          once, behind the editing gate and the session's backup
+//          once, behind the editing gate and the session's backup; with
+//          --dry-run as well, Query mode's Dry run: tried and rolled back
 //   maestro-cli sqlite history <path> [--forget <id>] [--clear] [--json]
 //       -> Query mode's History rail: the statements run against the file,
 //          newest first; --forget drops one, --clear drops them all
@@ -102,6 +103,7 @@ import {
 	sqliteReadOnlyRefusal,
 } from '../../shared/sqlite/query';
 import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
+import { formatSqliteDryRun } from '../../shared/sqlite/dryRun';
 import {
 	formatSqliteQueryErrorExcerpt,
 	formatSqliteQueryErrorPlace,
@@ -124,6 +126,7 @@ import type {
 	SqliteCellUpdateResult,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
+	SqliteDryRun,
 	SqliteFilterProblem,
 	SqliteIntegrityMode,
 	SqliteIntegrityResult,
@@ -779,6 +782,8 @@ interface SqliteQueryOptions {
 	 * way a tab's "Enable editing" lifts it in Query mode.
 	 */
 	enableEditing?: boolean;
+	/** Query mode's Dry run: classify, try in a transaction, roll back. Needs `enableEditing`. */
+	dryRun?: boolean;
 	json?: boolean;
 }
 
@@ -872,7 +877,9 @@ function failQuery(
  * `--enable-editing`, the read-only assertion is lifted for this one run, the
  * way a tab's "Enable editing" lifts it: a statement that changes the
  * database runs once, after the session's backup, and the reply says how
- * many rows it changed.
+ * many rows it changed. With `--dry-run` as well, nothing is changed: the
+ * reply says what kind of statement it is and what a trial run, rolled back,
+ * changed (`formatSqliteDryRun()`).
  */
 export async function sqliteQuery(
 	file: string,
@@ -894,6 +901,22 @@ export async function sqliteQuery(
 	const editing = options.enableEditing === true;
 	if (editing && options.output !== undefined) {
 		fail('--output exports a read-only statement; it does not take --enable-editing', options.json);
+	}
+	const dryRun = options.dryRun === true;
+	if (dryRun) {
+		if (!editing) {
+			fail('--dry-run tries a change and rolls it back; it needs --enable-editing', options.json);
+		}
+		if (plan) fail('--dry-run tries the statement itself; it does not take --plan', options.json);
+		if (options.output !== undefined) {
+			fail(
+				'--dry-run changes nothing and exports nothing; it does not take --output',
+				options.json
+			);
+		}
+		if (options.offset !== undefined && options.offset !== '0') {
+			fail('--dry-run reads the first rows only; it does not take --offset', options.json);
+		}
 	}
 	// A plan is shown whole and an export writes every row: no window applies.
 	const whole = plan || options.output !== undefined;
@@ -938,6 +961,7 @@ export async function sqliteQuery(
 					params,
 					plan,
 					...(editing ? { enableEditing: true } : {}),
+					...(dryRun ? { dryRun: true } : {}),
 				},
 				'sqlite_query_result',
 				// The app stops the run at its own timeout; leave room for the reply.
@@ -963,6 +987,10 @@ export async function sqliteQuery(
 		return;
 	}
 
+	if (result.dryRun) {
+		printSqliteDryRun(database, result, result.dryRun);
+		return;
+	}
 	const lines: string[] = [`${result.statement} on ${database.displayPath}`];
 	const { write } = result;
 	if (write) {
@@ -993,6 +1021,36 @@ export async function sqliteQuery(
 		lines.push('', `Rows ${result.offset + 1}-${last}${result.hasMore ? more : ''}.`);
 	}
 	lines.push(`${result.elapsedMs} ms.`);
+	console.log(lines.join('\n'));
+}
+
+/**
+ * A `--dry-run` reply: what the statement is and what its trial changed
+ * before it was rolled back (`formatSqliteDryRun()`, the Query panel's own
+ * sentence), then any rows its `RETURNING` gave in the trial.
+ */
+function printSqliteDryRun(
+	database: SqliteDatabaseInfo,
+	result: SqliteQueryResult,
+	dryRun: SqliteDryRun
+): void {
+	const lines: string[] = [
+		`Dry run of ${result.statement} on ${database.displayPath}`,
+		'',
+		formatSqliteDryRun(dryRun),
+	];
+	if (result.returnsRows && result.rows.length > 0) {
+		lines.push(
+			'',
+			'It would return:',
+			rowsTable(
+				result.columns.map((column) => column.name),
+				result.rows
+			)
+		);
+		if (result.hasMore) lines.push('', 'More rows would follow, not shown.');
+	}
+	if (dryRun.tried) lines.push(`${result.elapsedMs} ms.`);
 	console.log(lines.join('\n'));
 }
 

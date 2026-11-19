@@ -30,6 +30,9 @@
  * holds a grant any more or the handle is released), or, for a Query-mode
  * statement that runs in the SQLite child process, the file that child may
  * open writable (`openWritableSqliteTarget()`), stopped if the grant ends.
+ * A dry run's trial (`beginSqliteWorkerTrial()`) takes the same gate and
+ * file check and no backup: it runs in a transaction that is always rolled
+ * back, so it never commits a change.
  *
  * The CLI has no tab. Its write verbs take a per-call unlock flag that
  * enables editing for that one call and disables it after, through these
@@ -268,16 +271,27 @@ export async function beginSqliteWrite(
 	return { database, db, backup, backupCreated };
 }
 
+/** Steps 1-2 of a write: the grant is live, and the file is still the one opened and still writable. */
+async function passSqliteFileGate(handle: string, editToken: unknown): Promise<OpenSqliteDatabase> {
+	const database = requireSqliteEditing(handle, editToken);
+	const refusal = await sqliteEditingRefusal(database);
+	if (refusal) throw new Error(refusal);
+	return database;
+}
+
 /** Steps 1-3 of a write, shared by both ways to a writable connection. */
 async function passSqliteWriteGate(
 	handle: string,
 	editToken: unknown
 ): Promise<Omit<SqliteWriteSession, 'db'>> {
-	const database = requireSqliteEditing(handle, editToken);
-	const refusal = await sqliteEditingRefusal(database);
-	if (refusal) throw new Error(refusal);
+	const database = await passSqliteFileGate(handle, editToken);
 	const { backup, created } = await ensureSqliteBackup(database);
 	return { database, backup, backupCreated: created };
+}
+
+/** The file a child process may open writable: the handle's own, by path, device, and inode. */
+function workerWriteTarget(database: OpenSqliteDatabase): SqliteWriteTarget {
+	return { filePath: database.displayPath, dev: database.dev, ino: database.ino };
 }
 
 /** A write that will run in the SQLite child process: what `beginSqliteWorkerWrite()` hands its caller. */
@@ -303,10 +317,33 @@ export async function beginSqliteWorkerWrite(
 	const session = await passSqliteWriteGate(handle, editToken);
 	// A tab that locked, or a handle that closed, during the backup gets no write.
 	const database = requireSqliteEditing(handle, editToken);
-	return {
-		...session,
-		target: { filePath: database.displayPath, dev: database.dev, ino: database.ino },
-	};
+	return { ...session, target: workerWriteTarget(database) };
+}
+
+/** A dry run's trial in the SQLite child process: what `beginSqliteWorkerTrial()` hands its caller. */
+export interface SqliteWorkerTrialSession {
+	database: OpenSqliteDatabase;
+	/** What the child opens, through `openWritableSqliteTarget()`, and nothing else. */
+	target: SqliteWriteTarget;
+}
+
+/**
+ * Start a dry run's trial (Query mode's Dry run): steps 1 and 2 of a write,
+ * the grant and the file check, and then, gated again, the file the child may
+ * open writable, exactly as `beginSqliteWorkerWrite()` hands it, but with NO
+ * backup: the child runs a trial in a transaction and always rolls it back
+ * (`runSqliteWriteTask()` with `dryRun`), so it never commits a change. A
+ * trial killed mid-statement is rolled back by SQLite's journal, as a
+ * stopped write is. The caller should stop the child when the grant ends.
+ */
+export async function beginSqliteWorkerTrial(
+	handle: string,
+	editToken: unknown
+): Promise<SqliteWorkerTrialSession> {
+	await passSqliteFileGate(handle, editToken);
+	// A tab that locked, or a handle that closed, during the check gets no trial.
+	const database = requireSqliteEditing(handle, editToken);
+	return { database, target: workerWriteTarget(database) };
 }
 
 /** Test seam: whether the handle's writable connection is open. */

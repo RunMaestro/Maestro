@@ -3980,6 +3980,10 @@ sqliteCmd
 		'--enable-editing',
 		"Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused"
 	)
+	.option(
+		'--dry-run',
+		"With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried"
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, sql, options) => sqliteQuery(file, sql, options));
 

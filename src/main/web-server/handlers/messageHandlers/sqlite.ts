@@ -13,6 +13,8 @@
  *     is lifted for that one run, behind the same per-call unlock as
  *     `sqlite_update_cell`: a statement that changes the database runs once,
  *     after the once-per-session backup, and its result carries `write`.
+ *     With `dryRun: true` as well (`--dry-run`), it is tried and rolled back
+ *     instead, and its result carries `dryRun`.
  *   - `sqlite_export_query`: Query mode's Export, the statement's whole result
  *     written to a file (`maestro-cli sqlite query --output`).
  *   - `sqlite_query_history`: Query mode's History rail, read, one entry
@@ -363,6 +365,8 @@ export async function handleSqliteRunQuery(
 			params: (message.params ?? undefined) as SqliteParameterValues | undefined,
 			plan: message.plan === true,
 			...(editToken ? { editToken } : {}),
+			// Refused by the run without an editing grant (`--dry-run` needs `--enable-editing`).
+			...(message.dryRun === true ? { dryRun: true } : {}),
 		});
 
 	// `--enable-editing`: the read-only assertion is lifted for this one run,

@@ -56,12 +56,20 @@ import { performance } from 'perf_hooks';
 
 import type Database from 'better-sqlite3';
 
+import {
+	classifySqliteStatement,
+	sqliteDryRunTried,
+	sqliteDryRunUntransactedMessage,
+	sqliteSchemaChanges,
+	type SqliteSchemaEntry,
+} from '../../shared/sqlite/dryRun';
 import { SQLITE_REGEXP_FUNCTION, sqliteRegexpTest } from '../../shared/sqlite/filter';
 import {
 	SQLITE_NOT_READ_ONLY_MESSAGE,
 	SQLITE_ONE_STATEMENT_MESSAGE,
 	SQLITE_QUERY_MAX_LIMIT,
 	SQLITE_WRITE_RERUN_MESSAGE,
+	isSqliteUntransactedStatement,
 	sqliteEditingQueryRefusal,
 	sqliteLeadingKeyword,
 	sqliteQueryBinding,
@@ -108,6 +116,12 @@ export interface SqliteQueryTask {
 	 * `runSqliteWriteTask()`.
 	 */
 	writeTarget?: SqliteWriteTarget;
+	/**
+	 * With `writeTarget`: a dry run. Main passed the write gate WITHOUT the
+	 * backup (`beginSqliteWorkerTrial()`), because this run never commits:
+	 * `runSqliteWriteTask()` always rolls it back.
+	 */
+	dryRun?: boolean;
 }
 
 /** What one export's process is handed. The caller picks `destPath` (a temporary file) and renames it. */
@@ -259,13 +273,6 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 	}
 }
 
-/**
- * Statements SQLite will not run inside a transaction (`VACUUM`; a PRAGMA
- * such as `journal_mode = WAL`). They run as SQLite's own one-statement
- * transaction instead, which is just as atomic.
- */
-const BARE_WRITE_KEYWORDS: ReadonlySet<string> = new Set(['VACUUM', 'PRAGMA']);
-
 /** `changes()` and `total_changes()` on this connection, as plain numbers. */
 function changeCounts(db: Database.Database): { changes: number; total: number } {
 	const [changes, total] = db.prepare('SELECT changes(), total_changes()').raw().get() as [
@@ -273,6 +280,11 @@ function changeCounts(db: Database.Database): { changes: number; total: number }
 		number,
 	];
 	return { changes: Number(changes), total: Number(total) };
+}
+
+/** Every object in the file's schema, as a dry run compares it before and after its trial. */
+function readSchemaEntries(db: Database.Database): SqliteSchemaEntry[] {
+	return db.prepare('SELECT type, name, sql FROM main.sqlite_master').all() as SqliteSchemaEntry[];
 }
 
 /**
@@ -290,8 +302,9 @@ function changeCounts(db: Database.Database): { changes: number; total: number }
  *   - Run ONCE, in `BEGIN IMMEDIATE` ... `COMMIT` (the write lock taken up
  *     front, so a busy file waits and then fails before anything changes),
  *     rolled back on any error. VACUUM and PRAGMA run bare
- *     (`BARE_WRITE_KEYWORDS`). A child killed mid-statement (Stop, the
- *     timeout, Lock) leaves a transaction SQLite rolls back on the next open.
+ *     (`SQLITE_UNTRANSACTED_KEYWORDS`). A child killed mid-statement (Stop,
+ *     the timeout, Lock) leaves a transaction SQLite rolls back on the next
+ *     open.
  *   - A statement that returns rows (`RETURNING`, a PRAGMA's answer) returns
  *     its first `limit` of them; SQLite makes every change on the first step,
  *     so stopping early never stops the write.
@@ -301,6 +314,15 @@ function changeCounts(db: Database.Database): { changes: number; total: number }
  * (`total_changes()` beyond that), counted on this connection, which is the
  * run's alone. SQLite's own errors (a constraint, a missing table) pass
  * through verbatim.
+ *
+ * With `task.dryRun` (main passed the gate without the backup,
+ * `beginSqliteWorkerTrial()`), the same run is a TRIAL: a statement SQLite
+ * runs outside any transaction is refused, the schema is read before and
+ * after the statement inside the transaction, and the transaction is ALWAYS
+ * rolled back, success or failure. The result carries `dryRun` (the
+ * statement's kind, the counts, the schema changes) instead of `write`. A
+ * deferred foreign key the statement breaks is not seen: SQLite checks those
+ * only at COMMIT, which a trial never reaches.
  */
 export function runSqliteWriteTask(
 	task: SqliteQueryTask,
@@ -314,16 +336,20 @@ export function runSqliteWriteTask(
 	if (binding.problem !== null) throw refuse(binding.problem);
 	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);
 	const keyword = sqliteLeadingKeyword(task.sql);
+	const dryRun = task.dryRun === true;
+	const transaction = !isSqliteUntransactedStatement(task.sql);
+	// Nothing to roll back: main says so without starting a trial; this is the backstop.
+	if (dryRun && !transaction) throw refuse(sqliteDryRunUntransactedMessage(keyword));
 
 	const db = openWritableSqliteTarget(target);
 	try {
 		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
 		const statement = prepareOne(db, task.sql, { plan: false });
 		const before = changeCounts(db).total;
-		const transaction = !BARE_WRITE_KEYWORDS.has(keyword);
 		const started = performance.now();
 		if (transaction) db.exec('BEGIN IMMEDIATE');
 		try {
+			const schemaBefore = dryRun ? readSchemaEntries(db) : [];
 			let columns: SqliteResultColumn[] = [];
 			let window: { rows: SqliteQueryResult['rows']; hasMore: boolean } = {
 				rows: [],
@@ -339,16 +365,34 @@ export function runSqliteWriteTask(
 				statement.run(...binding.args);
 			}
 			const { changes, total } = changeCounts(db);
-			if (transaction) db.exec('COMMIT');
-			return {
+			const otherChanges = Math.max(0, total - before - changes);
+			const base = {
 				statement: keyword,
 				columns,
 				rows: window.rows,
 				offset: 0,
 				hasMore: window.hasMore,
 				returnsRows: statement.reader,
+			};
+			if (dryRun) {
+				const schemaChanges = sqliteSchemaChanges(schemaBefore, readSchemaEntries(db));
+				db.exec('ROLLBACK');
+				return {
+					...base,
+					elapsedMs: Math.round(performance.now() - started),
+					// This path runs only what main found SQLite would write.
+					dryRun: sqliteDryRunTried(classifySqliteStatement(task.sql, true), {
+						changes,
+						otherChanges,
+						schemaChanges,
+					}),
+				};
+			}
+			if (transaction) db.exec('COMMIT');
+			return {
+				...base,
 				elapsedMs: Math.round(performance.now() - started),
-				write: { changes, otherChanges: Math.max(0, total - before - changes) },
+				write: { changes, otherChanges },
 			};
 		} catch (error) {
 			if (transaction && db.inTransaction) db.exec('ROLLBACK');

@@ -1035,6 +1035,55 @@ describe('sqlite query', () => {
 		const sent = respondQuery();
 		await sqliteQuery(DB, 'SELECT 1', {});
 		expect(sent[0]).not.toHaveProperty('enableEditing');
+		expect(sent[0]).not.toHaveProperty('dryRun');
+	});
+
+	it('--dry-run asks for a dry run and prints what it would change and any rows it would return', async () => {
+		const sent = respondQuery({
+			statement: 'DELETE',
+			columns: [{ name: 'id', declaredType: 'INTEGER' }],
+			rows: [[{ kind: 'integer', text: '4' }]],
+			hasMore: false,
+			returnsRows: true,
+			dryRun: {
+				kind: 'data',
+				verb: 'DELETE',
+				target: 'users',
+				tried: true,
+				untriedReason: null,
+				changes: 1,
+				otherChanges: 2,
+				schemaChanges: [],
+			},
+		});
+		await sqliteQuery(DB, 'DELETE FROM users WHERE id = 4 RETURNING id', {
+			enableEditing: true,
+			dryRun: true,
+		});
+		expect(sent[0]).toMatchObject({ type: 'sqlite_run_query', enableEditing: true, dryRun: true });
+		const out = logged();
+		expect(out).toContain(`Dry run of DELETE on ${DB}`);
+		expect(out).toContain(
+			'DELETE on users (changes rows) would change 1 row; its triggers and foreign-key actions would change 2 other rows. Tried in a transaction and rolled back: nothing was changed.'
+		);
+		expect(out).toContain('It would return:');
+		expect(out).not.toContain('Changed');
+		expect(out).not.toContain(SQLITE_QUERY_WRITE_UNDO_MESSAGE);
+	});
+
+	it('--dry-run needs --enable-editing and refuses --plan, --output, and --offset, before asking the app', async () => {
+		const sent = respondQuery();
+		const cases: Array<[Record<string, unknown>, string]> = [
+			[{ dryRun: true }, 'it needs --enable-editing'],
+			[{ dryRun: true, enableEditing: true, plan: true }, 'it does not take --plan'],
+			[{ dryRun: true, enableEditing: true, output: '/tmp/out.csv' }, 'it does not take --output'],
+			[{ dryRun: true, enableEditing: true, offset: '5' }, 'it does not take --offset'],
+		];
+		for (const [options, message] of cases) {
+			await expect(sqliteQuery(DB, 'DELETE FROM users', options)).rejects.toThrow('__exit__');
+			expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		}
+		expect(sent).toHaveLength(0);
 	});
 
 	it('points a syntax error at the token SQLite stopped at, with a caret under it', async () => {

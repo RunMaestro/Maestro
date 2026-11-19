@@ -7,6 +7,7 @@ import {
 	SQLITE_TRANSACTION_KEYWORDS,
 	SQLITE_VACUUM_INTO_MESSAGE,
 	isSqliteReadOnlyKeyword,
+	isSqliteUntransactedStatement,
 	isSqliteWriteStatement,
 	sqliteEditingQueryRefusal,
 	sqliteQueryRefusal,
@@ -335,5 +336,14 @@ describe('sqliteWriteTimeoutMessage', () => {
 		expect(sqliteWriteTimeoutMessage(60_000)).toBe(
 			'The statement was stopped after 60 s. A statement stopped before it finished changes nothing.'
 		);
+	});
+});
+
+describe('isSqliteUntransactedStatement', () => {
+	it('names the statements SQLite runs outside any transaction', () => {
+		expect(isSqliteUntransactedStatement('vacuum')).toBe(true);
+		expect(isSqliteUntransactedStatement('/* wal */ PRAGMA journal_mode = WAL')).toBe(true);
+		expect(isSqliteUntransactedStatement('DELETE FROM t')).toBe(false);
+		expect(isSqliteUntransactedStatement('REINDEX')).toBe(false);
 	});
 });

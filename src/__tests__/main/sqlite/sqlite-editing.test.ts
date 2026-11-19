@@ -52,6 +52,7 @@ import {
 import { forgetSqliteBackups, SQLITE_BACKUP_NAME_MARKER } from '../../../main/sqlite/sqlite-backup';
 import {
 	SQLITE_EDITING_LOCKED_MESSAGE,
+	beginSqliteWorkerTrial,
 	beginSqliteWorkerWrite,
 	beginSqliteWrite,
 	disableSqliteEditing,
@@ -337,6 +338,43 @@ describe('beginSqliteWorkerWrite', () => {
 		const grant = await enableSqliteEditing(handle);
 		await fs.rename(await writeFixture('worker-swapped.db.tmp'), file);
 		await expect(beginSqliteWorkerWrite(handle, grant.editToken)).rejects.toThrow(
+			`${file} was replaced since it was opened. Reopen the file to edit it.`
+		);
+	});
+});
+
+describe('beginSqliteWorkerTrial', () => {
+	it('passes the gate and hands back the file with NO backup, since a trial is rolled back', async () => {
+		const file = await writeFixture('trial-first.db');
+		const { handle } = await openSqliteDatabase(file);
+		await expect(beginSqliteWorkerTrial(handle, 'made-up')).rejects.toThrow(
+			SQLITE_EDITING_LOCKED_MESSAGE
+		);
+
+		const grant = await enableSqliteEditing(handle);
+		const trial = await beginSqliteWorkerTrial(handle, grant.editToken);
+		const stat = await fs.stat(file);
+		expect(trial.target).toEqual({ filePath: file, dev: stat.dev, ino: stat.ino });
+		expect(trial.database).toBe(getSqliteDatabase(handle));
+		expect(await backupsOf(file)).toEqual([]);
+		expect(writableConnections(file)).toHaveLength(0);
+
+		// The session's first real write still takes the backup.
+		const write = await beginSqliteWorkerWrite(handle, grant.editToken);
+		expect(write.backupCreated).toBe(true);
+	});
+
+	it('refuses a file replaced since the unlock, and a tab that locked during the check', async () => {
+		const file = await writeFixture('trial-swapped.db');
+		const { handle } = await openSqliteDatabase(file);
+		const grant = await enableSqliteEditing(handle);
+		const trial = beginSqliteWorkerTrial(handle, grant.editToken);
+		disableSqliteEditing(handle, grant.editToken);
+		await expect(trial).rejects.toThrow(SQLITE_EDITING_LOCKED_MESSAGE);
+
+		const again = await enableSqliteEditing(handle);
+		await fs.rename(await writeFixture('trial-swapped.db.tmp'), file);
+		await expect(beginSqliteWorkerTrial(handle, again.editToken)).rejects.toThrow(
 			`${file} was replaced since it was opened. Reopen the file to edit it.`
 		);
 	});
