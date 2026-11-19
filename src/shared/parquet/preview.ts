@@ -18,6 +18,8 @@
  * path through the normal IPC surface.
  */
 
+import { createPreviewMarkerCodec } from '../previewMarker';
+
 /** Marker scheme stored in a file tab's `content` in place of parquet bytes. */
 export const PARQUET_SCHEME = 'maestro-parquet';
 
@@ -45,37 +47,20 @@ export function isParquetFile(filePath: string): boolean {
 	return ext !== null && PARQUET_EXTENSIONS.has(ext);
 }
 
-/** Hex-encode UTF-8 text so any filename survives round-tripping intact. */
-function toHex(value: string): string {
-	const bytes = new TextEncoder().encode(value);
-	let out = '';
-	for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
-	return out;
-}
-
-/** Inverse of {@link toHex}. Returns `null` for anything that is not clean hex. */
-function fromHex(hex: string): string | null {
-	if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/.test(hex)) return null;
-	const bytes = new Uint8Array(hex.length / 2);
-	for (let i = 0; i < bytes.length; i++) {
-		bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-	}
-	return new TextDecoder().decode(bytes);
-}
+/** The one codec behind the parquet marker; see src/shared/previewMarker.ts. */
+const parquetMarker = createPreviewMarkerCodec(PARQUET_SCHEME);
 
 /** Build the marker a parquet read returns in place of file content. */
 export function buildParquetPreviewMarker(filePath: string): string {
-	return `${PARQUET_SCHEME}://preview/${toHex(filePath)}`;
+	return parquetMarker.build(filePath);
 }
 
 /** Cheap check for "is this `fs:readFile` result a parquet marker". */
 export function isParquetPreviewMarker(value: string | null | undefined): boolean {
-	return typeof value === 'string' && value.startsWith(`${PARQUET_SCHEME}://preview/`);
+	return parquetMarker.is(value);
 }
 
 /** Recover the path from a marker, or `null` when it is malformed. */
 export function parseParquetPreviewMarker(value: string): string | null {
-	const prefix = `${PARQUET_SCHEME}://preview/`;
-	if (!value.startsWith(prefix)) return null;
-	return fromHex(value.slice(prefix.length));
+	return parquetMarker.parse(value);
 }

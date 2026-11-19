@@ -35,6 +35,8 @@ import {
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
 import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
+import { buildSqlitePreviewMarker } from '../../../shared/sqlite/preview';
+import { isSqliteDatabaseFile } from '../../sqlite/sqlite-detect';
 import { getImageMimeType } from '../../../shared/gitUtils';
 import { buildLocalMediaStreamUrl } from '../../media/media-stream';
 import {
@@ -433,6 +435,18 @@ export function registerFilesystemHandlers(): void {
 						throw new Error(result.error || 'Failed to read remote file');
 					}
 					return result.data!;
+				}
+
+				// SQLite is binary, can be far larger than RAM, and may be a live
+				// app database, so a proven one hands back a marker for the SQLite
+				// viewer instead of its bytes. The extension only decides whether
+				// to sniff; the 16-byte header decides (`.db` is not a format), and
+				// a candidate that fails it falls through to the text read below,
+				// which is the binary card it always got. Local only: remote
+				// databases are out of scope, since a copied database is a stale
+				// one. A vanished file throws ENOENT here and returns null below.
+				if (await isSqliteDatabaseFile(filePath)) {
+					return buildSqlitePreviewMarker(filePath);
 				}
 
 				// Local: use standard fs operations

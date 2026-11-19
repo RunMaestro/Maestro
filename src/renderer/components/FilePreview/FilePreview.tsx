@@ -66,6 +66,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { isSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
@@ -493,6 +494,12 @@ export const FilePreview = React.memo(
 			// line is what makes that edit safe. See the matching assertion in
 			// filePreviewUtils.test.ts.
 			if (isParquetPreviewMarker(file.content)) return false;
+			// A SQLite database arrives as a marker too (see shared/sqlite/preview.ts),
+			// and until its viewer exists it belongs on the binary card, exactly
+			// where the raw bytes landed before. This must be explicit: the marker
+			// is pure ASCII, and `.db3` / `.s3db` / `.sl3` are not binary extensions,
+			// so without it the marker string would render as editable text.
+			if (isSqlitePreviewMarker(file.content)) return true;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
 		}, [isImage, isMedia, file]);
 

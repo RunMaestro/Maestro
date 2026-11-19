@@ -1,6 +1,7 @@
 import { formatSize } from '../../../shared/formatters';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { isSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FileTreeIndices } from '../../utils/fileLinks';
 
@@ -388,8 +389,8 @@ export const isBinaryExtension = (filename: string): boolean => {
 
 /**
  * Whether a previewed file can go up as a GitHub Gist. A gist body is plain
- * text, so images, playable media, binaries, and the parquet marker (which
- * holds a path rather than the file) are all out, and so is an empty file -
+ * text, so images, playable media, binaries, and the parquet and SQLite
+ * markers (which hold a path rather than the file) are all out, and so is an empty file -
  * publishing one produces a gist with nothing in it.
  *
  * Shared so the FilePreview toolbar button and the file tab's overlay menu
@@ -403,6 +404,9 @@ export function isGistPublishableFile(filename: string, content: string): boolea
 	// Parquet is binary on disk but never arrives as content, so it is checked
 	// off the marker before the binary tests below (which the marker passes).
 	if (isParquetPreviewMarker(content)) return false;
+	// Same for a SQLite database: the marker is ASCII, so the content test
+	// below would pass it, and `.db3` / `.s3db` / `.sl3` are not binary extensions.
+	if (isSqlitePreviewMarker(content)) return false;
 	return !isBinaryExtension(filename) && !isBinaryContent(content);
 }
 

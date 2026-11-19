@@ -26,6 +26,7 @@ import {
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
 import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
+import { buildSqlitePreviewMarker } from '../../../../shared/sqlite/preview';
 
 describe('filePreviewUtils', () => {
 	describe('getLanguageFromFilename', () => {
@@ -591,6 +592,13 @@ describe('filePreviewUtils', () => {
 			expect(
 				isGistPublishableFile('data.parquet', buildParquetPreviewMarker('/tmp/data.parquet'))
 			).toBe(false);
+		});
+
+		it('rejects the SQLite marker, including on extensions not listed as binary', () => {
+			expect(isGistPublishableFile('app.db', buildSqlitePreviewMarker('/tmp/app.db'))).toBe(false);
+			expect(isGistPublishableFile('app.sl3', buildSqlitePreviewMarker('/tmp/app.sl3'))).toBe(
+				false
+			);
 		});
 
 		it('rejects an empty file, which would publish a blank gist', () => {

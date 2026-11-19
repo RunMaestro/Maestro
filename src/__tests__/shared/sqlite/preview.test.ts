@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 
+import { buildParquetPreviewMarker, isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import {
+	buildSqlitePreviewMarker,
 	hasSqliteHeader,
 	isSqliteCandidateFile,
+	isSqlitePreviewMarker,
+	parseSqlitePreviewMarker,
 	SQLITE_HEADER_LENGTH,
 	SQLITE_HEADER_MAGIC,
+	SQLITE_SCHEME,
 } from '../../../shared/sqlite/preview';
 
 const MAGIC = new TextEncoder().encode('SQLite format 3\0');
@@ -86,5 +91,34 @@ describe('isSqliteCandidateFile', () => {
 		expect(isSqliteCandidateFile('/data/app.db-journal')).toBe(false);
 		expect(isSqliteCandidateFile('/data/notes.md')).toBe(false);
 		expect(isSqliteCandidateFile('/data/.db')).toBe(false);
+	});
+});
+
+describe('SQLite preview marker', () => {
+	it('round-trips the path through its own scheme', () => {
+		const marker = buildSqlitePreviewMarker('/data/app.db');
+		expect(marker.startsWith(`${SQLITE_SCHEME}://preview/`)).toBe(true);
+		expect(isSqlitePreviewMarker(marker)).toBe(true);
+		expect(parseSqlitePreviewMarker(marker)).toBe('/data/app.db');
+	});
+
+	it('keeps Unicode and URL-hostile filenames intact', () => {
+		const path = '/data/naïve #1 ?50% 数据.sqlite';
+		expect(parseSqlitePreviewMarker(buildSqlitePreviewMarker(path))).toBe(path);
+	});
+
+	it('is never confused with the parquet marker', () => {
+		// Each viewer must only ever be handed its own format's marker.
+		const parquet = buildParquetPreviewMarker('/data/app.db');
+		expect(isSqlitePreviewMarker(parquet)).toBe(false);
+		expect(parseSqlitePreviewMarker(parquet)).toBeNull();
+		expect(isParquetPreviewMarker(buildSqlitePreviewMarker('/data/app.db'))).toBe(false);
+	});
+
+	it('rejects non-markers and malformed payloads', () => {
+		expect(isSqlitePreviewMarker('SQLite format 3\0')).toBe(false);
+		expect(isSqlitePreviewMarker(null)).toBe(false);
+		expect(isSqlitePreviewMarker(undefined)).toBe(false);
+		expect(parseSqlitePreviewMarker(`${SQLITE_SCHEME}://preview/zz`)).toBeNull();
 	});
 });
