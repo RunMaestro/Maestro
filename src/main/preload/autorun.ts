@@ -10,6 +10,7 @@
 import { ipcRenderer } from 'electron';
 import type { PlaybookStatus, PlaybookUpdate, Playbook as SavedPlaybook } from '../../shared/types';
 import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../shared/playbooksChanged';
 
 /**
  * Playbook document configuration
@@ -203,6 +204,14 @@ export function createPlaybooksApi() {
 
 		import: (sessionId: string, autoRunFolderPath: string) =>
 			ipcRenderer.invoke('playbooks:import', sessionId, autoRunFolderPath),
+
+		/** Fires with the agent id after any write to that agent's playbook records. */
+		onChanged: (handler: (sessionId: string) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, sessionId: string) =>
+				handler(sessionId);
+			ipcRenderer.on(PLAYBOOKS_CHANGED_CHANNEL, wrappedHandler);
+			return () => ipcRenderer.removeListener(PLAYBOOKS_CHANGED_CHANNEL, wrappedHandler);
+		},
 	};
 }
 

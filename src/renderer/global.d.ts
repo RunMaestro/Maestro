@@ -3263,6 +3263,8 @@ interface MaestroAPI {
 			sessionId: string,
 			autoRunFolderPath: string
 		) => Promise<{ success: boolean; playbook?: any; importedDocs?: string[]; error?: string }>;
+		/** Fires with the agent id after any write to that agent's playbook records. Returns an unsubscribe. */
+		onChanged: (handler: (sessionId: string) => void) => () => void;
 	};
 	// Marketplace API (browse and import playbooks from GitHub)
 	marketplace: {

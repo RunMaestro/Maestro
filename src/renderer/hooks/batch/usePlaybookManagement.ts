@@ -151,22 +151,32 @@ export function usePlaybookManagement(
 	// Ref for dropdown click-outside detection
 	const playbackDropdownRef = useRef<HTMLDivElement>(null);
 
-	// Load playbooks on mount
+	// Load playbooks on mount, then reload whenever main reports a write to
+	// this agent's records (an Exchange install, the CLI, another window), so
+	// the list never goes stale while the panel stays mounted.
 	useEffect(() => {
-		const loadPlaybooks = async () => {
-			setLoadingPlaybooks(true);
+		let cancelled = false;
+		const loadPlaybooks = async (showLoading: boolean) => {
+			if (showLoading) setLoadingPlaybooks(true);
 			try {
 				const result = await window.maestro.playbooks.list(sessionId);
-				if (result.success) {
+				if (!cancelled && result.success) {
 					setPlaybooks(result.playbooks);
 				}
 			} catch (error) {
 				logger.error('Failed to load playbooks:', undefined, error);
 			}
-			setLoadingPlaybooks(false);
+			if (!cancelled && showLoading) setLoadingPlaybooks(false);
 		};
 
-		loadPlaybooks();
+		void loadPlaybooks(true);
+		const unsubscribe = window.maestro.playbooks.onChanged((changedSessionId) => {
+			if (changedSessionId === sessionId) void loadPlaybooks(false);
+		});
+		return () => {
+			cancelled = true;
+			unsubscribe();
+		};
 	}, [sessionId]);
 
 	// Close dropdown when clicking outside

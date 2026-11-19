@@ -182,6 +182,7 @@ describe('BatchRunnerModal', () => {
 
 		// Add missing mocks to window.maestro
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),
 			create: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),
 			update: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),
@@ -702,6 +703,7 @@ describe('BatchRunnerModal', () => {
 		it('shows Load Playbook button when playbooks exist', async () => {
 			const mockPlaybooks: Playbook[] = [createMockPlaybook()];
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -720,6 +722,7 @@ describe('BatchRunnerModal', () => {
 		it('opens playbook dropdown when Load Playbook is clicked', async () => {
 			const mockPlaybooks: Playbook[] = [createMockPlaybook()];
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -745,6 +748,7 @@ describe('BatchRunnerModal', () => {
 			const mockPlaybook = createMockPlaybook();
 			const mockPlaybooks: Playbook[] = [mockPlaybook];
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -826,6 +830,7 @@ describe('BatchRunnerModal', () => {
 			const mockPlaybook = createMockPlaybook();
 			const mockPlaybooks: Playbook[] = [mockPlaybook];
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn().mockResolvedValue({ success: true, playbook: mockPlaybook }),
@@ -856,6 +861,7 @@ describe('BatchRunnerModal', () => {
 			const mockPlaybooks: Playbook[] = [mockPlaybook];
 			const mockDelete = vi.fn().mockResolvedValue({ success: true });
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -888,6 +894,7 @@ describe('BatchRunnerModal', () => {
 			const mockPlaybooks: Playbook[] = [mockPlaybook];
 			const mockExport = vi.fn().mockResolvedValue({ success: true });
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -913,6 +920,7 @@ describe('BatchRunnerModal', () => {
 			const mockPlaybook = createMockPlaybook({ id: 'imported-1', name: 'Imported Playbook' });
 			const mockImport = vi.fn().mockResolvedValue({ success: true, playbook: mockPlaybook });
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: [createMockPlaybook()] }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -942,6 +950,7 @@ describe('BatchRunnerModal', () => {
 		it('renders Import Playbook button with zero existing playbooks', async () => {
 			const mockImport = vi.fn().mockResolvedValue({ success: false, error: 'Import cancelled' });
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -976,6 +985,7 @@ describe('BatchRunnerModal', () => {
 		// set re-centers as buttons appear and disappear with playbook state.
 		it('centers the playbook action buttons in a single flex row', async () => {
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: [createMockPlaybook()] }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -1009,6 +1019,7 @@ describe('BatchRunnerModal', () => {
 			});
 			const mockPlaybooks: Playbook[] = [mockPlaybook];
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -1541,6 +1552,7 @@ describe('BatchRunnerModal', () => {
 
 		it('handles playbook list error gracefully', async () => {
 			(window.maestro as Record<string, unknown>).playbooks = {
+				onChanged: vi.fn().mockReturnValue(() => {}),
 				list: vi.fn().mockRejectedValue(new Error('Failed to load playbooks')),
 				create: vi.fn(),
 				update: vi.fn(),
@@ -1995,6 +2007,7 @@ describe.skip('Playbook with Worktree Settings', () => {
 		});
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2020,6 +2033,7 @@ describe.skip('Playbook with Worktree Settings', () => {
 		const mockPlaybook = createMockPlaybook(); // No worktreeSettings
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2061,6 +2075,7 @@ describe('Playbook Update Functionality', () => {
 			playbook: { ...mockPlaybook, prompt: 'Updated prompt' },
 		});
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: mockUpdate,
@@ -2106,6 +2121,7 @@ describe('Playbook Update Functionality', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockUpdate = vi.fn().mockRejectedValue(new Error('Network error'));
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: mockUpdate,
@@ -2144,6 +2160,7 @@ describe('Discard Changes Functionality', () => {
 		const mockPlaybook = createMockPlaybook({ prompt: 'Original prompt' });
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2186,6 +2203,7 @@ describe('Delete Playbook Edge Cases', () => {
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		const mockDelete = vi.fn().mockResolvedValue({ success: true });
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2230,6 +2248,7 @@ describe('Delete Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockDelete = vi.fn().mockRejectedValue(new Error('Delete failed'));
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2262,6 +2281,7 @@ describe('Delete Playbook Edge Cases', () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2299,6 +2319,7 @@ describe('Export Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockExport = vi.fn().mockResolvedValue({ success: false, error: 'Export failed' });
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2332,6 +2353,7 @@ describe('Export Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockExport = vi.fn().mockResolvedValue({ success: false, error: 'Export cancelled' });
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2364,6 +2386,7 @@ describe('Export Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockExport = vi.fn().mockRejectedValue(new Error('Network error'));
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2399,6 +2422,7 @@ describe('Import Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockImport = vi.fn().mockResolvedValue({ success: false, error: 'Invalid format' });
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2429,6 +2453,7 @@ describe('Import Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockImport = vi.fn().mockResolvedValue({ success: false, error: 'Import cancelled' });
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2458,6 +2483,7 @@ describe('Import Playbook Edge Cases', () => {
 		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockImport = vi.fn().mockRejectedValue(new Error('Network error'));
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2488,6 +2514,7 @@ describe('Click Outside Dropdown Handlers', () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2572,6 +2599,7 @@ describe('Save as New Playbook', () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn().mockResolvedValue({
 				success: true,
@@ -2604,6 +2632,7 @@ describe('Save as New Playbook', () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -2924,6 +2953,7 @@ describe('Escape Handler Priority', () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -3393,6 +3423,7 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 		vi.clearAllMocks();
 		await setupSession();
 		(window.maestro as Record<string, unknown>).playbooks = {
+			onChanged: vi.fn().mockReturnValue(() => {}),
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),
 			create: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),
 			update: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),

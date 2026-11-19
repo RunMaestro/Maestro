@@ -536,6 +536,7 @@ const mockMaestro = {
 		delete: vi.fn().mockResolvedValue({ success: true }),
 		export: vi.fn().mockResolvedValue({ success: true }),
 		import: vi.fn().mockResolvedValue({ success: true, playbook: {} }),
+		onChanged: vi.fn().mockReturnValue(() => {}),
 	},
 	plugins: {
 		list: vi.fn().mockResolvedValue({ plugins: [] }),

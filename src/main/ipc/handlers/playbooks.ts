@@ -16,6 +16,8 @@ import {
 } from '../../../shared/types';
 import { readPlaybookParamOverlay, readPlaybookParamValues } from '../../../shared/playbookParams';
 import { hashPlaybookDocument } from '../../utils/playbook-document-hash';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../../shared/playbooksChanged';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -105,6 +107,11 @@ export interface PlaybooksHandlerDependencies {
 	mainWindow: BrowserWindow | null;
 	getMainWindow: () => BrowserWindow | null;
 	app: App;
+	/**
+	 * Broadcast to every renderer and web client. Carries the
+	 * `playbooks:changed` push; defaults to the main window only.
+	 */
+	safeSend?: SafeSendFn;
 }
 
 /**
@@ -157,6 +164,13 @@ async function writePlaybooks(app: App, sessionId: string, playbooks: any[]): Pr
  */
 export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): void {
 	const { getMainWindow, app } = deps;
+	const safeSend = deps.safeSend ?? createSafeSend(getMainWindow);
+
+	/** Write an agent's records, then tell every listing surface to reload. */
+	const savePlaybooks = async (sessionId: string, playbooks: any[]): Promise<void> => {
+		await writePlaybooks(app, sessionId, playbooks);
+		safeSend(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
+	};
 
 	// List all playbooks for a session
 	ipcMain.handle(
@@ -227,7 +241,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Add to list and save
 				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
+				await savePlaybooks(sessionId, playbooks);
 
 				logger.info(`Created playbook "${playbook.name}" for session ${sessionId}`, LOG_CONTEXT);
 				return { playbook: newPlaybook };
@@ -257,7 +271,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				};
 				playbooks[index] = updatedPlaybook;
 
-				await writePlaybooks(app, sessionId, playbooks);
+				await savePlaybooks(sessionId, playbooks);
 
 				logger.info(
 					`Updated playbook "${updatedPlaybook.name}" for session ${sessionId}`,
@@ -284,7 +298,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 			// Remove from list and save
 			playbooks.splice(index, 1);
-			await writePlaybooks(app, sessionId, playbooks);
+			await savePlaybooks(sessionId, playbooks);
 
 			logger.info(`Deleted playbook "${deletedName}" from session ${sessionId}`, LOG_CONTEXT);
 			return {};
@@ -298,6 +312,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 			const filePath = getPlaybooksFilePath(app, sessionId);
 			try {
 				await fs.unlink(filePath);
+				safeSend(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
 				logger.info(`Deleted all playbooks for session ${sessionId}`, LOG_CONTEXT);
 			} catch (error) {
 				// File doesn't exist, that's fine
@@ -531,7 +546,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Add to list and save
 				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
+				await savePlaybooks(sessionId, playbooks);
 
 				logger.info(
 					`Imported playbook "${manifest.name}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,

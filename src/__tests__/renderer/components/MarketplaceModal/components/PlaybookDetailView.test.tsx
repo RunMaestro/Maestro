@@ -34,7 +34,8 @@ const baseProps = (overrides: Partial<React.ComponentProps<typeof PlaybookDetail
 	onSelectDocument: vi.fn(),
 	onTargetFolderChange: vi.fn(),
 	onBrowseFolder: vi.fn(),
-	onImport: vi.fn(),
+	onInstallAndRun: vi.fn(),
+	onInstallOnly: vi.fn(),
 	...overrides,
 });
 
@@ -137,16 +138,18 @@ describe('PlaybookDetailView', () => {
 		expect(container.querySelector('.animate-spin')).toBeTruthy();
 	});
 
-	it('updates target folder, browses locally, imports, and disables browse remotely', () => {
+	it('updates target folder, browses locally, installs, and disables browse remotely', () => {
 		const onTargetFolderChange = vi.fn();
 		const onBrowseFolder = vi.fn();
-		const onImport = vi.fn();
+		const onInstallAndRun = vi.fn();
+		const onInstallOnly = vi.fn();
 		const { getByPlaceholderText, getByTitle, getByText, rerender } = render(
 			<PlaybookDetailView
 				{...baseProps({
 					onTargetFolderChange,
 					onBrowseFolder,
-					onImport,
+					onInstallAndRun,
+					onInstallOnly,
 				})}
 			/>
 		);
@@ -157,8 +160,12 @@ describe('PlaybookDetailView', () => {
 		fireEvent.click(getByTitle('Browse for folder'));
 		expect(onBrowseFolder).toHaveBeenCalledTimes(1);
 
-		fireEvent.click(getByText('Import Playbook'));
-		expect(onImport).toHaveBeenCalledTimes(1);
+		fireEvent.click(getByText('Install and Run'));
+		expect(onInstallAndRun).toHaveBeenCalledTimes(1);
+		expect(onInstallOnly).not.toHaveBeenCalled();
+
+		fireEvent.click(getByText('Install only'));
+		expect(onInstallOnly).toHaveBeenCalledTimes(1);
 
 		rerender(<PlaybookDetailView {...baseProps({ isRemoteSession: true })} />);
 		expect(getByTitle('Browse is not available for remote sessions')).toBeDisabled();

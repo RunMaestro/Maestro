@@ -70,5 +70,6 @@ export interface PlaybookDetailViewProps {
 	onSelectDocument: (filename: string) => void;
 	onTargetFolderChange: (name: string) => void;
 	onBrowseFolder: () => void;
-	onImport: () => void;
+	onInstallAndRun: () => void;
+	onInstallOnly: () => void;
 }

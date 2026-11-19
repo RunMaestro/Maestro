@@ -16,7 +16,8 @@ import { ipcMain, App, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
-import { createSafeSend } from '../../utils/safe-send';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../../shared/playbooksChanged';
 import { SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
 import {
@@ -36,6 +37,11 @@ export interface MarketplaceHandlerDependencies {
 	settingsStore?: Store<MaestroSettings>;
 	/** Main window getter, used to bridge manifest-change pushes to web clients */
 	getMainWindow?: () => BrowserWindow | null;
+	/**
+	 * Broadcast to every renderer and web client. Carries the
+	 * `playbooks:changed` push after an import; defaults to the main window.
+	 */
+	safeSend?: SafeSendFn;
 }
 
 let marketplaceSettingsStore: Store<MaestroSettings> | undefined;
@@ -66,6 +72,7 @@ const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions
 export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies): void {
 	const { app, settingsStore, getMainWindow } = deps;
 	const safeSend = createSafeSend(getMainWindow ?? (() => null));
+	const broadcast = deps.safeSend ?? safeSend;
 
 	marketplaceSettingsStore = settingsStore;
 
@@ -145,6 +152,8 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					sessionId,
 					sshConfig,
 				});
+				// The import appended a record to the agent's playbook list.
+				broadcast(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
 				return { ...result };
 			}
 		)

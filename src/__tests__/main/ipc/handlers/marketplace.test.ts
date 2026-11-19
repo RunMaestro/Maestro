@@ -111,6 +111,7 @@ describe('marketplace IPC handlers', () => {
 	let mockApp: App;
 	let mockSettingsStore: { get: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn> };
 	let mockDeps: MarketplaceHandlerDependencies;
+	let mockSafeSend: ReturnType<typeof vi.fn>;
 
 	// Sample SSH remote configuration for testing
 	const sampleSshRemote: SshRemoteConfig = {
@@ -202,9 +203,11 @@ describe('marketplace IPC handlers', () => {
 		};
 
 		// Setup dependencies
+		mockSafeSend = vi.fn();
 		mockDeps = {
 			app: mockApp,
 			settingsStore: mockSettingsStore as unknown as Store,
+			safeSend: mockSafeSend,
 		};
 
 		// Default mock for crypto.randomUUID
@@ -625,6 +628,9 @@ describe('marketplace IPC handlers', () => {
 			expect(result.playbook.name).toBe('Test Playbook');
 			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
 
+			// Listing surfaces hear about the new record
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
+
 			// Verify documents have target folder prefixed in their filenames
 			// This ensures the playbook can find documents in subfolders
 			expect(result.playbook.documents).toEqual([
@@ -969,6 +975,7 @@ describe('marketplace IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Playbook not found');
+			expect(mockSafeSend).not.toHaveBeenCalledWith('playbooks:changed', expect.anything());
 		});
 
 		it('should import a local playbook that only exists in the local manifest', async () => {

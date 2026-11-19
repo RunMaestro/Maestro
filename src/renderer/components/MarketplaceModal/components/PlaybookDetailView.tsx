@@ -34,7 +34,8 @@ export function PlaybookDetailView({
 	onSelectDocument,
 	onTargetFolderChange,
 	onBrowseFolder,
-	onImport,
+	onInstallAndRun,
+	onInstallOnly,
 }: PlaybookDetailViewProps) {
 	const compatible = isCompatible(playbook, runningVersion);
 	const beta = isBeta(playbook);
@@ -226,7 +227,8 @@ export function PlaybookDetailView({
 				runningVersion={runningVersion}
 				onTargetFolderChange={onTargetFolderChange}
 				onBrowseFolder={onBrowseFolder}
-				onImport={onImport}
+				onInstallAndRun={onInstallAndRun}
+				onInstallOnly={onInstallOnly}
 			/>
 		</div>
 	);

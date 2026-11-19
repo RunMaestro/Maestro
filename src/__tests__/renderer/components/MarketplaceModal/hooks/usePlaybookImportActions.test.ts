@@ -20,6 +20,7 @@ function setup(overrides: Partial<Parameters<typeof usePlaybookImportActions>[0]
 	const importPlaybook = vi.fn().mockResolvedValue({ success: true });
 	const onImportComplete = vi.fn();
 	const onClose = vi.fn();
+	const onConfigure = vi.fn();
 	const setTargetFolderName = vi.fn();
 	const params = {
 		selectedPlaybook: makePlaybook({ id: 'playbook-1' }),
@@ -31,6 +32,7 @@ function setup(overrides: Partial<Parameters<typeof usePlaybookImportActions>[0]
 		importPlaybook,
 		onImportComplete,
 		onClose,
+		onConfigure,
 		setTargetFolderName,
 		...overrides,
 	};
@@ -42,6 +44,7 @@ function setup(overrides: Partial<Parameters<typeof usePlaybookImportActions>[0]
 		importPlaybook,
 		onImportComplete,
 		onClose,
+		onConfigure,
 		setTargetFolderName,
 		params,
 	};
@@ -53,11 +56,11 @@ describe('usePlaybookImportActions', () => {
 		vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue('/picked/folder');
 	});
 
-	it('imports the selected playbook with local arguments and closes on success', async () => {
+	it('Install only imports with local arguments and closes on success', async () => {
 		const result = setup();
 
 		await act(async () => {
-			await result.result.current.handleImport();
+			await result.result.current.handleInstallOnly();
 		});
 
 		expect(result.importPlaybook).toHaveBeenCalledWith(
@@ -69,7 +72,52 @@ describe('usePlaybookImportActions', () => {
 		);
 		expect(result.onImportComplete).toHaveBeenCalledWith('target-folder');
 		expect(result.onClose).toHaveBeenCalledTimes(1);
+		expect(result.onConfigure).not.toHaveBeenCalled();
 		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('Install and Run moves on to configure with the stored record instead of closing', async () => {
+		const record = { id: 'record-1', name: 'Imported', documents: [] };
+		const result = setup({
+			importPlaybook: vi.fn().mockResolvedValue({ success: true, playbook: record }),
+		});
+
+		await act(async () => {
+			await result.result.current.handleInstallAndRun();
+		});
+
+		expect(result.onImportComplete).toHaveBeenCalledWith('target-folder');
+		expect(result.onConfigure).toHaveBeenCalledWith(record);
+		expect(result.onClose).not.toHaveBeenCalled();
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('Install and Run closes with an error toast when no record comes back', async () => {
+		const result = setup();
+
+		await act(async () => {
+			await result.result.current.handleInstallAndRun();
+		});
+
+		expect(result.onConfigure).not.toHaveBeenCalled();
+		expect(result.onClose).toHaveBeenCalledTimes(1);
+		expect(notifyToastMock).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', title: 'Cannot configure the run' })
+		);
+	});
+
+	it('Install and Run stays on the detail view when the install fails', async () => {
+		const result = setup({
+			importPlaybook: vi.fn().mockResolvedValue({ success: false, error: 'Nope' }),
+		});
+
+		await act(async () => {
+			await result.result.current.handleInstallAndRun();
+		});
+
+		expect(result.onConfigure).not.toHaveBeenCalled();
+		expect(result.onClose).not.toHaveBeenCalled();
+		expect(result.onImportComplete).not.toHaveBeenCalled();
 	});
 
 	it('warns with a sticky toast naming what a partial import left behind', async () => {
@@ -82,12 +130,12 @@ describe('usePlaybookImportActions', () => {
 		});
 
 		await act(async () => {
-			await result.result.current.handleImport();
+			await result.result.current.handleInstallOnly();
 		});
 
 		expect(notifyToastMock).toHaveBeenCalledWith({
 			color: 'yellow',
-			title: 'Playbook imported partially',
+			title: 'Playbook installed partially',
 			message: 'Not imported: document Agent-Prompt; assets scanner.py, cue.yaml',
 			dismissible: true,
 		});
@@ -99,7 +147,7 @@ describe('usePlaybookImportActions', () => {
 		const result = setup({ sshRemoteId: 'remote-1', isRemoteSession: true });
 
 		await act(async () => {
-			await result.result.current.handleImport();
+			await result.result.current.handleInstallOnly();
 		});
 
 		expect(result.importPlaybook).toHaveBeenCalledWith(
@@ -114,14 +162,14 @@ describe('usePlaybookImportActions', () => {
 	it('does nothing without a selected playbook or folder name', async () => {
 		let result = setup({ selectedPlaybook: null });
 		await act(async () => {
-			await result.result.current.handleImport();
+			await result.result.current.handleInstallOnly();
 		});
 		expect(result.importPlaybook).not.toHaveBeenCalled();
 		result.unmount();
 
 		result = setup({ targetFolderName: '   ' });
 		await act(async () => {
-			await result.result.current.handleImport();
+			await result.result.current.handleInstallOnly();
 		});
 		expect(result.importPlaybook).not.toHaveBeenCalled();
 	});
@@ -132,13 +180,13 @@ describe('usePlaybookImportActions', () => {
 		});
 
 		await act(async () => {
-			await result.result.current.handleImport();
+			await result.result.current.handleInstallOnly();
 		});
 
 		expect(loggerErrorMock).toHaveBeenCalledWith('Import failed:', undefined, 'Nope');
 		expect(notifyToastMock).toHaveBeenCalledWith({
 			color: 'red',
-			title: 'Import failed',
+			title: 'Install failed',
 			message: 'Nope',
 			dismissible: true,
 		});

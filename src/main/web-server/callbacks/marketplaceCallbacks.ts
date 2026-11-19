@@ -1,8 +1,10 @@
-import { app as electronApp } from 'electron';
+import { app as electronApp, BrowserWindow } from 'electron';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { createSafeSend } from '../../utils/safe-send';
+import { PLAYBOOKS_CHANGED_CHANNEL } from '../../../shared/playbooksChanged';
 import type { StoredSession } from '../../stores/types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import {
@@ -24,6 +26,7 @@ export function registerMarketplaceCallbacks(
 	deps: Pick<WebServerFactoryDependencies, 'settingsStore' | 'sessionsStore'>
 ): void {
 	const { settingsStore, sessionsStore } = deps;
+	const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 
 	/**
 	 * Resolve a session's effective SSH remote config.
@@ -114,6 +117,9 @@ export function registerMarketplaceCallbacks(
 				sessionId,
 				sshConfig,
 			});
+			// Same push the desktop IPC import sends, so an open Auto Run
+			// panel lists the record a CLI or browser import just wrote.
+			safeSend(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
 			return {
 				success: true,
 				playbook: result.playbook,

@@ -116,6 +116,7 @@ const EVENTS: Record<string, string> = {
 	marketplace: 'manifestChanged',
 	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
+	playbooks: 'changed',
 	plugins: 'changed groupings-changed',
 	process:
 		'call-usage claude-mode-resolved command-exit data exit harness-interaction-request harness-interaction-settled headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',

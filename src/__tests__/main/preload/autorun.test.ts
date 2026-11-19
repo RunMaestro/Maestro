@@ -403,6 +403,26 @@ describe('Autorun Preload API', () => {
 				);
 			});
 		});
+
+		describe('onChanged', () => {
+			it('registers playbooks:changed and hands the agent id to the callback', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, sessionId: string) => void;
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, sessionId: string) => void) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onChanged(callback);
+
+				expect(mockOn).toHaveBeenCalledWith('playbooks:changed', expect.any(Function));
+				registeredHandler!({}, 'session-123');
+				expect(callback).toHaveBeenCalledWith('session-123');
+				cleanup();
+				expect(mockRemoveListener).toHaveBeenCalledWith('playbooks:changed', registeredHandler!);
+			});
+		});
 	});
 
 	describe('createMarketplaceApi', () => {

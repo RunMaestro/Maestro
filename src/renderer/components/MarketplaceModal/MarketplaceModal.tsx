@@ -7,11 +7,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
+import type { Playbook } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
-import { MarketplaceBrowseTab, MarketplaceHeader, PlaybookDetailView } from './components';
+import {
+	MarketplaceBrowseTab,
+	MarketplaceHeader,
+	PlaybookConfigureStep,
+	PlaybookDetailView,
+} from './components';
 import { partitionPlaybooksByCompatibility } from './helpers';
 import {
 	useMarketplaceCategoryDocumentCycle,
@@ -86,7 +92,11 @@ export function MarketplaceModal({
 		handleSelectDocument,
 	} = detailState;
 
-	const { handleImport, handleBrowseFolder } = usePlaybookImportActions({
+	// Set once Install and Run stores the record: the modal leaves the detail
+	// view for the configure step instead of closing.
+	const [configuringPlaybook, setConfiguringPlaybook] = useState<Playbook | null>(null);
+
+	const { handleInstallAndRun, handleInstallOnly, handleBrowseFolder } = usePlaybookImportActions({
 		selectedPlaybook,
 		targetFolderName,
 		autoRunFolderPath,
@@ -96,6 +106,7 @@ export function MarketplaceModal({
 		importPlaybook,
 		onImportComplete,
 		onClose,
+		onConfigure: setConfiguringPlaybook,
 		setTargetFolderName,
 	});
 
@@ -121,12 +132,19 @@ export function MarketplaceModal({
 	showHelpRef.current = showHelp;
 	const handleBackToListRef = useRef(handleBackToList);
 	handleBackToListRef.current = handleBackToList;
+	const configuringRef = useRef(configuringPlaybook);
+	configuringRef.current = configuringPlaybook;
 
 	useModalLayer(
 		MODAL_PRIORITIES.MARKETPLACE,
 		'Playbook Exchange',
 		() => {
-			if (showHelpRef.current) {
+			if (configuringRef.current) {
+				// The install already happened; Escape leaves the Exchange
+				// rather than stepping back to a detail view that would
+				// offer a second install.
+				onCloseRef.current();
+			} else if (showHelpRef.current) {
 				setShowHelp(false);
 			} else if (showDetailViewRef.current) {
 				handleBackToListRef.current();
@@ -151,8 +169,11 @@ export function MarketplaceModal({
 		[handleSelectPlaybook]
 	);
 
+	// The browse and detail keyboard maps stand down on the configure step.
+	const browseKeysActive = isOpen && !configuringPlaybook;
+
 	useMarketplaceListKeyboardNav({
-		isOpen,
+		isOpen: browseKeysActive,
 		showDetailView,
 		orderedPlaybooks,
 		selectedTileIndex,
@@ -162,7 +183,7 @@ export function MarketplaceModal({
 	});
 
 	useMarketplaceCategoryDocumentCycle({
-		isOpen,
+		isOpen: browseKeysActive,
 		categories,
 		selectedCategory,
 		showDetailView,
@@ -206,7 +227,9 @@ export function MarketplaceModal({
 					canReset={resizableModal.canReset}
 				/>
 
-				{showDetailView && selectedPlaybook ? (
+				{configuringPlaybook ? (
+					<PlaybookConfigureStep theme={theme} playbook={configuringPlaybook} onClose={onClose} />
+				) : showDetailView && selectedPlaybook ? (
 					<PlaybookDetailView
 						theme={theme}
 						playbook={selectedPlaybook}
@@ -222,7 +245,8 @@ export function MarketplaceModal({
 						onSelectDocument={handleSelectDocument}
 						onTargetFolderChange={setTargetFolderName}
 						onBrowseFolder={handleBrowseFolder}
-						onImport={handleImport}
+						onInstallAndRun={handleInstallAndRun}
+						onInstallOnly={handleInstallOnly}
 					/>
 				) : (
 					<>

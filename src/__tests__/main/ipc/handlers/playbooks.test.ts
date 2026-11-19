@@ -107,6 +107,7 @@ describe('playbooks IPC handlers', () => {
 	let mockApp: App;
 	let mockMainWindow: BrowserWindow;
 	let mockDeps: PlaybooksHandlerDependencies;
+	let mockSafeSend: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -126,10 +127,12 @@ describe('playbooks IPC handlers', () => {
 		mockMainWindow = {} as BrowserWindow;
 
 		// Setup dependencies
+		mockSafeSend = vi.fn();
 		mockDeps = {
 			mainWindow: mockMainWindow,
 			getMainWindow: () => mockMainWindow,
 			app: mockApp,
+			safeSend: mockSafeSend,
 		};
 
 		// Default mock for crypto.randomUUID
@@ -178,6 +181,8 @@ describe('playbooks IPC handlers', () => {
 				'utf-8'
 			);
 			expect(result).toEqual({ success: true, playbooks: mockPlaybooks });
+			// A read changes nothing, so it broadcasts nothing.
+			expect(mockSafeSend).not.toHaveBeenCalled();
 		});
 
 		it('should return empty array when file does not exist', async () => {
@@ -232,6 +237,7 @@ describe('playbooks IPC handlers', () => {
 			});
 			expect(result.playbook.createdAt).toBeDefined();
 			expect(result.playbook.updatedAt).toBeDefined();
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
 		});
 
 		it('should create a playbook with worktree settings', async () => {
@@ -316,6 +322,7 @@ describe('playbooks IPC handlers', () => {
 			expect(result.playbook.name).toBe('Updated');
 			expect(result.playbook.prompt).toBe('new prompt');
 			expect(result.playbook.updatedAt).toBeDefined();
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
 		});
 
 		it('should return error for non-existent playbook', async () => {
@@ -328,6 +335,7 @@ describe('playbooks IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Playbook not found');
+			expect(mockSafeSend).not.toHaveBeenCalled();
 		});
 
 		it('should preserve existing fields when updating', async () => {
@@ -411,6 +419,7 @@ describe('playbooks IPC handlers', () => {
 			const written = JSON.parse(writeCall[1] as string);
 			expect(written.playbooks).toHaveLength(1);
 			expect(written.playbooks[0].id).toBe('pb-2');
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
 		});
 
 		it('should return error for non-existent playbook', async () => {
@@ -435,6 +444,7 @@ describe('playbooks IPC handlers', () => {
 				path.join('/mock/userData', 'playbooks', 'session-123.json')
 			);
 			expect(result).toEqual({ success: true });
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
 		});
 
 		it('should not throw error when file does not exist', async () => {
@@ -694,6 +704,7 @@ describe('playbooks IPC handlers', () => {
 			expect(result.playbook.name).toBe('Imported Playbook');
 			expect(result.playbook.id).toBe('test-uuid-123');
 			expect(result.importedDocs).toEqual(['doc1']);
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
 		});
 
 		it('should still read a version 1 manifest and stamp zip provenance', async () => {

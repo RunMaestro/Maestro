@@ -53,8 +53,8 @@ Clicking a playbook tile (or pressing `Enter`) opens the detail view where you c
 ## Importing a Playbook
 
 1. Open the detail view for a playbook
-2. Optionally edit the **Import to folder** field (defaults to `category/title` slug, e.g., `development/code-review`)
-3. Click **Import Playbook**
+2. Optionally edit the **Install to folder** field (defaults to `category/title` slug, e.g., `development/code-review`)
+3. Click **Install and Run** to install and go straight on to configuring the run, or **Install only** to install and close the Exchange
 
 The import creates:
 
@@ -63,7 +63,7 @@ The import creates:
 - An `assets/` subfolder with any supporting files (configs, scripts, templates) if the playbook includes them. References to `{{AUTORUN_FOLDER}}/assets/` in the documents and prompt are rewritten to point at this subfolder, so each playbook keeps its own assets
 - A saved playbook configuration with loop settings, document order, the prompt, and the **Fresh Context Per** setting (per task unless the manifest says `"taskSelectionMode": "document"`)
 
-After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel.
+After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel, even if the panel was already open.
 
 ### Use One as Reference
 
