@@ -180,6 +180,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		app: deps.app,
 		safeSend: deps.safeSend,
+		getCueStatus: () => deps.getCueEngine()?.getStatus(),
 	});
 
 	// History operations - extracted to src/main/ipc/handlers/history.ts

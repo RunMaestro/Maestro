@@ -205,6 +205,9 @@ export function createPlaybooksApi() {
 		import: (sessionId: string, autoRunFolderPath: string) =>
 			ipcRenderer.invoke('playbooks:import', sessionId, autoRunFolderPath),
 
+		/** The local facts pack for an agent (git, gh, python3, Encore, Cue). Never fails on a missing tool. */
+		gatherFacts: (sessionId: string) => ipcRenderer.invoke('playbooks:gatherFacts', sessionId),
+
 		/** Fires with the agent id after any write to that agent's playbook records. */
 		onChanged: (handler: (sessionId: string) => void) => {
 			const wrappedHandler = (_event: Electron.IpcRendererEvent, sessionId: string) =>

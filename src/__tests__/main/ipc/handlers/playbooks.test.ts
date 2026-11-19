@@ -18,6 +18,10 @@ import {
 	registerPlaybooksHandlers,
 	PlaybooksHandlerDependencies,
 } from '../../../../main/ipc/handlers/playbooks';
+import {
+	createPlaybookFactsDeps,
+	gatherPlaybookFacts,
+} from '../../../../main/services/playbook-facts';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -92,6 +96,12 @@ function appendedManifest(append: ReturnType<typeof vi.fn>): Record<string, any>
 	return JSON.parse(call![0] as string);
 }
 
+// The facts pack's probes are tested in services/playbook-facts.test.ts.
+vi.mock('../../../../main/services/playbook-facts', () => ({
+	createPlaybookFactsDeps: vi.fn((getCueStatus?: unknown) => ({ getCueStatus })),
+	gatherPlaybookFacts: vi.fn(),
+}));
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -156,11 +166,36 @@ describe('playbooks IPC handlers', () => {
 				'playbooks:deleteAll',
 				'playbooks:export',
 				'playbooks:import',
+				'playbooks:gatherFacts',
 			];
 
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}
+		});
+	});
+
+	describe('playbooks:gatherFacts', () => {
+		it('returns the facts pack gathered with the Cue status dependency', async () => {
+			const getCueStatus = vi.fn(() => []);
+			handlers.clear();
+			registerPlaybooksHandlers({ ...mockDeps, getCueStatus });
+			const facts = { cwd: '/work', openPrUrlsForBranch: [], unknownProbes: [] };
+			vi.mocked(gatherPlaybookFacts).mockResolvedValue(facts as never);
+
+			const result = await handlers.get('playbooks:gatherFacts')!({} as any, 'session-123');
+
+			expect(result).toEqual({ success: true, facts });
+			expect(createPlaybookFactsDeps).toHaveBeenLastCalledWith(getCueStatus);
+			expect(gatherPlaybookFacts).toHaveBeenCalledWith('session-123', { getCueStatus });
+		});
+
+		it('does not broadcast playbooks:changed (it writes nothing)', async () => {
+			vi.mocked(gatherPlaybookFacts).mockResolvedValue({} as never);
+
+			await handlers.get('playbooks:gatherFacts')!({} as any, 'session-123');
+
+			expect(mockSafeSend).not.toHaveBeenCalled();
 		});
 	});
 

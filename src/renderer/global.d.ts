@@ -3263,6 +3263,12 @@ interface MaestroAPI {
 			sessionId: string,
 			autoRunFolderPath: string
 		) => Promise<{ success: boolean; playbook?: any; importedDocs?: string[]; error?: string }>;
+		/** The local facts pack for an agent (git, gh, python3, Encore, Cue). Never fails on a missing tool. */
+		gatherFacts: (sessionId: string) => Promise<{
+			success: boolean;
+			facts?: import('../shared/playbookFacts').PlaybookFacts;
+			error?: string;
+		}>;
 		/** Fires with the agent id after any write to that agent's playbook records. Returns an unsubscribe. */
 		onChanged: (handler: (sessionId: string) => void) => () => void;
 	};

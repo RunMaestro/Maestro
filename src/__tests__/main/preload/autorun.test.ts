@@ -365,6 +365,17 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('gatherFacts', () => {
+			it('should invoke playbooks:gatherFacts', async () => {
+				mockInvoke.mockResolvedValue({ success: true, facts: { cwd: '/work' } });
+
+				const result = await api.gatherFacts('session-123');
+
+				expect(mockInvoke).toHaveBeenCalledWith('playbooks:gatherFacts', 'session-123');
+				expect(result).toEqual({ success: true, facts: { cwd: '/work' } });
+			});
+		});
+
 		describe('deleteAll', () => {
 			it('should invoke playbooks:deleteAll', async () => {
 				mockInvoke.mockResolvedValue({ success: true });

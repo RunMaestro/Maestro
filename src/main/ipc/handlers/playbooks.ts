@@ -18,6 +18,11 @@ import { readPlaybookParamOverlay, readPlaybookParamValues } from '../../../shar
 import { hashPlaybookDocument } from '../../utils/playbook-document-hash';
 import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
 import { PLAYBOOKS_CHANGED_CHANNEL } from '../../../shared/playbooksChanged';
+import {
+	createPlaybookFactsDeps,
+	gatherPlaybookFacts,
+	type PlaybookFactsDeps,
+} from '../../services/playbook-facts';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -112,6 +117,11 @@ export interface PlaybooksHandlerDependencies {
 	 * `playbooks:changed` push; defaults to the main window only.
 	 */
 	safeSend?: SafeSendFn;
+	/**
+	 * The running Cue engine's per-agent status, for the facts pack's
+	 * subscription count. Absent or null when Cue is not running.
+	 */
+	getCueStatus?: PlaybookFactsDeps['getCueStatus'];
 }
 
 /**
@@ -161,10 +171,12 @@ async function writePlaybooks(app: App, sessionId: string, playbooks: any[]): Pr
  * - Delete a playbook
  * - Export a playbook to ZIP file
  * - Import a playbook from ZIP file
+ * - Gather the local facts pack for the configure step
  */
 export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): void {
 	const { getMainWindow, app } = deps;
 	const safeSend = deps.safeSend ?? createSafeSend(getMainWindow);
+	const factsDeps = createPlaybookFactsDeps(deps.getCueStatus);
 
 	/** Write an agent's records, then tell every listing surface to reload. */
 	const savePlaybooks = async (sessionId: string, playbooks: any[]): Promise<void> => {
@@ -180,6 +192,15 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 			logger.info(`Listed ${playbooks.length} playbooks for session ${sessionId}`, LOG_CONTEXT);
 			return { playbooks };
 		})
+	);
+
+	// The local facts pack for an agent's configure step. Best-effort probes;
+	// the gather never rejects, so a slow or missing tool is an answer.
+	ipcMain.handle(
+		'playbooks:gatherFacts',
+		createIpcHandler(handlerOpts('gatherFacts', false), async (sessionId: string) => ({
+			facts: await gatherPlaybookFacts(sessionId, factsDeps),
+		}))
 	);
 
 	// Create a new playbook

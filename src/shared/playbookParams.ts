@@ -23,6 +23,7 @@
  */
 
 import { forEachMarkdownLine } from './markdownTaskScan';
+import type { PlaybookFacts } from './playbookFacts';
 
 /** The value types a parameter can declare. Prose-only parameters are `string`. */
 export type PlaybookParamType = 'string' | 'url' | 'number' | 'multi-enum';
@@ -597,6 +598,59 @@ export function compactPlaybookParamValues(values: PlaybookParamValues): Playboo
 		if (value.trim() !== '') compact[name] = value;
 	}
 	return compact;
+}
+
+/**
+ * Branch-name segments that mean some OTHER branch than the one checked out
+ * (`BASE_BRANCH`, `TARGET_BRANCH`), so the current branch is never proposed.
+ */
+const OTHER_BRANCH_SEGMENTS = new Set(['BASE', 'TARGET', 'DEFAULT', 'UPSTREAM', 'MAIN', 'PARENT']);
+
+/** The fact a parameter name obviously asks for, by its `_`-separated segments. */
+function factProposalFor(
+	spec: PlaybookParamSpec,
+	facts: PlaybookFacts
+): PlaybookParamProposal | null {
+	const segments = spec.name.split('_');
+	const has = (segment: string) => segments.includes(segment);
+	if (spec.type === 'url' && has('PR')) {
+		const url = facts.openPrUrlsForBranch[0];
+		if (!url) return null;
+		return { value: url, evidence: `Open pull request for branch ${facts.gitBranch ?? 'unknown'}` };
+	}
+	if (spec.type !== 'string') return null;
+	if (has('BRANCH') && !segments.some((segment) => OTHER_BRANCH_SEGMENTS.has(segment))) {
+		return facts.gitBranch ? { value: facts.gitBranch, evidence: 'Current git branch' } : null;
+	}
+	if (spec.name.includes('WORK_DIR') || spec.name.includes('WORKING_DIR') || has('CWD')) {
+		if (!facts.cwd) return null;
+		const where = facts.isSshRemote ? 'on the SSH remote' : 'on this machine';
+		return { value: facts.cwd, evidence: `Agent working directory ${where}` };
+	}
+	return null;
+}
+
+/**
+ * Proposals the facts pack answers at zero token cost, by parameter name: a
+ * `url` named with a `PR` segment gets the branch's open pull request, a
+ * `string` named with `BRANCH` gets the current branch (never for
+ * `BASE_BRANCH` and kin), and one named `WORK_DIR`, `WORKING_DIR`, or `CWD`
+ * gets the agent's working directory. A proposal that would fail the spec's
+ * own validation is dropped. Answered names are filtered later, by
+ * {@link mergeProposedParamValues}.
+ */
+export function proposeFromFacts(
+	specs: PlaybookParamSpec[],
+	facts: PlaybookFacts
+): PlaybookParamProposals {
+	const proposals: PlaybookParamProposals = {};
+	for (const spec of specs) {
+		const proposal = factProposalFor(spec, facts);
+		if (proposal && validatePlaybookParamValue(spec, proposal.value) === null) {
+			proposals[spec.name] = proposal;
+		}
+	}
+	return proposals;
 }
 
 /**

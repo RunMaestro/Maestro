@@ -23,7 +23,6 @@ import {
 	setCachedGhStatus,
 	getCachedGhStatus,
 	getExpandedEnv,
-	resolveGhPath,
 } from '../utils/cliDetection';
 import { execFileNoThrow } from '../utils/execFile';
 import {
@@ -33,8 +32,7 @@ import {
 	isGitHubMissingScopeError,
 	isGitHubOAuthRestrictionError,
 } from '../utils/ghErrors';
-import { getSettingsStore } from '../stores/getters';
-import { isInitialized } from '../stores/instances';
+import { resolveConfiguredGhCommand } from '../utils/gh-command';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
 import { captureFeedbackLiveDiagnosis } from './live-state';
 import {
@@ -383,7 +381,7 @@ async function fetchIssueStates(numbers: number[]): Promise<Map<number, 'open' |
 	const fields = unique.map((n) => `i${n}: issue(number: ${n}) { number state }`).join(' ');
 	const query = `query { repository(owner: "RunMaestro", name: "Maestro") { ${fields} } }`;
 	const result = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', 'graphql', '-f', `query=${query}`],
 		undefined,
 		getExpandedEnv()
@@ -574,32 +572,9 @@ function buildEnvironmentSummary(payload: FeedbackSubmitPayload): FeedbackEnviro
 	};
 }
 
-/**
- * Resolve the gh binary this handler should invoke.
- *
- * Honours the user's configured Settings > GitHub CLI (gh) Path, falling back to
- * auto-detection. Every gh call in this file must go through here: a bare 'gh'
- * literal silently ignores that setting, which is the whole reason it exists for
- * installs where gh is not on the expanded PATH.
- */
-async function resolveFeedbackGhCommand(): Promise<string> {
-	// Guard on the predicate rather than catching. The stores genuinely are not
-	// initialised in every context (unit tests, early startup), and falling back
-	// to auto-detection there is correct, but a blanket catch would also swallow
-	// a real store failure and silently run some other binary.
-	if (!isInitialized()) {
-		return resolveGhPath();
-	}
-
-	const configured = getSettingsStore().get('ghPath');
-	const customPath =
-		typeof configured === 'string' && configured.trim() ? configured.trim() : undefined;
-	return resolveGhPath(customPath);
-}
-
 async function getGitHubLogin(): Promise<string> {
 	const result = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', 'user', '--jq', '.login'],
 		undefined,
 		getExpandedEnv()
@@ -628,7 +603,7 @@ function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {
 	const repoCheck = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', `repos/${owner}/${ATTACHMENTS_REPO}`],
 		undefined,
 		getExpandedEnv()
@@ -638,7 +613,7 @@ async function ensureAttachmentsRepo(owner: string): Promise<void> {
 	}
 
 	const repoCreate = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		[
 			'api',
 			'user/repos',
@@ -729,7 +704,7 @@ async function uploadAttachments(
 					'utf8'
 				);
 				const uploadResult = await execFileNoThrow(
-					await resolveFeedbackGhCommand(),
+					await resolveConfiguredGhCommand(),
 					[
 						'api',
 						`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
@@ -805,7 +780,7 @@ async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<str
 	);
 	try {
 		const uploadResult = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'api',
 				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
@@ -844,7 +819,7 @@ async function composeFeedbackPrompt(
 
 async function ensureFeedbackLabel(): Promise<void> {
 	const labelCheck = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		['api', 'repos/RunMaestro/Maestro/labels/Maestro-feedback'],
 		undefined,
 		getExpandedEnv()
@@ -854,7 +829,7 @@ async function ensureFeedbackLabel(): Promise<void> {
 	}
 
 	const labelCreate = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		[
 			'label',
 			'create',
@@ -966,7 +941,7 @@ export async function checkFeedbackGhAuth(
 	// binaries that PATH lookup cannot find. Resolve it before reading the
 	// cache, because the cache is keyed by the command a verdict was reached
 	// against, and the other gh callers probe the PATH-resolved binary.
-	const ghCommand = await resolveFeedbackGhCommand();
+	const ghCommand = await resolveConfiguredGhCommand();
 	const notInstalled: FeedbackAuthResponse = {
 		authenticated: false,
 		reason: 'not-installed',
@@ -1116,7 +1091,7 @@ function ghLoginCommandFor(ghCommand: string): FeedbackGhLoginCommand {
  * (a configured custom path wins).
  */
 export async function getFeedbackGhLoginCommand(): Promise<FeedbackGhLoginCommand> {
-	return ghLoginCommandFor(await resolveFeedbackGhCommand());
+	return ghLoginCommandFor(await resolveConfiguredGhCommand());
 }
 
 /**
@@ -1201,7 +1176,7 @@ export async function searchFeedbackIssues(payload: {
 
 	const searchPromises = searchQueries.map(async (q) => {
 		const result = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'search',
 				'issues',
@@ -1260,7 +1235,7 @@ export async function subscribeFeedbackIssue(payload: {
 
 	// Add a +1 reaction to show interest
 	await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
+		await resolveConfiguredGhCommand(),
 		[
 			'api',
 			`repos/RunMaestro/Maestro/issues/${issueNumber}/reactions`,
@@ -1276,7 +1251,7 @@ export async function subscribeFeedbackIssue(payload: {
 	// Add a comment if provided
 	if (comment && comment.trim()) {
 		const commentResult = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'issue',
 				'comment',
@@ -1394,7 +1369,7 @@ export async function submitFeedback(
 	try {
 		await fs.writeFile(bodyPath, buildIssueBody(normalizedPayload, environment, markdown), 'utf8');
 		const issueCreate = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
+			await resolveConfiguredGhCommand(),
 			[
 				'issue',
 				'create',
@@ -1724,7 +1699,7 @@ export async function submitFeedbackConversation(
 
 		try {
 			const issueCreate = await execFileNoThrow(
-				await resolveFeedbackGhCommand(),
+				await resolveConfiguredGhCommand(),
 				[
 					'issue',
 					'create',

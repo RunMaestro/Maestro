@@ -15,6 +15,7 @@ import {
 	mergePlaybookParams,
 	mergeProposedParamValues,
 	parsePlaybookParameterForm,
+	proposeFromFacts,
 	readPlaybookParamOverlay,
 	readPlaybookParamValues,
 	resolvePlaybookParamSpecs,
@@ -24,6 +25,8 @@ import {
 	type PlaybookParamOverlay,
 	type PlaybookParamSpec,
 } from '../../shared/playbookParams';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import type { PlaybookFacts } from '../../shared/playbookFacts';
 import {
 	ASSISTANTS_MESSAGE_BUS_PROMPT,
 	RESEARCH_CORPUS_PROMPT,
@@ -936,5 +939,97 @@ describe('describePlaybookParamProvenance', () => {
 describe('compactPlaybookParamValues', () => {
 	it('drops blank answers and keeps the rest verbatim', () => {
 		expect(compactPlaybookParamValues({ A_A: ' x ', B_B: '', C_C: '   ' })).toEqual({ A_A: ' x ' });
+	});
+});
+
+describe('proposeFromFacts', () => {
+	const spec = (name: string, type: PlaybookParamSpec['type'] = 'string'): PlaybookParamSpec => ({
+		name,
+		type,
+		required: true,
+		source: 'overlay',
+	});
+	const facts = (overrides: Partial<PlaybookFacts> = {}): PlaybookFacts => ({
+		cwd: '/work/repo',
+		isSshRemote: false,
+		gitBranch: 'feat/x',
+		gitRemoteUrl: 'https://github.com/acme/repo.git',
+		openPrUrlsForBranch: ['https://github.com/acme/repo/pull/7'],
+		hasGh: true,
+		hasPython3: true,
+		unknownProbes: [],
+		encoreFlags: resolveEncoreFeatures(undefined),
+		cueSubscriptionCount: 0,
+		...overrides,
+	});
+
+	it('fills a PR url, the current branch, and the working directory', () => {
+		const proposals = proposeFromFacts(
+			[spec('PR_URL', 'url'), spec('BRANCH'), spec('WORK_DIR'), spec('CWD'), spec('WORKING_DIR')],
+			facts()
+		);
+		expect(proposals).toEqual({
+			PR_URL: {
+				value: 'https://github.com/acme/repo/pull/7',
+				evidence: 'Open pull request for branch feat/x',
+			},
+			BRANCH: { value: 'feat/x', evidence: 'Current git branch' },
+			WORK_DIR: { value: '/work/repo', evidence: 'Agent working directory on this machine' },
+			CWD: { value: '/work/repo', evidence: 'Agent working directory on this machine' },
+			WORKING_DIR: { value: '/work/repo', evidence: 'Agent working directory on this machine' },
+		});
+	});
+
+	it('names the SSH remote as the source of the working directory', () => {
+		expect(proposeFromFacts([spec('WORK_DIR')], facts({ isSshRemote: true })).WORK_DIR).toEqual({
+			value: '/work/repo',
+			evidence: 'Agent working directory on the SSH remote',
+		});
+	});
+
+	it('matches whole name segments, so PROJECT_URL is not a PR', () => {
+		expect(
+			proposeFromFacts([spec('PROJECT_URL', 'url'), spec('PREVIEW_URL', 'url')], facts())
+		).toEqual({});
+	});
+
+	it('only proposes a PR into a url-typed parameter', () => {
+		expect(proposeFromFacts([spec('PR_NUMBER', 'number'), spec('PR')], facts())).toEqual({});
+	});
+
+	it('never proposes the current branch for a base or target branch', () => {
+		const names = [
+			'BASE_BRANCH',
+			'TARGET_BRANCH',
+			'DEFAULT_BRANCH',
+			'UPSTREAM_BRANCH',
+			'MAIN_BRANCH',
+		];
+		expect(
+			proposeFromFacts(
+				names.map((name) => spec(name)),
+				facts()
+			)
+		).toEqual({});
+		expect(proposeFromFacts([spec('FEATURE_BRANCH')], facts()).FEATURE_BRANCH?.value).toBe(
+			'feat/x'
+		);
+	});
+
+	it('proposes nothing when the fact is missing', () => {
+		expect(
+			proposeFromFacts(
+				[spec('PR_URL', 'url'), spec('BRANCH'), spec('WORK_DIR')],
+				facts({ openPrUrlsForBranch: [], gitBranch: undefined, cwd: '' })
+			)
+		).toEqual({});
+	});
+
+	it('drops a proposal the spec would reject', () => {
+		const strict: PlaybookParamSpec = { ...spec('BRANCH'), pattern: 'release/.*' };
+		expect(proposeFromFacts([strict], facts())).toEqual({});
+		expect(
+			proposeFromFacts([spec('PR_URL', 'url')], facts({ openPrUrlsForBranch: ['not a url'] }))
+		).toEqual({});
 	});
 });
