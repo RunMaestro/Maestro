@@ -19,6 +19,7 @@ import {
 	STRUCTURED_OUTPUT_SCHEMA,
 	STRUCTURED_OUTPUT_SUFFIX,
 	READY_CONFIDENCE_THRESHOLD,
+	wizardReadableDirectories,
 	type StructuredAgentResponse,
 	type ParsedResponse,
 	type SystemPromptConfig,
@@ -576,6 +577,32 @@ describe('wizardPrompts', () => {
 	});
 
 	describe('generateSystemPrompt', () => {
+		it('lists folders granted via Add Different Folder as read-only (#2037)', () => {
+			const prompt = generateSystemPrompt({
+				agentName: 'New Project',
+				agentPath: '/Users/test/Projects/new-project',
+				additionalDirectories: [
+					{ path: '/Users/test/Projects/einy-Law', read: true, write: false },
+					{ path: '/Users/test/Projects/shared', read: true, write: true },
+					{ path: '/Users/test/Projects/drop-box', read: false, write: true },
+				],
+			});
+
+			expect(prompt).toContain('## Additional Directories');
+			expect(prompt).toContain('| `/Users/test/Projects/einy-Law` | Read only |');
+			// The wizard writes only to the Auto Run folder, so a read+write grant is read-only here.
+			expect(prompt).toContain('| `/Users/test/Projects/shared` | Read only |');
+			expect(prompt).not.toContain('| Read + Write |');
+			// A write-only grant gives the wizard nothing it can use.
+			expect(prompt).not.toContain('/Users/test/Projects/drop-box');
+		});
+
+		it('omits the Additional Directories block when no folder was granted', () => {
+			const prompt = generateSystemPrompt({ agentName: 'Test', agentPath: '/path' });
+
+			expect(prompt).not.toContain('## Additional Directories');
+		});
+
 		it('should include agent name in prompt', () => {
 			const config: SystemPromptConfig = {
 				agentName: 'My Cool Project',
@@ -1023,6 +1050,22 @@ I'm about 45% confident I understand your needs so far.`;
 			expect(result.structured?.confidence).toBe(45); // Extracted from text
 			expect(result.structured?.ready).toBe(false); // Has questions
 			expect(result.structured?.message).toContain('web application');
+		});
+	});
+	describe('wizardReadableDirectories', () => {
+		it('keeps readable grants as read-only and drops the rest', () => {
+			expect(
+				wizardReadableDirectories([
+					{ path: ' /a ', read: true, write: true, description: 'ref' },
+					{ path: '/b', read: false, write: true },
+					{ path: '/c', read: false, write: false },
+				])
+			).toEqual([{ path: '/a', read: true, write: false, description: 'ref' }]);
+		});
+
+		it('returns undefined when nothing is readable', () => {
+			expect(wizardReadableDirectories(undefined)).toBeUndefined();
+			expect(wizardReadableDirectories([{ path: '/b', read: false, write: true }])).toBeUndefined();
 		});
 	});
 });

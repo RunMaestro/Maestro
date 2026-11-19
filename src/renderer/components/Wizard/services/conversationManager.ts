@@ -7,9 +7,11 @@
  */
 
 import type { ToolType, LogEntry } from '../../../types';
+import type { AdditionalDirectory } from '../../../../shared/types';
 import type { WizardMessage } from '../WizardContext';
 import {
 	generateSystemPrompt,
+	wizardReadableDirectories,
 	parseStructuredOutput,
 	formatUserMessage,
 	isReadyToProceed,
@@ -57,6 +59,8 @@ export interface ConversationConfig {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Extra folders granted on the Directory screen ("Add Different Folder") */
+	additionalDirectories?: AdditionalDirectory[];
 }
 
 /**
@@ -114,6 +118,8 @@ interface ConversationSession {
 	projectName: string;
 	/** Per-run model override, or undefined for the agent's configured model */
 	model?: string;
+	/** Extra folders the wizard may read, already reduced to read-only grants */
+	additionalDirectories?: AdditionalDirectory[];
 	/** Whether the agent process is active */
 	isActive: boolean;
 	/** System prompt used for this session */
@@ -188,10 +194,12 @@ class ConversationManager {
 		}
 
 		const sessionId = generateWizardSessionId();
+		const additionalDirectories = wizardReadableDirectories(config.additionalDirectories);
 		const systemPrompt = generateSystemPrompt({
 			agentName: config.projectName,
 			agentPath: config.directoryPath,
 			existingDocs: config.existingDocs,
+			additionalDirectories,
 		});
 
 		this.session = {
@@ -200,6 +208,7 @@ class ConversationManager {
 			directoryPath: config.directoryPath,
 			projectName: config.projectName,
 			model: config.model,
+			additionalDirectories,
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
@@ -679,6 +688,9 @@ class ConversationManager {
 					// line length limits for large prompts.
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
+					// The wizard's process id names no agent, so the folders granted on the
+					// Directory screen travel inline (native grants such as --add-dir).
+					sessionAdditionalDirectories: this.session!.additionalDirectories,
 					// The wizard's process id names no agent, so the TUI pick travels inline.
 					...getClaudeTokenSourceFields(this.session!.claudeTokenSource),
 				})

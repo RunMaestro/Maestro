@@ -505,4 +505,69 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			await conversationManager.endConversation();
 		});
 	});
+	describe('additional directories (#2037)', () => {
+		it('passes folders granted via Add Different Folder to the spawn as read-only grants', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				path: '/opt/homebrew/bin/claude',
+				args: ['--print'],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/new-project',
+				projectName: 'New Project',
+				additionalDirectories: [
+					{ path: '/test/einy-Law', read: true, write: false },
+					{ path: '/test/drop-box', read: false, write: true },
+				],
+			});
+
+			const messagePromise = conversationManager.sendMessage('Analyze einy-Law', [], {});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.cwd).toBe('/test/new-project');
+			expect(spawnCall.sessionAdditionalDirectories).toEqual([
+				{ path: '/test/einy-Law', read: true, write: false },
+			]);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+			await messagePromise;
+			await conversationManager.endConversation();
+		});
+
+		it('sends no grants when no folder was added', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				path: '/opt/homebrew/bin/claude',
+				args: ['--print'],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/new-project',
+				projectName: 'New Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(
+				mockMaestro.process.spawn.mock.calls[0][0].sessionAdditionalDirectories
+			).toBeUndefined();
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+			await messagePromise;
+			await conversationManager.endConversation();
+		});
+	});
 });

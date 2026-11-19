@@ -13,6 +13,9 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { createGenericErrorMessage } from './wizardErrorDetection';
+import type { AdditionalDirectory } from '../../../../shared/types';
+import { formatAdditionalDirectoriesForPrompt } from '../../../../shared/additionalDirectories';
+import { wizardReadableDirectories } from './wizardPrompts';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -62,6 +65,8 @@ export interface GenerationConfig {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Extra folders granted on the Directory screen ("Add Different Folder") */
+	additionalDirectories?: AdditionalDirectory[];
 }
 
 /**
@@ -357,7 +362,8 @@ export const wizardDebugLogger = new WizardDebugLogger();
  * - Name files as Phase-XX-Description.md
  */
 export function generateDocumentGenerationPrompt(config: GenerationConfig): string {
-	const { projectName, directoryPath, conversationHistory, subfolder } = config;
+	const { projectName, directoryPath, conversationHistory, subfolder, additionalDirectories } =
+		config;
 	const projectDisplay = projectName || 'this project';
 
 	// Build conversation summary
@@ -394,6 +400,14 @@ export function generateDocumentGenerationPrompt(config: GenerationConfig): stri
 
 	// Substitute any remaining template variables using the central function
 	prompt = substituteTemplateVariables(prompt, templateContext);
+
+	// The plan was discussed against these folders; keep them readable here too.
+	const additionalDirsSection = formatAdditionalDirectoriesForPrompt(
+		wizardReadableDirectories(additionalDirectories)
+	);
+	if (additionalDirsSection) {
+		prompt += `\n\n${additionalDirsSection}\n`;
+	}
 
 	return prompt;
 }
@@ -1185,6 +1199,8 @@ class PhaseGenerator {
 					sessionCustomModel: config.model,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
+					// Native read grants for the Directory screen's extra folders.
+					sessionAdditionalDirectories: wizardReadableDirectories(config.additionalDirectories),
 					...getClaudeTokenSourceFields(config.claudeTokenSource),
 				})
 				.then(() => {

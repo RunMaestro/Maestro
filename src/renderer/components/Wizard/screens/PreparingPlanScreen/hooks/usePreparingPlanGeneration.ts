@@ -115,6 +115,7 @@ export function usePreparingPlanGeneration({
 					conversationHistory: state.conversationHistory,
 					subfolder: 'Initiation',
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					additionalDirectories: state.additionalDirectories,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
 				},
 				{

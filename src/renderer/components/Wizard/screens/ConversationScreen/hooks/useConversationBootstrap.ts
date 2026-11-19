@@ -44,6 +44,7 @@ export function useConversationBootstrap({
 					model: state.plannerModel,
 					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					additionalDirectories: state.additionalDirectories,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
 				});
 
