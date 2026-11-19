@@ -15,6 +15,7 @@ import {
 	hasMaestroMarker,
 	buildMissingParamsHaltMarker,
 	stripMissingParamsHaltMarkers,
+	withMissingParamsHaltMarker,
 } from '../../shared/autorunMarkers';
 
 describe('scanMaestroMarkers - HITL', () => {
@@ -410,5 +411,34 @@ describe('missing-parameters halt marker', () => {
 	it('leaves a quoted example inside a code fence alone', () => {
 		const doc = ['```', marker, '```'].join('\n');
 		expect(stripMissingParamsHaltMarkers(doc)).toBeNull();
+	});
+	it('appends the marker after the body, keeping front matter and line endings', () => {
+		const doc = ['---', 'title: Doc', '---', '# Doc', '- [ ] task', ''].join('\r\n');
+		const next = withMissingParamsHaltMarker(doc, ['PR_URL']);
+		expect(next).toBe(
+			[
+				'---',
+				'title: Doc',
+				'---',
+				'# Doc',
+				'- [ ] task',
+				'',
+				buildMissingParamsHaltMarker(['PR_URL']),
+				'',
+			].join('\r\n')
+		);
+		expect(detectHaltMarker(next).halted).toBe(true);
+	});
+
+	it('replaces an earlier Maestro marker rather than adding a second', () => {
+		const once = withMissingParamsHaltMarker('# Doc\n', ['PR_URL', 'MAX_ITEMS']);
+		const twice = withMissingParamsHaltMarker(once, ['PR_URL']);
+		expect(twice).toBe(`# Doc\n\n${buildMissingParamsHaltMarker(['PR_URL'])}\n`);
+	});
+
+	it('writes just the marker into an empty document', () => {
+		expect(withMissingParamsHaltMarker('', ['PR_URL'])).toBe(
+			`${buildMissingParamsHaltMarker(['PR_URL'])}\n`
+		);
 	});
 });

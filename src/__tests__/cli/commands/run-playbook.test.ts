@@ -902,6 +902,58 @@ describe('run-playbook command', () => {
 			expect(executePlaybook).not.toHaveBeenCalled();
 		});
 
+		describe('when an automation started the run', () => {
+			const MARKER =
+				'<!-- maestro:halt: missing required parameters: PR_URL (written by Maestro) -->';
+			let savedSource: string | undefined;
+
+			beforeEach(() => {
+				savedSource = process.env.MAESTRO_QUERY_SOURCE;
+				vi.mocked(fs.readFileSync).mockReturnValue('# Doc\n- [ ] task\n');
+			});
+			afterEach(() => {
+				if (savedSource === undefined) delete process.env.MAESTRO_QUERY_SOURCE;
+				else process.env.MAESTRO_QUERY_SOURCE = savedSource;
+			});
+
+			it('writes a halt marker into the first document so the next Cue fire refuses', async () => {
+				process.env.MAESTRO_QUERY_SOURCE = 'cue';
+				const playbook = mockPlaybook({ prompt: PROMPT });
+				vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+				await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow();
+
+				expect(firstExitCode()).toBe(2);
+				expect(fs.writeFileSync).toHaveBeenCalledWith(
+					expect.stringMatching(/playbooks[\\/]doc1\.md\.md$/),
+					`# Doc\n- [ ] task\n\n${MARKER}\n`,
+					'utf-8'
+				);
+				expect(emitJsonl).toHaveBeenCalledWith(
+					expect.objectContaining({ code: 'MISSING_PARAMETERS', haltMarker: 'doc1.md' })
+				);
+				expect(executePlaybook).not.toHaveBeenCalled();
+			});
+
+			it.each([undefined, 'user'])(
+				'never writes the marker for an interactive or plain CLI run (source %s)',
+				async (source) => {
+					if (source === undefined) delete process.env.MAESTRO_QUERY_SOURCE;
+					else process.env.MAESTRO_QUERY_SOURCE = source;
+					const playbook = mockPlaybook({ prompt: PROMPT });
+					vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+
+					await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow();
+
+					expect(firstExitCode()).toBe(2);
+					expect(fs.writeFileSync).not.toHaveBeenCalled();
+					expect(emitJsonl).toHaveBeenCalledWith(
+						expect.not.objectContaining({ haltMarker: expect.anything() })
+					);
+				}
+			);
+		});
+
 		it('prints the missing names to stderr without a JSON event in human mode', async () => {
 			const playbook = mockPlaybook({ prompt: PROMPT });
 			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });

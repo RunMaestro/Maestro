@@ -20,7 +20,10 @@ import {
 	type PlaybookParamSpec,
 	type PlaybookParamValues,
 } from '../../shared/playbookParams';
-import { stripMissingParamsHaltMarkers } from '../../shared/autorunMarkers';
+import {
+	stripMissingParamsHaltMarkers,
+	withMissingParamsHaltMarker,
+} from '../../shared/autorunMarkers';
 import { resolveCliPath } from '../utils/parse';
 
 /** A bad `--param`, `--params-file`, or `--set`. The caller reports it and exits 2. */
@@ -235,4 +238,34 @@ export function stripMissingParamsHaltMarkersFromPlaybook(
 		cleared.push(doc.filename);
 	}
 	return cleared;
+}
+
+/**
+ * Write the missing-parameters halt marker into a playbook's first document, so
+ * the next scheduled fire refuses with `HALT_MARKER_PRESENT` instead of failing
+ * the same way again on every fire. Only an automation run calls this; a person
+ * at a shell reads the error and answers. `playbook configure --set` removes the
+ * marker once nothing required is missing
+ * ({@link stripMissingParamsHaltMarkersFromPlaybook}). Returns the filename it
+ * marked, or null when the playbook has no documents or the first one is absent
+ * locally (an SSH-remote folder).
+ */
+export function writeMissingParamsHaltMarker(
+	folderPath: string,
+	playbook: Pick<Playbook, 'documents'>,
+	names: string[]
+): string | null {
+	const first = playbook.documents[0];
+	if (!first || names.length === 0) return null;
+	const filePath = path.join(folderPath, `${first.filename}.md`);
+	let content: string;
+	try {
+		content = fs.readFileSync(filePath, 'utf-8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	}
+	const next = withMissingParamsHaltMarker(content, names);
+	if (next !== content) fs.writeFileSync(filePath, next, 'utf-8');
+	return first.filename;
 }

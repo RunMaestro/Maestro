@@ -285,6 +285,21 @@ export function stripMissingParamsHaltMarkers(content: string): string | null {
 }
 
 /**
+ * `content` with a missing-parameters halt marker naming `names` on its own line
+ * at the end. Any marker Maestro wrote before is replaced, so a refused fire
+ * that names different parameters never stacks a second line. The end of the
+ * document keeps any YAML front matter intact, and the engine scans the whole
+ * document for a halt.
+ */
+export function withMissingParamsHaltMarker(content: string, names: string[]): string {
+	const base = stripMissingParamsHaltMarkers(content) ?? content;
+	const eol = base.includes('\r\n') ? '\r\n' : '\n';
+	const body = base.replace(/(?:\r?\n)+$/, '');
+	const marker = buildMissingParamsHaltMarker(names);
+	return body.trim() === '' ? `${marker}${eol}` : `${body}${eol}${eol}${marker}${eol}`;
+}
+
+/**
  * Why a run refused to start over a halt marker an EARLIER run left behind.
  *
  * Both engines refuse: the CLI as its `HALT_MARKER_PRESENT` error, the desktop

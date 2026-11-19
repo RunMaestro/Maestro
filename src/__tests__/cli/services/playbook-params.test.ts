@@ -3,7 +3,8 @@
  * @description The CLI's playbook parameter input: `--param` / `--params-file`
  * parsing, the answer layering a headless run uses, the undeclared-name and
  * validation refusals, and the cleanup of Maestro's missing-parameters halt
- * marker that `playbook configure --set` performs.
+ * marker that `playbook configure --set` performs, and the writing of that
+ * marker when an automation run lacks answers.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -19,6 +20,7 @@ import {
 	reportPlaybookParams,
 	resolveRunParams,
 	stripMissingParamsHaltMarkersFromPlaybook,
+	writeMissingParamsHaltMarker,
 } from '../../../cli/services/playbook-params';
 import { buildMissingParamsHaltMarker } from '../../../shared/autorunMarkers';
 import { resolvePlaybookParamSpecs } from '../../../shared/playbookParams';
@@ -180,5 +182,43 @@ describe('stripMissingParamsHaltMarkersFromPlaybook', () => {
 		expect(fs.readFileSync(path.join(tmp, 'second.md'), 'utf-8')).toBe(
 			'<!-- maestro:halt: build broken -->\n'
 		);
+	});
+});
+
+describe('writeMissingParamsHaltMarker', () => {
+	const docs = {
+		documents: [
+			{ filename: 'first', resetOnCompletion: false },
+			{ filename: 'second', resetOnCompletion: false },
+		],
+	};
+
+	it('marks only the first document, and configuring removes the marker again', () => {
+		fs.writeFileSync(path.join(tmp, 'first.md'), '# First\n- [ ] task\n');
+		fs.writeFileSync(path.join(tmp, 'second.md'), '# Second\n');
+
+		expect(writeMissingParamsHaltMarker(tmp, docs, ['PR_URL'])).toBe('first');
+
+		const marked = fs.readFileSync(path.join(tmp, 'first.md'), 'utf-8');
+		expect(marked).toBe(`# First\n- [ ] task\n\n${buildMissingParamsHaltMarker(['PR_URL'])}\n`);
+		expect(fs.readFileSync(path.join(tmp, 'second.md'), 'utf-8')).toBe('# Second\n');
+
+		expect(stripMissingParamsHaltMarkersFromPlaybook(tmp, docs)).toEqual(['first']);
+		expect(fs.readFileSync(path.join(tmp, 'first.md'), 'utf-8')).toBe('# First\n- [ ] task\n');
+	});
+
+	it('replaces an earlier marker instead of stacking a second one', () => {
+		fs.writeFileSync(path.join(tmp, 'first.md'), '# First\n');
+		writeMissingParamsHaltMarker(tmp, docs, ['PR_URL', 'MAX_ITEMS']);
+		writeMissingParamsHaltMarker(tmp, docs, ['PR_URL']);
+
+		const content = fs.readFileSync(path.join(tmp, 'first.md'), 'utf-8');
+		expect(content.match(/maestro:halt/g)).toHaveLength(1);
+		expect(content).toContain(buildMissingParamsHaltMarker(['PR_URL']));
+	});
+
+	it('returns null when the first document is absent or there are no documents', () => {
+		expect(writeMissingParamsHaltMarker(tmp, docs, ['PR_URL'])).toBeNull();
+		expect(writeMissingParamsHaltMarker(tmp, { documents: [] }, ['PR_URL'])).toBeNull();
 	});
 });
