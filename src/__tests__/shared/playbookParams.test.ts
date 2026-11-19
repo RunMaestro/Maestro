@@ -5,6 +5,7 @@ import {
 	assertNoSurvivingParams,
 	buildResolvedConfigurationTable,
 	collectUnresolvedRequired,
+	describeMissingRequiredParams,
 	describeSurvivingParams,
 	expandPlaybookParamTemplates,
 	isPlaceholderDefault,
@@ -859,5 +860,12 @@ describe('describeSurvivingParams', () => {
 		expect(describeSurvivingParams(['PR_URL', 'TOPIC'])).toBe(
 			'Playbook parameters have no value: [PR_URL], [TOPIC]. Configure them, then resume.'
 		);
+	});
+});
+
+describe('describeMissingRequiredParams', () => {
+	it('names every missing required parameter in spec order', () => {
+		const specs = resolvePlaybookParamSpecs('', [{ name: 'PR_URL' }, { name: 'TOPIC' }]);
+		expect(describeMissingRequiredParams(specs)).toBe('Missing required parameters: PR_URL, TOPIC');
 	});
 });

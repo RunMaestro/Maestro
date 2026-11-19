@@ -6640,4 +6640,97 @@ describe('useBatchProcessor hook', () => {
 			});
 		});
 	});
+
+	describe('missing required playbook parameters', () => {
+		// An overlay-only name is a required parameter with no default.
+		const playbook = {
+			id: 'pb-1',
+			ownerSessionId: 'owner-session-id',
+			parameterOverlay: [{ name: 'REPO_URL' }],
+		};
+
+		// Unchecked until the agent has run once, then done, so the run ends.
+		const mockDocUntilSpawned = () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: mockOnSpawnAgent.mock.calls.length > 0 ? '- [x] Task' : '- [ ] Task',
+			}));
+		};
+
+		const renderProcessor = () =>
+			renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+		it('pauses before any spawn, then re-reads the answers on Resume and continues', async () => {
+			mockDocUntilSpawned();
+			const mockListPlaybooks = vi.fn().mockResolvedValue({
+				success: true,
+				playbooks: [{ ...playbook, parameterValues: { REPO_URL: 'https://example.com/repo' } }],
+			});
+			window.maestro.playbooks = { ...window.maestro.playbooks, list: mockListPlaybooks };
+
+			const { result } = renderProcessor();
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Work on [REPO_URL]',
+						loopEnabled: false,
+						playbook,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
+			);
+			const pausedState = result.current.getBatchState('test-session-id');
+			expect(pausedState.error?.type).toBe('missing_parameters');
+			expect(pausedState.error?.message).toBe('Missing required parameters: REPO_URL');
+			expect(pausedState.error?.recoverable).toBe(true);
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockListPlaybooks).not.toHaveBeenCalled();
+
+			act(() => {
+				result.current.resumeAfterError('test-session-id');
+			});
+			await startPromise!;
+
+			expect(mockListPlaybooks).toHaveBeenCalledWith('owner-session-id');
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(mockOnSpawnAgent.mock.calls[0][1]).toContain('Work on https://example.com/repo');
+		});
+
+		it('proceeds without pausing when every required parameter has an answer', async () => {
+			mockDocUntilSpawned();
+			const { result } = renderProcessor();
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Work on [REPO_URL]',
+						loopEnabled: false,
+						playbook: { ...playbook, parameterValues: { REPO_URL: 'https://example.com/repo' } },
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(result.current.getBatchState('test-session-id').errorPaused).toBeFalsy();
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+	});
 });

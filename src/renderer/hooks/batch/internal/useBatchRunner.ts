@@ -69,10 +69,12 @@ import {
 	type DocumentRunOverrides,
 	type UseDocumentProcessorReturn,
 } from '../useDocumentProcessor';
+import type { PlaybookParamSet } from '../../../../shared/playbookParams';
 import {
-	resolvePlaybookParamSpecs,
-	type PlaybookParamSet,
-} from '../../../../shared/playbookParams';
+	missingParamsPauseError,
+	reloadRunPlaybookParams,
+	resolveRunPlaybookParams,
+} from './batchPlaybookParams';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -249,13 +251,12 @@ export function useBatchRunner({
 					: undefined;
 
 			// The launching playbook's parameters, resolved once per run: specs are
-			// per playbook, not per document. An ad-hoc run has none.
-			const playbookParams: PlaybookParamSet | undefined = config.playbook
-				? {
-						specs: resolvePlaybookParamSpecs(prompt, config.playbook.parameterOverlay),
-						values: config.playbook.parameterValues ?? {},
-					}
-				: undefined;
+			// per playbook, not per document. An ad-hoc run has none. Reassigned only
+			// when a Resume re-reads answers the user gave during a pause.
+			let playbookParams: PlaybookParamSet | undefined = resolveRunPlaybookParams(
+				config.playbook,
+				prompt
+			);
 
 			if (documents.length === 0) {
 				window.maestro.logger.log(
@@ -694,6 +695,11 @@ export function useBatchRunner({
 			// paths.
 			let activeHitlGateLine: number | null = null;
 
+			// True while the run is paused because a required playbook parameter has
+			// no answer. The next check re-reads the answers from the playbook store
+			// first, so a Resume after configuring the playbook continues.
+			let missingParamsPaused = false;
+
 			// Track working copies for reset-on-completion documents (original filename -> working copy path)
 			// Working copies are stored in /Runs/ and serve as audit logs
 			const workingCopies: Map<string, string> = new Map();
@@ -912,6 +918,39 @@ export function useBatchRunner({
 								}
 								if (remainingTasks === 0) break;
 							}
+						}
+
+						// Missing-required precondition: a required playbook parameter with no
+						// answer pauses the run before anything is spawned. It runs for every
+						// task, so it holds at the first document and at each document change.
+						// Same pause path as the HITL gate below, so the AutoRunErrorBanner's
+						// Resume / Abort applies; Resume re-reads the answers and re-checks.
+						if (playbookParams && config.playbook) {
+							if (missingParamsPaused) {
+								playbookParams = await reloadRunPlaybookParams(
+									config.playbook,
+									config.playbook.ownerSessionId ?? sessionId,
+									prompt,
+									playbookParams
+								);
+							}
+							const missingError = missingParamsPauseError(playbookParams, {
+								agentId: session.toolType,
+								sessionId,
+							});
+							if (missingError) {
+								if (!missingParamsPaused) {
+									window.maestro.logger.autorun(
+										`Auto Run paused: ${missingError.message}`,
+										session.name,
+										{ document: docEntry.filename, playbookId: config.playbook.id }
+									);
+								}
+								missingParamsPaused = true;
+								pauseBatchOnError(sessionId, missingError, docIndex);
+								continue;
+							}
+							missingParamsPaused = false;
 						}
 
 						// HITL gate detection: if the document has a HITL marker positioned

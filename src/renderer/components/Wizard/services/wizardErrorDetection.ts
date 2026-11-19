@@ -56,6 +56,7 @@ const ERROR_TITLES: Record<AgentErrorType, string> = {
 	session_not_found: 'Session Not Found',
 	hitl_gate: 'Review Required',
 	parameter_substitution: 'Playbook Not Configured',
+	missing_parameters: 'Playbook Not Configured',
 	unknown: 'Agent Error',
 };
 
@@ -71,6 +72,7 @@ const RECOVERY_HINTS: Record<AgentErrorType, string> = {
 	session_not_found: 'Start the wizard again with a fresh conversation.',
 	hitl_gate: 'The agent is waiting on a human review step. Try again once it is cleared.',
 	parameter_substitution: 'Give every playbook parameter a value, then try again.',
+	missing_parameters: 'Give every required playbook parameter a value, then try again.',
 	unknown: 'Try again. If the problem persists, check the debug logs below.',
 };
 

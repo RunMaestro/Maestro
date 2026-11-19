@@ -80,6 +80,7 @@ const NON_RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>
 	'session_not_found',
 	'hitl_gate',
 	'parameter_substitution',
+	'missing_parameters',
 	'token_exhaustion',
 	'agent_crashed',
 	'agent_not_installed',

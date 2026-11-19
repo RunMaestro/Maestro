@@ -953,6 +953,11 @@ export interface BatchRunConfig {
 /** The parts of a saved playbook an Auto Run needs to resolve its parameters. */
 export interface BatchRunPlaybook {
 	id: string;
+	/**
+	 * The agent whose playbook store holds this record. A worktree run executes
+	 * in another agent, so a Resume re-reads the answers from here.
+	 */
+	ownerSessionId?: string;
 	parameterOverlay?: PlaybookParamOverlay[];
 	parameterValues?: PlaybookParamValues;
 }
@@ -1071,6 +1076,7 @@ export type AgentErrorType =
 	| 'session_not_found' // Session was deleted or doesn't exist
 	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker
 	| 'parameter_substitution' // A playbook [NAME] token had no value, so the task was not sent
+	| 'missing_parameters' // A required playbook parameter has no answer, so the run has not started
 	| 'unknown'; // Unrecognized error
 
 /**

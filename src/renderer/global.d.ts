@@ -3216,23 +3216,10 @@ interface MaestroAPI {
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {
+		/** The agent's stored playbook records, parameter answers and overlay included. */
 		list: (sessionId: string) => Promise<{
 			success: boolean;
-			playbooks: Array<{
-				id: string;
-				name: string;
-				createdAt: number;
-				updatedAt: number;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}>;
+			playbooks: import('../shared/types').Playbook[];
 			error?: string;
 		}>;
 		create: (

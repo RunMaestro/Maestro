@@ -701,6 +701,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(loadedPlaybook && {
 							playbook: {
 								id: loadedPlaybook.id,
+								ownerSessionId: sessionId,
 								...(loadedPlaybook.parameterOverlay && {
 									parameterOverlay: loadedPlaybook.parameterOverlay,
 								}),

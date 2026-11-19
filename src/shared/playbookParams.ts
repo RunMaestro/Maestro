@@ -603,6 +603,14 @@ export function describeSurvivingParams(surviving: string[]): string {
 	return `Playbook parameters have no value: ${surviving.map((name) => `[${name}]`).join(', ')}. Configure them, then resume.`;
 }
 
+/**
+ * The message an engine reports when it refuses to start because a required
+ * parameter has no answer. Both engines and the CLI print this text.
+ */
+export function describeMissingRequiredParams(missing: PlaybookParamSpec[]): string {
+	return `Missing required parameters: ${missing.map((spec) => spec.name).join(', ')}`;
+}
+
 /** Text that is safe inside one markdown table cell: pipes escaped, line breaks kept as `<br>`. */
 function escapeTableCell(text: string): string {
 	return text.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
