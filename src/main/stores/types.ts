@@ -161,6 +161,9 @@ export interface MaestroSettings {
 	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
 	// the task uses the session's own agent (fully backward compatible).
 	utilityAgentId: string | null;
+	// The Primary Agent (#2050): default receiver of the user's input when a
+	// feature has no agent of its own. Null = none. See src/shared/primaryAgent.ts.
+	primaryAgentId: string | null;
 	// Optional model override for the utility agent. When null, the agent default model is used.
 	utilityModelId: string | null;
 	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's

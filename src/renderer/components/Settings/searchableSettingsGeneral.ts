@@ -21,6 +21,24 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		keywords: ['profile', 'about me', 'conductor', 'persona', 'bio'],
 	},
 	{
+		id: 'general-primary-agent',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Primary Agent',
+		description:
+			'The agent you treat as your right hand; features send to it when you name no agent, unless they have their own agent set',
+		keywords: [
+			'primary agent',
+			'primary',
+			'default agent',
+			'right hand',
+			'home agent',
+			'main agent',
+			'crown',
+			'none',
+		],
+	},
+	{
 		id: 'general-global-show-hotkey',
 		tab: 'general',
 		tabLabel: 'General',

@@ -9,6 +9,7 @@ import {
 	Server,
 	FolderTree,
 	ChevronRight,
+	Crown,
 	Pin,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
@@ -254,6 +255,7 @@ export const SessionItem = memo(function SessionItem({
 	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const isPrimaryAgent = useSettingsStore((s) => s.primaryAgentId === session.id);
 	// Phone: the row is the name and the status dot. The provider line, location
 	// pills, git count, bookmark toggle, and the Cue / startup-command glyphs all
 	// come off - on a 390px drawer they crowded the name down to a few characters,
@@ -455,6 +457,17 @@ export const SessionItem = memo(function SessionItem({
 								aria-label="Pinned manager agent"
 							>
 								<Pin size={11} style={{ color: theme.colors.accent }} />
+							</span>
+						)}
+						{/* Primary Agent marker (#2050): the app-level default receiver of
+						    the user's input. Settings > General > Primary Agent. */}
+						{isPrimaryAgent && (
+							<span
+								className="shrink-0 inline-flex"
+								title="Primary Agent"
+								aria-label="Primary Agent"
+							>
+								<Crown size={11} style={{ color: theme.colors.accent }} />
 							</span>
 						)}
 						<span

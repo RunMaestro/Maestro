@@ -1,6 +1,7 @@
 import { Keyboard, MessageSquare, PanelTop } from 'lucide-react';
 import type { QuickChatDefaultTab, QuickChatSettings } from '../../../../../../shared/quickChat';
 import { useSessionStore } from '../../../../../stores/sessionStore';
+import { useSettingsStore } from '../../../../../stores/settingsStore';
 import type { Theme } from '../../../../../types';
 import { KeyCaptureButton } from '../../../../ui/KeyCaptureButton';
 import { RadioGroup, type RadioOption } from '../../../../ui/RadioGroup';
@@ -44,6 +45,11 @@ export function QuickChatSection({
 		setQuickChatSettings({ ...quickChatSettings, ...patch });
 	const agentMissing =
 		quickChatSettings.agentId !== '' && !agents.some((a) => a.id === quickChatSettings.agentId);
+	const primaryAgentId = useSettingsStore((s) => s.primaryAgentId);
+	const primaryAgent = primaryAgentId ? agents.find((a) => a.id === primaryAgentId) : undefined;
+	const fallbackLabel = primaryAgent
+		? `The Primary Agent (${primaryAgent.name})`
+		: 'The agent active in the main window';
 
 	return (
 		<div data-setting-id="encore-quick-chat" className="space-y-5 pt-4">
@@ -73,7 +79,7 @@ export function QuickChatSection({
 					icon={MessageSquare}
 					description={
 						agentMissing
-							? 'The chosen agent no longer exists, so Quick Chat uses the agent active in the main window.'
+							? `The chosen agent no longer exists, so Quick Chat uses ${fallbackLabel.charAt(0).toLowerCase()}${fallbackLabel.slice(1)}.`
 							: 'The agent every new Quick Chat talks to. You can also switch from the window itself.'
 					}
 				>
@@ -87,7 +93,7 @@ export function QuickChatSection({
 						className="w-full p-2 rounded border bg-transparent outline-none text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
-						<option value="">The agent active in the main window</option>
+						<option value="">{fallbackLabel}</option>
 						{agents.map((agent) => (
 							<option key={agent.id} value={agent.id}>
 								{agent.name}

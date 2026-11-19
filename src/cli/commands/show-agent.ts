@@ -6,7 +6,7 @@
 
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { HistoryEntry, SessionInfo } from '../../shared/types';
-import { getSessionById, readHistory, readGroups } from '../services/storage';
+import { getSessionById, readHistory, readGroups, readPrimaryAgentId } from '../services/storage';
 import { formatAgentDetail, formatError } from '../output/formatter';
 import { readAgentSessionSettings } from '../services/agent-settings';
 import {
@@ -109,6 +109,8 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			// Where this agent's worktrees go (Git menu -> Configure Worktrees).
 			// Null when unset; `create-worktree` then picks the desktop default.
 			worktreeBasePath: agent.worktreeConfig?.basePath ?? null,
+			// Whether this is the Primary Agent (Settings > General > Primary Agent).
+			primary: agent.id === readPrimaryAgentId(),
 			// Editable per-agent settings (the Edit Agent modal fields) so callers
 			// can read the full config without parsing raw store files.
 			...readAgentSessionSettings(agent),
@@ -168,6 +170,8 @@ function peerAgentOutput(
 		groupName,
 		autoRunFolderPath: agent.autoRunFolderPath,
 		worktreeBasePath: worktree?.basePath ?? null,
+		// The Primary Agent is a setting of THIS machine; a peer's agent is never it.
+		primary: false,
 		// The record mirrors the persisted `Session` fields these settings are read from; every
 		// one is optional and read with a null default, so a field the host did not send is unset.
 		...readAgentSessionSettings(agent as unknown as SessionInfo),
