@@ -79,6 +79,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
 | Prompt Links                  | `Opt+Cmd+Shift+L`       | `Alt+Ctrl+Shift+L`        |
 | Configure Playbook            | `Opt+Cmd+Shift+P`       | `Alt+Ctrl+Shift+P`        |
+| Playbook Exchange             | `Opt+Cmd+Shift+E`       | `Alt+Ctrl+Shift+E`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |

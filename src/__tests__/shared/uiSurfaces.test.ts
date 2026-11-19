@@ -125,10 +125,23 @@ describe('describeSurfaceAccess', () => {
 	});
 
 	it('omits the hotkey clause when the surface has none', () => {
-		const marketplace = resolveUiSurface('marketplace')!;
-		const hint = describeSurfaceAccess(marketplace);
+		const about = resolveUiSurface('about')!;
+		expect(about.shortcutId).toBeUndefined();
+		const hint = describeSurfaceAccess(about);
 		expect(hint).not.toContain('press');
 		expect(hint).toContain('command palette');
+	});
+
+	it('names the Playbook Exchange with its hotkey, palette entry, and click path', () => {
+		const exchange = resolveUiSurface('marketplace')!;
+		expect(resolveUiSurface('playbooks')).toBe(exchange);
+		expect(resolveUiSurface('playbook-exchange')).toBe(exchange);
+		expect(exchange.shortcutId).toBe('openPlaybookExchange');
+		const keys = DEFAULT_SHORTCUTS[exchange.shortcutId!].keys;
+		const hint = describeSurfaceAccess(exchange, formatShortcutKeysFor(keys, false, '+'));
+		expect(hint).toContain('Playbook Exchange');
+		expect(hint).toContain('Alt+Ctrl+Shift+E');
+		expect(hint).toContain('search "Playbook Exchange"');
 	});
 });
 

@@ -10,6 +10,7 @@ The Playbook Exchange is a curated collection of community-contributed playbooks
 
 Open the Playbook Exchange using:
 
+- **Keyboard** - `Opt+Cmd+Shift+E` / `Alt+Ctrl+Shift+E` (the active agent needs an Auto Run folder)
 - **Quick Actions** - `Cmd+K` / `Ctrl+K` → search "Playbook Exchange"
 - **Auto Run panel** - Click the **Exchange** button (grid icon)
 

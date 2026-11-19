@@ -955,6 +955,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				computerHistory: shortcuts.computerHistory,
 				fuzzyFileSearch: shortcuts.fuzzyFileSearch,
 				editClipboardImage: shortcuts.editClipboardImage,
+				openPlaybookExchange: shortcuts.openPlaybookExchange,
 			},
 		}),
 		...buildActiveTabContextCommands({

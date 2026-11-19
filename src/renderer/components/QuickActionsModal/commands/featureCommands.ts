@@ -68,6 +68,7 @@ interface BuildFeatureCommandsArgs {
 		computerHistory?: QuickAction['shortcut'];
 		fuzzyFileSearch?: QuickAction['shortcut'];
 		editClipboardImage?: QuickAction['shortcut'];
+		openPlaybookExchange?: QuickAction['shortcut'];
 	};
 }
 
@@ -337,7 +338,8 @@ export function buildFeatureCommands({
 		commands.push({
 			id: 'openPlaybookExchange',
 			label: 'Playbook Exchange',
-			subtext: 'Browse and import community playbooks',
+			shortcut: shortcuts.openPlaybookExchange,
+			subtext: 'Browse and install community playbooks',
 			action: () => {
 				onOpenPlaybookExchange();
 				setQuickActionOpen(false);

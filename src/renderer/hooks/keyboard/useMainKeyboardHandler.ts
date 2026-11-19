@@ -1137,6 +1137,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				openPlaybookConfigure();
 				trackShortcut('openPlaybookConfigure');
+			} else if (ctx.isShortcut(e, 'openPlaybookExchange')) {
+				// The Exchange installs into the active agent's Auto Run folder and
+				// renders only when one is set, so without a folder the chord would
+				// leave an invisible modal open that pops up once a folder appears.
+				e.preventDefault();
+				if (selectActiveSession(useSessionStore.getState())?.autoRunFolderPath) {
+					getModalActions().setMarketplaceModalOpen(true);
+					trackShortcut('openPlaybookExchange');
+				}
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

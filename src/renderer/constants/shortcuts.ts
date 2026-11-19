@@ -241,6 +241,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Configure Playbook',
 		keys: ['Alt', 'Meta', 'Shift', 'p'],
 	},
+	// E for Exchange. Cmd+E, Cmd+Shift+E, and Opt+Cmd+E are taken, so the
+	// four-key chord is the free one in the E family.
+	openPlaybookExchange: {
+		id: 'openPlaybookExchange',
+		label: 'Playbook Exchange',
+		keys: ['Alt', 'Meta', 'Shift', 'e'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

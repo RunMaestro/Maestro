@@ -242,11 +242,12 @@ export const UI_SURFACES: UiSurface[] = [
 	},
 	{
 		id: 'marketplace',
-		label: 'Playbook Marketplace',
-		aliases: ['playbooks'],
+		label: 'Playbook Exchange',
+		aliases: ['playbooks', 'playbook-exchange'],
 		modal: 'marketplace',
-		description: 'Browse and import Auto Run playbooks from GitHub.',
-		commandPalette: 'Marketplace',
+		description: 'Browse and install Auto Run playbooks from GitHub.',
+		shortcutId: 'openPlaybookExchange',
+		commandPalette: 'Playbook Exchange',
 		click: 'the Auto Run tab in the Right Bar, then the marketplace icon',
 	},
 	{

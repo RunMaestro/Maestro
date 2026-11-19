@@ -3683,6 +3683,48 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('openPlaybookExchange shortcut', () => {
+		const pressExchangeChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'E',
+						code: 'KeyE',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		const mountWithAgent = (autoRunFolderPath?: string) => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 'agent-active', autoRunFolderPath },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openPlaybookExchange',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+		};
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('marketplace');
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		});
+
+		it('opens the Playbook Exchange on Opt+Cmd+Shift+E', () => {
+			mountWithAgent('/project/.maestro/playbooks');
+			pressExchangeChord();
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(true);
+		});
+
+		it('stays closed when the active agent has no Auto Run folder', () => {
+			mountWithAgent(undefined);
+			pressExchangeChord();
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(false);
+		});
+	});
+
 	describe('openNotificationCenter shortcut', () => {
 		// Unbound by default, so the test binds it through isShortcut.
 		const press = () =>
