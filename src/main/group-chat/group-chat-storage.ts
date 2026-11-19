@@ -36,9 +36,22 @@ const bootstrapStore = new Store<BootstrapSettings>({
  * Get the group chats directory path.
  * Uses custom sync path if configured, otherwise falls back to Electron's userData.
  */
-function getGroupChatsDir(): string {
+export function getGroupChatsDir(): string {
 	const customPath = bootstrapStore.get('customSyncPath');
 	return path.join(customPath || app.getPath('userData'), GROUP_CHATS_DIR_NAME);
+}
+
+/** Convert a group-chat-owned file name into one safe on all supported filesystems. */
+export function sanitizeGroupChatFileName(name: string): string {
+	const sanitized = name
+		.replace(/[\x00-\x1f<>:"/\\|?*]/g, '-')
+		.trim()
+		.replace(/[. ]+$/g, '')
+		.slice(0, 240);
+	const safeName = sanitized || 'participant';
+	return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(safeName)
+		? `_${safeName}`
+		: safeName;
 }
 
 const store = createGroupChatStore({ groupChatsDir: getGroupChatsDir, generateId: uuidv4 });

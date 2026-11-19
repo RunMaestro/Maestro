@@ -75,8 +75,9 @@ const cache = new Map<string, GroupChatQueueState>();
  */
 const inFlight = new Set<string>();
 
-function queueFilePath(groupChatId: string): string {
-	return path.join(getGroupChatDir(groupChatId), 'queue.json');
+function queueFilePath(groupChatId: string): string | undefined {
+	const groupChatDir = getGroupChatDir(groupChatId);
+	return groupChatDir ? path.join(groupChatDir, 'queue.json') : undefined;
 }
 
 /**
@@ -97,6 +98,11 @@ async function loadQueue(groupChatId: string): Promise<GroupChatQueueState> {
 	if (cached) return cached;
 
 	const filePath = queueFilePath(groupChatId);
+	if (!filePath) {
+		const empty = emptyQueueState();
+		cache.set(groupChatId, empty);
+		return empty;
+	}
 	if (!existsSync(filePath)) {
 		const empty = emptyQueueState();
 		cache.set(groupChatId, empty);
@@ -252,8 +258,13 @@ async function mutate(
 		// The chat folder normally exists, but the queue must not be the thing that
 		// makes an unrelated action fail: `stopAll` pauses the queue, so a missing
 		// directory here would turn Stop All into an error the user cannot act on.
-		await mkdir(path.dirname(queueFilePath(groupChatId)), { recursive: true });
-		await atomicWriteJson(queueFilePath(groupChatId), updated);
+		const filePath = queueFilePath(groupChatId);
+		if (!filePath) {
+			cache.set(groupChatId, updated);
+			return { state: updated, changed: true };
+		}
+		await mkdir(path.dirname(filePath), { recursive: true });
+		await atomicWriteJson(filePath, updated);
 		return { state: updated, changed: true };
 	});
 	if (result.changed) deps?.broadcast(groupChatId, result.state);
