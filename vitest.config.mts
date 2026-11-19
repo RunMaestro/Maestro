@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { rendererNodeTests } from './vitest.renderer-node-tests.mts';
 
 // Directories excluded from the default unit-test run (have their own configs).
 const sharedExclude = [
@@ -88,9 +89,8 @@ export default defineConfig({
 		testTimeout: 10000,
 		hookTimeout: 10000,
 		teardownTimeout: 5000,
-		// Split into two projects so the ~360 backend suites skip the expensive
-		// jsdom environment and run under plain node (dramatically faster); only
-		// DOM-dependent suites pay for jsdom.
+		// Only DOM-dependent suites pay for jsdom. Backend and explicitly selected
+		// renderer suites run in plain Node with no browser setup.
 		projects: [
 			{
 				extends: true,
@@ -102,7 +102,7 @@ export default defineConfig({
 					// intermittently SEGFAULTS the run (native addons loaded from
 					// multiple worker threads in one process are not context-aware).
 					include: ['src/**/*.{test,spec}.tsx', ...jsdomOnlyTs],
-					exclude: sharedExclude,
+					exclude: [...sharedExclude, ...rendererNodeTests],
 				},
 			},
 			{
@@ -113,6 +113,15 @@ export default defineConfig({
 					// include matches .ts only, so .tsx files can never land here.
 					include: ['src/**/*.{test,spec}.ts'],
 					exclude: [...sharedExclude, ...jsdomOnlyTs],
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'node-renderer',
+					environment: 'node',
+					include: rendererNodeTests,
+					exclude: sharedExclude,
 				},
 			},
 		],

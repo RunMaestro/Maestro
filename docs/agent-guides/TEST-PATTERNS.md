@@ -27,6 +27,12 @@ teardownTimeout: 5000;
 exclude: ['src/__tests__/integration/**', 'src/__tests__/e2e/**', 'src/__tests__/performance/**'];
 ```
 
+Tests that need the DOM or renderer setup mocks stay in `jsdom`. The
+`node-renderer` project runs only files listed in `vitest.renderer-node-tests.mts`.
+Add a file there only after confirming its tests pass without the DOM or renderer
+setup mocks. Both Node projects keep per-file process isolation. To run both,
+use `--project 'node*'`.
+
 Coverage uses `v8` provider with `text`, `text-summary`, `json`, and `html` reporters.
 
 ### Running Tests
@@ -41,6 +47,10 @@ For parameterized tests that need `TestContext` (for example, runtime `skip()` w
 For real POSIX-shell fixtures under Git for Windows, translate Git drive paths relative to the native fixture root and join them to the shell's `pwd -P` root. Do not assume `/c/...`: temporary directories can appear under `/tmp`.
 
 For spawn-parity checks, freeze only `Date` across compared launches; generated temp-file timestamps are not stable across real-clock calls. Compare observable spawn payloads, not incidental filename formats.
+
+For mocked transports, advance Vitest's fake clock through real pacing and retry
+logic instead of waiting for production backoff intervals. Fake both the timer
+and the clock that computes the deadline.
 
 ### maestro-p Live Suite
 
