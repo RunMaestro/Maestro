@@ -231,3 +231,172 @@ export function parsePlaybookParameterForm(prompt: string): PlaybookParamSpec[] 
 
 	return specs;
 }
+
+/**
+ * A manifest's typed declaration for one parameter (`parameters[]` in the
+ * Exchange manifest). It owns only what prose cannot express. There is
+ * deliberately no `default` and no `help`: prose owns those, so the two
+ * representations own disjoint fields and cannot contradict each other.
+ */
+export interface PlaybookParamOverlay {
+	name: string;
+	type?: PlaybookParamType;
+	required?: boolean;
+	options?: string[];
+	pattern?: string;
+	min?: number;
+	max?: number;
+}
+
+/** Copy each field the overlay declares onto the spec, replacing the prose value. */
+function applyOverlayFields(spec: PlaybookParamSpec, overlay: PlaybookParamOverlay): void {
+	if (overlay.type !== undefined) spec.type = overlay.type;
+	if (overlay.required !== undefined) spec.required = overlay.required;
+	if (overlay.options !== undefined) spec.options = [...overlay.options];
+	if (overlay.pattern !== undefined) spec.pattern = overlay.pattern;
+	if (overlay.min !== undefined) spec.min = overlay.min;
+	if (overlay.max !== undefined) spec.max = overlay.max;
+}
+
+/**
+ * Merge prose specs with a manifest overlay, as a union keyed by name.
+ *
+ * - a prose name with no overlay entry stays as parsed (an untyped string);
+ *   half-migrated is the normal steady state, so it is never dropped
+ * - an overlay name with no prose entry is a declaration too: it is surfaced
+ *   with `label = name`, no default, and `required` unless the overlay says
+ *   otherwise (no default means no value)
+ * - when both exist, the overlay's fields win for exactly the fields it
+ *   declares, and `source` becomes `'both'`
+ *
+ * Prose order comes first, then overlay-only names in overlay order. Overlay
+ * entries with an illegal name, and repeats of a name, are ignored (the first
+ * wins). Inputs are not mutated.
+ */
+export function mergePlaybookParams(
+	prose: PlaybookParamSpec[],
+	overlay: PlaybookParamOverlay[]
+): PlaybookParamSpec[] {
+	const overlayByName = new Map<string, PlaybookParamOverlay>();
+	for (const entry of overlay) {
+		if (!PLAYBOOK_PARAM_NAME_REGEX.test(entry.name) || overlayByName.has(entry.name)) continue;
+		overlayByName.set(entry.name, entry);
+	}
+
+	const merged: PlaybookParamSpec[] = [];
+	const seen = new Set<string>();
+	for (const spec of prose) {
+		if (seen.has(spec.name)) continue;
+		seen.add(spec.name);
+		const copy: PlaybookParamSpec = { ...spec };
+		if (spec.options) copy.options = [...spec.options];
+		const entry = overlayByName.get(spec.name);
+		if (entry) {
+			applyOverlayFields(copy, entry);
+			copy.source = 'both';
+		}
+		merged.push(copy);
+	}
+
+	for (const entry of overlayByName.values()) {
+		if (seen.has(entry.name)) continue;
+		seen.add(entry.name);
+		const spec: PlaybookParamSpec = {
+			name: entry.name,
+			label: entry.name,
+			type: 'string',
+			required: true,
+			source: 'overlay',
+		};
+		applyOverlayFields(spec, entry);
+		merged.push(spec);
+	}
+
+	return merged;
+}
+
+/** The tokens of a `multi-enum` value: comma-separated, trimmed, blanks dropped. */
+export function splitMultiEnumValue(value: string): string[] {
+	return value
+		.split(',')
+		.map((token) => token.trim())
+		.filter(Boolean);
+}
+
+/**
+ * Check one answer against its spec. Returns a human-readable message, or
+ * `null` when the value is acceptable.
+ *
+ * - a blank value fails only a required spec
+ * - a placeholder ({@link isPlaceholderDefault}) is never a value
+ * - `url`: parses with `new URL()` and is http(s)
+ * - `number`: finite, and within `min` / `max` when declared
+ * - `multi-enum`: every comma-separated token is one of `options`
+ *   (case-sensitive); unchecked when the spec declares no options
+ * - `pattern`: the whole (trimmed) value must match
+ */
+export function validatePlaybookParamValue(spec: PlaybookParamSpec, value: string): string | null {
+	const trimmed = value.trim();
+	if (trimmed === '') {
+		return spec.required ? `${spec.name} is required.` : null;
+	}
+	if (isPlaceholderDefault(trimmed)) {
+		return `${spec.name} is still a placeholder: replace "${trimmed}" with a real value.`;
+	}
+
+	switch (spec.type) {
+		case 'url': {
+			let url: URL;
+			try {
+				url = new URL(trimmed);
+			} catch {
+				return `${spec.name} must be a URL, such as https://example.com.`;
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				return `${spec.name} must be an http or https URL.`;
+			}
+			break;
+		}
+		case 'number': {
+			const number = Number(trimmed);
+			if (!Number.isFinite(number)) {
+				return `${spec.name} must be a number.`;
+			}
+			if (spec.min !== undefined && number < spec.min) {
+				return `${spec.name} must be at least ${spec.min}.`;
+			}
+			if (spec.max !== undefined && number > spec.max) {
+				return `${spec.name} must be at most ${spec.max}.`;
+			}
+			break;
+		}
+		case 'multi-enum': {
+			if (!spec.options || spec.options.length === 0) break;
+			const tokens = splitMultiEnumValue(trimmed);
+			if (tokens.length === 0) {
+				return spec.required ? `${spec.name} is required.` : null;
+			}
+			const unknown = tokens.filter((token) => !spec.options!.includes(token));
+			if (unknown.length > 0) {
+				return `${spec.name} does not allow ${unknown.map((token) => `"${token}"`).join(', ')}. Choose from: ${spec.options.join(', ')}.`;
+			}
+			break;
+		}
+		case 'string':
+			break;
+	}
+
+	if (spec.pattern !== undefined) {
+		let regex: RegExp;
+		try {
+			regex = new RegExp(`^(?:${spec.pattern})$`);
+		} catch {
+			return `${spec.name} declares an invalid pattern: ${spec.pattern}`;
+		}
+		if (!regex.test(trimmed)) {
+			return `${spec.name} must match the pattern ${spec.pattern}.`;
+		}
+	}
+
+	return null;
+}

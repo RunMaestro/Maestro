@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
 	PLACEHOLDER_PR_URL,
 	isPlaceholderDefault,
+	mergePlaybookParams,
 	parsePlaybookParameterForm,
+	splitMultiEnumValue,
+	validatePlaybookParamValue,
+	type PlaybookParamOverlay,
 	type PlaybookParamSpec,
 } from '../../shared/playbookParams';
 import {
@@ -247,5 +251,216 @@ describe('parsePlaybookParameterForm', () => {
 			{ name: 'FILTER', type: 'string', required: true, source: 'prose', help: 'Filter' },
 			{ name: 'TAG', type: 'string', required: false, source: 'prose', help: 'Tag' },
 		]);
+	});
+});
+
+describe('mergePlaybookParams', () => {
+	const prose: PlaybookParamSpec[] = [
+		{
+			name: 'PR_URL',
+			type: 'string',
+			required: true,
+			source: 'prose',
+			help: 'The pull request to review',
+		},
+		{
+			name: 'MAX_ITEMS',
+			type: 'string',
+			required: false,
+			source: 'prose',
+			help: 'How many items',
+			default: '25',
+			options: ['25', 'all'],
+		},
+		{
+			name: 'AUTO_FIX_SEVERITY',
+			type: 'string',
+			required: false,
+			source: 'prose',
+			help: 'Severities to fix',
+			default: 'CRITICAL,HIGH',
+		},
+	];
+
+	it('keeps prose specs untouched when there is no overlay', () => {
+		const merged = mergePlaybookParams(prose, []);
+		expect(merged).toEqual(prose);
+		expect(merged[1]).not.toBe(prose[1]);
+		expect(merged[1].options).not.toBe(prose[1].options);
+	});
+
+	it('lets the overlay win for exactly the fields it declares', () => {
+		const overlay: PlaybookParamOverlay[] = [
+			{ name: 'PR_URL', type: 'url' },
+			{
+				name: 'AUTO_FIX_SEVERITY',
+				type: 'multi-enum',
+				options: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+			},
+			{ name: 'MAX_ITEMS', required: true, min: 1, max: 500, pattern: '[0-9]+|all' },
+		];
+		const merged = mergePlaybookParams(prose, overlay);
+		expect(merged).toEqual([
+			{
+				name: 'PR_URL',
+				type: 'url',
+				required: true,
+				source: 'both',
+				help: 'The pull request to review',
+			},
+			{
+				name: 'MAX_ITEMS',
+				type: 'string',
+				required: true,
+				source: 'both',
+				help: 'How many items',
+				default: '25',
+				options: ['25', 'all'],
+				pattern: '[0-9]+|all',
+				min: 1,
+				max: 500,
+			},
+			{
+				name: 'AUTO_FIX_SEVERITY',
+				type: 'multi-enum',
+				required: false,
+				source: 'both',
+				help: 'Severities to fix',
+				default: 'CRITICAL,HIGH',
+				options: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+			},
+		]);
+		// The overlay's options array is copied, not shared.
+		expect(merged[2].options).not.toBe(overlay[1].options);
+		// Inputs are not mutated.
+		expect(prose[0].type).toBe('string');
+		expect(prose[0].source).toBe('prose');
+	});
+
+	it('surfaces an overlay-only name with label = name and no default', () => {
+		const merged = mergePlaybookParams(prose.slice(0, 1), [
+			{ name: 'TARGET_BRANCH', pattern: '[A-Za-z0-9._/-]+' },
+			{ name: 'BATCH_SIZE', type: 'number', required: false, min: 1 },
+		]);
+		expect(merged.slice(1)).toEqual([
+			{
+				name: 'TARGET_BRANCH',
+				label: 'TARGET_BRANCH',
+				type: 'string',
+				required: true,
+				source: 'overlay',
+				pattern: '[A-Za-z0-9._/-]+',
+			},
+			{
+				name: 'BATCH_SIZE',
+				label: 'BATCH_SIZE',
+				type: 'number',
+				required: false,
+				source: 'overlay',
+				min: 1,
+			},
+		]);
+		expect(merged[1]).not.toHaveProperty('default');
+	});
+
+	it('ignores overlay entries with an illegal or repeated name', () => {
+		const merged = mergePlaybookParams(
+			[],
+			[
+				{ name: 'lowercase', type: 'url' },
+				{ name: 'X', type: 'url' },
+				{ name: 'REPORT_URL', type: 'url' },
+				{ name: 'REPORT_URL', type: 'number' },
+			]
+		);
+		expect(merged.map((spec) => [spec.name, spec.type])).toEqual([['REPORT_URL', 'url']]);
+	});
+
+	it('merges the parsed Research/Corpus form with a partial overlay', () => {
+		const parsed = parsePlaybookParameterForm(RESEARCH_CORPUS_PROMPT);
+		const merged = mergePlaybookParams(parsed, [{ name: 'MAX_LOOPS_HINT', type: 'number' }]);
+		expect(merged.slice(0, parsed.length).map((spec) => spec.source)).toEqual(
+			parsed.map(() => 'prose')
+		);
+		expect(merged[merged.length - 1]).toMatchObject({ name: 'MAX_LOOPS_HINT', source: 'overlay' });
+	});
+});
+
+describe('splitMultiEnumValue', () => {
+	it('splits on commas, trims, and drops blanks', () => {
+		expect(splitMultiEnumValue(' CRITICAL , HIGH,,')).toEqual(['CRITICAL', 'HIGH']);
+		expect(splitMultiEnumValue('')).toEqual([]);
+	});
+});
+
+describe('validatePlaybookParamValue', () => {
+	const spec = (overrides: Partial<PlaybookParamSpec>): PlaybookParamSpec => ({
+		name: 'PARAM',
+		type: 'string',
+		required: false,
+		source: 'overlay',
+		...overrides,
+	});
+
+	it('fails a blank value only when the spec is required', () => {
+		expect(validatePlaybookParamValue(spec({ required: true }), '  ')).toBe('PARAM is required.');
+		expect(validatePlaybookParamValue(spec({ type: 'number', min: 1 }), '')).toBeNull();
+	});
+
+	it('accepts any string, and rejects a leftover UNSET sentinel', () => {
+		expect(validatePlaybookParamValue(spec({}), 'anything at all')).toBeNull();
+		expect(validatePlaybookParamValue(spec({}), '<UNSET - describe it>')).toMatch(/placeholder/);
+	});
+
+	it('validates url values, rejecting the PR_URL placeholder', () => {
+		const prUrl = spec({ name: 'PR_URL', type: 'url', required: true });
+		expect(validatePlaybookParamValue(prUrl, 'https://github.com/acme/app/pull/12')).toBeNull();
+		expect(validatePlaybookParamValue(prUrl, 'http://localhost:3000/x')).toBeNull();
+		expect(validatePlaybookParamValue(prUrl, PLACEHOLDER_PR_URL)).toMatch(
+			/PR_URL is still a placeholder/
+		);
+		expect(validatePlaybookParamValue(prUrl, 'github.com/acme/app/pull/12')).toMatch(
+			/must be a URL/
+		);
+		expect(validatePlaybookParamValue(prUrl, 'ftp://example.com/file')).toMatch(/http or https/);
+		expect(validatePlaybookParamValue(prUrl, 'javascript:alert(1)')).toMatch(/http or https/);
+	});
+
+	it('validates number values against min and max', () => {
+		const loops = spec({ name: 'MAX_LOOPS', type: 'number', min: 1, max: 30 });
+		expect(validatePlaybookParamValue(loops, '30')).toBeNull();
+		expect(validatePlaybookParamValue(loops, ' 1 ')).toBeNull();
+		expect(validatePlaybookParamValue(loops, '2.5')).toBeNull();
+		expect(validatePlaybookParamValue(loops, 'ten')).toBe('MAX_LOOPS must be a number.');
+		expect(validatePlaybookParamValue(loops, 'Infinity')).toBe('MAX_LOOPS must be a number.');
+		expect(validatePlaybookParamValue(loops, '0')).toBe('MAX_LOOPS must be at least 1.');
+		expect(validatePlaybookParamValue(loops, '300')).toBe('MAX_LOOPS must be at most 30.');
+	});
+
+	it('validates multi-enum tokens case-sensitively against options', () => {
+		const severity = spec({
+			name: 'AUTO_FIX_SEVERITY',
+			type: 'multi-enum',
+			options: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+		});
+		expect(validatePlaybookParamValue(severity, 'CRITICAL, HIGH')).toBeNull();
+		expect(validatePlaybookParamValue(severity, 'Critical,SEV1')).toBe(
+			'AUTO_FIX_SEVERITY does not allow "Critical", "SEV1". Choose from: CRITICAL, HIGH, MEDIUM, LOW.'
+		);
+		expect(validatePlaybookParamValue({ ...severity, required: true }, ' , ')).toBe(
+			'AUTO_FIX_SEVERITY is required.'
+		);
+		// With no declared options there is nothing to enforce.
+		expect(validatePlaybookParamValue(spec({ type: 'multi-enum' }), 'anything')).toBeNull();
+	});
+
+	it('applies pattern as a full match', () => {
+		const branch = spec({ name: 'BRANCH', pattern: 'feat/[a-z-]+' });
+		expect(validatePlaybookParamValue(branch, 'feat/new-thing')).toBeNull();
+		expect(validatePlaybookParamValue(branch, 'xfeat/new-thing')).toBe(
+			'BRANCH must match the pattern feat/[a-z-]+.'
+		);
+		expect(validatePlaybookParamValue(spec({ pattern: 'a|b' }), 'ab')).toMatch(/must match/);
+		expect(validatePlaybookParamValue(spec({ pattern: '(' }), 'x')).toMatch(/invalid pattern/);
 	});
 });
