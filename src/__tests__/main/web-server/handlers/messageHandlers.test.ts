@@ -341,6 +341,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			},
 			importedDocs: [],
 			importedAssets: [],
+			failedDocs: [],
+			failedAssets: [],
 		}),
 		listDesktopSessions: vi.fn().mockReturnValue([]),
 		getSessionHistory: vi.fn().mockReturnValue(null),
@@ -5382,6 +5384,9 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('marketplace_import_playbook_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			// A partial import's failure lists travel to the client with the result.
+			expect(response.failedDocs).toEqual([]);
+			expect(response.failedAssets).toEqual([]);
 		});
 
 		it('rejects marketplace_import_playbook missing required fields via typed result', () => {

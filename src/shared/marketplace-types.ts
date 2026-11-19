@@ -243,6 +243,32 @@ export interface ImportPlaybookResponse {
 	importedDocs: string[];
 	/** List of imported asset filenames (from assets/ subfolder) */
 	importedAssets: string[];
+	/**
+	 * Documents the manifest lists that did not import (fetch or write failed).
+	 * Non-empty means the import was partial: the playbook record omits them.
+	 */
+	failedDocs: string[];
+	/** Assets (listed or discovered) that did not import (fetch or write failed) */
+	failedAssets: string[];
+}
+
+/**
+ * One line naming what a partial import left behind, or `null` when nothing
+ * failed. Shared by every surface that reports an import (toast, CLI).
+ */
+export function describeMarketplaceImportFailures(
+	result: Pick<Partial<ImportPlaybookResponse>, 'failedDocs' | 'failedAssets'>
+): string | null {
+	const parts: string[] = [];
+	const failedDocs = result.failedDocs ?? [];
+	const failedAssets = result.failedAssets ?? [];
+	if (failedDocs.length > 0) {
+		parts.push(`${failedDocs.length === 1 ? 'document' : 'documents'} ${failedDocs.join(', ')}`);
+	}
+	if (failedAssets.length > 0) {
+		parts.push(`${failedAssets.length === 1 ? 'asset' : 'assets'} ${failedAssets.join(', ')}`);
+	}
+	return parts.length > 0 ? `Not imported: ${parts.join('; ')}` : null;
 }
 
 /**

@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
-import type {
-	MarketplaceImportPlaybookResult,
-	MarketplacePlaybook,
+import {
+	describeMarketplaceImportFailures,
+	type MarketplaceImportPlaybookResult,
+	type MarketplacePlaybook,
 } from '../../../../shared/marketplace-types';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -49,6 +50,15 @@ export function usePlaybookImportActions({
 		);
 
 		if (result.success) {
+			const failures = describeMarketplaceImportFailures(result);
+			if (failures) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Playbook imported partially',
+					message: failures,
+					dismissible: true,
+				});
+			}
 			onImportComplete(targetFolderName);
 			onClose();
 		} else {

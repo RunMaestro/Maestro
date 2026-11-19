@@ -22,6 +22,7 @@ import {
 import { rebaseAssetReferences } from '../../../../main/services/marketplace-service';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { logger } from '../../../../main/utils/logger';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -89,9 +90,21 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock global fetch
+// Mock global fetch. GitHub contents API requests (remote asset discovery) go to
+// their own mock, which answers 404 (no assets folder) unless a test says
+// otherwise, so the ordered document and asset mocks below stay in call order.
+const GITHUB_CONTENTS_API = 'https://api.github.com/repos/RunMaestro/Maestro-Playbooks/contents/';
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const mockContentsFetch = vi.fn();
+global.fetch = ((url: string, init?: RequestInit) =>
+	String(url).startsWith(GITHUB_CONTENTS_API)
+		? mockContentsFetch(url, init)
+		: mockFetch(url, init)) as typeof fetch;
+
+/** A contents API listing of `assets/`, as GitHub returns it. */
+function contentsListing(entries: Array<{ name: string; type: string }>) {
+	return { ok: true, status: 200, statusText: 'OK', json: () => Promise.resolve(entries) };
+}
 
 describe('marketplace IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -203,6 +216,8 @@ describe('marketplace IPC handlers', () => {
 		vi.mocked(fs.readdir).mockReset();
 		vi.mocked(fs.stat).mockReset();
 		vi.mocked(fs.readdir).mockRejectedValue({ code: 'ENOENT' });
+		mockContentsFetch.mockReset();
+		mockContentsFetch.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
 
 		// Register handlers
 		registerMarketplaceHandlers(mockDeps);
@@ -1233,6 +1248,9 @@ describe('marketplace IPC handlers', () => {
 			expect(result.playbook.documents.map((d: { filename: string }) => d.filename)).toEqual([
 				'Partial/phase-2',
 			]);
+			// A partial import is reported in the result, not only logged.
+			expect(result.failedDocs).toEqual(['phase-1']);
+			expect(result.failedAssets).toEqual([]);
 		});
 
 		// Coderabbit feedback: the per-doc loop is intentionally tolerant so
@@ -1688,9 +1706,221 @@ describe('marketplace IPC handlers', () => {
 					'session-123'
 				);
 
-				// Should still succeed with partial assets
+				// Should still succeed with partial assets, and say which one failed
 				expect(result.success).toBe(true);
 				expect(result.importedAssets).toEqual(['logo.png']);
+				expect(result.failedAssets).toEqual(['config.yaml']);
+				expect(result.failedDocs).toEqual([]);
+			});
+
+			describe('remote asset discovery (GitHub contents API)', () => {
+				/** Import the one-document playbook `entry` from a cached official manifest. */
+				async function importRemote(
+					entry: MarketplaceManifest['playbooks'][number],
+					sshRemoteId?: string
+				) {
+					vi.mocked(fs.readFile)
+						.mockResolvedValueOnce(
+							JSON.stringify({
+								fetchedAt: Date.now(),
+								manifest: { ...sampleManifest, playbooks: [entry] },
+							})
+						)
+						.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+						.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file
+					vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+					vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+					mockMkdirRemote.mockResolvedValue({ success: true });
+					mockWriteFileRemote.mockResolvedValue({ success: true });
+					const handler = handlers.get('marketplace:importPlaybook');
+					return handler!(
+						{} as any,
+						entry.id,
+						'Discovered',
+						sshRemoteId ? '/remote/autorun' : '/autorun',
+						'session-123',
+						sshRemoteId
+					);
+				}
+
+				const bareRemotePlaybook = {
+					...sampleManifest.playbooks[0],
+					id: 'message-bus',
+					path: 'Assistants/Message-Bus',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+				} as MarketplaceManifest['playbooks'][number];
+
+				it('installs the files the assets folder holds when the manifest lists none', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([
+							{ name: 'maestro_message_scanner.py', type: 'file' },
+							{ name: 'cue-subscription.yaml', type: 'file' },
+							{ name: 'nested', type: 'dir' },
+						])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('print(1)').buffer),
+						})
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('event: time').buffer),
+						});
+
+					const result = await importRemote(bareRemotePlaybook);
+
+					expect(mockContentsFetch).toHaveBeenCalledTimes(1);
+					expect(mockContentsFetch).toHaveBeenCalledWith(
+						'https://api.github.com/repos/RunMaestro/Maestro-Playbooks/contents/Assistants/Message-Bus/assets?ref=main',
+						expect.objectContaining({
+							headers: expect.objectContaining({ Accept: 'application/vnd.github+json' }),
+						})
+					);
+					// Each discovered file downloads through the existing raw asset fetch.
+					expect(mockFetch).toHaveBeenCalledWith(
+						'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/Assistants/Message-Bus/assets/maestro_message_scanner.py',
+						expect.anything()
+					);
+					expect(fs.writeFile).toHaveBeenCalledWith(
+						path.join('/autorun', 'Discovered', 'assets', 'cue-subscription.yaml'),
+						expect.any(Buffer)
+					);
+					// The directory entry is not an asset.
+					expect(result.importedAssets).toEqual([
+						'maestro_message_scanner.py',
+						'cue-subscription.yaml',
+					]);
+					expect(result.failedAssets).toEqual([]);
+				});
+
+				it('unions discovered files with the manifest list without duplicates', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([
+							{ name: 'logo.png', type: 'file' },
+							{ name: 'extra.json', type: 'file' },
+							{ name: '..', type: 'file' },
+						])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValue({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(sampleManifest.playbooks[2]);
+
+					// Manifest order first, then discovered names; an unsafe name is dropped.
+					expect(result.importedAssets).toEqual(['config.yaml', 'logo.png', 'extra.json']);
+				});
+
+				it('treats a 404 as no assets folder and creates none', async () => {
+					mockContentsFetch.mockResolvedValueOnce({
+						ok: false,
+						status: 404,
+						statusText: 'Not Found',
+					});
+					mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main') });
+
+					const result = await importRemote(bareRemotePlaybook);
+
+					expect(result.success).toBe(true);
+					expect(result.importedAssets).toEqual([]);
+					expect(result.failedAssets).toEqual([]);
+					expect(mockFetch).toHaveBeenCalledTimes(1);
+					const assetsFolderCreated = vi
+						.mocked(fs.mkdir)
+						.mock.calls.some((call) => String(call[0]).endsWith(path.join('Discovered', 'assets')));
+					expect(assetsFolderCreated).toBe(false);
+					expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+						expect.stringContaining('Could not list the remote assets'),
+						expect.anything(),
+						expect.anything()
+					);
+				});
+
+				it('warns on a 403 rate limit and falls back to the manifest asset list', async () => {
+					mockContentsFetch.mockResolvedValueOnce({
+						ok: false,
+						status: 403,
+						statusText: 'Forbidden',
+					});
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValue({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(sampleManifest.playbooks[2]);
+
+					expect(result.success).toBe(true);
+					expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
+					expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+						expect.stringContaining('GitHub API rate limit, HTTP 403'),
+						'[Marketplace]',
+						undefined
+					);
+				});
+
+				it('falls back to the manifest list when the listing request throws', async () => {
+					mockContentsFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValue({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(sampleManifest.playbooks[2]);
+
+					expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
+				});
+
+				it('reports a discovered asset that fails to download in failedAssets', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([
+							{ name: 'scanner.py', type: 'file' },
+							{ name: 'cue.yaml', type: 'file' },
+						])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' })
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(bareRemotePlaybook);
+
+					expect(result.success).toBe(true);
+					expect(result.importedAssets).toEqual(['cue.yaml']);
+					expect(result.failedAssets).toEqual(['scanner.py']);
+				});
+
+				it('discovers assets for an SSH import and writes them on the remote host', async () => {
+					mockContentsFetch.mockResolvedValueOnce(
+						contentsListing([{ name: 'scanner.py', type: 'file' }])
+					);
+					mockFetch
+						.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Main Doc') })
+						.mockResolvedValueOnce({
+							ok: true,
+							arrayBuffer: () => Promise.resolve(Buffer.from('x').buffer),
+						});
+
+					const result = await importRemote(bareRemotePlaybook, 'ssh-remote-1');
+
+					expect(mockWriteFileRemote).toHaveBeenCalledWith(
+						'/remote/autorun/Discovered/assets/scanner.py',
+						expect.any(Buffer),
+						sampleSshRemote
+					);
+					expect(result.importedAssets).toEqual(['scanner.py']);
+				});
 			});
 
 			it('should import assets via SSH for remote sessions', async () => {

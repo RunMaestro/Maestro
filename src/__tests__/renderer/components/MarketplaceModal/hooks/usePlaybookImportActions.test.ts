@@ -69,6 +69,30 @@ describe('usePlaybookImportActions', () => {
 		);
 		expect(result.onImportComplete).toHaveBeenCalledWith('target-folder');
 		expect(result.onClose).toHaveBeenCalledTimes(1);
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('warns with a sticky toast naming what a partial import left behind', async () => {
+		const result = setup({
+			importPlaybook: vi.fn().mockResolvedValue({
+				success: true,
+				failedDocs: ['Agent-Prompt'],
+				failedAssets: ['scanner.py', 'cue.yaml'],
+			}),
+		});
+
+		await act(async () => {
+			await result.result.current.handleImport();
+		});
+
+		expect(notifyToastMock).toHaveBeenCalledWith({
+			color: 'yellow',
+			title: 'Playbook imported partially',
+			message: 'Not imported: document Agent-Prompt; assets scanner.py, cue.yaml',
+			dismissible: true,
+		});
+		expect(result.onImportComplete).toHaveBeenCalledWith('target-folder');
+		expect(result.onClose).toHaveBeenCalledTimes(1);
 	});
 
 	it('forwards sshRemoteId for remote imports', async () => {

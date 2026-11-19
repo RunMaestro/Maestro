@@ -11,10 +11,11 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { failCommand, failFromError, resolveAgentOrFail } from '../services/session-command';
 import { generateDefaultFolderName } from '../../shared/marketplaceFolderName';
-import type {
-	MarketplaceImportPlaybookResult,
-	MarketplaceManifest,
-	MarketplacePlaybook,
+import {
+	describeMarketplaceImportFailures,
+	type MarketplaceImportPlaybookResult,
+	type MarketplaceManifest,
+	type MarketplacePlaybook,
 } from '../../shared/marketplace-types';
 
 /** A cold catalog fetch goes to GitHub; an import downloads every document. */
@@ -169,6 +170,8 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 				folder: targetFolderName,
 				importedDocs: docs,
 				importedAssets: reply.importedAssets ?? [],
+				failedDocs: reply.failedDocs ?? [],
+				failedAssets: reply.failedAssets ?? [],
 			})
 		);
 		return;
@@ -176,5 +179,7 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 	console.log(
 		`Imported ${id} into ${targetFolderName}/ on ${sessionId} (${docs.length} documents).`
 	);
+	const failures = describeMarketplaceImportFailures(reply);
+	if (failures) console.error(`Warning: partial import. ${failures}`);
 	console.log(`Run it with: maestro-cli auto-run <docs...> -a ${sessionId}`);
 }

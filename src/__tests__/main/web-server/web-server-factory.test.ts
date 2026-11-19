@@ -1732,6 +1732,8 @@ describe('web-server/web-server-factory', () => {
 				playbook: { id: 'pb-1', name: 'pb', createdAt: 0, updatedAt: 0, documents: [] } as any,
 				importedDocs: [],
 				importedAssets: [],
+				failedDocs: [],
+				failedAssets: [],
 			});
 			const callback = setupImportCallback(
 				[

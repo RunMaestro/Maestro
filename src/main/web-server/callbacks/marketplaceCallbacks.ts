@@ -119,6 +119,8 @@ export function registerMarketplaceCallbacks(
 				playbook: result.playbook,
 				importedDocs: result.importedDocs,
 				importedAssets: result.importedAssets,
+				failedDocs: result.failedDocs,
+				failedAssets: result.failedAssets,
 			};
 		} catch (err) {
 			const errorMsg = err instanceof Error ? err.message : String(err);

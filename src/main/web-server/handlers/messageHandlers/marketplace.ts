@@ -418,6 +418,8 @@ export function handleMarketplaceImportPlaybook(
 				playbook: result.playbook,
 				importedDocs: result.importedDocs,
 				importedAssets: result.importedAssets,
+				failedDocs: result.failedDocs,
+				failedAssets: result.failedAssets,
 				sessionId,
 				requestId: message.requestId,
 			});

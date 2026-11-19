@@ -41,7 +41,10 @@ import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
 import { hashPlaybookDocument } from '../utils/playbook-document-hash';
 
-const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
+const MARKETPLACE_REPO = 'RunMaestro/Maestro-Playbooks';
+const MARKETPLACE_BRANCH = 'main';
+const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${MARKETPLACE_REPO}/${MARKETPLACE_BRANCH}`;
+const GITHUB_CONTENTS_API_BASE = `https://api.github.com/repos/${MARKETPLACE_REPO}/contents`;
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -365,6 +368,78 @@ async function fetchAsset(playbookPath: string, assetFilename: string): Promise<
 	}
 }
 
+/** A name the contents API lists that is safe to write under `assets/`. */
+function isSafeAssetFilename(name: string): boolean {
+	return (
+		name.length > 0 &&
+		name !== '.' &&
+		name !== '..' &&
+		!name.includes('/') &&
+		!name.includes('\\') &&
+		!name.includes('\0')
+	);
+}
+
+/**
+ * List the files in a remote playbook's `assets/` folder through the GitHub
+ * contents API, so a remote import installs the assets that ship with a
+ * playbook even when its manifest entry lists none. The request is
+ * unauthenticated. Discovery only ever adds to the manifest list, so every
+ * failure resolves to `[]`: a 404 means the playbook has no assets folder, and
+ * a 403 or 429 (the unauthenticated rate limit) or any other failure is a
+ * warning, after which the import installs the manifest list alone.
+ */
+async function discoverRemoteAssets(playbookPath: string): Promise<string[]> {
+	const encodedPath = playbookPath
+		.split('/')
+		.filter((segment) => segment.length > 0)
+		.map(encodeURIComponent)
+		.join('/');
+	const url = `${GITHUB_CONTENTS_API_BASE}/${encodedPath}/assets?ref=${MARKETPLACE_BRANCH}`;
+	const fallBack = (reason: string, details?: Record<string, unknown>): string[] => {
+		logger.warn(
+			`Could not list the remote assets of ${playbookPath} (${reason}); installing the manifest's asset list only`,
+			LOG_CONTEXT,
+			details
+		);
+		return [];
+	};
+
+	let response: Response;
+	try {
+		response = await fetchWithTimeout(
+			url,
+			{ headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Maestro' } },
+			MARKETPLACE_FETCH_TIMEOUT_MS
+		);
+	} catch (error) {
+		return fallBack('network error', { error });
+	}
+	if (response.status === 404) return [];
+	if (response.status === 403 || response.status === 429) {
+		return fallBack(`GitHub API rate limit, HTTP ${response.status}`);
+	}
+	if (!response.ok) return fallBack(`HTTP ${response.status} ${response.statusText}`);
+
+	let entries: unknown;
+	try {
+		entries = await response.json();
+	} catch (error) {
+		return fallBack('unreadable response', { error });
+	}
+	// An object, not a list, means `assets` is a file rather than a folder.
+	if (!Array.isArray(entries)) return [];
+	const discovered: string[] = [];
+	for (const entry of entries) {
+		if (!entry || typeof entry !== 'object') continue;
+		const { type, name } = entry as { type?: unknown; name?: unknown };
+		if (type === 'file' && typeof name === 'string' && isSafeAssetFilename(name)) {
+			discovered.push(name);
+		}
+	}
+	return discovered;
+}
+
 async function fetchReadme(playbookPath: string): Promise<string | null> {
 	if (isLocalPath(playbookPath)) {
 		const resolvedPath = resolveTildePath(playbookPath);
@@ -608,6 +683,7 @@ export async function importMarketplacePlaybook(
 	};
 
 	const importedDocs: string[] = [];
+	const failedDocs: string[] = [];
 	const documentHashes: Record<string, string> = {};
 	for (const doc of marketplacePlaybook.documents) {
 		let fetched: string;
@@ -623,6 +699,7 @@ export async function importMarketplacePlaybook(
 		} catch (error) {
 			void captureException(error);
 			logger.warn(`Failed to import document ${doc.filename}`, LOG_CONTEXT, { error });
+			failedDocs.push(doc.filename);
 			continue;
 		}
 		await writePristineCopy(doc.filename, fetched);
@@ -639,10 +716,15 @@ export async function importMarketplacePlaybook(
 		);
 	}
 
-	// Build effective asset list (local: union manifest + discovered files)
+	// The effective asset list is the manifest list plus the files found in the
+	// playbook's assets/ folder: read from disk for a local playbook, listed
+	// through the GitHub contents API for a remote one.
 	const manifestAssets = marketplacePlaybook.assets ?? [];
 	let effectiveAssets = manifestAssets;
-	if (isLocalPath(marketplacePlaybook.path)) {
+	if (!isLocalPath(marketplacePlaybook.path)) {
+		const discoveredAssets = await discoverRemoteAssets(marketplacePlaybook.path);
+		effectiveAssets = Array.from(new Set([...manifestAssets, ...discoveredAssets]));
+	} else {
 		const discoveredAssets: string[] = [];
 		const resolvedPlaybookPath = resolveTildePath(marketplacePlaybook.path);
 		const localAssetsPath = path.join(resolvedPlaybookPath, 'assets');
@@ -668,6 +750,7 @@ export async function importMarketplacePlaybook(
 	}
 
 	const importedAssets: string[] = [];
+	const failedAssets: string[] = [];
 	if (effectiveAssets.length > 0) {
 		const assetsPath = joinTarget(targetPath, 'assets');
 		try {
@@ -687,6 +770,7 @@ export async function importMarketplacePlaybook(
 			} catch (error) {
 				void captureException(error);
 				logger.warn(`Failed to import asset ${assetFilename}`, LOG_CONTEXT, { error });
+				failedAssets.push(assetFilename);
 			}
 		}
 	}
@@ -767,7 +851,15 @@ export async function importMarketplacePlaybook(
 		LOG_CONTEXT
 	);
 
-	return { playbook: newPlaybook, importedDocs, importedAssets };
+	if (failedDocs.length > 0 || failedAssets.length > 0) {
+		logger.warn(
+			`Playbook "${marketplacePlaybook.title}" imported partially: ${failedDocs.length} documents and ${failedAssets.length} assets failed`,
+			LOG_CONTEXT,
+			{ failedDocs, failedAssets }
+		);
+	}
+
+	return { playbook: newPlaybook, importedDocs, importedAssets, failedDocs, failedAssets };
 }
 
 /**
