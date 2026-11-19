@@ -238,16 +238,19 @@ export class ChildProcessSpawner {
 			finalArgs = args;
 		}
 
-		// Some CLIs need an explicit query source to avoid opening their interactive UI.
+		// Some CLIs need an explicit query source to avoid opening their interactive UI,
+		// or an input-format flag whose line shape stdinPromptMessage then writes.
 		// SSH scripts own their remote arguments and must not receive local stdin flags.
+		let formatStdinPrompt: ((prompt: string) => string) | undefined;
 		if (
 			sendPromptViaStdinRaw &&
 			effectivePrompt &&
 			!config.sshStdinScript &&
 			!config.promptAlreadyInArgs
 		) {
-			const stdinPromptArgs = getAgentDefinition(toolType)?.stdinPromptArgs;
-			if (stdinPromptArgs) finalArgs = [...finalArgs, ...stdinPromptArgs];
+			const agentDef = getAgentDefinition(toolType);
+			if (agentDef?.stdinPromptArgs) finalArgs = [...finalArgs, ...agentDef.stdinPromptArgs];
+			formatStdinPrompt = agentDef?.stdinPromptMessage;
 		}
 
 		// A NUL byte anywhere in argv makes Node refuse the spawn outright (MAESTRO-153).
@@ -734,14 +737,18 @@ export class ChildProcessSpawner {
 				);
 				childProcess.stdin?.end();
 			} else if (sendPromptViaStdinRaw && effectivePrompt) {
-				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
+				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows),
+				// or in the agent's own stdin line format when it declares one (Antigravity).
 				// Note: When sending via stdin, PowerShell treats the input as literal text,
 				// NOT as code to parse. No escaping is needed for special characters.
 				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
 					sessionId,
 					promptLength: effectivePrompt.length,
+					agentFormatted: !!formatStdinPrompt,
 				});
-				childProcess.stdin?.write(effectivePrompt);
+				childProcess.stdin?.write(
+					formatStdinPrompt ? formatStdinPrompt(effectivePrompt) : effectivePrompt
+				);
 				childProcess.stdin?.end();
 			} else if (isStreamJsonMode && effectivePrompt && !promptAddedToArgs) {
 				// Stream-json mode: send the message via stdin as JSON.

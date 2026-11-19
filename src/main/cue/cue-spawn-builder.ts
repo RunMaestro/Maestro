@@ -387,7 +387,9 @@ export async function buildSpawnSpec(
 		if (agentDef.stdinPromptArgs) {
 			spawnArgs = [...spawnArgs, ...agentDef.stdinPromptArgs];
 		}
-		stdinPrompt = substitutedPrompt;
+		stdinPrompt = agentDef.stdinPromptMessage
+			? agentDef.stdinPromptMessage(substitutedPrompt)
+			: substitutedPrompt;
 	} else if (!sshRemoteUsed) {
 		if (agentDef.promptArgs) {
 			promptArgv = agentDef.promptArgs(substitutedPrompt);
