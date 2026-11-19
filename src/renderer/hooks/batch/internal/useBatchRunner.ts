@@ -29,9 +29,12 @@ import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import {
 	aggregateAutoRunHistoryTotals,
+	autoRunOutcomeStatus,
+	buildAutoRunEndOutcome,
 	buildFinalSummary,
 	mergeFinalSummaryTotals,
 } from './batchFinalSummary';
+import type { AutoRunFailureEntry } from '../../../../shared/stats-types';
 import {
 	MAX_CONSECUTIVE_NO_CHANGES,
 	describeStall,
@@ -610,6 +613,12 @@ export function useBatchRunner({
 					tasksTotal: initialTotalTasks,
 					projectPath: session.cwd,
 					kind: 'spec-driven',
+					...(config.playbook && {
+						playbookLocalId: config.playbook.id,
+						playbookId: config.playbook.marketplaceId,
+						playbookVersion: config.playbook.sourceVersion,
+					}),
+					launchSource: config.launchSource,
 				});
 			} catch (statsError) {
 				// Don't fail the batch if stats tracking fails
@@ -640,6 +649,24 @@ export function useBatchRunner({
 			let agentTurnIndex = 0;
 			let loopIteration = 0;
 
+			// Every stall, task error, and halt of this run, in order, for the
+			// auto_run_failures rows endAutoRun writes. taskIndex is the document's
+			// checked-task count when it happened: the 0-based task the run was on.
+			const runFailures: AutoRunFailureEntry[] = [];
+			const noteRunFailure = (
+				kind: AutoRunFailureEntry['kind'],
+				documentFilename: string,
+				taskIndex: number
+			) => {
+				runFailures.push({
+					kind,
+					documentFilename,
+					taskIndex,
+					agentType: session.toolType,
+					createdAt: Date.now(),
+				});
+			};
+
 			// Register this Auto Run for emergency stats/history flush on force-kill.
 			// Populated even if startAutoRun failed (statsAutoRunId null) so killBatchRun can
 			// still write a history entry with the elapsed time the user actually spent.
@@ -654,6 +681,7 @@ export function useBatchRunner({
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => documents.length,
 				kind: 'spec-driven',
+				getFailures: () => [...runFailures],
 			};
 
 			// Per-loop tracking for loop summary. The span is sleep-aware so a
@@ -1360,6 +1388,7 @@ export function useBatchRunner({
 
 								// Track this document as stalled
 								stalledDocuments.set(docEntry.filename, stallReason);
+								noteRunFailure('stall', docEntry.filename, docCheckedCount);
 
 								// AUTORUN LOG: Document stalled
 								window.maestro.logger.autorun(
@@ -1446,6 +1475,7 @@ export function useBatchRunner({
 									document: docEntry.filename,
 									reason: haltMarker.reason || 'Halted by agent',
 								};
+								noteRunFailure('halt', docEntry.filename, docCheckedCount);
 								window.maestro.logger.autorun('Auto Run halted by agent', session.name, {
 									document: docEntry.filename,
 									reason: haltRequest.reason,
@@ -1466,6 +1496,8 @@ export function useBatchRunner({
 								text: error instanceof Error ? error.message : String(error),
 								success: false,
 							});
+
+							noteRunFailure('error', docEntry.filename, docCheckedCount);
 
 							// A task that refused to spawn (a playbook token with no value)
 							// pauses the run on the Resume / Abort banner, handled below.
@@ -1820,6 +1852,7 @@ export function useBatchRunner({
 				summary: finalSummary,
 				details: finalDetails,
 				isSuccess,
+				statusText: finalStatusText,
 			} = buildFinalSummary({
 				wasStopped,
 				totalCompletedTasks: finalTotals.totalCompletedTasks,
@@ -1876,7 +1909,11 @@ export function useBatchRunner({
 							statsAutoRunId,
 							finalTotals.totalElapsedMs,
 							finalTotals.totalCompletedTasks,
-							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks)
+							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks),
+							buildAutoRunEndOutcome(
+								autoRunOutcomeStatus(finalStatusText, haltRequest !== null),
+								runFailures
+							)
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails

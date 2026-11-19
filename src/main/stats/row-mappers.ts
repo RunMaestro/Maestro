@@ -6,8 +6,12 @@
  */
 
 import {
+	isAutoRunFailureKind,
 	normalizeAutoRunKind,
+	normalizeAutoRunLaunchSource,
+	normalizeAutoRunOutcomeStatus,
 	type QueryEvent,
+	type AutoRunFailure,
 	type AutoRunSession,
 	type AutoRunTask,
 	type SessionLifecycleEvent,
@@ -49,6 +53,23 @@ export interface AutoRunSessionRow {
 	project_path: string | null;
 	/** Added in v15; null only if a row somehow bypassed the column DEFAULT. */
 	kind: string | null;
+	/** Added in v17, like the five columns after it; absent when selected from an older file. */
+	playbook_id?: string | null;
+	playbook_local_id?: string | null;
+	playbook_version?: string | null;
+	launch_source?: string | null;
+	status?: string | null;
+	documents_stalled?: number | null;
+}
+
+export interface AutoRunFailureRow {
+	id: string;
+	auto_run_session_id: string;
+	document_filename: string | null;
+	task_index: number | null;
+	kind: string;
+	agent_type: string;
+	created_at: number;
 }
 
 export interface AutoRunTaskRow {
@@ -122,6 +143,25 @@ export function mapAutoRunSessionRow(row: AutoRunSessionRow): AutoRunSession {
 		tasksCompleted: row.tasks_completed ?? undefined,
 		projectPath: row.project_path ?? undefined,
 		kind: normalizeAutoRunKind(row.kind),
+		playbookId: row.playbook_id ?? undefined,
+		playbookLocalId: row.playbook_local_id ?? undefined,
+		playbookVersion: row.playbook_version ?? undefined,
+		launchSource: normalizeAutoRunLaunchSource(row.launch_source) ?? undefined,
+		status: normalizeAutoRunOutcomeStatus(row.status) ?? undefined,
+		documentsStalled: row.documents_stalled ?? undefined,
+	};
+}
+
+export function mapAutoRunFailureRow(row: AutoRunFailureRow): AutoRunFailure {
+	return {
+		id: row.id,
+		autoRunSessionId: row.auto_run_session_id,
+		documentFilename: row.document_filename ?? undefined,
+		taskIndex: row.task_index ?? undefined,
+		// The column's CHECK admits only known kinds; a row from a newer build reads as an error.
+		kind: isAutoRunFailureKind(row.kind) ? row.kind : 'error',
+		agentType: row.agent_type,
+		createdAt: row.created_at,
 	};
 }
 

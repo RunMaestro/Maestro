@@ -9,6 +9,7 @@ import type { CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { NativeSessionBinding } from './maestro-lib/agents/providerSwap';
 import type { PlaybookParamOverlay, PlaybookParamValues } from './playbookParams';
+import type { AutoRunLaunchSource } from './stats-types';
 
 /**
  * Union type of all valid agent IDs.
@@ -948,11 +949,20 @@ export interface BatchRunConfig {
 	 * for an ad-hoc run, which has no parameters.
 	 */
 	playbook?: BatchRunPlaybook;
+	/** Where the run was launched from, for the stats row. Absent when the launcher did not say. */
+	launchSource?: AutoRunLaunchSource;
 }
 
-/** The parts of a saved playbook an Auto Run needs to resolve its parameters. */
+/**
+ * The parts of a saved playbook an Auto Run needs to resolve its parameters
+ * and to name the playbook in its stats row.
+ */
 export interface BatchRunPlaybook {
 	id: string;
+	/** `provenance.marketplaceId`: the Playbook Exchange entry it was imported from. */
+	marketplaceId?: string;
+	/** `provenance.sourceVersion`: the entry version it was imported at. */
+	sourceVersion?: string;
 	/**
 	 * The agent whose playbook store holds this record. A worktree run executes
 	 * in another agent, so a Resume re-reads the answers from here.

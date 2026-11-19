@@ -73,19 +73,44 @@ Note there is deliberately **no index on `tab_id` and no aggregation that groups
 
 Tracks complete Auto Run batch processing runs:
 
-| Column            | Type             | Description                            |
-| ----------------- | ---------------- | -------------------------------------- |
-| `id`              | TEXT PK          | UUID                                   |
-| `session_id`      | TEXT NOT NULL    | Maestro session ID                     |
-| `agent_type`      | TEXT NOT NULL    | Agent type                             |
-| `document_path`   | TEXT             | Path to Auto Run document              |
-| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                    |
-| `duration`        | INTEGER NOT NULL | Duration in ms (updated on completion) |
-| `tasks_total`     | INTEGER          | Total tasks in document                |
-| `tasks_completed` | INTEGER          | Tasks completed (updated on end)       |
-| `project_path`    | TEXT             | Project path                           |
+| Column              | Type             | Description                                                        |
+| ------------------- | ---------------- | ------------------------------------------------------------------ |
+| `id`                | TEXT PK          | UUID                                                               |
+| `session_id`        | TEXT NOT NULL    | Maestro session ID                                                 |
+| `agent_type`        | TEXT NOT NULL    | Agent type                                                         |
+| `document_path`     | TEXT             | Path to Auto Run document                                          |
+| `start_time`        | INTEGER NOT NULL | Unix timestamp (ms)                                                |
+| `duration`          | INTEGER NOT NULL | Duration in ms (updated on completion)                             |
+| `tasks_total`       | INTEGER          | Total tasks in document                                            |
+| `tasks_completed`   | INTEGER          | Tasks completed (updated on end)                                   |
+| `project_path`      | TEXT             | Project path                                                       |
+| `kind`              | TEXT             | `goal-driven` or `spec-driven` (v15)                               |
+| `playbook_id`       | TEXT             | Marketplace entry id from the playbook's provenance (v17)          |
+| `playbook_local_id` | TEXT             | Saved playbook record UUID (v17)                                   |
+| `playbook_version`  | TEXT             | Marketplace entry version at import (v17)                          |
+| `launch_source`     | TEXT             | `exchange`, `panel`, `cli`, or `cue`; NULL when not declared (v17) |
+| `status`            | TEXT             | `completed`, `stalled`, `stopped`, or `failed`; set at end (v17)   |
+| `documents_stalled` | INTEGER          | Distinct documents that stalled, default 0 (v17)                   |
 
 **Indexes**: `start_time`
+
+The v17 columns are written by the desktop runner: identity at `stats:start-autorun`, outcome as the optional fifth argument of `stats:end-autorun` (`AutoRunEndOutcome`). `failed` means a halt marker ended the run. The CLI engine and the goal runner leave them NULL.
+
+#### `auto_run_failures` (Migration v17)
+
+One row per stall, task error, or halt inside an Auto Run, written with the run's end in one transaction:
+
+| Column                | Type             | Description                                              |
+| --------------------- | ---------------- | -------------------------------------------------------- |
+| `id`                  | TEXT PK          | UUID                                                     |
+| `auto_run_session_id` | TEXT NOT NULL FK | References `auto_run_sessions(id)`                       |
+| `document_filename`   | TEXT             | Document the failure happened in                         |
+| `task_index`          | INTEGER          | Checked tasks in the document when it happened (0-based) |
+| `kind`                | TEXT NOT NULL    | `stall`, `error`, or `halt`                              |
+| `agent_type`          | TEXT NOT NULL    | Agent type                                               |
+| `created_at`          | INTEGER NOT NULL | Unix timestamp (ms)                                      |
+
+**Indexes**: `auto_run_session_id`, `created_at`
 
 #### `auto_run_tasks` (Migration v1)
 
@@ -209,24 +234,25 @@ The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB`
 
 Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorded in the `_migrations` table. The current schema version is stored in SQLite's `user_version` pragma.
 
-| Version | Description                                                           |
-| ------- | --------------------------------------------------------------------- |
-| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks` |
-| v2      | Add `is_remote` column to `query_events` for SSH tracking             |
-| v3      | Add `session_lifecycle` table                                         |
-| v4      | Add compound indexes on `query_events` for dashboard performance      |
-| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
-| v6      | Add `image_annotations` table                                         |
-| v7      | Add `shortcut_usage_daily` table                                      |
-| v8      | Add `multi_window_usage_daily` table                                  |
-| v9      | Add per-turn token and cost columns to `query_events`                 |
-| v10     | Add `resilience_events` table                                         |
-| v11     | Add `wizard_runs` table                                               |
-| v12     | Add `user_name` column to `query_events` for Web Login attribution    |
-| v13     | Add `active_ms` column to `wizard_runs`                               |
-| v14     | Add `shortcut_usage_by_id` and the `(start_time, session_id)` index   |
-| v15     | Add `kind` column to `auto_run_sessions` (goal-driven vs spec-driven) |
-| v16     | Add `token_speed_hourly` (token speed timed off the live stream)      |
+| Version | Description                                                                               |
+| ------- | ----------------------------------------------------------------------------------------- |
+| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                     |
+| v2      | Add `is_remote` column to `query_events` for SSH tracking                                 |
+| v3      | Add `session_lifecycle` table                                                             |
+| v4      | Add compound indexes on `query_events` for dashboard performance                          |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                        |
+| v6      | Add `image_annotations` table                                                             |
+| v7      | Add `shortcut_usage_daily` table                                                          |
+| v8      | Add `multi_window_usage_daily` table                                                      |
+| v9      | Add per-turn token and cost columns to `query_events`                                     |
+| v10     | Add `resilience_events` table                                                             |
+| v11     | Add `wizard_runs` table                                                                   |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution                        |
+| v13     | Add `active_ms` column to `wizard_runs`                                                   |
+| v14     | Add `shortcut_usage_by_id` and the `(start_time, session_id)` index                       |
+| v15     | Add `kind` column to `auto_run_sessions` (goal-driven vs spec-driven)                     |
+| v16     | Add `token_speed_hourly` (token speed timed off the live stream)                          |
+| v17     | Add playbook identity and outcome columns to `auto_run_sessions`, and `auto_run_failures` |
 
 To add a new migration:
 

@@ -31,6 +31,7 @@ import { getActingUser } from '../../web-server/auth/acting-user';
 import { resolveTurnActor } from '../../web-server/auth/turn-attribution';
 import {
 	QueryEvent,
+	AutoRunEndOutcome,
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
@@ -187,6 +188,8 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					sessionId: session.sessionId,
 					documentPath: session.documentPath,
 					kind: session.kind,
+					playbookLocalId: session.playbookLocalId,
+					launchSource: session.launchSource,
 				});
 				broadcastStatsUpdate(safeSend, 'auto_run');
 				return id;
@@ -199,20 +202,32 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		'stats:end-autorun',
 		withIpcErrorLogging(
 			handlerOpts('endAutoRun'),
-			async (id: string, duration: number, tasksCompleted: number, tasksTotal?: number) => {
+			async (
+				id: string,
+				duration: number,
+				tasksCompleted: number,
+				tasksTotal?: number,
+				outcome?: AutoRunEndOutcome
+			) => {
 				const db = getStatsDB();
 				// Raises tasks_total to at least tasks_completed, so a looping run
 				// cannot report more than 100% done (see finishAutoRunSession).
+				// The outcome arrives over IPC: anything that is not an object is
+				// dropped, and finishAutoRunSession coerces each field it keeps.
 				const updated = db.finishAutoRunSession(
 					id,
 					duration,
 					tasksCompleted,
-					typeof tasksTotal === 'number' && Number.isFinite(tasksTotal) ? tasksTotal : undefined
+					typeof tasksTotal === 'number' && Number.isFinite(tasksTotal) ? tasksTotal : undefined,
+					outcome && typeof outcome === 'object'
+						? { ...outcome, failures: Array.isArray(outcome.failures) ? outcome.failures : [] }
+						: undefined
 				);
 				if (updated) {
 					logger.info(`Ended Auto Run session: ${id}`, LOG_CONTEXT, {
 						duration,
 						tasksCompleted,
+						status: outcome?.status,
 					});
 				} else {
 					logger.warn(`Auto Run session not found: ${id}`, LOG_CONTEXT);

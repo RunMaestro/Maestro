@@ -16,6 +16,8 @@ import { logger } from '../utils/logger';
 import { isSqliteCorruptionError } from '../../shared/sqliteErrors';
 import type {
 	QueryEvent,
+	AutoRunEndOutcome,
+	AutoRunFailure,
 	AutoRunSession,
 	AutoRunTask,
 	AutoRunTurnsByHour,
@@ -51,6 +53,7 @@ import {
 	getAutoRunSessions,
 	insertAutoRunTask,
 	getAutoRunTasks,
+	getAutoRunFailures,
 	getAutoRunTurnsByHour,
 	clearAutoRunCache,
 } from './auto-run';
@@ -893,9 +896,14 @@ export class StatsDB {
 		id: string,
 		duration: number,
 		tasksCompleted: number,
-		tasksTotal?: number
+		tasksTotal?: number,
+		outcome?: AutoRunEndOutcome
 	): boolean {
-		return finishAutoRunSession(this.database, id, duration, tasksCompleted, tasksTotal);
+		return finishAutoRunSession(this.database, id, duration, tasksCompleted, tasksTotal, outcome);
+	}
+
+	getAutoRunFailures(autoRunSessionId: string): AutoRunFailure[] {
+		return getAutoRunFailures(this.database, autoRunSessionId);
 	}
 
 	getAutoRunTurnsByHour(range: StatsTimeRange): AutoRunTurnsByHour[] {

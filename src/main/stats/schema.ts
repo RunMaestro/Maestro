@@ -113,6 +113,55 @@ export const ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL = `
   ALTER TABLE auto_run_sessions ADD COLUMN kind TEXT DEFAULT 'spec-driven'
 `;
 
+/**
+ * Auto Run playbook identity and outcome columns (Migration v17), in the order
+ * they are added. Each entry is the column name and its full column definition.
+ *
+ * All nullable with no default except `documents_stalled`: a row written before
+ * v17 has no recorded playbook, launch source, or outcome, and NULL says that
+ * truthfully. `documents_stalled` defaults to 0 because the old runner already
+ * reported stalls in the run's summary, never in this table, so 0 is the count
+ * this table can vouch for. A CHECK passes NULL, so the constrained columns
+ * still accept a run that never declared a value.
+ */
+export const ADD_AUTO_RUN_SESSION_PLAYBOOK_COLUMNS: ReadonlyArray<
+	readonly [column: string, definition: string]
+> = [
+	['playbook_id', 'TEXT'],
+	['playbook_local_id', 'TEXT'],
+	['playbook_version', 'TEXT'],
+	['launch_source', "TEXT CHECK(launch_source IN ('exchange', 'panel', 'cli', 'cue'))"],
+	['status', "TEXT CHECK(status IN ('completed', 'stalled', 'stopped', 'failed'))"],
+	['documents_stalled', 'INTEGER DEFAULT 0'],
+];
+
+// ============================================================================
+// Auto Run Failures (Migration v17)
+// ============================================================================
+
+/**
+ * One row per thing that went wrong inside an Auto Run: a document that
+ * stalled, a task that errored, or a halt marker. Keyed to its run, so a
+ * playbook's failures can be grouped by document and task without parsing
+ * History text.
+ */
+export const CREATE_AUTO_RUN_FAILURES_SQL = `
+  CREATE TABLE IF NOT EXISTS auto_run_failures (
+    id TEXT PRIMARY KEY,
+    auto_run_session_id TEXT NOT NULL REFERENCES auto_run_sessions(id),
+    document_filename TEXT,
+    task_index INTEGER,
+    kind TEXT NOT NULL CHECK(kind IN ('stall', 'error', 'halt')),
+    agent_type TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )
+`;
+
+export const CREATE_AUTO_RUN_FAILURES_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_auto_run_failures_session ON auto_run_failures(auto_run_session_id);
+  CREATE INDEX IF NOT EXISTS idx_auto_run_failures_created ON auto_run_failures(created_at)
+`;
+
 // ============================================================================
 // Auto Run Tasks (Migration v1)
 // ============================================================================

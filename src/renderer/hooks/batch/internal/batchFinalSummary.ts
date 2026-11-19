@@ -12,6 +12,11 @@ import {
 	formatTimeRemaining,
 } from '../../../constants/conductorBadges';
 import type { AutoRunStats } from '../../../types';
+import type {
+	AutoRunEndOutcome,
+	AutoRunFailureEntry,
+	AutoRunOutcomeStatus,
+} from '../../../../shared/stats-types';
 
 // Reconciliation helpers now live in shared/ so the CLI batch processor can
 // reuse the exact same logic. Re-exported here to keep existing importers
@@ -144,4 +149,33 @@ export function buildFinalSummary(params: FinalSummaryParams): FinalSummaryResul
 	const isSuccess = !wasStopped && !allDocsStalled;
 
 	return { summary, details, isSuccess, statusText };
+}
+
+/**
+ * The `auto_run_sessions.status` for a finished run, from its summary's
+ * `statusText`. A halt marker ends the run early, so a halted run the user did
+ * not stop is `failed`. "completed with stalls" is `completed`: the stalled
+ * document count is stored beside it.
+ */
+export function autoRunOutcomeStatus(statusText: string, halted: boolean): AutoRunOutcomeStatus {
+	if (statusText === 'stopped') return 'stopped';
+	if (halted) return 'failed';
+	if (statusText === 'stalled') return 'stalled';
+	return 'completed';
+}
+
+/**
+ * The outcome `endAutoRun` records: the status, how many distinct documents
+ * stalled, and every stall, error, and halt in the order they happened. The
+ * stalled count comes from the failures so a force-kill, which has only the
+ * failure list, reports the same figure as a run that finished.
+ */
+export function buildAutoRunEndOutcome(
+	status: AutoRunOutcomeStatus,
+	failures: readonly AutoRunFailureEntry[]
+): AutoRunEndOutcome {
+	const stalledDocuments = new Set(
+		failures.filter((failure) => failure.kind === 'stall').map((f) => f.documentFilename)
+	);
+	return { status, documentsStalled: stalledDocuments.size, failures: [...failures] };
 }

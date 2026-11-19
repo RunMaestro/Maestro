@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
 	aggregateAutoRunHistoryTotals,
+	autoRunOutcomeStatus,
+	buildAutoRunEndOutcome,
 	buildFinalSummary,
 	mergeFinalSummaryTotals,
 } from '../../../../renderer/hooks/batch/internal/batchFinalSummary';
@@ -484,6 +486,77 @@ describe('buildFinalSummary', () => {
 			totalInputTokens: 100,
 			totalOutputTokens: 50,
 			totalCost: 0.2,
+		});
+	});
+});
+
+describe('autoRunOutcomeStatus', () => {
+	it('maps each summary status to the stats status', () => {
+		expect(autoRunOutcomeStatus('completed', false)).toBe('completed');
+		expect(autoRunOutcomeStatus('completed with stalls', false)).toBe('completed');
+		expect(autoRunOutcomeStatus('stalled', false)).toBe('stalled');
+		expect(autoRunOutcomeStatus('stopped', false)).toBe('stopped');
+	});
+
+	it('reads a halted run as failed unless the user stopped it', () => {
+		expect(autoRunOutcomeStatus('completed', true)).toBe('failed');
+		expect(autoRunOutcomeStatus('stalled', true)).toBe('failed');
+		expect(autoRunOutcomeStatus('stopped', true)).toBe('stopped');
+	});
+
+	it('agrees with the statusText buildFinalSummary returns', () => {
+		const { statusText } = buildFinalSummary({
+			wasStopped: false,
+			totalCompletedTasks: 0,
+			totalElapsedMs: 1000,
+			stalledDocuments: new Map([['A.md', 'no progress']]),
+			documents: docs('A.md'),
+			loopEnabled: false,
+			loopIteration: 0,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCost: 0,
+		});
+		expect(autoRunOutcomeStatus(statusText, false)).toBe('stalled');
+	});
+});
+
+describe('buildAutoRunEndOutcome', () => {
+	it('counts distinct stalled documents and keeps every failure in order', () => {
+		const failures = [
+			{
+				kind: 'stall' as const,
+				documentFilename: 'A.md',
+				taskIndex: 0,
+				agentType: 'codex',
+				createdAt: 1,
+			},
+			{
+				kind: 'error' as const,
+				documentFilename: 'B.md',
+				taskIndex: 2,
+				agentType: 'codex',
+				createdAt: 2,
+			},
+			// A looping run can stall the same document again on a later loop.
+			{
+				kind: 'stall' as const,
+				documentFilename: 'A.md',
+				taskIndex: 0,
+				agentType: 'codex',
+				createdAt: 3,
+			},
+		];
+		const outcome = buildAutoRunEndOutcome('completed', failures);
+		expect(outcome).toEqual({ status: 'completed', documentsStalled: 1, failures });
+		expect(outcome.failures).not.toBe(failures);
+	});
+
+	it('reports zero stalls for a clean run', () => {
+		expect(buildAutoRunEndOutcome('completed', [])).toEqual({
+			status: 'completed',
+			documentsStalled: 0,
+			failures: [],
 		});
 	});
 });

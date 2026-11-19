@@ -10,6 +10,7 @@
 import { ipcRenderer } from 'electron';
 import type {
 	QueryEvent,
+	AutoRunEndOutcome,
 	AutoRunSession,
 	AutoRunTask,
 	AutoRunTurnsByHour,
@@ -63,13 +64,16 @@ export function createStatsApi() {
 		// End an Auto Run session (update duration and completed count). The
 		// optional `tasksTotal` is the run's best checkbox total (a looping run
 		// re-checks tasks); main never stores a total below the completed count.
+		// The optional `outcome` records the run's status, stalled document
+		// count, and its stalls, errors, and halts.
 		endAutoRun: (
 			id: string,
 			duration: number,
 			tasksCompleted: number,
-			tasksTotal?: number
+			tasksTotal?: number,
+			outcome?: AutoRunEndOutcome
 		): Promise<boolean> =>
-			ipcRenderer.invoke('stats:end-autorun', id, duration, tasksCompleted, tasksTotal),
+			ipcRenderer.invoke('stats:end-autorun', id, duration, tasksCompleted, tasksTotal, outcome),
 
 		// Record an Auto Run task completion
 		recordAutoTask: (task: AutoRunTask): Promise<string> =>

@@ -6733,4 +6733,87 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
 	});
+
+	describe('stats playbook identity and outcome', () => {
+		const renderProcessor = () =>
+			renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+		const lastEndOutcome = () => vi.mocked(window.maestro.stats.endAutoRun).mock.calls.at(-1)?.[4];
+
+		it('names the playbook and launch source at start and records a completed run at the end', async () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: mockOnSpawnAgent.mock.calls.length > 0 ? '- [x] Task' : '- [ ] Task',
+			}));
+			const { result } = renderProcessor();
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						launchSource: 'panel',
+						playbook: {
+							id: 'pb-local-1',
+							marketplaceId: 'message-bus',
+							sourceVersion: '2026-08-30',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(window.maestro.stats.startAutoRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					playbookLocalId: 'pb-local-1',
+					playbookId: 'message-bus',
+					playbookVersion: '2026-08-30',
+					launchSource: 'panel',
+				})
+			);
+			expect(lastEndOutcome()).toEqual({ status: 'completed', documentsStalled: 0, failures: [] });
+		});
+
+		it('records a run a halt marker ended as failed, with the halt as a failure row', async () => {
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content:
+					mockOnSpawnAgent.mock.calls.length > 0
+						? '- [x] Task 1\n- [ ] Task 2\n\n<!-- maestro:halt: upstream is down -->'
+						: '- [ ] Task 1\n- [ ] Task 2',
+			}));
+			const { result } = renderProcessor();
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(lastEndOutcome()).toEqual({
+				status: 'failed',
+				documentsStalled: 0,
+				failures: [
+					expect.objectContaining({ kind: 'halt', documentFilename: 'tasks', taskIndex: 1 }),
+				],
+			});
+		});
+	});
 });

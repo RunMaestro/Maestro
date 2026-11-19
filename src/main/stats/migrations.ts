@@ -38,6 +38,9 @@ import {
 	CREATE_WIZARD_RUNS_SQL,
 	CREATE_WIZARD_RUNS_INDEXES_SQL,
 	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
+	ADD_AUTO_RUN_SESSION_PLAYBOOK_COLUMNS,
+	CREATE_AUTO_RUN_FAILURES_SQL,
+	CREATE_AUTO_RUN_FAILURES_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -161,6 +164,17 @@ function getMigrations(): Migration[] {
 			description: 'Add token_speed_hourly table (token speed timed off the live stream)',
 			up: (db) => migrateV16(db),
 			isApplied: (db) => hasTable(db, 'token_speed_hourly'),
+		},
+		{
+			version: 17,
+			description:
+				'Add playbook identity and outcome columns to auto_run_sessions, and the auto_run_failures table',
+			up: (db) => migrateV17(db),
+			isApplied: (db) =>
+				hasTable(db, 'auto_run_failures') &&
+				ADD_AUTO_RUN_SESSION_PLAYBOOK_COLUMNS.every(([column]) =>
+					hasColumn(db, 'auto_run_sessions', column)
+				),
 		},
 	];
 }
@@ -558,6 +572,30 @@ function migrateV15(db: Database.Database): void {
 function migrateV16(db: Database.Database): void {
 	db.prepare(CREATE_TOKEN_SPEED_HOURLY_SQL).run();
 	logger.debug('Created token_speed_hourly table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v17: which playbook an Auto Run ran and how it ended.
+ *
+ * - `auto_run_sessions` gains `playbook_id` (the marketplace id from the
+ *   playbook's provenance), `playbook_local_id` (the saved record's UUID),
+ *   `playbook_version`, `launch_source`, `status`, and `documents_stalled`.
+ * - `auto_run_failures` records each stall, task error, and halt of a run.
+ *
+ * Every column is guarded by hasColumn and the table is CREATE IF NOT EXISTS,
+ * so a partially applied run is safe to repeat (same reason as v5).
+ */
+function migrateV17(db: Database.Database): void {
+	for (const [column, definition] of ADD_AUTO_RUN_SESSION_PLAYBOOK_COLUMNS) {
+		if (hasColumn(db, 'auto_run_sessions', column)) continue;
+		db.prepare(`ALTER TABLE auto_run_sessions ADD COLUMN ${column} ${definition}`).run();
+	}
+	runStatements(db, CREATE_AUTO_RUN_FAILURES_SQL);
+	runStatements(db, CREATE_AUTO_RUN_FAILURES_INDEXES_SQL);
+	logger.debug(
+		'Added playbook identity columns to auto_run_sessions and created auto_run_failures',
+		LOG_CONTEXT
+	);
 }
 
 /**

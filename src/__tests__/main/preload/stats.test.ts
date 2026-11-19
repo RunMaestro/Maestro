@@ -88,7 +88,28 @@ describe('Stats Preload API', () => {
 		it('endAutoRun forwards a corrected tasksTotal', async () => {
 			mockInvoke.mockResolvedValue(true);
 			await api.endAutoRun('autorun-1', 1000, 12, 12);
-			expect(mockInvoke).toHaveBeenCalledWith('stats:end-autorun', 'autorun-1', 1000, 12, 12);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'stats:end-autorun',
+				'autorun-1',
+				1000,
+				12,
+				12,
+				undefined
+			);
+		});
+
+		it('endAutoRun forwards the run outcome', async () => {
+			mockInvoke.mockResolvedValue(true);
+			const outcome = { status: 'stalled' as const, documentsStalled: 2, failures: [] };
+			await api.endAutoRun('autorun-1', 1000, 0, 4, outcome);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'stats:end-autorun',
+				'autorun-1',
+				1000,
+				0,
+				4,
+				outcome
+			);
 		});
 
 		it('getAutoRunTurnsByHour invokes the grouped channel', async () => {
@@ -121,6 +142,7 @@ describe('Stats Preload API', () => {
 				'autorun-123',
 				60000,
 				8,
+				undefined,
 				undefined
 			);
 			expect(result).toBe(true);

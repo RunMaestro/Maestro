@@ -518,6 +518,7 @@ describe('stats IPC handlers', () => {
 					'autorun-session-id',
 					60000,
 					4,
+					undefined,
 					undefined
 				);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
@@ -541,15 +542,68 @@ describe('stats IPC handlers', () => {
 				const handler = handlers.get('stats:end-autorun');
 
 				await handler!({} as any, 'run-1', 1000, 12, 12);
-				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-1', 1000, 12, 12);
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
+					'run-1',
+					1000,
+					12,
+					12,
+					undefined
+				);
 
 				await handler!({} as any, 'run-2', 1000, 3, Number.NaN);
 				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
 					'run-2',
 					1000,
 					3,
+					undefined,
 					undefined
 				);
+			});
+		});
+
+		describe('stats:end-autorun outcome', () => {
+			it('forwards the outcome and its failures', async () => {
+				const handler = handlers.get('stats:end-autorun');
+				const failures = [
+					{
+						kind: 'halt',
+						documentFilename: 'A.md',
+						taskIndex: 2,
+						agentType: 'codex',
+						createdAt: 5,
+					},
+				];
+
+				await handler!({} as any, 'run-1', 1000, 2, 3, {
+					status: 'failed',
+					documentsStalled: 0,
+					failures,
+				});
+
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-1', 1000, 2, 3, {
+					status: 'failed',
+					documentsStalled: 0,
+					failures,
+				});
+			});
+
+			it('drops an outcome that is not an object and a failures field that is not a list', async () => {
+				const handler = handlers.get('stats:end-autorun');
+
+				await handler!({} as any, 'run-1', 1000, 2, 3, 'completed');
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
+					'run-1',
+					1000,
+					2,
+					3,
+					undefined
+				);
+
+				await handler!({} as any, 'run-2', 1000, 2, 3, { status: 'completed', failures: 'nope' });
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-2', 1000, 2, 3, {
+					status: 'completed',
+					failures: [],
+				});
 			});
 		});
 

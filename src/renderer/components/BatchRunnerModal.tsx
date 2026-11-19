@@ -697,11 +697,19 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(runEffort && { effort: runEffort }),
 						...(ignoreModelHints && { ignoreModelHints: true }),
 						...autoResumeFields,
+						launchSource: 'panel',
 						// The playbook's parameter answers resolve its `[NAME]` tokens.
+						// Its provenance names it in the stats row.
 						...(loadedPlaybook && {
 							playbook: {
 								id: loadedPlaybook.id,
 								ownerSessionId: sessionId,
+								...(loadedPlaybook.provenance?.marketplaceId && {
+									marketplaceId: loadedPlaybook.provenance.marketplaceId,
+								}),
+								...(loadedPlaybook.provenance?.sourceVersion && {
+									sourceVersion: loadedPlaybook.provenance.sourceVersion,
+								}),
 								...(loadedPlaybook.parameterOverlay && {
 									parameterOverlay: loadedPlaybook.parameterOverlay,
 								}),

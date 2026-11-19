@@ -8,7 +8,11 @@ import type { BatchAction } from '../batchReducer';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
-import { aggregateAutoRunHistoryTotals, mergeFinalSummaryTotals } from './batchFinalSummary';
+import {
+	aggregateAutoRunHistoryTotals,
+	buildAutoRunEndOutcome,
+	mergeFinalSummaryTotals,
+} from './batchFinalSummary';
 
 interface TimeTrackingApi {
 	getElapsedTime: (sessionId: string) => number;
@@ -121,7 +125,9 @@ export function useBatchKillAction({
 						await window.maestro.stats.endAutoRun(
 							flushState.statsAutoRunId,
 							finalTotals.totalElapsedMs,
-							finalTotals.totalCompletedTasks
+							finalTotals.totalCompletedTasks,
+							undefined,
+							buildAutoRunEndOutcome('stopped', flushState.getFailures?.() ?? [])
 						);
 					} catch (statsError) {
 						logger.warn(

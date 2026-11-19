@@ -221,7 +221,13 @@ import type {
 	CueStatsSourceTotals,
 	CueStatsTimeRange,
 } from '../shared/cue-stats-types';
-import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
+import type {
+	AutoRunEndOutcome,
+	AutoRunKind,
+	AutoRunLaunchSource,
+	QueryEvent,
+	StatsAggregation,
+} from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
 import type { MarketplaceImportPlaybookResult } from '../shared/marketplace-types';
@@ -4116,13 +4122,19 @@ interface MaestroAPI {
 			tasksTotal?: number;
 			projectPath?: string;
 			kind?: AutoRunKind;
+			playbookId?: string;
+			playbookLocalId?: string;
+			playbookVersion?: string;
+			launchSource?: AutoRunLaunchSource;
 		}) => Promise<string>;
-		// End an Auto Run session (update duration and completed count)
+		// End an Auto Run session (update duration and completed count, plus the
+		// run's outcome when the runner knows it)
 		endAutoRun: (
 			id: string,
 			duration: number,
 			tasksCompleted: number,
-			tasksTotal?: number
+			tasksTotal?: number,
+			outcome?: AutoRunEndOutcome
 		) => Promise<boolean>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
