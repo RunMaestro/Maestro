@@ -236,6 +236,7 @@ describe('marketplace IPC handlers', () => {
 			const expectedChannels = [
 				'marketplace:getManifest',
 				'marketplace:refreshManifest',
+				'marketplace:getHealth',
 				'marketplace:getDocument',
 				'marketplace:getReadme',
 				'marketplace:importPlaybook',
@@ -503,6 +504,133 @@ describe('marketplace IPC handlers', () => {
 			// Should return empty manifest
 			expect(result.manifest.playbooks).toEqual([]);
 			expect(result.fromCache).toBe(false);
+		});
+	});
+
+	describe('marketplace:getHealth', () => {
+		const HEALTH_URL = 'https://runmaestro.ai/api/v1/playbooks/health';
+		const healthCachePath = path.join('/mock/userData', 'marketplace-health-cache.json');
+		const sampleHealth = {
+			'test-playbook-1': {
+				installs_30d: 42,
+				runs_30d: 130,
+				success_rate_30d: 0.92,
+				median_duration_ms: 540_000,
+				median_cost_usd: 0.37,
+				recent_failures: 1,
+			},
+		};
+
+		it('fetches the figures, caches them, and answers them', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(sampleHealth),
+			});
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(mockFetch).toHaveBeenCalledWith(HEALTH_URL, expect.anything());
+			expect(result).toEqual({ success: true, health: sampleHealth, fromCache: false });
+			const write = vi.mocked(fs.writeFile).mock.calls.find(([file]) => file === healthCachePath);
+			expect(write).toBeDefined();
+			expect(JSON.parse(write![1] as string).health).toEqual(sampleHealth);
+		});
+
+		it('drops malformed rows from the server', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve({ ...sampleHealth, broken: { installs_30d: 'lots' } }),
+			});
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result.health).toEqual(sampleHealth);
+		});
+
+		it('serves the cache within the TTL without a request', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ fetchedAt: Date.now() - 60 * 60 * 1000, health: sampleHealth })
+			);
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: true, health: sampleHealth, fromCache: true });
+		});
+
+		it('bypasses a fresh cache when forced', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ fetchedAt: Date.now(), health: {} })
+			);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(sampleHealth),
+			});
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any, true);
+
+			expect(mockFetch).toHaveBeenCalledWith(HEALTH_URL, expect.anything());
+			expect(result.health).toEqual(sampleHealth);
+		});
+
+		it('answers no figures on a 404 and caches the absence', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result).toEqual({ success: true, health: {}, fromCache: false });
+			const write = vi.mocked(fs.writeFile).mock.calls.find(([file]) => file === healthCachePath);
+			expect(JSON.parse(write![1] as string).health).toEqual({});
+			expect(logger.warn).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+		});
+
+		it('falls back to the stale cache on a network error', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ fetchedAt: Date.now() - 7 * 60 * 60 * 1000, health: sampleHealth })
+			);
+			mockFetch.mockRejectedValue(new Error('ECONNRESET'));
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result).toEqual({ success: true, health: sampleHealth, fromCache: true });
+			expect(logger.error).not.toHaveBeenCalled();
+		});
+
+		it('answers no figures on a server error with no cache', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			mockFetch.mockResolvedValue({ ok: false, status: 503, statusText: 'Unavailable' });
+
+			const result = await handlers.get('marketplace:getHealth')!({} as any);
+
+			expect(result).toEqual({ success: true, health: {}, fromCache: false });
+		});
+
+		it('never touches the manifest cache', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () => Promise.resolve(sampleHealth),
+			});
+
+			await handlers.get('marketplace:getHealth')!({} as any);
+
+			const manifestCachePath = path.join('/mock/userData', 'marketplace-cache.json');
+			expect(vi.mocked(fs.writeFile).mock.calls.some(([file]) => file === manifestCachePath)).toBe(
+				false
+			);
 		});
 	});
 

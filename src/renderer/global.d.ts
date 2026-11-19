@@ -235,6 +235,7 @@ import type {
 } from '../shared/playbookTelemetry';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
 import type { MarketplaceImportPlaybookResult } from '../shared/marketplace-types';
+import type { PlaybookHealthMap } from '../shared/playbookHealth';
 import type {
 	CotAgentConfig,
 	CotAgentStatus,
@@ -3362,6 +3363,13 @@ interface MaestroAPI {
 					source?: 'official' | 'local';
 				}>;
 			};
+			fromCache?: boolean;
+			error?: string;
+		}>;
+		/** Popularity and reliability figures by playbook id; empty when the server has none. */
+		getHealth: (forceRefresh?: boolean) => Promise<{
+			success: boolean;
+			health?: PlaybookHealthMap;
 			fromCache?: boolean;
 			error?: string;
 		}>;

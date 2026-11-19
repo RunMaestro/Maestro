@@ -1,7 +1,8 @@
 /**
  * PlaybookRunSummary: the row above Run that prices one click (documents,
  * loops, agent and model), the loop cap and its raise control, and the
- * machine-scope notice.
+ * machine-scope notice, and the typical duration and cost from the Exchange
+ * server's figures.
  */
 
 import type { ComponentProps } from 'react';
@@ -11,6 +12,7 @@ import {
 	PlaybookRunSummary,
 	describePlaybookRunLoops,
 	describePlaybookRunModel,
+	describePlaybookRunTypical,
 } from '../../../../renderer/components/PlaybookLaunch/PlaybookRunSummary';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -52,6 +54,39 @@ describe('describePlaybookRunModel', () => {
 		expect(describePlaybookRunModel('auto')).toBe('Auto');
 		expect(describePlaybookRunModel(undefined)).toBe('default model');
 		expect(describePlaybookRunModel('')).toBe('default model');
+	});
+});
+
+const figures = {
+	installs_30d: 30,
+	runs_30d: 90,
+	success_rate_30d: 0.9,
+	recent_failures: 0,
+};
+
+describe('describePlaybookRunTypical', () => {
+	it('names the median duration and cost', () => {
+		expect(
+			describePlaybookRunTypical({
+				...figures,
+				median_duration_ms: 9 * 60 * 1000,
+				median_cost_usd: 0.37,
+			})
+		).toBe('Typically 9m, about $0.37');
+	});
+
+	it('names whichever median the server has', () => {
+		expect(describePlaybookRunTypical({ ...figures, median_duration_ms: 45_000 })).toBe(
+			'Typically 45s'
+		);
+		expect(describePlaybookRunTypical({ ...figures, median_cost_usd: 1.5 })).toBe(
+			'Typically about $1.50'
+		);
+	});
+
+	it('says nothing without figures or medians', () => {
+		expect(describePlaybookRunTypical(undefined)).toBeNull();
+		expect(describePlaybookRunTypical(figures)).toBeNull();
 	});
 });
 
@@ -104,5 +139,19 @@ describe('PlaybookRunSummary', () => {
 		expect(screen.getByTestId('playbook-run-summary-machine').textContent).toBe(
 			'This playbook configures your machine, not just this project.'
 		);
+	});
+
+	it('shows the typical run from the Exchange figures, and nothing without them', () => {
+		renderSummary({
+			health: { ...figures, median_duration_ms: 12 * 60 * 1000, median_cost_usd: 0.4 },
+		});
+		expect(screen.getByTestId('playbook-run-summary-typical').textContent).toBe(
+			'Typically 12m, about $0.40'
+		);
+	});
+
+	it('leaves the typical run out when the server has no figures', () => {
+		renderSummary();
+		expect(screen.queryByTestId('playbook-run-summary-typical')).toBeNull();
 	});
 });

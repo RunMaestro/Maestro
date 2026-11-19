@@ -5298,6 +5298,39 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.requestId).toBe('req-1');
 		});
 
+		it('carries the health figures, and an empty map when the callback has none', async () => {
+			const health = {
+				'sample-playbook': {
+					installs_30d: 12,
+					runs_30d: 40,
+					success_rate_30d: 0.9,
+					recent_failures: 0,
+				},
+			};
+			callbacks.getMarketplaceManifest = vi.fn().mockResolvedValue({
+				manifest: { lastUpdated: '2026-01-01', playbooks: [] },
+				fromCache: false,
+				health,
+			});
+			handler.setCallbacks(callbacks);
+			handler.handleMessage(client, { type: 'marketplace_get_manifest', requestId: 'req-h1' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBe(1);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0]).health).toEqual(health);
+
+			callbacks.getMarketplaceManifest = vi.fn().mockResolvedValue({
+				manifest: { lastUpdated: '2026-01-01', playbooks: [] },
+				fromCache: false,
+			});
+			handler.setCallbacks(callbacks);
+			handler.handleMessage(client, { type: 'marketplace_get_manifest', requestId: 'req-h2' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBe(2);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[1][0]).health).toEqual({});
+		});
+
 		it('forwards refresh:true when requested', async () => {
 			handler.handleMessage(client, {
 				type: 'marketplace_get_manifest',

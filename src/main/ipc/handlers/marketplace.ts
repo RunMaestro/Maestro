@@ -10,6 +10,8 @@
  * - Manifest is cached locally with 6-hour TTL
  * - Individual documents are fetched on-demand (not cached)
  * - Force refresh bypasses cache and fetches fresh data
+ * - Health figures (popularity, reliability) are cached with the same TTL on
+ *   their own channel, so the manifest never waits on them
  */
 
 import { ipcMain, App, BrowserWindow } from 'electron';
@@ -23,6 +25,7 @@ import type { MaestroSettings } from './persistence';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
+	getMarketplaceHealth,
 	getMarketplaceDocument,
 	getMarketplaceReadme,
 	importMarketplacePlaybook,
@@ -105,6 +108,15 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 		createIpcHandler(handlerOpts('refreshManifest'), async () => {
 			logger.info('Force refreshing manifest (bypass cache)', LOG_CONTEXT);
 			return refreshMarketplaceManifest(app);
+		})
+	);
+
+	// marketplace:getHealth - Popularity and reliability figures, fetched beside
+	// the manifest. Never fails: an absent endpoint answers with no figures.
+	ipcMain.handle(
+		'marketplace:getHealth',
+		createIpcHandler(handlerOpts('getHealth', false), async (forceRefresh?: boolean) => {
+			return getMarketplaceHealth(app, { forceRefresh: forceRefresh === true });
 		})
 	);
 

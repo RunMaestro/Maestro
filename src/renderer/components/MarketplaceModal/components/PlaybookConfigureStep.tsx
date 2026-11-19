@@ -5,6 +5,7 @@ import {
 	type PlaybookParamValues,
 } from '../../../../shared/playbookParams';
 import { clampImportedMaxLoops, isUnboundedLoop } from '../../../../shared/playbookRun';
+import type { PlaybookHealthStats } from '../../../../shared/playbookHealth';
 import type { Playbook } from '../../../../shared/types';
 import { buildPlaybookBatchRunConfig } from '../../../hooks/batch/playbookRunConfig';
 import { useBatchStore } from '../../../stores/batchStore';
@@ -27,6 +28,8 @@ export interface PlaybookConfigureStepProps {
 	readmeContent?: string | null;
 	/** The manifest asked for unlimited loops and the import capped them. */
 	importCappedLoops?: boolean;
+	/** The Exchange server's figures for this playbook, for the medians on the run row. */
+	health?: PlaybookHealthStats;
 	/** Starts the run; resolves true once it is running. */
 	onRunPlaybook: (sessionId: string, config: BatchRunConfig) => Promise<boolean>;
 	onClose: () => void;
@@ -51,6 +54,7 @@ export function PlaybookConfigureStep({
 	sessionId,
 	readmeContent,
 	importCappedLoops = false,
+	health,
 	onRunPlaybook,
 	onClose,
 }: PlaybookConfigureStepProps) {
@@ -155,6 +159,7 @@ export function PlaybookConfigureStep({
 							onMaxLoopsChange={setMaxLoops}
 							agentName={agentName}
 							model={session?.customModel}
+							health={health}
 						/>
 					}
 					onRun={handleRun}

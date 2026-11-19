@@ -19,6 +19,7 @@ import {
 	filterPlaybooks,
 	marketplaceImport,
 	marketplaceList,
+	playbookHealthLabels,
 } from '../../../cli/commands/marketplace';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
@@ -92,6 +93,82 @@ describe('marketplace commands', () => {
 
 		mockBridge({ marketplace_get_manifest: { success: false, error: 'offline' } });
 		await expect(marketplaceList({})).rejects.toThrow('__exit__');
+	});
+
+	describe('health figures', () => {
+		const health = {
+			'docs-pass': { installs_30d: 80, runs_30d: 200, success_rate_30d: 0.95, recent_failures: 0 },
+			'security-audit': {
+				installs_30d: 5,
+				runs_30d: 20,
+				success_rate_30d: 0.4,
+				recent_failures: 4,
+			},
+		};
+		const logged = () =>
+			vi
+				.mocked(console.log)
+				.mock.calls.map((call) => String(call[0]))
+				.join('\n');
+
+		it('--sort popular orders by installs and prints the modal badges', async () => {
+			mockBridge({
+				marketplace_get_manifest: {
+					success: true,
+					manifest: { lastUpdated: '', playbooks: catalog },
+					health,
+				},
+			});
+			await marketplaceList({ sort: 'popular' });
+			const out = logged();
+			expect(out.indexOf('docs-pass')).toBeLessThan(out.indexOf('security-audit'));
+			expect(out).toContain('docs-pass  (Development, 1 docs, by a)  [Most popular]');
+			expect(out).toContain('[Recently broken]');
+		});
+
+		it("--json carries each playbook's figures and badges", async () => {
+			mockBridge({
+				marketplace_get_manifest: {
+					success: true,
+					manifest: { lastUpdated: '', playbooks: catalog },
+					health,
+				},
+			});
+			await marketplaceList({ json: true });
+			const rows = JSON.parse(String(vi.mocked(console.log).mock.calls[0][0]));
+			expect(rows.map((row: { id: string }) => row.id)).toEqual(['security-audit', 'docs-pass']);
+			expect(rows[0].badges).toEqual(['Recently broken']);
+			expect(rows[1].health).toEqual(health['docs-pass']);
+		});
+
+		it('prints no badges and keeps the catalog order when the app sends no figures', async () => {
+			mockBridge({
+				marketplace_get_manifest: {
+					success: true,
+					manifest: { lastUpdated: '', playbooks: catalog },
+				},
+			});
+			await marketplaceList({ sort: 'popular' });
+			const out = logged();
+			expect(out).not.toContain('[');
+			expect(out.indexOf('security-audit')).toBeLessThan(out.indexOf('docs-pass'));
+		});
+
+		it('rejects an unknown --sort before asking the app', async () => {
+			const sent = mockBridge({});
+			await expect(marketplaceList({ sort: 'newest' })).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+		});
+
+		it('playbookHealthLabels follows the shared rules', () => {
+			expect(playbookHealthLabels('docs-pass', health, new Set(['docs-pass']))).toEqual([
+				'Most popular',
+			]);
+			expect(playbookHealthLabels('security-audit', health, new Set())).toEqual([
+				'Recently broken',
+			]);
+			expect(playbookHealthLabels('missing', health, new Set())).toEqual([]);
+		});
 	});
 
 	it('import defaults the folder to the slug the modal proposes', async () => {

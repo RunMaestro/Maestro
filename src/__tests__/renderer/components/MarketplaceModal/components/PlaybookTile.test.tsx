@@ -65,4 +65,75 @@ describe('PlaybookTile', () => {
 		expect(button.getAttribute('style')).toContain('box-shadow');
 		expect(scrollSpy).toHaveBeenCalledTimes(1);
 	});
+
+	describe('health badges', () => {
+		const healthy = {
+			installs_30d: 50,
+			runs_30d: 200,
+			success_rate_30d: 0.95,
+			recent_failures: 0,
+		};
+
+		it('shows Most popular only when the tile is in the top installs', () => {
+			const { getByTestId, queryByTestId, rerender } = render(
+				<PlaybookTile
+					playbook={makePlaybook()}
+					theme={mockTheme}
+					isSelected={false}
+					runningVersion="1.0.0"
+					health={healthy}
+					isMostPopular
+					onSelect={vi.fn()}
+				/>
+			);
+			const badge = getByTestId('playbook-tile-popular-badge');
+			expect(badge.textContent).toBe('Most popular');
+			expect(badge.getAttribute('title')).toContain('50 installs');
+			expect(queryByTestId('playbook-tile-broken-badge')).toBeNull();
+
+			rerender(
+				<PlaybookTile
+					playbook={makePlaybook()}
+					theme={mockTheme}
+					isSelected={false}
+					runningVersion="1.0.0"
+					health={healthy}
+					onSelect={vi.fn()}
+				/>
+			);
+			expect(queryByTestId('playbook-tile-popular-badge')).toBeNull();
+		});
+
+		it('shows Recently broken from the failure figures', () => {
+			const { getByTestId } = render(
+				<PlaybookTile
+					playbook={makePlaybook()}
+					theme={mockTheme}
+					isSelected={false}
+					runningVersion="1.0.0"
+					health={{ ...healthy, success_rate_30d: 0.5, recent_failures: 4 }}
+					onSelect={vi.fn()}
+				/>
+			);
+			const badge = getByTestId('playbook-tile-broken-badge');
+			expect(badge.textContent).toBe('Recently broken');
+			expect(badge.getAttribute('title')).toContain('4 recent failed runs');
+			expect(badge.getAttribute('title')).toContain('50%');
+		});
+
+		it('shows no health badges without figures, even if marked popular', () => {
+			const { queryByTestId } = render(
+				<PlaybookTile
+					playbook={makePlaybook()}
+					theme={mockTheme}
+					isSelected={false}
+					runningVersion="1.0.0"
+					isMostPopular
+					onSelect={vi.fn()}
+				/>
+			);
+			expect(queryByTestId('playbook-tile-popular-badge')).toBeNull();
+			expect(queryByTestId('playbook-tile-broken-badge')).toBeNull();
+		});
+	});
 });

@@ -7,11 +7,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
+import {
+	PLAYBOOK_BROWSE_SORTS,
+	selectMostPopularPlaybookIds,
+	sortPlaybooksByHealth,
+} from '../../../shared/playbookHealth';
 import { isUnboundedLoop } from '../../../shared/playbookRun';
 import type { Playbook } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import {
 	MarketplaceBrowseTab,
@@ -51,6 +57,7 @@ export function MarketplaceModal({
 	const {
 		manifest,
 		categories,
+		health,
 		isLoading,
 		isRefreshing,
 		isImporting,
@@ -68,9 +75,32 @@ export function MarketplaceModal({
 		fetchDocument,
 	} = useMarketplace();
 
+	const { value: sort, setValue: setSort } = usePersistedChoice(
+		'marketplace.sort',
+		PLAYBOOK_BROWSE_SORTS,
+		'default'
+	);
+
+	// Sorted before the compatibility split, so each section keeps the order
+	// and the keyboard walks the tiles as they are drawn.
 	const { compatiblePlaybooks, incompatiblePlaybooks, orderedPlaybooks } = useMemo(
-		() => partitionPlaybooksByCompatibility(filteredPlaybooks, runningVersion),
-		[filteredPlaybooks, runningVersion]
+		() =>
+			partitionPlaybooksByCompatibility(
+				sortPlaybooksByHealth(filteredPlaybooks, sort, health),
+				runningVersion
+			),
+		[filteredPlaybooks, sort, health, runningVersion]
+	);
+
+	// Ranked over the whole catalog, so a filter cannot hand the badge to a
+	// playbook that is only the most popular of what is on screen.
+	const mostPopularIds = useMemo(
+		() =>
+			selectMostPopularPlaybookIds(
+				health,
+				(manifest?.playbooks ?? []).map((playbook) => playbook.id)
+			),
+		[health, manifest]
 	);
 
 	const [selectedTileIndex, setSelectedTileIndex] = useState(0);
@@ -118,6 +148,14 @@ export function MarketplaceModal({
 			setSelectedTileIndex(0);
 		},
 		[setSelectedCategory]
+	);
+
+	const handleSortChange = useCallback(
+		(next: typeof sort) => {
+			setSort(next);
+			setSelectedTileIndex(0);
+		},
+		[setSort]
 	);
 
 	const handleSearchChange = useCallback(
@@ -240,6 +278,11 @@ export function MarketplaceModal({
 								? isUnboundedLoop(selectedPlaybook.loopEnabled, selectedPlaybook.maxLoops)
 								: false
 						}
+						health={
+							configuringPlaybook.provenance?.marketplaceId
+								? health[configuringPlaybook.provenance.marketplaceId]
+								: undefined
+						}
 						onRunPlaybook={onRunPlaybook}
 						onClose={onClose}
 					/>
@@ -291,6 +334,10 @@ export function MarketplaceModal({
 							isLoading={isLoading}
 							error={error}
 							runningVersion={runningVersion}
+							health={health}
+							mostPopularIds={mostPopularIds}
+							sort={sort}
+							onSortChange={handleSortChange}
 							onRefresh={() => refresh()}
 							onSelectPlaybook={handleSelectPlaybookFromList}
 							searchInputRef={searchInputRef}

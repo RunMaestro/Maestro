@@ -1,5 +1,10 @@
 import type { RefObject } from 'react';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
+import type {
+	PlaybookBrowseSort,
+	PlaybookHealthMap,
+	PlaybookHealthStats,
+} from '../../../shared/playbookHealth';
 import type { BatchRunConfig, Theme } from '../../types';
 
 export interface MarketplaceModalProps {
@@ -23,6 +28,10 @@ export interface PlaybookTileProps {
 	theme: Theme;
 	isSelected: boolean;
 	runningVersion: string;
+	/** The Exchange server's figures for this playbook, when it has any. */
+	health?: PlaybookHealthStats;
+	/** In the top installs (`selectMostPopularPlaybookIds`). */
+	isMostPopular?: boolean;
 	onSelect: () => void;
 }
 
@@ -53,6 +62,12 @@ export interface MarketplaceBrowseTabProps {
 	isLoading: boolean;
 	error: string | null;
 	runningVersion: string;
+	/** Health figures by playbook id; empty hides the sort control and the badges. */
+	health: PlaybookHealthMap;
+	/** Ids that carry the "Most popular" badge. */
+	mostPopularIds: ReadonlySet<string>;
+	sort: PlaybookBrowseSort;
+	onSortChange: (sort: PlaybookBrowseSort) => void;
 	onRefresh: () => void;
 	onSelectPlaybook: (playbook: MarketplacePlaybook) => void;
 	searchInputRef: RefObject<HTMLInputElement>;

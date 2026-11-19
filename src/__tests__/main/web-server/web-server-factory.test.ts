@@ -214,6 +214,7 @@ vi.mock('../../../main/utils/logger', () => ({
 vi.mock('../../../main/services/marketplace-service', () => ({
 	getMarketplaceManifest: vi.fn(),
 	refreshMarketplaceManifest: vi.fn(),
+	getMarketplaceHealth: vi.fn().mockResolvedValue({ health: {}, fromCache: false }),
 	getMarketplaceDocument: vi.fn(),
 	getMarketplaceReadme: vi.fn(),
 	importMarketplacePlaybook: vi.fn(),

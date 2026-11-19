@@ -28,6 +28,10 @@ const baseProps = (overrides: Partial<React.ComponentProps<typeof MarketplaceBro
 		isLoading: false,
 		error: null,
 		runningVersion: '1.0.0',
+		health: {},
+		mostPopularIds: new Set<string>(),
+		sort: 'default' as const,
+		onSortChange: vi.fn(),
 		onRefresh: vi.fn(),
 		onSelectPlaybook: vi.fn(),
 		searchInputRef: createRef<HTMLInputElement>(),
@@ -120,5 +124,43 @@ describe('MarketplaceBrowseTab', () => {
 		expect(getByText('Requires a newer Maestro')).toBeTruthy();
 		expect(getByText('Use arrow keys to navigate, Enter to select')).toBeTruthy();
 		expect(getByText('search')).toBeTruthy();
+	});
+
+	describe('health figures', () => {
+		const figures = {
+			compatible: {
+				installs_30d: 90,
+				runs_30d: 300,
+				success_rate_30d: 0.4,
+				recent_failures: 6,
+			},
+		};
+
+		it('hides the sort control and the badges when the server has no figures', () => {
+			const { queryByTestId } = render(<MarketplaceBrowseTab {...baseProps()} />);
+			expect(queryByTestId('marketplace-sort')).toBeNull();
+			expect(queryByTestId('playbook-tile-popular-badge')).toBeNull();
+			expect(queryByTestId('playbook-tile-broken-badge')).toBeNull();
+		});
+
+		it('shows the sort control and passes the figures to the tiles', () => {
+			const onSortChange = vi.fn();
+			const { getByTestId } = render(
+				<MarketplaceBrowseTab
+					{...baseProps({
+						health: figures,
+						mostPopularIds: new Set(['compatible']),
+						onSortChange,
+					})}
+				/>
+			);
+
+			expect(getByTestId('marketplace-sort')).toBeTruthy();
+			expect(getByTestId('playbook-tile-popular-badge').textContent).toBe('Most popular');
+			expect(getByTestId('playbook-tile-broken-badge').textContent).toBe('Recently broken');
+
+			fireEvent.click(getByTestId('marketplace-sort-popular'));
+			expect(onSortChange).toHaveBeenCalledWith('popular');
+		});
 	});
 });

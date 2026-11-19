@@ -5,11 +5,15 @@
  * When the manifest asked for unlimited loops, the import capped them
  * (`clampImportedMaxLoops`); the row says so and carries a slider to raise
  * the cap. A `scope: 'machine'` playbook adds one line saying it reaches past
- * the project.
+ * the project. When the Exchange server has figures for the playbook, the row
+ * also says what a typical run took and cost (the 30 day medians).
  */
 
-import { Bot, FileText, Monitor, Repeat } from 'lucide-react';
+import { Bot, Clock, FileText, Monitor, Repeat } from 'lucide-react';
 import { AUTO_MODEL_LABEL, isAutoModel } from '../../../shared/autoModel';
+import { formatDurationCompact } from '../../../shared/duration';
+import { formatCost } from '../../../shared/formatters';
+import type { PlaybookHealthStats } from '../../../shared/playbookHealth';
 import { IMPORTED_MAX_LOOPS_CEILING } from '../../../shared/playbookRun';
 import type { Playbook, Theme } from '../../types';
 import { Slider } from '../widgets';
@@ -28,6 +32,8 @@ export interface PlaybookRunSummaryProps {
 	agentName: string;
 	/** The agent's configured model; absent means the provider's default. */
 	model?: string | null;
+	/** The Exchange server's figures for this playbook, when it has any. */
+	health?: PlaybookHealthStats;
 }
 
 export function describePlaybookRunModel(model: string | null | undefined): string {
@@ -44,6 +50,22 @@ export function describePlaybookRunLoops(
 	return `Up to ${maxLoops} ${maxLoops === 1 ? 'loop' : 'loops'}`;
 }
 
+/**
+ * "Typically 12m, about $0.40": the 30 day median duration and cost across
+ * everyone's runs, or null when the server has neither.
+ */
+export function describePlaybookRunTypical(health: PlaybookHealthStats | undefined): string | null {
+	if (!health) return null;
+	const parts: string[] = [];
+	if (health.median_duration_ms !== undefined) {
+		parts.push(formatDurationCompact(health.median_duration_ms));
+	}
+	if (health.median_cost_usd !== undefined) {
+		parts.push(`about ${formatCost(health.median_cost_usd)}`);
+	}
+	return parts.length > 0 ? `Typically ${parts.join(', ')}` : null;
+}
+
 export function PlaybookRunSummary({
 	theme,
 	playbook,
@@ -52,8 +74,10 @@ export function PlaybookRunSummary({
 	onMaxLoopsChange,
 	agentName,
 	model,
+	health,
 }: PlaybookRunSummaryProps) {
 	const documentCount = playbook.documents.length;
+	const typical = describePlaybookRunTypical(health);
 	const iconClass = 'w-3.5 h-3.5 shrink-0';
 
 	return (
@@ -71,6 +95,16 @@ export function PlaybookRunSummary({
 					<Repeat className={iconClass} style={{ color: theme.colors.textDim }} aria-hidden />
 					{describePlaybookRunLoops(playbook.loopEnabled, maxLoops)}
 				</span>
+				{typical && (
+					<span
+						className="flex items-center gap-1.5"
+						title="Median across everyone's runs of this playbook in the last 30 days"
+						data-testid="playbook-run-summary-typical"
+					>
+						<Clock className={iconClass} style={{ color: theme.colors.textDim }} aria-hidden />
+						{typical}
+					</span>
+				)}
 				<span
 					className="flex items-center gap-1.5 min-w-0 select-text"
 					data-testid="playbook-run-summary-agent"

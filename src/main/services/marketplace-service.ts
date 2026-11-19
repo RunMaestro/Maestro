@@ -27,6 +27,12 @@ import type {
 	MarketplacePlaybook,
 } from '../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
+import {
+	parsePlaybookHealth,
+	PLAYBOOK_HEALTH_URL,
+	type GetPlaybookHealthResponse,
+	type PlaybookHealthCache,
+} from '../../shared/playbookHealth';
 import { isCompatible } from '../../shared/marketplace-compatibility';
 import {
 	isPlaybookSourceChannel,
@@ -57,10 +63,19 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
  * that never resolves.
  */
 const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * The health figures only decorate the catalog, so a slow server costs a
+ * badge, not a wait: a short budget, after which the Exchange shows none.
+ */
+const HEALTH_FETCH_TIMEOUT_MS = 10_000;
 const LOG_CONTEXT = '[Marketplace]';
 
 export function getCacheFilePath(app: App): string {
 	return path.join(app.getPath('userData'), 'marketplace-cache.json');
+}
+
+export function getHealthCacheFilePath(app: App): string {
+	return path.join(app.getPath('userData'), 'marketplace-health-cache.json');
 }
 
 export function getLocalManifestPath(app: App): string {
@@ -530,6 +545,62 @@ export async function refreshMarketplaceManifest(
 	const localManifest = await readLocalManifest(app);
 	const mergedManifest = mergeManifests(officialManifest, localManifest);
 	return { manifest: mergedManifest, fromCache };
+}
+
+async function readHealthCache(app: App): Promise<PlaybookHealthCache | null> {
+	try {
+		const data = JSON.parse(await fs.readFile(getHealthCacheFilePath(app), 'utf-8'));
+		if (typeof data?.fetchedAt !== 'number') return null;
+		return { fetchedAt: data.fetchedAt, health: parsePlaybookHealth(data.health) };
+	} catch {
+		// Missing or unreadable: the health figures are optional, fetch again.
+		return null;
+	}
+}
+
+async function writeHealthCache(app: App, cache: PlaybookHealthCache): Promise<void> {
+	try {
+		await fs.writeFile(getHealthCacheFilePath(app), JSON.stringify(cache), 'utf-8');
+	} catch (error) {
+		logger.warn('Failed to write the playbook health cache', LOG_CONTEXT, { error });
+	}
+}
+
+/**
+ * The Exchange server's popularity and reliability figures, cached for the
+ * manifest's 6 hour TTL. Never throws and never reports to Sentry: the
+ * endpoint is optional, so a 404 is cached as "no figures" (no new request
+ * for 6 hours), and a network or server error falls back to the last cached
+ * figures, or none. Callers fetch this beside the manifest, never before it.
+ */
+export async function getMarketplaceHealth(
+	app: App,
+	options: { forceRefresh?: boolean } = {}
+): Promise<GetPlaybookHealthResponse> {
+	const cache = await readHealthCache(app);
+	if (cache && !options.forceRefresh && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
+		return { health: cache.health, fromCache: true };
+	}
+	try {
+		const response = await fetchWithTimeout(
+			PLAYBOOK_HEALTH_URL,
+			{ headers: { Accept: 'application/json' } },
+			HEALTH_FETCH_TIMEOUT_MS
+		);
+		if (response.status === 404) {
+			await writeHealthCache(app, { fetchedAt: Date.now(), health: {} });
+			return { health: {}, fromCache: false };
+		}
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const health = parsePlaybookHealth(await response.json());
+		await writeHealthCache(app, { fetchedAt: Date.now(), health });
+		return { health, fromCache: false };
+	} catch (error) {
+		logger.debug('Playbook health figures unavailable', LOG_CONTEXT, {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return { health: cache?.health ?? {}, fromCache: !!cache };
+	}
 }
 
 export async function getMarketplaceDocument(

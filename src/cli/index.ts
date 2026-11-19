@@ -1566,6 +1566,10 @@ marketplace
 	.option('-c, --category <name>', 'Only this category')
 	.option('-s, --search <text>', 'Match id, title, description, or tags')
 	.option('--refresh', 'Bypass the catalog cache')
+	.option(
+		'--sort <order>',
+		'default (the Exchange order) or popular (most installed in the last 30 days first)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(marketplaceList);
 

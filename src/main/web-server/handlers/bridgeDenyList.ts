@@ -58,7 +58,7 @@ const METHODS: Record<string, string> = {
 	logger: 'getLogLevel log',
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
-	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
+	marketplace: 'getDocument getHealth getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
 	// Main owns the inbox; a browser marks read or clears through the same delta.
 	notification: 'changeHistory',

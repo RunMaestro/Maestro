@@ -23,6 +23,11 @@ The exchange displays playbooks in a searchable grid organized by category:
 - **Arrow keys** - Navigate between tiles
 - **Enter** - Open the detail view for the selected playbook
 - **`Cmd+F` / `Ctrl+F`** - Focus the search input
+- **Featured / Most popular** - Sort the grid in the Exchange's own order or by installs in the last 30 days
+
+Tiles can carry two badges from the Exchange's usage figures. **Most popular** marks the three most installed playbooks of the last 30 days (each with at least 10 installs). **Recently broken** marks a playbook with at least 3 recent failed runs and fewer than 75% of its runs succeeding. Hover a badge for the numbers. The figures come from people who chose to [share anonymous usage](#anonymous-usage); until there are any, the grid shows no badges and no sort control.
+
+From the command line, `maestro-cli marketplace list --sort popular` lists the same order and prints the same badges after each line; `--json` adds each playbook's `health` figures and `badges`.
 
 Use `Cmd+Shift+[` / `Cmd+Shift+]` (`Ctrl+Shift+[/]` on Windows/Linux) to quickly switch between category tabs.
 
@@ -89,7 +94,7 @@ From the command line, `maestro-cli playbook configure <id> --set NAME=VALUE` sa
 
 ### Running It
 
-Above **Run**, one row says what the click starts: how many documents, how many loops, and which agent it runs on with that agent's model. The run always goes to the agent you opened the Exchange from. A playbook marked as machine-wide adds one line: "This playbook configures your machine, not just this project."
+Above **Run**, one row says what the click starts: how many documents, how many loops, and which agent it runs on with that agent's model. When the Exchange has usage figures for the playbook, the row also says what a typical run takes and costs ("Typically 12m, about $0.40", the 30 day medians across everyone's runs). The run always goes to the agent you opened the Exchange from. A playbook marked as machine-wide adds one line: "This playbook configures your machine, not just this project."
 
 A looping playbook whose manifest asks for unlimited loops is capped at 10 when you install it, so one click cannot start a run that never ends. The row says so and has a slider to raise the cap before you run.
 
@@ -132,6 +137,8 @@ Playbooks are fetched from the [Maestro-Playbooks](https://github.com/RunMaestro
 
 - **Cache indicator** - Shows whether data is from cache and how old it is (e.g., "Cached 2h ago" or "Live")
 - **Refresh button** - Forces a fresh fetch from GitHub, bypassing the cache
+
+The popularity and reliability figures behind the badges come from `runmaestro.ai` on their own request, cached for the same 6 hours. The manifest never waits for them, and when the server has none (or is unreachable) the Exchange looks as it would without them.
 
 ### Anonymous Usage
 

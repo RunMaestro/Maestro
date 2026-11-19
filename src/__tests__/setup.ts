@@ -608,6 +608,7 @@ const mockMaestro = {
 			manifest: { lastUpdated: '2025-01-01', playbooks: [] },
 			fromCache: false,
 		}),
+		getHealth: vi.fn().mockResolvedValue({ success: true, health: {}, fromCache: false }),
 		getDocument: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getReadme: vi.fn().mockResolvedValue({ success: true, content: null }),
 		importPlaybook: vi.fn().mockResolvedValue({ success: true, playbook: {}, importedDocs: [] }),

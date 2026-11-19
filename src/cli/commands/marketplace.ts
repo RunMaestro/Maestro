@@ -17,6 +17,14 @@ import {
 	type MarketplaceManifest,
 	type MarketplacePlaybook,
 } from '../../shared/marketplace-types';
+import {
+	isPlaybookBrowseSort,
+	isPlaybookRecentlyBroken,
+	PLAYBOOK_BROWSE_SORTS,
+	selectMostPopularPlaybookIds,
+	sortPlaybooksByHealth,
+	type PlaybookHealthMap,
+} from '../../shared/playbookHealth';
 
 /** A cold catalog fetch goes to GitHub; an import downloads every document. */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -30,6 +38,7 @@ interface ListOptions extends JsonOption {
 	category?: string;
 	search?: string;
 	refresh?: boolean;
+	sort?: string;
 }
 
 interface ImportOptions extends JsonOption {
@@ -37,9 +46,20 @@ interface ImportOptions extends JsonOption {
 	folder?: string;
 }
 
-async function fetchManifest(refresh: boolean): Promise<MarketplaceManifest> {
+interface CatalogReply {
+	manifest: MarketplaceManifest;
+	/** Popularity and reliability figures by playbook id; empty when the server has none. */
+	health: PlaybookHealthMap;
+}
+
+async function fetchCatalog(refresh: boolean): Promise<CatalogReply> {
 	const reply = await withMaestroClient((client) =>
-		client.sendCommand<{ success: boolean; manifest?: MarketplaceManifest; error?: string }>(
+		client.sendCommand<{
+			success: boolean;
+			manifest?: MarketplaceManifest;
+			health?: PlaybookHealthMap;
+			error?: string;
+		}>(
 			{ type: 'marketplace_get_manifest', refresh },
 			'marketplace_get_manifest_result',
 			FETCH_TIMEOUT_MS
@@ -48,7 +68,26 @@ async function fetchManifest(refresh: boolean): Promise<MarketplaceManifest> {
 	if (!reply.success || !reply.manifest) {
 		throw new Error(reply.error || 'Failed to load the Playbook Exchange catalog');
 	}
-	return reply.manifest;
+	return { manifest: reply.manifest, health: reply.health ?? {} };
+}
+
+async function fetchManifest(refresh: boolean): Promise<MarketplaceManifest> {
+	return (await fetchCatalog(refresh)).manifest;
+}
+
+/**
+ * The badges the Exchange modal draws on a tile, as text: "Most popular" and
+ * "Recently broken", from the same shared rules.
+ */
+export function playbookHealthLabels(
+	id: string,
+	health: PlaybookHealthMap,
+	mostPopularIds: ReadonlySet<string>
+): string[] {
+	const labels: string[] = [];
+	if (mostPopularIds.has(id)) labels.push('Most popular');
+	if (isPlaybookRecentlyBroken(health[id])) labels.push('Recently broken');
+	return labels;
 }
 
 /** Case-insensitive match on id, title, description, and tags. */
@@ -76,14 +115,45 @@ function findPlaybook(manifest: MarketplaceManifest, id: string): MarketplacePla
 }
 
 export async function marketplaceList(options: ListOptions): Promise<void> {
+	const sort = options.sort ?? 'default';
+	if (!isPlaybookBrowseSort(sort)) {
+		failCommand(
+			`Unknown --sort "${sort}". Use one of: ${PLAYBOOK_BROWSE_SORTS.join(', ')}.`,
+			options.json
+		);
+	}
 	let playbooks: MarketplacePlaybook[];
+	let health: PlaybookHealthMap;
+	let mostPopularIds: Set<string>;
 	try {
-		playbooks = filterPlaybooks((await fetchManifest(options.refresh === true)).playbooks, options);
+		const catalog = await fetchCatalog(options.refresh === true);
+		health = catalog.health;
+		// Ranked over the whole catalog, as the modal does, so a filter cannot
+		// hand the badge to the most popular of a narrow match.
+		mostPopularIds = selectMostPopularPlaybookIds(
+			health,
+			catalog.manifest.playbooks.map((pb) => pb.id)
+		);
+		playbooks = sortPlaybooksByHealth(
+			filterPlaybooks(catalog.manifest.playbooks, options),
+			sort,
+			health
+		);
 	} catch (error) {
 		failFromError(error, options.json);
 	}
 	if (options.json) {
-		console.log(JSON.stringify(playbooks, null, 2));
+		console.log(
+			JSON.stringify(
+				playbooks.map((pb) => ({
+					...pb,
+					health: health[pb.id] ?? null,
+					badges: playbookHealthLabels(pb.id, health, mostPopularIds),
+				})),
+				null,
+				2
+			)
+		);
 		return;
 	}
 	if (playbooks.length === 0) {
@@ -91,7 +161,11 @@ export async function marketplaceList(options: ListOptions): Promise<void> {
 		return;
 	}
 	for (const pb of playbooks) {
-		console.log(`${pb.id}  (${pb.category}, ${pb.documents.length} docs, by ${pb.author})`);
+		const labels = playbookHealthLabels(pb.id, health, mostPopularIds);
+		const badgeText = labels.length > 0 ? `  [${labels.join(', ')}]` : '';
+		console.log(
+			`${pb.id}  (${pb.category}, ${pb.documents.length} docs, by ${pb.author})${badgeText}`
+		);
 		console.log(`    ${pb.title}: ${pb.description}`);
 	}
 }

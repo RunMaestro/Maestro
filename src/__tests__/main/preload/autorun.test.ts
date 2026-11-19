@@ -494,6 +494,18 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('getHealth', () => {
+			it('should invoke marketplace:getHealth with the force flag', async () => {
+				mockInvoke.mockResolvedValue({ success: true, health: {}, fromCache: false });
+
+				await api.getHealth();
+				await api.getHealth(true);
+
+				expect(mockInvoke).toHaveBeenNthCalledWith(1, 'marketplace:getHealth', undefined);
+				expect(mockInvoke).toHaveBeenNthCalledWith(2, 'marketplace:getHealth', true);
+			});
+		});
+
 		describe('getDocument', () => {
 			it('should invoke marketplace:getDocument', async () => {
 				mockInvoke.mockResolvedValue('# Document content');

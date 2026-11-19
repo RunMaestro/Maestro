@@ -136,6 +136,7 @@ export function handleMarketplaceGetManifest(
 				manifest: result.manifest,
 				fromCache: result.fromCache,
 				cacheAge: result.cacheAge,
+				health: result.health ?? {},
 				requestId: message.requestId,
 			});
 		})

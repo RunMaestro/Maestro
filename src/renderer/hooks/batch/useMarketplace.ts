@@ -10,6 +10,8 @@
  * - Refresh operations (bypass cache)
  * - Import operations (download playbook to Auto Run folder)
  * - Document preview fetching (README, individual documents)
+ * - Popularity and reliability figures (`health`), loaded beside the manifest
+ *   and never ahead of it; empty when the server has none
  *
  * The marketplace data is fetched from the Maestro-Playbooks GitHub repository
  * and cached locally for 5 minutes to reduce API calls.
@@ -21,6 +23,7 @@ import type {
 	MarketplaceManifest,
 	MarketplacePlaybook,
 } from '../../../shared/marketplace-types';
+import type { PlaybookHealthMap } from '../../../shared/playbookHealth';
 import { logger } from '../../utils/logger';
 
 /**
@@ -34,6 +37,8 @@ export interface UseMarketplaceReturn {
 	playbooks: MarketplacePlaybook[];
 	/** Available categories including 'All' */
 	categories: string[];
+	/** Popularity and reliability figures by playbook id (empty until loaded, or when absent) */
+	health: PlaybookHealthMap;
 
 	// Loading states
 	/** True during initial manifest load */
@@ -130,9 +135,26 @@ export function useMarketplace(): UseMarketplaceReturn {
 	// Error state
 	const [error, setError] = useState<string | null>(null);
 
+	// Health figures: decoration only, so a failure leaves the map empty
+	const [health, setHealth] = useState<PlaybookHealthMap>({});
+
 	// Filter state
 	const [selectedCategory, setSelectedCategory] = useState('All');
 	const [searchQuery, setSearchQuery] = useState('');
+
+	const loadHealth = useCallback(async (forceRefresh: boolean) => {
+		try {
+			const result = await window.maestro.marketplace.getHealth(forceRefresh);
+			if (result.success && result.health) setHealth(result.health);
+		} catch (err) {
+			logger.debug('Playbook health figures unavailable:', undefined, err);
+		}
+	}, []);
+
+	// Health loads beside the manifest, never ahead of it
+	useEffect(() => {
+		void loadHealth(false);
+	}, [loadHealth]);
 
 	// Load manifest on mount
 	useEffect(() => {
@@ -218,6 +240,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 	const refresh = useCallback(async () => {
 		setIsRefreshing(true);
 		setError(null);
+		void loadHealth(true);
 		try {
 			const result = await window.maestro.marketplace.refreshManifest();
 			if (result.success && result.manifest) {
@@ -232,7 +255,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 			setError('Failed to refresh marketplace data');
 		}
 		setIsRefreshing(false);
-	}, []);
+	}, [loadHealth]);
 
 	// Import a playbook to the Auto Run folder (supports SSH remote via sshRemoteId)
 	const importPlaybook = useCallback(
@@ -300,6 +323,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 		manifest,
 		playbooks,
 		categories,
+		health,
 
 		// Loading states
 		isLoading,

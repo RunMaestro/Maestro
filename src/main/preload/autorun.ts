@@ -249,6 +249,9 @@ export function createMarketplaceApi() {
 
 		refreshManifest: () => ipcRenderer.invoke('marketplace:refreshManifest'),
 
+		getHealth: (forceRefresh?: boolean) =>
+			ipcRenderer.invoke('marketplace:getHealth', forceRefresh),
+
 		getDocument: (playbookPath: string, filename: string) =>
 			ipcRenderer.invoke('marketplace:getDocument', playbookPath, filename),
 

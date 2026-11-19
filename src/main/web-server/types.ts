@@ -1711,6 +1711,7 @@ import type {
 	MarketplaceManifest,
 	MarketplacePlaybook,
 } from '../../shared/marketplace-types';
+import type { PlaybookHealthMap } from '../../shared/playbookHealth';
 
 /** Re-export for convenience so handlers don't pull from two places. */
 export type { MarketplaceManifest, MarketplacePlaybook };
@@ -1720,6 +1721,8 @@ export interface MarketplaceManifestResult {
 	manifest: MarketplaceManifest;
 	fromCache: boolean;
 	cacheAge?: number;
+	/** Popularity and reliability figures by playbook id; empty when the server has none. */
+	health?: PlaybookHealthMap;
 }
 
 /** Result from the marketplace import callback: the shared IPC shape, record included. */

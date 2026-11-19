@@ -129,6 +129,22 @@ describe('PlaybookConfigureStep', () => {
 		expect(onRunPlaybook.mock.calls[0][1].maxLoops).toBe(30);
 	});
 
+	it('shows the typical run from the Exchange figures it is handed', () => {
+		renderStep({
+			health: {
+				installs_30d: 20,
+				runs_30d: 60,
+				success_rate_30d: 0.9,
+				median_duration_ms: 5 * 60 * 1000,
+				median_cost_usd: 0.25,
+				recent_failures: 0,
+			},
+		});
+		expect(screen.getByTestId('playbook-run-summary-typical').textContent).toBe(
+			'Typically 5m, about $0.25'
+		);
+	});
+
 	it('says when the playbook configures the machine', () => {
 		renderStep({ playbook: makePlaybook({ scope: 'machine' }) });
 		expect(screen.getByTestId('playbook-run-summary-machine')).toBeTruthy();

@@ -10,6 +10,7 @@ import type { SshRemoteConfig } from '../../../shared/types';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
+	getMarketplaceHealth,
 	getMarketplaceDocument,
 	getMarketplaceReadme,
 	importMarketplacePlaybook,
@@ -66,11 +67,16 @@ export function registerMarketplaceCallbacks(
 		return found;
 	};
 
+	// The health figures ride along for `maestro-cli marketplace list`, which
+	// prints the badges and sorts by them. They never fail the manifest:
+	// getMarketplaceHealth answers an empty map on any error.
 	server.setGetMarketplaceManifestCallback(async (options) => {
-		if (options?.refresh) {
-			return refreshMarketplaceManifest(electronApp);
-		}
-		return getMarketplaceManifest(electronApp);
+		const refresh = options?.refresh === true;
+		const [manifestResult, healthResult] = await Promise.all([
+			refresh ? refreshMarketplaceManifest(electronApp) : getMarketplaceManifest(electronApp),
+			getMarketplaceHealth(electronApp, { forceRefresh: refresh }),
+		]);
+		return { ...manifestResult, health: healthResult.health };
 	});
 
 	server.setGetMarketplaceDocumentCallback(async (playbookPath, filename) => {

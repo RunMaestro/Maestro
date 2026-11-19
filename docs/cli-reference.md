@@ -1226,12 +1226,13 @@ Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
 
 List playbooks in the official + local catalog
 
-| Option                  | Description                           | Default |
-| ----------------------- | ------------------------------------- | ------- |
-| `-c, --category <name>` | Only this category                    | -       |
-| `-s, --search <text>`   | Match id, title, description, or tags | -       |
-| `--refresh`             | Bypass the catalog cache              | -       |
-| `--json`                | Output as JSON (for scripting)        | -       |
+| Option                  | Description                                                                        | Default |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------- |
+| `-c, --category <name>` | Only this category                                                                 | -       |
+| `-s, --search <text>`   | Match id, title, description, or tags                                              | -       |
+| `--refresh`             | Bypass the catalog cache                                                           | -       |
+| `--sort <order>`        | default (the Exchange order) or popular (most installed in the last 30 days first) | -       |
+| `--json`                | Output as JSON (for scripting)                                                     | -       |
 
 ## `maestro-cli marketplace show <playbook-id>`
 
