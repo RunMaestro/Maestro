@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
 	buildFinalSummaryFacts,
+	playbookReportFooterParts,
+	playbookReportSections,
 	playbookRunReportStatus,
 	renderFinalSummaryFactsMarkdown,
 	renderPlaybookReportMarkdown,
@@ -246,5 +248,63 @@ describe('renderPlaybookReportMarkdown', () => {
 		expect(markdown).toContain('| PATTERN | a\\|b c | detected |');
 		expect(markdown).toContain('| EMPTY | _empty_ | unresolved |');
 		expect(markdown).toContain('- `` odd`name.md ``');
+	});
+});
+
+describe('playbookReportSections', () => {
+	const STATUSES: PlaybookRunReportStatus[] = ['completed', 'partial', 'failed', 'stopped'];
+
+	it.each(STATUSES)('joins into exactly the rendered document (%s)', (status) => {
+		const report = makeReport(
+			status,
+			{
+				narrative,
+				howToUse: 'Run `npm run release`.',
+				nextSteps: ['Tag the release'],
+				evidence: {
+					source: 'git',
+					changedFiles: ['src/a.ts'],
+					createdFiles: [],
+					deletedFiles: [],
+				},
+				parameters: [{ name: 'BRANCH', value: 'main', source: 'default' }],
+			},
+			status === 'partial' || status === 'failed'
+				? { stalledDocuments: new Map([['02-BUILD.md', 'No progress']]) }
+				: {}
+		);
+		const s = playbookReportSections(report);
+		const joined =
+			[
+				s.title,
+				s.whatDidNotHappen,
+				s.whatWasDone,
+				s.howToUse,
+				s.nextSteps,
+				s.filesChanged,
+				s.configuration,
+				s.footer,
+			]
+				.filter(Boolean)
+				.join('\n\n') + '\n';
+		expect(joined).toBe(renderPlaybookReportMarkdown(report));
+	});
+
+	it('leaves out the sections with nothing to say', () => {
+		const s = playbookReportSections(makeReport('completed'));
+		expect(s.whatDidNotHappen).toBeUndefined();
+		expect(s.howToUse).toBeUndefined();
+		expect(s.nextSteps).toBeUndefined();
+		expect(s.filesChanged).toBeUndefined();
+		expect(s.configuration).toBeUndefined();
+		expect(s.whatWasDone).toMatch(/^## What was done/);
+	});
+
+	it('gives the footer facts as plain phrases for the modal', () => {
+		const parts = playbookReportFooterParts(makeReport('completed'));
+		expect(parts[0]).toMatch(/^Duration: /);
+		expect(parts).toContain('Tokens: 1,500 (1,200 in / 300 out)');
+		expect(parts.some((part) => part.startsWith('Cost: '))).toBe(true);
+		expect(parts.at(-1)).toBe('Finished: 2026-11-19T10:02:05.000Z');
 	});
 });

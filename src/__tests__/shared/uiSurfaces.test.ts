@@ -145,6 +145,16 @@ describe('describeSurfaceAccess', () => {
 	});
 });
 
+describe('playbook-report surface', () => {
+	it('resolves by id and aliases and names its palette entry', () => {
+		const report = resolveUiSurface('playbook-report')!;
+		expect(report.modal).toBe('playbookReport');
+		expect(resolveUiSurface('playbook-completion')).toBe(report);
+		expect(resolveUiSurface('run-report')).toBe(report);
+		expect(describeSurfaceAccess(report)).toContain('search "Open Last Playbook Report"');
+	});
+});
+
 describe('formatShortcutKeysFor', () => {
 	it('uses macOS symbols with spaces and text with plus signs elsewhere', () => {
 		expect(formatShortcutKeysFor(['Meta', 'Shift', 'k'], true)).toBe('⌘ ⇧ K');

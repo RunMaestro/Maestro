@@ -1,8 +1,9 @@
 /**
  * The desktop's side of a playbook run report: loading the two authoring
- * prompts and saving a finished report under `<autoRunFolder>/.maestro-reports/`
+ * prompts, saving a finished report under `<autoRunFolder>/.maestro-reports/`
  * as JSON (the data, for the completion modal and History) and as rendered
- * markdown (what Copy and Save produce).
+ * markdown (what Copy and Save produce), reading the newest one back, and the
+ * completion modal's "Save to project".
  *
  * The report itself is built and rendered by the shared modules
  * (`src/shared/playbookRunReport.ts`, `src/shared/playbookReportAuthoring.ts`),
@@ -15,7 +16,10 @@
 import { joinPath } from '../../shared/formatters';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import {
+	latestPlaybookReportJsonName,
+	parsePlaybookRunReportJson,
 	PLAYBOOK_REPORTS_DIR,
+	playbookReportProjectFileName,
 	playbookReportRelativePaths,
 } from '../../shared/playbookReportAuthoring';
 import {
@@ -87,4 +91,53 @@ export async function savePlaybookRunReport(
 		logger.warn('Report write failed', LOG_CONTEXT, { markdownPath, jsonPath, error });
 		return null;
 	}
+}
+
+/**
+ * "Save to project": write the rendered report to
+ * `<cwd>/<playbook-slug>-REPORT-<timestamp>.md`, on the agent's SSH remote
+ * when it has one. Returns the absolute path; throws when the write fails, so
+ * the caller can say so.
+ */
+export async function savePlaybookReportToProject(
+	report: PlaybookRunReport,
+	cwd: string,
+	sshRemoteId?: string,
+	savedAt: number = Date.now()
+): Promise<string> {
+	const path = joinPath(cwd, playbookReportProjectFileName(report.playbookName, savedAt));
+	const result = await window.maestro.fs.writeFile(
+		path,
+		renderPlaybookReportMarkdown(report),
+		sshRemoteId
+	);
+	if (!result?.success) throw new Error(`Could not write ${path}`);
+	return path;
+}
+
+/**
+ * The newest report saved under `<autoRunFolder>/.maestro-reports/`, read
+ * from its JSON copy. Null when the folder is missing, holds no report, or
+ * the newest file is not a readable report.
+ */
+export async function loadLatestPlaybookRunReport(
+	autoRunFolder: string,
+	sshRemoteId?: string
+): Promise<PlaybookRunReport | null> {
+	const dir = joinPath(autoRunFolder, PLAYBOOK_REPORTS_DIR);
+	let names: string[];
+	try {
+		const entries = await window.maestro.fs.readDir(dir, sshRemoteId);
+		names = entries.filter((entry) => entry.isFile).map((entry) => entry.name);
+	} catch {
+		// No .maestro-reports/ yet: this agent has never finished a playbook run.
+		return null;
+	}
+	const latest = latestPlaybookReportJsonName(names);
+	if (!latest) return null;
+	const raw = await window.maestro.fs.readFile(joinPath(dir, latest), sshRemoteId);
+	if (raw === null) return null;
+	const report = parsePlaybookRunReportJson(raw);
+	if (!report) logger.warn('Saved report is not readable', LOG_CONTEXT, { file: latest });
+	return report ?? null;
 }

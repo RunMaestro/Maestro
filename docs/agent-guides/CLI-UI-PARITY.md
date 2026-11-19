@@ -551,6 +551,13 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    reachable without it: an agent reads the file, quotes `path:lines` itself,
    and hands the text over with `dispatch` / `send`; replacing text is an edit
    to the file on disk, which an agent makes directly and `open-file` shows.
+5. **Playbook completion report: Copy report and Save to project.** The
+   modal is reachable with `open playbook-report`, and the report is on disk
+   as `<autoRunFolder>/.maestro-reports/<slug>-<timestamp>.{json,md}`, which an
+   agent can read or copy directly. There is no verb that writes the
+   `<slug>-REPORT-<timestamp>.md` project copy. The CLI engine's own report
+   (PLAYBOOK-EXCHANGE-04, the CLI mirror task) is the natural home for one,
+   through `savePlaybookReportToProject()`'s shared file name.
 
 ### Federation: remaining gaps
 

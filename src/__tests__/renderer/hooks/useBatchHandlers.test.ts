@@ -76,6 +76,8 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
+import { usePlaybookCompletionStore } from '../../../renderer/stores/playbookCompletionStore';
+import { buildFinalSummaryFacts } from '../../../shared/playbookRunReport';
 
 // ============================================================================
 // Helpers
@@ -954,6 +956,60 @@ describe('useBatchHandlers', () => {
 
 			// notifyToast is called (we can't easily check this without mocking the module,
 			// but we verify the callback runs without error)
+		});
+
+		it("queues a playbook run's report for the completion modal, and nothing for an ad-hoc run", () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				leaderboardRegistration: null,
+			});
+			usePlaybookCompletionStore.getState().clear();
+
+			renderHook(() => useBatchHandlers(createDeps()));
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+			const info = {
+				sessionId: 'session-1',
+				sessionName: 'Test',
+				completedTasks: 1,
+				totalTasks: 1,
+				wasStopped: false,
+				elapsedTimeMs: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCostUsd: 0,
+				documentsProcessed: 1,
+			};
+			const report = {
+				playbookName: 'Message Bus',
+				status: 'completed' as const,
+				facts: buildFinalSummaryFacts({
+					wasStopped: false,
+					totalCompletedTasks: 1,
+					totalElapsedMs: 0,
+					stalledDocuments: new Map(),
+					documents: [{ filename: 'doc' }],
+					loopEnabled: false,
+					loopIteration: 0,
+					totalInputTokens: 0,
+					totalOutputTokens: 0,
+					totalCost: 0,
+				}),
+				parameters: [],
+				startedAt: 0,
+				finishedAt: 0,
+			};
+
+			act(() => callArgs.onComplete(info));
+			expect(usePlaybookCompletionStore.getState().queue).toHaveLength(0);
+
+			act(() => callArgs.onComplete({ ...info, report }));
+			const queue = usePlaybookCompletionStore.getState().queue;
+			expect(queue).toHaveLength(1);
+			expect(queue[0]).toMatchObject({ sessionId: 'session-1', report });
+			usePlaybookCompletionStore.getState().clear();
 		});
 
 		it('shows stopped warning when batch was stopped', () => {

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	loadLatestPlaybookRunReport,
 	loadPlaybookReportPrompt,
+	savePlaybookReportToProject,
 	savePlaybookRunReport,
 } from '../../../renderer/services/playbookRunReport';
 import { buildFinalSummaryFacts, type PlaybookRunReport } from '../../../shared/playbookRunReport';
@@ -37,6 +39,8 @@ function fsApi() {
 	return window.maestro.fs as unknown as {
 		mkdir: ReturnType<typeof vi.fn>;
 		writeFile: ReturnType<typeof vi.fn>;
+		readDir: ReturnType<typeof vi.fn>;
+		readFile: ReturnType<typeof vi.fn>;
 	};
 }
 
@@ -108,5 +112,65 @@ describe('loadPlaybookReportPrompt', () => {
 		await expect(loadPlaybookReportPrompt('playbook-report-synthesis')).rejects.toThrow(/missing/);
 		promptsApi().get.mockResolvedValueOnce({ success: true, content: '  ' });
 		await expect(loadPlaybookReportPrompt('playbook-report-synthesis')).rejects.toThrow();
+	});
+});
+
+describe('savePlaybookReportToProject', () => {
+	const savedAt = new Date(2026, 10, 19, 14, 3, 7).getTime();
+
+	it('writes the rendered report to <cwd>/<slug>-REPORT-<timestamp>.md and returns the path', async () => {
+		const path = await savePlaybookReportToProject(makeReport(), '/project', undefined, savedAt);
+
+		expect(path).toBe('/project/message-bus-REPORT-20261119-140307.md');
+		const [call] = fsApi().writeFile.mock.calls;
+		expect(call[0]).toBe(path);
+		expect(call[1]).toMatch(/^# Message Bus\n/);
+		expect(call[2]).toBeUndefined();
+	});
+
+	it('writes on the SSH remote when the agent has one', async () => {
+		await savePlaybookReportToProject(makeReport(), '/home/me/app', 'remote-1', savedAt);
+		expect(fsApi().writeFile.mock.calls[0][2]).toBe('remote-1');
+	});
+
+	it('throws when the write fails, so the caller can say so', async () => {
+		fsApi().writeFile.mockResolvedValueOnce({ success: false });
+		await expect(
+			savePlaybookReportToProject(makeReport(), '/project', undefined, savedAt)
+		).rejects.toThrow('/project/message-bus-REPORT-20261119-140307.md');
+	});
+});
+
+describe('loadLatestPlaybookRunReport', () => {
+	const file = (name: string) => ({ name, isFile: true, isDirectory: false, path: name });
+
+	it('reads the newest saved report from .maestro-reports/', async () => {
+		fsApi().readDir.mockResolvedValueOnce([
+			file('old-20261101-090000.json'),
+			file('new-20261119-090000.json'),
+			file('new-20261119-090000.md'),
+		]);
+		fsApi().readFile.mockResolvedValueOnce(JSON.stringify(makeReport()));
+
+		const report = await loadLatestPlaybookRunReport('/docs', 'remote-1');
+
+		expect(fsApi().readDir).toHaveBeenCalledWith('/docs/.maestro-reports', 'remote-1');
+		expect(fsApi().readFile).toHaveBeenCalledWith(
+			'/docs/.maestro-reports/new-20261119-090000.json',
+			'remote-1'
+		);
+		expect(report?.playbookName).toBe('Message Bus');
+	});
+
+	it('answers null with no folder, no report, or an unreadable one', async () => {
+		fsApi().readDir.mockRejectedValueOnce(new Error('ENOENT'));
+		await expect(loadLatestPlaybookRunReport('/docs')).resolves.toBeNull();
+
+		fsApi().readDir.mockResolvedValueOnce([file('notes.md')]);
+		await expect(loadLatestPlaybookRunReport('/docs')).resolves.toBeNull();
+
+		fsApi().readDir.mockResolvedValueOnce([file('x-20261119-090000.json')]);
+		fsApi().readFile.mockResolvedValueOnce('{"not":"a report"}');
+		await expect(loadLatestPlaybookRunReport('/docs')).resolves.toBeNull();
 	});
 });

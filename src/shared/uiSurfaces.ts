@@ -262,6 +262,17 @@ export const UI_SURFACES: UiSurface[] = [
 			'Configure Playbook in the Left Bar hamburger menu, or the sliders icon on a playbook in the Auto Run playbook list',
 	},
 	{
+		id: 'playbook-report',
+		label: 'Playbook Report',
+		aliases: ['playbook-completion', 'run-report'],
+		modal: 'playbookReport',
+		description:
+			"A finished playbook run's report: what was done, how to use it, and what to do next. Opens the waiting reports, or the active agent's most recent one.",
+		commandPalette: 'Open Last Playbook Report',
+		click:
+			'it opens by itself when a playbook run finishes; the report is also the AUTO entry in History',
+	},
+	{
 		id: 'process-monitor',
 		label: 'Process Monitor',
 		aliases: ['processes'],

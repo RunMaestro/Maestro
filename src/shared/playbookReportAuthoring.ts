@@ -32,6 +32,7 @@ import {
 import type {
 	DiskEvidence,
 	FinalSummaryFacts,
+	PlaybookRunReport,
 	PlaybookRunReportParameter,
 	PlaybookRunReportStatus,
 } from './playbookRunReport';
@@ -75,6 +76,70 @@ export function playbookReportRelativePaths(
 ): { json: string; markdown: string } {
 	const stem = `${PLAYBOOK_REPORTS_DIR}/${playbookReportFileStem(playbookName, finishedAt)}`;
 	return { json: `${stem}.json`, markdown: `${stem}.md` };
+}
+
+/**
+ * The file name "Save to project" writes into the agent's working directory:
+ * `<playbook-slug>-REPORT-<timestamp>.md`, stamped with the time of the save.
+ */
+export function playbookReportProjectFileName(playbookName: string, savedAt: number): string {
+	return `${playbookReportSlug(playbookName)}-REPORT-${fileTimestampSlug(savedAt)}.md`;
+}
+
+/** The `-<YYYYMMDD-HHMMSS>.json` tail every saved report's JSON file ends with. */
+const REPORT_JSON_STAMP = /-(\d{8}-\d{6})\.json$/;
+
+/**
+ * The newest saved report among the names in `.maestro-reports/`, by the
+ * timestamp in the file name (the slug comes first, so a plain sort would
+ * order by playbook). Only the JSON copies count: they carry the data.
+ * Undefined when there is none.
+ */
+export function latestPlaybookReportJsonName(names: readonly string[]): string | undefined {
+	let latest: { name: string; stamp: string } | undefined;
+	for (const name of names) {
+		const stamp = REPORT_JSON_STAMP.exec(name)?.[1];
+		if (stamp && (!latest || stamp > latest.stamp)) latest = { name, stamp };
+	}
+	return latest?.name;
+}
+
+const REPORT_STATUSES: ReadonlySet<string> = new Set<PlaybookRunReportStatus>([
+	'completed',
+	'partial',
+	'failed',
+	'stopped',
+]);
+
+/**
+ * A saved report's JSON, read back. The file sits in the user's project and
+ * anything may have edited it, so the fields the report's renderer walks are
+ * checked; undefined when the text is not a report.
+ */
+export function parsePlaybookRunReportJson(raw: string): PlaybookRunReport | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+	if (!value || typeof value !== 'object') return undefined;
+	const report = value as Partial<PlaybookRunReport>;
+	const facts = report.facts as Partial<PlaybookRunReport['facts']> | undefined;
+	const valid =
+		typeof report.playbookName === 'string' &&
+		typeof report.status === 'string' &&
+		REPORT_STATUSES.has(report.status) &&
+		typeof report.finishedAt === 'number' &&
+		typeof report.startedAt === 'number' &&
+		Array.isArray(report.parameters) &&
+		!!facts &&
+		typeof facts === 'object' &&
+		Array.isArray(facts.documents) &&
+		Array.isArray(facts.stalledDocuments) &&
+		typeof facts.totalCompletedTasks === 'number' &&
+		typeof facts.totalElapsedMs === 'number';
+	return valid ? (report as PlaybookRunReport) : undefined;
 }
 
 // ============================================================================

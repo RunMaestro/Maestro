@@ -222,6 +222,11 @@ export interface PlaybookRunReport {
 	finishedAt: number;
 	/** Where the rendered markdown was saved, once it has been. */
 	reportPath?: string;
+	/**
+	 * The folder the run worked in (the worktree when it used one): the
+	 * evidence paths are relative to it, so it is what makes them clickable.
+	 */
+	cwd?: string;
 }
 
 /**
@@ -340,7 +345,11 @@ function configurationSection(parameters: PlaybookRunReportParameter[]): string[
 	return lines;
 }
 
-function footerLines(report: PlaybookRunReport): string[] {
+/**
+ * The footer facts (duration, tokens, cost, finish time), one phrase each.
+ * The markdown footer joins them; the completion modal shows them as a line.
+ */
+export function playbookReportFooterParts(report: PlaybookRunReport): string[] {
 	const { facts } = report;
 	const parts = [`Duration: ${humanizeDuration(facts.totalElapsedMs)}`];
 	const totalTokens = facts.totalInputTokens + facts.totalOutputTokens;
@@ -351,7 +360,73 @@ function footerLines(report: PlaybookRunReport): string[] {
 	}
 	parts.push(`Cost: ${formatCost(facts.totalCost)}`);
 	parts.push(`Finished: ${new Date(report.finishedAt).toISOString()}`);
-	return ['---', '', `_${parts.join(' · ')}_`];
+	return parts;
+}
+
+/**
+ * The report split into its sections, each a markdown block with its own
+ * heading. A section with nothing to say is absent. Copy and Save join them
+ * ({@link renderPlaybookReportMarkdown}); the completion modal renders them
+ * one by one, so both always show the same words.
+ */
+export interface PlaybookReportSections {
+	/** `# <playbook name>` and the status line. */
+	title: string;
+	/** Partial and failed runs only. */
+	whatDidNotHappen?: string;
+	whatWasDone: string;
+	howToUse?: string;
+	nextSteps?: string;
+	filesChanged?: string;
+	configuration?: string;
+	/** A rule and the italic footer line. */
+	footer: string;
+}
+
+function block(lines: string[]): string {
+	return lines.join('\n').trimEnd();
+}
+
+/** Every section of `report` as markdown. */
+export function playbookReportSections(report: PlaybookRunReport): PlaybookReportSections {
+	const { facts, status } = report;
+
+	const taskWord = facts.totalCompletedTasks === 1 ? 'task' : 'tasks';
+	const statusLine = [
+		`**Status:** ${playbookRunReportStatusLabel(status)}`,
+		`${formatCount(facts.totalCompletedTasks)} ${taskWord} completed`,
+	];
+	// The stall sentence explains a partial or stalled run. Elsewhere it only
+	// repeats the label, and for a halted run it would wrongly say "Completed".
+	if (!facts.wasStopped && facts.stalledDocuments.length > 0) {
+		statusLine.push(facts.statusMessage);
+	}
+
+	const sections: PlaybookReportSections = {
+		title: block([`# ${report.playbookName}`, '', statusLine.join(' · ')]),
+		whatWasDone: block(whatWasDoneSection(report)),
+		footer: block(['---', '', `_${playbookReportFooterParts(report).join(' · ')}_`]),
+	};
+
+	if (status === 'partial' || status === 'failed') {
+		sections.whatDidNotHappen = block(whatDidNotHappenSection(report));
+	}
+
+	const howToUse = report.howToUse?.trim();
+	if (howToUse) sections.howToUse = block(['## How to use it', '', howToUse]);
+
+	const nextSteps = (report.nextSteps ?? []).map((step) => step.trim()).filter(Boolean);
+	if (nextSteps.length > 0) {
+		sections.nextSteps = block(['## Next steps', '', ...nextSteps.map((step) => `- ${step}`)]);
+	}
+
+	if (report.evidence) sections.filesChanged = block(filesChangedSection(report.evidence));
+
+	if (report.parameters.length > 0) {
+		sections.configuration = block(configurationSection(report.parameters));
+	}
+
+	return sections;
 }
 
 /**
@@ -364,44 +439,19 @@ function footerLines(report: PlaybookRunReport): string[] {
  * with duration, tokens, and cost. A section with nothing to say is left out.
  */
 export function renderPlaybookReportMarkdown(report: PlaybookRunReport): string {
-	const { facts, status } = report;
-	const blocks: string[][] = [];
-
-	const taskWord = facts.totalCompletedTasks === 1 ? 'task' : 'tasks';
-	const statusLine = [
-		`**Status:** ${playbookRunReportStatusLabel(status)}`,
-		`${formatCount(facts.totalCompletedTasks)} ${taskWord} completed`,
-	];
-	// The stall sentence explains a partial or stalled run. Elsewhere it only
-	// repeats the label, and for a halted run it would wrongly say "Completed".
-	if (!facts.wasStopped && facts.stalledDocuments.length > 0) {
-		statusLine.push(facts.statusMessage);
-	}
-	blocks.push([`# ${report.playbookName}`, '', statusLine.join(' · ')]);
-
-	if (status === 'partial' || status === 'failed') {
-		blocks.push(whatDidNotHappenSection(report));
-	}
-
-	blocks.push(whatWasDoneSection(report));
-
-	const howToUse = report.howToUse?.trim();
-	if (howToUse) blocks.push(['## How to use it', '', howToUse]);
-
-	const nextSteps = (report.nextSteps ?? []).map((step) => step.trim()).filter(Boolean);
-	if (nextSteps.length > 0) {
-		blocks.push(['## Next steps', '', ...nextSteps.map((step) => `- ${step}`)]);
-	}
-
-	if (report.evidence) blocks.push(filesChangedSection(report.evidence));
-
-	if (report.parameters.length > 0) blocks.push(configurationSection(report.parameters));
-
-	blocks.push(footerLines(report));
-
+	const s = playbookReportSections(report);
 	return (
-		blocks
-			.map((lines) => lines.join('\n').trimEnd())
+		[
+			s.title,
+			s.whatDidNotHappen,
+			s.whatWasDone,
+			s.howToUse,
+			s.nextSteps,
+			s.filesChanged,
+			s.configuration,
+			s.footer,
+		]
+			.filter((section): section is string => Boolean(section))
 			.join('\n\n')
 			.trim() + '\n'
 	);

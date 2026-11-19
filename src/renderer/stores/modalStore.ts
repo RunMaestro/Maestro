@@ -445,6 +445,7 @@ export type ModalId =
 	| 'autoRunSetup'
 	| 'marketplace'
 	| 'playbookConfigure'
+	| 'playbookReport'
 	// Worktree
 	| 'worktreeConfig'
 	| 'createWorktree'

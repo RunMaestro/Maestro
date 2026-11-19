@@ -12,6 +12,10 @@ import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftSto
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
+import { usePlaybookCompletionStore } from '../../../renderer/stores/playbookCompletionStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { buildFinalSummaryFacts } from '../../../shared/playbookRunReport';
+import { createMockSession } from '../../helpers/mockSession';
 
 describe('openUiSurface - feedback', () => {
 	beforeEach(() => {
@@ -99,5 +103,70 @@ describe('openUiSurface - Encore-gated tabs', () => {
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('Cue');
 		expect(selectModalOpen('usageDashboard')(useModalStore.getState())).toBe(false);
+	});
+});
+
+describe('openUiSurface - playbook-report', () => {
+	const report = {
+		playbookName: 'Message Bus',
+		status: 'completed' as const,
+		facts: buildFinalSummaryFacts({
+			wasStopped: false,
+			totalCompletedTasks: 1,
+			totalElapsedMs: 1_000,
+			stalledDocuments: new Map(),
+			documents: [{ filename: 'doc' }],
+			loopEnabled: false,
+			loopIteration: 0,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCost: 0,
+		}),
+		parameters: [],
+		startedAt: 0,
+		finishedAt: 1_000,
+	};
+	const isOpen = () => selectModalOpen('playbookReport')(useModalStore.getState());
+	const fs = () =>
+		window.maestro.fs as unknown as {
+			readDir: ReturnType<typeof vi.fn>;
+			readFile: ReturnType<typeof vi.fn>;
+		};
+
+	beforeEach(() => {
+		usePlaybookCompletionStore.getState().clear();
+	});
+
+	afterEach(() => {
+		usePlaybookCompletionStore.getState().clear();
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
+	it('reopens the waiting reports without reading the disk', () => {
+		usePlaybookCompletionStore.getState().enqueue('agent-1', report);
+		useModalStore.getState().closeModal('playbookReport');
+		fs().readDir.mockClear();
+
+		expect(openUiSurface('run-report')).toEqual({ ok: true });
+
+		expect(isOpen()).toBe(true);
+		expect(fs().readDir).not.toHaveBeenCalled();
+	});
+
+	it("with none waiting, opens the active agent's newest saved report", async () => {
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'agent-1', autoRunFolderPath: '/docs' })],
+			activeSessionId: 'agent-1',
+		});
+		fs().readDir.mockResolvedValueOnce([
+			{ name: 'message-bus-20261119-090000.json', isFile: true, isDirectory: false, path: '' },
+		]);
+		fs().readFile.mockResolvedValueOnce(JSON.stringify(report));
+
+		expect(openUiSurface('playbook-report')).toEqual({ ok: true });
+
+		await vi.waitFor(() => expect(usePlaybookCompletionStore.getState().queue).toHaveLength(1));
+		expect(fs().readDir).toHaveBeenCalledWith('/docs/.maestro-reports', undefined);
+		expect(isOpen()).toBe(true);
 	});
 });

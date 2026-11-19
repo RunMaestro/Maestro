@@ -7,11 +7,14 @@ import {
 	formatPlaybookReportFilesChanged,
 	formatPlaybookReportRunFacts,
 	formatPlaybookReportSynopses,
+	latestPlaybookReportJsonName,
 	parseMarkdownListItems,
 	parsePlaybookReportAnswer,
 	parsePlaybookReportSynthesis,
+	parsePlaybookRunReportJson,
 	playbookReportFileStem,
 	playbookReportNarrativeAllowed,
+	playbookReportProjectFileName,
 	playbookReportRelativePaths,
 	playbookReportSlug,
 	REPORT_SYNOPSES_MAX,
@@ -340,5 +343,60 @@ describe('buildPlaybookRunReportParameters', () => {
 
 	it('is empty for an ad-hoc run', () => {
 		expect(buildPlaybookRunReportParameters(undefined)).toEqual([]);
+	});
+});
+
+describe('playbookReportProjectFileName', () => {
+	it('names the project copy <slug>-REPORT-<timestamp>.md', () => {
+		const savedAt = new Date(2026, 10, 19, 14, 3, 7).getTime();
+		expect(playbookReportProjectFileName('Message Bus', savedAt)).toBe(
+			'message-bus-REPORT-20261119-140307.md'
+		);
+	});
+});
+
+describe('latestPlaybookReportJsonName', () => {
+	it('picks the newest JSON by the timestamp in its name, not by its slug', () => {
+		expect(
+			latestPlaybookReportJsonName([
+				'zebra-20261118-090000.json',
+				'alpha-20261119-080000.json',
+				'alpha-20261119-080000.md',
+				'zebra-20261120-070000.md',
+			])
+		).toBe('alpha-20261119-080000.json');
+	});
+
+	it('ignores names that are not saved reports', () => {
+		expect(latestPlaybookReportJsonName(['notes.json', 'readme.md'])).toBeUndefined();
+		expect(latestPlaybookReportJsonName([])).toBeUndefined();
+	});
+});
+
+describe('parsePlaybookRunReportJson', () => {
+	const report = {
+		playbookName: 'Message Bus',
+		status: 'partial',
+		facts: facts(),
+		parameters: [],
+		startedAt: 1,
+		finishedAt: 2,
+	};
+
+	it('reads a saved report back', () => {
+		expect(parsePlaybookRunReportJson(JSON.stringify(report))).toEqual(report);
+	});
+
+	it('refuses text that is not a report', () => {
+		expect(parsePlaybookRunReportJson('not json')).toBeUndefined();
+		expect(parsePlaybookRunReportJson('null')).toBeUndefined();
+		expect(
+			parsePlaybookRunReportJson(JSON.stringify({ ...report, status: 'exploded' }))
+		).toBeUndefined();
+		expect(
+			parsePlaybookRunReportJson(JSON.stringify({ ...report, facts: { documents: [] } }))
+		).toBeUndefined();
+		const { parameters: _parameters, ...noParameters } = report;
+		expect(parsePlaybookRunReportJson(JSON.stringify(noParameters))).toBeUndefined();
 	});
 });

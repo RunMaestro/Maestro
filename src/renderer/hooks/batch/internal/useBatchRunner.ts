@@ -1978,6 +1978,7 @@ export function useBatchRunner({
 					parameters: buildPlaybookRunReportParameters(playbookParams),
 					startedAt: batchStartTime,
 					finishedAt: Date.now(),
+					cwd: effectiveCwd,
 				};
 				const saved = await savePlaybookRunReport(report, folderPath, sshRemoteId);
 				if (saved) report = { ...report, reportPath: saved.markdownPath };

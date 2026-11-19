@@ -23,8 +23,14 @@ import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
 import { buildPromptLinksCommands } from './commands/promptLinksCommands';
 import { buildPlaybookConfigureCommands } from './commands/playbookConfigureCommands';
+import { buildPlaybookReportCommands } from './commands/playbookReportCommands';
 import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { openPlaybookConfigure } from '../../services/playbookConfigure';
+import { openPlaybookReport } from '../../services/playbookCompletion';
+import {
+	selectPlaybookCompletionCount,
+	usePlaybookCompletionStore,
+} from '../../stores/playbookCompletionStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -257,6 +263,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Sourced from the modal store directly to skip the 3-layer prop chain.
 	const openModal = useModalStore((s) => s.openModal);
 	const closeModal = useModalStore((s) => s.closeModal);
+	const waitingPlaybookReports = usePlaybookCompletionStore(selectPlaybookCompletionCount);
 	const setDebugAgentProbeOpen = useCallback(
 		(open: boolean) => (open ? openModal('debugAgentProbe') : closeModal('debugAgentProbe')),
 		[openModal, closeModal]
@@ -687,6 +694,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openPlaybookConfigure,
 			setQuickActionOpen,
 			shortcuts: { openPlaybookConfigure: shortcuts.openPlaybookConfigure },
+		}),
+		...buildPlaybookReportCommands({
+			activeAgentId:
+				activeSession && activeSession.toolType !== 'terminal' ? activeSession.id : undefined,
+			waitingCount: waitingPlaybookReports,
+			openPlaybookReport: () => void openPlaybookReport(),
+			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,
