@@ -172,6 +172,8 @@ import type {
 	GetMarketplaceDocumentCallback,
 	GetMarketplaceReadmeCallback,
 	ImportMarketplacePlaybookCallback,
+	CheckMarketplaceUpdatesCallback,
+	MarketplaceCheckUpdatesResult,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
 	ListDesktopSessionsCallback,
@@ -333,6 +335,7 @@ export interface WebServerCallbacks {
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
 	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
 	importMarketplacePlaybook: ImportMarketplacePlaybookCallback | null;
+	checkMarketplaceUpdates: CheckMarketplaceUpdatesCallback | null;
 	listDesktopSessions: ListDesktopSessionsCallback | null;
 	getSessionHistory: GetSessionHistoryCallback | null;
 }
@@ -451,6 +454,7 @@ export class CallbackRegistry {
 		getMarketplaceDocument: null,
 		getMarketplaceReadme: null,
 		importMarketplacePlaybook: null,
+		checkMarketplaceUpdates: null,
 		listDesktopSessions: null,
 		getSessionHistory: null,
 	};
@@ -1293,12 +1297,25 @@ export class CallbackRegistry {
 	async importMarketplacePlaybook(
 		sessionId: string,
 		playbookId: string,
-		targetFolderName: string
+		targetFolderName: string,
+		options?: { update?: boolean }
 	): Promise<MarketplaceImportResult> {
 		if (!this.callbacks.importMarketplacePlaybook) {
 			return { success: false, error: 'Marketplace import not configured' };
 		}
-		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
+		return this.callbacks.importMarketplacePlaybook(
+			sessionId,
+			playbookId,
+			targetFolderName,
+			options
+		);
+	}
+
+	async checkMarketplaceUpdates(sessionId: string): Promise<MarketplaceCheckUpdatesResult> {
+		if (!this.callbacks.checkMarketplaceUpdates) {
+			return { success: false, error: 'Marketplace update check not configured' };
+		}
+		return this.callbacks.checkMarketplaceUpdates(sessionId);
 	}
 
 	listDesktopSessions(): ReturnType<ListDesktopSessionsCallback> | null {
@@ -1763,6 +1780,10 @@ export class CallbackRegistry {
 
 	setImportMarketplacePlaybookCallback(callback: ImportMarketplacePlaybookCallback): void {
 		this.callbacks.importMarketplacePlaybook = callback;
+	}
+
+	setCheckMarketplaceUpdatesCallback(callback: CheckMarketplaceUpdatesCallback): void {
+		this.callbacks.checkMarketplaceUpdates = callback;
 	}
 
 	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {

@@ -1712,6 +1712,7 @@ import type {
 	MarketplacePlaybook,
 } from '../../shared/marketplace-types';
 import type { PlaybookHealthMap } from '../../shared/playbookHealth';
+import type { PlaybookUpdateStatusMap } from '../../shared/playbookUpdates';
 
 /** Re-export for convenience so handlers don't pull from two places. */
 export type { MarketplaceManifest, MarketplacePlaybook };
@@ -1741,8 +1742,25 @@ export type GetMarketplaceReadmeCallback = (
 	playbookPath: string
 ) => Promise<{ content: string | null }>;
 
+/**
+ * `options.update` updates the record the agent already holds for the entry,
+ * in its own folder (`targetFolderName` is ignored), keeping its parameter
+ * answers. Without it an entry that is already installed is refused.
+ */
 export type ImportMarketplacePlaybookCallback = (
 	sessionId: string,
 	playbookId: string,
-	targetFolderName: string
+	targetFolderName: string,
+	options?: { update?: boolean }
 ) => Promise<MarketplaceImportResult>;
+
+/** Result from the update check: a status per installed Exchange record, or the failure. */
+export interface MarketplaceCheckUpdatesResult {
+	success: boolean;
+	updates?: PlaybookUpdateStatusMap;
+	error?: string;
+}
+
+export type CheckMarketplaceUpdatesCallback = (
+	sessionId: string
+) => Promise<MarketplaceCheckUpdatesResult>;

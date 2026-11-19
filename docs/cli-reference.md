@@ -1220,7 +1220,7 @@ Revoke a prompt link so it never runs again (accepts a unique id prefix)
 
 ## `maestro-cli marketplace`
 
-Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
+Browse, import, and update Playbook Exchange playbooks (the modal: `open marketplace`)
 
 ## `maestro-cli marketplace list`
 
@@ -1246,11 +1246,21 @@ Show a playbook's details, documents, and README
 
 Install a playbook into an agent's Auto Run folder
 
-| Option                | Description                                                     | Default |
-| --------------------- | --------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`    | Target agent ID                                                 | -       |
-| `-f, --folder <name>` | Folder name under the Auto Run folder (default: from the title) | -       |
-| `--json`              | Output as JSON (for scripting)                                  | -       |
+| Option                | Description                                                                           | Default |
+| --------------------- | ------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent ID                                                                       | -       |
+| `-f, --folder <name>` | Folder name under the Auto Run folder (default: from the title)                       | -       |
+| `--update`            | Update the copy already installed on the agent (same folder, keeps parameter answers) | -       |
+| `--json`              | Output as JSON (for scripting)                                                        | -       |
+
+## `maestro-cli marketplace updates`
+
+Show which of an agent's installed playbooks are up to date, have an update, or were edited
+
+| Option             | Description                    | Default |
+| ------------------ | ------------------------------ | ------- |
+| `-a, --agent <id>` | Target agent ID                | -       |
+| `--json`           | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli remove-playbook <agent-id> <playbook-id>`
 

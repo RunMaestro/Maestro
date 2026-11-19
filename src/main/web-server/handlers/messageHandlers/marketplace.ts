@@ -2,7 +2,8 @@
  * Marketplace domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: marketplace_get_manifest,
- * marketplace_get_document, marketplace_get_readme, marketplace_import_playbook.
+ * marketplace_get_document, marketplace_get_readme, marketplace_import_playbook,
+ * marketplace_check_updates.
  */
 
 import { captureException } from '../../../utils/sentry';
@@ -57,7 +58,8 @@ function sendMarketplaceFailure(
 		| 'marketplace_get_manifest_result'
 		| 'marketplace_get_document_result'
 		| 'marketplace_get_readme_result'
-		| 'marketplace_import_playbook_result',
+		| 'marketplace_import_playbook_result'
+		| 'marketplace_check_updates_result',
 	error: string,
 	message: WebClientMessage,
 	extra?: Record<string, unknown>
@@ -87,7 +89,8 @@ function reportMarketplaceHandlerError(
 		| 'marketplace_get_manifest_result'
 		| 'marketplace_get_document_result'
 		| 'marketplace_get_readme_result'
-		| 'marketplace_import_playbook_result',
+		| 'marketplace_import_playbook_result'
+		| 'marketplace_check_updates_result',
 	handler: string,
 	message: WebClientMessage,
 	userMessagePrefix: string,
@@ -329,7 +332,9 @@ export function handleMarketplaceGetReadme(
  * Handle marketplace_import_playbook - import a playbook into the
  * session's Auto Run folder. The server resolves both the folder path
  * and SSH config from the session, so the mobile client doesn't need
- * to send them - and can't lie about them.
+ * to send them - and can't lie about them. `update: true` updates the
+ * record the agent already holds for the entry, in that record's own
+ * folder, so it needs no `targetFolderName`.
  */
 export function handleMarketplaceImportPlaybook(
 	ctx: MessageHandlerContext,
@@ -339,6 +344,7 @@ export function handleMarketplaceImportPlaybook(
 	const sessionId = message.sessionId;
 	const playbookId = message.playbookId;
 	const targetFolderName = message.targetFolderName;
+	const update = message.update === true;
 
 	if (typeof sessionId !== 'string' || sessionId.trim() === '') {
 		sendMarketplaceFailure(
@@ -363,7 +369,7 @@ export function handleMarketplaceImportPlaybook(
 		);
 		return;
 	}
-	if (typeof targetFolderName !== 'string' || targetFolderName.trim() === '') {
+	if (!update && (typeof targetFolderName !== 'string' || targetFolderName.trim() === '')) {
 		sendMarketplaceFailure(
 			ctx,
 			client,
@@ -378,7 +384,7 @@ export function handleMarketplaceImportPlaybook(
 	// escape the session's Auto Run root. The service-layer guard
 	// (assertSafeTargetFolderName) is the source of truth, but
 	// short-circuiting here returns a cleaner WebSocket error code.
-	const trimmedFolder = targetFolderName.trim();
+	const trimmedFolder = typeof targetFolderName === 'string' ? targetFolderName.trim() : '';
 	if (
 		trimmedFolder.includes('..') ||
 		trimmedFolder.includes('/') ||
@@ -410,7 +416,7 @@ export function handleMarketplaceImportPlaybook(
 	}
 
 	ctx.callbacks
-		.importMarketplacePlaybook(sessionId, playbookId, trimmedFolder)
+		.importMarketplacePlaybook(sessionId, playbookId, trimmedFolder, { update })
 		.then((result) => {
 			ctx.send(client, {
 				type: 'marketplace_import_playbook_result',
@@ -435,6 +441,66 @@ export function handleMarketplaceImportPlaybook(
 				message,
 				'Import failed',
 				{ sessionId, playbookId, targetFolderName: trimmedFolder }
+			);
+		});
+}
+
+/**
+ * Handle marketplace_check_updates - classify every playbook the session
+ * installed from the Exchange (`up-to-date`, `update-available`,
+ * `locally-modified`). The server resolves the Auto Run folder and SSH
+ * config from the session, as the import does.
+ */
+export function handleMarketplaceCheckUpdates(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = message.sessionId;
+	if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+		sendMarketplaceFailure(
+			ctx,
+			client,
+			'marketplace_check_updates_result',
+			'Missing sessionId',
+			message
+		);
+		return;
+	}
+	if (!ctx.callbacks.checkMarketplaceUpdates) {
+		sendMarketplaceFailure(
+			ctx,
+			client,
+			'marketplace_check_updates_result',
+			'Marketplace update check not configured',
+			message,
+			{ sessionId }
+		);
+		return;
+	}
+
+	ctx.callbacks
+		.checkMarketplaceUpdates(sessionId)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'marketplace_check_updates_result',
+				success: result.success,
+				error: result.error,
+				updates: result.updates,
+				sessionId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			reportMarketplaceHandlerError(
+				ctx,
+				client,
+				error,
+				'marketplace_check_updates_result',
+				'marketplace_check_updates',
+				message,
+				'Update check failed',
+				{ sessionId }
 			);
 		});
 }

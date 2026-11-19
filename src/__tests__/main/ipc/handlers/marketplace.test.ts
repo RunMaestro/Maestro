@@ -71,14 +71,16 @@ vi.mock('electron-store', () => {
 });
 
 // Mock remote-fs for SSH operations using vi.hoisted for factory hoisting
-const { mockWriteFileRemote, mockMkdirRemote } = vi.hoisted(() => ({
+const { mockWriteFileRemote, mockMkdirRemote, mockReadFileRemote } = vi.hoisted(() => ({
 	mockWriteFileRemote: vi.fn(),
 	mockMkdirRemote: vi.fn(),
+	mockReadFileRemote: vi.fn(),
 }));
 
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	writeFileRemote: mockWriteFileRemote,
 	mkdirRemote: mockMkdirRemote,
+	readFileRemote: mockReadFileRemote,
 }));
 
 // Mock the logger
@@ -217,6 +219,7 @@ describe('marketplace IPC handlers', () => {
 		// Reset remote-fs mocks
 		mockWriteFileRemote.mockReset();
 		mockMkdirRemote.mockReset();
+		mockReadFileRemote.mockReset();
 		vi.mocked(fs.readdir).mockReset();
 		vi.mocked(fs.stat).mockReset();
 		vi.mocked(fs.readdir).mockRejectedValue({ code: 'ENOENT' });
@@ -240,6 +243,7 @@ describe('marketplace IPC handlers', () => {
 				'marketplace:getDocument',
 				'marketplace:getReadme',
 				'marketplace:importPlaybook',
+				'marketplace:checkUpdates',
 			];
 
 			for (const channel of expectedChannels) {
@@ -1253,15 +1257,15 @@ describe('marketplace IPC handlers', () => {
 			// Mock file reads in order:
 			// 1. Official cache
 			// 2. Local manifest (with the filesystem playbook)
-			// 3. Document read: /Users/test/custom-playbooks/my-playbook/phase-1.md
-			// 4. Document read: /Users/test/custom-playbooks/my-playbook/phase-2.md
-			// 5. Existing playbooks file (ENOENT = none)
+			// 3. Existing playbooks file (ENOENT = none), read before any write
+			// 4. Document read: /Users/test/custom-playbooks/my-playbook/phase-1.md
+			// 5. Document read: /Users/test/custom-playbooks/my-playbook/phase-2.md
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache)) // 1. Official cache
 				.mockResolvedValueOnce(JSON.stringify(localManifest)) // 2. Local manifest
-				.mockResolvedValueOnce('# Phase 1 from filesystem\n\n- [ ] Task 1') // 3. phase-1.md
-				.mockResolvedValueOnce('# Phase 2 from filesystem\n\n- [ ] Task 2') // 4. phase-2.md
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // 5. No existing playbooks
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // 3. No existing playbooks
+				.mockResolvedValueOnce('# Phase 1 from filesystem\n\n- [ ] Task 1') // 4. phase-1.md
+				.mockResolvedValueOnce('# Phase 2 from filesystem\n\n- [ ] Task 2'); // 5. phase-2.md
 
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1354,12 +1358,12 @@ describe('marketplace IPC handlers', () => {
 			// The tilde path ~/playbooks/my-tilde-playbook will be resolved to:
 			// /Users/testuser/playbooks/my-tilde-playbook (or similar based on os.homedir)
 			// For this test, we just verify that fs.readFile is called (not fetch).
-			// Order: cache, local manifest, document content, playbooks file (ENOENT).
+			// Order: cache, local manifest, playbooks file (ENOENT), document content.
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
 				.mockResolvedValueOnce(JSON.stringify(localManifest)) // local manifest
-				.mockResolvedValueOnce('# Setup from tilde path') // document content
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // playbooks file (no existing)
+				.mockResolvedValueOnce('# Setup from tilde path'); // document content
 
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1439,7 +1443,8 @@ describe('marketplace IPC handlers', () => {
 
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -2223,10 +2228,10 @@ describe('marketplace IPC handlers', () => {
 				vi.mocked(fs.readFile)
 					.mockResolvedValueOnce(JSON.stringify(validCache))
 					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // playbooks file
 					.mockResolvedValueOnce('# Main local doc')
 					.mockResolvedValueOnce(Buffer.from('asset-one'))
-					.mockResolvedValueOnce(Buffer.from('asset-two'))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(Buffer.from('asset-two'));
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				vi.mocked(fs.readdir).mockResolvedValue(['settings.yaml', 'logo.png']);
@@ -2286,11 +2291,11 @@ describe('marketplace IPC handlers', () => {
 				vi.mocked(fs.readFile)
 					.mockResolvedValueOnce(JSON.stringify(validCache))
 					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // playbooks file
 					.mockResolvedValueOnce('# Main local doc')
 					.mockResolvedValueOnce(Buffer.from('config'))
 					.mockResolvedValueOnce(Buffer.from('logo'))
-					.mockResolvedValueOnce(Buffer.from('dockerignore'))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(Buffer.from('dockerignore'));
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				vi.mocked(fs.readdir).mockResolvedValue(['logo.png', '.dockerignore']);
@@ -2584,6 +2589,307 @@ describe('marketplace IPC handlers', () => {
 		});
 	});
 
+	describe('update detection and update in place', () => {
+		const sha256 = (text: string) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+		const rawPhase1 = '# Phase 1\n\n- [ ] Task';
+		const rawPhase2 = '# Phase 2\n\n- [ ] Task';
+		const newPhase1 = '# Phase 1 v2\n\n- [ ] Task';
+		const newPhase2 = '# Phase 2 v2\n\n- [ ] Task';
+
+		const entry = {
+			...sampleManifest.playbooks[0],
+			id: 'exchange-playbook',
+			title: 'Exchange Playbook',
+			lastUpdated: '2026-09-01',
+		} as MarketplaceManifest['playbooks'][number];
+
+		const installedRecord = {
+			id: 'existing-id',
+			name: 'Exchange Playbook',
+			createdAt: 5,
+			updatedAt: 6,
+			documents: [
+				{ filename: 'Old Folder/phase-1', resetOnCompletion: false },
+				{ filename: 'Old Folder/phase-2', resetOnCompletion: true },
+			],
+			loopEnabled: false,
+			maxLoops: null,
+			prompt: '',
+			parameterValues: { PR_URL: 'https://example.com/pr/1' },
+			worktreeSettings: { branchNameTemplate: 'pb/{{DATE}}', createPROnCompletion: false },
+			provenance: {
+				kind: 'marketplace',
+				marketplaceId: 'exchange-playbook',
+				sourceVersion: '2026-08-01',
+				sourceChannel: 'official',
+				targetFolderName: 'Old Folder',
+				importedAt: 1,
+				documentHashes: { 'phase-1': sha256(rawPhase1), 'phase-2': sha256(rawPhase2) },
+			},
+		};
+		const otherRecord = { id: 'other-id', name: 'Hand Made', documents: [] };
+
+		const cacheJson = (playbooks: MarketplaceManifest['playbooks']) =>
+			JSON.stringify({ fetchedAt: Date.now(), manifest: { ...sampleManifest, playbooks } });
+
+		function queueStoreReads(playbooks: unknown[]) {
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(cacheJson([entry]))
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockResolvedValueOnce(JSON.stringify({ playbooks })); // playbooks file
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		}
+
+		function savedPlaybooks() {
+			const written = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find(([file]) => String(file).endsWith('session-123.json'));
+			return JSON.parse(String(written![1])).playbooks;
+		}
+
+		it('refuses a second install of an entry the agent already has, before writing anything', async () => {
+			queueStoreReads([installedRecord]);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'exchange-playbook',
+				'New Folder',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('already installed');
+			expect(result.error).toContain('Old Folder/');
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(mockSafeSend).not.toHaveBeenCalled();
+		});
+
+		it('updates the record in its own folder, refreshes the pristine copies, and keeps the answers', async () => {
+			queueStoreReads([otherRecord, installedRecord]);
+			mockFetch
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(newPhase1) })
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(newPhase2) });
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'exchange-playbook',
+				'',
+				'/autorun/folder',
+				'session-123',
+				undefined,
+				{ update: true }
+			);
+
+			expect(result.success).toBe(true);
+			// Re-fetched into the installed folder, not a new one.
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'Old Folder', 'phase-1.md'),
+				newPhase1,
+				'utf-8'
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'Old Folder', '.maestro-playbook', 'source', 'phase-2.md'),
+				newPhase2,
+				'utf-8'
+			);
+
+			const saved = savedPlaybooks();
+			// Replaced in place: still two records, the other one untouched.
+			expect(saved).toHaveLength(2);
+			expect(saved[0]).toEqual(otherRecord);
+			const updated = saved[1];
+			expect(updated.id).toBe('existing-id');
+			expect(updated.createdAt).toBe(5);
+			expect(updated.parameterValues).toEqual({ PR_URL: 'https://example.com/pr/1' });
+			expect(updated.worktreeSettings).toEqual(installedRecord.worktreeSettings);
+			expect(updated.documents.map((doc: { filename: string }) => doc.filename)).toEqual([
+				'Old Folder/phase-1',
+				'Old Folder/phase-2',
+			]);
+			expect(updated.provenance).toEqual(
+				expect.objectContaining({
+					marketplaceId: 'exchange-playbook',
+					sourceVersion: '2026-09-01',
+					targetFolderName: 'Old Folder',
+					documentHashes: { 'phase-1': sha256(newPhase1), 'phase-2': sha256(newPhase2) },
+				})
+			);
+			expect(result.playbook).toEqual(updated);
+			expect(mockSafeSend).toHaveBeenCalledWith('playbooks:changed', 'session-123');
+		});
+
+		it('refuses an update of an entry the agent never installed', async () => {
+			queueStoreReads([otherRecord]);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'exchange-playbook',
+				'',
+				'/autorun/folder',
+				'session-123',
+				undefined,
+				{ update: true }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('nothing to update');
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		describe('marketplace:checkUpdates', () => {
+			const modifiedRecord = {
+				...installedRecord,
+				id: 'modified-id',
+				provenance: {
+					...installedRecord.provenance,
+					marketplaceId: 'edited-playbook',
+					sourceVersion: '2026-09-01',
+					targetFolderName: 'Edited',
+				},
+			};
+			const retiredRecord = {
+				...installedRecord,
+				id: 'retired-id',
+				provenance: {
+					...installedRecord.provenance,
+					marketplaceId: 'retired-playbook',
+					targetFolderName: 'Retired',
+				},
+			};
+			const zipRecord = {
+				id: 'zip-id',
+				name: 'From a ZIP',
+				documents: [],
+				provenance: { kind: 'zip', targetFolderName: 'Zip', importedAt: 1, documentHashes: {} },
+			};
+			const manifestEntries = [
+				entry,
+				{ ...entry, id: 'edited-playbook', lastUpdated: '2026-09-01' },
+			] as MarketplaceManifest['playbooks'];
+
+			/** Answer reads by path: the store, the cache, and the pristine copies. */
+			function mockDisk(playbooks: unknown[], pristine: Record<string, string>) {
+				vi.mocked(fs.readFile).mockImplementation((async (file: string) => {
+					const name = String(file);
+					if (name.endsWith('session-123.json')) return JSON.stringify({ playbooks });
+					if (name.endsWith('marketplace-cache.json')) return cacheJson(manifestEntries);
+					if (name in pristine) return pristine[name];
+					throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				}) as any);
+			}
+			// mockDisk installs an implementation, which clearAllMocks keeps; put
+			// back whatever the file's other tests had, so none of them inherit it.
+			let previousReadFile: ReturnType<
+				ReturnType<typeof vi.mocked<typeof fs.readFile>>['getMockImplementation']
+			>;
+			beforeEach(() => {
+				previousReadFile = vi.mocked(fs.readFile).getMockImplementation();
+			});
+			afterEach(() => {
+				if (previousReadFile) vi.mocked(fs.readFile).mockImplementation(previousReadFile);
+				else vi.mocked(fs.readFile).mockReset();
+			});
+			const pristinePath = (folder: string, doc: string) =>
+				path.join('/autorun/folder', folder, '.maestro-playbook', 'source', `${doc}.md`);
+
+			it('classifies each installed Exchange record and skips the others', async () => {
+				mockDisk([installedRecord, modifiedRecord, retiredRecord, zipRecord, otherRecord], {
+					[pristinePath('Old Folder', 'phase-1')]: rawPhase1,
+					[pristinePath('Old Folder', 'phase-2')]: rawPhase2,
+					[pristinePath('Edited', 'phase-1')]: rawPhase1,
+					[pristinePath('Edited', 'phase-2')]: '# Phase 2, edited by hand',
+					// The retired record's pristine copies are missing: not an edit.
+				});
+
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/autorun/folder');
+
+				expect(result.success).toBe(true);
+				expect(Object.keys(result.updates).sort()).toEqual([
+					'existing-id',
+					'modified-id',
+					'retired-id',
+				]);
+				expect(result.updates['existing-id']).toEqual({
+					playbookId: 'existing-id',
+					marketplaceId: 'exchange-playbook',
+					name: 'Exchange Playbook',
+					targetFolderName: 'Old Folder',
+					installedVersion: '2026-08-01',
+					latestVersion: '2026-09-01',
+					state: 'update-available',
+					updateAvailable: true,
+					modifiedDocuments: [],
+				});
+				expect(result.updates['modified-id']).toEqual(
+					expect.objectContaining({
+						state: 'locally-modified',
+						updateAvailable: false,
+						modifiedDocuments: ['phase-2'],
+					})
+				);
+				expect(result.updates['retired-id']).toEqual(
+					expect.objectContaining({ state: 'up-to-date', updateAvailable: false })
+				);
+				expect(result.updates['retired-id'].latestVersion).toBeUndefined();
+			});
+
+			it('reads the pristine copies on the SSH remote that holds the folder', async () => {
+				mockDisk([installedRecord], {});
+				mockReadFileRemote.mockImplementation(async (file: string) =>
+					file.endsWith('phase-1.md')
+						? { success: true, data: rawPhase1 }
+						: { success: true, data: '# Phase 2, edited by hand' }
+				);
+
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/remote/autorun/', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(mockReadFileRemote).toHaveBeenCalledWith(
+					'/remote/autorun/Old Folder/.maestro-playbook/source/phase-1.md',
+					sampleSshRemote
+				);
+				expect(result.updates['existing-id']).toEqual(
+					expect.objectContaining({
+						state: 'locally-modified',
+						updateAvailable: true,
+						modifiedDocuments: ['phase-2'],
+					})
+				);
+			});
+
+			it('fails loudly when the SSH remote cannot be resolved', async () => {
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/remote', 'missing-remote');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('SSH remote not found or disabled');
+				expect(mockReadFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('answers an empty map without reading the catalog when nothing is installed', async () => {
+				mockDisk([otherRecord], {});
+
+				const handler = handlers.get('marketplace:checkUpdates');
+				const result = await handler!({} as any, 'session-123', '/autorun/folder');
+
+				expect(result).toEqual({ success: true, updates: {} });
+				const catalogReads = vi
+					.mocked(fs.readFile)
+					.mock.calls.filter(([file]) => String(file).endsWith('marketplace-cache.json'));
+				expect(catalogReads).toHaveLength(0);
+			});
+		});
+	});
+
 	describe('path traversal protection', () => {
 		it('should resolve a normal local document filename correctly', async () => {
 			// Setup a local playbook with a normal filename
@@ -2614,8 +2920,8 @@ describe('marketplace IPC handlers', () => {
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache))
 				.mockResolvedValueOnce(JSON.stringify(localManifest))
-				.mockResolvedValueOnce('# Phase 1 Content') // The document read
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // No existing playbooks
+				.mockResolvedValueOnce('# Phase 1 Content'); // The document read
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -2685,8 +2991,8 @@ describe('marketplace IPC handlers', () => {
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(JSON.stringify(validCache))
 				.mockResolvedValueOnce(JSON.stringify(localManifest))
-				.mockResolvedValueOnce('# Doc content') // Document read
-				.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // No existing playbooks
+				.mockResolvedValueOnce('# Doc content'); // Document read
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 

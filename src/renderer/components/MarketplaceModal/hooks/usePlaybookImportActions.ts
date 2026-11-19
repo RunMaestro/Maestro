@@ -4,13 +4,21 @@ import {
 	type MarketplaceImportPlaybookResult,
 	type MarketplacePlaybook,
 } from '../../../../shared/marketplace-types';
+import type { PlaybookUpdateStatus } from '../../../../shared/playbookUpdates';
 import type { Playbook } from '../../../../shared/types';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
+import { checkPlaybookUpdates, updateInstalledPlaybook } from '../../../services/playbookUpdates';
 
 export interface UsePlaybookImportActionsParams {
 	selectedPlaybook: MarketplacePlaybook | null;
 	targetFolderName: string;
+	/**
+	 * The copy of the selected playbook the agent already has. Set, Install
+	 * becomes Update: the record is updated in its own folder instead of a
+	 * second record being written over the same files.
+	 */
+	installed?: PlaybookUpdateStatus;
 	autoRunFolderPath: string;
 	sessionId: string;
 	sshRemoteId?: string;
@@ -35,6 +43,7 @@ export interface UsePlaybookImportActionsParams {
 export function usePlaybookImportActions({
 	selectedPlaybook,
 	targetFolderName,
+	installed,
 	autoRunFolderPath,
 	sessionId,
 	sshRemoteId,
@@ -51,8 +60,18 @@ export function usePlaybookImportActions({
 	 * the install failed (after reporting the failure).
 	 */
 	const install = useCallback(async (): Promise<MarketplaceImportPlaybookResult | null> => {
-		if (!selectedPlaybook || !targetFolderName.trim()) return null;
+		if (!selectedPlaybook) return null;
+		const target = { sessionId, autoRunFolderPath, sshRemoteId };
 
+		if (installed) {
+			// The service reports the outcome in a toast and re-checks.
+			const updated = await updateInstalledPlaybook(target, selectedPlaybook.id);
+			if (!updated.success) return null;
+			onImportComplete(installed.targetFolderName);
+			return updated;
+		}
+
+		if (!targetFolderName.trim()) return null;
 		const result = await importPlaybook(
 			selectedPlaybook,
 			targetFolderName,
@@ -82,10 +101,13 @@ export function usePlaybookImportActions({
 			});
 		}
 		onImportComplete(targetFolderName);
+		// The new record shows as installed (Update, not Install) from now on.
+		void checkPlaybookUpdates(target, { force: true });
 		return result;
 	}, [
 		selectedPlaybook,
 		targetFolderName,
+		installed,
 		importPlaybook,
 		autoRunFolderPath,
 		sessionId,

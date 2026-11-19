@@ -273,6 +273,31 @@ export function createMarketplaceApi() {
 				sshRemoteId
 			),
 
+		/**
+		 * Update the record this agent already holds for an Exchange entry:
+		 * re-fetch its documents into the record's own folder, refresh the
+		 * pristine copies, and keep the parameter answers.
+		 */
+		updatePlaybook: (
+			playbookId: string,
+			autoRunFolderPath: string,
+			sessionId: string,
+			sshRemoteId?: string
+		) =>
+			ipcRenderer.invoke(
+				'marketplace:importPlaybook',
+				playbookId,
+				'',
+				autoRunFolderPath,
+				sessionId,
+				sshRemoteId,
+				{ update: true }
+			),
+
+		/** Classify every playbook the agent installed from the Exchange. */
+		checkUpdates: (sessionId: string, autoRunFolderPath: string, sshRemoteId?: string) =>
+			ipcRenderer.invoke('marketplace:checkUpdates', sessionId, autoRunFolderPath, sshRemoteId),
+
 		onManifestChanged: (handler: () => void) => {
 			const wrappedHandler = () => handler();
 			ipcRenderer.on('marketplace:manifestChanged', wrappedHandler);

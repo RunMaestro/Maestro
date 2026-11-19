@@ -1,7 +1,8 @@
 /**
- * `maestro-cli marketplace list|show|import` - the Playbook Exchange, for an
- * agent: browse the official + local catalog, read a playbook's README, and
- * install one into an agent's Auto Run folder.
+ * `maestro-cli marketplace list|show|import|updates` - the Playbook Exchange,
+ * for an agent: browse the official + local catalog, read a playbook's README,
+ * install one into an agent's Auto Run folder, and see which installed ones
+ * have an update (`import --update` applies it).
  *
  * Every call goes through the app's marketplace service over the WS bridge, so
  * the catalog cache, the version-compatibility gate, and the import (documents
@@ -25,6 +26,11 @@ import {
 	sortPlaybooksByHealth,
 	type PlaybookHealthMap,
 } from '../../shared/playbookHealth';
+import {
+	describePlaybookUpdate,
+	type PlaybookUpdateStatus,
+	type PlaybookUpdateStatusMap,
+} from '../../shared/playbookUpdates';
 
 /** A cold catalog fetch goes to GitHub; an import downloads every document. */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -44,6 +50,12 @@ interface ListOptions extends JsonOption {
 interface ImportOptions extends JsonOption {
 	agent: string;
 	folder?: string;
+	/** Update the record the agent already holds for the entry, in its own folder. */
+	update?: boolean;
+}
+
+interface UpdatesOptions extends JsonOption {
+	agent: string;
 }
 
 interface CatalogReply {
@@ -207,10 +219,17 @@ export async function marketplaceShow(id: string, options: JsonOption): Promise<
 
 export async function marketplaceImport(id: string, options: ImportOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
+	const update = options.update === true;
+	if (update && options.folder) {
+		failCommand(
+			'--update re-fetches into the folder the playbook is installed in; drop --folder.',
+			options.json
+		);
+	}
 	let reply: MarketplaceImportPlaybookResult;
 	let targetFolderName = options.folder?.trim();
 	try {
-		if (!targetFolderName) {
+		if (!targetFolderName && !update) {
 			// Same default the modal proposes, so a CLI import and a click import
 			// of the same playbook land in the same place.
 			targetFolderName = generateDefaultFolderName(
@@ -224,7 +243,7 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 					type: 'marketplace_import_playbook',
 					sessionId,
 					playbookId: id,
-					targetFolderName: folder,
+					...(update ? { update: true } : { targetFolderName: folder }),
 				},
 				'marketplace_import_playbook_result',
 				IMPORT_TIMEOUT_MS
@@ -236,6 +255,8 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 	if (!reply.success) failCommand(reply.error || 'Import failed', options.json);
 
 	const docs = reply.importedDocs ?? [];
+	// An update reports the folder the record already lived in.
+	if (update) targetFolderName = reply.playbook?.provenance?.targetFolderName;
 	// The import wrote a saved playbook record. Running that record (not the
 	// bare documents) is what applies its parameters and ends with its report.
 	const savedPlaybookId = reply.playbook?.id ?? null;
@@ -245,6 +266,7 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 				success: true,
 				sessionId,
 				playbookId: savedPlaybookId,
+				updated: update,
 				folder: targetFolderName,
 				importedDocs: docs,
 				importedAssets: reply.importedAssets ?? [],
@@ -255,7 +277,7 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 		return;
 	}
 	console.log(
-		`Imported ${id} into ${targetFolderName}/ on ${sessionId} (${docs.length} documents).`
+		`${update ? 'Updated' : 'Imported'} ${id} ${update ? 'in' : 'into'} ${targetFolderName}/ on ${sessionId} (${docs.length} documents).`
 	);
 	const failures = describeMarketplaceImportFailures(reply);
 	if (failures) console.error(`Warning: partial import. ${failures}`);
@@ -265,5 +287,44 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 		console.log(`See its parameters with: maestro-cli playbook configure ${savedPlaybookId}`);
 	} else {
 		console.log(`Run it with: maestro-cli auto-run <docs...> -a ${sessionId}`);
+	}
+}
+
+/** One line per installed playbook: the record, its Exchange entry, and its state. */
+export function formatPlaybookUpdateLine(status: PlaybookUpdateStatus): string {
+	return `${status.playbookId}  ${status.marketplaceId} in ${status.targetFolderName}/  [${status.state}]  ${describePlaybookUpdate(status)}`;
+}
+
+export async function marketplaceUpdates(options: UpdatesOptions): Promise<void> {
+	const sessionId = resolveAgentOrFail(options.agent, options.json);
+	let updates: PlaybookUpdateStatusMap;
+	try {
+		const reply = await withMaestroClient((client) =>
+			client.sendCommand<{ success: boolean; updates?: PlaybookUpdateStatusMap; error?: string }>(
+				{ type: 'marketplace_check_updates', sessionId },
+				'marketplace_check_updates_result',
+				FETCH_TIMEOUT_MS
+			)
+		);
+		if (!reply.success) throw new Error(reply.error || 'Update check failed');
+		updates = reply.updates ?? {};
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	const statuses = Object.values(updates).sort((a, b) => a.name.localeCompare(b.name));
+	if (options.json) {
+		console.log(JSON.stringify(statuses, null, 2));
+		return;
+	}
+	if (statuses.length === 0) {
+		console.log(`No Playbook Exchange playbooks are installed on ${sessionId}.`);
+		return;
+	}
+	for (const status of statuses) console.log(formatPlaybookUpdateLine(status));
+	if (statuses.some((status) => status.updateAvailable)) {
+		console.log('');
+		console.log(
+			`Update one with: maestro-cli marketplace import <playbook-id> --update -a ${sessionId}`
+		);
 	}
 }

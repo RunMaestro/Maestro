@@ -8,3 +8,4 @@ export { DocumentSelector } from './DocumentSelector';
 export { MarkdownPreviewPane } from './MarkdownPreviewPane';
 export { PlaybookTile } from './PlaybookTile';
 export { PlaybookTileSkeleton } from './PlaybookTileSkeleton';
+export { PlaybookUpdatePill } from './PlaybookUpdatePill';

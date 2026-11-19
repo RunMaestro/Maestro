@@ -71,7 +71,12 @@ import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
 import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
-import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
+import {
+	marketplaceList,
+	marketplaceShow,
+	marketplaceImport,
+	marketplaceUpdates,
+} from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import { cueModel } from './commands/cue-model';
 import {
@@ -1558,7 +1563,9 @@ promptLink
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
 	.command('marketplace')
-	.description('Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)');
+	.description(
+		'Browse, import, and update Playbook Exchange playbooks (the modal: `open marketplace`)'
+	);
 
 marketplace
 	.command('list')
@@ -1584,8 +1591,21 @@ marketplace
 	.description("Install a playbook into an agent's Auto Run folder")
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('-f, --folder <name>', 'Folder name under the Auto Run folder (default: from the title)')
+	.option(
+		'--update',
+		'Update the copy already installed on the agent (same folder, keeps parameter answers)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(marketplaceImport);
+
+marketplace
+	.command('updates')
+	.description(
+		"Show which of an agent's installed playbooks are up to date, have an update, or were edited"
+	)
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceUpdates);
 
 // Remove playbook command - delete a saved playbook from an agent
 program

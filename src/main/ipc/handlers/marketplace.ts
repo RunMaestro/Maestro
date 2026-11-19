@@ -29,6 +29,7 @@ import {
 	getMarketplaceDocument,
 	getMarketplaceReadme,
 	importMarketplacePlaybook,
+	checkMarketplacePlaybookUpdates,
 	createLocalManifestWatcher,
 } from '../../services/marketplace-service';
 
@@ -61,6 +62,19 @@ function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
 	}
 	const sshRemotes = marketplaceSettingsStore.get('sshRemotes', []) as SshRemoteConfig[];
 	return sshRemotes.find((r) => r.id === sshRemoteId && r.enabled);
+}
+
+/**
+ * The SSH config for a request that named a remote. Fails loudly when the
+ * remote cannot be resolved: silently working locally would land (or read)
+ * the playbook on the wrong host (the SSH spawn pattern in CLAUDE.md: never
+ * silently downgrade to local).
+ */
+function resolveSshConfig(sshRemoteId: string | undefined): SshRemoteConfig | undefined {
+	if (!sshRemoteId) return undefined;
+	const sshConfig = getSshRemoteById(sshRemoteId);
+	if (!sshConfig) throw new Error(`SSH remote not found or disabled: ${sshRemoteId}`);
+	return sshConfig;
 }
 
 const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions => ({
@@ -146,16 +160,10 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				targetFolderName: string,
 				autoRunFolderPath: string,
 				sessionId: string,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				options?: { update?: boolean }
 			) => {
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail loudly when the user opted into SSH but the remote
-				// can't be resolved - silently importing locally would land
-				// the playbook on the wrong host (mirrors the SSH spawn
-				// pattern in CLAUDE.md: never silently downgrade to local).
-				if (sshRemoteId && !sshConfig) {
-					throw new Error(`SSH remote not found or disabled: ${sshRemoteId}`);
-				}
+				const sshConfig = resolveSshConfig(sshRemoteId);
 				const result = await importMarketplacePlaybook({
 					app,
 					playbookId,
@@ -163,10 +171,30 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					autoRunFolderPath,
 					sessionId,
 					sshConfig,
+					update: options?.update === true,
 				});
-				// The import appended a record to the agent's playbook list.
+				// The import appended (or, for an update, replaced) a record in
+				// the agent's playbook list.
 				broadcast(PLAYBOOKS_CHANGED_CHANNEL, sessionId);
 				return { ...result };
+			}
+		)
+	);
+
+	// marketplace:checkUpdates - Classify every playbook the agent installed
+	// from the Exchange: up-to-date, update-available, or locally-modified.
+	ipcMain.handle(
+		'marketplace:checkUpdates',
+		createIpcHandler(
+			handlerOpts('checkUpdates', false),
+			async (sessionId: string, autoRunFolderPath: string, sshRemoteId?: string) => {
+				const updates = await checkMarketplacePlaybookUpdates({
+					app,
+					sessionId,
+					autoRunFolderPath,
+					sshConfig: resolveSshConfig(sshRemoteId),
+				});
+				return { updates };
 			}
 		)
 	);

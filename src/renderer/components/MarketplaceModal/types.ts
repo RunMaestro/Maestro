@@ -5,6 +5,7 @@ import type {
 	PlaybookHealthMap,
 	PlaybookHealthStats,
 } from '../../../shared/playbookHealth';
+import type { PlaybookUpdateStatus } from '../../../shared/playbookUpdates';
 import type { BatchRunConfig, Theme } from '../../types';
 
 export interface MarketplaceModalProps {
@@ -83,6 +84,12 @@ export interface PlaybookDetailViewProps {
 	isLoadingDocument: boolean;
 	targetFolderName: string;
 	isImporting: boolean;
+	/**
+	 * The copy of this playbook the agent already has, from the update check.
+	 * When set, the footer offers Update (same folder, answers kept) instead of
+	 * a second install.
+	 */
+	installed?: PlaybookUpdateStatus;
 	/** Whether this is a remote SSH session (disables local folder browsing) */
 	isRemoteSession: boolean;
 	runningVersion: string;

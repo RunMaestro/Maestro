@@ -344,6 +344,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			failedDocs: [],
 			failedAssets: [],
 		}),
+		checkMarketplaceUpdates: vi.fn().mockResolvedValue({ success: true, updates: {} }),
 		listDesktopSessions: vi.fn().mockReturnValue([]),
 		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
@@ -5450,7 +5451,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith(
 					'session-1',
 					'pb-1',
-					'my-folder'
+					'my-folder',
+					{ update: false }
 				);
 			});
 
@@ -5461,6 +5463,55 @@ describe('WebSocketMessageHandler', () => {
 			// A partial import's failure lists travel to the client with the result.
 			expect(response.failedDocs).toEqual([]);
 			expect(response.failedAssets).toEqual([]);
+		});
+
+		it('updates an installed playbook without a targetFolderName when update is set', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				update: true,
+				requestId: 'req-6u',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith('session-1', 'pb-1', '', {
+					update: true,
+				});
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('answers marketplace_check_updates with the statuses', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_check_updates',
+				sessionId: 'session-1',
+				requestId: 'req-cu',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.checkMarketplaceUpdates).toHaveBeenCalledWith('session-1');
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_check_updates_result');
+			expect(response.success).toBe(true);
+			expect(response.updates).toEqual({});
+			expect(response.requestId).toBe('req-cu');
+		});
+
+		it('rejects marketplace_check_updates without a sessionId via typed result', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_check_updates',
+				requestId: 'req-cu2',
+			});
+
+			expect(callbacks.checkMarketplaceUpdates).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_check_updates_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('sessionId');
 		});
 
 		it('rejects marketplace_import_playbook missing required fields via typed result', () => {

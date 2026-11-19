@@ -28,6 +28,7 @@ export function PlaybookDetailView({
 	isLoadingDocument,
 	targetFolderName,
 	isImporting,
+	installed,
 	isRemoteSession,
 	runningVersion,
 	onBack,
@@ -223,6 +224,7 @@ export function PlaybookDetailView({
 				playbook={playbook}
 				targetFolderName={targetFolderName}
 				isImporting={isImporting}
+				installed={installed}
 				isRemoteSession={isRemoteSession}
 				runningVersion={runningVersion}
 				onTargetFolderChange={onTargetFolderChange}

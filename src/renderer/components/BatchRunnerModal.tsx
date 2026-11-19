@@ -46,6 +46,10 @@ import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTempla
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { openPlaybookConfigure } from '../services/playbookConfigure';
+import { checkPlaybookUpdates, updateInstalledPlaybook } from '../services/playbookUpdates';
+import { usePlaybookUpdateStatuses, usePlaybookUpdatesStore } from '../stores/playbookUpdatesStore';
+import { PlaybookUpdatePill } from './MarketplaceModal/components/PlaybookUpdatePill';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
 import { GoalConfigPanel } from './GoalConfigPanel';
@@ -489,6 +493,20 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const isBatchRunningForSession = useBatchStore(
 		useCallback((s) => !!s.batchRunStates[sessionId]?.isRunning, [sessionId])
 	);
+
+	// Playbooks installed from the Exchange: checked once per agent per app
+	// start (the Exchange re-checks on every open). A row's pill offers the
+	// update, which re-fetches the documents and keeps the parameter answers.
+	const activeSshRemoteId = getSessionSshRemoteId(activeSession);
+	const playbookUpdateTarget = useMemo(
+		() => ({ sessionId, autoRunFolderPath: folderPath, sshRemoteId: activeSshRemoteId }),
+		[sessionId, folderPath, activeSshRemoteId]
+	);
+	useEffect(() => {
+		void checkPlaybookUpdates(playbookUpdateTarget);
+	}, [playbookUpdateTarget]);
+	const playbookUpdateStatuses = usePlaybookUpdateStatuses(sessionId);
+	const updatingPlaybookIds = usePlaybookUpdatesStore((s) => s.updatingPlaybookIds);
 
 	// Dispatching to a separate worktree spawns/uses a different agent, so the current
 	// session being busy is irrelevant - let the user launch regardless. (Busy open-worktree
@@ -938,6 +956,44 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 															>
 																{pb.name}
 															</span>
+															{playbookUpdateStatuses[pb.id]?.updateAvailable ? (
+																<button
+																	type="button"
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		void updateInstalledPlaybook(
+																			playbookUpdateTarget,
+																			playbookUpdateStatuses[pb.id].marketplaceId
+																		);
+																	}}
+																	disabled={
+																		isBatchRunningForSession || !!updatingPlaybookIds[pb.id]
+																	}
+																	className="shrink-0 flex items-center rounded disabled:opacity-50 disabled:cursor-not-allowed"
+																	aria-label={`Update ${pb.name}`}
+																	data-testid={`playbook-update-${pb.id}`}
+																>
+																	{updatingPlaybookIds[pb.id] ? (
+																		<Spinner size={12} />
+																	) : (
+																		<PlaybookUpdatePill
+																			theme={theme}
+																			status={playbookUpdateStatuses[pb.id]}
+																			title={
+																				isBatchRunningForSession
+																					? 'Wait for the running Auto Run to finish before updating its documents'
+																					: undefined
+																			}
+																		/>
+																	)}
+																</button>
+															) : (
+																<PlaybookUpdatePill
+																	theme={theme}
+																	status={playbookUpdateStatuses[pb.id]}
+																	testId={`playbook-update-pill-${pb.id}`}
+																/>
+															)}
 															<span
 																className="text-2xs shrink-0"
 																style={{ color: theme.colors.textDim }}

@@ -42,6 +42,7 @@ import type {
 	NotifyCenterFlashParams,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
+	MarketplaceCheckUpdatesResult,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
@@ -488,8 +489,10 @@ export interface MessageHandlerCallbacks {
 	importMarketplacePlaybook: (
 		sessionId: string,
 		playbookId: string,
-		targetFolderName: string
+		targetFolderName: string,
+		options?: { update?: boolean }
 	) => Promise<MarketplaceImportResult>;
+	checkMarketplaceUpdates: (sessionId: string) => Promise<MarketplaceCheckUpdatesResult>;
 	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
 	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
 	 *  can address tabs by id without owning a persistent channel. */

@@ -1,7 +1,8 @@
 /**
  * @file marketplace.test.ts
- * @description Tests for `marketplace list|show|import`: catalog filtering,
- * the modal's default folder name, and failure reporting.
+ * @description Tests for `marketplace list|show|import|updates`: catalog
+ * filtering, the modal's default folder name, updating an installed copy, and
+ * failure reporting.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -17,8 +18,10 @@ vi.mock('../../../cli/services/storage', () => ({
 
 import {
 	filterPlaybooks,
+	formatPlaybookUpdateLine,
 	marketplaceImport,
 	marketplaceList,
+	marketplaceUpdates,
 	playbookHealthLabels,
 } from '../../../cli/commands/marketplace';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -224,5 +227,92 @@ describe('marketplace commands', () => {
 		);
 		expect(sent[0]).toMatchObject({ targetFolderName: 'mine' });
 		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	describe('updates', () => {
+		const status = {
+			playbookId: 'pb-123',
+			marketplaceId: 'security-audit',
+			name: 'Security Audit',
+			targetFolderName: 'security-audit',
+			state: 'update-available',
+			updateAvailable: true,
+			installedVersion: '2026-08-01',
+			latestVersion: '2026-09-01',
+			modifiedDocuments: [],
+		} as const;
+
+		it('import --update sends no folder and reports the folder the record lives in', async () => {
+			const sent = mockBridge({
+				marketplace_import_playbook: {
+					success: true,
+					importedDocs: ['one'],
+					playbook: {
+						id: 'pb-123',
+						name: 'Security Audit',
+						documents: [],
+						provenance: { targetFolderName: 'audit' },
+					},
+				},
+			});
+			await marketplaceImport('security-audit', { agent: 'a1', update: true });
+
+			// No catalog fetch for a default folder name: the record has its own.
+			expect(sent).toEqual([
+				{
+					type: 'marketplace_import_playbook',
+					sessionId: 'a1',
+					playbookId: 'security-audit',
+					update: true,
+				},
+			]);
+			const printed = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+			expect(printed).toContain('Updated security-audit in audit/ on a1 (1 documents).');
+		});
+
+		it('import --update refuses --folder before asking the app', async () => {
+			const sent = mockBridge({});
+			await expect(
+				marketplaceImport('security-audit', { agent: 'a1', update: true, folder: 'x' })
+			).rejects.toThrow('__exit__');
+			expect(sent).toEqual([]);
+		});
+
+		it('lists each installed playbook with its state and how to update', async () => {
+			const sent = mockBridge({
+				marketplace_check_updates: { success: true, updates: { 'pb-123': status } },
+			});
+			await marketplaceUpdates({ agent: 'a1' });
+
+			expect(sent).toEqual([{ type: 'marketplace_check_updates', sessionId: 'a1' }]);
+			const printed = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+			expect(printed[0]).toBe(formatPlaybookUpdateLine(status));
+			expect(printed[0]).toContain('[update-available]');
+			expect(printed).toContain(
+				'Update one with: maestro-cli marketplace import <playbook-id> --update -a a1'
+			);
+		});
+
+		it('prints the statuses as JSON', async () => {
+			mockBridge({
+				marketplace_check_updates: { success: true, updates: { 'pb-123': status } },
+			});
+			await marketplaceUpdates({ agent: 'a1', json: true });
+			expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0][0]))).toEqual([status]);
+		});
+
+		it('says so when nothing from the Exchange is installed', async () => {
+			mockBridge({ marketplace_check_updates: { success: true, updates: {} } });
+			await marketplaceUpdates({ agent: 'a1' });
+			expect(vi.mocked(console.log)).toHaveBeenCalledWith(
+				'No Playbook Exchange playbooks are installed on a1.'
+			);
+		});
+
+		it('fails when the app cannot check', async () => {
+			mockBridge({ marketplace_check_updates: { success: false, error: 'SSH remote down' } });
+			await expect(marketplaceUpdates({ agent: 'a1' })).rejects.toThrow('__exit__');
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
 	});
 });

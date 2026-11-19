@@ -73,6 +73,20 @@ After import, the playbook is immediately available in your **Load Playbook** dr
 
 From the command line, `maestro-cli marketplace import <id> -a <agent>` does the same import and prints the saved playbook's id (`playbookId` with `--json`). Run it with `maestro-cli playbook <playbook-id>`, which applies its parameters and ends with its report.
 
+### Updating an Installed Playbook
+
+Each agent holds one copy of a given Exchange playbook. Open a playbook that is already installed and the detail view names its folder and offers **Update and Run** and **Update only** in place of the install buttons, so a second install never lands on top of the first.
+
+Maestro checks for updates each time the Exchange opens, and once per agent per app start when the Auto Run playbook dropdown appears. Each installed playbook is one of:
+
+- **Up to date** - the Exchange has the version you installed.
+- **Update available** - the Exchange has a different version. An **Update available** pill shows on the detail view and beside the playbook in the **Load Playbook** dropdown; click the pill in the dropdown to update.
+- **Edited** - the pristine copy Maestro keeps under `.maestro-playbook/source/` no longer matches what was installed, so someone changed it by hand. The pill's tooltip names the documents; an update replaces them. Your working documents are not compared, because a run is expected to check their boxes.
+
+An update re-fetches the documents into the same folder, which resets their tasks, refreshes the pristine copies, and keeps the saved playbook's id, your parameter answers, and its worktree settings. It is refused while that agent's Auto Run is running. Documents the new version dropped stay on disk but leave the playbook's run list.
+
+From the command line, `maestro-cli marketplace updates -a <agent>` lists each installed playbook and its state (`--json` for the full status), and `maestro-cli marketplace import <id> --update -a <agent>` updates one. A plain `marketplace import` of a playbook the agent already has is refused with the folder it lives in.
+
 ### Answering a Playbook's Parameters
 
 Many playbooks ask a few questions before they run, such as a pull request URL or how many items to process. After **Install and Run**, the Exchange shows a form with one row per parameter: its type, whether it is required, its help text, and where the current value comes from:

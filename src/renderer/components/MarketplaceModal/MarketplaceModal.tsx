@@ -13,12 +13,18 @@ import {
 	sortPlaybooksByHealth,
 } from '../../../shared/playbookHealth';
 import { isUnboundedLoop } from '../../../shared/playbookRun';
+import { findPlaybookUpdateStatus } from '../../../shared/playbookUpdates';
 import type { Playbook } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { checkPlaybookUpdates } from '../../services/playbookUpdates';
+import {
+	useIsPlaybookUpdating,
+	usePlaybookUpdateStatuses,
+} from '../../stores/playbookUpdatesStore';
 import {
 	MarketplaceBrowseTab,
 	MarketplaceHeader,
@@ -128,9 +134,22 @@ export function MarketplaceModal({
 	// view for the configure step instead of closing.
 	const [configuringPlaybook, setConfiguringPlaybook] = useState<Playbook | null>(null);
 
+	// Every open re-checks which of the agent's installed playbooks have an
+	// update, so the detail view offers Update for one already installed.
+	useEffect(() => {
+		if (!isOpen) return;
+		void checkPlaybookUpdates({ sessionId, autoRunFolderPath, sshRemoteId }, { force: true });
+	}, [isOpen, sessionId, autoRunFolderPath, sshRemoteId]);
+	const updateStatuses = usePlaybookUpdateStatuses(sessionId);
+	const installedStatus = selectedPlaybook
+		? findPlaybookUpdateStatus(updateStatuses, selectedPlaybook.id)
+		: undefined;
+	const isUpdating = useIsPlaybookUpdating(installedStatus?.playbookId);
+
 	const { handleInstallAndRun, handleInstallOnly, handleBrowseFolder } = usePlaybookImportActions({
 		selectedPlaybook,
 		targetFolderName,
+		installed: installedStatus,
 		autoRunFolderPath,
 		sessionId,
 		sshRemoteId,
@@ -295,7 +314,8 @@ export function MarketplaceModal({
 						documentContent={documentContent}
 						isLoadingDocument={isLoadingDocument}
 						targetFolderName={targetFolderName}
-						isImporting={isImporting}
+						isImporting={isImporting || isUpdating}
+						installed={installedStatus}
 						isRemoteSession={isRemoteSession}
 						runningVersion={runningVersion}
 						onBack={handleBackToList}

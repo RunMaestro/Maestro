@@ -570,6 +570,39 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('updatePlaybook', () => {
+			it('should invoke marketplace:importPlaybook in update mode, with no folder', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.updatePlaybook('mp-1', '/project/.maestro', 'session-123', 'ssh-remote-1');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'marketplace:importPlaybook',
+					'mp-1',
+					'',
+					'/project/.maestro',
+					'session-123',
+					'ssh-remote-1',
+					{ update: true }
+				);
+			});
+		});
+
+		describe('checkUpdates', () => {
+			it('should invoke marketplace:checkUpdates', async () => {
+				mockInvoke.mockResolvedValue({ success: true, updates: {} });
+
+				await api.checkUpdates('session-123', '/project/.maestro');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'marketplace:checkUpdates',
+					'session-123',
+					'/project/.maestro',
+					undefined
+				);
+			});
+		});
+
 		describe('onManifestChanged', () => {
 			it('should register event listener and return cleanup function', () => {
 				const callback = vi.fn();

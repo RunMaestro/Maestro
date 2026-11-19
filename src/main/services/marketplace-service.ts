@@ -45,9 +45,15 @@ import {
 } from '../../shared/types';
 import { readPlaybookParamOverlay } from '../../shared/playbookParams';
 import { clampImportedMaxLoops } from '../../shared/playbookRun';
-import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
+import { writeFileRemote, mkdirRemote, readFileRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
 import { hashPlaybookDocument } from '../utils/playbook-document-hash';
+import {
+	classifyPlaybookUpdate,
+	findInstalledMarketplacePlaybook,
+	marketplaceProvenanceOf,
+	type PlaybookUpdateStatusMap,
+} from '../../shared/playbookUpdates';
 
 const MARKETPLACE_REPO = 'RunMaestro/Maestro-Playbooks';
 const MARKETPLACE_BRANCH = 'main';
@@ -626,29 +632,26 @@ export interface ImportPlaybookOptions {
 	sessionId: string;
 	/** Resolved SSH config - caller is responsible for looking it up. */
 	sshConfig?: SshRemoteConfig;
+	/**
+	 * Update the record this agent already holds for the entry instead of
+	 * installing it: the documents are re-fetched into that record's own
+	 * folder (`targetFolderName` is ignored), the pristine copies are
+	 * refreshed, and the record keeps its id and parameter answers. Without
+	 * it, an entry that is already installed is refused.
+	 */
+	update?: boolean;
 }
 
 /** The saved record, with provenance, plus the documents and assets that landed. */
 export type ImportPlaybookServiceResult = ImportPlaybookResponse;
 
 /**
- * Import a playbook to the Auto Run folder (local or remote via SSH).
- * Mirrors the IPC handler import flow exactly.
+ * The merged official + local manifest an import or an update check works
+ * from: the cache when fresh, else a fetch, else the stale cache, so a
+ * transient network failure does not hide a playbook the Exchange is still
+ * showing from that same stale cache.
  */
-export async function importMarketplacePlaybook(
-	opts: ImportPlaybookOptions
-): Promise<ImportPlaybookServiceResult> {
-	const { app, playbookId, targetFolderName, autoRunFolderPath, sessionId, sshConfig } = opts;
-	const isRemote = !!sshConfig;
-
-	assertSafeTargetFolderName(targetFolderName);
-
-	logger.info(
-		`Importing playbook "${playbookId}" to "${targetFolderName}"${isRemote ? ' (remote via SSH)' : ''}`,
-		LOG_CONTEXT
-	);
-
-	// Re-resolve manifest (cache-aware) so local + official playbooks are visible
+async function resolveCurrentManifest(app: App): Promise<MarketplaceManifest> {
 	const cache = await readCache(app);
 	let officialManifest: MarketplaceManifest | null = null;
 	if (cache && isCacheValid(cache)) {
@@ -681,7 +684,51 @@ export async function importMarketplacePlaybook(
 		}
 	}
 	const localManifest = await readLocalManifest(app);
-	const manifest = mergeManifests(officialManifest, localManifest);
+	return mergeManifests(officialManifest, localManifest);
+}
+
+function getSessionPlaybooksFilePath(app: App, sessionId: string): string {
+	return path.join(app.getPath('userData'), 'playbooks', `${sessionId}.json`);
+}
+
+/**
+ * The agent's saved playbook records. ENOENT is an agent with none yet;
+ * anything else (corrupt JSON, EACCES) is user data this process could not
+ * read, so it throws rather than let a later write start from `[]` and drop
+ * every saved playbook.
+ */
+async function readSessionPlaybooksStrict(app: App, sessionId: string): Promise<Playbook[]> {
+	try {
+		const content = await fs.readFile(getSessionPlaybooksFilePath(app, sessionId), 'utf-8');
+		const data = JSON.parse(content);
+		return Array.isArray(data.playbooks) ? data.playbooks : [];
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		void captureException(error);
+		throw new MarketplaceImportError(
+			`Failed to read existing playbooks file (refusing to overwrite): ${error instanceof Error ? error.message : String(error)}`,
+			error
+		);
+	}
+}
+
+/**
+ * Import a playbook to the Auto Run folder (local or remote via SSH), or
+ * update the record the agent already holds for it (`update: true`).
+ * Mirrors the IPC handler import flow exactly.
+ */
+export async function importMarketplacePlaybook(
+	opts: ImportPlaybookOptions
+): Promise<ImportPlaybookServiceResult> {
+	const { app, playbookId, autoRunFolderPath, sessionId, sshConfig, update = false } = opts;
+	const isRemote = !!sshConfig;
+
+	// An install names its folder; an update reuses the installed record's, so
+	// the requested one is checked only for an install.
+	if (!update) assertSafeTargetFolderName(opts.targetFolderName);
+
+	// Re-resolve manifest (cache-aware) so local + official playbooks are visible
+	const manifest = await resolveCurrentManifest(app);
 
 	const marketplacePlaybook = manifest.playbooks.find((p) => p.id === playbookId);
 	if (!marketplacePlaybook) {
@@ -698,6 +745,31 @@ export async function importMarketplacePlaybook(
 				`you have ${runningVersion}. Update Maestro and try again.`
 		);
 	}
+
+	// Read before anything is written: an entry that is already installed is
+	// updated in place, never installed a second time over the same files.
+	const existingPlaybooks = await readSessionPlaybooksStrict(app, sessionId);
+	const installed = findInstalledMarketplacePlaybook(existingPlaybooks, playbookId);
+	if (installed && !update) {
+		throw new MarketplaceImportError(
+			`"${installed.name}" is already installed from this playbook in ` +
+				`${installed.provenance!.targetFolderName}/. Update it instead of installing a second copy.`
+		);
+	}
+	if (update && !installed) {
+		throw new MarketplaceImportError(
+			`Playbook ${playbookId} is not installed on this agent, so there is nothing to update.`
+		);
+	}
+	const targetFolderName = installed
+		? installed.provenance!.targetFolderName
+		: opts.targetFolderName;
+	if (update) assertSafeTargetFolderName(targetFolderName);
+
+	logger.info(
+		`${update ? 'Updating' : 'Importing'} playbook "${playbookId}" ${update ? 'in' : 'to'} "${targetFolderName}"${isRemote ? ' (remote via SSH)' : ''}`,
+		LOG_CONTEXT
+	);
 
 	const targetPath = isRemote
 		? autoRunFolderPath.endsWith('/')
@@ -911,32 +983,29 @@ export async function importMarketplacePlaybook(
 		provenance,
 	};
 
-	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');
-	await fs.mkdir(playbooksDir, { recursive: true });
-	const playbooksFilePath = path.join(playbooksDir, `${sessionId}.json`);
-	let playbooks: any[] = [];
-	try {
-		const content = await fs.readFile(playbooksFilePath, 'utf-8');
-		const data = JSON.parse(content);
-		playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
-	} catch (error) {
-		// ENOENT is normal (first save). Anything else (corrupt JSON, EACCES,
-		// etc.) means there's existing user data we couldn't read - refuse
-		// to silently overwrite it, since starting from [] would drop their
-		// previously-saved playbooks on the next write.
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-			void captureException(error);
-			throw new MarketplaceImportError(
-				`Failed to read existing playbooks file (refusing to overwrite): ${error instanceof Error ? error.message : String(error)}`,
-				error
-			);
-		}
-	}
-	playbooks.push(newPlaybook);
+	// An update keeps the record's identity and the user's own answers: its id
+	// (Cue subscriptions and History name it), when it was first saved, the
+	// parameter answers, and the worktree settings. Everything the manifest
+	// owns is taken fresh.
+	const savedPlaybook: Playbook = installed
+		? {
+				...newPlaybook,
+				id: installed.id,
+				createdAt: installed.createdAt,
+				...(installed.parameterValues && { parameterValues: installed.parameterValues }),
+				...(installed.worktreeSettings && { worktreeSettings: installed.worktreeSettings }),
+			}
+		: newPlaybook;
+
+	const playbooksFilePath = getSessionPlaybooksFilePath(app, sessionId);
+	await fs.mkdir(path.dirname(playbooksFilePath), { recursive: true });
+	const playbooks = installed
+		? existingPlaybooks.map((playbook) => (playbook.id === installed.id ? savedPlaybook : playbook))
+		: [...existingPlaybooks, savedPlaybook];
 	await fs.writeFile(playbooksFilePath, JSON.stringify({ playbooks }, null, 2), 'utf-8');
 
 	logger.info(
-		`Successfully imported playbook "${marketplacePlaybook.title}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,
+		`Successfully ${installed ? 'updated' : 'imported'} playbook "${marketplacePlaybook.title}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,
 		LOG_CONTEXT
 	);
 
@@ -949,10 +1018,94 @@ export async function importMarketplacePlaybook(
 	}
 
 	// Anonymous `install` event; dropped unless the user opted in and the
-	// entry came from the official manifest.
-	recordPlaybookInstall(provenance);
+	// entry came from the official manifest. An update is not a new install.
+	if (!installed) recordPlaybookInstall(provenance);
 
-	return { playbook: newPlaybook, importedDocs, importedAssets, failedDocs, failedAssets };
+	return { playbook: savedPlaybook, importedDocs, importedAssets, failedDocs, failedAssets };
+}
+
+export interface CheckPlaybookUpdatesOptions {
+	app: App;
+	sessionId: string;
+	autoRunFolderPath: string;
+	/** Resolved SSH config when the Auto Run folder lives on a remote host. */
+	sshConfig?: SshRemoteConfig;
+}
+
+/**
+ * Classify every playbook this agent installed from the Exchange as
+ * `up-to-date`, `update-available`, or `locally-modified`
+ * (`classifyPlaybookUpdate()`): the record's `sourceVersion` against the
+ * current manifest, and its `documentHashes` against the pristine copies
+ * under `.maestro-playbook/source/`, on whichever host holds the folder.
+ * A record whose entry left the catalog is `up-to-date`, since nothing
+ * newer exists to fetch.
+ */
+export async function checkMarketplacePlaybookUpdates(
+	opts: CheckPlaybookUpdatesOptions
+): Promise<PlaybookUpdateStatusMap> {
+	const { app, sessionId, autoRunFolderPath, sshConfig } = opts;
+	const playbooks = await readSessionPlaybooksStrict(app, sessionId);
+	const installed = playbooks.filter((playbook) => marketplaceProvenanceOf(playbook) !== null);
+	if (installed.length === 0) return {};
+
+	const manifest = await resolveCurrentManifest(app);
+	const latestVersions = new Map(
+		manifest.playbooks.map((entry) => [
+			entry.id,
+			typeof entry.lastUpdated === 'string' ? entry.lastUpdated : undefined,
+		])
+	);
+
+	const pristinePath = (folderName: string, documentName: string): string => {
+		const parts = [folderName, ...PLAYBOOK_PRISTINE_SOURCE_DIR.split('/'), `${documentName}.md`];
+		if (!sshConfig) return path.join(autoRunFolderPath, ...parts);
+		return [autoRunFolderPath.replace(/\/+$/, ''), ...parts].join('/');
+	};
+	// A copy that cannot be read is `null`: it was written best-effort at
+	// import, so its absence is not an edit.
+	const hashPristineCopy = async (filePath: string): Promise<string | null> => {
+		try {
+			if (sshConfig) {
+				const result = await readFileRemote(filePath, sshConfig);
+				return result.success && typeof result.data === 'string'
+					? hashPlaybookDocument(result.data)
+					: null;
+			}
+			return hashPlaybookDocument(await fs.readFile(filePath, 'utf-8'));
+		} catch {
+			return null;
+		}
+	};
+
+	const statuses: PlaybookUpdateStatusMap = {};
+	await Promise.all(
+		installed.map(async (playbook) => {
+			const provenance = marketplaceProvenanceOf(playbook)!;
+			const documentNames = Object.keys(provenance.documentHashes ?? {});
+			const hashes = await Promise.all(
+				documentNames.map((name) =>
+					hashPristineCopy(pristinePath(provenance.targetFolderName, name))
+				)
+			);
+			const pristineHashes = Object.fromEntries(
+				documentNames.map((name, index) => [name, hashes[index]])
+			);
+			const latestVersion = latestVersions.get(provenance.marketplaceId);
+			statuses[playbook.id] = {
+				playbookId: playbook.id,
+				marketplaceId: provenance.marketplaceId,
+				name: playbook.name,
+				targetFolderName: provenance.targetFolderName,
+				...(provenance.sourceVersion !== undefined && {
+					installedVersion: provenance.sourceVersion,
+				}),
+				...(latestVersion !== undefined && { latestVersion }),
+				...classifyPlaybookUpdate({ provenance, latestVersion, pristineHashes }),
+			};
+		})
+	);
+	return statuses;
 }
 
 /**

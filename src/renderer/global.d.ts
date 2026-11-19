@@ -236,6 +236,7 @@ import type {
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
 import type { MarketplaceImportPlaybookResult } from '../shared/marketplace-types';
 import type { PlaybookHealthMap } from '../shared/playbookHealth';
+import type { PlaybookUpdateStatusMap } from '../shared/playbookUpdates';
 import type {
 	CotAgentConfig,
 	CotAgentStatus,
@@ -3393,6 +3394,21 @@ interface MaestroAPI {
 			sessionId: string,
 			sshRemoteId?: string
 		) => Promise<MarketplaceImportPlaybookResult>;
+		updatePlaybook: (
+			playbookId: string,
+			autoRunFolderPath: string,
+			sessionId: string,
+			sshRemoteId?: string
+		) => Promise<MarketplaceImportPlaybookResult>;
+		checkUpdates: (
+			sessionId: string,
+			autoRunFolderPath: string,
+			sshRemoteId?: string
+		) => Promise<{
+			success: boolean;
+			updates?: PlaybookUpdateStatusMap;
+			error?: string;
+		}>;
 		onManifestChanged: (handler: () => void) => () => void;
 	};
 	// Updates API
