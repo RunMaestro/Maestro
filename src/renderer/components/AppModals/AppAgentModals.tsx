@@ -208,7 +208,6 @@ export const AppAgentModals = memo(function AppAgentModals({
 			});
 			return;
 		}
-		useAgentStore.getState().clearAgentError(sessionId);
 		if (!tabId || !liveSession.aiTabs?.some((t) => t.id === tabId)) {
 			notifyToast({
 				color: 'yellow',
@@ -218,6 +217,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 			});
 			return;
 		}
+		useAgentStore.getState().clearAgentError(sessionId, tabId);
 		replayAfterAuth(sessionId, [tabId], 'install');
 	}, [providerInstallData, closeReauthModal]);
 

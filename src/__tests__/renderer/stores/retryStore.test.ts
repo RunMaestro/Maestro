@@ -28,6 +28,7 @@ import {
 	registerDispatchDepsProvider,
 	noteDirectDispatch,
 	replayAfterAuth,
+	resetPersistedSnapshotsForTests,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -1269,6 +1270,51 @@ describe('replayAfterAuth', () => {
 		const tab = useSessionStore.getState().sessions[0].aiTabs[0];
 		expect(tab.id).toBe('tab-other');
 		expect(tab.logs.some((l: any) => l.text === 'Re-sent after re-authentication.')).toBe(true);
+	});
+
+	it('notifies and does not fall back to the active tab on install replay if the tab closes during persisted snapshot read', async () => {
+		resetPersistedSnapshotsForTests();
+		setupTabs('sess-persisted-install', ['tab-1', 'tab-other']);
+		useNotificationStore.setState({ toasts: [] } as any);
+
+		let resolveSettingsGet!: (value: unknown) => void;
+		const settingsGet = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveSettingsGet = resolve;
+				})
+		);
+		const settingsSet = vi.fn().mockResolvedValue(undefined);
+		const prevSettings = (window as any).maestro?.settings;
+		(window as any).maestro = {
+			...(window as any).maestro,
+			settings: { get: settingsGet, set: settingsSet },
+		};
+
+		try {
+			replayAfterAuth('sess-persisted-install', ['tab-1'], 'install');
+
+			// Close tab-1 while loadPersistedSnapshots is awaiting settings.get.
+			setupTabs('sess-persisted-install', ['tab-other']);
+			resolveSettingsGet({
+				'sess-persisted-install:tab-1': {
+					item: { id: 'item-p', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'hi' },
+					deps,
+					savedAt: NOW,
+				},
+			});
+
+			await vi.waitFor(() => {
+				const toasts = useNotificationStore.getState().toasts;
+				expect(toasts.some((t) => t.color === 'yellow' && t.title === 'Nothing to resend')).toBe(
+					true
+				);
+			});
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		} finally {
+			resetPersistedSnapshotsForTests();
+			(window as any).maestro = { ...(window as any).maestro, settings: prevSettings };
+		}
 	});
 });
 

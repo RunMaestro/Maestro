@@ -323,6 +323,7 @@ describe('AppAgentModals', () => {
 			await waitFor(() =>
 				expect(mockReplayAfterAuth).toHaveBeenCalledWith('install-sess', ['tab-1'], 'install')
 			);
+			expect(mockClearAgentError).toHaveBeenCalledWith('install-sess', 'tab-1');
 			expect(mockNotifyToast).not.toHaveBeenCalled();
 		});
 
@@ -353,6 +354,7 @@ describe('AppAgentModals', () => {
 				)
 			);
 			expect(mockReplayAfterAuth).not.toHaveBeenCalled();
+			expect(mockClearAgentError).not.toHaveBeenCalled();
 		});
 
 		it('catches a tab closed during reprobe and notifies instead of replaying', async () => {
@@ -401,6 +403,7 @@ describe('AppAgentModals', () => {
 				)
 			);
 			expect(mockReplayAfterAuth).not.toHaveBeenCalled();
+			expect(mockClearAgentError).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -285,6 +285,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const updatedAiTabs = targetTabId
 				? s.aiTabs.map((tab) => (tab.id === targetTabId ? { ...tab, agentError: undefined } : tab))
 				: s.aiTabs;
+			// When a specific tabId is provided and the session-level error belongs
+			// to a different tab, only clear that tab's error and leave the newer
+			// session-level error intact.
+			const clearsSessionError = !tabId || !s.agentErrorTabId || s.agentErrorTabId === tabId;
+			if (!clearsSessionError) {
+				return {
+					...s,
+					aiTabs: updatedAiTabs,
+				};
+			}
 			// Clearing the error must not claim the AGENT is idle while one of its
 			// tabs is still mid-turn. A re-authentication resumes blocked agents one
 			// after another (see `resolveAuthOutage`), so this runs while an earlier

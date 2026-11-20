@@ -225,6 +225,11 @@ interface PersistedSnapshot extends DispatchSnapshot {
 /** Mirror of what is on disk, hydrated once on first use. */
 let persistedSnapshots: Record<string, PersistedSnapshot> | null = null;
 
+/** Clear the hydrated snapshot cache between unit tests. */
+export function resetPersistedSnapshotsForTests(): void {
+	persistedSnapshots = null;
+}
+
 async function loadPersistedSnapshots(): Promise<Record<string, PersistedSnapshot>> {
 	if (persistedSnapshots) return persistedSnapshots;
 	try {
@@ -1007,6 +1012,33 @@ function dispatchReplay(
 }
 
 /**
+ * Install replays must stay on the tab where the message failed. If the agent
+ * or tab is gone, notify the user instead of falling back to the active tab.
+ */
+function ensureInstallTargetOpen(sessionId: string, tabId: string): boolean {
+	const liveSession = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!liveSession) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Nothing to resend',
+			message:
+				'The agent where the message failed was closed. Send it again in an open tab to continue.',
+		});
+		return false;
+	}
+	if (!liveSession.aiTabs?.some((t) => t.id === tabId)) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Nothing to resend',
+			message:
+				'The tab where the message failed was closed. Send it again in an open tab to continue.',
+		});
+		return false;
+	}
+	return true;
+}
+
+/**
  * Restart path: the in-memory snapshot is gone, so look for the copy written to
  * disk when the outage was reported. Async because it reads settings; the
  * common in-memory case above stays synchronous.
@@ -1022,6 +1054,9 @@ async function replayPersistedSnapshot(
 		// Consume it: a replayed prompt must never be resent twice, and a stale
 		// entry outliving its outage is how the wrong message reaches the wire later.
 		void forgetPersistedSnapshot(key);
+		if (reason === 'install' && !ensureInstallTargetOpen(sessionId, tabId)) {
+			return;
+		}
 		logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key, reason });
 		dispatchReplay(sessionId, { ...persisted.item, tabId }, persisted.deps, key, reason);
 		return;
@@ -1075,6 +1110,9 @@ export function replayAfterAuth(
 			continue;
 		}
 		void forgetPersistedSnapshot(key);
+		if (reason === 'install' && !ensureInstallTargetOpen(sessionId, tabId)) {
+			continue;
+		}
 
 		logger.info(`[retry] Replaying a turn ${REPLAY_REASON_LABELS[reason]}`, undefined, { key });
 		// A dispatch-time throw is handled inside dispatchReplay (it settles the
