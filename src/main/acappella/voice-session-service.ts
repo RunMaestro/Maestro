@@ -1975,7 +1975,7 @@ export class VoiceSessionService {
 		this.speechActive = false;
 		this.dispatchReadyForInput = false;
 		this.cancelSpeech();
-		this.flushPlayback?.();
+		if (this.state !== 'idle') this.flushPlayback?.();
 		// A half-collected thought belongs to the turn that is ending. Letting it
 		// settle afterwards would dispatch a fragment into a session that is no
 		// longer listening.

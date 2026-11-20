@@ -2858,6 +2858,21 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		await h.service.stopSession('user');
 	});
 
+	it('flushes playback once on stop even when paused or using a text-only recognizer', async () => {
+		const textOnlyFlush = vi.fn();
+		const textOnly = makeHarness({ flushPlayback: textOnlyFlush });
+		await start(textOnly);
+		await textOnly.service.stopSession('user');
+		expect(textOnlyFlush).toHaveBeenCalledTimes(1);
+
+		const pausedFlush = vi.fn();
+		const paused = makeHarness({ flushPlayback: pausedFlush });
+		(paused.stt as unknown as { acceptsAudio: boolean }).acceptsAudio = true;
+		await paused.service.startSession({ scope: { kind: 'conductor' }, paused: true });
+		await paused.service.stopSession('user');
+		expect(pausedFlush).toHaveBeenCalledTimes(1);
+	});
+
 	it('ignores late provider callbacks from a failed turn after error', async () => {
 		const routeGate = deferred();
 		const h = makeHarness();
