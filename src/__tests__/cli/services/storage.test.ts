@@ -276,6 +276,28 @@ describe('storage service', () => {
 
 			expect(getSyncDir()).toBe(configDir);
 			expect(readSessions().map((s) => s.id)).toEqual(['local']);
+			expect(fs.mkdirSync).not.toHaveBeenCalled();
+		});
+
+		it('writes settings into a missing sync directory the desktop would create (#2082)', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.mkdirSync).mockClear();
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					activeThemeId: 'old-theme',
+					fontSize: 12,
+				},
+			});
+
+			writeSettingValue('activeThemeId', 'new-theme');
+
+			expect(fs.mkdirSync).toHaveBeenCalledWith(syncDir, { recursive: true });
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [file, content] = vi.mocked(fs.writeFileSync).mock.calls[0];
+			expect(file).toBe(path.join(syncDir, 'maestro-settings.json'));
+			// The merge starts from the (empty) store the desktop will read, not the stale local copy.
+			expect(JSON.parse(content as string)).toEqual({ activeThemeId: 'new-theme' });
 		});
 	});
 
