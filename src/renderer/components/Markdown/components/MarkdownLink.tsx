@@ -30,6 +30,7 @@ import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
 import { notifyToast } from '../../../stores/notificationStore';
 import { isWebUrl } from '../../../../shared/urlRoutingHint';
+import { getBasename, isAbsolutePath } from '../../../../shared/formatters';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -237,13 +238,19 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 					if (targetPath && onFileContextMenu) {
 						e.preventDefault();
 						e.stopPropagation();
-						// Resolve to absolute path for file operations.
-						const absPath = targetPath.startsWith('/')
+						// Resolve to absolute path for file operations. A Windows drive
+						// path (`D:/a.png`, from `file:///D:/a.png`) is already absolute.
+						// Under a POSIX project root a leading `\` is part of a file name,
+						// not a root, so only `/` and a drive letter count as absolute.
+						const isAbsolute = projectRoot?.startsWith('/')
+							? targetPath.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(targetPath)
+							: isAbsolutePath(targetPath);
+						const absPath = isAbsolute
 							? targetPath
 							: projectRoot
 								? `${projectRoot}/${targetPath}`
 								: targetPath;
-						const fileName = targetPath.split('/').pop() || targetPath;
+						const fileName = getBasename(targetPath) || targetPath;
 						onFileContextMenu(e, absPath, fileName);
 					} else if (href && onLinkContextMenu) {
 						e.preventDefault();
