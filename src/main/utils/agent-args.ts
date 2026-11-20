@@ -23,9 +23,10 @@ type BuildAgentArgsOptions = {
 	/**
 	 * Resume `agentSessionId` as a throwaway branch (the agent's
 	 * `ephemeralForkArgs`): the turn sees the conversation, the conversation never
-	 * sees the turn. Ignored without `agentSessionId`. Callers must check the agent
-	 * declares `ephemeralForkArgs` first; without them the turn would resume, and
-	 * write into, the real session.
+	 * sees the turn. Without `agentSessionId` the turn still saves nothing (the
+	 * agent's `noPersistenceArgs`). Callers must check the agent declares both
+	 * first; without them the turn would resume, and write into, the real
+	 * session, or save a new one.
 	 */
 	ephemeralFork?: boolean;
 	/**
@@ -269,6 +270,12 @@ export function buildAgentArgs(
 			seenFlags.add(arg);
 			return true;
 		});
+
+	// A fresh turn has nothing to fork, but a throwaway turn must still not
+	// leave a session behind.
+	if (options.ephemeralFork && !options.agentSessionId && agent.noPersistenceArgs) {
+		finalArgs = [...finalArgs, ...agent.noPersistenceArgs];
+	}
 
 	const dedupedArgs = dedupe(finalArgs);
 	const resumeArgs =

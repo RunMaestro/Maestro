@@ -446,9 +446,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// the tab is busy: it forks the tab's session instead of adding a turn
 				// to it, and the answer goes to a card above the composer, never into
 				// the transcript.
+				// Not while the wizard is active: its panel replaces the composer, so
+				// the card would never render and the answer would be lost.
 				const sideQuestion = isTerminalMode ? null : parseSideQuestion(commandText);
-				if (sideQuestion !== null && activeSession.toolType === 'claude-code') {
-					const targetTab = getActiveTab(activeSession);
+				if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
+					const targetTab = resolveTargetTab(activeSession);
 					if (targetTab) {
 						clearComposerText();
 						void askSideQuestion({

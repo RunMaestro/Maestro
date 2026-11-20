@@ -452,6 +452,18 @@ describe('buildAgentArgs', () => {
 		]);
 	});
 
+	it('still saves nothing on a fresh tab with no session to fork', () => {
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+			ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
+			noPersistenceArgs: ['--no-session-persistence'],
+		});
+		expect(buildAgentArgs(agent, { baseArgs: ['--print'], ephemeralFork: true })).toEqual([
+			'--print',
+			'--no-session-persistence',
+		]);
+	});
+
 	it('never forks an ordinary resume', () => {
 		const agent = makeAgent({
 			resumeArgs: (sid: string) => ['--resume', sid],

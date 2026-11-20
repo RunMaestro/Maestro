@@ -51,6 +51,7 @@ function invokeAsk(config: Partial<SideQuestionRequest>): Promise<SideQuestionRe
 
 describe('sideQuestion IPC handler', () => {
 	let getAgent: Mock;
+	let settingsGet: Mock;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -62,11 +63,12 @@ describe('sideQuestion IPC handler', () => {
 			ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
 		});
 
+		settingsGet = vi.fn((_key: string, fallback: unknown) => fallback);
 		registerSideQuestionHandlers({
 			getProcessManager: () => ({}) as unknown as ProcessManager,
 			getAgentDetector: () => ({ getAgent }) as unknown as AgentDetector,
 			agentConfigsStore: { get: vi.fn(() => ({})) } as never,
-			settingsStore: { get: vi.fn((_key: string, fallback: unknown) => fallback) } as never,
+			settingsStore: { get: settingsGet } as never,
 		});
 	});
 
@@ -109,6 +111,34 @@ describe('sideQuestion IPC handler', () => {
 		const [options] = mockGroomContext.mock.calls[0];
 		expect(options.sessionSshRemoteConfig).toEqual({ enabled: true, remoteId: 'r1' });
 		expect(options.sshStore).toBeDefined();
+	});
+
+	it('allows an agent installed only on the SSH remote', async () => {
+		getAgent.mockResolvedValue({
+			id: 'claude-code',
+			name: 'Claude Code',
+			available: false,
+			ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
+		});
+
+		const local = await invokeAsk({});
+		expect(local.success).toBe(false);
+		expect(mockGroomContext).not.toHaveBeenCalled();
+
+		const remote = await invokeAsk({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } });
+		expect(remote.success).toBe(true);
+		expect(mockGroomContext).toHaveBeenCalledTimes(1);
+	});
+
+	it('forwards the global Shell Configuration vars', async () => {
+		settingsGet.mockImplementation((key: string, fallback: unknown) =>
+			key === 'shellEnvVars' ? { HTTPS_PROXY: 'http://proxy:8080' } : fallback
+		);
+
+		await invokeAsk({});
+
+		const [options] = mockGroomContext.mock.calls[0];
+		expect(options.globalShellEnvVars).toEqual({ HTTPS_PROXY: 'http://proxy:8080' });
 	});
 
 	it('reports a failed turn instead of throwing', async () => {

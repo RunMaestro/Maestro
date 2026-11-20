@@ -92,8 +92,11 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 					return { success: false, error: 'Type a question after /btw.' };
 				}
 
+				const isRemote = !!config.sessionSshRemoteConfig?.enabled;
+				// Local detection cannot see an SSH remote: an agent installed only on
+				// the remote host reads as unavailable here but runs fine there.
 				const agent = await agentDetector.getAgent(config.agentType);
-				if (!agent || !agent.available) {
+				if (!agent || (!agent.available && !isRemote)) {
 					return { success: false, error: `${config.agentType} is not available.` };
 				}
 				if (!agent.ephemeralForkArgs?.length) {
@@ -103,7 +106,6 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 					};
 				}
 
-				const isRemote = !!config.sessionSshRemoteConfig?.enabled;
 				const agentConfigValues = agentConfigsStore.get('configs', {})[config.agentType] || {};
 
 				logger.info('Asking side question', LOG_CONTEXT, {
@@ -133,6 +135,7 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 							sessionCustomPath: config.customPath,
 							sessionCustomArgs: config.customArgs,
 							sessionCustomEnvVars: config.customEnvVars,
+							globalShellEnvVars: settingsStore.get('shellEnvVars', {}) as Record<string, string>,
 							sessionCustomModel: config.customModel,
 							sessionCustomEffort: config.customEffort,
 							// No `claudeTokenSource` on purpose: maestro-p tails the transcript

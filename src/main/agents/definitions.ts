@@ -110,6 +110,12 @@ export interface AgentConfig extends BaseAgentConfig {
 	 * Agents without it cannot answer a side question with context.
 	 */
 	ephemeralForkArgs?: string[];
+	/**
+	 * Args that stop a fresh (non-resumed) turn from saving a session at all.
+	 * The no-session counterpart of `ephemeralForkArgs`: a side question on a tab
+	 * that has not had a turn yet must not leave a transcript behind either.
+	 */
+	noPersistenceArgs?: string[];
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	noToolsArgs?: string[]; // Args that disable ALL tool use, forcing a pure text response (e.g., ['--tools', ''] for Claude). Used by tab naming so a task-like first message produces a name instead of triggering a real agentic investigation.
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
@@ -220,6 +226,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Print mode only: maestro-p tails the transcript it resumed, which a fork
 		// never writes, so side questions always run `claude --print`.
 		ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
+		noPersistenceArgs: ['--no-session-persistence'],
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		// `--add-dir` allows tool access to a dir (read AND write), so it maps to
