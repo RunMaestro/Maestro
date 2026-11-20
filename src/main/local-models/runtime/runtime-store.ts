@@ -31,6 +31,7 @@ import {
 	nativeRuntimeArtifact,
 	type NativeRuntimeArtifact,
 } from '../../../shared/local-models/runtime-artifacts';
+import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { directoryBytes } from '../../utils/directory-size';
 import { LOCAL_RUNTIMES_DIRNAME, localModelsDataDir } from '../paths';
 
@@ -223,6 +224,8 @@ export async function runtimesFootprint(): Promise<number> {
 	return directoryBytes(runtimesRoot());
 }
 
+const manifestWrites = createKeyedWriteQueue();
+
 /**
  * Record a finished install.
  *
@@ -234,8 +237,10 @@ export async function writeRuntimeManifest(
 	id: NativeRuntimeId,
 	manifest: RuntimeManifest
 ): Promise<void> {
-	await fs.mkdir(runtimeDir(id), { recursive: true });
-	await fs.writeFile(manifestPath(id), JSON.stringify(manifest, null, 2), 'utf8');
+	await manifestWrites.enqueue(id, async () => {
+		await fs.mkdir(runtimeDir(id), { recursive: true });
+		await atomicWriteJson(manifestPath(id), manifest);
+	});
 }
 
 /**

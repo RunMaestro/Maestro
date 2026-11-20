@@ -214,6 +214,7 @@ function makeHarness(
 		executeRoute?: VoiceRouteExecutor;
 		getForceSendAllowed?: () => boolean;
 		onSpeechChunk?: (chunk: TtsChunk) => void;
+		flushPlayback?: () => void;
 		checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
 		agentReplyStream?: AgentReplyStream;
 		focusTarget?: VoiceFocusTarget;
@@ -255,6 +256,7 @@ function makeHarness(
 		refineTranscript: overrides.refineTranscript,
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
 		onSpeechChunk: overrides.onSpeechChunk,
+		flushPlayback: overrides.flushPlayback,
 		checkReadiness: overrides.checkReadiness,
 		agentReplyStream: overrides.agentReplyStream,
 		focusTarget: overrides.focusTarget,
@@ -2781,5 +2783,365 @@ describe('VoiceSessionService busy hold', () => {
 			)
 		).toBe(true);
 		await h.service.stopSession();
+	});
+});
+
+describe('VoiceSessionService error cleanup and stop/start lifecycle races', () => {
+	afterEach(() => vi.useRealTimers());
+
+	it('cancels composer and pending sends on error without closing the microphone', async () => {
+		vi.useFakeTimers();
+		let calls = 0;
+		const execute = vi.fn<VoiceRouteExecutor>(async () => {
+			calls += 1;
+			if (calls === 1) throw new VoiceDispatchBusyError('agent busy');
+			return { accepted: true, message: 'ok', agentSessionId: 'agent-backend' };
+		});
+		const h = makeHarness({
+			executeRoute: execute,
+			getForceSendAllowed: () => true,
+			getUtteranceComposerConfig: () => ({ settleMs: 1200 }),
+		});
+		(h.stt as unknown as { acceptsAudio: boolean }).acceptsAudio = true;
+		await start(h);
+
+		// Enqueue a pending send with its retry timer.
+		h.service.submitUtterance('first request');
+		await vi.advanceTimersByTimeAsync(1200);
+		expect(h.service.getSendState().pending).toHaveLength(1);
+
+		// Leave a partial utterance in the composer (acceptsAudio: true routes through composer).
+		h.stt.callbacks?.onFinal('half finished thought', 0.9);
+		expect(h.events.some((e) => e.type === 'partial-transcript' && Boolean(e.held))).toBe(true);
+
+		// Trigger a recoverable provider error.
+		h.stt.callbacks?.onError(new Error('temporary glitch'));
+
+		expect(h.service.getState()).toBe('error');
+		expect(h.service.getSendState().pending).toEqual([]);
+		expect(h.service.getSendState().forceSend).toBe(false);
+		expect(h.stt.stopped).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+
+		// Advancing timers must not flush the composer fragment or retry the cleared send.
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(execute).toHaveBeenCalledTimes(1);
+
+		// A recoverable error can still be restarted cleanly.
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(h.service.getState()).toBe('listening');
+		await h.service.stopSession('user');
+	});
+
+	it('cancels active speech playback and flushes the device when a session moves to error', async () => {
+		const flushPlayback = vi.fn();
+		const h = makeHarness({ flushPlayback });
+		await start(h);
+
+		h.stt.injectUtterance('tell me what happened.');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		h.tts.onChunk = () => {
+			h.stt.callbacks?.onError(new Error('tts interrupted by stt error'));
+		};
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: AGENT_REPLY,
+		});
+
+		expect(h.service.getState()).toBe('error');
+		expect(h.types()).toContain('speak-start');
+		expect(h.tts.cancelled).toBe(true);
+		expect(flushPlayback).toHaveBeenCalledTimes(1);
+		expect(h.events.filter((event) => event.type === 'speak-sentence').length).toBeLessThan(2);
+		await h.service.stopSession('user');
+	});
+
+	it('flushes playback once on stop even when paused or using a text-only recognizer', async () => {
+		const textOnlyFlush = vi.fn();
+		const textOnly = makeHarness({ flushPlayback: textOnlyFlush });
+		await start(textOnly);
+		await textOnly.service.stopSession('user');
+		expect(textOnlyFlush).toHaveBeenCalledTimes(1);
+
+		const pausedFlush = vi.fn();
+		const paused = makeHarness({ flushPlayback: pausedFlush });
+		(paused.stt as unknown as { acceptsAudio: boolean }).acceptsAudio = true;
+		await paused.service.startSession({ scope: { kind: 'conductor' }, paused: true });
+		await paused.service.stopSession('user');
+		expect(pausedFlush).toHaveBeenCalledTimes(1);
+	});
+
+	it('ignores late provider callbacks from a failed turn after error', async () => {
+		const routeGate = deferred();
+		const h = makeHarness();
+		h.brain.routeGate = routeGate.promise;
+		await start(h);
+
+		h.stt.injectUtterance('open the logs.');
+		await vi.waitFor(() => expect(h.brain.contexts).toHaveLength(1));
+
+		h.stt.callbacks?.onError(new Error('connection lost'));
+		expect(h.service.getState()).toBe('error');
+
+		routeGate.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(h.executor).not.toHaveBeenCalled();
+		expect(h.service.getState()).toBe('error');
+		await h.service.stopSession('user');
+	});
+
+	it('waits for an in-flight stopSession before starting a new session', async () => {
+		const h = makeHarness();
+		const order: string[] = [];
+		const stopGate = deferred();
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			order.push('stt.start');
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => {
+			order.push('stt.stop:begin');
+			await stopGate.promise;
+			order.push('stt.stop:end');
+			return origStop();
+		});
+
+		await start(h);
+		const stopping = h.service.stopSession('user');
+		const restarting = h.service.startSession({ scope: { kind: 'conductor' } });
+
+		await vi.waitFor(() => expect(h.stt.stop).toHaveBeenCalledTimes(1));
+		expect(h.stt.start).toHaveBeenCalledTimes(1);
+
+		stopGate.resolve();
+		await Promise.all([stopping, restarting]);
+
+		expect(h.stt.start).toHaveBeenCalledTimes(2);
+		expect(order).toEqual(['stt.start', 'stt.stop:begin', 'stt.stop:end', 'stt.start']);
+		expect(h.service.getState()).toBe('listening');
+		stopGate.resolve();
+	});
+
+	it('deduplicates concurrent stopSession calls and awaits the same teardown', async () => {
+		const h = makeHarness();
+		const stopGate = deferred();
+		let stopFinished = false;
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.stop = vi.fn(async () => {
+			await stopGate.promise;
+			stopFinished = true;
+			return origStop();
+		});
+
+		await start(h);
+		const firstStop = h.service.stopSession('user');
+		const secondStop = h.service.stopSession('stop-word');
+
+		await vi.waitFor(() => expect(h.stt.stop).toHaveBeenCalledTimes(1));
+		let secondResolved = false;
+		void secondStop.then(() => {
+			secondResolved = true;
+		});
+		await Promise.resolve();
+		expect(secondResolved).toBe(false);
+
+		stopGate.resolve();
+		await Promise.all([firstStop, secondStop]);
+
+		expect(stopFinished).toBe(true);
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+		expect(h.service.getState()).toBe('idle');
+	});
+
+	it('leaves no live recognizer or timers when dispose runs during an in-flight startSession', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		const startGate = deferred();
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			await startGate.promise;
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => origStop());
+
+		const starting = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const disposing = h.service.dispose();
+		startGate.resolve();
+		await Promise.all([starting, disposing]);
+
+		expect(h.service.getState()).toBe('idle');
+		expect(h.stt.stopped).toBe(true);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('reports stt.stop() failure on an aborted start without rejecting startSession', async () => {
+		const h = makeHarness();
+		const startGate = deferred();
+		const origStart = h.stt.start.bind(h.stt);
+		const stopError = new Error('device busy on abort');
+		h.stt.start = vi.fn(async (cb) => {
+			await startGate.promise;
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => {
+			throw stopError;
+		});
+
+		const starting = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const disposing = h.service.dispose();
+		startGate.resolve();
+		const snapshot = await starting;
+		await disposing;
+
+		expect(snapshot.state).toBe('idle');
+		expect(captureException).toHaveBeenCalledWith(stopError, {
+			context: 'acappella.abortedStart',
+			providerId: 'fake-stt',
+		});
+	});
+
+	it('does not let an overtaken start stop the newer session recognizer', async () => {
+		const h = makeHarness();
+		const start1Gate = deferred();
+		const start2Gate = deferred();
+		let startCall = 0;
+		let recognizerActive = false;
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			startCall += 1;
+			if (startCall === 1) {
+				await start1Gate.promise;
+			} else {
+				await start2Gate.promise;
+			}
+			recognizerActive = true;
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => {
+			recognizerActive = false;
+			return origStop();
+		});
+
+		const first = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const second = h.service.startSession({
+			scope: { kind: 'agent', sessionId: 'agent-2' },
+		});
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(2));
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+
+		start2Gate.resolve();
+		const secondSnapshot = await second;
+		expect(secondSnapshot.state).toBe('listening');
+		expect(recognizerActive).toBe(true);
+
+		start1Gate.resolve();
+		await first;
+
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+		expect(recognizerActive).toBe(true);
+		expect(h.service.getState()).toBe('listening');
+		expect(h.service.getSnapshot().scope).toEqual({ kind: 'agent', sessionId: 'agent-2' });
+
+		h.stt.injectUtterance('run tests');
+		await vi.waitFor(() =>
+			expect(h.events.some((e) => e.type === 'final-transcript' && e.text === 'run tests')).toBe(
+				true
+			)
+		);
+		await h.service.stopSession('user');
+	});
+
+	it('waits for every in-flight start in dispose even when a newer start finishes first', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		const start1Gate = deferred();
+		const start2Gate = deferred();
+		let startCall = 0;
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			startCall += 1;
+			if (startCall === 1) {
+				await start1Gate.promise;
+			} else {
+				await start2Gate.promise;
+			}
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => origStop());
+
+		const first = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const second = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(2));
+
+		let disposed = false;
+		const disposing = h.service.dispose().then(() => {
+			disposed = true;
+		});
+
+		start2Gate.resolve();
+		await second;
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(disposed).toBe(false);
+
+		start1Gate.resolve();
+		await Promise.all([first, disposing]);
+
+		expect(disposed).toBe(true);
+		expect(h.service.getState()).toBe('idle');
+		expect(h.stt.stopped).toBe(true);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('stops the recognizer if an overtaken start finishes after the newer start failed', async () => {
+		const h = makeHarness();
+		const start1Gate = deferred();
+		let startCall = 0;
+		let recognizerActive = false;
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			startCall += 1;
+			if (startCall === 1) {
+				await start1Gate.promise;
+				recognizerActive = true;
+				return origStart(cb);
+			}
+			throw new Error('mic busy');
+		});
+		h.stt.stop = vi.fn(async () => {
+			recognizerActive = false;
+			return origStop();
+		});
+
+		const first = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const secondSnapshot = await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(secondSnapshot.state).toBe('error');
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+
+		start1Gate.resolve();
+		await first;
+
+		expect(h.service.getState()).toBe('error');
+		expect(h.stt.stop).toHaveBeenCalledTimes(2);
+		expect(recognizerActive).toBe(false);
 	});
 });
