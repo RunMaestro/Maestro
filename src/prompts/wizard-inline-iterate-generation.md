@@ -69,9 +69,11 @@ Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network 
 
 **Never checkbox these:** manual action ("manually test", "by hand"), visual judgment ("visually verify", "confirm it looks right"), waiting on a person ("ask the user", "confirm with the team"), approval gates ("get sign-off", "human review"), credentials or accounts a person must obtain ("sign up for an API key"), or physical/out-of-band work.
 
-**Use one of these two instead:**
+**Design the human out first, and push what remains late.** A pause stalls the whole playbook until the person comes back. Turn the dependency into agent work where you can (code against an env var plus `.env.example`, mock the service in tests, use a test-mode key, an automated test instead of "visually verify"), then order the work so everything that does not need the person runs first. Human steps belong at the END of the playbook, collected into one gate where you can.
 
-1. **The run must pause for a person** - emit a HITL gate marker on its own line above the dependent tasks. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume - a deliberate, visible pause instead of a silent stall:
+**For the residue a person truly must do, use one of these two:**
+
+1. **The run must pause for a person** - emit a HITL gate marker on its own line above the dependent tasks, as late as the dependency allows. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume - a deliberate, visible pause instead of a silent stall:
 
    ```markdown
    <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->

@@ -75,13 +75,18 @@ docs/
    - Fully understand the task and inspect the relevant code.
    - Identify all subtasks within the current checkbox item.
    - There will be future runs to take care of other checkbox items.
-   - **If the task requires a human** - manual testing, visual judgment, approval or sign-off, credentials only a person can obtain, or physical/out-of-band action - you cannot complete it. Do NOT check it off, and do NOT pretend you did. Leave it unchecked and write a gate marker on its own line immediately above it, naming what the human has to do:
+   - **If the task seems to need a human** - manual testing, visual judgment, approval or sign-off, credentials only a person can obtain, or physical/out-of-band action - a pause is the last resort, not the first. The person is probably not watching, and every pause stalls the whole playbook until they come back. Work down this ladder and stop at the first rung that holds:
+     1. **Self-heal: do the machine part and finish.** Nearly every "human" task has a core an agent can do. Missing credential: write the code against an environment variable, add the name to `.env.example`, mock it in tests, and fail with a clear message when it is unset. Visual check: write an automated test, or capture a screenshot and check it against the stated requirement. Approval: prepare the change behind a flag or on a branch. Do that core, check the task off, and record whatever a person must still do as a plain `-` bullet under a `## Manual Follow-Up (not executed by Auto Run)` section at the end of this document (create it if it is missing). No pause.
+     2. **Defer: push the human part to the end.** If the task cannot be checked off without a person but the tasks after it do not depend on it, move the task line (byte-for-byte) to the end of this document, put a gate marker on its own line directly above it, and finish your turn. Every independent task still runs first, so the pause lands after the rest of the work instead of in the middle of it. Several deferred tasks share ONE gate at the end: one pause, not several.
+     3. **Gate in place: only when the next tasks truly depend on the person.** Leave the task unchecked and put the gate marker on its own line immediately above it, naming exactly what the human has to do:
 
      ```markdown
      <!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
      ```
 
-     A gate pauses at that point and resumes the moment the human ticks the box, so the rest of the playbook is still reachable. Do NOT halt for this. Halting throws away every remaining task in every remaining document because one task needed a person, and it leaves behind a marker the user has to find and delete by hand before anything will run again.
+     On every rung: do NOT check off work you did not do, and do NOT pretend you did. A gate pauses at that point and resumes the moment the human passes it, so the rest of the playbook is still reachable. Do NOT halt for a human step. Halting throws away every remaining task in every remaining document because one task needed a person, and it leaves behind a marker the user has to find and delete by hand before anything will run again.
+
+   - **If the task fails for an ordinary reason** (a failing test, a missing dependency, a wrong path, a flaky command), recover before you give up: read the error, fix the cause, retry, and try a second approach if the first one is a dead end. A dependency you can install, a file you can create, or a config you can correct is your job, not the user's. Leave the task unchecked only after real attempts, and say in your synopsis what you tried.
 
 4. Task Implementation
    - **Before creating new code**, search for existing implementations, utilities, helpers, or patterns in the codebase that can be reused or extended. Avoid duplicating functionality that already exists.

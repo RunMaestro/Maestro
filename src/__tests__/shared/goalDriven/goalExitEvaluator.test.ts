@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { evaluateGoalExit } from '../../../shared/goalDriven/goalExitEvaluator';
+import {
+	evaluateGoalExit,
+	resolveGoalIterationProgress,
+} from '../../../shared/goalDriven/goalExitEvaluator';
 import { STALL_THRESHOLD } from '../../../shared/goalDriven/types';
 import type { GoalIterationRecord, GoalRunConfig } from '../../../shared/goalDriven/types';
 
@@ -233,5 +236,39 @@ describe('evaluateGoalExit', () => {
 				expect(decision.reason).toBe('completed');
 			}
 		});
+	});
+});
+
+describe('resolveGoalIterationProgress', () => {
+	it('keeps the reported value at full precision and rounds only the display', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: 48.35 }, [], 0)).toEqual({
+			reported: 48.35,
+			display: 48,
+		});
+	});
+
+	it('carries the previous raw value forward when no marker was reported', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: null }, [rec(1, 48.27)], 48)).toEqual({
+			reported: 48.27,
+			display: 48,
+		});
+		expect(resolveGoalIterationProgress({ exactProgress: null }, [], 0)).toEqual({
+			reported: 0,
+			display: 0,
+		});
+	});
+
+	it('never lets the display slide backward on a dip', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: 35 }, [rec(1, 55)], 55)).toEqual({
+			reported: 35,
+			display: 55,
+		});
+	});
+});
+
+describe('evaluateGoalExit with fractional progress', () => {
+	it('does not stall when every iteration rounds to the same whole percent but climbs', () => {
+		const history = [rec(1, 48.27), rec(2, 48.29), rec(3, 48.31)];
+		expect(evaluateGoalExit(history, config()).action).toBe('continue');
 	});
 });

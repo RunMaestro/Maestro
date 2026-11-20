@@ -310,9 +310,10 @@ export function getAgentLoginCommand(
  *
  * Only quoting differs, but the difference is not cosmetic: PowerShell parses a
  * line that STARTS with a quoted string as an expression and simply echoes it,
- * so a quoted path runs nothing at all.
+ * so a quoted path runs nothing at all. Fish uses the same quoting as POSIX
+ * shells, but rejects `$?` and exits with `$status` instead.
  */
-export type LoginShellSyntax = 'posix' | 'powershell' | 'cmd';
+export type LoginShellSyntax = 'posix' | 'fish' | 'powershell' | 'cmd';
 
 /**
  * Render an {@link AgentLoginCommand} as the single line typed into a shell.
@@ -346,11 +347,20 @@ export function formatAgentLoginCommand(
  *
  * cmd.exe expands `%ERRORLEVEL%` when the line is parsed, before the command
  * runs, so it uses `&&` / `||` instead.
+ *
+ * PowerShell leaves `$LASTEXITCODE` unset (or stale) when a command is not found
+ * or a cmdlet throws, so `exit $LASTEXITCODE` would exit 0 on failure. Checking
+ * `$?` first preserves a native command's exit code while still exiting 1 when
+ * the command itself could not run.
+ *
+ * fish rejects `$?` before running anything on the line, so it uses `$status`.
  */
 export function exitWithCommandStatus(line: string, syntax: LoginShellSyntax = 'posix'): string {
 	switch (syntax) {
+		case 'fish':
+			return `${line}; exit $status`;
 		case 'powershell':
-			return `${line}; exit $LASTEXITCODE`;
+			return `${line}; if ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }`;
 		case 'cmd':
 			return `${line} && exit 0 || exit 1`;
 		default:
@@ -362,12 +372,14 @@ export function exitWithCommandStatus(line: string, syntax: LoginShellSyntax = '
  * Map a Maestro shell id to the dialect its command line is written in.
  *
  * Shell ids come from `shellDetector`: on Windows `powershell`, `pwsh`, `cmd`,
- * `bash` (Git Bash), and `wsl`; elsewhere the usual Unix shells. Off Windows
- * every shell is posix, so the platform is checked first.
+ * `bash` (Git Bash), and `wsl`; elsewhere the usual Unix shells (`zsh`, `bash`,
+ * `sh`, `fish`, `tcsh`). Fish gets its own dialect regardless of platform;
+ * everything else off Windows is posix.
  */
 export function loginShellSyntaxFor(shellId: string, isWindows: boolean): LoginShellSyntax {
-	if (!isWindows) return 'posix';
 	const shell = shellId.trim().toLowerCase();
+	if (shell === 'fish') return 'fish';
+	if (!isWindows) return 'posix';
 	// Git Bash and WSL run a posix shell even though the host is Windows.
 	if (shell === 'bash' || shell === 'sh' || shell === 'wsl') return 'posix';
 	if (shell === 'cmd') return 'cmd';
