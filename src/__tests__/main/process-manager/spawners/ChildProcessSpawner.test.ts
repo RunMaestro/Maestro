@@ -2026,6 +2026,43 @@ describe('ChildProcessSpawner', () => {
 			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
 		});
 
+		// MAESTRO-16E: `agy -p <prompt>` overran the Windows command line limit
+		// (spawn ENAMETOOLONG). Antigravity reads the prompt as one stream-json
+		// line on stdin instead, and drops any prompt given by flag.
+		it('delivers a long Antigravity prompt as one stream-json line on stdin (MAESTRO-16E)', () => {
+			const { spawner } = createTestContext();
+			const agy = getAgentDefinition('antigravity')!;
+			const capabilities = getRealAgentCapabilities('antigravity');
+			expect(capabilities.supportsPromptViaStdin).toBe(true);
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(capabilities);
+			const prompt = 'Private playbook text "quoted" & %PATH% 日本語\n'.repeat(1000);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'antigravity',
+					command: 'C:\\agy\\bin\\agy.exe',
+					args: [...agy.batchModeArgs!, ...agy.jsonOutputArgs!],
+					promptArgs: agy.promptArgs,
+					prompt,
+					sendPromptViaStdinRaw: capabilities.supportsPromptViaStdin,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual([
+				'--dangerously-skip-permissions',
+				'--output-format',
+				'stream-json',
+				'--input-format',
+				'stream-json',
+			]);
+			expect(args).not.toContain('-p');
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n',
+				expect.any(Function)
+			);
+			// Closing stdin is what lets agy exit after the turn.
+			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
+		});
+
 		it.each([false, true])('keeps prompt content out of spawn diagnostics (stdin=%s)', (stdin) => {
 			const { spawner } = createTestContext();
 			const secret = 'PRIVATE_HERMES_PROMPT_CONTENT';

@@ -55,6 +55,7 @@ import {
 } from './env';
 import {
 	resolvePromptDelivery,
+	stdinPromptText,
 	selectPromptFileDestination,
 	type PromptDelivery,
 	type PromptDeliveryAgent,
@@ -428,7 +429,10 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			args,
 			cwd: input.cwd,
 			prompt,
-			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? effectivePrompt : undefined,
+			stdin:
+				prompt.via === 'stdin' && prompt.format === 'raw' && effectivePrompt !== undefined
+					? stdinPromptText(agent, effectivePrompt)
+					: undefined,
 			envVars,
 			...(resolved
 				? {

@@ -188,6 +188,34 @@ describe('buildAgentLaunchPlan', () => {
 		expect(result.plan.stdin).toBe('fix the bug');
 	});
 
+	// MAESTRO-16E: `agy -p <prompt>` overran the Windows command line. Antigravity
+	// reads the prompt as one stream-json line on stdin instead.
+	it('plans Antigravity stdin delivery on a Windows host as its stream-json line', () => {
+		const result = buildAgentLaunchPlan(
+			input({
+				agent: {
+					...getAgentDefinition('antigravity'),
+					capabilities: getAgentCapabilities('antigravity'),
+				},
+				command: 'agy',
+				args: ['--output-format', 'stream-json'],
+				isWindowsHost: true,
+			})
+		);
+
+		if (!result.ok) throw new Error(result.error);
+		expect(result.plan.args).toEqual([
+			'--output-format',
+			'stream-json',
+			'--input-format',
+			'stream-json',
+		]);
+		expect(result.plan.args).not.toContain('-p');
+		expect(result.plan.stdin).toBe(
+			JSON.stringify({ event: 'user', message: { content: 'fix the bug' } }) + '\n'
+		);
+	});
+
 	it.each(['cli', 'cue'] as const)(
 		'keeps the prompt on the command line on a Windows host for the %s surface',
 		(surface) => {
