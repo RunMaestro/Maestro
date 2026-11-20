@@ -256,7 +256,27 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 	{
 		id: '_interface-primitives',
 		filename: '_interface-primitives.md',
-		description: 'Read / Write / Peek / Poke access model and intent→action routing table',
+		description: 'Read / Write / Peek / Poke access model and intent→action routing list',
+		category: 'includes',
+	},
+	{
+		id: '_concerto',
+		filename: '_concerto.md',
+		description:
+			'Concerto surfaces: Cadenzas, native-block Movements, HTML prototypes, and the designer QA loop',
+		category: 'includes',
+	},
+	{
+		id: '_terminals',
+		filename: '_terminals.md',
+		description:
+			'Native terminal tabs: when to open one, and the open / send / read / list commands',
+		category: 'includes',
+	},
+	{
+		id: '_media-playback',
+		filename: '_media-playback.md',
+		description: 'Audio and video through the floating media player: playlists, queueing, streams',
 		category: 'includes',
 	},
 	{
