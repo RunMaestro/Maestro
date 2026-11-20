@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installCommand } from '../../../cli/commands/install-command';
 import { ExitCode } from '../../../cli/exit-codes';
+import { getAgentInstallCommand } from '../../../shared/agentInstall';
 
 describe('installCommand', () => {
 	let logSpy: ReturnType<typeof vi.spyOn>;
@@ -27,15 +28,15 @@ describe('installCommand', () => {
 		installCommand('codex', { platform: 'linux' });
 		expect(logSpy).toHaveBeenCalledWith('npm install -g @openai/codex');
 
+		// The command text itself is owned by agentInstall.ts and tested there;
+		// this checks the CLI prints exactly what the shared table holds.
 		logSpy.mockClear();
 		installCommand('claude-code', { platform: 'win32' });
-		expect(logSpy).toHaveBeenCalledWith(
-			'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"'
-		);
+		expect(logSpy).toHaveBeenCalledWith(getAgentInstallCommand('claude-code', 'win32'));
 
 		logSpy.mockClear();
 		installCommand('claude-code', { platform: 'darwin' });
-		expect(logSpy).toHaveBeenCalledWith('curl -fsSL https://claude.ai/install.sh | bash');
+		expect(logSpy).toHaveBeenCalledWith(getAgentInstallCommand('claude-code', 'darwin'));
 	});
 
 	it('defaults to process.platform when --platform is omitted', () => {
