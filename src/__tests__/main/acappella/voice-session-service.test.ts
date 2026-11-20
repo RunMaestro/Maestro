@@ -214,6 +214,7 @@ function makeHarness(
 		executeRoute?: VoiceRouteExecutor;
 		getForceSendAllowed?: () => boolean;
 		onSpeechChunk?: (chunk: TtsChunk) => void;
+		flushPlayback?: () => void;
 		checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
 		agentReplyStream?: AgentReplyStream;
 		focusTarget?: VoiceFocusTarget;
@@ -255,6 +256,7 @@ function makeHarness(
 		refineTranscript: overrides.refineTranscript,
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
 		onSpeechChunk: overrides.onSpeechChunk,
+		flushPlayback: overrides.flushPlayback,
 		checkReadiness: overrides.checkReadiness,
 		agentReplyStream: overrides.agentReplyStream,
 		focusTarget: overrides.focusTarget,
@@ -2795,16 +2797,22 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 			if (calls === 1) throw new VoiceDispatchBusyError('agent busy');
 			return { accepted: true, message: 'ok', agentSessionId: 'agent-backend' };
 		});
-		const h = makeHarness({ executeRoute: execute, getForceSendAllowed: () => true });
+		const h = makeHarness({
+			executeRoute: execute,
+			getForceSendAllowed: () => true,
+			getUtteranceComposerConfig: () => ({ settleMs: 1200 }),
+		});
+		(h.stt as unknown as { acceptsAudio: boolean }).acceptsAudio = true;
 		await start(h);
 
 		// Enqueue a pending send with its retry timer.
 		h.service.submitUtterance('first request');
-		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(1200);
 		expect(h.service.getSendState().pending).toHaveLength(1);
 
-		// Leave a partial utterance in the composer.
+		// Leave a partial utterance in the composer (acceptsAudio: true routes through composer).
 		h.stt.callbacks?.onFinal('half finished thought', 0.9);
+		expect(h.events.some((e) => e.type === 'partial-transcript' && Boolean(e.held))).toBe(true);
 
 		// Trigger a recoverable provider error.
 		h.stt.callbacks?.onError(new Error('temporary glitch'));
@@ -2813,6 +2821,7 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		expect(h.service.getSendState().pending).toEqual([]);
 		expect(h.service.getSendState().forceSend).toBe(false);
 		expect(h.stt.stopped).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
 
 		// Advancing timers must not flush the composer fragment or retry the cleared send.
 		await vi.advanceTimersByTimeAsync(5000);
@@ -2824,8 +2833,9 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		await h.service.stopSession('user');
 	});
 
-	it('cancels active speech playback when a session moves to error', async () => {
-		const h = makeHarness();
+	it('cancels active speech playback and flushes the device when a session moves to error', async () => {
+		const flushPlayback = vi.fn();
+		const h = makeHarness({ flushPlayback });
 		await start(h);
 
 		h.stt.injectUtterance('tell me what happened.');
@@ -2843,6 +2853,7 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		expect(h.service.getState()).toBe('error');
 		expect(h.types()).toContain('speak-start');
 		expect(h.tts.cancelled).toBe(true);
+		expect(flushPlayback).toHaveBeenCalledTimes(1);
 		expect(h.events.filter((event) => event.type === 'speak-sentence').length).toBeLessThan(2);
 		await h.service.stopSession('user');
 	});

@@ -268,12 +268,18 @@ export class VoiceAudioBridge {
 			case 'listen-start':
 				if (!this.paused) this.startCapture();
 				break;
-			case 'listen-stop':
+			case 'listen-stop': {
 				// Only the end of the session lifts the gate. It belongs to the
 				// session it was closed in, and the next one opens hot unless told.
 				if (event.reason === 'stopped' || event.reason === 'error') this.paused = false;
+				const wasRunning = this.pipeline.isRunning;
 				this.pipeline.stop();
+				if (!wasRunning) this.flushPlayback();
 				this.meter.reset();
+				break;
+			}
+			case 'session-error':
+				this.flushPlayback();
 				break;
 			case 'speak-end':
 				// A completed run drains what is queued; anything else was cut off and

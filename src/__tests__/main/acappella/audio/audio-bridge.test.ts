@@ -687,4 +687,43 @@ describe('VoiceAudioBridge', () => {
 		const h = harness();
 		expect(h.bridge).toBeInstanceOf(VoiceAudioBridge);
 	});
+
+	it('flushes playback on session-error', () => {
+		const h = harness();
+		ready(h);
+		h.commands.length = 0;
+
+		h.session.state = 'error';
+		h.session.emit({
+			type: 'session-error',
+			code: 'provider-unavailable',
+			message: 'stt died',
+			recoverable: false,
+		});
+
+		expect(h.kinds()).toEqual(['flush']);
+	});
+
+	it('flushes playback on listen-stop even when capture is paused or text-only', () => {
+		const h = harness();
+		ready(h);
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.commands.length = 0;
+
+		h.session.state = 'idle';
+		h.session.emit({ type: 'listen-stop', reason: 'stopped' });
+
+		expect(h.kinds()).toEqual(['flush']);
+
+		const textOnly = harness();
+		textOnly.stt.acceptsAudio = false;
+		textOnly.bridge.handleStatus({ kind: 'ready' });
+		textOnly.session.listen();
+		textOnly.commands.length = 0;
+
+		textOnly.session.state = 'idle';
+		textOnly.session.emit({ type: 'listen-stop', reason: 'stopped' });
+
+		expect(textOnly.kinds()).toEqual(['flush']);
+	});
 });

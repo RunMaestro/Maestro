@@ -416,6 +416,7 @@ export class VoiceSessionService {
 	private readonly announcer: BackgroundAnnouncer;
 	private readonly bargeIn: BargeInController;
 	private readonly speechOutput: SpeechOutputCoordinator;
+	private readonly flushPlayback?: () => void;
 
 	private readonly listeners = new Set<VoiceEventListener>();
 
@@ -504,6 +505,7 @@ export class VoiceSessionService {
 		this.getSpeechOptions = options.getSpeechOptions;
 		this.utteranceHistoryLimit = options.utteranceHistoryLimit ?? DEFAULT_UTTERANCE_HISTORY;
 		this.onSpeechChunk = options.onSpeechChunk;
+		this.flushPlayback = options.flushPlayback;
 		this.checkReadiness = options.checkReadiness;
 		this.getProviderState = options.getProviderState;
 		this.pipelineShape = options.pipelineShape ?? 'cascade';
@@ -1973,6 +1975,7 @@ export class VoiceSessionService {
 		this.speechActive = false;
 		this.dispatchReadyForInput = false;
 		this.cancelSpeech();
+		this.flushPlayback?.();
 		// A half-collected thought belongs to the turn that is ending. Letting it
 		// settle afterwards would dispatch a fragment into a session that is no
 		// longer listening.
