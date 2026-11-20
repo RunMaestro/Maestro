@@ -233,6 +233,18 @@ export type ReauthHost = Pick<
 	| 'remoteCwd'
 >;
 
+/**
+ * Provider CLI install modal data. Addressed by the agent whose turn failed:
+ * the install runs in its working directory, and Retry resends its turn.
+ */
+export interface ProviderInstallModalData {
+	sessionId: string;
+	/** The tab whose turn failed, replayed by Retry. */
+	tabId?: string;
+	/** The classified error message, shown above the install terminal. */
+	reason?: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -388,6 +400,7 @@ export type ModalId =
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
+	| 'providerInstall'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -593,6 +606,7 @@ export interface ModalDataMap {
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
+	providerInstall: ProviderInstallModalData;
 	deleteAgent: DeleteAgentModalData;
 	/**
 	 * Present when opened from the Left Bar's right-click menu, naming the agent
@@ -1150,6 +1164,11 @@ export function getModalActions() {
 		// Provider Re-authentication Modal
 		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
 		closeReauthModal: () => closeModal('reauth'),
+
+		// Provider CLI Install Modal
+		openProviderInstallModal: (data: ProviderInstallModalData) =>
+			openModal('providerInstall', data),
+		closeProviderInstallModal: () => closeModal('providerInstall'),
 
 		// Worktree Modals
 		// Opened WITHOUT a target (header pill, Settings): follows the active agent.

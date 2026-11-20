@@ -803,3 +803,65 @@ describe('useAgentErrorListener - SSH transport errors', () => {
 		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
 	});
 });
+
+describe('Auto Run history hint for agent_not_installed', () => {
+	function runBatchError(error: any) {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-batch', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const addHistoryEntry = vi.fn();
+		const deps = {
+			...makeDeps(),
+			getBatchStateRef: {
+				current: () => ({
+					isRunning: true,
+					errorPaused: false,
+					documents: ['task.md'],
+					currentDocumentIndex: 0,
+				}),
+			},
+			pauseBatchOnErrorRef: { current: vi.fn() },
+			addHistoryEntryRef: { current: addHistoryEntry },
+		};
+
+		renderHook(() => useAgentErrorListener(deps as any));
+		handler!('sess-batch-ai-tab-1', error);
+		return addHistoryEntry;
+	}
+
+	it('tells the user to restore the runtime rather than reinstall the CLI when runtime-missing', () => {
+		const addHistoryEntry = runBatchError({
+			...baseError,
+			type: 'agent_not_installed',
+			message: 'Codex CLI is installed, but the runtime it needs (Node.js) is not on PATH.',
+			raw: {
+				exitCode: 127,
+				stderr: 'env: node: No such file or directory',
+			},
+		});
+
+		expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+		const fullResponse = addHistoryEntry.mock.calls[0][0].fullResponse as string;
+		expect(fullResponse).toContain('Restore Node.js to PATH');
+		expect(fullResponse).not.toContain('Install the provider CLI');
+	});
+
+	it('tells the user to install the provider CLI when the binary itself is not found', () => {
+		const addHistoryEntry = runBatchError({
+			...baseError,
+			type: 'agent_not_installed',
+			message: 'Codex CLI not installed.',
+			raw: {
+				exitCode: 127,
+				stderr: 'zsh: command not found: codex',
+			},
+		});
+
+		expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+		const fullResponse = addHistoryEntry.mock.calls[0][0].fullResponse as string;
+		expect(fullResponse).toContain(
+			'Install the provider CLI (open the error for the install command), then resume'
+		);
+	});
+});
