@@ -2983,4 +2983,103 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 			providerId: 'fake-stt',
 		});
 	});
+
+	it('does not let an overtaken start stop the newer session recognizer', async () => {
+		const h = makeHarness();
+		const start1Gate = deferred();
+		const start2Gate = deferred();
+		let startCall = 0;
+		let recognizerActive = false;
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			startCall += 1;
+			if (startCall === 1) {
+				await start1Gate.promise;
+			} else {
+				await start2Gate.promise;
+			}
+			recognizerActive = true;
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => {
+			recognizerActive = false;
+			return origStop();
+		});
+
+		const first = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const second = h.service.startSession({
+			scope: { kind: 'agent', sessionId: 'agent-2' },
+		});
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(2));
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+
+		start2Gate.resolve();
+		const secondSnapshot = await second;
+		expect(secondSnapshot.state).toBe('listening');
+		expect(recognizerActive).toBe(true);
+
+		start1Gate.resolve();
+		await first;
+
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+		expect(recognizerActive).toBe(true);
+		expect(h.service.getState()).toBe('listening');
+		expect(h.service.getSnapshot().scope).toEqual({ kind: 'agent', sessionId: 'agent-2' });
+
+		h.stt.injectUtterance('run tests');
+		await vi.waitFor(() =>
+			expect(h.events.some((e) => e.type === 'final-transcript' && e.text === 'run tests')).toBe(
+				true
+			)
+		);
+		await h.service.stopSession('user');
+	});
+
+	it('waits for every in-flight start in dispose even when a newer start finishes first', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		const start1Gate = deferred();
+		const start2Gate = deferred();
+		let startCall = 0;
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			startCall += 1;
+			if (startCall === 1) {
+				await start1Gate.promise;
+			} else {
+				await start2Gate.promise;
+			}
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => origStop());
+
+		const first = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const second = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(2));
+
+		let disposed = false;
+		const disposing = h.service.dispose().then(() => {
+			disposed = true;
+		});
+
+		start2Gate.resolve();
+		await second;
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(disposed).toBe(false);
+
+		start1Gate.resolve();
+		await Promise.all([first, disposing]);
+
+		expect(disposed).toBe(true);
+		expect(h.service.getState()).toBe('idle');
+		expect(h.stt.stopped).toBe(true);
+		expect(vi.getTimerCount()).toBe(0);
+	});
 });

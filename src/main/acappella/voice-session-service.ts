@@ -422,8 +422,10 @@ export class VoiceSessionService {
 	private state: VoiceSessionState = 'idle';
 	/** An in-flight teardown, awaited by later `stopSession` / `startSession` callers. */
 	private stopPromise: Promise<void> | null = null;
-	/** An in-flight `startSession`, awaited by `dispose` so no recognizer starts after shutdown. */
-	private startPromise: Promise<VoiceSessionSnapshot> | null = null;
+	/** Every in-flight `startSession`, awaited by `dispose` so no recognizer starts after shutdown. */
+	private readonly activeStarts = new Set<Promise<VoiceSessionSnapshot>>();
+	/** Monotonic counter incremented before each `stt.start()` so an overtaken start only stops its own attempt. */
+	private sttStartGeneration = 0;
 	private disposed = false;
 
 	private get stopping(): boolean {
@@ -716,11 +718,9 @@ export class VoiceSessionService {
 	}): Promise<VoiceSessionSnapshot> {
 		if (this.disposed) return this.getSnapshot();
 		const promise = this.runStartSession(params).finally(() => {
-			if (this.startPromise === promise) {
-				this.startPromise = null;
-			}
+			this.activeStarts.delete(promise);
 		});
-		this.startPromise = promise;
+		this.activeStarts.add(promise);
 		return promise;
 	}
 
@@ -780,6 +780,7 @@ export class VoiceSessionService {
 			return this.getSnapshot();
 		}
 
+		const mySttGen = ++this.sttStartGeneration;
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
 		} catch (error) {
@@ -800,14 +801,16 @@ export class VoiceSessionService {
 
 		if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
 			// Teardown ran while stt.start() was in flight; stop the recognizer
-			// that just finished starting so it is not left open.
-			try {
-				await this.providers.stt.stop();
-			} catch (error) {
-				void captureException(error as Error, {
-					context: 'acappella.abortedStart',
-					providerId: this.providers.stt.id,
-				});
+			// only if no newer startSession has already taken ownership of it.
+			if (this.sttStartGeneration === mySttGen) {
+				try {
+					await this.providers.stt.stop();
+				} catch (error) {
+					void captureException(error as Error, {
+						context: 'acappella.abortedStart',
+						providerId: this.providers.stt.id,
+					});
+				}
 			}
 			return this.getSnapshot();
 		}
@@ -1133,7 +1136,9 @@ export class VoiceSessionService {
 	async dispose(): Promise<void> {
 		this.disposed = true;
 		await this.stopSession('shutdown');
-		await this.startPromise;
+		while (this.activeStarts.size > 0) {
+			await Promise.all([...this.activeStarts]);
+		}
 		this.listeners.clear();
 	}
 
