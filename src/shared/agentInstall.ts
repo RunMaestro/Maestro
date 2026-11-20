@@ -45,10 +45,10 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 	terminal: null,
 	'claude-code': {
 		commands: {
-			darwin: 'curl -fsSL https://claude.ai/install.sh | bash',
-			linux: 'curl -fsSL https://claude.ai/install.sh | bash',
+			darwin: "bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'",
+			linux: "bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'",
 			win32:
-				'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"',
+				'powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = \'Stop\'; irm https://claude.ai/install.ps1 | iex"',
 		},
 		docsUrl: 'https://docs.anthropic.com/en/docs/claude-code/setup',
 	},
@@ -79,10 +79,12 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 	},
 	'factory-droid': {
 		commands: {
-			darwin: 'curl -fsSL https://app.factory.ai/cli | sh',
-			linux: 'curl -fsSL https://app.factory.ai/cli | sh',
+			darwin:
+				'sh -c \'f=$(mktemp) && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; rc=$?; rm -f "$f"; exit $rc\'',
+			linux:
+				'sh -c \'f=$(mktemp) && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; rc=$?; rm -f "$f"; exit $rc\'',
 			win32:
-				'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://app.factory.ai/cli/windows | iex"',
+				'powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = \'Stop\'; irm https://app.factory.ai/cli/windows | iex"',
 		},
 		docsUrl: 'https://docs.factory.ai/cli/getting-started/quickstart',
 	},

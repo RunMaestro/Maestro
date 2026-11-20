@@ -22,6 +22,24 @@ describe('agentInstall', () => {
 				const command = getAgentInstallCommand(id, 'win32');
 				if (command && /\birm\b/.test(command)) {
 					expect(command.startsWith('powershell ')).toBe(true);
+					expect(command).toContain("$ErrorActionPreference = 'Stop'");
+				}
+			}
+		});
+
+		it('propagates download failures in piped Unix install commands', () => {
+			for (const id of AGENT_IDS) {
+				for (const platform of ['darwin', 'linux'] as const) {
+					const command = getAgentInstallCommand(id, platform);
+					if (command && command.includes('curl ')) {
+						// Must not be a bare `curl ... | sh` or `curl ... | bash` whose
+						// exit code would be masked by the downstream shell, and must
+						// parse in fish as well as bash/zsh/sh.
+						expect(command).toMatch(/^(bash|sh) -c '/);
+						expect(command.includes('set -o pipefail') || command.includes('&& sh "$f"')).toBe(
+							true
+						);
+					}
 				}
 			}
 		});
@@ -253,7 +271,7 @@ describe('agentInstall', () => {
 				'npm install -g @openai/codex'
 			);
 			expect(agentNotInstalledMessage('claude-code', 'not-found', 'linux')).toContain(
-				'curl -fsSL https://claude.ai/install.sh | bash'
+				"bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'"
 			);
 		});
 
