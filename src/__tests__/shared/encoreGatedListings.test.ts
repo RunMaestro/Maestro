@@ -79,6 +79,8 @@ describe('the base system prompt', () => {
 		'_documentation-index.md',
 		'_toc.md',
 		'_autorun-playbooks.md',
+		'_terminals.md',
+		'_media-playback.md',
 	];
 
 	it('does not tell every agent to use Concerto', () => {
@@ -115,7 +117,7 @@ describe('the base system prompt', () => {
 		expect(CORE_PROMPTS.find((def) => def.id === '_concerto')?.encoreFlag).toBe('concerto');
 		expect(read('concerto-system.md')).toContain('{{REF:_concerto}}');
 		const guide = read('_concerto.md');
-		expect(guide).toContain('#### Required designer feedback loop');
+		expect(guide).toContain('### Required designer feedback loop');
 		expect(guide).toContain('maestro-cli cadenza open');
 		expect(guide).toContain('maestro-cli movement add');
 	});

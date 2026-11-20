@@ -35,6 +35,13 @@ export interface GoalRunConfig {
 export interface GoalMarkers {
 	/** Reported progress, clamped to 0-100 and rounded; `null` if not reported. */
 	progress: number | null;
+	/**
+	 * The same report clamped to 0-100 but NOT rounded; `null` if not reported.
+	 * Stall detection reads this one: on a long goal a real iteration can move
+	 * the needle by a fraction of a percent (48.27 -> 48.33), which `progress`
+	 * rounds flat and would misread as a stall.
+	 */
+	exactProgress: number | null;
 	/** Optional short rationale accompanying the progress marker; `null` if absent or empty. */
 	rationale: string | null;
 	/** True if the agent declared the goal complete (bare marker or progress === 100). */
@@ -49,7 +56,10 @@ export interface GoalMarkers {
 export interface GoalIterationRecord {
 	/** 1-based iteration number. */
 	iteration: number;
-	/** Normalized progress for this iteration (0-100, never null in history). */
+	/**
+	 * Raw progress for this iteration at full reported precision (0-100, never
+	 * null in history). Not rounded, so sub-1% movement resets a stall window.
+	 */
 	progress: number;
 	/** Optional rationale captured from the iteration's progress marker. */
 	rationale: string | null;
