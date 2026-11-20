@@ -801,8 +801,8 @@ export class VoiceSessionService {
 
 		if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
 			// Teardown ran while stt.start() was in flight; stop the recognizer
-			// only if no newer startSession has already taken ownership of it.
-			if (this.sttStartGeneration === mySttGen) {
+			// unless a newer startSession is still holding or starting it.
+			if (this.sttStartGeneration === mySttGen || this.getState() === 'error') {
 				try {
 					await this.providers.stt.stop();
 				} catch (error) {

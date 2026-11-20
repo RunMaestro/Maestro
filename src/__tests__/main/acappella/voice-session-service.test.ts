@@ -3082,4 +3082,40 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		expect(h.stt.stopped).toBe(true);
 		expect(vi.getTimerCount()).toBe(0);
 	});
+
+	it('stops the recognizer if an overtaken start finishes after the newer start failed', async () => {
+		const h = makeHarness();
+		const start1Gate = deferred();
+		let startCall = 0;
+		let recognizerActive = false;
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			startCall += 1;
+			if (startCall === 1) {
+				await start1Gate.promise;
+				recognizerActive = true;
+				return origStart(cb);
+			}
+			throw new Error('mic busy');
+		});
+		h.stt.stop = vi.fn(async () => {
+			recognizerActive = false;
+			return origStop();
+		});
+
+		const first = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const secondSnapshot = await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(secondSnapshot.state).toBe('error');
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+
+		start1Gate.resolve();
+		await first;
+
+		expect(h.service.getState()).toBe('error');
+		expect(h.stt.stop).toHaveBeenCalledTimes(2);
+		expect(recognizerActive).toBe(false);
+	});
 });
