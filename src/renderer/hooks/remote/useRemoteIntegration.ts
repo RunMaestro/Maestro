@@ -22,6 +22,7 @@ import {
 import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
+import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { reopenClosedTabInAgent } from '../../services/reopenClosedTab';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
@@ -759,7 +760,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		const unsubscribeCrossAgentAsk = window.maestro.process.onRemoteCrossAgentAsk(
 			(request, responseChannel) => {
-				void runCrossAgentAsk(request)
+				// `ask --btw` rides the same wire but forks the target's tab instead of
+				// consulting it, exactly as a typed `/btw` in that tab would.
+				const run = request.sideQuestion
+					? runRemoteSideQuestion({
+							targetSessionId: request.targetSessionId,
+							question: request.question,
+							tabId: request.targetTabId,
+						}).then((outcome) => ({
+							success: outcome.success,
+							answer: outcome.answer,
+							error: outcome.error,
+							targetAgentName: outcome.agentName,
+							targetTabId: outcome.tabId,
+						}))
+					: runCrossAgentAsk(request);
+				void run
 					.then((result) => {
 						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, result);
 					})

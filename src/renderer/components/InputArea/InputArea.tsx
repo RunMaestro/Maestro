@@ -42,6 +42,9 @@ import { CommandModeBar } from './components/CommandModeBar';
 import { MentionRoutingBar } from './components/MentionRoutingBar';
 import { useMentionRouting } from './hooks/useMentionRouting';
 import { AiCommandProposal } from './components/AiCommandProposal';
+import { SideQuestionCard } from './components/SideQuestionCard';
+import { selectSideQuestionEntry, useSideQuestionStore } from '../../stores/sideQuestionStore';
+import { dismissSideQuestion } from '../../services/sideQuestion';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -253,6 +256,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// per tab, so switching away and back finds the same card waiting.
 	const aiCommandEntry = useAiCommandStore(selectAiCommandEntry(session.id, session.activeTabId));
 	const setAiCommandChoice = useAiCommandStore((s) => s.setAiCommandChoice);
+	const sideQuestionEntry = useSideQuestionStore(
+		selectSideQuestionEntry(session.id, session.activeTabId)
+	);
 	// What the bar advertises. While a request is in flight the entry's stamp
 	// wins: settings are codified at send time, so changing the model mid-request
 	// applies from the NEXT one, and the bar must not claim otherwise.
@@ -665,6 +671,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								theme={theme}
 								routing={mentionRouting.routing}
 								agentNames={mentionRouting.agentNames}
+							/>
+						)}
+
+						{sideQuestionEntry && (
+							<SideQuestionCard
+								theme={theme}
+								entry={sideQuestionEntry}
+								onDismiss={() => dismissSideQuestion(session.id, sideQuestionEntry.tabId)}
 							/>
 						)}
 

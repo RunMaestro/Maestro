@@ -30,6 +30,8 @@ import {
 } from '../../utils/shellCommandInput';
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { getSideQuestionEntry } from '../../stores/sideQuestionStore';
+import { dismissSideQuestion } from '../../services/sideQuestion';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../utils/useEventListener';
 
@@ -274,6 +276,19 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					// that no longer shows it, to reappear the next time the user
 					// climbs back. Answering the card is the only way past it.
 					e.preventDefault();
+					return;
+				}
+			}
+
+			// Escape on an empty composer closes a `/btw` side-question card first.
+			// stopPropagation for the same reason as below: the window-level Escape
+			// handler would otherwise blur the composer.
+			if (e.key === 'Escape' && !inputValue.trim() && activeSession?.activeTabId) {
+				const sideQuestion = getSideQuestionEntry(activeSession.id, activeSession.activeTabId);
+				if (sideQuestion) {
+					e.preventDefault();
+					e.stopPropagation();
+					dismissSideQuestion(sideQuestion.sessionId, sideQuestion.tabId);
 					return;
 				}
 			}

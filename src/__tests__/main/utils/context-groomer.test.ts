@@ -179,7 +179,28 @@ describe('groomContext', () => {
 			yoloMode: false,
 			permissionMode: 'standard',
 			agentSessionId: undefined,
+			ephemeralFork: false,
 		});
+	});
+
+	it('refuses an ephemeral fork the agent cannot do, rather than resume the real session', async () => {
+		const agent = makeAgent();
+		const detector = createMockAgentDetector(agent);
+
+		await expect(
+			groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'side question',
+					agentSessionId: 'sess-1',
+					ephemeralFork: true,
+				},
+				mockPM,
+				detector
+			)
+		).rejects.toThrow('cannot fork a session');
+		expect(buildAgentArgs).not.toHaveBeenCalled();
 	});
 
 	// A one-shot turn that belongs to an agent (AI command mode, summarization,
@@ -657,6 +678,61 @@ describe('groomContext', () => {
 
 		expect(mockPM._lastSpawnConfig!.promptArgs).toBe(promptArgsFn);
 		expect(mockPM._lastSpawnConfig!.noPromptSeparator).toBe(true);
+	});
+
+	it('refuses a fresh-tab ephemeral turn the agent cannot keep unsaved', async () => {
+		const detector = createMockAgentDetector(makeAgent());
+
+		await expect(
+			groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'side question',
+					ephemeralFork: true,
+				},
+				mockPM,
+				detector
+			)
+		).rejects.toThrow('without saving a session');
+		expect(buildAgentArgs).not.toHaveBeenCalled();
+	});
+
+	it('passes global shell env vars to a local spawn', async () => {
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{
+				projectRoot: '/project',
+				agentType: 'claude-code',
+				prompt: 'summarize',
+				globalShellEnvVars: { HTTPS_PROXY: 'http://proxy:8080' },
+			},
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.shellEnvVars).toEqual({ HTTPS_PROXY: 'http://proxy:8080' });
+	});
+
+	it('runs an agent installed only on the SSH remote', async () => {
+		const detector = createMockAgentDetector(makeAgent({ available: false }));
+
+		await groomContext(
+			{
+				projectRoot: '/project',
+				agentType: 'claude-code',
+				prompt: 'summarize',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'my-remote' },
+				sshStore: createSshStore(),
+			},
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.command).toBe('ssh');
+		// Global vars ride in the remote env, not the local ssh process.
+		expect(mockPM._lastSpawnConfig!.shellEnvVars).toBeUndefined();
 	});
 
 	it('throws when agent is not available', async () => {
