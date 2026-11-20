@@ -16,6 +16,7 @@ import {
 	fakeTurnFromRecording,
 	writeFakeTurn,
 } from '../shared/maestro-lib/run/fakeAgent';
+import { createFakeGroupChatProvider } from '../shared/maestro-lib/run/fakeGroupChatProvider';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
 import { type ClientResult } from '../../shared/maestro-lib/client/types';
 import { readHistory } from '../../shared/maestro-lib/store/read-history';
@@ -522,7 +523,10 @@ describe('m4-group-chat', () => {
 			...extra,
 		});
 
-		async function startRuntime(sessions: unknown[] = []): Promise<MaestroRuntime> {
+		async function startRuntime(
+			sessions: unknown[] = [],
+			background: RuntimeDeps['background'] = {}
+		): Promise<MaestroRuntime> {
 			const activeId =
 				Array.isArray(sessions) && sessions.length > 0 ? (sessions[0] as any).id : 'a1';
 			fs.writeFileSync(
@@ -532,7 +536,7 @@ describe('m4-group-chat', () => {
 			const started = await createMaestroRuntime({
 				dataDir: dir,
 				mode: 'tui',
-				deps: deps(),
+				deps: { ...deps(), background },
 				turns: { bundledPromptsDir: BUNDLED_PROMPTS },
 			});
 			if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
@@ -653,26 +657,26 @@ describe('m4-group-chat', () => {
 			// Create two agents
 			const sessions = [seedAgent('asker', 'Asker'), seedAgent('responder', 'Responder')];
 
-			// Start the runtime
-			const runtime = await startRuntime(sessions);
+			// The foreground fake provider does not intercept background consults.
+			const answer = 'Use a queue.';
+			const provider = createFakeGroupChatProvider(work, () => ({ text: answer }));
+			const runtime = await startRuntime(sessions, { runTurn: provider.runTurn });
 
 			try {
 				// Verify consults API exists
 				expect(runtime.consults).toBeDefined();
 				expect(typeof runtime.consults.ask).toBe('function');
 
-				// Verify we can ask a consult (it will timeout since fake provider doesn't handle it,
-				// but that's OK - we're just verifying the API is wired)
 				const result = await runtime.consults.ask({
 					targetAgentId: 'responder',
 					question: 'What is the answer?',
 					fromAgentId: 'asker',
-					timeoutMs: 100, // Short timeout for test
+					timeoutMs: 100,
 				});
 
-				// Even if it times out, the API should return a ClientResult
 				expect(result).toBeDefined();
 				expect(typeof result.ok).toBe('boolean');
+				expect(value(result).answer).toBe(answer);
 			} finally {
 				await runtime.connection.close();
 			}
