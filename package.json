@@ -53,7 +53,7 @@
 		"package:linux": "node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --linux && npm run verify:native-packaging",
 		"verify:native-packaging": "node scripts/verify-native-packaging.mjs",
 		"start": "node scripts/ensure-native-runtime.mjs electron && electron .",
-		"start": "node scripts/ensure-native-runtime.mjs electron && electron .",
+		"start:lite": "node scripts/ensure-native-runtime.mjs electron && electron . --lite",
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
