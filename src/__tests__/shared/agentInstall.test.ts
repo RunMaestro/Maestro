@@ -20,9 +20,16 @@ describe('agentInstall', () => {
 		it('wraps PowerShell-only Windows installers so cmd.exe can run them too', () => {
 			for (const id of AGENT_IDS) {
 				const command = getAgentInstallCommand(id, 'win32');
+				if (command) {
+					// Outer shells (PowerShell, Git Bash, cmd.exe) expand $VAR / %VAR%
+					// before the inner command sees it, so win32 lines must stay free
+					// of shell-expandable variables.
+					expect(command).not.toContain('$');
+					expect(command).not.toContain('%');
+				}
 				if (command && /\birm\b/.test(command)) {
 					expect(command.startsWith('powershell ')).toBe(true);
-					expect(command).toContain("$ErrorActionPreference = 'Stop'");
+					expect(command).toContain('irm -ErrorAction Stop ');
 				}
 			}
 		});
