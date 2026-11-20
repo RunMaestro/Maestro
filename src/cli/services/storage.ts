@@ -52,8 +52,17 @@ const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
 	'maestro-claude-session-origins.json',
 ]);
 
-function getStoreFileDir(filename: string): string {
-	return SYNCED_STORE_FILES.has(filename) ? getSyncDir() : getConfigDir();
+const SETTINGS_FILE = 'maestro-settings.json';
+
+/**
+ * Directory a store file lives in. `forWrite` resolves a missing custom Storage
+ * Location the way the desktop does at startup (create it and use it), so a
+ * write lands in the file the app will read rather than the stale copy in the
+ * config directory (issue #2082). Reads never create the folder.
+ */
+function getStoreFileDir(filename: string, forWrite = false): string {
+	if (!SYNCED_STORE_FILES.has(filename)) return getConfigDir();
+	return forWrite ? resolveSyncDir(getConfigDir(), { create: true }) : getSyncDir();
 }
 
 /**
@@ -69,8 +78,8 @@ export function getStoreFilePath(filename: string): string {
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
-function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = getStoreFilePath(filename);
+function readStoreFile<T>(filename: string, dir = getStoreFileDir(filename)): T | undefined {
+	const filePath = path.join(dir, filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -87,8 +96,11 @@ function readStoreFile<T>(filename: string): T | undefined {
  * Write a JSON value back to an Electron Store JSON file.
  * Creates the file (and parent directory) if it doesn't exist.
  */
-function writeStoreFile<T>(filename: string, data: T): void {
-	const dirPath = getStoreFileDir(filename);
+function writeStoreFile<T>(
+	filename: string,
+	data: T,
+	dirPath = getStoreFileDir(filename, true)
+): void {
 	if (!fs.existsSync(dirPath)) {
 		fs.mkdirSync(dirPath, { recursive: true });
 	}
@@ -326,9 +338,12 @@ export function readSettingValue(key: string): unknown {
  * Returns true on success.
  */
 export function writeSettingValue(key: string, value: unknown): boolean {
-	const settings = readSettings();
+	// Read and write the same directory, resolved for a write, so the merge
+	// starts from the file the desktop reads and never from a stale copy.
+	const dir = getStoreFileDir(SETTINGS_FILE, true);
+	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
 	setNestedValue(settings, key, value);
-	writeStoreFile('maestro-settings.json', settings);
+	writeStoreFile(SETTINGS_FILE, settings, dir);
 	return true;
 }
 
@@ -338,10 +353,11 @@ export function writeSettingValue(key: string, value: unknown): boolean {
  * Returns true if the key existed and was removed.
  */
 export function deleteSettingValue(key: string): boolean {
-	const settings = readSettings();
+	const dir = getStoreFileDir(SETTINGS_FILE, true);
+	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
 	const removed = deleteNestedValue(settings, key);
 	if (removed) {
-		writeStoreFile('maestro-settings.json', settings);
+		writeStoreFile(SETTINGS_FILE, settings, dir);
 	}
 	return removed;
 }
