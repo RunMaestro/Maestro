@@ -33,7 +33,7 @@ describe('Maestro collaboration setup prompt', () => {
 		);
 		const row = primitives
 			.split('\n')
-			.find((line) => line.includes('Configure agent relationships'));
+			.find((line) => line.toLowerCase().includes('configure agent relationships'));
 		expect(row).toContain('make these agents peers');
 		expect(row).toContain('let these agents collaborate');
 		expect(row).toContain('maestro-cli prompts get _maestro-cli');
