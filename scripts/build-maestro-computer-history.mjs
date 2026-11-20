@@ -22,7 +22,7 @@
  * and run the app in dev. The `package*` npm scripts run it for the host
  * platform and arch, and the release workflow calls it explicitly for every
  * platform and arch. The electron-builder afterPack hook
- * (scripts/verify-computer-history-helper.js) fails any package that lacks
+ * (scripts/after-pack.js, via verify-computer-history-helper.js) fails any package that lacks
  * the helper, because electron-builder silently skips a missing
  * extraResources folder.
  *
