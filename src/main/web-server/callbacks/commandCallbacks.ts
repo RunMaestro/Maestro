@@ -4,7 +4,10 @@ import type { StoredSession } from '../../stores/types';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
+import { requestRemoteCommandReceipt } from './remoteCommandReceipt';
+import { REMOTE_COMMAND_CLAIM_TIMEOUT_MS } from '../../../shared/remoteCommandReceipt';
 import type { ConsultAgentResult } from '../types';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
 import {
@@ -15,20 +18,16 @@ import {
 } from '../../../shared/turnInterrupt';
 
 /**
- * The renderer's answer to a `remote:executeCommand` send: did it accept the
- * command for execution? `timedOut` distinguishes "the renderer said no" from
- * "the renderer never answered" (a renderer too old to send a receipt, or a
- * wedged one) so the two can be logged apart.
+ * How long to wait for the outcome of a command the renderer has claimed
+ * before reporting the handover itself.
+ *
+ * A `maestro-cli dispatch` gives up on its own reply after 10 s
+ * (`DEFAULT_COMMAND_TIMEOUT_MS` in `src/shared/maestro-lib/client/bridge-connection.ts`),
+ * so the claim window plus this one must stay inside that. A turn that takes
+ * longer to start (a slow `git status`, a spawn held behind a synopsis writer)
+ * is reported as accepted and pending: the renderer owns it by then.
  */
-interface RemoteCommandReceipt {
-	accepted: boolean;
-	reason?: string;
-	timedOut?: boolean;
-}
-
-/** How long to wait for the renderer's delivery receipt before giving up.
- *  Bounded so a hung renderer cannot wedge a CLI `dispatch` call. */
-const REMOTE_COMMAND_RECEIPT_TIMEOUT_MS = 3000;
+const REMOTE_COMMAND_OUTCOME_TIMEOUT_MS = 4000;
 
 /**
  * Reduce a receipt reason to its leading code for logging.
@@ -45,19 +44,6 @@ function receiptReasonCode(reason: string | undefined): string {
 	// Guard against a reason that is entirely detail (leading colon) or that
 	// smuggles whitespace/punctuation in place of a code.
 	return /^[a-z0-9-]+$/i.test(code) ? code : 'unrecognized-reason';
-}
-
-function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
-	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
-		const receipt = raw as { accepted: unknown; reason?: unknown };
-		if (typeof receipt.accepted === 'boolean') {
-			return {
-				accepted: receipt.accepted,
-				reason: typeof receipt.reason === 'string' ? receipt.reason : undefined,
-			};
-		}
-	}
-	return { accepted: false, reason: 'malformed-receipt' };
 }
 
 /**
@@ -79,6 +65,7 @@ export function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
 		canceled: r.canceled === true,
 		targetAgentName: str(r.targetAgentName),
 		targetTabId: str(r.targetTabId),
+		targetToolType: str(r.targetToolType),
 	};
 }
 
@@ -105,6 +92,7 @@ export function registerCommandCallbacks(
 			force?: boolean,
 			images?: string[],
 			background?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
 			requireDeliveryReceipt?: boolean,
 			pianolaDispatchId?: string
@@ -140,40 +128,40 @@ export function registerCommandCallbacks(
 			// success for the mere fact that an IPC send was issued. `success`
 			// means "the renderer accepted the command for execution" - a
 			// dropped, not-found or busy command must not read as success.
-			// This is delivery, not execution: the renderer acks as soon as it
-			// hands the prompt to the spawn/queue logic. An old renderer build
-			// simply ignores the extra response channel and falls through to
-			// the timeout below, which is why the fallback resolves `false`.
-			const receipt = await requestFromRenderer<RemoteCommandReceipt>(
+			// This is delivery, not execution: the renderer reports as soon as
+			// the turn starts or the prompt is queued. A renderer that never
+			// claims the command never runs it, so that failure is true too.
+			const receipt = await requestRemoteCommandReceipt(
 				targetWindow,
-				'remote:executeCommand',
-				{
-					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
-					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
-					parse: parseRemoteCommandReceipt,
-					args: [
-						sessionId,
-						command,
-						inputMode,
-						tabId,
-						force,
-						images,
-						background,
-						mentionRouting,
-						...(pianolaDispatchId ? [pianolaDispatchId] : []),
-					],
-				}
+				[
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					force,
+					images,
+					background,
+					consultChain,
+					mentionRouting,
+					...(pianolaDispatchId ? [pianolaDispatchId] : []),
+				],
+				{ outcomeTimeoutMs: REMOTE_COMMAND_OUTCOME_TIMEOUT_MS }
 			);
 			if (!receipt.accepted) {
 				logger.warn(
 					receipt.timedOut
-						? `[Web → Renderer] No delivery receipt within ${REMOTE_COMMAND_RECEIPT_TIMEOUT_MS}ms for session ${sessionId} - reporting dispatch as failed`
+						? `[Web → Renderer] No renderer claimed the command within ${REMOTE_COMMAND_CLAIM_TIMEOUT_MS}ms for session ${sessionId} - reporting dispatch as failed`
 						: `[Web → Renderer] Renderer rejected command for session ${sessionId}: ${receiptReasonCode(receipt.reason)}`,
 					'WebServer'
 				);
+			} else if (receipt.pending) {
+				logger.info(
+					`[Web → Renderer] Renderer claimed the command for session ${sessionId} and is still starting the turn - reporting the handover`,
+					'WebServer'
+				);
 			}
-			// A missing/malformed receipt says nothing about delivery. Scoped
-			// callers preserve the durable intent when this throws.
+			// An unclaimed or malformed receipt is not a refusal by the agent.
+			// Scoped callers preserve the durable intent when this throws.
 			if (requireDeliveryReceipt && (receipt.timedOut || receipt.reason === 'malformed-receipt')) {
 				throw new Error('Renderer delivery outcome unknown');
 			}
@@ -215,6 +203,7 @@ export function registerCommandCallbacks(
 					fromSessionId: params.fromSessionId,
 					fromTabId: params.fromTabId,
 					withContext: params.withContext,
+					...(params.consultChain ? { consultChain: params.consultChain } : {}),
 				},
 			],
 		});

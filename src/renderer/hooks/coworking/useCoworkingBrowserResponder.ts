@@ -19,6 +19,8 @@ import { useEffect } from 'react';
 import type { MutableRefObject } from 'react';
 import type { BrowserTabViewHandle } from '../../components/MainPanel/BrowserTabView';
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
+import type { CoworkingBrowserCaller } from '../../../shared/coworkingBrowser';
+import { coworkingBrowserPolicy } from '../../utils/coworkingBrowserPolicy';
 import {
 	browserOpNeedsConfirm,
 	DEFAULT_BROWSER_CONFIRM_POLICY,
@@ -403,7 +405,8 @@ export async function resolveAndRun(
 		sessionId: string,
 		tabUuid: string
 	) => Promise<BrowserTabViewHandle | null>,
-	mainNeedsConfirm?: boolean
+	mainNeedsConfirm?: boolean,
+	caller?: CoworkingBrowserCaller
 ): Promise<BrowserOpResult> {
 	const state = useSessionStore.getState();
 	const active = selectActiveSession(state);
@@ -435,8 +438,24 @@ export async function resolveAndRun(
 	// policy, ORed with main's own computation from its mirrored policy - either
 	// side requiring approval forces the dialog.
 	if (op.kind !== 'read' && op.kind !== 'pick') {
+		const settings = useSettingsStore.getState();
+		const policy = coworkingBrowserPolicy(
+			requesting,
+			settings.coworkingBrowserInteraction,
+			settings.coworkingBrowserInteractionConfirm
+		);
+		if (caller && caller.sessionId !== sessionId) {
+			return { ok: false, content: 'Browser caller does not own this agent session.' };
+		}
+		const provider = caller?.provider ?? policy.agentType;
+		if (!provider || !policy.providerPolicies[provider]?.interactionEnabled) {
+			return {
+				ok: false,
+				content: 'Browser interaction is disabled or the caller provider is ambiguous.',
+			};
+		}
 		const approved = await requestApproval(op, {
-			agentId: requesting.toolType,
+			agentId: provider,
 			sessionId,
 			forceConfirm: mainNeedsConfirm === true,
 		});
@@ -534,7 +553,7 @@ export function useCoworkingBrowserResponder(
 		const bridge = window.maestro?.coworking;
 		if (!bridge) return;
 		const off = bridge.onRequestBrowserOp(
-			(tabUuid, sessionId, op, responseChannel, needsConfirm) => {
+			(tabUuid, sessionId, op, responseChannel, needsConfirm, caller) => {
 				void (async () => {
 					let result: BrowserOpResult;
 					try {
@@ -545,7 +564,8 @@ export function useCoworkingBrowserResponder(
 							op,
 							defaultRequestApproval,
 							defaultResolveBackgroundHandle,
-							needsConfirm
+							needsConfirm,
+							caller
 						);
 					} catch (err) {
 						// Unexpected failures degrade to a clear ok:false for the agent, but

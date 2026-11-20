@@ -94,6 +94,7 @@ import { captureException } from '../utils/sentry';
 import { SegmentWriter, INDEX_QUEUE_KEY, STORE_DIR_MODE, STORE_FILE_MODE } from './segment-writer';
 import { deleteSegments, listSegmentFiles, runRetention } from './retention';
 import { DigestScheduler, type DigestConsult, type DigestStatus } from './digests';
+import type { HistoryDigestWriter } from '../local-models/history-digests';
 import type { ObserverSupervisorDeps } from './observer-supervisor';
 
 /** The slice of ObserverSupervisor the service drives (injectable for tests). */
@@ -122,6 +123,8 @@ export interface ComputerHistoryServiceDeps {
 	getBlockPids?: () => number[];
 	onStatusChange?: (status: ComputerHistoryStatus) => void;
 	getConsult?: () => DigestConsult | null;
+	/** Writes digests while the digest source is the local model. */
+	getLocalDigestWriter?: () => HistoryDigestWriter | null;
 	log?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
@@ -188,6 +191,7 @@ export class ComputerHistoryService {
 			storeDir: this.storeDir,
 			getConfig: () => this.getConfig(),
 			getConsult: () => deps.getConsult?.() ?? null,
+			getLocalWriter: () => deps.getLocalDigestWriter?.() ?? null,
 			now: this.now,
 			log: (level, message) => deps.log?.(level, message),
 		});

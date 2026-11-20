@@ -22,12 +22,15 @@ const METHODS: Record<string, string> = {
 		'deleteMessagePair getAllNamedSessions getCommands getGlobalStats getProjectStats getSessionOrigins getSessionTimestamps getSkills listSessions listSessionsPaginated readSessionMessages registerSessionOrigin searchSessions updateSessionContextUsage updateSessionName updateSessionStarred usage:refresh-all',
 	cli: 'getActivity',
 	codex: 'usage:refresh-all',
+	// Builds the sandboxed Concerto document for a Codex `visualize` reference;
+	// the browser loads it from the web server's Concerto route.
+	codexVisualization: 'load',
 	'concerto-html': 'release restore',
 	context:
-		'cancelGrooming cleanupGroomingSession createGroomingSession getStoredSession groomContext sendGroomingPrompt',
+		'cancelGrooming cleanupGroomingSession createGroomingSession getFootprint getStoredSession groomContext sendGroomingPrompt',
 	contextTimeline: 'clearCaptures getCaptures',
 	coworking: 'getInstallStatus removeSession',
-	'cross-agent': 'cancel send',
+	'cross-agent': 'cancel consultBudget send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
 	// setActive is absent on purpose: it is one host-wide visibility flag, and a
 	// browser reporting its own visibility paused the host's scanners on every
@@ -55,6 +58,14 @@ const METHODS: Record<string, string> = {
 	journey: 'append path read',
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
+	// The Models settings tab, the tasks it assigns, and the surfaces that run them.
+	// Dictation records in the BROWSER and sends the clip (`dictation:transcribe`);
+	// `dictation:start` / `stop` would open the host's microphone and stay
+	// desktop-only, while `cancel` only aborts this client's own transcription.
+	// Credentials stay on the host: `server:key` reads the model server's key,
+	// `systemOne:setKey` / `clearKey` manage a stored engine key.
+	localModels:
+		'cancel dictation:cancel dictation:transcribe download draftPullRequest endpoints:detect endpoints:listModels endpoints:test footprint hardware hf:add hf:preview hf:remove list pause proxy:block proxy:ensurePort proxy:report remove remove-all resume routeTurn runOn:test runTask runtimes:footprint runtimes:install runtimes:list runtimes:remove-all search semanticIndex:browse semanticIndex:clear semanticIndex:status semanticIndex:storage server:installEngine server:report server:set server:start server:stop spokenNotices:agentFinished spokenNotices:speak suggestTabCleanup systemOne:agentAccess systemOne:ledger systemOne:report systemOne:set systemOne:test systemOne:usage taskReadiness tiers:options userModels verify',
 	logger: 'getLogLevel log',
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
@@ -82,11 +93,11 @@ const METHODS: Record<string, string> = {
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:
-		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
+		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-indexing-state get-model-usage get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
 	symphony:
 		'cancel checkPRStatuses clearCache cloneRepo complete createDraftPR fetchDocumentContent getActive getCompleted getIssueCounts getIssues getRegistry getState getStats manualCredit registerActive start startContribution syncContribution updateStatus',
 	tabNaming: 'generateTabName',
-	tabs: 'aiTabClosed',
+	tabs: 'aiTabClosed aiTabRetryState',
 	tempfile: 'delete read write',
 	// claimAutoRunStart / releaseAutoRunStartClaim serialize Auto Run starts across every
 	// client, so a browser must reach them to start a run (#1862). Reclaiming orphaned
@@ -113,6 +124,9 @@ const EVENTS: Record<string, string> = {
 	groupChat:
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
+	// `dictation:interrupted` is absent: it goes to the one window recording.
+	localModels:
+		'progress runtimes:progress semanticIndex:progress server:changed server:progress systemOne:changed userModels:changed',
 	marketplace: 'manifestChanged',
 	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
@@ -125,7 +139,7 @@ const EVENTS: Record<string, string> = {
 		'movement cadenza cadenzaFlash cadenzaHidden notifyToast notifyCenterFlash autoRunStateMirror',
 	sessions: 'lifecycleSync transcriptSync transcriptCommitted',
 	settings: 'externalChange',
-	stats: 'updated',
+	stats: 'indexingUpdate updated',
 	symphony: 'contributionStarted prCreated updated',
 	worktree: 'discovered removed',
 };
@@ -157,6 +171,10 @@ export function remoteDeniedChannelError(channel: string): string {
 // Do not apply this to transcripts, file content or process output: this is an
 // owner-operator workload API, not an attempt at content-based data-loss prevention.
 export function isRemoteSecretField(key: string): boolean {
+	// The NAME of the variable a Local Models endpoint reads its key from, never
+	// the key. Stripping it would make a browser that saves the endpoint list
+	// write every endpoint back without it.
+	if (key === 'apiKeyEnvVar') return false;
 	return /^(?:.*(?:auth|access|refresh|client|session|webAuth|id)Token|token|.*secret.*|.*password.*|.*api.?key.*|.*credential.*|private.?key(?:Pem|Content)?|(?:custom|remote|shell)Env.*|env(?:Vars|Disabled)?)$/i.test(
 		key
 	);

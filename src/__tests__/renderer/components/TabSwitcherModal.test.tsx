@@ -102,6 +102,101 @@ const renderWithLayerStack = (ui: React.ReactElement) => {
 };
 
 describe('TabSwitcherModal', () => {
+	it('keeps a closed session when another provider has the same open native ID', async () => {
+		vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([
+			{
+				agentId: 'claude-code',
+				agentSessionId: 'same',
+				projectPath: '/test',
+				sessionName: 'Closed Claude',
+			},
+			{ agentId: 'codex', agentSessionId: 'same', projectPath: '/test', sessionName: 'Open Codex' },
+		]);
+		const onSelect = vi.fn();
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={createTestTheme()}
+				tabs={[
+					createTestTab({
+						id: 'codex',
+						name: 'Open Codex',
+						tabProvider: 'codex',
+						agentSessionId: 'same',
+					}),
+				]}
+				activeTabId="codex"
+				projectRoot="/test"
+				onTabSelect={vi.fn()}
+				onNamedSessionSelect={onSelect}
+				onClose={vi.fn()}
+			/>
+		);
+		await waitFor(() =>
+			expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled()
+		);
+		fireEvent.click(screen.getByText(/All Named/));
+		await waitFor(() => expect(screen.getByText('Closed Claude')).toBeInTheDocument());
+		fireEvent.click(screen.getByText('Closed Claude'));
+		expect(onSelect).toHaveBeenCalledWith(
+			'same',
+			'/test',
+			'Closed Claude',
+			undefined,
+			'claude-code'
+		);
+		expect(screen.getAllByText('Open Codex')).toHaveLength(1);
+	});
+
+	it('syncs pending and explicit native slots under their providers', async () => {
+		const tabs = [
+			createTestTab({
+				id: 'foreign',
+				name: 'Codex name',
+				tabProvider: 'codex',
+				agentSessionId: 'codex-native',
+			}),
+			createTestTab({
+				id: 'pending',
+				name: 'Pending name',
+				tabProvider: 'codex',
+				agentSessionId: 'stale-codex',
+				pendingTranslation: 'claude-code',
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-native' } },
+			}),
+		];
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={createTestTheme()}
+				tabs={tabs}
+				activeTabId="foreign"
+				projectRoot="/test"
+				agentId="claude-code"
+				onTabSelect={vi.fn()}
+				onNamedSessionSelect={vi.fn()}
+				onClose={vi.fn()}
+			/>
+		);
+		await waitFor(() =>
+			expect(window.maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+				'codex',
+				'/test',
+				'codex-native',
+				'Codex name'
+			)
+		);
+		expect(window.maestro.claude.updateSessionName).toHaveBeenCalledWith(
+			'/test',
+			'claude-native',
+			'Pending name'
+		);
+		expect(window.maestro.agentSessions.setSessionName).not.toHaveBeenCalledWith(
+			'codex',
+			'/test',
+			'stale-codex',
+			expect.anything()
+		);
+	});
+
 	let theme: Theme;
 
 	beforeEach(() => {
@@ -1809,7 +1904,8 @@ describe('TabSwitcherModal', () => {
 				'closed-abc-123',
 				'/test',
 				'Closed Session',
-				true
+				true,
+				'claude-code'
 			);
 			expect(onClose).toHaveBeenCalled();
 		});

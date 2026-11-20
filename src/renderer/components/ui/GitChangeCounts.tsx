@@ -24,6 +24,8 @@ export interface GitChangeCountsProps {
 	className?: string;
 	/** Icon sizing, so a menu badge can be smaller than the header widget. */
 	iconClassName?: string;
+	/** Show only changed files in a compact summary such as a submenu trigger. */
+	filesOnly?: boolean;
 }
 
 export const GitChangeCounts = memo(function GitChangeCounts({
@@ -31,12 +33,13 @@ export const GitChangeCounts = memo(function GitChangeCounts({
 	totals,
 	className = 'flex items-center gap-2',
 	iconClassName = 'w-3 h-3',
+	filesOnly = false,
 }: GitChangeCountsProps) {
 	const { fileCount, additions, deletions, modified } = totals;
 	if (fileCount <= 0) return null;
 
 	// Fallback readout: files changed, but nobody counted the lines.
-	if (additions === 0 && deletions === 0 && modified === 0) {
+	if (filesOnly || (additions === 0 && deletions === 0 && modified === 0)) {
 		return (
 			<span className={className} data-testid="git-change-counts">
 				<span className="flex items-center gap-0.5" style={{ color: theme.colors.textDim }}>

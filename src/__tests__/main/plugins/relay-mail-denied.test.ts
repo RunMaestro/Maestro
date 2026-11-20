@@ -307,7 +307,7 @@ describe('Relay authenticated MCP actual host path', () => {
 							},
 						} as MessageHandlerContext;
 						if (message.type === 'plugins_list_tools')
-							handlePluginsListTools(ctx, client, message as WebClientMessage);
+							await handlePluginsListTools(ctx, client, message as WebClientMessage);
 						else await handlePluginsCallTool(ctx, client, message as WebClientMessage);
 						return response as T;
 					},

@@ -29,6 +29,7 @@ import { downloadGroupChatExport } from '../utils/groupChatExport';
 import { logger } from '../utils/logger';
 import { computeGroupChatActivity } from '../../shared/groupChatActivity';
 import { formatCost, formatDurationCompact, formatTokens } from '../../shared/formatters';
+import { hostShellAvailable } from '../services/hostShell';
 
 interface GroupChatInfoOverlayProps {
 	theme: Theme;
@@ -380,17 +381,22 @@ export function GroupChatInfoOverlay({
 					className="border-t pt-4 flex justify-between"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<button
-						onClick={openInFinder}
-						className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors border"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-						}}
-					>
-						<FolderOpen className="w-4 h-4" />
-						Open in Finder
-					</button>
+					{/* The host's file manager: not on the web interface */}
+					{hostShellAvailable() ? (
+						<button
+							onClick={openInFinder}
+							className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors border"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						>
+							<FolderOpen className="w-4 h-4" />
+							Open in Finder
+						</button>
+					) : (
+						<span />
+					)}
 					<button
 						onClick={handleExport}
 						disabled={isExporting}

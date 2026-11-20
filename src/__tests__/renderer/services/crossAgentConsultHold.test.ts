@@ -292,6 +292,54 @@ describe('consult-first hold', () => {
 	});
 });
 
+// A turn another agent's `maestro-cli dispatch` started is in that agent's
+// consult chain. The hold releases into a NEW spawn, which would root a fresh
+// chain (and a fresh budget) if the hold did not carry the turn's place.
+describe('consult chain on a hold', () => {
+	const chain = { chainId: 'chain-a', depth: 1 };
+	const heldItem = (deferred?: { message: string }) => {
+		const session = sourceSession();
+		return buildConsultHoldItem({
+			session,
+			tab: session.aiTabs[0],
+			targets: [BACKEND],
+			deferred,
+			consultChain: chain,
+		});
+	};
+	const release = (item: QueuedItem) =>
+		settleConsultInQueue(
+			[item],
+			{
+				sourceSessionId: SOURCE_ID,
+				sourceTabId: SOURCE_TAB,
+				targetSessionId: BACKEND.targetSessionId,
+				text: 'answer',
+			},
+			REPLY_TEMPLATE
+		)[0];
+
+	it('carries the held turn chain, and keeps it when the hold releases', () => {
+		const item = heldItem();
+
+		expect(item.consultChain).toEqual(chain);
+		const released = release(item);
+		expect(released.awaitingConsult).toBeUndefined();
+		expect(released.consultChain).toEqual(chain);
+	});
+
+	it('keeps it on the turn a consult-first hold releases into', () => {
+		expect(release(heldItem({ message: 'check with @Backend first' })).consultChain).toEqual(chain);
+	});
+
+	it('carries none for a turn the user started', () => {
+		const session = sourceSession();
+		const item = buildConsultHoldItem({ session, tab: session.aiTabs[0], targets: [BACKEND] });
+
+		expect(item).not.toHaveProperty('consultChain');
+	});
+});
+
 describe('hand-off note', () => {
 	it('is appended once the template has loaded, naming every target', async () => {
 		stubPrompts({ 'cross-agent-handoff-pending': 'Forwarding to {{HANDOFF_AGENTS}}.' });
@@ -342,6 +390,19 @@ describe('store-bound hold', () => {
 		expect(queue[0].awaitingConsult?.pending).toEqual([BACKEND]);
 		expect(queue[0].tabId).toBe(SOURCE_TAB);
 		expect(queue[1]).toBe(later);
+	});
+
+	it('puts the deferred message and the consult chain on the hold', () => {
+		useSessionStore.setState({ sessions: [sourceSession()] });
+
+		holdTurnForConsults(SOURCE_ID, SOURCE_TAB, [BACKEND], {
+			deferred: { message: 'check with @Backend first' },
+			consultChain: { chainId: 'chain-a', depth: 1 },
+		});
+
+		const [held] = queueOf();
+		expect(held.awaitingConsult?.deferred).toEqual({ message: 'check with @Backend first' });
+		expect(held.consultChain).toEqual({ chainId: 'chain-a', depth: 1 });
 	});
 
 	it('does nothing without targets', () => {

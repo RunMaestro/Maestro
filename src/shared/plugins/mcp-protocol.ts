@@ -49,6 +49,11 @@ export interface McpToolServerDeps {
 	/** Invoke a tool by its advertised name. Tool errors SHOULD be returned as a
 	 *  result with `isError: true`; a thrown error is converted to one. */
 	callTool: (name: string, args: unknown) => Promise<McpToolCallResult>;
+	/**
+	 * The server's `instructions` for the model, sent in the `initialize`
+	 * result when it resolves to a non-empty string. A rejection omits them.
+	 */
+	instructions?: () => Promise<string | undefined>;
 	/** Optional diagnostics sink. MUST NOT write to stdout (reserved for MCP). */
 	onError?: (err: unknown, context: string) => void;
 }
@@ -119,10 +124,18 @@ export function createMcpToolServer(deps: McpToolServerDeps): McpToolServer {
 				const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
 					? requested
 					: MCP_PROTOCOL_VERSION;
+				let instructions: string | undefined;
+				try {
+					instructions = await deps.instructions?.();
+				} catch (e) {
+					// Instructions are guidance; a failure must not fail the handshake.
+					report(e, 'initialize');
+				}
 				return ok(id, {
 					protocolVersion,
 					capabilities: { tools: { listChanged: false } },
 					serverInfo: deps.serverInfo,
+					...(typeof instructions === 'string' && instructions ? { instructions } : {}),
 				});
 			}
 			case 'ping':

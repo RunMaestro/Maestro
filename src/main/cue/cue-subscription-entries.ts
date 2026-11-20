@@ -14,6 +14,7 @@
 
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { cueTurnSettingsOf } from '../../shared/cue/turn-settings';
+import { readCueGateSetting } from '../../shared/cue/gate';
 import type { CueGraphSession } from '../../shared/cue/contracts';
 import type { CueSubscriptionInfo } from '../web-server/types';
 
@@ -62,6 +63,7 @@ export function toCueSubscriptionInfos(
 	const subs: CueSubscriptionInfo[] = [];
 	for (const session of filtered) {
 		for (const sub of session.subscriptions) {
+			const gate = readCueGateSetting(sub);
 			subs.push({
 				// No stable per-subscription id in YAML; compose one from
 				// session + pipeline + name. Names are unique within a
@@ -79,6 +81,14 @@ export function toCueSubscriptionInfos(
 				sessionId: session.sessionId,
 				sessionName: session.sessionName,
 				enabled: sub.enabled !== false,
+				...(gate ? { gate: gate.condition } : {}),
+				...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
+				...(typeof sub.screen_injection === 'boolean'
+					? { screenInjection: sub.screen_injection }
+					: {}),
+				...(typeof sub.injection_threshold === 'number'
+					? { injectionThreshold: sub.injection_threshold }
+					: {}),
 				// Per-subscription last-triggered / count are not yet
 				// tracked by the engine (only per-session). Leave the
 				// numeric fields zero so the CLI renders "never triggered"

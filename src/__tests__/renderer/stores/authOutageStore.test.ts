@@ -13,10 +13,12 @@ import {
 	resolveAuthOutage,
 	providerKeyForSession,
 	startManualReauth,
+	startAccountReauth,
 	useAuthOutageStore,
 } from '../../../renderer/stores/authOutageStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { Session } from '../../../renderer/types';
 
 const clearAgentError = vi.fn();
@@ -80,6 +82,61 @@ describe('providerKeyForSession', () => {
 });
 
 describe('reportAuthFailure', () => {
+	it('captures the failed turn provider and account after the selection changes', () => {
+		const tab = createMockAITab({
+			id: 'failed',
+			tabProvider: 'claude-code',
+			turnProvider: 'codex',
+		});
+		const session = agent({
+			id: 'a',
+			aiTabs: [tab],
+			customPath: '/claude',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/claude' },
+			providerOverrides: {
+				codex: { customPath: '/codex', customEnvVars: { CODEX_HOME: '/codex-failed' } },
+			},
+		});
+		seed([session]);
+		const { providerKey } = reportAuthFailure({
+			sessionId: 'a',
+			tabId: tab.id,
+			message: 'expired',
+		});
+		const outage = useAuthOutageStore.getState().outages[providerKey!];
+		expect(outage.toolType).toBe('codex');
+		expect(outage.host).toMatchObject({
+			toolType: 'codex',
+			customPath: '/codex',
+			customEnvVars: { CODEX_HOME: '/codex-failed' },
+		});
+		seed([{ ...session, toolType: 'opencode' }]);
+		expect(outage.host?.toolType).toBe('codex');
+		expect(startAccountReauth('codex', outage.host).providerKey).toBe(providerKey);
+	});
+
+	it('separates simultaneous failures of the same provider on different accounts', () => {
+		seed([
+			agent({ id: 'a', customEnvVars: { CLAUDE_CONFIG_DIR: '/accounts/a' } }),
+			agent({ id: 'b', customEnvVars: { CLAUDE_CONFIG_DIR: '/accounts/b' } }),
+		]);
+		const first = reportAuthFailure({ sessionId: 'a', message: 'expired' });
+		const second = reportAuthFailure({ sessionId: 'b', message: 'expired' });
+		expect(first.providerKey).not.toBe(second.providerKey);
+		expect(Object.keys(useAuthOutageStore.getState().outages)).toHaveLength(2);
+	});
+
+	it('retains an explicitly captured launch owner when its tab has closed', () => {
+		seed([agent({ id: 'a', aiTabs: [] })]);
+		const { providerKey } = reportAuthFailure({
+			sessionId: 'a',
+			tabId: 'closed',
+			provider: 'codex',
+			message: 'expired',
+		});
+		expect(useAuthOutageStore.getState().outages[providerKey!].host?.toolType).toBe('codex');
+	});
+
 	it('opens an outage for the first blocked agent', () => {
 		seed([agent({ id: 'a' })]);
 
@@ -159,8 +216,8 @@ describe('resolveAuthOutage', () => {
 		// Resumes are staggered so 30 agents don't spawn in one tick.
 		vi.runAllTimers();
 
-		expect(clearAgentError).toHaveBeenCalledWith('a');
-		expect(clearAgentError).toHaveBeenCalledWith('b');
+		expect(clearAgentError).toHaveBeenCalledWith('a', 't1');
+		expect(clearAgentError).toHaveBeenCalledWith('b', 't2');
 		expect(replayAfterAuth).toHaveBeenCalledWith('a', ['t1']);
 		expect(replayAfterAuth).toHaveBeenCalledWith('b', ['t2']);
 		expect(useAuthOutageStore.getState().outages).toEqual({});
@@ -232,6 +289,11 @@ describe('resolveAuthOutage', () => {
  * off, and a resume that must not disturb a healthy agent.
  */
 describe('startManualReauth', () => {
+	it('keeps an explicit agent login scoped to the default provider', () => {
+		seed([agent({ id: 'a', aiTabs: [createMockAITab({ tabProvider: 'codex' })] })]);
+		expect(startManualReauth('a').providerKey).toBe('claude-code');
+	});
+
 	it('opens an outage the modal can describe as a user-initiated login', () => {
 		seed([agent({ id: 'a' })]);
 

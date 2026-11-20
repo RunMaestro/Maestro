@@ -21,7 +21,8 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { status } from '../../../cli/commands/status';
+import { formatError } from '../../../cli/output/formatter';
+import { NOT_RUNNING_MESSAGE, status } from '../../../cli/commands/status';
 import { version } from '../../../cli/commands/version';
 import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -82,7 +83,7 @@ describe('status and version', () => {
 		it('status keeps the sentence others match on and says how to start a headless host', async () => {
 			expect(await run(status)).toBe(3);
 			expect(logs).toHaveLength(1);
-			expect(logs[0].startsWith('Maestro desktop app is not running')).toBe(true);
+			expect(logs[0]).toBe(formatError(NOT_RUNNING_MESSAGE));
 			expect(logs[0]).toContain('maestro-cli host start');
 		});
 

@@ -8,13 +8,15 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Target, ExternalLink, FolderOpen, Copy } from 'lucide-react';
+import { File, FileText, Target, ExternalLink, FolderOpen, Copy } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { ContextMenuHeader, contextMenuIconStyle } from './ui/ContextMenuHeader';
+import { canRevealOnHost, openFileForUser, openFileForUserLabel } from '../services/hostShell';
 
 export interface FileContextMenuState {
 	x: number;
@@ -49,6 +51,8 @@ export function FileContextMenu({
 	projectRoot,
 	sshRemote,
 }: FileContextMenuProps) {
+	// Row icons in the accent; destructive rows keep their error color.
+	const iconStyle = contextMenuIconStyle(theme);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -90,7 +94,7 @@ export function FileContextMenu({
 	}, [menu.filePath, projectRoot, onDismiss]);
 
 	const handleOpenInDefaultApp = useCallback(() => {
-		window.maestro?.shell?.openPath(menu.filePath);
+		void openFileForUser(menu.filePath);
 		onDismiss();
 	}, [menu.filePath, onDismiss]);
 
@@ -129,7 +133,8 @@ export function FileContextMenu({
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>
-			<div className="p-1">
+			<ContextMenuHeader theme={theme} label={menu.fileName} icon={File} title={menu.filePath} />
+			<div className="px-1 pb-1">
 				{/* Preview */}
 				{onPreview && (
 					<button
@@ -137,7 +142,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<FileText className="w-3.5 h-3.5" style={iconStyle} />
 						<span>Preview</span>
 					</button>
 				)}
@@ -149,7 +154,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<Target className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<Target className="w-3.5 h-3.5" style={iconStyle} />
 						<span>Document Graph</span>
 					</button>
 				)}
@@ -161,8 +166,8 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span>Open in Default App</span>
+						<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
+						<span>{openFileForUserLabel()}</span>
 					</button>
 				)}
 
@@ -177,7 +182,7 @@ export function FileContextMenu({
 					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<Copy className="w-3.5 h-3.5" style={iconStyle} />
 					<span>Copy Path</span>
 				</button>
 
@@ -187,18 +192,18 @@ export function FileContextMenu({
 					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<Copy className="w-3.5 h-3.5" style={iconStyle} />
 					<span>Copy File Name</span>
 				</button>
 
-				{/* Reveal in Finder / Explorer */}
-				{!sshRemote && (
+				{/* Reveal in Finder / Explorer: the host's, so desktop and local only */}
+				{canRevealOnHost(sshRemote) && (
 					<button
 						onClick={handleRevealInFinder}
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<FolderOpen className="w-3.5 h-3.5" style={iconStyle} />
 						<span>{getRevealLabel(window.maestro?.platform ?? '')}</span>
 					</button>
 				)}

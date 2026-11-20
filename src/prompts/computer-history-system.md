@@ -2,7 +2,7 @@
 
 The user turned on Computer History: Maestro records what they see and type across their apps on this computer (app and window changes, settled text in fields, selections, visible window text) through the OS accessibility API. It is local only; nothing is uploaded.
 
-Use it when the user refers to something they did or saw outside Maestro ("the error I was looking at", "what did I send in Slack an hour ago"). It is a `timeline` source: `timeline --sources history,journey,computer --since 1h` places their app switches among the agent's turns, and `--grep "<text>"` searches the captured text as well. For the full events:
+Use it when the user refers to something they did or saw outside Maestro ("the error I was looking at", "what did I send in Slack an hour ago"). It is a `timeline` source: `timeline --global --sources history,journey,computer --since 1h` places their app switches among the agent's turns, and `--grep "<text>"` searches the captured text as well. For the full events:
 
 ```bash
 {{MAESTRO_CLI_PATH}} computer-history query --since 1h --grep "<text>" --json

@@ -70,6 +70,7 @@ let ipcRenderer: typeof import('../../web-desktop/electron-shim').ipcRenderer;
 let webFrame: typeof import('../../web-desktop/electron-shim').webFrame;
 let BRIDGE_HEARTBEAT_INTERVAL_MS: number;
 let BRIDGE_PONG_TIMEOUT_MS: number;
+let requestTimeoutMs: typeof import('../../web-desktop/electron-shim').requestTimeoutMs;
 const reconcileInPlace = (event: Event) => {
 	const detail = (event as CustomEvent).detail;
 	if (detail?.authoritative) detail.waitUntil(Promise.resolve());
@@ -84,8 +85,13 @@ beforeEach(async () => {
 		writable: true,
 		value: { ...originalLocation, reload: vi.fn() },
 	});
-	({ ipcRenderer, webFrame, BRIDGE_HEARTBEAT_INTERVAL_MS, BRIDGE_PONG_TIMEOUT_MS } =
-		await import('../../web-desktop/electron-shim'));
+	({
+		ipcRenderer,
+		webFrame,
+		BRIDGE_HEARTBEAT_INTERVAL_MS,
+		BRIDGE_PONG_TIMEOUT_MS,
+		requestTimeoutMs,
+	} = await import('../../web-desktop/electron-shim'));
 	window.addEventListener('maestro:webBridgeReconcile', reconcileInPlace);
 });
 afterEach(() => {
@@ -704,47 +710,64 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 			'process:spawn'
 		);
 	});
-	it('preserves capability-read rejection without showing a submission banner while mutation rejection remains visible', async () => {
-		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
-		const socket = InertWebSocket.instances.at(-1)!;
-		socket.readyState = InertWebSocket.OPEN;
-		socket.emit('open');
-		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
-		const query = ipcRenderer.invoke('plugins:contributions');
-		const queryRejected = expect(query).rejects.toThrow('PluginsDisabled');
-		await Promise.resolve();
-		const queryRequest = JSON.parse(socket.sent.at(-1)!);
-		socket.emit(
-			'message',
-			frame({
-				type: 'bridge.response',
-				requestId: queryRequest.requestId,
-				ok: false,
-				error: 'PluginsDisabled',
-			})
-		);
-		await queryRejected;
-		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
-		const mutation = ipcRenderer.invoke('agentRun:event', { runId: 'rejected', type: 'note' });
-		const mutationRejected = expect(mutation).rejects.toThrow('Permission denied');
-		await Promise.resolve();
-		const mutationRequest = JSON.parse(socket.sent.at(-1)!);
-		socket.emit(
-			'message',
-			frame({
-				type: 'bridge.response',
-				requestId: mutationRequest.requestId,
-				ok: false,
-				error: 'Permission denied',
-			})
-		);
-		await mutationRejected;
-		expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
-			'Submission rejected for agentRun:event'
-		);
-	});
+	it.each([
+		['plugins:contributions', 'PluginsDisabled'],
+		[
+			'cross-agent:consultBudget',
+			'Channel "cross-agent:consultBudget" is not available over the web interface',
+		],
+		['localModels:taskReadiness', 'Readiness unavailable'],
+		['localModels:userModels', 'Store unavailable'],
+		['localModels:server:report', 'Report unavailable'],
+		['localModels:systemOne:report', 'Report unavailable'],
+		[
+			'acappella:input-devices',
+			'Channel "acappella:input-devices" is not available over the web interface',
+		],
+	])(
+		'preserves %s read rejection without a submission banner while mutations remain visible',
+		async (channel, error) => {
+			document.getElementById('maestro-submission-notice')?.remove();
+			sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+			const socket = InertWebSocket.instances.at(-1)!;
+			socket.readyState = InertWebSocket.OPEN;
+			socket.emit('open');
+			socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+			const query = ipcRenderer.invoke(channel);
+			const queryRejected = expect(query).rejects.toThrow(error);
+			await Promise.resolve();
+			const queryRequest = JSON.parse(socket.sent.at(-1)!);
+			socket.emit(
+				'message',
+				frame({
+					type: 'bridge.response',
+					requestId: queryRequest.requestId,
+					ok: false,
+					error,
+				})
+			);
+			await queryRejected;
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+			expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
+			const mutation = ipcRenderer.invoke('agentRun:event', { runId: 'rejected', type: 'note' });
+			const mutationRejected = expect(mutation).rejects.toThrow('Permission denied');
+			await Promise.resolve();
+			const mutationRequest = JSON.parse(socket.sent.at(-1)!);
+			socket.emit(
+				'message',
+				frame({
+					type: 'bridge.response',
+					requestId: mutationRequest.requestId,
+					ok: false,
+					error: 'Permission denied',
+				})
+			);
+			await mutationRejected;
+			expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
+				'Submission rejected for agentRun:event'
+			);
+		}
+	);
 
 	it('rejects a channel the web interface does not offer without a submission banner', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
@@ -901,28 +924,31 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 	});
 
-	it('rejects disconnected reads without claiming a submission was lost and without replaying them', async () => {
-		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
-		const socket = InertWebSocket.instances.at(-1)!;
-		socket.readyState = InertWebSocket.OPEN;
-		socket.emit('open');
-		const query = ipcRenderer.invoke('sessions:getBootstrap');
-		const queryRejected = expect(query).rejects.toThrow('bridge disconnected');
-		await Promise.resolve();
-		const next = reconnect(socket);
-		await queryRejected;
-		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
-		await expect(ipcRenderer.invoke('plugins:contributions')).rejects.toThrow(/reconnect/i);
-		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		next.readyState = InertWebSocket.OPEN;
-		next.emit('open');
-		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
-		expect(
-			next.sent.map((data) => JSON.parse(data)).some((packet) => packet.type === 'bridge.invoke')
-		).toBe(false);
-	});
+	it.each(['sessions:getBootstrap', 'cross-agent:consultBudget'])(
+		'rejects disconnected %s reads without claiming a submission was lost and without replaying them',
+		async (channel) => {
+			document.getElementById('maestro-submission-notice')?.remove();
+			sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+			const socket = InertWebSocket.instances.at(-1)!;
+			socket.readyState = InertWebSocket.OPEN;
+			socket.emit('open');
+			const query = ipcRenderer.invoke(channel);
+			const queryRejected = expect(query).rejects.toThrow('bridge disconnected');
+			await Promise.resolve();
+			const next = reconnect(socket);
+			await queryRejected;
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+			expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
+			await expect(ipcRenderer.invoke('plugins:contributions')).rejects.toThrow(/reconnect/i);
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+			next.readyState = InertWebSocket.OPEN;
+			next.emit('open');
+			next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+			expect(
+				next.sent.map((data) => JSON.parse(data)).some((packet) => packet.type === 'bridge.invoke')
+			).toBe(false);
+		}
+	);
 	it('records disconnected diagnostics locally without rejection, replay, or a submission warning', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
 		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
@@ -1045,5 +1071,52 @@ describe('web-desktop electron-shim bridge heartbeat', () => {
 		).toEqual([]);
 		await vi.advanceTimersByTimeAsync(0);
 		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+	});
+});
+
+describe('request timeouts for Local Models', () => {
+	it.each([
+		'localModels:download',
+		'localModels:resume',
+		'localModels:runtimes:install',
+		'localModels:server:installEngine',
+	])('lets the transfer %s run for hours, not the two minutes a mutation gets', (channel) => {
+		expect(requestTimeoutMs(channel)).toBeGreaterThanOrEqual(60 * 60_000);
+	});
+
+	it.each(['localModels:runTask', 'localModels:dictation:transcribe', 'localModels:verify'])(
+		'gives model work like %s ten minutes',
+		(channel) => {
+			expect(requestTimeoutMs(channel)).toBe(600_000);
+		}
+	);
+
+	it('keeps the ordinary read timeout for a Local Models read', () => {
+		expect(requestTimeoutMs('localModels:list')).toBe(requestTimeoutMs('settings:getAll'));
+	});
+});
+
+describe('links from the browser', () => {
+	it('opens shell:openExternal in this browser and never asks the host', async () => {
+		const open = vi.spyOn(window, 'open').mockReturnValue(null);
+		const socket = InertWebSocket.instances.at(-1)!;
+		const before = socket.sent.length;
+		// An earlier test's lost submission leaves its notice up; only a notice this
+		// link raises counts here.
+		document.getElementById('maestro-submission-notice')?.remove();
+		try {
+			await ipcRenderer.invoke('shell:openExternal', 'mailto:someone@example.com');
+			expect(open).toHaveBeenCalledWith(
+				'mailto:someone@example.com',
+				'_blank',
+				'noopener,noreferrer'
+			);
+			expect(socket.sent.slice(before).map((data) => JSON.parse(data).channel)).not.toContain(
+				'shell:openExternal'
+			);
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		} finally {
+			open.mockRestore();
+		}
 	});
 });

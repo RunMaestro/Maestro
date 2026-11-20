@@ -21,6 +21,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { extractQuickTabName } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
 import type { AITab, Session } from '../types';
+import { projectTabProvider } from '../utils/providerTabSessions';
 
 /**
  * Ceiling on the text handed to the namer. Richer context produces names that
@@ -146,6 +147,7 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 	// A second namer over a running one just races the first for the same tab.
 	if (tab.isGeneratingName) return;
 	if (!canApply(tab)) return;
+	const providerSession = projectTabProvider(session, tab).agent;
 
 	const applyName = (generatedName: string, how: string) => {
 		const liveTab = findTab(sessionId, tabId);
@@ -182,22 +184,24 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 		tabId,
 		sessionId,
 		label,
-		agentType: session.toolType,
+		agentType: providerSession.toolType,
 		promptLength: prompt.length,
 	});
 
 	window.maestro.tabNaming
 		.generateTabName({
 			userMessage: prompt,
-			agentType: session.toolType,
+			agentType: providerSession.toolType,
 			cwd: session.cwd,
+			// Lets main show a "local model unavailable" notice once per agent.
+			sessionId,
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 			// Forward session env so naming uses the same provider auth as the chat.
-			sessionCustomEnvVars: session.customEnvVars,
+			sessionCustomEnvVars: providerSession.customEnvVars,
 			// Honor the agent's Claude token source for the naming spawn. Shared
 			// extractor guarantees the SAME complete triple the chat spawn forwards -
 			// no partial/drifting forward possible.
-			...getClaudeTokenSourceFields(session),
+			...getClaudeTokenSourceFields(providerSession),
 		})
 		.then((generatedName) => {
 			if (!generatedName) {

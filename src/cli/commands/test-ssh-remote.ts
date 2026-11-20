@@ -14,27 +14,19 @@
 
 import { execFile } from 'child_process';
 import { readSshRemotes, resolveSshRemoteId } from '../services/storage';
-import { formatError, formatSuccess, colorize } from '../output/formatter';
+import { formatSuccess, colorize } from '../output/formatter';
 import {
 	buildSshConnectionArgs,
 	buildSshProbeCommand,
 	describeSshConnectionError,
 	readSshProbeOutput,
 } from '../../shared/sshConnection';
+import { failCommand, failFromError } from '../services/session-command';
 
 interface TestSshRemoteOptions {
 	agent?: string;
 	timeout?: string | number;
 	json?: boolean;
-}
-
-function fail(message: string, json?: boolean): never {
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	process.exit(1);
 }
 
 /**
@@ -52,19 +44,19 @@ export function testSshRemote(remoteId: string, options: TestSshRemoteOptions): 
 	try {
 		resolvedId = resolveSshRemoteId(remoteId);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 
 	const remote = readSshRemotes().find((r) => r.id === resolvedId);
 	if (!remote) {
-		fail(`SSH remote not found: ${resolvedId}`, options.json);
+		failCommand(`SSH remote not found: ${resolvedId}`, options.json);
 	}
 
 	let timeoutMs = DEFAULT_PROBE_TIMEOUT_MS;
 	if (options.timeout !== undefined) {
 		const parsed = Number(options.timeout);
 		if (!Number.isFinite(parsed) || parsed <= 0) {
-			fail('--timeout must be a positive number of seconds', options.json);
+			failCommand('--timeout must be a positive number of seconds', options.json);
 		}
 		timeoutMs = Math.round(parsed * 1000);
 	}
@@ -83,18 +75,18 @@ export function testSshRemote(remoteId: string, options: TestSshRemoteOptions): 
 		const timedOut = Boolean(error && (error as NodeJS.ErrnoException).code === 'ETIMEDOUT');
 		if (timedOut) {
 			const msg = `No response within ${Math.round(timeoutMs / 1000)}s. The host or its ProxyCommand accepted the connection but never answered.`;
-			fail(msg, options.json);
+			failCommand(msg, options.json);
 		}
 
 		if (error && !stdout) {
-			fail(describeSshConnectionError(stderr) ?? 'Connection failed', options.json);
+			failCommand(describeSshConnectionError(stderr) ?? 'Connection failed', options.json);
 		}
 
 		const reading = readSshProbeOutput(stdout, Boolean(options.agent));
 		if (!reading.ok) {
 			// Reaching here means ssh exited 0 but the marker never arrived, which
 			// is a remote that answered with something other than our command.
-			fail(
+			failCommand(
 				describeSshConnectionError(stderr) ?? 'Unexpected response from remote host',
 				options.json
 			);

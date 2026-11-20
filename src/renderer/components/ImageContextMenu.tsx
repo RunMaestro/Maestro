@@ -28,6 +28,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { getBasename } from '../../shared/formatters';
 import { openZoomViewer, ZOOM_VIEWER_ATTR } from './ZoomViewer/zoomViewerStore';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { contextMenuIconStyle } from './ui/ContextMenuHeader';
 
 export interface ImageContextMenuState {
 	x: number;
@@ -109,6 +110,10 @@ export function ImageContextMenu({
 		}
 	}, [menu.target, onDismiss]);
 
+	// Icons in the accent, labels in the main text color: the shared
+	// right-click menu look (see ContextMenuHeader).
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return createPortal(
 		<div
 			ref={menuRef}
@@ -137,7 +142,7 @@ export function ImageContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Maximize2 className="w-3.5 h-3.5" />
+					<Maximize2 className="w-3.5 h-3.5" style={iconStyle} />
 					Expand (Pan and Zoom)
 				</button>
 			)}
@@ -146,7 +151,7 @@ export function ImageContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Copy className="w-3.5 h-3.5" />
+				<Copy className="w-3.5 h-3.5" style={iconStyle} />
 				Copy Image
 			</button>
 			{onSaveToProject && (
@@ -158,7 +163,7 @@ export function ImageContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<FolderOpen className="w-3.5 h-3.5" />
+					<FolderOpen className="w-3.5 h-3.5" style={iconStyle} />
 					Save to Project...
 				</button>
 			)}
@@ -167,7 +172,7 @@ export function ImageContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Download className="w-3.5 h-3.5" />
+				<Download className="w-3.5 h-3.5" style={iconStyle} />
 				{isSvgElement(menu.target) ? 'Save As... (SVG or PNG)' : 'Save As...'}
 			</button>
 		</div>,

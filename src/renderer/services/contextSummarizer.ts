@@ -27,15 +27,27 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
 
+import {
+	buildContextDigest,
+	type ContextDigest,
+	type ContextDigestInput,
+} from '../../shared/contextDigest';
+import {
+	planContinuityPreview,
+	type ContinuityHistoryRecord,
+	type ContinuityPreviewInput,
+	type ContinuityPreviewResult,
+} from '../../shared/continuityPreview';
 import type { ToolType } from '../../shared/types';
 import type { SummarizeRequest, SummarizeProgress } from '../types/contextMerge';
-import type { LogEntry } from '../types';
+import type { LogEntry, Session } from '../types';
 import {
 	formatLogsForGrooming,
 	parseGroomedOutput,
 	estimateTextTokenCount,
 } from '../utils/contextExtractor';
 import { logger } from '../utils/logger';
+import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 
 let cachedContextSummarizePrompt: string | null = null;
 let contextSummarizerPromptsLoaded = false;
@@ -114,6 +126,13 @@ const MIN_LOG_ENTRIES_FOR_SUMMARIZATION = 8;
  * Prevents infinite loops if summarization doesn't reduce size.
  */
 const MAX_CONSOLIDATION_DEPTH = 3;
+
+/**
+ * Newest interactive History entries of one agent a continuity preview reads.
+ * Entries of the agent's other tabs share this window, so a busy agent can push
+ * a quiet tab's synopses out of it; the preview then says it read a window.
+ */
+const CONTINUITY_HISTORY_SCAN_LIMIT = 300;
 
 /**
  * Service for summarizing and compacting conversation contexts.
@@ -495,6 +514,71 @@ Please provide a comprehensive but compacted summary of the above conversation, 
 		}
 
 		return false;
+	}
+
+	/**
+	 * Build the evidence digest of a tab's logs: the first and latest request,
+	 * the user's constraints, pending work, verified results and unresolved
+	 * failures, each tagged with the entry it came from, and what is unknown.
+	 *
+	 * Built from the logs alone, without a model, so it starts no turn, spawns no
+	 * process and is not sent anywhere by this method. A caller shows it beside a
+	 * summary so the two can be compared; `synopses` adds earlier History
+	 * responses as optional excerpts. The rules it keeps (user words first, exit
+	 * status alone is not verification, tool text is data) are documented on
+	 * `buildContextDigest`.
+	 */
+	buildContinuityDigest(
+		logs: LogEntry[],
+		options: Omit<ContextDigestInput, 'entries'> = {}
+	): ContextDigest {
+		return buildContextDigest({ ...options, entries: logs });
+	}
+
+	/**
+	 * The continuity preview of ONE tab: its digest, behind the gates that decide
+	 * what may go into it (the tab asked about, a conversation of this agent, a
+	 * synopsis that provably belongs to it). Only an explicit request reaches it
+	 * (`useSummarizeAndContinue().previewContinuity`, and so `maestro-cli tab
+	 * continuity`); summarizing, merging and sending never call it, so nothing here
+	 * enters a prompt, a transcript or the system prompt. Pure like
+	 * `buildContinuityDigest`: it starts no turn and calls no IPC.
+	 */
+	previewContinuity(input: ContinuityPreviewInput): ContinuityPreviewResult {
+		return planContinuityPreview(input);
+	}
+
+	/**
+	 * Read the History a continuity preview may draw synopses from: the agent's
+	 * newest interactive entries, through the same read the History panel uses.
+	 * Which of them belong to a tab is the preview's call, not this read's.
+	 *
+	 * A read that fails resolves to `null` and the preview says History was not
+	 * read. That is the one expected failure here (the shared History of an SSH
+	 * remote can be unreachable); anything else is not caught.
+	 */
+	async readContinuityHistory(
+		session: Pick<Session, 'id' | 'cwd' | 'projectRoot' | 'sessionSshRemoteConfig'>
+	): Promise<{ records: ContinuityHistoryRecord[]; truncated: boolean } | null> {
+		const query = {
+			sessionId: session.id,
+			projectPath: session.projectRoot || session.cwd || undefined,
+			sharedContext: buildSharedHistoryContext(session),
+			lookbackHours: null,
+			types: ['USER' as const],
+			pagination: { limit: CONTINUITY_HISTORY_SCAN_LIMIT, offset: 0 },
+		};
+		try {
+			const page = await window.maestro.history.getAllPaginated(query);
+			return { records: page.entries as ContinuityHistoryRecord[], truncated: page.hasMore };
+		} catch (error) {
+			logger.warn(
+				'[ContextSummarizer] History could not be read for a continuity preview',
+				undefined,
+				error
+			);
+			return null;
+		}
 	}
 
 	/**

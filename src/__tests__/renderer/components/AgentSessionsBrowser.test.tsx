@@ -16,6 +16,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { AgentSessionsBrowser } from '../../../renderer/components/AgentSessionsBrowser';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { Theme, Session, LogEntry } from '../../../renderer/types';
 import type { SessionMessagesResult } from '../../../main/agents/session-storage';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -178,6 +179,79 @@ const renderWithProvider = (ui: React.ReactElement) => {
 };
 
 describe('AgentSessionsBrowser', () => {
+	it.each([false, true])(
+		'opens the active native provider, including pending sources (%s)',
+		async (pending) => {
+			const tab = createMockAITab({
+				id: 'foreign',
+				tabProvider: pending ? 'claude-code' : 'codex',
+				agentSessionId: pending ? 'stale-claude' : 'codex-native',
+				...(pending
+					? {
+							pendingTranslation: 'codex' as const,
+							providerSessions: { codex: { agentSessionId: 'codex-native' } },
+						}
+					: {}),
+			});
+			const props = createDefaultProps({
+				activeSession: createMockActiveSession({ aiTabs: [tab], activeTabId: tab.id }),
+			});
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+			expect(window.maestro.agentSessions.listPaginated).toHaveBeenCalledWith(
+				'codex',
+				'/path/to/project',
+				expect.any(Object),
+				undefined
+			);
+			expect(window.maestro.claude.getSessionOrigins).not.toHaveBeenCalled();
+		}
+	);
+
+	it('retains explicit provider scope and sends it with a quick resume', async () => {
+		vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+			sessions: [createMockClaudeSession({ sessionId: 'native' })],
+			hasMore: false,
+			totalCount: 1,
+			nextCursor: null,
+		});
+		const tab = createMockAITab({
+			id: 'foreign',
+			tabProvider: 'codex',
+			agentSessionId: 'other-native',
+		});
+		const props = createDefaultProps({
+			provider: 'claude-code',
+			activeSession: createMockActiveSession({ aiTabs: [tab], activeTabId: tab.id }),
+		});
+		await act(async () => {
+			renderWithProvider(<AgentSessionsBrowser {...props} />);
+			await vi.runAllTimersAsync();
+		});
+		expect(window.maestro.agentSessions.listPaginated).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			expect.any(Object),
+			undefined
+		);
+		const resumeButton = screen.getAllByTitle(/Resume/)[0];
+		await act(async () => {
+			fireEvent.click(resumeButton);
+			await vi.runAllTimersAsync();
+		});
+		expect(props.onResumeSession).toHaveBeenCalledWith(
+			'native',
+			[],
+			undefined,
+			false,
+			expect.any(Object),
+			'/path/to/project',
+			expect.objectContaining({ provider: 'claude-code', targetSessionId: 'session-1' })
+		);
+	});
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
@@ -185,6 +259,7 @@ describe('AgentSessionsBrowser', () => {
 		resetStore(useSessionStore);
 		useSessionStore.setState({ sessions: [createMockActiveSession()] });
 
+		vi.mocked(window.maestro.agentSessions.getOrigins).mockResolvedValue({});
 		// Setup mock implementations for generic agentSessions API
 		vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 			sessions: [],
@@ -1292,7 +1367,12 @@ describe('AgentSessionsBrowser', () => {
 				'session-1',
 				true
 			);
-			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { starred: true });
+			expect(onUpdateTab).toHaveBeenCalledWith(
+				'session-1',
+				{ starred: true },
+				'claude-code',
+				'session-1'
+			);
 		});
 
 		it('unstars previously starred session', async () => {
@@ -1327,7 +1407,12 @@ describe('AgentSessionsBrowser', () => {
 				'session-1',
 				false
 			);
-			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { starred: false });
+			expect(onUpdateTab).toHaveBeenCalledWith(
+				'session-1',
+				{ starred: false },
+				'claude-code',
+				'session-1'
+			);
 		});
 
 		it('uses projectRoot (not cwd) for session storage when they differ', async () => {
@@ -1483,7 +1568,12 @@ describe('AgentSessionsBrowser', () => {
 				'session-1',
 				'New Name'
 			);
-			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { name: 'New Name' });
+			expect(onUpdateTab).toHaveBeenCalledWith(
+				'session-1',
+				{ name: 'New Name' },
+				'claude-code',
+				'session-1'
+			);
 		});
 
 		it('cancels rename on Escape key (clears input value)', async () => {
@@ -1787,7 +1877,12 @@ describe('AgentSessionsBrowser', () => {
 				'session-1',
 				''
 			);
-			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { name: null });
+			expect(onUpdateTab).toHaveBeenCalledWith(
+				'session-1',
+				{ name: null },
+				'claude-code',
+				'session-1'
+			);
 		});
 
 		it('uses projectRoot (not cwd) for rename when they differ', async () => {
@@ -2466,7 +2561,7 @@ describe('AgentSessionsBrowser', () => {
 					totalCostUsd: 0.15,
 				}),
 				'/path/to/project',
-				{ targetSessionId: 'session-1', nativeSessionBinding: undefined }
+				{ provider: 'claude-code', targetSessionId: 'session-1', nativeSessionBinding: undefined }
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -2517,7 +2612,7 @@ describe('AgentSessionsBrowser', () => {
 					totalCostUsd: 0.15,
 				}),
 				'/path/to/project',
-				{ targetSessionId: 'session-1', nativeSessionBinding: undefined }
+				{ provider: 'claude-code', targetSessionId: 'session-1', nativeSessionBinding: undefined }
 			);
 		});
 
@@ -2662,7 +2757,7 @@ describe('AgentSessionsBrowser', () => {
 					totalCostUsd: 0.15,
 				}),
 				'/path/to/project',
-				{ targetSessionId: 'session-1', nativeSessionBinding: undefined }
+				{ provider: 'claude-code', targetSessionId: 'session-1', nativeSessionBinding: undefined }
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -3190,7 +3285,12 @@ describe('AgentSessionsBrowser', () => {
 				'session-1',
 				true
 			);
-			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { starred: true });
+			expect(onUpdateTab).toHaveBeenCalledWith(
+				'session-1',
+				{ starred: true },
+				'claude-code',
+				'session-1'
+			);
 		});
 	});
 
@@ -3459,7 +3559,8 @@ describe('AgentSessionsBrowser', () => {
 					false,
 					expect.any(Object),
 					'/remote/project',
-					{ targetSessionId: owner.id, nativeSessionBinding: binding }
+					// The explicit native owner rides along with rc's verified binding.
+					{ targetSessionId: owner.id, nativeSessionBinding: binding, provider: binding.provider }
 				);
 				const forwarded = onResumeSession.mock.calls[0][6].nativeSessionBinding;
 				expect(forwarded).not.toBe(binding);
@@ -3709,9 +3810,13 @@ describe('AgentSessionsBrowser', () => {
 						row.sessionId,
 						'Retained native name'
 					);
-					expect(props.onUpdateTab).toHaveBeenCalledWith(row.sessionId, {
-						name: 'Retained native name',
-					});
+					// The rename names the provider and agent whose tab holds the session.
+					expect(props.onUpdateTab).toHaveBeenCalledWith(
+						row.sessionId,
+						{ name: 'Retained native name' },
+						'codex',
+						renameOwner.id
+					);
 				}
 				expect(screen.getByText(expectedName)).toBeInTheDocument();
 				expect(screen.getByTestId('icon-loader')).toBeInTheDocument();
@@ -3738,7 +3843,11 @@ describe('AgentSessionsBrowser', () => {
 					false,
 					expect.any(Object),
 					'/remote/project',
-					{ targetSessionId: renameOwner.id, nativeSessionBinding: renameBinding },
+					{
+						targetSessionId: renameOwner.id,
+						nativeSessionBinding: renameBinding,
+						provider: renameBinding.provider,
+					},
 				]);
 				expect(props.onClose).not.toHaveBeenCalled();
 				await act(async () => {
@@ -3857,6 +3966,7 @@ describe('AgentSessionsBrowser', () => {
 						expect(onResumeSession.mock.calls[0][6]).toEqual({
 							targetSessionId: owner.id,
 							nativeSessionBinding: nextBinding,
+							provider: nextBinding.provider,
 						});
 					} else {
 						expect(

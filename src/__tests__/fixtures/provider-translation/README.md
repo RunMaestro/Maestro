@@ -1,3 +1,5 @@
 # Provider translation fixtures
 
 All content is synthetic. No private transcript, credentials, valid thinking signature or real attachment appears here. `claude.jsonl` covers repeated distinct events, linked tools/results, inline attachment bytes, opaque reasoning, compaction, branch ancestry and an unknown record. `codex.jsonl` covers Responses items, duplicate display projections, assistant phases, opaque encrypted evidence, compaction and forks. `MEMORY.md` links `topic.md`. These are extraction fixtures, not native resume evidence.
+
+`claude-compactions.jsonl` has two compactions and an attachment row before the latest summary. `codex-compacted-replacement.jsonl` carries replacement history with a reused message ID and a retained tool call/result pair; its nonempty fallback message must not be projected. `codex-compacted-message.jsonl` covers the older message-only format. Each retains an unanswered pre-boundary tool call as archived evidence. These fixtures cover window extraction, both native projections, persisted archive bytes, capacity limits and repeated return hops without provider execution.

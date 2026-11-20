@@ -33,7 +33,7 @@ import { addLocalDays, parseLocalYmd, toLocalYmd } from '../../../shared/localDa
 import { computePercentiles } from '../../../shared/percentiles';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { buildCueRunSummary, parseSubscriptionName } from '../../../shared/cue/cue-summary';
-import type { CueEventType } from '../../../shared/cue/contracts';
+import { isCueRunSkipped, type CueEventType } from '../../../shared/cue/contracts';
 import type { CueHistoryGroup, HistoryEntry, UsageStats } from '../../../shared/types';
 import { usageCostUsd } from '../../../shared/maestro-lib/streaming/usage-totals';
 import {
@@ -735,7 +735,14 @@ export async function getCueStatsAggregation(
 	const windowStartMs = getTimeRangeStart(timeRange);
 	const bucketSizeMs = bucketSizeFor(timeRange);
 
-	const allEvents = getCueEventsForStats(windowStartMs, ORPHANED_RUN_MESSAGE);
+	// A `gated` row is an event a subscription's gate skipped, not a run: it
+	// spent no agent time and no tokens. Counting it as an occurrence would
+	// bury the real runs under the events the gate exists to filter out. A
+	// run the injection screen blocked spent none either, and its duration is
+	// the classifier's, so it stays out of these run statistics too.
+	const allEvents = getCueEventsForStats(windowStartMs, ORPHANED_RUN_MESSAGE).filter(
+		(event) => !isCueRunSkipped(event.status)
+	);
 	const excluded = new Set(options.excludeTriggerTypes ?? []);
 	// Options are counted from the unfiltered set - see buildTriggerTypeOptions.
 	const triggerTypeOptions = buildTriggerTypeOptions(allEvents);
@@ -832,7 +839,10 @@ export async function getCueStatsSourceTotals(
 	timeRange: CueStatsTimeRange
 ): Promise<CueStatsSourceTotals> {
 	const windowStartMs = getTimeRangeStart(timeRange);
-	const events = getCueEventsForStats(windowStartMs, ORPHANED_RUN_MESSAGE);
+	// Skipped events are not runs, exactly as in the full aggregation.
+	const events = getCueEventsForStats(windowStartMs, ORPHANED_RUN_MESSAGE).filter(
+		(event) => !isCueRunSkipped(event.status)
+	);
 	const { tokensByEvent } = await resolveEventTokens(events, windowStartMs);
 	let totalDurationMs = 0;
 	let tokens = 0;

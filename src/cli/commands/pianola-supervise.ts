@@ -21,6 +21,7 @@ import {
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
 import { ensurePianolaEnabled } from './pianola';
+import { failCommand } from '../services/session-command';
 import { MaestroClient, withMaestroClient, CommandTimeoutError } from '../services/maestro-client';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import type { PianolaSupervisorSnapshot } from '../../main/ipc/handlers/pianola';
@@ -58,16 +59,6 @@ export interface PianolaSuperviseScopeOptions {
 	json?: boolean;
 }
 
-/** Print an error (JSON-aware) and exit non-zero. */
-function fail(message: string, json?: boolean): never {
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
-}
-
 /** Parse a positive-integer seconds/count flag; returns undefined when absent or invalid. */
 function parsePositiveInt(raw: string | undefined, min: number): number | undefined {
 	if (raw === undefined) return undefined;
@@ -80,7 +71,7 @@ function parsePositiveInt(raw: string | undefined, min: number): number | undefi
 export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
 	if (options.futureLocalAgents && !options.id && !options.requestOwnerApproval)
-		fail(
+		failCommand(
 			'--future-local-agents requires an existing --id or --request-owner-approval',
 			options.json
 		);
@@ -120,7 +111,7 @@ export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOption
 			'bridge.response',
 			options.requestOwnerApproval ? 70_000 : undefined
 		);
-		if (!response.ok) fail(response.error ?? 'Scope host request failed', options.json);
+		if (!response.ok) failCommand(response.error ?? 'Scope host request failed', options.json);
 		const migration = response.result.migration;
 		if (!migration || ['NeedsConfiguration', 'Denied', 'Unknown'].includes(migration.status)) {
 			if (options.json)
@@ -159,7 +150,7 @@ export async function pianolaSuperviseScope(options: PianolaSuperviseScopeOption
 export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWatchOptions): void {
 	ensurePianolaEnabled(options.json);
 	if (!options.agent || options.agent.trim().length === 0) {
-		fail('supervise watch requires --agent <agent-id>', options.json);
+		failCommand('supervise watch requires --agent <agent-id>', options.json);
 	}
 
 	// Reuse an existing watcher for the same (kind, tabId, agentId) so registering
@@ -167,7 +158,7 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 	if (options.idleHours !== undefined) {
 		const parsed = Number(options.idleHours.trim());
 		if (options.idleHours.trim() === '' || !Number.isFinite(parsed) || parsed < 0) {
-			fail('--idle-hours must be a number of hours (0 = never)', options.json);
+			failCommand('--idle-hours must be a number of hours (0 = never)', options.json);
 		}
 		parsedIdleHours = parsed;
 	}
@@ -197,13 +188,13 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 	});
 	const saved = written.find((t) => t.id === target.id);
 	if (saved?.migratedToScopeId) {
-		fail(
+		failCommand(
 			`Legacy watch was migrated to scope ${saved.migratedToScopeId}; it cannot be restarted`,
 			options.json
 		);
 	}
 	if (!saved) {
-		fail('Target failed validation and was not saved', options.json);
+		failCommand('Target failed validation and was not saved', options.json);
 	}
 
 	if (options.json) {
@@ -242,7 +233,7 @@ export function pianolaSuperviseOrchestrate(
 			: [...current, target];
 	});
 	if (!written.some((t) => t.id === target.id)) {
-		fail('Target failed validation and was not saved', options.json);
+		failCommand('Target failed validation and was not saved', options.json);
 	}
 
 	if (options.json) {
@@ -275,7 +266,7 @@ export function pianolaSuperviseProgram(
 			: [...current, target];
 	});
 	if (!written.some((entry) => entry.id === target.id))
-		fail('Target failed validation and was not saved', options.json);
+		failCommand('Target failed validation and was not saved', options.json);
 	if (options.json)
 		console.log(JSON.stringify({ success: true, target, targetCount: written.length }));
 	else console.log('Supervising program ' + programId + '. Target: ' + target.id);
@@ -312,7 +303,8 @@ export async function pianolaSuperviseList(options: PianolaSuperviseCommonOption
 					'bridge.response'
 				)
 			);
-			if (!response.ok) fail(response.error ?? 'Supervisor status unavailable', options.json);
+			if (!response.ok)
+				failCommand(response.error ?? 'Supervisor status unavailable', options.json);
 			if (options.json) console.log(JSON.stringify(response.result));
 			else {
 				for (const target of response.result.targets) {
@@ -354,7 +346,7 @@ export function pianolaSuperviseRemove(id: string, options: PianolaSuperviseComm
 	ensurePianolaEnabled(options.json);
 	const before = readPianolaSupervisorTargets();
 	if (!before.some((t) => t.id === id)) {
-		fail(`No supervised target with id ${id}`, options.json);
+		failCommand(`No supervised target with id ${id}`, options.json);
 	}
 	const after = removePianolaSupervisorTarget(id);
 	if (options.json) {
@@ -375,7 +367,7 @@ export function pianolaSuperviseSetEnabled(
 		current.map((target) => (target.id === id ? { ...target, enabled } : target))
 	);
 	if (!written.some((target) => target.id === id))
-		fail('No supervised target with id ' + id, options.json);
+		failCommand('No supervised target with id ' + id, options.json);
 	const verb = enabled ? 'Enabled' : 'Disabled';
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, id, enabled, targetCount: written.length }));

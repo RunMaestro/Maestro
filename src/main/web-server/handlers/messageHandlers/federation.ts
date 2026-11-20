@@ -77,6 +77,15 @@ export async function handleFederationCommand(
 			reply(await requestFederationWindow({ action: 'list' }));
 			return;
 		}
+		if (action === 'settings-fields') {
+			const { agent } = message as Record<string, unknown>;
+			if (typeof agent !== 'string' || !agent.trim()) {
+				reply({ success: false, error: 'Name the hosted agent (peer:agent)' });
+				return;
+			}
+			reply(await requestFederationWindow({ action: 'fields', agent }));
+			return;
+		}
 		if (action === 'resolve-conflict') {
 			const { agent, field, take, value } = message as Record<string, unknown>;
 			if (typeof agent !== 'string' || !agent.trim()) {

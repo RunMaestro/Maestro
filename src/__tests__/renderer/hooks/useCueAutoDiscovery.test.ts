@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useCueAutoDiscovery } from '../../../renderer/hooks/useCueAutoDiscovery';
+import { registerSessionPersistenceFlush } from '../../../renderer/services/sessionPersistenceFlush';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { resetStore } from '../../helpers/resetStores';
 import type { Session, EncoreFeatureFlags } from '../../../renderer/types';
@@ -136,7 +137,7 @@ describe('useCueAutoDiscovery', () => {
 	});
 
 	describe('session additions', () => {
-		it('should refresh new sessions when added', () => {
+		it('should refresh new sessions when added', async () => {
 			const initialSessions = [makeSession('s1', '/project/a')];
 			const encoreFeatures = makeEncoreFeatures(true);
 
@@ -146,11 +147,43 @@ describe('useCueAutoDiscovery', () => {
 			mockRefreshSession.mockClear();
 
 			// Add a new session
-			act(() => {
+			await act(async () => {
 				seedSessions([...initialSessions, makeSession('s2', '/project/b')], true);
 			});
 
 			expect(mockRefreshSession).toHaveBeenCalledWith('s2', '/project/b');
+		});
+
+		it('saves a new agent before asking Cue to watch it', async () => {
+			// Main resolves the agent from the persisted store; a refresh sent ahead
+			// of the debounced save failed with "Cue session not found".
+			let finishSave!: () => void;
+			const save = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						finishSave = resolve;
+					})
+			);
+			registerSessionPersistenceFlush(save);
+			try {
+				const initialSessions = [makeSession('s1', '/project/a')];
+				seedSessions(initialSessions, true);
+				renderHook(() => useCueAutoDiscovery(makeEncoreFeatures(true)));
+				mockRefreshSession.mockClear();
+
+				await act(async () => {
+					seedSessions([...initialSessions, makeSession('s2', '/project/b')], true);
+				});
+
+				expect(save).toHaveBeenCalledTimes(1);
+				expect(mockRefreshSession).not.toHaveBeenCalled();
+
+				await act(async () => finishSave());
+
+				expect(mockRefreshSession).toHaveBeenCalledWith('s2', '/project/b');
+			} finally {
+				registerSessionPersistenceFlush(null);
+			}
 		});
 	});
 

@@ -28,6 +28,8 @@ export const isHiddenProgressEntry = (log: LogEntry): boolean =>
 export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 	const result: LogEntry[] = [];
 	let currentResponseGroup: LogEntry[] = [];
+	// null is an explicitly unknown assistant owner; undefined is a banner-only group.
+	let currentResponseProvider: LogEntry['turnProvider'] | null;
 
 	// Flush the accumulated LOCAL response group into one combined entry.
 	const flushResponseGroup = () => {
@@ -44,16 +46,23 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			// carries the turn's codified settings, so a group led by a system
 			// banner would lose them if the combined entry took `[0]` alone.
 			const turnModel = currentResponseGroup.find((l) => l.turnModel)?.turnModel;
+			const turnProvider = currentResponseProvider;
 			const turnEffort = currentResponseGroup.find((l) => l.turnEffort)?.turnEffort;
+			const turnRunOn = currentResponseGroup.find((l) => l.turnRunOn)?.turnRunOn;
+			const turnAuto = currentResponseGroup.find((l) => l.turnAuto)?.turnAuto;
 			result.push({
 				...currentResponseGroup[0],
 				text: combinedText,
 				// Keep the first entry's timestamp and id.
 				...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
 				...(turnModel ? { turnModel } : {}),
+				...(turnProvider ? { turnProvider } : {}),
 				...(turnEffort ? { turnEffort } : {}),
+				...(turnRunOn ? { turnRunOn } : {}),
+				...(turnAuto ? { turnAuto } : {}),
 			});
 			currentResponseGroup = [];
+			currentResponseProvider = undefined;
 		}
 	};
 
@@ -91,6 +100,17 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			flushResponseGroup();
 			result.push(log);
 		} else {
+			// A background/queued turn may change owners without a user row.
+			// Never concatenate two providers into a bubble with one attribution.
+			const provider =
+				log.turnProvider ?? (log.source === 'stdout' || log.source === 'ai' ? null : undefined);
+			if (
+				provider !== undefined &&
+				currentResponseProvider !== undefined &&
+				provider !== currentResponseProvider
+			)
+				flushResponseGroup();
+			if (provider !== undefined) currentResponseProvider = provider;
 			// Accumulate the local agent's own response entries.
 			currentResponseGroup.push(log);
 		}

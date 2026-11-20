@@ -14,9 +14,9 @@
  * (the first `open-file`) lands on the hydrated queue instead of racing it.
  *
  * The window shows while there is a loaded, undismissed item and hides
- * otherwise. The X and Escape dismiss (minimize): the audio keeps going and the
- * primary window's Now Playing pill brings the window back. The stop button is
- * what releases the player.
+ * otherwise. Minus and Escape dismiss (minimize): the audio keeps going and the
+ * primary window's Now Playing pill brings the window back. X stops playback
+ * and releases the player.
  *
  * The window sizes itself to what it plays (a transport strip for audio, the
  * picture plus transport for video) until the user resizes it; see
@@ -38,7 +38,7 @@ import {
 	useState,
 	type RefObject,
 } from 'react';
-import { Copy, FileAudio, FileVideo, Square } from 'lucide-react';
+import { Copy, FileAudio, FileVideo, Minus } from 'lucide-react';
 
 import { ActiveMediaPlayer } from '../components/MediaPlayback/ActiveMediaPlayer';
 import { copyMediaFileName } from '../components/MediaPlayback/copyMediaFileName';
@@ -274,10 +274,10 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 		onGranted: handleListOverflow,
 	});
 
-	// Escape (and the X) close the innermost thing first: an open list, then the
+	// Escape closes the innermost thing first: an open list, then the
 	// player, which minimizes rather than stops so a reflexive key never kills
 	// playback. A fullscreen video is already using Escape to leave fullscreen.
-	const handleClose = useCallback(() => {
+	const handleEscape = useCallback(() => {
 		if (document.fullscreenElement) return;
 		if (openList) closeList();
 		else dismiss();
@@ -295,8 +295,9 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 			icon={<KindIcon className="w-3.5 h-3.5" />}
 			title={active.name}
 			subtitle={active.sessionName}
-			onClose={handleClose}
-			closeLabel="Minimize player (keeps playing)"
+			onClose={() => closeItem(active.id)}
+			onEscape={handleEscape}
+			closeLabel="Close player and stop playback"
 			actions={
 				<>
 					<GhostIconButton
@@ -310,13 +311,13 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 					</GhostIconButton>
 					{listButtons}
 					<GhostIconButton
-						onClick={() => closeItem(active.id)}
-						title="Close player (stops playback)"
-						ariaLabel="Close player and stop playback"
+						onClick={() => dismiss()}
+						title="Minimize to the Left Bar (keeps playing)"
+						ariaLabel="Minimize player to the Left Bar"
 						color={theme.colors.textDim}
-						testId="media-stop"
+						testId="media-minimize"
 					>
-						<Square className="w-3.5 h-3.5" />
+						<Minus className="w-3.5 h-3.5" />
 					</GhostIconButton>
 				</>
 			}

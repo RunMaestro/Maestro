@@ -75,9 +75,20 @@ export async function handleSupportPackageCreate(
 	] as const) {
 		if (typeof raw[key] === 'boolean') options[key] = raw[key];
 	}
+	// Only a literal `true` writes a package past the secret screen.
+	if (raw.allowSecrets === true) options.allowSecrets = true;
 
 	try {
 		const result = await generateDebugPackage(outputDir, deps, options);
+		if (result.secretFindings?.length) {
+			sendResult(false, {
+				error: result.error,
+				code: result.code,
+				secretFindings: result.secretFindings,
+				...(result.secretScreenNote ? { secretScreenNote: result.secretScreenNote } : {}),
+			});
+			return;
+		}
 		if (!result.success) {
 			sendResult(false, { error: result.error || 'Failed to generate support package' });
 			return;
@@ -191,8 +202,10 @@ export function handleFeedbackSubscribe(
 ): Promise<void> {
 	const issueNumber = typeof message.issueNumber === 'number' ? message.issueNumber : NaN;
 	const comment = typeof message.comment === 'string' ? message.comment : undefined;
+	// Only a literal `true` posts past the secret screen.
+	const allowSecrets = message.allowSecrets === true;
 	return answerFeedback(ctx, client, message, async () => ({
-		...(await subscribeFeedbackIssue({ issueNumber, comment })),
+		...(await subscribeFeedbackIssue({ issueNumber, comment, allowSecrets })),
 	}));
 }
 

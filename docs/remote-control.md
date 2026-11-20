@@ -294,7 +294,7 @@ Application access additionally requires a valid, non-revoked device credential.
 
 Lite checks up to 32 eligible online peers from its existing Tailscale network map,
 not an address range or an advertising directory. It checks only the fixed Maestro
-port and manifest path. The local daemon's node identity—not remote manifest text—is
+port and manifest path. The local daemon's node identity, not remote manifest text, is
 bound to the remembered device credential. A changed node or host identity refuses
 credential reuse and requires explicit verification/new pairing.
 
@@ -386,15 +386,41 @@ The web interface is the full Maestro app, served by the desktop app to any brow
 
 Everything else is the desktop app: the same agents, tabs, transcripts (including pasted screenshots), Auto Run, and settings, live-synced with the desktop window.
 
+**Models:** the whole **Settings -> Models** tab works from a browser. Downloads, endpoints, the model server, System One (all but its keys), model sources, tiers and every housekeeping task (tab naming, AI command mode, PR drafts, tab cleanup, semantic search, dictation) run on the computer running Maestro, whichever screen you press the button on. A long download or model call is not cut off by the browser connection. See [Local Models](./local-models#models).
+
+**Links and files:** with **Use system browser for links** on (**Settings -> General -> Default Browser**, off by default), a link opens in a new tab of your own browser; otherwise it opens in a Maestro browser tab, which the computer running Maestro loads and your browser displays. A link to a `localhost` preview on that computer always opens in a Maestro browser tab, because your device cannot reach that address. With no agent selected it says "Select an agent to open a host preview", and a tab that cannot be created says "Could not create host browser tab". Folder and save pickers browse the files of the computer running Maestro, not your device's. Copy and paste use your device's clipboard.
+
 **Browser tab title:** when agents are waiting for your input, the browser tab title shows how many, for example `(2) Maestro`. The count covers every agent, in every desktop window, so a background tab tells you when to come back.
 
 **Theme:** by default the web interface shows the theme picked in **Settings > Themes**, the same one the desktop window shows. To have a phone follow its own light or dark setting, turn on **Follow System Appearance** in **Settings > Themes**, then pick a light theme and a dark theme. Each browser resolves that setting against its own device, so a phone in dark mode and a laptop in light mode each show the matching theme.
+
+### What stays in the desktop app
+
+A few things act on the computer running Maestro itself, or manage its secrets, so they work only in the desktop app. In the web interface they are missing or say so:
+
+| Feature                                                                                 | In the web interface                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **A Cappella** (voice sessions, document voice, wake word, voice setup, paired devices) | Not available, and it cannot be switched on from a browser. Use the desktop app, or [pair a phone](./voice-mode#pairing-a-phone) as the desktop's microphone. Typed [document chat](./general-usage#chatting-with-a-document) works in the browser.                                                                                                          |
+| **System Log Viewer**                                                                   | Not available. Read the logs in the desktop app.                                                                                                                                                                                                                                                                                                             |
+| **Cue bundle import and export**                                                        | Not available. Import and export bundles in the desktop app.                                                                                                                                                                                                                                                                                                 |
+| **API keys** (System One engine keys, agent credentials)                                | System One shows where the key in force comes from but has no field to paste one; set it in the desktop app or with `pbpaste \| maestro-cli s1 key set` on the computer running Maestro. Agent credentials and environment variables are never sent to the browser. The rest of System One (the engine, **Test**, budgets, the ledger) works in the browser. |
+| **Models -> Sources**: the model server key, VoiceStudio **Check connection**           | The key shows masked and **Copy** is refused; read it in the desktop app or with `maestro-cli models server key` on that computer. **Check connection** fails. Everything else works, and **Detect local servers** and **Test** run on the computer running Maestro. See [Sources in the web interface](./local-models#sources-in-the-web-interface).        |
+| **Reveal in Finder**, **Open in Finder**                                                | Not shown: there is no Finder on your device to show the host's folder in.                                                                                                                                                                                                                                                                                   |
+| **Open in Default App**                                                                 | Shown as **Download to This Client**: it downloads the file to your device and says `Downloaded "<name>" to this client`. A file that would open in another app asks `Download "<name>" to this client?` first. If the download fails, a **Download failed** toast says why.                                                                                 |
+| **Dictation**                                                                           | Records on your device's microphone. Needs HTTPS (Remote Control) or localhost on the computer running Maestro; over a plain `http://` address the microphone stays dimmed and says why.                                                                                                                                                                     |
+| **Spoken notices**                                                                      | The setting and its **Test** button work, but the line plays on the computer running Maestro, not on your device. A browser tab in front does not count as Maestro being focused.                                                                                                                                                                            |
+| **Plugin install and permissions**, **DataviewJS trust**, **Computer History**          | Desktop app only.                                                                                                                                                                                                                                                                                                                                            |
+| **Quit, updates, windows, the web server and Remote Control switches**                  | Desktop app only. Turning the web server off from a browser would disconnect that browser.                                                                                                                                                                                                                                                                   |
+| **Encore Features** (switching any Plugins tile on or off)                              | Desktop app only. Switch them in **Settings -> Plugins** on the desktop, or with `maestro-cli encore enable <feature>` / `maestro-cli encore disable <feature>` on the computer running Maestro.                                                                                                                                                             |
+| **Quick Chat**                                                                          | Not available: it is a window of the desktop app. Its menu item and command palette entry are hidden, and a request to open it from a browser says "Quick Chat is only available in the desktop app".                                                                                                                                                        |
 
 ## Local Access (Same Network)
 
 1. Click the **OFFLINE** button in the Left Bar header to enable the web interface
 2. The button changes to **LIVE** (pulsing) and a QR code overlay appears automatically
 3. Scan the QR code or copy the secure URL to access from your phone on the same network
+
+To have the web interface on every time Maestro starts, turn on **Turn on web interface at launch** in **Settings -> General -> Web Interface** (off by default; turning it on also starts the web interface now). From a terminal: `maestro-cli live on` now, and `maestro-cli settings set webInterfaceAutoStart true` for every launch. A browser cannot change this setting.
 
 <Note>
 The web interface uses your local IP address (e.g., `192.168.x.x`) for LAN accessibility. Both devices must be on the same network.
@@ -425,7 +451,7 @@ To access Maestro from outside your local network (e.g., on mobile data or from 
 The Remote tab automatically activates when the tunnel connects successfully.
 </Tip>
 
-You can also do all of this from a terminal: `maestro-cli live on --tunnel` starts the web interface and the tunnel, `maestro-cli live status` prints both URLs, and `maestro-cli live off` stops them. The LIVE panel follows whatever the CLI does. See [CLI: Live Mode](./cli#live-mode-live).
+You can also do all of this from a terminal: `maestro-cli live on --tunnel` starts the web interface and the tunnel, `maestro-cli live tunnel on` or `maestro-cli live tunnel off` starts or stops only the tunnel (it needs the web interface on), `maestro-cli live status` prints both URLs, and `maestro-cli live off` stops them. The LIVE panel follows whatever the CLI does. See [CLI: Live Mode](./cli#live-mode-live).
 
 ## Custom Port Configuration
 
@@ -454,7 +480,7 @@ However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies
 
 By default, anyone who has the URL is in: the token in the URL is the whole credential. When more than one person drives the same Maestro, or the URL travels further than you would like, turn on **Web Login**:
 
-1. Open **Settings**, then **Extensions**, and enable the **Web Login** tile
+1. Open **Settings**, then **Plugins**, and enable the **Web Login** tile (or run `maestro-cli encore enable webLogin` on the computer running Maestro)
 2. On the same tile, add an account for each person: a username, an optional display name, and a password
 3. The next time a browser opens the web interface it lands on a login page styled in your active theme. Each person signs in once per browser and stays signed in for 30 days
 
@@ -478,10 +504,6 @@ On your own network the web interface is served over plain HTTP, so a password t
 A reverse proxy must forward the original `Host` header (nginx: `proxy_set_header Host $host;`, Caddy does this by default). Maestro refuses browser requests whose `Origin` does not match the `Host` they were sent to.
 </Note>
 
-<Note>
-A reverse proxy must forward the original `Host` header (nginx: `proxy_set_header Host $host;`, Caddy does this by default). Maestro refuses browser requests whose `Origin` does not match the `Host` they were sent to.
-</Note>
-
 ## Connection Handling
 
 The browser talks to the host over a WebSocket. It reconnects with bounded event replay when possible and reconciles current host state after a host restart or replay gap. Opening handshakes have deadlines, stale sockets are replaced on wake or network restoration, and sustained outages use capped jittered backoff. Authoritative reconciliation is bounded and retried without remounting the active workflow. Commands are never automatically resent merely because the connection dropped. If a submission's acknowledgement is lost, its outcome is shown as uncertain: check the host's chat, running work and History before deciding whether to submit again.
@@ -496,5 +518,17 @@ Native Lite also supervises its transport and renderer. SSH exits, temporary con
 
 ## Related
 
-- [Configuration](/configuration) - General settings including web interface options
+- [Configuration](/configuration) - the General tab, with **Turn on web interface at launch** and **Use system browser for links**
+- [Encore Features](/encore-features) - Web Login, and switching features on and off, which only the desktop app and `maestro-cli encore` can do
+- [CLI: Live Mode](/cli#live-mode-live) - `maestro-cli live status`, `live on`, `live off` and `live tunnel`
 - [SSH Remote Execution](/ssh-remote-execution) - Running Maestro on remote servers
+- [Voice Mode](/voice-mode) - A Cappella voice, desktop only, and pairing a phone as its microphone
+- [Local Models](/local-models#models) - the Models settings tab, which works in the browser and downloads to the computer running Maestro
+- [Semantic search](/local-models#semantic-search) - the **Semantic** toggles and the **Semantic index** card, which work in the browser; the index and the model stay on the computer running Maestro
+- [Dictation](/local-models#dictation) - speech into any text box, which works in the browser over HTTPS
+- [Chatting with a document](/general-usage#chatting-with-a-document) - the file preview's chat panel, which works in the browser; [talking to a document](/voice-mode#talking-to-a-document) is A Cappella and stays in the desktop app
+- [System One](/local-models#system-one) - the engine, its **Test**, agent budgets and the **Decision ledger**, which work in the browser; engine keys are set only on the computer running Maestro
+- [Model source](/local-models#model-source), [Tiers](/local-models#tiers) and [Auto](/local-models#model-routing-and-auto) - the model behind an agent, its tier targets and the model router, which work in the browser; the model source **Test** and the router run on the computer running Maestro, and turn pills are hidden on a phone screen
+- [Spoken notices](/local-models#spoken-notices) - a line spoken when an agent finishes, which plays on the computer running Maestro
+- [Gateway](/local-models#gateway) and [the Maestro proxy](/local-models#the-maestro-proxy) - per-agent gateway URLs, proxy modes and the usage card, which work in the browser; the proxy listens on the loopback address of the computer running Maestro
+- [Sources in the web interface](/local-models#sources-in-the-web-interface) - endpoints, the model server and VoiceStudio from a browser, where the model server key stays on the host

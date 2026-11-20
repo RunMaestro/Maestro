@@ -86,6 +86,22 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
 
+### Desktop-only by decision
+
+The bridge serves only the channels listed in `src/main/web-server/handlers/bridgeDenyList.ts`; everything else is refused with `Channel "x" is not available over the web interface`. Most refusals are deliberate. These are the ones a browser user can reach and that stay refused on purpose, decided 2026-11-11. Do not allowlist them to make a banner go away; hide or relabel the control instead. The user-facing list is in `docs/remote-control.md` ("What stays in the desktop app").
+
+| Gap                          | Channels                                                                                                                              | Why                                                                                                                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A Cappella voice             | `acappella:*`, `models:*`, `runtimes:*`                                                                                               | The session, floor and microphone belong to the desktop. A browser microphone holding the floor would need its own design (the paired-phone path is the precedent).                                         |
+| System Log Viewer            | `logger:getLogs`, `logger:clearLogs`, `logger:getMaxLogBuffer`                                                                        | Logs can carry sensitive detail.                                                                                                                                                                            |
+| Cue bundle import and export | `cueBundle:*`                                                                                                                         | Built on host file dialogs.                                                                                                                                                                                 |
+| Credentials                  | `localModels:server:key`, `localModels:systemOne:setKey` / `clearKey`, `agents:setCustomEnvVars`                                      | Keys are managed on the host only. Surfaces show where a key comes from, never a paste field (see `SystemOneEngineCard`).                                                                                   |
+| Host shell                   | `shell:openPath`, `shell:showItemInFolder`                                                                                            | They act on the host's desktop. Route through `services/hostShell.ts`: a file downloads to the browser, reveal and folder opens are not drawn. `shell:openExternal` is answered in the browser by the shim. |
+| Host microphone dictation    | `localModels:dictation:start` / `stop`                                                                                                | A browser records on its own microphone and sends the clip to `localModels:dictation:transcribe` (`services/browserDictation.ts`).                                                                          |
+| Admin and lifecycle          | `plugins:*` consent and install, `dataview:js*` trust, `computerHistory:*`, `live:*`, `tunnel:*`, `updates:*`, `windows:*`, `power:*` | Security administration, privacy, or the host's own lifecycle.                                                                                                                                              |
+
+A refused channel that the browser still calls is a bug in the CALLER, not the allowlist: it either draws a control that should be hidden (`isWebDesktop()`), or a read that should be classified read-only in `electron-shim.ts` so a failure does not raise a submission banner.
+
 For renderer outage handling, reuse `BridgeTransportError`, `isExpectedBridgeError()`,
 `isBridgeTransportReady()`, and `WEB_BRIDGE_STATE_EVENT` from
 `src/shared/bridgeError.ts`. Recovery preserves pending session intent through
@@ -186,7 +202,13 @@ These rules keep the clients in sync:
 - **Browser bootstrap is thin.** `sessions:getBootstrap` returns agent metadata and tab structure without AI tab logs, legacy session logs, or command history. The selected conversation and legacy shell output load through `sessions:getDeferredContent`; later selected tabs and every visible pane in an active tiled group load when opened. A failed pane read does not block the other visible panes. The `deferredContent` marker tells both `sessions:setMany` and `sessions:setAll` to merge any unloaded fields from the main store before saving, including snoozed tabs. A tab closed by another client is dropped from a stale browser write, and a projected agent absent from main cannot be restored by an old browser copy. A failed initial read shows Retry and keeps persistence disabled; a bridge reconnect retries it. Desktop `sessions:getAll` still reads the full tree.
 - **Live content comes from the owning renderer.** Bootstrap requests set
   `metadataOnly` and return current incognito/browser/terminal inventory without
-  traversing or copying transcript rows. Deferred reads return the selected
+  traversing or copying transcript rows. Private `transcriptSnapshots` carry
+  agent runtime, including `waiting_input`, and apply after restoration resets
+  restart-only state; they never enter the stored session tree. Reconnect
+  refreshes this metadata for background agents with the same stale-turn guard.
+  The browser title uses `selectNeedsInputCount` to show `(N) Maestro` while
+  agents await input and `Maestro` otherwise; native window titles stay unchanged.
+  Deferred reads return the selected
   canonical transcript and its runtime snapshot (including errors and explicit
   cleared fields) only to their requester: request replies, including late
   replies, never fan out as `sessions:transcriptSync` events. Snapshot runtime

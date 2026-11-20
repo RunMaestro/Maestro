@@ -8,6 +8,7 @@ import {
 	failCommand,
 	resolveAgentOrFail,
 	type SimpleResult,
+	failFromError,
 } from '../services/session-command';
 import { resolveGroupId } from '../services/storage';
 import { formatSuccess } from '../output/formatter';
@@ -34,7 +35,7 @@ async function sendWindow(request: WindowCommandRequest, json?: boolean): Promis
 		if (!result.success) failCommand(result.error || 'Window command failed', json);
 		return result;
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), json);
+		return failFromError(error, json);
 	}
 }
 
@@ -99,7 +100,7 @@ export async function windowMoveGroup(groupId: string, options: WindowOptions): 
 	try {
 		resolved = resolveGroupId(groupId);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	const result = await sendWindow({ action: 'move-group', targetId: resolved, to }, options.json);
 	reportMove(result, `group ${resolved}`, options);

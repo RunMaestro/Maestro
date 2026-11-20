@@ -13,6 +13,8 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => id),
 	readActiveAgentId: vi.fn(() => null),
+	getSessionById: vi.fn(),
+	readHarnessTierDefaults: vi.fn(() => ({})),
 	readLiveSessions: vi.fn(() => []),
 }));
 vi.mock('../../../cli/output/formatter', () => ({
@@ -37,6 +39,7 @@ import {
 	tabClosed,
 	tabReopen,
 	tabCompact,
+	tabContinuity,
 	tabMerge,
 	tabTransfer,
 	tabPinsList,
@@ -46,7 +49,13 @@ import {
 	tabPinsShow,
 } from '../../../cli/commands/tab';
 import { withMaestroClient, CommandTimeoutError } from '../../../cli/services/maestro-client';
-import { resolveAgentId, readActiveAgentId, readLiveSessions } from '../../../cli/services/storage';
+import {
+	resolveAgentId,
+	readActiveAgentId,
+	getSessionById,
+	readHarnessTierDefaults,
+	readLiveSessions,
+} from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
 
 // agent-1 owns three tabs in tab-bar order so reordering has something to move
@@ -111,6 +120,8 @@ describe('tab commands', () => {
 		vi.clearAllMocks();
 		vi.mocked(resolveAgentId).mockImplementation((id: string) => id);
 		vi.mocked(readActiveAgentId).mockReturnValue(null);
+		vi.mocked(getSessionById).mockReturnValue(undefined);
+		vi.mocked(readHarnessTierDefaults).mockReturnValue({});
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
@@ -314,6 +325,38 @@ describe('tab commands', () => {
 		const getEnter = mockTab({ success: true });
 		await tabEnterToSend('tab-bbbb', null, {});
 		expect(getEnter().configPatch).toEqual({ tabId: 'tab-bbbb', enterToSend: null });
+	});
+
+	it('tab model auto stores the word for an agent Auto can act on', async () => {
+		vi.mocked(getSessionById).mockReturnValue({ id: 'agent-1', toolType: 'claude-code' } as never);
+		const getModel = mockTab({ success: true });
+		// Any spelling is the same choice, and it is stored as the word.
+		await tabModel('tab-cccc', 'Auto', {});
+		expect(getSessionById).not.toHaveBeenCalled();
+		expect(getModel().configPatch).toEqual({ tabId: 'tab-cccc', customModel: 'auto' });
+	});
+
+	it('tab model auto is refused, by name, where it would change nothing', async () => {
+		// No effort ladder and no tier mapped: the composer does not offer Auto here.
+		vi.mocked(getSessionById).mockReturnValue({ id: 'agent-1', toolType: 'opencode' } as never);
+		const getModel = mockTab({ success: false, error: 'Auto would change nothing for this agent' });
+		await expect(tabModel('tab-cccc', 'auto', {})).rejects.toThrow('__exit__');
+		expect(formatError).toHaveBeenCalledWith(
+			expect.stringContaining('Auto would change nothing for this agent')
+		);
+		expect(getModel().configPatch).toEqual({ tabId: 'tab-cccc', customModel: 'auto' });
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('tab model auto is allowed once a tier of the agent is mapped', async () => {
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'agent-1',
+			toolType: 'opencode',
+			tierTargets: { medium: { type: 'provider-model', model: 'big-pickle' } },
+		} as never);
+		const getModel = mockTab({ success: true });
+		await tabModel('tab-cccc', 'auto', {});
+		expect(getModel().configPatch).toEqual({ tabId: 'tab-cccc', customModel: 'auto' });
 	});
 
 	it('"active" targets the agent named by --agent', async () => {
@@ -660,6 +703,147 @@ describe('tab commands', () => {
 			mockContextOp({ success: false, timedOut: true, error: 'still summarizing' });
 			await expect(tabCompact(undefined, { agent: 'agent-1' })).rejects.toThrow('__exit__');
 			expect(processExitSpy).toHaveBeenCalledWith(5);
+		});
+
+		const PREVIEW = {
+			text: 'Continuity preview of tab tab-bbbb (claude-code).\n\nNotices:\n- one',
+			entries: 6,
+			synopses: { shown: 1, refused: { 'other-tab': 2 } },
+			notices: ['one'],
+			unknowns: ['objective: none'],
+		};
+
+		it('tab continuity defaults to the active tab of -a, sends its own message, and prints the text', async () => {
+			const sent = mockContextOp({ success: true, continuity: PREVIEW });
+			await tabContinuity(undefined, { agent: 'agent-2' });
+
+			expect(sent).toHaveLength(1);
+			// Its own message: no field on it could make an older desktop compact instead.
+			expect(sent[0].payload).toEqual({
+				type: 'continuity_preview',
+				sessionId: 'agent-2',
+				tabId: 'tab-bbbb',
+			});
+			expect(sent[0].responseType).toBe('continuity_preview_result');
+			// A read, not a summarization turn: seconds, not the minutes a compaction waits.
+			expect(sent[0].timeoutMs).toBeLessThan(2 * 60_000);
+			expect(consoleSpy).toHaveBeenCalledWith(PREVIEW.text);
+		});
+
+		it('tab continuity --json carries the counts, notices and unknowns beside the text', async () => {
+			const sent = mockContextOp({ success: true, continuity: PREVIEW });
+			await tabContinuity('tab-cc', { json: true });
+
+			expect(sent[0].payload).toEqual({
+				type: 'continuity_preview',
+				sessionId: 'agent-1',
+				tabId: 'tab-cccc',
+			});
+			expect(lastJson()).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-cccc',
+				...PREVIEW,
+			});
+		});
+
+		it('tab continuity --json carries the signals as data, cleaned again on this side', async () => {
+			const escape = String.fromCharCode(27);
+			const signals = {
+				repetition: [
+					{
+						kind: 'repeated-failure',
+						call: `npm test${escape}[2J`,
+						count: 3,
+						ongoing: true,
+						outputs: 'identical',
+						refs: ['tool #2', 'tool #3', 'tool #4'],
+						uncertainty: ['one limit'],
+					},
+				],
+				readiness: [
+					{ id: 'pressure', status: 'unknown', statement: 'No record.', uncertainty: [] },
+				],
+				routing: ['Model source: Provider.'],
+				advice: ['A sentence.'],
+				unknowns: ['pressure: No record.'],
+			};
+			mockContextOp({ success: true, continuity: { ...PREVIEW, signals } });
+			await tabContinuity('tab-cc', { json: true });
+
+			const printed = lastJson() as { signals?: typeof signals; text?: string };
+			expect(printed.signals?.repetition[0]).toMatchObject({ call: 'npm test[2J', count: 3 });
+			expect(printed.signals?.readiness).toEqual(signals.readiness);
+			expect(printed.signals?.advice).toEqual(['A sentence.']);
+			expect(JSON.stringify(printed)).not.toContain(escape);
+		});
+
+		it('tab continuity prints the text only: the signals are already part of it', async () => {
+			mockContextOp({
+				success: true,
+				continuity: {
+					...PREVIEW,
+					text: `${PREVIEW.text}\n\nSignals: observations`,
+					signals: { repetition: [], readiness: [], routing: [], advice: [], unknowns: [] },
+				},
+			});
+			await tabContinuity(undefined, { agent: 'agent-2' });
+			expect(consoleSpy).toHaveBeenCalledTimes(1);
+			expect(consoleSpy).toHaveBeenCalledWith(`${PREVIEW.text}\n\nSignals: observations`);
+		});
+
+		it('tab continuity refuses a tab that belongs to another agent than -a, sending nothing', async () => {
+			const sent = mockContextOp({ success: true, continuity: PREVIEW });
+			await expect(tabContinuity('tab-bbbb', { agent: 'agent-1' })).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+		});
+
+		it("tab continuity reports the desktop's refusal and exits 1", async () => {
+			mockContextOp({
+				success: false,
+				error: "Tab tab-aaaa holds another agent's consult, not a conversation of this agent.",
+			});
+			await expect(tabContinuity(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(lastJson().success).toBe(false);
+			expect(lastJson().error).toContain('consult');
+		});
+
+		it('tab continuity reports a timeout apart from a failure (exit 5)', async () => {
+			mockContextOp(new CommandTimeoutError('continuity_preview_result'));
+			await expect(tabContinuity(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(5);
+			expect(lastJson().error).toContain('continuity preview');
+			// A read has nothing "still running" to look for; it says nothing changed and why it may be silent.
+			expect(lastJson().error).toContain('Nothing was changed');
+			expect(lastJson().error).not.toContain('still be running');
+			expect(lastJson().error).toContain('predates');
+		});
+
+		it('tab continuity says so when the desktop answers success with no preview (an older Maestro)', async () => {
+			mockContextOp({ success: true });
+			await expect(tabContinuity(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(lastJson().error).toContain('answered without a preview');
+		});
+
+		it('tab continuity does not print control characters a sender put in the text', async () => {
+			mockContextOp({
+				success: true,
+				continuity: { ...PREVIEW, text: 'Done\u001b[2J\u001b]0;pwned\u0007\rhidden\u202e' },
+			});
+			await tabContinuity(undefined, { agent: 'agent-1' });
+
+			const printed = consoleSpy.mock.calls.map((call) => String(call[0])).join('\n');
+			// eslint-disable-next-line no-control-regex
+			expect(printed).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/);
+			expect(printed).toContain('Done');
 		});
 
 		it('tab merge sends both tabs and reports the receiving tab', async () => {

@@ -907,6 +907,8 @@ describe('combined contribution surfaces', () => {
 describe('settings panel host destinations', () => {
 	it.each([
 		['settings', ['media'], true],
+		['settings', ['dictation'], true],
+		['settings', ['arbitrary-setting'], false],
 		['settings', ['mediaModelDirectory'], false],
 		['settings', 'media', false],
 		['modal', ['media'], false],
@@ -921,7 +923,7 @@ describe('settings panel host destinations', () => {
 			)
 		);
 		expect(result.panels.length).toBe(valid ? 1 : 0);
-		if (valid) expect(result.panels[0].hostSettings).toEqual(['media']);
+		if (valid) expect(result.panels[0].hostSettings).toEqual(hostSettings);
 		else expect(result.errors.join(' ')).toContain('hostSettings');
 	});
 });

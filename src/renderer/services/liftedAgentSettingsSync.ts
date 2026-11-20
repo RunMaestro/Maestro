@@ -25,13 +25,17 @@
 
 import {
 	applyLiftSyncPull,
+	buildLiftPeerIdMap,
+	describeFederationFields,
 	fromStored,
 	liftSyncAgentValues,
+	liftSyncPendingIds,
 	overlaySyncValues,
 	planLiftedSettingsSync,
 	readLiftSyncBaseline,
 	settleLiftSyncBaseline,
 	toStored,
+	type LiftPeerIdMap,
 	type LiftSyncBaseline,
 	type LiftSyncEcho,
 	type LiftSyncPlan,
@@ -71,6 +75,9 @@ const TRANSIENT_CODES: ReadonlySet<ClientErrorCode> = new Set([
 ]);
 
 type FailedAnswer = Extract<MirroredActionAnswer, { ok: false }>;
+
+/** The baselines of the running sync, so a field's pending state reads what the sync agreed. */
+let liveBaselines: Map<string, LiftSyncBaseline> | undefined;
 
 function loadBaselines(): Map<string, LiftSyncBaseline> {
 	const map = new Map<string, LiftSyncBaseline>();
@@ -125,6 +132,50 @@ function connectedHostAgent(
 	return undefined;
 }
 
+/**
+ * How this machine's agents name the agents of one host: every local agent lifted to `peerId`,
+ * and the agents its mirror holds. Peer rows on a pointer are compared and sent through it.
+ */
+export function liftPeerIdMapFor(peerId: string): LiftPeerIdMap {
+	const peer = usePeerMirrorStore.getState().peers[peerId];
+	return buildLiftPeerIdMap(
+		useSessionStore.getState().sessions as unknown as AgentRecord[],
+		peerId,
+		(peer?.agents ?? []).map((agent) => agent.id)
+	);
+}
+
+/** The sync field ids of one hosted agent that wait: on the host (pending) or on a person. */
+export interface HostedFieldState {
+	pendingIds: string[];
+	conflictIds: string[];
+}
+
+/**
+ * What waits for one hosted agent (`mirrorKey()` of its host agent): the edits this machine made
+ * that the host has not taken, and the fields in conflict. The settings badge and `maestro-cli
+ * show agent --json` both read this.
+ */
+export function hostedFieldState(peerId: string, agentId: string): HostedFieldState {
+	const key = mirrorKey(peerId, agentId);
+	const store = useHostedAgentSettingsStore.getState();
+	const resolved = store.resolutions[key] ?? {};
+	const conflictIds = (store.conflicts[key]?.conflicts ?? [])
+		.map((conflict) => conflict.id)
+		.filter((id) => !resolved[id]);
+	const pointer = liftedPointerFor(peerId, agentId);
+	if (pointer) {
+		const baseline = (liveBaselines ?? loadBaselines()).get(pointer.id);
+		const pendingIds = liftSyncPendingIds(
+			pointer as unknown as AgentRecord,
+			baseline,
+			liftPeerIdMapFor(peerId)
+		).filter((id) => !conflictIds.includes(id));
+		return { pendingIds, conflictIds };
+	}
+	return { pendingIds: Object.keys(store.pending[key]?.values ?? {}), conflictIds };
+}
+
 /** The lifted local agent that points at a host agent, if this machine holds one. */
 export function liftedPointerFor(peerId: string, agentId: string): Session | undefined {
 	return useSessionStore.getState().sessions.find((session) => {
@@ -168,14 +219,16 @@ export function saveHostedAgentSettings(
 					agent[id] = after[id];
 				}
 			}
+			// The editor names peers by the host's ids; the pointer keeps this machine's.
+			const peerIds = liftPeerIdMapFor(peerId);
 			updateSessionWith(
 				pointer.id,
 				(session) =>
-					applyLiftSyncPull(session as unknown as AgentRecord, {
-						agent,
-						env,
-						tabs: {},
-					}) as unknown as Session
+					applyLiftSyncPull(
+						session as unknown as AgentRecord,
+						{ agent, env, tabs: {} },
+						peerIds
+					) as unknown as Session
 			);
 		}
 		requestHostedSettingsSync();
@@ -219,13 +272,35 @@ export function listHostedSettingsConflicts(): HostedSettingsConflictSummary[] {
 	}));
 }
 
+/** `peer:agentId` (a `mirrorKey()`) back to its two parts, or undefined when it is not one. */
+function parseMirrorKey(key: string): { peerId: string; agentId: string } | undefined {
+	// An agent id holds no colon; a peer id might.
+	const at = key.lastIndexOf(':');
+	if (at <= 0 || at === key.length - 1) return undefined;
+	return { peerId: key.slice(0, at), agentId: key.slice(at + 1) };
+}
+
 /**
- * Answer `maestro-cli federation conflicts|resolve` (asked by main through the window). A
+ * Answer `maestro-cli federation conflicts|resolve` and the field states `show agent` reads
+ * (asked by main through the window). A
  * resolution is the one the modal's buttons record, so the next sync pass carries it out.
  */
 export function answerHostedSettingsRequest(
-	request: Extract<FederationWindowRequest, { action: 'list' | 'resolve' }>
+	request: Extract<FederationWindowRequest, { action: 'list' | 'resolve' | 'fields' }>
 ): FederationWindowReply {
+	if (request.action === 'fields') {
+		const target = parseMirrorKey(request.agent);
+		if (!target) {
+			return {
+				success: false,
+				error: `Name the hosted agent as peer:agent, not "${request.agent}".`,
+			};
+		}
+		return {
+			success: true,
+			fields: describeFederationFields(hostedFieldState(target.peerId, target.agentId)),
+		};
+	}
 	if (request.action === 'resolve') {
 		const store = useHostedAgentSettingsStore.getState();
 		const set = store.conflicts[request.agent];
@@ -258,6 +333,7 @@ export function answerHostedSettingsRequest(
  */
 export function startLiftedAgentSettingsSync(): () => void {
 	const baselines = loadBaselines();
+	liveBaselines = baselines;
 	const awaiting = new Map<string, Record<string, LiftSyncEcho>>();
 	const inFlight = new Set<string>();
 	/** Conflict ids already announced per target, so a toast is raised once per new conflict. */
@@ -357,9 +433,12 @@ export function startLiftedAgentSettingsSync(): () => void {
 			const now = Date.now();
 			const echoes = liveEchoes(key, now);
 			const resolutions = useHostedAgentSettingsStore.getState().resolutions[key];
+			// The pointer names peers by this machine's ids; the host's ids are compared and sent.
+			const peerIds = liftPeerIdMapFor(pointer.peer);
 			const plan = planLiftedSettingsSync({
 				local: session as unknown as AgentRecord,
 				host,
+				peerIds,
 				baseline: baselines.get(session.id),
 				awaiting: echoes,
 				resolutions,
@@ -370,7 +449,11 @@ export function startLiftedAgentSettingsSync(): () => void {
 				updateSessionWith(
 					session.id,
 					(current) =>
-						applyLiftSyncPull(current as unknown as AgentRecord, plan.pull) as unknown as Session
+						applyLiftSyncPull(
+							current as unknown as AgentRecord,
+							plan.pull,
+							peerIds
+						) as unknown as Session
 				);
 			}
 			const outcome = await sendPushes(session.name, pointer.peer, pointer.agentId, plan, echoes);
@@ -526,6 +609,7 @@ export function startLiftedAgentSettingsSync(): () => void {
 	return () => {
 		disposed = true;
 		if (scheduleSync === schedule) scheduleSync = undefined;
+		if (liveBaselines === baselines) liveBaselines = undefined;
 		offSessions();
 		offPeers();
 		offHosted();

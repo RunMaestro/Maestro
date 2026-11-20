@@ -42,7 +42,11 @@ describe('AgentTurnSettings', () => {
 
 	it('offers no tiers for a provider without a tier table, only an exact model', () => {
 		render(
-			<AgentTurnSettings data={data({ toolType: 'codex' })} theme={theme} onChange={vi.fn()} />
+			<AgentTurnSettings
+				data={data({ toolType: 'copilot-cli' })}
+				theme={theme}
+				onChange={vi.fn()}
+			/>
 		);
 		openSelect(/model/i);
 		expect(screen.queryByText(/tier \(/)).not.toBeInTheDocument();

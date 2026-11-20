@@ -38,6 +38,7 @@ import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { QueuedMergeConfirmModal } from './QueuedMergeConfirmModal';
 import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
+import { queuedTurnPills } from '../utils/providerTabSessions';
 import { MiniBadge } from './ui/MiniBadge';
 import { HeldForRetryBadge } from './HeldForRetryBadge';
 import { useIsHeldRetryItem } from '../stores/retryStore';
@@ -968,11 +969,7 @@ function QueueItemRow({
 						    will spawn under, no matter what is selected by the time the
 						    queue reaches it. */}
 						<div className="flex items-center justify-center gap-1 min-w-0">
-							<TurnSettingPills
-								theme={theme}
-								model={item.turnSettings?.model}
-								effort={item.turnSettings?.effort}
-							/>
+							<TurnSettingPills theme={theme} {...queuedTurnPills(item.turnSettings)} />
 						</div>
 						<div className="flex items-center justify-end gap-1">
 							{onMerge && (

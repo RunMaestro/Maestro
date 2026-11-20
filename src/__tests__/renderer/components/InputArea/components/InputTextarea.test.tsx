@@ -4,7 +4,8 @@ import type { ComponentProps, RefObject } from 'react';
 import { InputTextarea } from '../../../../../renderer/components/InputArea/components/InputTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../../../renderer/utils/textareaSizing';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
-import { inputAreaTheme } from '../_fixtures';
+import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { projectTabProvider } from '../../../../../renderer/utils/providerTabSessions';
 
 /**
  * jsdom performs no layout, so the browser's scroll clamping (scrollTop can
@@ -72,6 +73,15 @@ function renderTextarea(overrides: Partial<TextareaProps> = {}) {
 }
 
 describe('InputTextarea', () => {
+	it('names the selected provider while another provider owns the running turn', () => {
+		const session = createInputAreaSession();
+		session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex', turnProvider: 'claude-code' };
+		// InputArea hands the textarea the tab's provider projection, not the turn's.
+		const { agent } = projectTabProvider(session, session.aiTabs[0]);
+		const { container } = renderTextarea({ toolType: agent.toolType });
+		expect(container.querySelector('textarea')?.placeholder).toContain('powered by Codex');
+	});
+
 	it('caps the textarea with the shared KEYSTROKE_TEXTAREA_MAX_HEIGHT constant', () => {
 		const { textarea } = renderTextarea();
 

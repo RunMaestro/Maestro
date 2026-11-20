@@ -66,7 +66,7 @@ function fixture() {
 	const key = `worker-ai-${request.dispatchId}`;
 	const events: string[] = [];
 	const newTab = vi.fn<NewAITabWithPromptCallback>(
-		async (_agent, prompt, _background, _hidden, _routing, control) => {
+		async (_agent, prompt, _background, _hidden, _chain, _routing, control) => {
 			if (control?.phase === 'prepare') {
 				expect(prompt).toBe('');
 				expect(() => pianolaNewTabSpawns.claim(key)).toThrow('DispatchAdmissionPending');
@@ -117,6 +117,23 @@ function fixture() {
 }
 
 describe('native new-tab Pianola admission adapter', () => {
+	it('keeps the consult chain separate from routing and native admission control', async () => {
+		const f = fixture();
+		const chain = { chainId: 'chain', depth: 2 };
+		const request = { ...f.request, consultChain: chain, mentionRouting: 'parallel' as const };
+		await f.adapter.run(f.client, request, f.arm);
+		for (const phase of ['prepare', 'release'])
+			expect(f.newTab).toHaveBeenCalledWith(
+				'worker',
+				phase === 'prepare' ? '' : request.prompt,
+				true,
+				true,
+				chain,
+				'parallel',
+				{ phase, dispatchId: request.dispatchId, tabId: request.dispatchId }
+			);
+	});
+
 	it.each([false, true])(
 		'releases an existing-tab fence only after proven nonstart: %s',
 		async (changed) => {
@@ -169,7 +186,7 @@ describe('native new-tab Pianola admission adapter', () => {
 		f.snapshot.owners[0].groupId = 'selected';
 		const original = f.newTab.getMockImplementation()!;
 		f.newTab.mockImplementation(async (...args) => {
-			if (args[5]?.phase === 'release') f.snapshot.owners[0].groupId = 'different';
+			if (args[6]?.phase === 'release') f.snapshot.owners[0].groupId = 'different';
 			return original(...args);
 		});
 		const result = await f.adapter.run(f.client, f.request, f.arm);
@@ -240,7 +257,7 @@ describe('native new-tab Pianola admission adapter', () => {
 		});
 		const original = f.newTab.getMockImplementation()!;
 		f.newTab.mockImplementation(async (...args) => {
-			if (args[5]?.phase === 'release') {
+			if (args[6]?.phase === 'release') {
 				reachedRelease();
 				await delayed;
 			}
@@ -286,7 +303,7 @@ describe('native new-tab Pianola admission adapter', () => {
 		const f = fixture();
 		const original = f.newTab.getMockImplementation()!;
 		f.newTab.mockImplementation(async (...args) => {
-			if (args[5]?.phase === 'prepare') return original(...args);
+			if (args[6]?.phase === 'prepare') return original(...args);
 			return { success: false, unknown: true };
 		});
 		const first = await f.adapter.run(f.client, f.request, f.arm);
@@ -331,7 +348,7 @@ describe('native new-tab Pianola admission adapter', () => {
 		const f = fixture();
 		const original = f.newTab.getMockImplementation()!;
 		f.newTab.mockImplementation(async (...args) => {
-			if (args[5]?.phase === 'prepare') return original(...args);
+			if (args[6]?.phase === 'prepare') return original(...args);
 			const guard = pianolaNewTabSpawns.claim(f.key, f.request.dispatchId);
 			expect(() => pianolaNewTabSpawns.claim(f.key, f.request.dispatchId)).toThrow(
 				'DispatchAlreadyStarting'

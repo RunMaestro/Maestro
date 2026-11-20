@@ -2,9 +2,10 @@
  * Context Ops domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: merge_context,
- * transfer_context, summarize_context, create_gist.
+ * transfer_context, summarize_context, continuity_preview, create_gist.
  */
 
+import type { CreateGistResult } from '../../../../shared/gitUtils';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 import {
 	TAB_CONTEXT_OP_MESSAGES,
@@ -14,7 +15,7 @@ import {
 } from '../../../../shared/tabContextOps';
 
 /**
- * Shared body of the three context messages: validate, forward to the
+ * Shared body of the four context messages: validate, forward to the
  * renderer that owns the source agent, and ALWAYS answer with the typed
  * `*_result` (never a bare `error` frame), so a waiting client is never left
  * to its own timeout.
@@ -82,6 +83,19 @@ export function handleSummarizeContext(
 }
 
 /**
+ * Handle continuity_preview - the read-only digest of one tab. Its own message,
+ * not a flag on summarize_context: a desktop that predates it must refuse the
+ * message instead of ignoring a flag and starting a compaction.
+ */
+export function handleContinuityPreview(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	handleTabContextOp(ctx, client, message, 'continuity');
+}
+
+/**
  * Handle create_gist message - publish a session's transcript to a GitHub gist.
  * Always replies with `create_gist_result` (even on failure) so waiting
  * clients don't hang until their request timeout.
@@ -91,7 +105,7 @@ export function handleCreateGist(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const reply = (result: { success: boolean; gistUrl?: string; error?: string }) => {
+	const reply = (result: CreateGistResult) => {
 		ctx.send(client, {
 			type: 'create_gist_result',
 			...result,
@@ -131,8 +145,15 @@ export function handleCreateGist(
 		}
 		agentSessionId = rawAgentSessionId;
 	}
+	// Only a literal `true` publishes past the secret screen. Anything else,
+	// including a string, is a refusal rather than a quiet opt-in.
+	if (message.allowSecrets !== undefined && typeof message.allowSecrets !== 'boolean') {
+		reply({ success: false, error: 'allowSecrets must be a boolean when provided' });
+		return;
+	}
 	const description = message.description ?? '';
 	const isPublic = message.isPublic ?? false;
+	const allowSecrets = message.allowSecrets === true;
 
 	if (!ctx.callbacks.createGist) {
 		reply({ success: false, error: 'Gist creation not configured' });
@@ -140,7 +161,7 @@ export function handleCreateGist(
 	}
 
 	ctx.callbacks
-		.createGist(sessionId, description, isPublic, agentSessionId)
+		.createGist(sessionId, description, isPublic, agentSessionId, allowSecrets)
 		.then((result) => {
 			reply(result);
 		})

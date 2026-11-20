@@ -73,7 +73,12 @@ describe('hostedAgents', () => {
 				[row('row-1', 'tome', 'm1')]
 			);
 			expect(listings.map((listing) => listing.ref)).toEqual(['gpu:g1', 'tome:k1', 'tome:m1']);
-			expect(listings[0]).toMatchObject({ peerName: 'GPU Box', name: 'Trainer', cwd: '/srv/g1' });
+			expect(listings[0]).toMatchObject({
+				peerName: 'GPU Box',
+				remoteId: 'remote-gpu',
+				name: 'Trainer',
+				cwd: '/srv/g1',
+			});
 			expect(listings[1]).toMatchObject({ hostGroupName: 'Host Group' });
 			expect(listings[1].addedAs).toBeUndefined();
 			expect(listings[2].addedAs).toBe('row-1');

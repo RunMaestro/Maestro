@@ -671,6 +671,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 					...(input.model ? { model: input.model } : {}),
 					...(input.effort ? { effort: input.effort } : {}),
 					...(input.ignoreModelHints ? { ignoreModelHints: true } : {}),
+					...(input.runOn ? { runOn: input.runOn } : {}),
 					signal: abort.signal,
 				},
 				buildDeps(agentId, controller)
@@ -732,6 +733,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 				{
 					...(input.model ? { model: input.model } : {}),
 					...(input.effort ? { effort: input.effort } : {}),
+					...(input.runOn ? { runOn: input.runOn } : {}),
 					signal: abort.signal,
 				},
 				buildDeps(agentId, controller)

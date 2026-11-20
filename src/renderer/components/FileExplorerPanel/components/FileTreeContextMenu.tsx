@@ -15,19 +15,26 @@ import {
 	Files,
 	Download,
 	Bot,
+	Mic,
 	ListPlus,
 	Play,
 	PlayCircle,
 	FileArchive,
+	File,
+	Folder,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { isMediaFile } from '../../../../shared/mediaTypes';
+import { isTalkableDocumentPath } from '../../../../shared/fileKinds';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { canRevealOnHost } from '../../../services/hostShell';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
+import { getBasename } from '../../../../shared/formatters';
+import { ContextMenuHeader, contextMenuIconStyle } from '../../ui/ContextMenuHeader';
 
 interface FileTreeContextMenuProps {
 	theme: Theme;
@@ -35,6 +42,11 @@ interface FileTreeContextMenuProps {
 	contextMenuRef: React.RefObject<HTMLDivElement>;
 	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
 	sshRemoteId: string | undefined;
+	/**
+	 * Absolute path of the tree's root folder. Names the empty-space menu, whose
+	 * actions target that root.
+	 */
+	rootPath?: string;
 	onFocusFileInGraph?: (relativePath: string) => void;
 	/** Graph every markdown file under the right-clicked folder. */
 	onGraphFolder?: () => void;
@@ -43,6 +55,11 @@ interface FileTreeContextMenuProps {
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
+	/**
+	 * Whether A Cappella is on. False hides "Talk with Document" entirely, which
+	 * is the Encore rule: a feature nobody turned on adds no entries anywhere.
+	 */
+	voiceEnabled?: boolean;
 	/**
 	 * How many Auto Run documents the current menu context resolves to - a
 	 * folder's subtree, one markdown file, or the whole selection. Zero for
@@ -62,6 +79,7 @@ interface FileTreeContextMenuProps {
 	onOpenNewFile: () => void;
 	onOpenNewFolder: () => void;
 	onNewAgentHere: () => void;
+	onTalkWithDocument: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
 	onStageForAutoRun: () => void;
@@ -81,12 +99,14 @@ export function FileTreeContextMenu({
 	contextMenuRef,
 	contextMenuPos,
 	sshRemoteId,
+	rootPath,
 	onFocusFileInGraph,
 	onGraphFolder,
 	onGraphSelection,
 	onOpenBrowserTabAt,
 	isMultiSelectionContext = false,
 	selectedCount = 0,
+	voiceEnabled = false,
 	selectedMediaCount = 0,
 	selectedMarkdownCount = 0,
 	autoRunStagedCount = 0,
@@ -99,6 +119,7 @@ export function FileTreeContextMenu({
 	onOpenNewFile,
 	onOpenNewFolder,
 	onNewAgentHere,
+	onTalkWithDocument,
 	onPreviewFile,
 	onPreviewAllInFolder,
 	onStageForAutoRun,
@@ -111,6 +132,8 @@ export function FileTreeContextMenu({
 	onOpenRename,
 	onOpenDelete,
 }: FileTreeContextMenuProps) {
+	// Row icons in the accent; destructive rows keep their error color.
+	const iconStyle = contextMenuIconStyle(theme);
 	// node === null is the empty-space / workspace-root menu (no row under the
 	// cursor). It only offers "New Folder", targeting the workspace root.
 	const node = contextMenu.node;
@@ -152,7 +175,7 @@ export function FileTreeContextMenu({
 				className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 				style={{ color: theme.colors.textMain }}
 			>
-				<PlayCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				<PlayCircle className="w-3.5 h-3.5" style={iconStyle} />
 				<span>
 					{autoRunStagedCount === 1
 						? 'Stage Document for Auto Run'
@@ -160,6 +183,15 @@ export function FileTreeContextMenu({
 				</span>
 			</button>
 		) : null;
+
+	// The band names what the menu acts on: the selection, the right-clicked
+	// row, or (empty space) the tree root.
+	const isMultiSelectionMenu = !isRoot && isMultiSelectionContext && selectedCount > 1;
+	const header = !node
+		? { label: (rootPath && getBasename(rootPath)) || 'Workspace', icon: Folder, title: rootPath }
+		: isMultiSelectionMenu
+			? { label: `${selectedCount} items selected`, icon: Files }
+			: { label: node.name, icon: isFolder ? Folder : File, title: contextMenu.path };
 
 	return createPortal(
 		<div
@@ -180,7 +212,13 @@ export function FileTreeContextMenu({
 				opacity: contextMenuPos.ready ? 1 : 0,
 			}}
 		>
-			<div className="p-1">
+			<ContextMenuHeader
+				theme={theme}
+				label={header.label}
+				icon={header.icon}
+				title={header.title}
+			/>
+			<div className="px-1 pb-1">
 				{isRoot ? (
 					<>
 						<button
@@ -188,7 +226,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<FilePlus className="w-3.5 h-3.5" style={iconStyle} />
 							<span>New File</span>
 						</button>
 						<button
@@ -196,18 +234,18 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 							<span>New Folder</span>
 						</button>
 					</>
-				) : isMultiSelectionContext && selectedCount > 1 ? (
+				) : isMultiSelectionMenu ? (
 					<>
 						<button
 							onClick={onPreviewMulti}
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<FileText className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Preview {selectedCount} items</span>
 						</button>
 						{/* Opening the selection already plays the first media file and
@@ -219,17 +257,18 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ListPlus className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Add {queueableCount} to Play Queue</span>
 							</button>
 						)}
-						{!sshRemoteId && (
+						{/* The host's opener: a browser gets Download to This Client instead */}
+						{canRevealOnHost(sshRemoteId) && (
 							<button
 								onClick={onOpenInDefaultAppMulti}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open {selectedCount} in Default App</span>
 							</button>
 						)}
@@ -239,7 +278,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Network className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open {selectedMarkdownCount} in Document Graph</span>
 							</button>
 						)}
@@ -264,7 +303,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FilePlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New File</span>
 								</button>
 								<button
@@ -272,7 +311,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New Folder</span>
 								</button>
 								{/* New Agent Here - opens the New Agent modal with this folder
@@ -286,7 +325,7 @@ export function FileTreeContextMenu({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<Bot className="w-3.5 h-3.5" style={iconStyle} />
 										<span>New Agent Here</span>
 									</button>
 								)}
@@ -296,7 +335,7 @@ export function FileTreeContextMenu({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<Network className="w-3.5 h-3.5" style={iconStyle} />
 										<span>Open in Document Graph</span>
 									</button>
 								)}
@@ -306,7 +345,7 @@ export function FileTreeContextMenu({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Files className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<Files className="w-3.5 h-3.5" style={iconStyle} />
 										<span>
 											Preview All {previewableCount} {previewableCount === 1 ? 'File' : 'Files'} in
 											Folder
@@ -319,7 +358,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FileArchive className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FileArchive className="w-3.5 h-3.5" style={iconStyle} />
 									<span>Compress</span>
 								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -338,7 +377,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FilePlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New File</span>
 								</button>
 								<button
@@ -346,7 +385,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New Folder</span>
 								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -363,11 +402,27 @@ export function FileTreeContextMenu({
 								style={{ color: theme.colors.textMain }}
 							>
 								{isMedia ? (
-									<Play className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<Play className="w-3.5 h-3.5" style={iconStyle} />
 								) : (
-									<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FileText className="w-3.5 h-3.5" style={iconStyle} />
 								)}
 								<span>{isMedia ? 'Play' : 'Preview'}</span>
+							</button>
+						)}
+
+						{/* Talk with Document - a voice session about this file, held with
+						    this agent. Hidden for anything with no text to read: an image,
+						    a video, or a compiled binary. Note this asks about the file
+						    itself, not about `isMedia`, which is false for a video sitting
+						    on an SSH remote purely because there is no way to play it. */}
+						{isFile && voiceEnabled && isTalkableDocumentPath(nodeName) && (
+							<button
+								onClick={onTalkWithDocument}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Mic className="w-3.5 h-3.5" style={iconStyle} />
+								<span>Talk with Document</span>
 							</button>
 						)}
 
@@ -377,7 +432,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ListPlus className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Add to Play Queue</span>
 							</button>
 						)}
@@ -391,7 +446,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Target className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Target className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Document Graph</span>
 							</button>
 						)}
@@ -403,19 +458,20 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Globe className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open in Maestro Browser</span>
 							</button>
 						)}
 
-						{/* Open in Default App option - for files only, not available over SSH */}
-						{isFile && !sshRemoteId && (
+						{/* Open in Default App - files only, the host's opener: desktop and local
+						    only (a browser has Download to This Client below) */}
+						{isFile && canRevealOnHost(sshRemoteId) && (
 							<button
 								onClick={onOpenInDefaultApp}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open in Default App</span>
 							</button>
 						)}
@@ -427,7 +483,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Download className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Download className="w-3.5 h-3.5" style={iconStyle} />
 								<span>{isWebDesktop() ? 'Download to This Client' : 'Download File'}</span>
 							</button>
 						)}
@@ -443,7 +499,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<Copy className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Copy Path</span>
 						</button>
 
@@ -453,18 +509,18 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<FileText className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Copy File Name</span>
 						</button>
 
-						{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
-						{!sshRemoteId && (
+						{/* Reveal in Finder / Explorer - the host's: desktop and local only */}
+						{canRevealOnHost(sshRemoteId) && (
 							<button
 								onClick={onOpenInExplorer}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<FolderOpen className="w-3.5 h-3.5" style={iconStyle} />
 								<span>{getRevealLabel(platform)}</span>
 							</button>
 						)}
@@ -478,7 +534,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<Edit2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<Edit2 className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Rename</span>
 						</button>
 

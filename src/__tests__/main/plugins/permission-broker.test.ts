@@ -75,6 +75,19 @@ describe('PermissionBroker', () => {
 		);
 	});
 
+	it.each(['media.transcriptionStatus', 'media.transcribe'] as const)(
+		'requires the exact media grant for %s',
+		(method) => {
+			let grants: PermissionGrant[] = [grant('media:tools', 'discord-voice')];
+			const broker = new PermissionBroker({ getGrants: () => grants });
+			expect(broker.authorize('p', method, {}).allowed).toBe(true);
+			grants = [grant('media:tools', '*')];
+			expect(broker.authorize('p', method, {}).allowed).toBe(false);
+			grants = [];
+			expect(broker.authorize('p', method, {}).allowed).toBe(false);
+		}
+	);
+
 	it('checks live media grants without emitting synthetic RPC audit decisions', () => {
 		let grants: PermissionGrant[] = [grant('media:tools', 'discord-voice')];
 		const onDecision = vi.fn();

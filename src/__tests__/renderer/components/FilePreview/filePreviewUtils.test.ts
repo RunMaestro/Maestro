@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
 	getLanguageFromFilename,
-	isBinaryContent,
-	isBinaryExtension,
 	formatFileSize,
 	formatDateTime,
 	countMarkdownTasks,
@@ -25,6 +23,7 @@ import {
 	PREVIEW_SCROLLER_ATTR,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
+import { isBinaryExtension } from '../../../../shared/fileKinds';
 import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
 
 describe('filePreviewUtils', () => {
@@ -84,36 +83,6 @@ describe('filePreviewUtils', () => {
 
 		it('returns text for files with no extension', () => {
 			expect(getLanguageFromFilename('Makefile')).toBe('text');
-		});
-	});
-
-	describe('isBinaryContent', () => {
-		it('detects null bytes as binary', () => {
-			expect(isBinaryContent('hello\0world')).toBe(true);
-		});
-
-		it('returns false for normal text', () => {
-			expect(isBinaryContent('Hello, world!\nThis is text.')).toBe(false);
-		});
-
-		it('returns false for empty content', () => {
-			expect(isBinaryContent('')).toBe(false);
-		});
-
-		it('allows common whitespace (tab, newline, carriage return)', () => {
-			expect(isBinaryContent('hello\tworld\r\n')).toBe(false);
-		});
-
-		it('detects high non-printable ratio as binary', () => {
-			// Create content with >10% non-printable characters
-			const binary = String.fromCharCode(1).repeat(20) + 'a'.repeat(80);
-			expect(isBinaryContent(binary)).toBe(true);
-		});
-
-		it('allows low non-printable ratio as text', () => {
-			// Less than 10% non-printable
-			const almostText = String.fromCharCode(1).repeat(5) + 'a'.repeat(100);
-			expect(isBinaryContent(almostText)).toBe(false);
 		});
 	});
 

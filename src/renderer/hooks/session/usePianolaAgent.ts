@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { AITab, EncoreFeatureFlags, Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { generateId } from '../../utils/ids';
 import { getHomeDirAsync } from '../../utils/homeDir';
@@ -79,8 +80,9 @@ export function usePianolaAgent(encoreFeatures: EncoreFeatureFlags): void {
 
 		void resolveWorkingDir
 			.catch(() => '~')
-			.then((workingDir) => {
+			.then(async (workingDir) => {
 				const { setSessions } = useSessionStore.getState();
+				let createdId: string | undefined;
 				setSessions((prev) => {
 					// Re-check inside the updater so two near-simultaneous runs cannot
 					// both append a Pianola agent.
@@ -88,6 +90,7 @@ export function usePianolaAgent(encoreFeatures: EncoreFeatureFlags): void {
 
 					const currentDefaults = useSettingsStore.getState();
 					const newId = generateId();
+					createdId = newId;
 					const initialTabId = generateId();
 					const initialTab: AITab = {
 						id: initialTabId,
@@ -159,6 +162,7 @@ export function usePianolaAgent(encoreFeatures: EncoreFeatureFlags): void {
 
 					return [...prev, pianolaSession];
 				});
+				if (createdId) await applyDefaultAgentTokenProxy(createdId);
 			})
 			.catch((error) => {
 				// Allow a retry on the next render if creation failed unexpectedly.

@@ -127,12 +127,14 @@ function compactLogs(value: unknown): CompactedValue<unknown> {
  * Compact one AI tab: its tool results and inputs, and its transcript tail to
  * the newest {@link MAX_PERSISTED_SESSION_LOGS} entries. The renderer trims the
  * tail before it saves, but rows written by any other path (or before the cap
- * existed) kept every entry.
+ * existed) kept every entry. A document chat (`documentOrigin`) keeps its whole
+ * transcript: reopening the chat reads its history from this saved copy.
  */
 function compactTab(value: unknown): CompactedValue<unknown> {
 	if (!value || typeof value !== 'object') return { value, count: 0 };
 	const tab = value as Record<string, unknown>;
-	const overCap = Array.isArray(tab.logs) && tab.logs.length > MAX_PERSISTED_SESSION_LOGS;
+	const overCap =
+		!tab.documentOrigin && Array.isArray(tab.logs) && tab.logs.length > MAX_PERSISTED_SESSION_LOGS;
 	const tail = overCap ? (tab.logs as unknown[]).slice(-MAX_PERSISTED_SESSION_LOGS) : tab.logs;
 	const compacted = compactLogs(tail);
 	const count = compacted.count + (overCap ? 1 : 0);

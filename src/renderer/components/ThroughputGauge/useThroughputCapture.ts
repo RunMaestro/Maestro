@@ -14,7 +14,7 @@
  * - `onCallUsage` -> `recordCallUsage`: one API call's real spend as it lands
  *   (claude-code). The live signal for a turn that is mostly tool calls, whose
  *   text is too thin (or redacted) to estimate from.
- * - `onUsage` -> `recordUsage` with the agent's `toolType`, which decides
+ * - `onUsage` -> `recordUsage` with the captured turn provider, which decides
  *   whether cache reads sit inside `inputTokens`.
  * - `onExit` -> `forgetSource`, so per-turn state never accumulates.
  *
@@ -53,6 +53,8 @@ import { selectActiveSession, selectSessionById, useSessionStore } from '../../s
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { parseSessionId } from '../../utils/sessionIdParser';
+import { resolveTurnProvider } from '../../utils/providerTabSessions';
+import type { ToolType } from '../../../shared/types';
 
 /** How often the gauge reads the engine and publishes to the store. */
 export const THROUGHPUT_PUBLISH_MS = 250;
@@ -68,6 +70,7 @@ export function useThroughputCapture(): void {
 
 	useEffect(() => {
 		const processApi = window.maestro.process;
+		const sourceProviders = new Map<string, ToolType>();
 
 		/** The agent id a raw process id counts toward, or null when it does not count. */
 		const agentTurnOf = (rawSessionId: string): string | null => {
@@ -77,18 +80,31 @@ export function useThroughputCapture(): void {
 			return parsed.type === 'regular' ? null : parsed.baseSessionId;
 		};
 
-		const providerOf = (agentId: string) =>
-			selectSessionById(agentId)(useSessionStore.getState())?.toolType;
+		const providerOf = (rawSessionId: string) => {
+			const captured = sourceProviders.get(rawSessionId);
+			if (captured) return captured;
+			const { baseSessionId, tabId } = parseSessionId(rawSessionId);
+			const session = selectSessionById(baseSessionId)(useSessionStore.getState());
+			if (!session) return undefined;
+			const tab =
+				session.aiTabs.find((candidate) => candidate.id === tabId) ??
+				session.orphanedThinkingTabs?.find((candidate) => candidate.id === tabId);
+			const provider = resolveTurnProvider(tab, session);
+			sourceProviders.set(rawSessionId, provider);
+			return provider;
+		};
 
 		const unsubscribers = [
 			processApi.onThinkingChunk?.((sessionId: string, content: string) => {
 				const agentId = agentTurnOf(sessionId);
 				if (agentId === null) return;
+				providerOf(sessionId);
 				throughputTracker.recordStreamedText(sessionId, agentId, content, performance.now());
 			}),
 			processApi.onData((sessionId: string, data: string) => {
 				const agentId = agentTurnOf(sessionId);
 				if (agentId === null) return;
+				providerOf(sessionId);
 				throughputTracker.recordReplyText(sessionId, agentId, data, performance.now());
 			}),
 			processApi.onCallUsage?.((sessionId, usage) => {
@@ -99,7 +115,7 @@ export function useThroughputCapture(): void {
 					agentId,
 					usage,
 					performance.now(),
-					providerOf(agentId)
+					providerOf(sessionId)
 				);
 			}),
 			processApi.onUsage((sessionId, usageStats) => {
@@ -110,12 +126,13 @@ export function useThroughputCapture(): void {
 					agentId,
 					usageStats,
 					performance.now(),
-					providerOf(agentId)
+					providerOf(sessionId)
 				);
 			}),
 			processApi.onExit((sessionId: string) => {
 				// Not gated: forgetting a source this window never tracked is a no-op.
 				throughputTracker.forgetSource(sessionId);
+				sourceProviders.delete(sessionId);
 			}),
 		];
 

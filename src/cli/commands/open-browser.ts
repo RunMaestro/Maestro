@@ -8,6 +8,7 @@
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { readActiveAgentId, resolveAgentId } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { BROWSER_PICK_TIMEOUT_MS } from '../../shared/coworkingBrowser';
 
@@ -29,7 +30,7 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	} else {
 		sessionId = resolveSessionId({});
@@ -38,7 +39,7 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 	const trimmed = url.trim();
 	if (!trimmed) {
 		console.error('Error: URL cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Prepend https:// for scheme-less URLs so the user doesn't need to type it.
@@ -52,7 +53,7 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 		parsed = new URL(normalized);
 	} catch {
 		console.error(`Error: Invalid URL: ${url}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// A scheme-less input that parses with userinfo (e.g. `foo:bar@baz`) is
@@ -60,12 +61,12 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 	// `https://` and producing `https://foo:bar@baz/`.
 	if (!hasExplicitScheme && (parsed.username || parsed.password)) {
 		console.error(`Error: Invalid URL: ${url}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
 		console.error(`Error: Only http(s) URLs are supported (got ${parsed.protocol})`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const background = resolveBackgroundFlag(options, 'open-browser');
@@ -106,14 +107,14 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 			const error = result.error || 'Failed to open browser tab';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -125,7 +126,7 @@ export async function closeBrowser(tabId: string, options: CloseBrowserOptions):
 	const trimmed = tabId.trim();
 	if (!trimmed) {
 		console.error('Error: Tab ID cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	try {
@@ -143,14 +144,14 @@ export async function closeBrowser(tabId: string, options: CloseBrowserOptions):
 			const error = result.error || 'Failed to close browser tab';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 

@@ -9,6 +9,14 @@ export { isolateAgentEnv, SHELL_OVERRIDABLE_AGENT_ENV_KEYS } from './agentEnvIso
 export { createMockAITab, createMockFileTab } from './mockTab';
 export { createMockSession } from './mockSession';
 export { installLocalStorageMock, installSessionStorageMock } from './mockLocalStorage';
+export {
+	createFakeAudioBuffer,
+	createFakeAudioContext,
+	createFakeGainNode,
+	createFakeMediaStream,
+	installAudioWorkletNodeMock,
+	installMediaDevicesMock,
+} from './mockWebAudio';
 export { ALL_RENDERER_STORES, resetAllStores, resetStore, resetStores } from './resetStores';
 
 // NOT re-exported: `./nodeSqlite`. It imports `node:sqlite` at module scope, and

@@ -11,6 +11,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { describeMaestroRunPhase } from '../../shared/maestro-run/status';
 import type { MaestroRunCommandAction, MaestroRunStatus } from '../../shared/maestro-run/status';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface MaestroRunOptions {
 	json?: boolean;
@@ -36,7 +37,7 @@ function fail(message: string, options: MaestroRunOptions, status?: MaestroRunSt
 	} else {
 		console.error(`Error: ${message}`);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 function printStatus(status: MaestroRunStatus): void {

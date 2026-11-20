@@ -18,6 +18,7 @@ export function reconcileConversation(
 	);
 	const limitations = [...incoming.limitations];
 	const observed = new Set<string>();
+	const windows = new Map<string, 'active' | 'archived'>();
 	let newRecords = 0;
 	for (const record of incoming.records) {
 		const nativeKey = nativeRecordKey(
@@ -38,6 +39,9 @@ export function reconcileConversation(
 		const lineage = checkpoint?.lineage[nativeKey];
 		const original = lineage ?? record.origin;
 		const key = recordKey(original);
+		// One original record can project to several native items. Any active item
+		// keeps its origin active; archived items alone must not resurrect it.
+		if (windows.get(key) !== 'active') windows.set(key, record.window ?? 'active');
 		// A foreign representation hashes differently. Native edits are checked above.
 		if (known.has(key)) continue;
 		const canonical = canonicalRecords.get(key);
@@ -68,8 +72,21 @@ export function reconcileConversation(
 	}
 	const artifacts = new Map((previous?.artifacts ?? []).map((a) => [a.id, a]));
 	for (const artifact of incoming.artifacts) artifacts.set(artifact.id, artifact);
+	const hasCompaction = incoming.records.some((record) => record.boundary === 'compaction');
 	return {
-		conversation: { ...incoming, records, artifacts: [...artifacts.values()], limitations },
+		conversation: {
+			...incoming,
+			// Preserve all canonical evidence and identities, but refresh window
+			// membership even for known records. Unrepresented checkpoint evidence
+			// stays archived when the current provider has compacted its context.
+			records: records.map((record) => ({
+				...record,
+				window:
+					windows.get(recordKey(record.origin)) ?? (hasCompaction ? 'archived' : record.window),
+			})),
+			artifacts: [...artifacts.values()],
+			limitations,
+		},
 		newRecords,
 		limitations,
 	};

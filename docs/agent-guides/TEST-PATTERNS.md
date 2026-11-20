@@ -273,6 +273,18 @@ expect(key).toBe(path.resolve(configDir));
 
 Never hardcode `/`, `\`, or `process.env.HOME` in path assertions or path fixtures. Use `path.isAbsolute`, `path.join`, `path.resolve`, `os.homedir()`, and `os.tmpdir()` so the test verifies identical behavior on every OS.
 
+### Reading Source or Docs as Text (`readTextLf`)
+
+The Windows leg checks the tree out with CRLF line endings. A test that reads a repository file and looks at its line structure (`indexOf('\n\t}')`, a regex with `\n` in it, a `split('\n')` count, a line-length limit) finds nothing there, or one extra character per line, and fails only on Windows. Read the file through the shared helper instead of a bare `readFileSync(file, 'utf8')`:
+
+```typescript
+import { readTextLf, toLf } from '../helpers/sourceText';
+
+const source = readTextLf(path.join(SRC, 'renderer/components/MainPanel/MainPanel.tsx'));
+```
+
+`toLf(text)` normalizes text you already hold. A script that CI runs over the docs (`scripts/*.mjs`) cannot import a test helper, so it splits on `/\r?\n/` itself (see `entryLines()` in `scripts/verify-docs-paths.mjs`).
+
 ---
 
 ## Common Mock Patterns
@@ -374,6 +386,28 @@ save / delete / restore block; there were three near-identical copies in one
 file and only some of them were applied where they mattered. When an agent
 definition gains a new `defaultEnvVars` key, add it to
 `SHELL_OVERRIDABLE_AGENT_ENV_KEYS`.
+
+### Starting the Model Server in an On-Device Suite (`scratchKeySeal`)
+
+The opt-in local-model suites (`*-e2e.test.ts` under `src/__tests__/main/local-models/`) share
+ONE scratch data dir, `$TMPDIR/maestro-local-model-e2e`, so a model is downloaded once. The Maestro
+model server keeps its sealed API key in that dir between runs. The real seal is Electron's
+`safeStorage`, which works only inside the app, so a suite gives the server a stand-in:
+
+```typescript
+import { scratchKeySeal } from '../../helpers/scratchKeySeal';
+
+configureModelServer({
+	dataDir: () => DATA_DIR,
+	osSeal: () => scratchKeySeal(),
+	safeSend: () => {},
+});
+```
+
+Every suite MUST use this one. A suite with a seal of its own cannot open the key the last suite
+wrote, and the server refuses to start with `key-unavailable`. That happened to the routing eval
+on 2026-10-12, when five suites each carried their own copy of the same literal. Pass
+`scratchKeySeal(() => available)` to take the key store away mid-test, as `model-server-e2e` does.
 
 ### Driving a Touch-Only Branch (`setCoarsePointer`)
 

@@ -3,11 +3,17 @@
  */
 import {
 	stripLeadingEmojis,
+	stripEmojis,
 	nameSortKey,
 	compareNamesIgnoringEmojis,
 } from '../../shared/emojiUtils';
 
 describe('emojiUtils', () => {
+	it('strips complete emoji anywhere without consuming ordinary digits or non-emoji joiners', () => {
+		expect(stripEmojis('0DIN #1 * 🧑🏽‍💻 🇺🇸 1️⃣ ✅')).toBe('0DIN #1 *    ');
+		expect(stripEmojis('क्‍ष')).toBe('क्‍ष');
+		expect(stripEmojis('🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}')).toBe('');
+	});
 	describe('stripLeadingEmojis', () => {
 		describe('basic emoji handling', () => {
 			it('should strip single emoji at the start', () => {

@@ -27,7 +27,7 @@ import type { AgentRecord } from '../store/records';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, type LiftedToPointer } from './lift-pointer';
-import { liftFollowUpPatch } from './lift-settings-sync';
+import { buildLiftPeerIdMap, liftFollowUpPatch } from './lift-settings-sync';
 
 export interface LiftRunOptions {
 	/** Build and show the plan, then stop. */
@@ -255,8 +255,20 @@ export async function runLift(
 		const notices = [...(imported.value.notices ?? [])];
 		// The settings an import cannot carry go right after it, so the hosted copy starts whole
 		// and the first settings sync finds nothing to ask about. A refusal here does not undo the
-		// lift: the agent moved, and the sync shows what still differs.
-		const followUp = liftFollowUpPatch(agent);
+		// lift: the agent moved, and the sync shows what still differs. Peer rows are rewritten to
+		// the host's ids: an agent lifted there earlier, or one the host holds. A row for an agent
+		// anywhere else stays on this machine, shown as not honored by the host.
+		// The host's agent list is read only for an agent with rows to rewrite.
+		const hostAgents =
+			Array.isArray(agent.peerAgents) && agent.peerAgents.length > 0
+				? await connection.client.agents.list()
+				: undefined;
+		const peerIds = buildLiftPeerIdMap(
+			deps.readAgents(),
+			connection.peer,
+			hostAgents?.ok ? hostAgents.value.map((hostAgent) => hostAgent.id) : []
+		);
+		const followUp = liftFollowUpPatch(agent, peerIds);
 		if (followUp) {
 			const updated = await connection.client.agents.update(hostAgentId, followUp);
 			if (!updated.ok) {

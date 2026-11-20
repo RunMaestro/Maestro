@@ -34,6 +34,7 @@ import {
 	type TypographyPresetSizes,
 } from '../../shared/typographyPresets';
 import { BUNDLED_FONTS } from '../../shared/bundledFonts';
+import { ExitCode } from '../exit-codes';
 
 interface DisplayFontOptions {
 	json?: boolean;
@@ -121,7 +122,7 @@ export function displayFontList(options: DisplayFontOptions): void {
 		console.log('Surfaces: ' + TYPOGRAPHY_SURFACE_LIST.map((s) => s.id).join(', '));
 	} catch (error) {
 		console.error(formatError(error instanceof Error ? error.message : String(error)));
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 	}
 }
 
@@ -211,7 +212,7 @@ export function displayFont(
 		}
 	} catch (error) {
 		console.error(formatError(error instanceof Error ? error.message : String(error)));
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 	}
 }
 
@@ -277,7 +278,7 @@ export function displayFontSize(
 		);
 	} catch (error) {
 		console.error(formatError(error instanceof Error ? error.message : String(error)));
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 	}
 }
 
@@ -306,7 +307,7 @@ export function displayZoom(value: string | undefined, options: DisplayFontOptio
 		else console.log(formatSuccess(`Zoom set to ${Math.round(next * 100)}%`));
 	} catch (error) {
 		console.error(formatError(error instanceof Error ? error.message : String(error)));
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 	}
 }
 
@@ -341,7 +342,7 @@ export function displayPreset(id: string | undefined, options: DisplayFontOption
 		console.log(formatSuccess(`Typography reset to ${preset.label}: ${preset.tagline}`));
 	} catch (error) {
 		console.error(formatError(error instanceof Error ? error.message : String(error)));
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 	}
 }
 

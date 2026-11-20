@@ -6,6 +6,7 @@
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface SendTerminalOptions {
@@ -49,7 +50,7 @@ export async function sendTerminal(
 			: 'Nothing to send: pass a command, or --control <letter>';
 		if (options.json) console.log(JSON.stringify({ success: false, error }));
 		else console.error(`Error: ${error}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let data: string;
@@ -59,7 +60,7 @@ export async function sendTerminal(
 			const error = `Invalid --control value: ${options.control} (expected a single letter, e.g. C for Ctrl-C)`;
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		data = char;
 	} else {
@@ -75,7 +76,7 @@ export async function sendTerminal(
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	} else {
 		sessionId = resolveSessionId({});
@@ -113,13 +114,13 @@ export async function sendTerminal(
 			const error = result.error || 'Failed to write to the terminal tab';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

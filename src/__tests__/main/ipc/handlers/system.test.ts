@@ -281,6 +281,7 @@ describe('system IPC handlers', () => {
 				'logger:getLogFilePath',
 				'logger:isFileLoggingEnabled',
 				'logger:enableFileLogging',
+				'logger:readLogSource',
 				// Sync handlers
 				'sync:getDefaultPath',
 				'sync:getSettings',

@@ -8,6 +8,7 @@
 
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import {
 	armDispatchCallback,
@@ -52,8 +53,15 @@ export function handleEnqueueCommand(
 	const images = Array.isArray(message.images)
 		? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
 		: undefined;
+	// The queued turn's place in a consult chain, admitted and paid for by
+	// `maestro-cli dispatch --queue` (see handleSendCommand). It rides the queue
+	// item, so the turn takes it whenever the queue reaches it.
+	const consultChain = parseConsultChain(message.consultChain);
 	// A Federation client's own tab chips for this one message (`TurnInput.overrides`).
 	const turnOverrides = normalizeTurnOverrides(message.turnOverrides);
+	// Sent over the client protocol (`turns.send`): the turn is a hosted agent's, so it runs with
+	// `MAESTRO_HOSTED_TURN` the way a `maestro-cli host` turn does.
+	const hostedTurn = message.hostedTurn === true;
 
 	logger.info(
 		`[Web] Received enqueue_command: session=${sessionId}, tab=${requestedTabId ?? 'active'}, commandLen=${command.length}, images=${images?.length ?? 0}`,
@@ -115,6 +123,7 @@ export function handleEnqueueCommand(
 					hidden: false,
 					held,
 					images,
+					consultChain,
 					mentionRouting: routing.routing,
 					callbackIntent: {
 						notifyOnComplete: message.notifyOnComplete,
@@ -243,10 +252,13 @@ export function handleEnqueueCommand(
 		images,
 		background,
 		held,
+		consultChain,
 		routingField.routing,
 	];
-	// The overrides ride after the dispatch-callback and admission slots, which this path leaves empty.
-	if (turnOverrides) enqueueArgs.push(undefined, undefined, turnOverrides);
+	// The overrides ride after the dispatch-callback and admission slots, which this path leaves
+	// empty, and the hosted-turn mark after them.
+	if (turnOverrides || hostedTurn) enqueueArgs.push(undefined, undefined, turnOverrides);
+	if (hostedTurn) enqueueArgs.push(true);
 
 	ctx.callbacks
 		.enqueueCommand(...enqueueArgs)

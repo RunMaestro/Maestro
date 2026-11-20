@@ -432,6 +432,85 @@ describe('normalizer - github re-trigger field passthrough', () => {
 	});
 });
 
+describe('normalizer - gate field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'triage',
+		event: 'github.issue',
+		prompt: 'Triage it',
+		enabled: true,
+		repo: 'RunMaestro/Maestro',
+	};
+
+	it('keeps gate and gate_on_unavailable for the dispatch service', () => {
+		const sub = normalizeSub({
+			...base,
+			gate: '  the comment reports a bug  ',
+			gate_on_unavailable: 'skip',
+		});
+		expect(sub.gate).toBe('the comment reports a bug');
+		expect(sub.gate_on_unavailable).toBe('skip');
+	});
+
+	it('leaves both undefined when the YAML has no gate', () => {
+		const sub = normalizeSub(base);
+		expect(sub.gate).toBeUndefined();
+		expect(sub.gate_on_unavailable).toBeUndefined();
+	});
+
+	it('treats a blank gate as no gate', () => {
+		expect(normalizeSub({ ...base, gate: '   ' }).gate).toBeUndefined();
+	});
+
+	it('drops malformed values rather than passing them to dispatch', () => {
+		const sub = normalizeSub({ ...base, gate: 42, gate_on_unavailable: 'explode' });
+		expect(sub.gate).toBeUndefined();
+		expect(sub.gate_on_unavailable).toBeUndefined();
+	});
+});
+
+describe('normalizer - injection screen field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'triage',
+		event: 'github.issue',
+		prompt: 'Triage it',
+		enabled: true,
+		repo: 'RunMaestro/Maestro',
+	};
+
+	it('keeps screen_injection and injection_threshold for the dispatch service', () => {
+		const on = normalizeSub({ ...base, screen_injection: true, injection_threshold: 0.6 });
+		expect(on.screen_injection).toBe(true);
+		expect(on.injection_threshold).toBe(0.6);
+		expect(normalizeSub({ ...base, screen_injection: false }).screen_injection).toBe(false);
+	});
+
+	// Absent is "apply the default", which depends on the action. Turning it
+	// into `false` here would switch the default screen off for every command.
+	it('leaves both undefined when the YAML sets neither', () => {
+		const sub = normalizeSub(base);
+		expect(sub.screen_injection).toBeUndefined();
+		expect(sub.injection_threshold).toBeUndefined();
+	});
+
+	it('drops malformed values rather than passing them to dispatch', () => {
+		const sub = normalizeSub({ ...base, screen_injection: 'yes', injection_threshold: 5 });
+		expect(sub.screen_injection).toBeUndefined();
+		expect(sub.injection_threshold).toBeUndefined();
+	});
+});
+
 describe('normalizer - github.label field passthrough', () => {
 	function normalizeSub(sub: Record<string, unknown>) {
 		const raw = yaml.dump({ subscriptions: [sub] });
@@ -509,6 +588,33 @@ describe('normalizer - action: autorun option passthrough', () => {
 			task_selection_mode: 'document',
 			ignore_model_hints: true,
 		});
+	});
+
+	it('carries a valid run_on target to the engine and drops a malformed one', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: {
+				documents: ['/proj/a.md'],
+				run_on: {
+					type: 'source',
+					endpointId: 'ep-ollama',
+					model: 'qwen3:latest',
+					contextTokens: 131072,
+				},
+			},
+		});
+		expect(sub.auto_run?.run_on).toEqual({
+			type: 'source',
+			endpointId: 'ep-ollama',
+			model: 'qwen3:latest',
+			contextTokens: 131072,
+		});
+
+		const bad = normalizeSub({
+			...base,
+			auto_run: { documents: ['/proj/a.md'], run_on: { type: 'source' } },
+		});
+		expect(bad.auto_run).not.toHaveProperty('run_on');
 	});
 
 	it('leaves both absent when the document does not set them', () => {

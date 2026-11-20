@@ -177,7 +177,7 @@ The rules that matter when authoring:
 
 - **`low`/`medium`/`high` are ladder POSITIONS, not literal provider values.** `high` means the ceiling of whatever that provider offers, so on Claude Code `effort="high"` becomes `max`, not `high`. Never write a provider-specific value here.
 - **`tier` and `effort` are different axes.** `tier` picks which model; `effort` picks how hard it thinks. A low tier at high effort is a sensible request.
-- **Not every provider can honor a tier.** Model tiers ship for Claude Code and Factory Droid; Codex, Copilot-CLI, and OpenCode discover their catalogues at runtime, so a tier hint there falls back to the agent's configured model and logs a warning. Effort works everywhere except OpenCode, which has no effort setting.
+- **Not every provider can honor a tier.** Model tiers ship for Claude Code, Factory Droid, and Codex (by model family: `low` / `medium` / `high` = the newest Luna / Sol / Astra model). Copilot-CLI and OpenCode discover their catalogues at runtime, so a tier hint there falls back to the agent's configured model and logs a warning. Effort works everywhere except OpenCode, which has no effort setting.
 - **Markers inside fenced code blocks are ignored**, so a playbook can document this syntax (as above) without changing its own behavior.
 
 Reach for a hint when a task's cost and its difficulty are genuinely mismatched - a document-wide `low` with a couple of inline `high` tasks is the common shape, and it is usually cheaper than the default. Omit markers entirely when the whole playbook wants one setting; the agent's own configuration is then used, which is the right default.

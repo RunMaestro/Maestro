@@ -8,6 +8,12 @@
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type { TokenProxyMode } from '../../shared/local-models/token-proxy';
+import type { LocalModelAssignments } from '../../shared/local-models/tasks';
+import type { ModelMap } from '../../shared/local-models/model-map';
+import type { HarnessTierDefaults } from '../../shared/modelTiers';
+import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 import type { FloatingWidgetBounds, FloatingWidgetId } from '../../shared/floatingWidgets';
 import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
@@ -137,6 +143,12 @@ export interface MaestroSettings {
 	usageRefreshIntervals: Record<string, number>;
 	/** Add a supervised Pianola watch for each newly created top-level agent. */
 	pianolaAutoWatchNewAgents: boolean;
+	/**
+	 * Peer consults and delegations one user message may spend, counted across
+	 * the whole chain (0 = off). Read by main and the CLI at every consult. See
+	 * src/shared/consultBudget.ts.
+	 */
+	maxConsultationsPerTurn: number;
 	pianolaAutoFixEnabled: boolean;
 	/** Minimum independent matching human samples for a proposal; default three. */
 	pianolaLearningMinSamples?: number;
@@ -158,11 +170,11 @@ export interface MaestroSettings {
 	// Throughput Gauge (Encore Feature): scope, metric, layout, style, and rate
 	// window. See src/shared/throughputGauge.ts.
 	throughputGaugeSettings: ThroughputGaugeSettings;
-	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
-	// the task uses the session's own agent (fully backward compatible).
-	utilityAgentId: string | null;
-	// Optional model override for the utility agent. When null, the agent default model is used.
-	utilityModelId: string | null;
+	// Model Map: the Agent and Housekeeping models System Two tasks point at.
+	// Null until first saved; `readModelMap()` then builds it from the old
+	// `utilitySource` / `utilityAgentId` / `utilityModelId` keys, which nothing
+	// writes any more.
+	modelMap: ModelMap | null;
 	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's
 	// prune pass at startup; declared explicitly (rather than left to the index
 	// signature) so main-process readers get `number` instead of `any`.
@@ -170,6 +182,27 @@ export interface MaestroSettings {
 	// Collapse repeated Cue runs in the History panel into one row per trigger.
 	// Declared explicitly for the same reason as the retention days above.
 	groupCueEntries: boolean;
+	// Local Models endpoints (Ollama, LM Studio, OpenAI-compatible servers the
+	// user runs). API keys are referenced by env-var name, never stored here.
+	localModelEndpoints: LocalModelEndpoint[];
+	defaultTokenProxyMode: TokenProxyMode;
+	tokenProxyDefaultApplied: TokenProxyMode | null;
+	// Where Local Models downloads model files from (a mirror of Hugging Face
+	// for networks that block it). See shared/local-models/download-base.ts.
+	localModelsDownloadBase: string;
+	// Which source each Local Models task runs on. Sparse: a task with no entry
+	// uses its registry default. See shared/local-models/tasks.ts.
+	localModelAssignments: LocalModelAssignments;
+	// Where each harness launches a model tier (low, medium, high) for an agent
+	// that does not set the tier itself. Sparse: an absent tier uses the
+	// built-in table. See resolveTierTarget in shared/modelTiers.ts.
+	harnessTierDefaults: HarnessTierDefaults;
+	// Include Cue runs in the semantic index. Declared explicitly because the
+	// main process reads it (local-models/semantic-index-startup.ts).
+	semanticIndexCue: boolean;
+	// When a finished turn is spoken about (off, unfocused, always). Declared
+	// explicitly because the main process reads it (local-models/spoken-notices.ts).
+	spokenNotices: SpokenNoticeMode;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

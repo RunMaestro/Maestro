@@ -4,6 +4,11 @@
 # directory from the Mintlify build to keep the deploy green.
 agent-guides/
 
+# Internal architecture notes and ADRs (structured markdown with YAML front
+# matter and `[[wiki-links]]` for DocGraph, not part of docs.json navigation).
+# Same MDX-hostile `{...}` type examples as above.
+architecture/
+
 # Internal architecture note, not user documentation and not in the navigation.
 # It documents how the env-var layers are composed in the main process.
 env-vars.md
@@ -12,3 +17,12 @@ env-vars.md
 # navigation. They carry TypeScript wire types that are not meant for the site.
 sketch-book-spec.md
 sketch-book-wire-contract.md
+
+# Internal design spec for the iOS client, not user documentation and not in the
+# navigation. It is read on GitHub (voice-mode.md links the tree there) and uses
+# YAML front matter, `[[wiki-links]]` and MDX-hostile `{...}` / `<...>` examples.
+ios-client/
+
+# Internal research ledgers for the token proxy, not user documentation and not
+# in the navigation. They hold local working paths that must not publish.
+research/

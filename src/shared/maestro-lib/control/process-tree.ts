@@ -248,16 +248,24 @@ async function readProcessTableAsync(): Promise<ProcessTableRow[]> {
 	return rows.filter((row): row is ProcessTableRow => row !== null);
 }
 
-/** Descendants of every root in `roots`, nearest first, from one table read. */
-function descendantsOf(rows: ProcessTableRow[], roots: number[]): ProcessTableRow[] {
-	const childrenByParent = new Map<number, ProcessTableRow[]>();
+/**
+ * Descendants of every root in `roots`, nearest first, from one table read.
+ *
+ * Generic over the row so any process table with a parent pid can walk it: the
+ * kill path reads start times, the Application Stats panel reads memory and CPU.
+ */
+export function descendantsOf<Row extends { pid: number; ppid: number }>(
+	rows: readonly Row[],
+	roots: readonly number[]
+): Row[] {
+	const childrenByParent = new Map<number, Row[]>();
 	for (const row of rows) {
 		const siblings = childrenByParent.get(row.ppid);
 		if (siblings) siblings.push(row);
 		else childrenByParent.set(row.ppid, [row]);
 	}
 
-	const descendants: ProcessTableRow[] = [];
+	const descendants: Row[] = [];
 	const seen = new Set<number>(roots);
 	const queue = [...roots];
 	while (queue.length > 0) {

@@ -1,4 +1,5 @@
 import { formatSize } from '../../../shared/formatters';
+import { isBinaryContent, isBinaryExtension } from '../../../shared/fileKinds';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
@@ -309,80 +310,6 @@ export function isReadableTextPreview(filename: string): boolean {
 
 	return READABLE_TEXT_BASENAMES.has(lowerFilename);
 }
-
-// ─── Binary Detection ─────────────────────────────────────────────────────────
-
-/** Check if content appears to be binary (null bytes or high non-printable ratio) */
-export const isBinaryContent = (content: string): boolean => {
-	if (content.includes('\0')) return true;
-
-	const sample = content.slice(0, 8192);
-	if (sample.length === 0) return false;
-
-	let nonPrintableCount = 0;
-	for (let i = 0; i < sample.length; i++) {
-		const code = sample.charCodeAt(i);
-		if (code < 9 || (code > 13 && code < 32) || (code >= 127 && code < 160)) {
-			nonPrintableCount++;
-		}
-	}
-
-	return nonPrintableCount / sample.length > 0.1;
-};
-
-/** Known binary file extensions (module-scope Set for O(1) lookup) */
-const BINARY_EXTENSIONS = new Set([
-	// macOS/iOS specific
-	'icns',
-	'car',
-	'actool',
-	// Design files
-	'psd',
-	'ai',
-	'sketch',
-	'fig',
-	'xd',
-	// Compiled/object files
-	'o',
-	'a',
-	'so',
-	'dylib',
-	'dll',
-	'class',
-	'pyc',
-	'pyo',
-	'wasm',
-	// Database files
-	'db',
-	'sqlite',
-	'sqlite3',
-	// Fonts
-	'ttf',
-	'otf',
-	'woff',
-	'woff2',
-	'eot',
-	// Archives
-	'zip',
-	'tar',
-	'gz',
-	'7z',
-	'rar',
-	'bz2',
-	'xz',
-	'tgz',
-	// Other binary
-	'exe',
-	'bin',
-	'dat',
-	'pak',
-]);
-
-/** Check if file extension indicates a known binary format */
-export const isBinaryExtension = (filename: string): boolean => {
-	const ext = filename.split('.').pop()?.toLowerCase();
-	return BINARY_EXTENSIONS.has(ext || '');
-};
 
 // ─── Gist Publishing ──────────────────────────────────────────────────────────
 

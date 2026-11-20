@@ -38,6 +38,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { openFileForUser } from '../../services/hostShell';
 
 interface MediaViewerProps {
 	/** Whether to mount an <audio> or a <video> element. */
@@ -486,7 +487,7 @@ export const MediaViewer = memo(function MediaViewer({
 	const isRemote = isRemoteMediaUrl(path);
 	const openExternally = useCallback(() => {
 		if (isRemoteMediaUrl(path)) void window.maestro.shell.openExternal(path);
-		else void window.maestro.shell.openPath(path);
+		else void openFileForUser(path);
 	}, [path]);
 
 	// Close the speed menu on any outside click. Both the button and the portaled

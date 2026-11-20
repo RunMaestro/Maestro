@@ -132,8 +132,8 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 	// get out of the way of a tiling default that has since moved to Ctrl+Cmd.
 	// Both interim eras are listed, plus Opt+J for the installs that never left
 	// it: a user who skipped a build carries whichever one they last received.
-	// Cmd+Shift+J itself is NOT listed - it is the destination, and remapping a
-	// chord onto itself would set needsMigration on every load.
+	// Cmd+Shift+J itself is NOT listed - it is the destination, and a rule that
+	// remaps a chord onto itself is dead weight.
 	jumpToBottom: {
 		fromKeys: [
 			['Alt', 'j'],
@@ -181,9 +181,17 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
  * (for store state), the raw migrated map (for persistence write-back), and
  * whether a migration write is needed.
  *
- * `migratedRaw` applies BOTH migrations so writing it back makes `needsMigration`
+ * `migratedRaw` applies EVERY migration so writing it back makes `needsMigration`
  * false on the next load. Writing only a partially-migrated map caused an
  * infinite re-persist loop via the settings file watcher.
+ *
+ * `needsMigration` is a DIFF against `saved`, never a flag each rule raises as it
+ * fires. Two rules can be inverses of each other - a default remap that targets a
+ * chord the reserved guard immediately strips back - and then a rule "fires" on
+ * every load while the value never moves. That reported a migration forever, and
+ * each write woke the file watcher and every peer window into another load, which
+ * spun the settings file at ~166 writes/sec and starved the renderer. Comparing
+ * the result to the input makes a no-op transform silent by construction.
  */
 function migrateShortcuts(
 	saved: Record<string, Shortcut>,
@@ -194,16 +202,9 @@ function migrateShortcuts(
 	needsMigration: boolean;
 } {
 	const migrated: Record<string, Shortcut> = {};
-	let needsMigration = false;
 
 	for (const [id, shortcut] of Object.entries(saved)) {
-		const migratedKeys = shortcut.keys.map((key) => {
-			if (MAC_ALT_CHAR_MAP[key]) {
-				needsMigration = true;
-				return MAC_ALT_CHAR_MAP[key];
-			}
-			return key;
-		});
+		const migratedKeys = shortcut.keys.map((key) => MAC_ALT_CHAR_MAP[key] ?? key);
 		migrated[id] = { ...shortcut, keys: migratedKeys };
 	}
 
@@ -213,7 +214,6 @@ function migrateShortcuts(
 		const current = migrated[id];
 		if (current && remap.fromKeys.some((from) => shortcutKeysEqual(current.keys, from))) {
 			migrated[id] = { ...current, keys: remap.toKeys };
-			needsMigration = true;
 		}
 	}
 
@@ -232,8 +232,15 @@ function migrateShortcuts(
 			...shortcut,
 			keys: fallback && !findReservedShortcutCombo(fallback) ? fallback : [],
 		};
-		needsMigration = true;
 	}
+
+	// A migration is worth persisting only when it actually MOVED something. A
+	// rule that fires and lands on the value it started from (a default remap the
+	// reserved guard undoes on the same pass) must stay silent, or the write wakes
+	// the file watcher and every peer window into another identical load forever.
+	const needsMigration = Object.entries(migrated).some(
+		([id, shortcut]) => !shortcutKeysEqual(shortcut.keys, saved[id]?.keys ?? [])
+	);
 
 	// Merge: use default labels (in case they changed) but preserve user's custom keys
 	const merged: Record<string, Shortcut> = {};

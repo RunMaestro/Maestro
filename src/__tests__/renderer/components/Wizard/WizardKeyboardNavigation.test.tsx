@@ -21,7 +21,8 @@ import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="x-icon" className={className} style={style} />
 	),
@@ -75,6 +76,12 @@ vi.mock('lucide-react', () => ({
 	),
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="trash-icon" className={className} style={style} />
+	),
+	Users: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="users-icon" className={className} style={style} />
+	),
+	GitBranch: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="git-branch-icon" className={className} style={style} />
 	),
 	RefreshCw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="refresh-icon" className={className} style={style} />

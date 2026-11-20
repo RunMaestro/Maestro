@@ -22,6 +22,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { agentIdFromProcessId } from './process-ids';
 import { execGit } from './remote-git';
 import type { SshRemoteConfig } from '../../shared/types';
 
@@ -107,12 +108,6 @@ async function realpathOrSelf(p: string): Promise<string> {
 	} catch {
 		return p;
 	}
-}
-
-/** `{agentId}-ai-{tabId}`, `{agentId}-batch-...`, etc. -> `{agentId}`. */
-function agentIdFromProcessId(processId: string): string {
-	const match = /^(.+?)-(?:ai|batch|cue|synopsis)(?:-|$)/.exec(processId);
-	return match ? match[1] : processId;
 }
 
 /**

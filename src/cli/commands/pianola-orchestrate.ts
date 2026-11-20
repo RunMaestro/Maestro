@@ -71,6 +71,7 @@ import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import { ExitCode, exitWith } from '../exit-codes';
 import { tabProcessId } from '../../shared/maestro-lib/runtime/server-frames';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
@@ -810,7 +811,7 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 	const fail = (message: string): never => {
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	const raw = readPlanInput(options, fail);
@@ -832,7 +833,7 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 			console.error('Plan is invalid:');
 			for (const e of errors) console.error(`  - ${e}`);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -966,7 +967,7 @@ export function pianolaPlanShow(planId: string, options: PianolaPlanShowOptions)
 		const message = `No Pianola plan with id "${planId}".`;
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 	if (options.json) {
@@ -1007,7 +1008,7 @@ export async function pianolaOrchestrate(
 		const message = `No Pianola plan with id "${planId}". Save one first with: pianola plan set --file <plan.json>`;
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 	const program = plan.programId
@@ -1057,7 +1058,7 @@ export async function pianolaOrchestrate(
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[orchestrator] could not connect to Maestro: ${message}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -1260,7 +1261,11 @@ export async function pianolaOrchestrate(
 			).length;
 			if (activeCount >= currentLimit)
 				return { success: false, error: 'program concurrency limit reached' };
-			const res = await runDispatch(agentId, prompt, { newTab: true, background: true });
+			const res = await runDispatch(agentId, prompt, {
+				newTab: true,
+				background: true,
+				skipConsultBudget: true,
+			});
 			// Dispatch success is delivery, not a run receipt. Never retry a delivered
 			// but unaddressable prompt: that could duplicate work. The engine parks it.
 			const tabId = res.tabId ?? res.sessionId ?? undefined;
@@ -1313,7 +1318,11 @@ export async function pianolaOrchestrate(
 			try {
 				if (task.tabId) historyCache.delete(task.tabId);
 				if (programPausedNow()) return { success: false, error: 'program paused' };
-				const res = await runDispatch(agentId, fixPrompt, { newTab: true, background: true });
+				const res = await runDispatch(agentId, fixPrompt, {
+					newTab: true,
+					background: true,
+					skipConsultBudget: true,
+				});
 				const tabId = res.tabId ?? res.sessionId;
 				if (tabId) historyCache.delete(tabId);
 				const uncertain = !res.success && !UNDISPATCHED_CODES.has(res.code ?? '');

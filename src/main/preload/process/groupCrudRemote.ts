@@ -1,5 +1,9 @@
 import { ipcRenderer } from 'electron';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../../shared/groupSettingsUpdate';
 
 export function createGroupCrudRemoteApi() {
 	return {
@@ -82,6 +86,38 @@ export function createGroupCrudRemoteApi() {
 		 */
 		sendRemoteUpdateGroupResponse: (responseChannel: string, success: boolean): void => {
 			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote writes of a group's Group Settings profile and pill
+		 * label. Uses request-response pattern with a unique responseChannel; the
+		 * reply is the stored profile and, for a publish, what it reached.
+		 */
+		onRemoteUpdateGroupSettings: (
+			callback: (
+				groupId: string,
+				request: GroupSettingsUpdateRequest,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				groupId: string,
+				request: GroupSettingsUpdateRequest,
+				responseChannel: string
+			) => callback(groupId, request, responseChannel);
+			ipcRenderer.on('remote:updateGroupSettings', handler);
+			return () => ipcRenderer.removeListener('remote:updateGroupSettings', handler);
+		},
+
+		/**
+		 * Send response for remote update group settings
+		 */
+		sendRemoteUpdateGroupSettingsResponse: (
+			responseChannel: string,
+			result: GroupSettingsUpdateResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

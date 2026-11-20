@@ -15,6 +15,7 @@ import {
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
 import { buildConcertoCommands } from './commands/concertoCommands';
@@ -32,6 +33,8 @@ import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { isImeComposing } from '../../utils/ime';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
+import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { visibleAiTabs } from '../../utils/tabHelpers';
@@ -65,6 +68,7 @@ import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
 import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { buildDelegationGraphCommands } from './commands/delegationGraphCommands';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { buildStatsIndexingCommands } from './commands/statsIndexingCommands';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
@@ -74,6 +78,7 @@ import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
 import { areToastsEnabled } from '../../../shared/toastDuration';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
+import { buildVoiceCommands } from './commands/voiceCommands';
 import {
 	buildGroupChatCommands,
 	buildGroupChatJumpCommands,
@@ -112,6 +117,7 @@ import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { hostShellAvailable } from '../../services/hostShell';
 import {
 	buildGroupWindowMoveTargets,
 	buildWindowMoveTargets,
@@ -483,6 +489,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// The palette is the third surface for the git action set, after the header
 	// branch pill and the Left Bar right-click menu.
 	const gitActions = useGitAgentActions(activeSession);
+	// Same arrangement for voice - see `buildVoiceCommands`.
+	const voiceActions = useVoiceAgentActions(activeSession);
+	const voiceTranscriptVisible = useVoiceUiStore((s) => s.transcriptVisible);
+	const toggleVoiceTranscript = useVoiceUiStore((s) => s.toggleTranscript);
 	// Output search is scoped per agent+AI-tab; open the active window's slot so
 	// the Find bar doesn't follow the user to other agents/tabs.
 	const openActiveOutputSearch = useCallback(
@@ -633,7 +643,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		settingsConflictCount,
 		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
 		addableHostedAgentCount,
-		openAddHostedAgent: () => openModal('addHostedAgent'),
+		openAddHostedAgent: () => openUiSurface({ surface: 'add-hosted-agent' }),
 		setQuickActionOpen,
 	});
 
@@ -659,6 +669,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			hotkey: quickChatHotkey,
 			openQuickChat: () => void window.maestro.quickChat.window('show'),
 			setQuickActionOpen,
+		}),
+		...buildDelegationGraphCommands({
+			setQuickActionOpen,
+			openDelegationGraphShortcut: shortcuts.openDelegationGraph,
+			groups,
 		}),
 		...buildStatsIndexingCommands({
 			scanActive: statsIndexingActive,
@@ -730,7 +745,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openWizard,
 			getOpenInLabel,
 			platform: window.maestro?.platform || 'darwin',
-			openPath: window.maestro?.shell?.openPath,
+			// The host's file manager: no command for it on the web interface.
+			openPath: hostShellAvailable() ? window.maestro?.shell?.openPath : undefined,
 			onGoToNextUnread,
 			onGoToPreviousUnread,
 			onNavBack,
@@ -868,6 +884,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
 				showSnoozeList: shortcuts.showSnoozeList,
+				tabCleanupSuggestions: shortcuts.tabCleanupSuggestions,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
@@ -953,6 +970,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			activeSessionId,
 			activeGroupChatId,
 			activeTabType,
+			voiceEnabled: voiceActions.enabled,
 			ghCliAvailable,
 			setSessions,
 			setQuickActionOpen,
@@ -964,6 +982,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mainPanelRef,
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
+			documentChatShortcut: shortcuts.toggleDocumentChat,
 			toggleDesignModeShortcut: tabShortcuts?.toggleBrowserDesignMode,
 		}),
 		...buildSupportCommands({
@@ -1015,6 +1034,15 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			notifyToast,
 			openUrl,
 			logger,
+		}),
+		...buildVoiceCommands({
+			activeSession,
+			voiceActions,
+			openVoiceSetup: () => getModalActions().setVoiceSetupOpen(true),
+			transcriptVisible: voiceTranscriptVisible,
+			toggleTranscript: toggleVoiceTranscript,
+			setQuickActionOpen,
+			tabShortcuts,
 		}),
 		...buildRightPanelCommands({
 			autoRunDisabled: useSettingsStore.getState().autoRunDisabled,

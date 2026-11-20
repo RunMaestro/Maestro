@@ -6,7 +6,7 @@
 
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { NOT_RUNNING_MESSAGE } from './status';
 
 interface AppInfoResponse {
@@ -32,7 +32,7 @@ export async function version(cliVersion: string, options: VersionOptions = {}):
 			console.log(`maestro-cli ${cliVersion}`);
 			console.log(NOT_RUNNING_MESSAGE);
 		}
-		process.exit(ExitCode.NotRunning);
+		exitWith(ExitCode.NotRunning);
 	}
 
 	// The headless host serves no `get_app_info`: it is a build of the CLI, not
@@ -85,6 +85,6 @@ export async function version(cliVersion: string, options: VersionOptions = {}):
 		});
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(ExitCode.NotRunning);
+		exitWith(ExitCode.NotRunning);
 	}
 }

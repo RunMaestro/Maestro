@@ -292,6 +292,22 @@ describe('NodeContextMenu', () => {
 		});
 	});
 
+	describe('Header', () => {
+		it('names the right-clicked document, with its path as the tooltip', () => {
+			render(<NodeContextMenu {...createProps()} />);
+			const header = screen.getByTestId('context-menu-header');
+			expect(header.textContent).toBe('Test Document');
+			expect(header.getAttribute('title')).toBe('/test/path/document.md');
+		});
+
+		it('names an external node by its domain', () => {
+			render(<NodeContextMenu {...createProps({ nodeData: mockExternalNodeDataSingle })} />);
+			expect(screen.getByTestId('context-menu-header').textContent).toBe(
+				mockExternalNodeDataSingle.domain
+			);
+		});
+	});
+
 	describe('Theme Styling', () => {
 		it('applies theme colors to menu', () => {
 			const props = createProps();

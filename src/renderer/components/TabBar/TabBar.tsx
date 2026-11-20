@@ -53,6 +53,7 @@ function TabBarInner({
 	onTabReorder,
 	onTabStar,
 	onTabMarkUnread,
+	onPreviewContinuity,
 	onMergeWith,
 	onSendToAgent,
 	onSummarizeAndContinue,
@@ -648,6 +649,7 @@ function TabBarInner({
 		onRename: handleRenameRequest,
 		onStar: onTabStar && tab.agentSessionId ? onTabStar : undefined,
 		onMarkUnread: onTabMarkUnread || undefined,
+		onPreviewContinuity: onPreviewContinuity || undefined,
 		onMergeWith: onMergeWith || undefined,
 		onSendToAgent: onSendToAgent || undefined,
 		onSummarizeAndContinue:

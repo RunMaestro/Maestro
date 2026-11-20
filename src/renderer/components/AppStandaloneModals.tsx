@@ -1,4 +1,5 @@
 import { NotificationCenterHost } from './NotificationCenter';
+import { OffboardingProgressHost } from './GroupLifecycle/OffboardingProgressHost';
 import { useSettingsStore } from '../stores/settingsStore';
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
@@ -36,7 +37,6 @@ import { HostFolderPicker } from './HostFolderPicker';
 import { AgentBundleModals } from './Bundles/AgentBundleModals';
 import type { UnifiedHistoryTabProps } from './DirectorNotes/UnifiedHistoryTab';
 import { MoveToHostModalHost } from './MoveToHostModal';
-import { AddHostedAgentModalHost } from './AddHostedAgentModal';
 
 import type {
 	Theme,
@@ -329,7 +329,7 @@ function AppStandaloneModalsInner({
 			<HostFolderPicker theme={theme} />
 			<AgentBundleModals theme={theme} />
 			<MoveToHostModalHost theme={theme} />
-			<AddHostedAgentModalHost theme={theme} />
+			<OffboardingProgressHost theme={theme} />
 			{notificationCenterEnabled && <NotificationCenterHost theme={theme} />}
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal

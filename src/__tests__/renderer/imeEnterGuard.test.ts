@@ -56,6 +56,8 @@ export const ALLOWLIST: Record<string, string> = {
 		'Document graph canvas: Enter previews document node (no text inputs)',
 
 	// Modals and dialogs where Enter activates buttons or confirms actions (no text inputs)
+	'components/ConfirmModal.tsx':
+		'Confirm dialog: Enter on the Cancel button only stops propagation; no text input',
 	'components/DeleteAgentConfirmModal.tsx':
 		'Confirmation dialog buttons: Enter activates Cancel or Delete button',
 	'components/DeleteWorktreeModal.tsx':

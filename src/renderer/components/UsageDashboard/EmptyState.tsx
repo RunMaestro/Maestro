@@ -10,6 +10,7 @@
  * - Subtle chart illustration/icon
  * - Friendly, encouraging message
  * - Reusable component with customizable message
+ * - Optional action button, for an empty state the user can do something about
  */
 
 import { memo } from 'react';
@@ -23,12 +24,15 @@ interface EmptyStateProps {
 	title?: string;
 	/** Optional custom message (default: "Start using Maestro to see your stats!") */
 	message?: string;
+	/** Optional button under the message: where the user goes to fill this state. */
+	action?: { label: string; onClick: () => void };
 }
 
 export const EmptyState = memo(function EmptyState({
 	theme,
 	title = 'No usage data yet',
 	message = 'Start using Maestro to see your stats!',
+	action,
 }: EmptyStateProps) {
 	return (
 		<div
@@ -61,6 +65,18 @@ export const EmptyState = memo(function EmptyState({
 				</p>
 				<p className="text-sm">{message}</p>
 			</div>
+
+			{action && (
+				<button
+					type="button"
+					onClick={action.onClick}
+					className="px-4 py-2 rounded text-sm"
+					style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+					data-testid="usage-dashboard-empty-action"
+				>
+					{action.label}
+				</button>
+			)}
 		</div>
 	);
 });

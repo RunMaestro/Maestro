@@ -3,11 +3,12 @@
  *
  * Keeps `src/main/index.ts` to one call: everything Electron-specific the
  * service needs (userData, the macOS accessibility check, Maestro's own pids,
- * the renderer status push, the consult route for digests) is resolved here.
+ * the renderer status push, the two digest writers) is resolved here.
  */
 
 import { app, shell, systemPreferences, type BrowserWindow } from 'electron';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import { createHistoryDigestWriter } from '../local-models/history-digests';
 import { logger } from '../utils/logger';
 import { createDigestConsult } from './digest-consult';
 import { initComputerHistoryService } from './index';
@@ -38,6 +39,7 @@ function maestroPids(): number[] {
 
 export function createComputerHistoryForApp(deps: ComputerHistoryAppDeps): ComputerHistoryService {
 	const digestConsult = createDigestConsult(deps.getWindowForSession);
+	const localDigestWriter = createHistoryDigestWriter({ safeSend: deps.safeSend });
 	return initComputerHistoryService({
 		userDataDir: app.getPath('userData'),
 		isPackaged: app.isPackaged,
@@ -55,6 +57,7 @@ export function createComputerHistoryForApp(deps: ComputerHistoryAppDeps): Compu
 		onStatusChange: (status: ComputerHistoryStatus) =>
 			deps.safeSend('computerHistory:statusChanged', status),
 		getConsult: () => digestConsult,
+		getLocalDigestWriter: () => localDigestWriter,
 		log: (level, message) => {
 			if (level === 'error') logger.error(message, LOG_CONTEXT);
 			else if (level === 'warn') logger.warn(message, LOG_CONTEXT);

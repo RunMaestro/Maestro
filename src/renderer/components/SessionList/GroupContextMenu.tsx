@@ -9,12 +9,16 @@ import {
 	FolderUp,
 	PackagePlus,
 	Plus,
+	Settings,
 	Trash2,
+	Waypoints,
 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
+import { isWorktreeGroup } from '../../../shared/types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ContextMenuHeader, contextMenuIconStyle } from '../ui/ContextMenuHeader';
 
 interface GroupContextMenuProps {
 	x: number;
@@ -25,6 +29,10 @@ interface GroupContextMenuProps {
 	groupsPlusEnabled?: boolean;
 	memberCount: number;
 	onRename: () => void;
+	/** Open Group Settings (the defaults for new agents) on this group. */
+	onGroupSettings?: () => void;
+	/** Open the Delegation Graph on this group. */
+	onOpenDelegationGraph?: () => void;
 	onNewAgent: () => void;
 	/** Import a bundled agent into this group. */
 	onImportAgent?: () => void;
@@ -56,6 +64,8 @@ export function GroupContextMenu({
 	groupsPlusEnabled = false,
 	memberCount,
 	onRename,
+	onGroupSettings,
+	onOpenDelegationGraph,
 	onNewAgent,
 	onImportAgent,
 	onDelete,
@@ -101,10 +111,14 @@ export function GroupContextMenu({
 		moveSubmenuOpen || windowSubmenuOpen
 	);
 
+	// Every row reads the same: label in the main text color, icon in the
+	// accent. Only Delete Group breaks the pattern, in the error color.
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
+			className="fixed z-50 pb-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -118,14 +132,7 @@ export function GroupContextMenu({
 				overflowY: 'auto',
 			}}
 		>
-			<div
-				className="px-3 py-1 text-2xs uppercase tracking-wider opacity-60 flex items-center gap-2"
-				style={{ color: theme.colors.textDim }}
-			>
-				<span>{group.emoji}</span>
-				<span className="truncate max-w-[12rem]">{group.name}</span>
-			</div>
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			<ContextMenuHeader theme={theme} label={group.name} emoji={group.emoji} />
 
 			{/* First on purpose: adding an agent is the most common reason to open this menu. */}
 			<button
@@ -135,9 +142,9 @@ export function GroupContextMenu({
 					onDismiss();
 				}}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.accent }}
+				style={{ color: theme.colors.textMain }}
 			>
-				<Plus className="w-3.5 h-3.5" />
+				<Plus className="w-3.5 h-3.5" style={iconStyle} />
 				New Agent in Group...
 			</button>
 
@@ -152,7 +159,7 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<PackagePlus className="w-3.5 h-3.5" />
+					<PackagePlus className="w-3.5 h-3.5" style={iconStyle} />
 					Import Agent...
 				</button>
 			)}
@@ -166,9 +173,44 @@ export function GroupContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Edit3 className="w-3.5 h-3.5" />
+				<Edit3 className="w-3.5 h-3.5" style={iconStyle} />
 				Rename Group...
 			</button>
+
+			{/* A worktree group is made by Maestro, and its agents are made by
+			    create-worktree, which copies the parent agent and never opens the
+			    create form. Defaults for that form would do nothing there. */}
+			{onGroupSettings && !isWorktreeGroup(group) && (
+				<button
+					type="button"
+					onClick={() => {
+						onGroupSettings();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Settings className="w-3.5 h-3.5" style={iconStyle} />
+					Group Settings...
+				</button>
+			)}
+
+			{/* Offered on a worktree group too: its agents hold peer grants like
+			    any others, so its graph is as real as a hand-made group's. */}
+			{onOpenDelegationGraph && (
+				<button
+					type="button"
+					onClick={() => {
+						onOpenDelegationGraph();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Waypoints className="w-3.5 h-3.5" style={iconStyle} />
+					Delegation Graph
+				</button>
+			)}
 
 			{showMoveToWindow && (
 				<div>
@@ -180,7 +222,7 @@ export function GroupContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<AppWindow className="w-3.5 h-3.5" />
+						<AppWindow className="w-3.5 h-3.5" style={iconStyle} />
 						Move Group to Window...
 					</button>
 					{windowSubmenuOpen && (
@@ -192,9 +234,9 @@ export function GroupContextMenu({
 									onDismiss();
 								}}
 								className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-								style={{ color: theme.colors.accent }}
+								style={{ color: theme.colors.textMain }}
 							>
-								<Plus className="w-3.5 h-3.5" />
+								<Plus className="w-3.5 h-3.5" style={iconStyle} />
 								New Window
 							</button>
 							{windowTargets.map((target) => (
@@ -210,7 +252,7 @@ export function GroupContextMenu({
 									className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent"
 									style={{ color: theme.colors.textMain }}
 								>
-									<AppWindow className="w-3.5 h-3.5 shrink-0" />
+									<AppWindow className="w-3.5 h-3.5 shrink-0" style={iconStyle} />
 									<span className="truncate">{target.label}</span>
 								</button>
 							))}
@@ -229,7 +271,7 @@ export function GroupContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<FolderInput className="w-3.5 h-3.5" />
+						<FolderInput className="w-3.5 h-3.5" style={iconStyle} />
 						Move into...
 					</button>
 					{moveSubmenuOpen &&
@@ -261,7 +303,7 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<FolderUp className="w-3.5 h-3.5" />
+					<FolderUp className="w-3.5 h-3.5" style={iconStyle} />
 					Move to top level
 				</button>
 			)}
@@ -274,9 +316,9 @@ export function GroupContextMenu({
 						onDismiss();
 					}}
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.accent }}
+					style={{ color: theme.colors.textMain }}
 				>
-					<FolderPlus className="w-3.5 h-3.5" />
+					<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 					New group inside...
 				</button>
 			)}
@@ -291,7 +333,11 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					{group.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+					{group.hidden ? (
+						<Eye className="w-3.5 h-3.5" style={iconStyle} />
+					) : (
+						<EyeOff className="w-3.5 h-3.5" style={iconStyle} />
+					)}
 					{group.hidden ? 'Unhide Group' : 'Hide Group'}
 				</button>
 			)}

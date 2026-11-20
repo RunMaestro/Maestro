@@ -8,6 +8,7 @@ import {
 	writeSettingValue,
 } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface RemoveSshRemoteOptions {
 	json?: boolean;
@@ -25,7 +26,7 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 		} else {
 			console.error(formatError(msg));
 		}
-		return process.exit(1);
+		return exitWith(ExitCode.GeneralError);
 	}
 
 	const remotes = readSshRemotes();
@@ -38,7 +39,7 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const removedName = remotes[index].name;

@@ -109,4 +109,9 @@ describe('maestro-cli under plain Node', () => {
 			);
 		expect(offenders, 'move the SQLite consumer behind a dynamic import()').toEqual([]);
 	});
+
+	it('loads media settings validation without pulling in the Dictation runtime', () => {
+		expect(graph.has(path.join(SRC, 'main/plugins/plugin-media-tools.ts'))).toBe(true);
+		expect(graph.has(path.join(SRC, 'main/local-models/dictation.ts'))).toBe(false);
+	});
 });

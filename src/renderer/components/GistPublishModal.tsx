@@ -7,6 +7,7 @@ import { Modal } from './ui/Modal';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { openUrl } from '../utils/openUrl';
 import { formatLogsForClipboard, hasThinkingEntries } from '../utils/contextExtractor';
+import { withSecretScreenConfirm } from '../services/secretScreen';
 
 export interface GistInfo {
 	gistUrl: string;
@@ -67,14 +68,26 @@ export function GistPublishModal({
 			setError(null);
 
 			try {
-				const result = await window.maestro.git.createGist(
-					filename,
-					effectiveContent,
-					'', // No description - file name serves as context
-					isPublic
+				// The main process screens the content for secrets and refuses on a
+				// finding. The shared confirm lists them (masked) and, on "Publish
+				// anyway", repeats this same publish with `allowSecrets`.
+				const { result, declined } = await withSecretScreenConfirm(
+					(allowSecrets) =>
+						window.maestro.git.createGist(
+							filename,
+							effectiveContent,
+							'', // No description - file name serves as context
+							isPublic,
+							undefined,
+							{ allowSecrets }
+						),
+					{ subject: 'this gist' }
 				);
 
-				if (result.success && result.gistUrl) {
+				if (declined) {
+					// Cancelled at the confirm: back to the publish view, no error.
+					setIsPublishing(false);
+				} else if (result.success && result.gistUrl) {
 					onSuccess(result.gistUrl, isPublic);
 					onClose();
 				} else {

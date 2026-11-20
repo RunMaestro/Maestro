@@ -27,6 +27,37 @@ export interface LiftedToPointer {
 /** The error code a refused send reports (`--json` output and bridge replies). */
 export const AGENT_LIFTED_CODE = 'AGENT_LIFTED';
 
+/**
+ * Stamped on a hosted agent's turn, so `maestro-cli ask` and `dispatch` inside it know their
+ * caller is a hosted agent: every turn `maestro-cli host` runs, and every turn a Maestro desktop
+ * runs for a message that arrived over the client protocol. Set it only through
+ * `hostedTurnEnv()`, so both hosts set it the same way.
+ */
+export const HOSTED_TURN_ENV_VAR = 'MAESTRO_HOSTED_TURN';
+
+/** The environment that marks a hosted agent's turn (`HOSTED_TURN_ENV_VAR`). */
+export function hostedTurnEnv(): Record<string, string> {
+	return { [HOSTED_TURN_ENV_VAR]: '1' };
+}
+
+/** The error code `hostedTurnTargetRefusal()` is reported with. */
+export const TARGET_OFF_HOST_CODE = 'TARGET_OFF_HOST';
+
+/**
+ * Why a consult or delegation from a hosted agent's turn cannot reach `target`, or undefined when
+ * the caller is not a hosted turn. Ask it only for a target the host does not hold (an id it
+ * cannot resolve, or a `peer:agent` route): the turn runs on the host, with the host's
+ * `maestro-cli`, so an agent on a conductor's machine is out of its reach until hosts can call
+ * back.
+ */
+export function hostedTurnTargetRefusal(
+	target: string,
+	env: Readonly<Record<string, string | undefined>>
+): string | undefined {
+	if (env[HOSTED_TURN_ENV_VAR] !== '1') return undefined;
+	return `"${target}" is not an agent on this host. This agent runs on a Federation host, so it can consult and delegate only to agents on the same host; an agent on a conductor's machine cannot be reached from here.`;
+}
+
 /** How a peer's agent is addressed on the command line: `peer:agentId`. */
 export function peerAgentRef(peer: string, agentId: string): string {
 	return `${peer}:${agentId}`;

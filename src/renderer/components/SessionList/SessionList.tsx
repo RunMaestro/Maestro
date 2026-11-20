@@ -39,6 +39,11 @@ import {
 	takeLeftBarPointerInput,
 } from '../../utils/sidebarReveal';
 import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
+import { VoiceStatusIndicator } from '../ACappella/VoiceStatusIndicator';
+import {
+	ConductorVoiceIndicator,
+	useConductorHoldsFloor,
+} from '../ACappella/ConductorVoiceIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -175,6 +180,11 @@ const LIVE_PILL_RESERVE = 48;
  */
 const NOW_PLAYING_COMPACT_RESERVE = 59;
 const NOW_PLAYING_LABEL_RESERVE = 181;
+/**
+ * The Conductor's voice-floor glyph beside the wordmark: a 12px icon plus the
+ * identity zone's 8px gap. Reserved only while it is drawn.
+ */
+const CONDUCTOR_FLOOR_RESERVE = 20;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -364,13 +374,17 @@ function SessionListInner(props: SessionListProps) {
 	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
 	// The label's own delta rides with it, since the reserve exists to hold it.
 	const livePillReserve = LIVE_PILL_RESERVE + headerTextDelta.liveLabel;
+	const conductorFloorReserve = useConductorHoldsFloor()
+		? CONDUCTOR_FLOOR_RESERVE * headerTextDelta.remScale
+		: 0;
 	const showWordmark =
 		leftSidebarWidthState >=
 		WORDMARK_MIN_WIDTH +
 			headerTextDelta.wordmark +
 			livePillReserve +
 			headerBadgeWidth +
-			nowPlayingReserve;
+			nowPlayingReserve +
+			conductorFloorReserve;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -1601,6 +1615,10 @@ function SessionListInner(props: SessionListProps) {
 									style={{ color: theme.colors.textMain }}
 								/>
 							)}
+							{/* The one status glyph in the identity zone, by design: in
+							    Conductor mode the voice floor belongs to Maestro itself,
+							    so it sits on Maestro's name rather than in the band. */}
+							<ConductorVoiceIndicator theme={theme} />
 						</div>
 
 						{/* Indicator band. `flex-1` is what centers it: it takes the space
@@ -1631,6 +1649,13 @@ function SessionListInner(props: SessionListProps) {
 							    the widget back with one click. Sheds its label on a narrow
 							    sidebar, the same way the LIVE pill below does. */}
 							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
+							{/* Voice session - the minimized HUD's home, and the same bargain
+							    as the now-playing pill above it: something that is running
+							    while its widget is away has to stay visible somewhere. */}
+							<VoiceStatusIndicator
+								theme={theme}
+								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH}
+							/>
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
@@ -1737,7 +1762,15 @@ function SessionListInner(props: SessionListProps) {
 					// The collapsed rail carries no media pill. The rail is an icon strip
 					// for agents, and a minimized player is restored by expanding the Left
 					// Bar, where the full pill lives.
+					//
+					// The voice indicator stays, because a live microphone has no other
+					// tell: audio evidences itself, so a hidden media control still
+					// announces what it is doing, while an open microphone's only sign is
+					// this glyph. Dropping it would make the collapsed rail the one place an
+					// open microphone is invisible - see the minimize/close note in
+					// `VoiceHud.tsx`.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
+						<VoiceStatusIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<BusyWand
 								busy={isAnyBusy}
@@ -1746,6 +1779,7 @@ function SessionListInner(props: SessionListProps) {
 								color={theme.colors.accent}
 							/>
 						</GhostIconButton>
+						<ConductorVoiceIndicator theme={theme} />
 						{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
@@ -2671,6 +2705,10 @@ function SessionListInner(props: SessionListProps) {
 						modalActions.setRenameGroupColor(groupContextMenuGroup.color);
 						modalActions.setRenameGroupModalOpen(true);
 					}}
+					onGroupSettings={() => getModalActions().openGroupSettings(groupContextMenuGroup.id)}
+					onOpenDelegationGraph={() =>
+						getModalActions().openDelegationGraph(groupContextMenuGroup.id)
+					}
 					onNewAgent={() => {
 						// Expand the group so the new agent is visible when it lands here.
 						if (groupContextMenuGroup.collapsed) {

@@ -5,6 +5,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	HOSTED_TURN_ENV_VAR,
+	hostedTurnEnv,
+	hostedTurnTargetRefusal,
 	liftBusyReason,
 	liftedAgentRef,
 	liftedOwnerOfProcess,
@@ -102,5 +105,24 @@ describe('liftBusyReason', () => {
 
 	it('counts the agent state when no tab says busy', () => {
 		expect(liftBusyReason({ name: 'Docs', state: 'busy', aiTabs: [] })).toContain('"Docs" is busy');
+	});
+});
+
+describe('hostedTurnTargetRefusal', () => {
+	it('says nothing outside a hosted turn', () => {
+		expect(hostedTurnTargetRefusal('laptop-agent', {})).toBeUndefined();
+	});
+
+	it("names the target and why a hosted agent's turn cannot reach it", () => {
+		const refusal = hostedTurnTargetRefusal('laptop-agent', { [HOSTED_TURN_ENV_VAR]: '1' });
+		expect(refusal).toContain('"laptop-agent" is not an agent on this host');
+		expect(refusal).toContain('only to agents on the same host');
+	});
+});
+
+describe('hostedTurnEnv', () => {
+	it('is the one marker both hosts stamp, and the refusal reads it', () => {
+		expect(hostedTurnEnv()).toEqual({ MAESTRO_HOSTED_TURN: '1' });
+		expect(hostedTurnTargetRefusal('laptop-agent', hostedTurnEnv())).toBeDefined();
 	});
 });

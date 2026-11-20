@@ -120,6 +120,14 @@ describe('logsToQuickChatMessages', () => {
 		expect(logsToQuickChatMessages([log('1', 'stdout', '  \n')])).toEqual([]);
 	});
 
+	it('can project a full document conversation without applying the quick window cap', () => {
+		const logs = Array.from({ length: QUICK_CHAT_MAX_MESSAGES + 5 }, (_, i) =>
+			log(String(i), i % 2 === 0 ? 'user' : 'stdout', `m${i}`)
+		);
+		const messages = logsToQuickChatMessages(logs, { maxMessages: Infinity });
+		expect(messages).toHaveLength(logs.length);
+		expect(messages[0].text).toBe('m0');
+	});
 	it('keeps only the newest messages', () => {
 		const logs = Array.from({ length: QUICK_CHAT_MAX_MESSAGES + 5 }, (_, i) =>
 			log(String(i), i % 2 === 0 ? 'user' : 'stdout', `m${i}`)

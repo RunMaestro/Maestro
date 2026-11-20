@@ -14,7 +14,12 @@
 
 import { isWebDesktop } from './runtimeContext';
 
-/** The host's `process.platform` value (`darwin`, `win32`, `linux`), or '' when unknown. */
+/**
+ * The raw `process.platform` string as the preload bridge reported it, or '' in
+ * a context with no bridge. Exported for the callers that need the value itself
+ * rather than a boolean - a platform-keyed lookup table has no business being
+ * rewritten as a chain of `isMacOSPlatform()` tests.
+ */
 export function getPlatform(): string {
 	return (window as any).maestro?.platform ?? '';
 }

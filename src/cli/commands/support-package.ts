@@ -7,6 +7,10 @@
  * The section toggles mirror the Debug Package modal's checkboxes. Auto Run
  * live state is held only by the app windows, so main asks each of them for it
  * and the package records why when none can answer.
+ *
+ * The package is screened for secrets before it is written. A finding writes no
+ * zip and prints the masked list; `--allow-secrets` is the CLI's form of the
+ * modal's "Create anyway".
  */
 
 import { withMaestroClient } from '../services/maestro-client';
@@ -15,6 +19,11 @@ import { failFromError } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
 import { formatSize } from '../../shared/formatters';
 import type { DebugPackageOptions } from '../../shared/debugPackage';
+import {
+	isSecretScreenRefusal,
+	secretScreenReportLines,
+	type SecretScreenFields,
+} from '../../shared/secretScan';
 
 /** Log collection and zipping can take a while on a large install. */
 const CREATE_TIMEOUT_MS = 120_000;
@@ -27,6 +36,7 @@ interface SupportPackageOptions {
 	sessions?: boolean;
 	groupChats?: boolean;
 	batchState?: boolean;
+	allowSecrets?: boolean;
 	json?: boolean;
 }
 
@@ -38,9 +48,10 @@ export async function supportPackage(options: SupportPackageOptions): Promise<vo
 		includeSessions: options.sessions !== false,
 		includeGroupChats: options.groupChats !== false,
 		includeBatchState: options.batchState !== false,
+		...(options.allowSecrets === true ? { allowSecrets: true } : {}),
 	};
 
-	let result: {
+	let result: SecretScreenFields & {
 		success: boolean;
 		path?: string;
 		filesIncluded?: string[];
@@ -57,6 +68,25 @@ export async function supportPackage(options: SupportPackageOptions): Promise<vo
 		);
 	} catch (error) {
 		failFromError(error, options.json);
+	}
+
+	if (isSecretScreenRefusal(result)) {
+		const message = result.error || 'Possible secrets found in the support package';
+		if (options.json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: message,
+					code: result.code,
+					secretFindings: result.secretFindings,
+					...(result.secretScreenNote ? { secretScreenNote: result.secretScreenNote } : {}),
+				})
+			);
+		} else {
+			console.error(`Error: ${message}`);
+			for (const line of secretScreenReportLines(result)) console.error(line);
+		}
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (!result.success) {

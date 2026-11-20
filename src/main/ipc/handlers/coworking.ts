@@ -8,6 +8,10 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { coworkingRegistry } from '../../coworking/coworking-registry';
+import type {
+	CoworkingBrowserCaller,
+	CoworkingBrowserPolicies,
+} from '../../../shared/coworkingBrowser';
 import { setBrowserResolver, setTerminalBufferResolver } from '../../coworking/coworking-tools';
 import {
 	getInstallStatus,
@@ -126,14 +130,16 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				inputs: CoworkingBrowserInput[],
 				interactionEnabled: boolean,
 				agentType?: string,
-				confirmPolicy?: BrowserConfirmPolicy
+				confirmPolicy?: BrowserConfirmPolicy,
+				providerPolicies?: CoworkingBrowserPolicies
 			): Promise<void> => {
 				coworkingRegistry.syncSessionBrowsers(
 					sessionId,
 					inputs,
 					interactionEnabled,
 					agentType,
-					confirmPolicy
+					confirmPolicy,
+					providerPolicies
 				);
 			}
 		)
@@ -220,7 +226,12 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	// mounted hidden webview and only activates the tab as a fallback) and await
 	// the BrowserOpResult on a unique, sender-validated responseChannel.
 	setBrowserResolver(
-		async (sessionId: string, tabUuid: string, op: BrowserOp): Promise<BrowserOpResult> => {
+		async (
+			sessionId: string,
+			tabUuid: string,
+			op: BrowserOp,
+			caller?: CoworkingBrowserCaller
+		): Promise<BrowserOpResult> => {
 			const win = deps.getMainWindow();
 			if (!win || win.isDestroyed()) {
 				throw new Error('Coworking: main window is not available to drive browser tab');
@@ -258,7 +269,7 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 			// holds even if the renderer's local settings read is stale. The renderer
 			// ORs this with its own computation (defense in depth, never weakening).
 			const needsConfirm = browserOpNeedsConfirm(
-				coworkingRegistry.getBrowserConfirmPolicy(sessionId),
+				coworkingRegistry.getBrowserConfirmPolicy(sessionId, caller?.provider),
 				op.kind
 			);
 			try {
@@ -268,7 +279,8 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					sessionId,
 					op,
 					responseChannel,
-					needsConfirm
+					needsConfirm,
+					caller
 				);
 			} catch (err) {
 				clearTimeout(timer);

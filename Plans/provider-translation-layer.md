@@ -1,8 +1,13 @@
 # Provider translation and reversible switching
 
-Research baseline: 2026-10-13, branch `provider-translation-layer`, commit `0dca5bd096`.
-Status (2026-10-14): Claude Code/Codex converters and one CLI/UX migration path are implemented. Tests and isolated acceptance are authored but NOT EXECUTED. Both directions remain unverified. The original guinea pig and provider homes were read only.
+## Current status (2026-10-17)
 
+| Direction            | Versions (source -> destination) | Verification   | Native evidence date                |
+| -------------------- | -------------------------------- | -------------- | ----------------------------------- |
+| Claude Code -> Codex | `2.1.296` -> `0.162.1`           | **Unverified** | None; acceptance skipped 2026-10-17 |
+| Codex -> Claude Code | `0.162.1` -> `2.1.296`           | **Unverified** | None; acceptance skipped 2026-10-17 |
+
+These are the minimum versions and sole declared schema-coverage versions in `src/shared/maestro-lib/translation/support.ts`, not native-certified versions. No direction is verified for any version. **Native acceptance skipped; certification deferred** under the explicit unattended-run inputs. No native hops ran or evidence files were generated. SSH acceptance was also skipped; SSH Ensemble choices remain disabled. See the [Hardening log](#hardening-log) for the acceptance record and [[provider-translation-native-formats]] for the mapping.
 Live QA update (2026-10-17): exercised isolated Claude Code 2.1.302 / Codex 0.163.0 sessions after explicit test authorization. CLI preflight exposed undeclared installed versions and the selected Claude profile's shared `projects` link. Native resume also exposed invalid foreign message IDs and provider-added persistence metadata. The implementation now declares these versions, pins the canonical selected projects directory, preserves nested-link checks, uses provider-assigned Codex IDs, and estimates capacity from projected history instead of archived diagnostics.
 
 The production translation service completed Claude -> Codex -> Claude with real native files and Codex app-server, using isolated stores and a no-op desktop notification boundary. `maestro-cli send --session ... --read-only --no-system-prompt --no-history --no-synopsis` resumed both destinations and recalled the original conversation-only marker. A further CLI turn read the carried instruction, memory, skill and subagent-definition markers. Draft and queue fixtures survived the service round trip. Skill execution, subagent invocation, arbitrary tool histories, attachments and repeated incremental synchronization remain uncertified; both directions remain unverified. The running desktop must be rebuilt before its full CLI migration path can use these source fixes.
@@ -208,102 +213,174 @@ The translation tests above are under `src/__tests__/shared/maestro-lib/`. No pa
 
 P01–P07 are implementation/preparation records. They do not certify native resume, recall, capability equivalence or lossless repeated round trips. The explicit limitations in the native mapping remain part of the implemented contract.
 
-### Implementation audit, 2026-10-14
+### Implementation history (2026-10-14)
 
-The existing seven-phase implementation and user documentation edits were retained. The audit added selected-account validation before Claude transcript writes and Codex history injection, including file/parent symlink escapes; retained out-of-scope nested resource links without importing their bodies; and blocked selected aliases outside approved resource categories or missing explicit resources. Durable staged `destinationObserved` hashes now survive mapping-commit crashes without accepting later native edits/turns as the import baseline. The host requires recovery/rollback before replacing unfinished operations and defaults status/recovery to the persisted operation ID.
+The initial seven-phase implementation followed research on 2026-10-13 at `0dca5bd096` on `provider-translation-layer`. Repeated audits hardened account and symlink boundaries, journaled write ownership, backup integrity, native identity commits, recovery/retry guards, destination environments, tool linkage and deferred warning acceptance. Regression cases were authored and statically checked; lint, scoped ESLint, docs verification and acceptance-driver compilation passed. A broader static check reported 255 test typing diagnostics, so it was not full-suite validation. Tests and native acceptance were not executed during these audits; original provider homes and the guinea pig stayed unchanged. These historical static checks do not certify native resume or round-trip continuity; later hardening and acceptance decisions follow below.
 
-Regression cases were added to `translation-transaction.test.ts`, `translation-adapters.test.ts`, `translation-resources.test.ts`, `translation-projections.test.ts` and `src/__tests__/main/provider-translation-service.test.ts`. They remain **unexecuted**. The final contract and concise onboarding guidance in all three requested documents include these invariants.
+## Hardening log
 
-Static checks: `npm run lint` passed; ESLint with `--max-warnings 0` passed on 61 changed production files; `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings; focused Prettier and `git diff --check` passed. TypeScript syntax parsing covered 26 changed test files without importing/executing them; `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed for the prepared driver. No tests, acceptance cases, native imports, provider turns, PR, push, commits or hooks were run. The branch remains `provider-translation-layer`; the original guinea pig and provider homes were not modified.
+### 2026-10-16: Ensemble baseline
 
-### Resource ownership and CLI response audit, 2026-10-14
+Baseline executed on 2026-10-17 for [[ENSEMBLE-01]]. `command git fetch origin` succeeded. Branch `acappella` at `14ac0a4a3daf5cfdb73dc55033d7da12187364d3` matches `origin/acappella` and already contains `origin/rc` at `295ef6667656fdd773aaec0d12032f2933067220`; no fast-forward or merge was needed. `node_modules` is a real directory, so no reinstall was needed.
 
-Retained the existing implementation and user documentation edits. Native resource projections, managed knowledge bodies and discovery indexes now share one journaled staging writer in maestro-lib. Creation intents remain unowned until exclusive file/alias creation succeeds; colliding files with identical bytes and unowned dangling links cannot be removed by rollback. The writer also creates the discovery-index directory when there are no selected knowledge files.
+The requested translation suite passed before any changes: **11 test files passed, 0 failed; 134 tests passed, 0 failed, 0 skipped**. Command:
 
-The migration timeout now applies to the CLI migration call rather than ordinary config edits. Its web bridge keeps the reply channel open beyond the settings deadline and reports a timeout as uncertain completion with a migration-status instruction. The transaction, CLI and existing web-server factory cases cover these changes and remain **unexecuted**. The three requested provider-onboarding documents now describe the ownership and response-timeout contract.
+```bash
+env -u MAESTRO_USER_DATA -u MAESTRO_CLAUDE_BIN -u MAESTRO_QUERY_SOURCE -u CLAUDE_CODE_SESSION_ID npx vitest run src/__tests__/shared/maestro-lib/translation-*.test.ts src/__tests__/main/provider-translation-service.test.ts src/__tests__/renderer/services/providerTranslation.test.ts
+```
 
-Current static evidence: `npm run lint` passed; ESLint with `--max-warnings 0` passed on 61 changed production files; `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. TypeScript syntax parsing passed for 27 changed test files without loading their modules. `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed. Both conversion directions remain **unverified**. No test or live acceptance cases, native imports, provider continuations, commits, hooks, PR or push were executed. No branch switch occurred, and the original guinea pig and provider homes were not modified.
+`rtk proxy npm run lint` and `rtk proxy npm run lint:eslint` both exited 0. `npm run docs:verify` reported 1,393 asserted paths, 453 index entries and zero findings. Focused Prettier and `command git diff --check` passed.
 
-### Historical recovery and destination environment audit, 2026-10-14
+This is unit-test baseline evidence only. Native resume, context continuity and resource discovery remain unverified; no real provider homes were modified.
 
-Preserved the seven-phase implementation and existing documentation edits. Recovery/rollback now reject a historical operation ID when the agent has a different current operation; status can still inspect historical journals. The library also refuses rollback of a committed journal after a later switch replaces its active operation ID, protecting previously committed native artifacts. The Codex import channel now reuses `buildAgentEnvironment` for destination provider defaults, global settings and destination credentials, then pins the planned account root; source-specific session environment overrides are excluded.
+### 2026-10-17: Read-only native transcript probe
 
-Regression cases were added to `src/__tests__/main/provider-translation-service.test.ts` and `src/__tests__/shared/maestro-lib/translation-transaction.test.ts`. They are **authored, not executed**. `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md` and `docs/agent-guides/AGENT-INFRA.md` describe the implemented guards and launch-environment contract.
+Added `scripts/provider-translation-probe.mjs` for [[ENSEMBLE-01]]. It bundles and imports the existing native extractor, samples the most recent files across Claude account homes and nested Codex sessions, and reports file counts per diagnostic code. `clean` means no blocking diagnostic; warning and info counts remain separate. Each code counts a file once, and files can contribute to several codes. Claude subagent subfolders are excluded. The probe reads provider homes without writing to them; generated bundles and optional JSON reports are confined to `.maestro/scratch/`, with symlink and hard-link output rejection. Message content and diagnostic messages are never printed or stored in reports.
 
-Static evidence from this audit: `npm run lint` passed; scoped ESLint with `--max-warnings 0` passed on 61 changed production files; the repository's dash-only ESLint configuration passed on 28 changed test/JavaScript script files. That configuration excludes the TypeScript acceptance driver, which passed `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` separately. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Syntax parsing passed on 27 changed test files without importing their modules; focused Prettier passed. No LSP surface was available. Both native conversion directions remain **unverified**; no tests, live acceptance, provider imports/turns, commits/hooks, PR or push were run. The branch remains `provider-translation-layer`, and the original guinea pig/provider homes were not modified.
+Baseline command:
 
-### Native identity commit audit, 2026-10-14
+```bash
+node scripts/provider-translation-probe.mjs --json .maestro/scratch/provider-translation-probe/baseline-2026-10-17.json
+```
 
-Preserved the existing seven-phase implementation and documentation edits. The shared `commitTranslationSession` now refuses a mapping when a tab's native source ID changes after staging, including closed tabs and saved inventory. Lifecycle/IPC delivery remains idempotent only when the destination ID and parked source ID both match. A late native ID cannot replace a staged empty tab unnoticed; failure leaves the input agent unchanged.
+| Provider    | Sampled | Clean | Blocked | Blocked fraction |
+| ----------- | ------- | ----- | ------- | ---------------- |
+| Claude Code | 300     | 240   | 60      | 20%              |
+| Codex       | 300     | 299   | 1       | 0.33%            |
 
-Added regression cases in `translation-session.test.ts` without executing them and updated the final contract in all three requested provider guides. `npm run lint` passed; scoped ESLint with `--max-warnings 0` passed on 61 changed production files and on the final shared commit change. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier passed; static acceptance-driver compilation with `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed. No LSP surface was available. Both conversion directions remain **unverified**. No tests, live acceptance, provider imports/turns, commits/hooks, PR, push or branch switches were performed; the original guinea pig and provider homes were not modified.
+Claude block codes: `native-project-root-mismatch` in 60 files and `unfinished-tool-call` in 6 files, with overlap. Warning codes: `opaque-runtime-state` in 300 files, `native-attachment-state` in 300 files, and `native-boundary` in 6 files. Codex block codes: `unfinished-tool-call` in 1 file. Warning codes: `historical-instructions` in 300 files, `opaque-runtime-state` in 300 files, and `native-boundary` in 12 files. Both providers had no info codes. The current sample differs from the earlier review; these are live, mutable transcripts and an in-flight tool call can block extraction. This measures extraction only, not version compatibility or native resume acceptance.
 
-### Read scope audit, 2026-10-14
+Added synthetic regression coverage for CLI validation, newest-file sampling across accounts, identity extraction and fallback, subagent exclusion, per-file diagnostic counts, future info severity, missing/malformed metadata, output privacy, unchanged input bytes and mtime, and scratch output confinement. Test cases were not run, per the standing conductor instruction.
 
-Reviewed all seven phase documents against the existing implementation and preserved the user's documentation edits. Native transcript snapshots and pre-commit rechecks now reuse `assertTranslationTarget` against approved account roots, including parked/checkpoint accounts. Return-trip managed knowledge directories stay inside the project, bodies stay inside the managed tree, and owned native projections stay inside the project. Managed memory links retain link evidence without importing unselected bodies; managed collection limitations now reach preflight.
+Validation: `rtk proxy npm run lint`, `rtk proxy npm run lint:eslint`, `npm run docs:verify`, focused Prettier, script syntax checking, and `command git diff --check` all passed. No task images were supplied.
 
-Added unexecuted regression cases in `provider-translation-service.test.ts` and `translation-resources.test.ts` for file/parent escapes, same-byte retargeting after preflight, whole knowledge-directory retargeting, managed memory and selected-user directory links, owned projections, and return-trip limitation propagation. Updated the implemented contract in `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md`, and `docs/agent-guides/AGENT-INFRA.md`.
+### 2026-10-17: Ensemble 02 extraction recheck
 
-Static checks: final `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files and again on the final two production files. The dash-only ESLint configuration passed on both updated regression files. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier and `git diff --check` passed. Syntax parsing covered 27 changed test files, with a final repeat on the two updated files, without importing or executing test modules. The prepared acceptance driver's `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed. No LSP surface was available. Both directions remain **unverified**; no tests, live acceptance, native imports, provider turns, commits/hooks, PR, push or branch switches were performed. The original guinea pig and provider homes were not modified.
+Re-ran the read-only probe after the cwd-origin, interrupted-tool-call, severity-tier and plan-telemetry changes in [[ENSEMBLE-02]], at commit `109eab74d2`:
 
-### Codex import readiness audit, 2026-10-14
+```bash
+node scripts/provider-translation-probe.mjs --json .maestro/scratch/provider-translation-probe/ensemble-02-2026-10-17.json
+```
 
-Retained the seven-phase implementation and existing documentation edits. The shared host now opens the selected-account Codex import channel for ready plans with no limitations as well as explicitly accepted warnings. A certified complete plan therefore does not require an acceptance flag. Blocked, deferred, no-op and unaccepted-warning plans do not open the channel; the library remains responsible for their refusal or deferral.
+| Provider    | Sampled | Phase 01 blocked | Phase 02 clean | Phase 02 blocked | Blocked fraction |
+| ----------- | ------- | ---------------- | -------------- | ---------------- | ---------------- |
+| Claude Code | 300     | 60 (20%)         | 300            | 0                | 0%               |
+| Codex       | 300     | 1 (0.33%)        | 300            | 0                | 0%               |
 
-Expanded `src/__tests__/main/provider-translation-service.test.ts` to cover those six readiness cases, destination launch settings, channel forwarding and cleanup. The cases are **authored, not executed**. Updated the actual channel contract in `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md` and `docs/agent-guides/AGENT-INFRA.md`.
+Neither provider emitted a block code, including `native-project-root-mismatch` or `unfinished-tool-call`; no code crossed the 2% investigation threshold. These are fresh samples of live, mutable transcripts, not a replay of the baseline's exact files.
 
-Current static evidence: `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files and the dash-only configuration passed on the updated test file. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier and `git diff --check` passed. The updated test file passed syntax parsing without module execution, and `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed for the prepared acceptance driver. No LSP tool was exposed. Both native directions remain **unverified**. No tests, live acceptance, provider imports/turns, commits/hooks, PR, push or branch switches were run. The branch remains `provider-translation-layer`; the original guinea pig and provider homes were not modified.
+| Provider    | Severity | Code                            | Files |
+| ----------- | -------- | ------------------------------- | ----- |
+| Claude Code | info     | `opaque-runtime-state`          | 300   |
+| Claude Code | info     | `native-attachment-state`       | 300   |
+| Claude Code | info     | `native-cwd-drift`              | 66    |
+| Claude Code | warning  | `interrupted-tool-call-dropped` | 27    |
+| Claude Code | warning  | `native-boundary`               | 6     |
+| Codex       | info     | `historical-instructions`       | 300   |
+| Codex       | info     | `opaque-runtime-state`          | 300   |
+| Codex       | info     | `native-cwd-drift`              | 1     |
+| Codex       | warning  | `interrupted-tool-call-dropped` | 2     |
+| Codex       | warning  | `native-boundary`               | 12    |
 
-### Clean deferred migration audit, 2026-10-14
+All always-on codes now appear as info; warnings remain separate for interrupted calls and native boundaries. Counts are files per code and can overlap. This probe measures extraction only: it does not establish native resume, context continuity, resource discovery, or Sentry delivery. No provider homes were modified. No code or tests changed, and test cases were not run, per the standing conductor instruction. No task images were supplied.
 
-Reviewed all seven phases against the existing implementation and preserved the existing user documentation edits. The shared CLI/UX renderer client now continues clean deferrals without requiring warning acceptance, retains the plan's verification state, and restores saved deferrals after reload without granting additional consent. Replanning the completed source still refuses newly discovered limitations before native apply.
+Validation: `rtk proxy npm run lint`, `rtk proxy npm run lint:eslint`, `npm run docs:verify` (1,397 asserted paths, 455 index entries, zero findings), focused Prettier and `command git diff --check` passed.
 
-Added `src/__tests__/renderer/services/providerTranslation.test.ts` using existing Session/AITab factories. Cases cover clean deferral with omitted/false/true acceptance, shared pending completion, native mapping/draft preservation, saved deferral restoration and new-warning refusal. Cases remain **authored, not executed**. All three provider-onboarding documents describe the final deferred client contract.
+### 2026-10-17: Ensemble 03 compaction-window recheck
 
-Static evidence: `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files and the dash-only configuration passed on the new test file. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Static TypeScript checking with the new test explicitly added to the lint program passed without loading test modules; syntax parsing passed on 28 changed test files. No LSP surface was exposed. Both conversion directions remain **unverified**. No tests, live acceptance, native imports/turns, commits/hooks, PR, push or branch switches were run. The original guinea pig and provider homes were not modified.
+Updated [[provider-translation-native-formats]], [[PROVIDER-SUPPORT]], [[CLAUDE-AGENTS]] and [[docs/agent-guides/AGENT-INFRA]] for [[ENSEMBLE-03]]. The destination receives the source provider's own latest compaction summary/replacement history plus later records; Maestro never writes a summary itself. Pre-compaction records and original transcript bytes remain archived. Projection, capacity and plan counts use the active window, tool-link checks exclude archived calls, and return-hop reconciliation retains archived identities.
 
-### Absent rollback target audit, 2026-10-14
+Re-ran the existing read-only extractor probe after the implementation and synthetic fixtures in `c63add9f8f`:
 
-Preserved the existing seven-phase implementation and user documentation edits. Shared rollback now validates selected roots before checking whether a target exists, so restoring a backup cannot bypass the parent-symlink guard for an absent file. A missing backed-up projection can be restored only when its deletion is journaled; files deleted after staging require inspection instead of being recreated over later user intent.
+```bash
+node scripts/provider-translation-probe.mjs
+```
 
-Added three regression cases in `translation-transaction.test.ts`: journaled deletion restoration, refusal after a later deletion, and refusal when a deleted resource's parent is replaced with an external directory link. Cases remain **authored, not executed**. The final provider contract and both onboarding guides describe these rollback requirements.
+| Provider    | Sampled | Clean | Blocked | Blocked fraction |
+| ----------- | ------- | ----- | ------- | ---------------- |
+| Claude Code | 300     | 300   | 0       | 0%               |
+| Codex       | 300     | 300   | 0       | 0%               |
 
-Static evidence: `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files, and the dash-only configuration passed on the updated test file. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier and `git diff --check` passed. Syntax parsing passed on 28 changed test files without importing or executing them. `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed for the prepared driver. No LSP surface was available. Both directions remain **unverified**. No tests, live acceptance, provider imports/turns, commits/hooks, PR, push or branch switches were run. The branch remains `provider-translation-layer`; the original guinea pig and provider homes were not modified.
+| Provider    | Severity | Code                            | Files |
+| ----------- | -------- | ------------------------------- | ----- |
+| Claude Code | info     | `opaque-runtime-state`          | 300   |
+| Claude Code | info     | `native-attachment-state`       | 300   |
+| Claude Code | info     | `native-cwd-drift`              | 54    |
+| Claude Code | warning  | `interrupted-tool-call-dropped` | 18    |
+| Codex       | info     | `historical-instructions`       | 300   |
+| Codex       | info     | `opaque-runtime-state`          | 300   |
+| Codex       | info     | `compaction-window`             | 12    |
+| Codex       | info     | `native-cwd-drift`              | 1     |
+| Codex       | warning  | `interrupted-tool-call-dropped` | 1     |
 
-### Library retry and test-import audit, 2026-10-14
+Neither provider emitted a block code or a `native-boundary` warning. Twelve Codex files reported `compaction-window` as info. This Claude sample contained no compaction windows; it does not provide live Claude compaction evidence. Counts are files per code and can overlap; clean means no blocks, not no warnings. Samples are fresh, mutable transcripts, not a replay of earlier probe files. The probe reads provider homes without modifying them and reports no message content. It measures extraction only, not native resume, context continuity or resource discovery; both translation directions remain unverified.
 
-Retained the seven-phase implementation and existing documentation edits. `applyTranslation` now returns a committed journal's saved result without native writes. Other non-planned operations or journals with existing mappings/writes refuse replay and preserve their recovery evidence. Added regression cases for committed retries with later native work and seven states containing staged artifacts; these cases were authored, not executed. All three provider-onboarding documents describe this library requirement.
+The task explicitly requested the translation suite. It passed **11 test files / 244 tests, with no failures or skips**, including the synthetic Claude two-compaction and Codex replacement-history/message fixtures, projection/archive preservation, active-window capacity and repeated return-hop coverage:
 
-Static TypeScript checking exposed source imports one directory too high in eight translation test files, which ordinary production lint and syntax parsing had not detected. Corrected those imports and annotated session fixtures with the existing shared contract. The unchanged four-level import of the repository-root acceptance driver remains correct. A TypeScript program using `tsconfig.lint.json` plus all nine translation test files now reports zero diagnostics without importing or executing test modules. Syntax and relative-import checks across all 28 changed test files also report zero findings.
+```bash
+env -u MAESTRO_USER_DATA -u MAESTRO_CLAUDE_BIN -u MAESTRO_QUERY_SOURCE -u CLAUDE_CODE_SESSION_ID TMPDIR="$PWD/.maestro/scratch/ensemble-03-tests" npx vitest run src/__tests__/shared/maestro-lib/translation-*.test.ts src/__tests__/main/provider-translation-service.test.ts src/__tests__/renderer/services/providerTranslation.test.ts
+```
 
-Current checks: `npm run lint` passed; ESLint with `--max-warnings 0` passed on 61 changed production files, and the dash-only configuration passed on all nine translation test files. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier and `git diff --check` passed. No LSP tool was available. Both native directions remain **unverified**. No tests, live acceptance, provider imports/turns, commits/hooks, PR, push or branch switches were run; the original guinea pig and provider homes were not modified.
+`rtk proxy npm run lint` and `rtk proxy npm run lint:eslint` exited 0. `npm run docs:verify` checked 1,399 asserted paths and 456 index entries with zero findings. Focused Prettier and `command git diff --check` passed. Vitest printed the existing advisory about `__dirname` compatibility with Vite's future native config loader; no test failed. This task changed documentation only, reused the existing probe and tests, and executed no native provider import or resume. No task images were supplied.
 
-### Host preflight identity and retry audit, 2026-10-14
+### 2026-10-17: Ensemble 06 live SSH acceptance awaiting target
 
-Preserved the seven-phase implementation and existing user documentation edits. The shared host now retains the reviewed `planId` after refreshing and matching its fingerprint. Apply retries inspect the saved journal before opening a native channel: a current, settled commit returns its saved result, while historical commits, unfinished staging, mappings and write intents refuse a new import. A committed journal with unsettled agent state requires recovery.
+The live SSH check in [[ENSEMBLE-06]] could not start: `.maestro/scratch/ssh-acceptance.json` is absent from the `acappella` worktree, although the preceding human step is checked. No approved remote target or explicit skip was available. The live-check task remains unchecked with a new human gate requesting either `{"skip": true}` or `{"sshRemoteId": "<configured-test-host-id>", "projectPath": "<disposable-remote-project>"}` in that file.
 
-Added unexecuted regression cases in `src/__tests__/main/provider-translation-service.test.ts` for ready/deferred preflight identity, current/historical/destination-mismatch retries, unsettled commits and staging evidence without a persisted active migration. Static TypeScript checking also found two existing mock callback signatures incompatible with Vitest's inferred unknown arguments; corrected those signatures. Updated the contract in `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md` and `docs/agent-guides/AGENT-INFRA.md` without replacing the existing edits.
+SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** No hop was attempted, so plan status, limitations, fact recall and remote write-boundary verification have no live results. Phase 08 must not treat this entry as evidence to enable the Ensemble pill on SSH agents. No scratch agent was created, no SSH command ran, and no provider home or remote file was modified. This is a pending prerequisite, not an explicit skip or a failed translation.
 
-Checks: `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files; the dash-only ESLint configuration passed on the updated test file. A TypeScript program using `tsconfig.lint.json` plus that test file reports zero diagnostics without importing or executing test modules. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier, `git diff --check` and `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed. No LSP surface was available. Both conversion directions remain **unverified**. No tests, live acceptance cases, provider imports/turns, commits/hooks, PR, push or branch switches were run. The original guinea pig and provider homes were not modified.
+### 2026-10-17: Ensemble unattended run, explicit acceptance skips
 
-### Native tool linkage audit, 2026-10-14
+Pedram requested removal of the Ensemble Auto Run human gates and unattended continuation. Created `.maestro/scratch/ssh-acceptance.json` and `.maestro/scratch/acceptance-auth/inputs.json` with `{"skip": true}`. This supersedes the pending-target entry above.
 
-Read the seven phase documents and retained the existing implementation and user documentation edits. Shared native extraction now blocks duplicate tool calls/results, results preceding their calls, and invalid tool message roles before staging. Parallel calls can still receive results in a different order once the calls exist; original bytes are retained without replay or history reordering. Added Claude/Codex regression cases to `translation-native.test.ts` without executing them. Removed the duplicate local `createMockAITab` declaration from the lifecycle tests, reusing the existing canonical factory. All three requested provider guides now state the tool-link contract.
+SSH live check skipped. SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** Native acceptance skipped; certification deferred. No provider turn, scratch agent, SSH command, credential staging or provider-home write was performed. These decisions are not passing acceptance evidence; SSH Ensemble choices remain disabled without live proof.
 
-Static evidence: final `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files, and the dash-only configuration passed on both updated test files. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. A focused TypeScript compiler program checked the 11 new translation test files plus the updated lifecycle test with zero diagnostics, without executing modules. A separate broader check of all 28 modified test files reported 255 diagnostics, largely mock/API typing mismatches; it is not passing evidence for the full test set, which repository lint excludes. Focused Prettier, `git diff --check` and static acceptance-driver compilation passed. No LSP surface was exposed. Both directions remain **unverified**. No tests, live acceptance, native imports/turns, commits/hooks, PR, push or branch switches were run. The original guinea pig and provider homes were not modified.
+Removed the three human gates from the active Ensemble playbook. Remaining tasks must update tests without executing them and run lint, ESLint, docs verification and static checks. Missing native acceptance inputs resolve as explicit skips; dependent certification and OpenCode work resolve as deferred, while independent Ensemble implementation continues. Runtime integrity checks and write boundaries remain required.
 
-### Backup integrity audit, 2026-10-14
+### 2026-10-17: Ensemble 06 SSH acceptance skip verified
 
-Read all seven phase documents and retained the existing implementation and user documentation edits. `TranslationArchive` now archives and validates backup bytes from projections, resource writes and native mappings on both write and reload. Direct `recoverTranslation` rollback also validates every backup hash before restoring or deleting any target, including absent targets with journaled deletions. Corrupt backups cannot replace later native work or bypass the original-byte integrity contract.
+Read `.maestro/scratch/ssh-acceptance.json` and confirmed `skip: true` for [[ENSEMBLE-06]]. **SSH live check skipped.** This explicit decision supersedes the earlier missing-target prerequisite. SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** Phase 08 must keep SSH Ensemble choices disabled without live evidence; certification remains deferred.
 
-Added five parameterized regression cases in `translation-transaction.test.ts` for backup archive integrity, durable-journal preservation on failed writes, corrupt reloads and refusal before any rollback target mutation. Cases remain **authored, not executed**. Updated the implemented backup contract in `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md` and `docs/agent-guides/AGENT-INFRA.md` without replacing their existing edits.
+No live hop was attempted, so plan status, limitations, fact recall and remote write-boundary checks have no live results. No scratch agent was created, no SSH command or provider turn ran, and no provider home or remote file was modified. No code or tests changed; no test cases were executed and no task images were supplied.
 
-Checks: `npm run lint` passed; scoped ESLint with `--max-warnings 0` passed on all 61 changed production files, and the dash-only configuration passed on the updated test file. A TypeScript compiler program using `tsconfig.lint.json` plus the updated transaction test reported zero diagnostics without executing modules. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier, `git diff --check` and `tsc -p .maestro/scratch/provider-translation-driver-tsconfig.json --noEmit` passed. No LSP surface was available. Both directions remain **unverified**. No tests, live acceptance, native imports/turns, commits/hooks, PR, push or branch switches were run; the original guinea pig and provider homes were not modified.
+### 2026-10-17: Ensemble 07 native acceptance skip verified
 
-### Deferred warning acceptance audit, 2026-10-14
+Read `.maestro/scratch/acceptance-auth/inputs.json` and confirmed `skip: true` for [[ENSEMBLE-07]]. **Native acceptance skipped; certification deferred**. Both Claude Code to Codex and Codex to Claude Code remain `unverified` in `src/shared/maestro-lib/translation/support.ts`.
 
-Reviewed all seven phases and retained the existing implementation and user documentation edits. Deferred migration acceptance now stores complete limitations with the existing `canonicalJson` utility in both maestro-lib and the shared CLI/UX renderer client. Replanning must match the tab, artifact, severity and message, so an accepted warning code cannot silently authorize changed evidence. Saved legacy code/artifact-only acceptance requires renewed review when warnings remain; clean saved deferrals still resume without granting warning acceptance.
+No native hop or test case was executed. No credentials were accessed, no provider turn ran, and no provider home or original-agent data was modified. No acceptance evidence was generated. This completes only the acceptance skip-handling task; no human gate was added. No code or tests changed, and no task images were supplied.
 
-Updated the transaction persistence case and added renderer cases for changed tabs/messages/severity, exact saved acceptance with reordered keys and colon-containing artifact IDs, and refusal of legacy acceptance. Cases remain **authored, not executed**. The final contract in `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md` and `docs/agent-guides/AGENT-INFRA.md` describes these requirements.
+### 2026-10-17: Ensemble 07 native acceptance repair deferred
 
-Checks: `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files and the dash-only configuration passed on 28 changed test files. A TypeScript compiler program using `tsconfig.lint.json` plus both updated regression files reported zero diagnostics without executing modules; syntax parsing passed on all 28 changed test files. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier, `git diff --check` and static compilation of the prepared acceptance driver passed. No LSP surface was exposed. Both native directions remain **unverified**. No tests, live acceptance, imports, provider turns, commits/hooks, PR, push or branch switches were run. The branch remains `provider-translation-layer`; the original guinea pig and provider homes were not modified.
+**Native acceptance repair deferred; no hops executed**. Confirmed `skip: true` in `.maestro/scratch/acceptance-auth/inputs.json` and no `evidence-*.json` files in `.maestro/scratch/provider-translation-acceptance/`. There are no native hop results to inspect or repair for [[ENSEMBLE-07]]. Both translation directions remain `unverified`; certification remains deferred.
+
+No tests or provider turns were executed, and no credentials, provider homes or original-agent data were accessed. No code or tests changed; no task images were supplied. This completes only the repair skip-handling task, without a human gate.
+
+### 2026-10-17: Ensemble 07 certification deferred
+
+**Certification deferred; native acceptance not executed**. Confirmed `skip: true` in `.maestro/scratch/acceptance-auth/inputs.json` and no `evidence-*.json` files in `.maestro/scratch/provider-translation-acceptance/` for [[ENSEMBLE-07]]. Both Claude Code to Codex and Codex to Claude Code remain `unverified` in `src/shared/maestro-lib/translation/support.ts`; no native certification evidence or tested-version changes were declared.
+
+This completes only the certification skip-handling task. No code or tests changed, no test cases or provider turns ran, and no credentials, provider homes or original-agent data were accessed. No human gate was added; no task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode mapping deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Read `src/shared/maestro-lib/translation/support.ts` and confirmed that Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the first task's deferral handling; OpenCode mapping research and its implementation steps were not executed.
+
+No code or tests changed, no test cases or live provider acceptance ran, and no OpenCode session was exported. No implementation or certification is claimed; no human gate or halt marker was added. No task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode adapter implementation deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Rechecked `src/shared/maestro-lib/translation/support.ts`: Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the second task's deferral handling. Extraction, native import/export readback, adapter registration, direction declarations and service identity resolution were not implemented.
+
+No code or tests changed, and no test cases or live provider acceptance ran. No provider homes were accessed or modified. No implementation or certification is claimed; no human gate or halt marker was added. No task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode fixtures and probe deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Rechecked `src/shared/maestro-lib/translation/support.ts`: Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the third task's deferral handling. Synthetic fixtures, extraction/projection/round-trip/blocking/readback tests and the OpenCode probe extension were not implemented. The probe and translation suite were not executed; no sample counts or certification evidence are claimed.
+
+No code or tests changed, and no test cases or live provider acceptance ran. No provider homes were accessed or modified. No human gate or halt marker was added; no task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode support documentation deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Rechecked `src/shared/maestro-lib/translation/support.ts`: Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the fourth task's deferral handling. Updates to `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md`, `docs/agent-guides/AGENT-INFRA.md`, `docs/multi-provider.md` and the provider readiness table were deferred because the OpenCode adapter was not implemented. No OpenCode direction is declared implemented or certified.
+
+No code or tests changed, and no test cases, translation suite or live provider acceptance ran. No provider homes were accessed or modified. No human gate or halt marker was added; no task images were supplied.

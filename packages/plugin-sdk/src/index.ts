@@ -491,6 +491,7 @@ export function describeCapability(capability: PluginCapability): string {
  * 1.30.0 adds separately consented bounded original-audio staging for supported
  * local agent sends. 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
  * confirmed records, durable plugin Cue events and parentSessionId metadata.
+ * 1.27.0 adds local-only Dictation clip transcription on the authenticated media broker.
  * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
@@ -1015,7 +1016,7 @@ export interface PanelContribution {
 	entry: string;
 	placement: PanelPlacement;
 	size: PanelSize;
-	hostSettings?: 'media'[];
+	hostSettings?: ('media' | 'dictation')[];
 }
 
 /** A runtime agent a (tier-1) plugin registers - a Left Bar entry backed by a
@@ -1436,6 +1437,8 @@ export const HOST_API = {
 	'services.media.decode': { capability: 'media:tools' },
 	'services.media.run': { capability: 'media:tools' },
 	'media.status': { capability: 'media:tools' },
+	'media.transcriptionStatus': { capability: 'media:tools' },
+	'media.transcribe': { capability: 'media:tools' },
 	'media.open': { capability: 'media:tools' },
 	'media.download': { capability: 'media:tools' },
 	'media.probe': { capability: 'media:tools' },
@@ -1898,13 +1901,14 @@ export interface MaestroBackgroundApi {
 	list(): Promise<MaestroBackgroundHealth>;
 }
 
-/** Bounded media primitives. STT orchestration and result interpretation belong to plugins. */
+/** Bounded host media primitives and local-only Dictation clips. */
 export const MEDIA_LIMITS = {
 	maxDownloadBytes: 8 * 1024 * 1024,
 	maxDurationSeconds: 120,
 	jobTimeoutMs: 120_000,
 	maxProcessOutputBytes: 16 * 1024,
 	maxResultBytes: 128 * 1024,
+	maxTranscriptChars: 12000,
 	maxPcmBytes: 4 * 1024 * 1024,
 	maxJobsPerPlugin: 2,
 	maxJobs: 4,
@@ -1933,6 +1937,7 @@ export const MEDIA_ERROR_CODES = [
 	'MediaBusy',
 	'MediaProcessFailed',
 	'MediaOutputTooLarge',
+	'MediaLanguageUnsupported',
 ] as const;
 export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
 
@@ -1957,8 +1962,33 @@ export interface MediaRunOptions {
 	/** Lowercase Whisper language code or auto (default). Translation is always off. */
 	language?: string;
 }
+export interface MediaTranscriptionStatus {
+	state: 'ready' | 'unavailable';
+	taskId: 'dictation';
+	/** Selected host Dictation language; null if no supported local assignment. */
+	language: 'de' | 'en' | null;
+	modelId: string | null;
+	languages: string[];
+	reason: string | null;
+}
+export interface MediaTranscriptionResult {
+	text: string;
+	language: 'de' | 'en';
+	durationSeconds: number;
+	modelId: string;
+	translated: false;
+}
+
 export interface MaestroMediaApi {
 	status(): Promise<MediaToolStatus>;
+	/** Local Dictation and ffprobe/ffmpeg readiness; never loads a model or probes cloud. */
+	transcriptionStatus(): Promise<MediaTranscriptionStatus>;
+	/** Decoded own PCM through the core pool. Omit language to use the host setting; an explicit value must match it. No live voice session. */
+	transcribe(
+		jobId: string,
+		audioId: string,
+		options: { language?: 'de' | 'en' }
+	): Promise<MediaTranscriptionResult>;
 	/** Reserves an opaque job without I/O. Fixed deadline starts here. */
 	open(): Promise<{ jobId: string }>;
 	download(jobId: string, url: string): Promise<{ audioId: string; bytes: number }>;

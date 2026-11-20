@@ -87,7 +87,8 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 		'feedback:subscribe-issue',
 		withIpcErrorLogging(
 			handlerOpts('subscribe-issue'),
-			(payload: { issueNumber: number; comment?: string }) => subscribeFeedbackIssue(payload)
+			(payload: { issueNumber: number; comment?: string; allowSecrets?: boolean }) =>
+				subscribeFeedbackIssue(payload)
 		)
 	);
 

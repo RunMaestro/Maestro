@@ -1,3 +1,4 @@
+import { projectTabProvider, resolveTurnProvider } from '../../../utils/providerTabSessions';
 /**
  * buildContextTimelinePoint - the ONE copy of "what does this usage event mean
  * for the Context Timeline".
@@ -71,6 +72,14 @@ export function buildContextTimelinePoint(
 	usageStats: UsageStats,
 	session: Session
 ): ContextTimelinePointBuild {
+	const tab =
+		session.aiTabs.find((candidate) => candidate.id === parsed.tabId) ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === parsed.tabId);
+	const projected = projectTabProvider(session, tab, resolveTurnProvider(tab, session));
+	session = {
+		...projected.agent,
+		customModel: tab?.turnModel ?? projected.tab?.customModel ?? projected.agent.customModel,
+	};
 	const agentToolType = session.toolType as ToolType | undefined;
 	const sessionRemoteId = resolveUsageSessionRemoteId(session);
 

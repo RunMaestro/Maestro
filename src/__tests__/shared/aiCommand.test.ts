@@ -15,6 +15,7 @@ import {
 	describePlatform,
 	extractCommandLine,
 	formatRecentCommands,
+	parseAiCommandReply,
 	type CommandCardLike,
 } from '../../shared/aiCommand';
 
@@ -169,6 +170,52 @@ describe('extractCommandLine', () => {
 		expect(extractCommandLine('')).toBeNull();
 		expect(extractCommandLine('   \n\n  ')).toBeNull();
 		expect(extractCommandLine('```\n\n```')).toBeNull();
+	});
+});
+
+describe('parseAiCommandReply', () => {
+	test('reads the command and explanation out of a parsed reply', () => {
+		expect(
+			parseAiCommandReply({ command: 'du -sh *', explanation: 'Sizes everything here.' }, '')
+		).toEqual({ command: 'du -sh *', explanation: 'Sizes everything here.' });
+	});
+
+	test('cleans the command field like any other model reply', () => {
+		// The schema keeps the shape, not the content.
+		expect(parseAiCommandReply({ command: '```sh\n$ git status\n```' }, '')).toEqual({
+			command: 'git status',
+		});
+		expect(parseAiCommandReply({ command: 'ls\nrm -rf build' }, '')?.command).toBe('ls');
+	});
+
+	test('flattens and omits the explanation rather than passing noise through', () => {
+		expect(parseAiCommandReply({ command: 'ls', explanation: 'Lists\n  files.' }, '')).toEqual({
+			command: 'ls',
+			explanation: 'Lists files.',
+		});
+		expect(parseAiCommandReply({ command: 'ls', explanation: '   ' }, '')).toEqual({
+			command: 'ls',
+		});
+		expect(parseAiCommandReply({ command: 'ls', explanation: 42 }, '')).toEqual({ command: 'ls' });
+	});
+
+	test('returns null when the parsed reply carries no command', () => {
+		expect(parseAiCommandReply({ explanation: 'nothing to run' }, '')).toBeNull();
+		expect(parseAiCommandReply({ command: '   ' }, '')).toBeNull();
+		expect(parseAiCommandReply({ command: 7 }, '')).toBeNull();
+	});
+
+	test('accepts a bare line when the reply was not JSON at all', () => {
+		expect(parseAiCommandReply(undefined, 'git log --oneline')).toEqual({
+			command: 'git log --oneline',
+		});
+	});
+
+	test('refuses a JSON object that never parsed', () => {
+		// Cut off at the token budget: pasting it into a shell is a syntax error.
+		expect(parseAiCommandReply(undefined, '{"command": "du -sh')).toBeNull();
+		expect(parseAiCommandReply(undefined, '```json\n{"command": "du\n```')).toBeNull();
+		expect(parseAiCommandReply(undefined, '   ')).toBeNull();
 	});
 });
 

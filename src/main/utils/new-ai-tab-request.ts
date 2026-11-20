@@ -16,6 +16,7 @@ import { logger } from './logger';
 import { isWebContentsAvailable } from './safe-send';
 import type { NewAITabWithPromptResult } from '../web-server/types';
 import type { MentionRouting } from '../../shared/crossAgentContext';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { PianolaNewTabControl } from '../../shared/pianola/pianola-dispatch';
 
 /** How long the renderer has to answer before the request is reported as timed out. */
@@ -35,6 +36,8 @@ export const NEW_AI_TAB_NO_WINDOW_ERROR = 'Maestro desktop window is not availab
 export interface NewAITabRequestOptions {
 	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
 	hidden?: boolean;
+	/** The consult chain a delegating agent's `dispatch` spends from (see `admitCliConsult()`). */
+	consultChain?: ConsultChain;
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
 	mentionRouting?: MentionRouting;
 	control?: PianolaNewTabControl;
@@ -118,6 +121,8 @@ export function requestNewAITabWithPrompt(
 				responseChannel,
 				background,
 				options.hidden,
+				// The renderer reads it in this slot (`onRemoteNewAITabWithPrompt` in preload).
+				options.consultChain,
 				options.mentionRouting,
 				options.control
 			);

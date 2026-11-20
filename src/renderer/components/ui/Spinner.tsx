@@ -61,7 +61,7 @@ export function Spinner({
 			role={decorative ? undefined : 'status'}
 			data-testid={testId}
 		>
-			<Icon className="block w-full h-full" aria-hidden="true" />
+			<Icon size={size} className="block w-full h-full" aria-hidden="true" />
 		</span>
 	);
 }

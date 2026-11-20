@@ -66,6 +66,35 @@ describe('collectNamingPrompt', () => {
 });
 
 describe('requestTabAutoName', () => {
+	it('names the target tab through its own provider and account', async () => {
+		const tab = createMockAITab({ id: 'named-tab', tabProvider: 'claude-code' });
+		const session = createMockSession({
+			toolType: 'codex',
+			aiTabs: [tab],
+			customEnvVars: { CODEX_HOME: '/codex' },
+			providerOverrides: {
+				'claude-code': {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/claude' },
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+					maestroPPath: '/maestro-p',
+				},
+			},
+		});
+		seedStore(session);
+		requestTabAutoName({ session, tabId: tab.id, prompt: 'wire up the ingest pipeline' });
+		await flush();
+		expect(generateTabName).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'claude-code',
+				sessionCustomEnvVars: { CLAUDE_CONFIG_DIR: '/claude' },
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/maestro-p',
+			})
+		);
+	});
+
 	it('names an unnamed tab from the agent response', async () => {
 		const tab = createMockAITab({ id: 'tab-1', name: null });
 		const session = createMockSession({ aiTabs: [tab], activeTabId: tab.id });

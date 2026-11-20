@@ -7834,7 +7834,7 @@ describe('qualification harness', () => {
 				binary: {
 					path: `${REL}/bin/grok`,
 					sha256: sha.grok,
-					version: TRANSLATION_PROVIDER_VERSIONS.grok[0],
+					version: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions[0],
 				},
 				spendBounds: {
 					perCall: {
@@ -7863,7 +7863,7 @@ describe('qualification harness', () => {
 					binary: {
 						path: `${REL}/bin/claude`,
 						sha256: sha.claude,
-						version: TRANSLATION_PROVIDER_VERSIONS['claude-code'][0],
+						version: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions[0],
 					},
 				},
 				codex: {
@@ -7873,7 +7873,7 @@ describe('qualification harness', () => {
 					binary: {
 						path: `${REL}/bin/codex`,
 						sha256: sha.codex,
-						version: TRANSLATION_PROVIDER_VERSIONS.codex[0],
+						version: TRANSLATION_PROVIDER_VERSIONS.codex.testedVersions[0],
 					},
 				},
 			},
@@ -8187,8 +8187,9 @@ describe('qualification harness', () => {
 					d,
 					'pass',
 					{
-						grok: TRANSLATION_PROVIDER_VERSIONS.grok[0],
-						peer: TRANSLATION_PROVIDER_VERSIONS[d.includes('claude') ? 'claude-code' : 'codex'][0],
+						grok: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions[0],
+						peer: TRANSLATION_PROVIDER_VERSIONS[d.includes('claude') ? 'claude-code' : 'codex']
+							.testedVersions[0],
 					},
 				])
 			);
@@ -8296,7 +8297,7 @@ describe('qualification harness', () => {
 			const dest = (patch: Partial<Parameters<typeof translationTargetRefusal>[0]> = {}) =>
 				({
 					provider: 'claude-code',
-					version: TRANSLATION_PROVIDER_VERSIONS['claude-code'][0],
+					version: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions[0],
 					accountRoot: ownedRoot,
 					projectRoot: path.join(ROOT, 'home'),
 					...patch,
@@ -8391,7 +8392,8 @@ describe('qualification harness', () => {
 				const pin = (p: string) => ({
 					provider: p,
 					version:
-						TRANSLATION_PROVIDER_VERSIONS[p as keyof typeof TRANSLATION_PROVIDER_VERSIONS][0],
+						TRANSLATION_PROVIDER_VERSIONS[p as keyof typeof TRANSLATION_PROVIDER_VERSIONS]
+							.testedVersions[0],
 					sha256: sha[p === 'claude-code' ? 'claude' : p],
 				});
 				expect(l.binaries, id).toEqual({ source: pin(source), destination: pin(destination) });

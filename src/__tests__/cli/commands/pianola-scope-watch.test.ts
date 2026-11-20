@@ -425,6 +425,7 @@ describe('native host -> wire -> worker -> cycle -> native delivery', () => {
 			_force,
 			_images,
 			_background,
+			_chain,
 			_routing,
 			_receipt,
 			dispatchId

@@ -128,10 +128,14 @@ export function getSectionsForViewMode(
 			return ANTHROPIC_USAGE_SECTIONS;
 		case 'codex-usage':
 			return CODEX_USAGE_SECTIONS;
+		// Panels that load for themselves have no fixed section list to walk:
+		// what they draw comes and goes with their own data.
 		case 'cue':
 			return CUE_SECTIONS;
 		case 'shortcuts':
 			return SHORTCUTS_SECTIONS;
+		case 'models':
+			return [];
 		default:
 			return OVERVIEW_SECTIONS;
 	}

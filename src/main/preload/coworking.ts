@@ -13,6 +13,8 @@ import type {
 	BrowserOp,
 	BrowserOpResult,
 	CoworkingBrowserInput,
+	CoworkingBrowserCaller,
+	CoworkingBrowserPolicies,
 } from '../../shared/coworkingBrowser';
 
 export interface CoworkingTerminalEntry {
@@ -66,7 +68,8 @@ export interface CoworkingApi {
 		inputs: CoworkingBrowserInput[],
 		interactionEnabled: boolean,
 		agentType?: string,
-		confirmPolicy?: BrowserConfirmPolicy
+		confirmPolicy?: BrowserConfirmPolicy,
+		providerPolicies?: CoworkingBrowserPolicies
 	): Promise<void>;
 
 	/** The Coworking `browser:N` id of a browser tab, or null when Coworking does
@@ -87,7 +90,8 @@ export interface CoworkingApi {
 			sessionId: string,
 			op: BrowserOp,
 			responseChannel: string,
-			needsConfirm?: boolean
+			needsConfirm?: boolean,
+			caller?: CoworkingBrowserCaller
 		) => void
 	): () => void;
 	sendBrowserOpResponse(responseChannel: string, result: BrowserOpResult): void;
@@ -114,14 +118,22 @@ export function createCoworkingApi(): CoworkingApi {
 			ipcRenderer.send(responseChannel, content, ok);
 		},
 
-		syncSessionBrowsers: (sessionId, inputs, interactionEnabled, agentType, confirmPolicy) =>
+		syncSessionBrowsers: (
+			sessionId,
+			inputs,
+			interactionEnabled,
+			agentType,
+			confirmPolicy,
+			providerPolicies
+		) =>
 			ipcRenderer.invoke(
 				'coworking:syncSessionBrowsers',
 				sessionId,
 				inputs,
 				interactionEnabled,
 				agentType,
-				confirmPolicy
+				confirmPolicy,
+				providerPolicies
 			),
 		getBrowserId: (sessionId, tabUuid) =>
 			ipcRenderer.invoke('coworking:getBrowserId', sessionId, tabUuid),
@@ -133,8 +145,9 @@ export function createCoworkingApi(): CoworkingApi {
 				sessionId: string,
 				op: BrowserOp,
 				responseChannel: string,
-				needsConfirm?: boolean
-			) => callback(tabUuid, sessionId, op, responseChannel, needsConfirm);
+				needsConfirm?: boolean,
+				caller?: CoworkingBrowserCaller
+			) => callback(tabUuid, sessionId, op, responseChannel, needsConfirm, caller);
 			ipcRenderer.on('coworking:requestBrowserOp', handler);
 			return () => ipcRenderer.removeListener('coworking:requestBrowserOp', handler);
 		},

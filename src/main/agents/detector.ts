@@ -31,8 +31,21 @@ import {
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { resolveConfigDirKeyFromEnv } from './claudeSpawnCore';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
+import {
+	CLAUDE_CATALOG_SUBDIR,
+	CLAUDE_MODEL_ALIASES,
+	claudeCatalogModelIds,
+	isClaudeCatalogFileName,
+	type ClaudeCatalogFileText,
+} from './claude-model-catalog';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
+import {
+	codexCatalogModels,
+	staleTierModels,
+	type CodexCatalogModel,
+	type HarnessCatalogModel,
+} from '../../shared/modelTiers';
 import { capabilitySnapshots } from './capability-snapshot';
 import {
 	setOmpModelCatalog,
@@ -162,63 +175,26 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 	}
 }
 
+// ============ Codex model discovery ============
+
+/**
+ * The listed models of `~/.codex/models_cache.json` (the file the Codex CLI
+ * maintains), with the description and priority it states for each. `null`
+ * when the file is missing or unreadable: a fresh install has not written it.
+ */
+function readCodexModelCatalog(): HarnessCatalogModel[] | null {
+	try {
+		const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+		const cacheContent = fs.readFileSync(path.join(codexHome, 'models_cache.json'), 'utf8');
+		const cache = parseJsonWithBom<{ models?: CodexCatalogModel[] }>(cacheContent);
+		return Array.isArray(cache.models) ? codexCatalogModels(cache.models) : null;
+	} catch {
+		logger.debug('Could not read Codex models_cache.json for model discovery', LOG_CONTEXT);
+		return null;
+	}
+}
+
 // ============ Claude Code model discovery ============
-
-/**
- * Tier aliases Claude Code always accepts, each resolving to the current model
- * in that tier. `[1m]` variants select the 1M extended context window and need
- * extra usage enabled at claude.ai/settings/usage; the CLI offers them for opus
- * and sonnet only.
- *
- * Not every model has an alias - limited-access models are reachable only by
- * their full ID - so this list is a floor, never the whole picture. The sources
- * below fill in the rest.
- */
-const CLAUDE_MODEL_ALIASES = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
-
-/**
- * Model catalog the Claude Code CLI caches to render its own `/model` picker,
- * relative to the Claude config directory.
- */
-const CLAUDE_CATALOG_SUBDIR = ['cache', 'model-catalog'];
-
-/**
- * Surface key for Claude Code inside the catalog. The catalog also carries
- * `chat`, `cowork` and others, whose model lists differ.
- */
-const CLAUDE_CATALOG_SURFACE = 'cc';
-
-/** One entry of a surface's model selector, in either catalog shape. */
-interface ClaudeCatalogSelectorConfig {
-	models?: Array<{ id?: string }>;
-}
-
-/**
- * The CLI's cached catalog, in both shapes seen in the wild.
- *
- * Shape A (observed on CLI 2.1.257): one `published-<hash>.json` holding every
- * surface, keyed by name under `document.surfaces`, each with an array of
- * selector configs.
- *
- * Shape B (observed on CLI 2.1.294): one `<uuid>-<hash>-<surface>.json` per
- * surface, the surface named in a field rather than a key, and a single
- * selector config object instead of an array.
- *
- * This is an undocumented cache that has already been reshaped once between two
- * patch releases, so both shapes are read and neither is required.
- */
-interface ClaudeCatalogFile {
-	document?: {
-		surfaces?: Record<
-			string,
-			{ model_selector_config?: ClaudeCatalogSelectorConfig | ClaudeCatalogSelectorConfig[] }
-		>;
-	};
-	catalog?: {
-		surface?: string;
-		config?: ClaudeCatalogSelectorConfig | ClaudeCatalogSelectorConfig[];
-	};
-}
 
 interface ClaudeConfigFile {
 	projects?: Record<string, { lastModelUsage?: Record<string, unknown> }>;
@@ -226,14 +202,6 @@ interface ClaudeConfigFile {
 
 interface ClaudeStatsCacheFile {
 	modelUsage?: Record<string, unknown>;
-}
-
-/** Tolerate a field that is a single object in one CLI build and an array in another. */
-function asConfigList(
-	value: ClaudeCatalogSelectorConfig | ClaudeCatalogSelectorConfig[] | undefined
-): ClaudeCatalogSelectorConfig[] {
-	if (!value) return [];
-	return Array.isArray(value) ? value : [value];
 }
 
 /**
@@ -272,24 +240,6 @@ function resolveClaudeConfigJsonPath(): string {
 		: path.join(os.homedir(), '.claude.json');
 }
 
-/** Model IDs the `cc` surface offers, from whichever catalog shape this file is in. */
-function readCatalogSurfaceModelIds(file: ClaudeCatalogFile): string[] {
-	const configs = [
-		...asConfigList(file.document?.surfaces?.[CLAUDE_CATALOG_SURFACE]?.model_selector_config),
-		...(file.catalog?.surface === CLAUDE_CATALOG_SURFACE ? asConfigList(file.catalog.config) : []),
-	];
-
-	const ids: string[] = [];
-	for (const config of configs) {
-		for (const model of config?.models ?? []) {
-			if (typeof model?.id === 'string' && model.id && !ids.includes(model.id)) {
-				ids.push(model.id);
-			}
-		}
-	}
-	return ids;
-}
-
 /**
  * Model IDs from the CLI's cached model catalog.
  *
@@ -310,31 +260,21 @@ function readClaudeCatalogModelIds(): string[] {
 	const dir = path.join(resolveClaudeConfigDir(), ...CLAUDE_CATALOG_SUBDIR);
 	let entries: string[];
 	try {
-		entries = fs
-			.readdirSync(dir)
-			.filter((name) => name.endsWith('.json') && name !== 'published-floor.json');
+		entries = fs.readdirSync(dir).filter(isClaudeCatalogFileName);
 	} catch {
 		logger.debug('No Claude model catalog cache for model discovery', LOG_CONTEXT);
 		return [];
 	}
 
-	const ids: string[] = [];
-	for (const entry of entries) {
+	const files: ClaudeCatalogFileText[] = [];
+	for (const name of entries) {
 		try {
-			const catalog = parseJsonWithBom<ClaudeCatalogFile>(
-				fs.readFileSync(path.join(dir, entry), 'utf8')
-			);
-			for (const id of readCatalogSurfaceModelIds(catalog)) {
-				if (!ids.includes(id)) {
-					ids.push(id);
-				}
-			}
+			files.push({ name, text: fs.readFileSync(path.join(dir, name), 'utf8') });
 		} catch {
-			// A half-written or superseded catalog file should not cost us the others.
-			logger.debug(`Could not read Claude model catalog ${entry}`, LOG_CONTEXT);
+			logger.debug(`Could not read Claude model catalog ${name}`, LOG_CONTEXT);
 		}
 	}
-	return ids;
+	return claudeCatalogModelIds(files);
 }
 
 /**
@@ -934,6 +874,35 @@ export class AgentDetector {
 	}
 
 	/**
+	 * The models a harness can run, each with what its catalogue states about it.
+	 *
+	 * The ids are `discoverModels()` (same cache, same gates), so this lists
+	 * exactly what the model picker offers. A harness with no discovery falls
+	 * back to the static `model` options of its definition (Factory Droid), so
+	 * a tier picker is not empty for it. Only Codex's catalogue states more than
+	 * an id: its description and its order, which Suggest ranks by.
+	 */
+	async discoverModelCatalog(
+		agentId: string,
+		forceRefresh = false
+	): Promise<HarnessCatalogModel[]> {
+		let ids = await this.discoverModels(agentId, forceRefresh);
+		if (ids.length === 0) {
+			const agent = await this.getAgent(agentId);
+			if (agent?.available && agent.capabilities.supportsModelSelection) {
+				const option = AGENT_DEFINITIONS.find((d) => d.id === agentId)?.configOptions?.find(
+					(o) => o.key === 'model'
+				);
+				if (option?.type === 'select') ids = (option.options ?? []).filter((id) => id !== '');
+			}
+		}
+		const stated = new Map(
+			(agentId === 'codex' ? (readCodexModelCatalog() ?? []) : []).map((model) => [model.id, model])
+		);
+		return ids.map((id) => stated.get(id) ?? { id });
+	}
+
+	/**
 	 * Run the agent-specific model discovery command.
 	 * Each agent may have a different way to list available models.
 	 *
@@ -993,32 +962,26 @@ export class AgentDetector {
 				case 'codex': {
 					// Codex: read ~/.codex/models_cache.json maintained by the Codex CLI.
 					// Contains the full list of available models with metadata.
-					try {
-						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-						const cachePath = path.join(codexHome, 'models_cache.json');
-						const cacheContent = fs.readFileSync(cachePath, 'utf8');
-						const cache = parseJsonWithBom<{
-							models?: Array<{ slug?: string; visibility?: string }>;
-						}>(cacheContent);
-						if (Array.isArray(cache.models)) {
-							const models = cache.models
-								.filter(
-									(m: {
-										slug?: string;
-										visibility?: string;
-									}): m is { slug: string; visibility?: string } =>
-										typeof m.slug === 'string' && m.visibility !== 'hide'
-								)
-								.map((m) => m.slug);
-							logger.info(
-								`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+					const catalog = readCodexModelCatalog();
+					if (catalog) {
+						// The Codex tier table names one slug per family, and the
+						// slugs move every generation. Say so here, where the
+						// user's own catalogue is read, rather than at the 400
+						// Codex answers a stale slug with.
+						for (const stale of staleTierModels('codex', catalog)) {
+							logger.warn(
+								`Codex tier "${stale.tier}" maps to ${stale.model}, which this Codex account does not list`,
 								LOG_CONTEXT,
-								{ models }
+								{ tier: stale.tier, slug: stale.model, replacement: stale.replacement }
 							);
-							return models;
 						}
-					} catch {
-						logger.debug('Could not read Codex models_cache.json for model discovery', LOG_CONTEXT);
+						const models = catalog.map((model) => model.id);
+						logger.info(
+							`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+							LOG_CONTEXT,
+							{ models }
+						);
+						return models;
 					}
 					return [];
 				}

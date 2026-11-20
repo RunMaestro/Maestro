@@ -1,4 +1,4 @@
-import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
+import type { TabConfigResult } from '../../../shared/desktopTabs';
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
@@ -294,7 +294,7 @@ export function registerSessionCrudCallbacks(
 
 				const handleResponse = (
 					_event: Electron.IpcMainEvent,
-					result: TranslationReport | undefined
+					result: TabConfigResult | undefined
 				) => {
 					if (resolved) return;
 					resolved = true;
@@ -304,6 +304,7 @@ export function registerSessionCrudCallbacks(
 						error: result?.error,
 						plan: result?.plan,
 						result: result?.result,
+						tab: result?.tab,
 					});
 				};
 

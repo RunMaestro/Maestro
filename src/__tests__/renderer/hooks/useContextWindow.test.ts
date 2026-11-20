@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useContextWindow } from '../../../renderer/hooks/mainPanel/useContextWindow';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { Session } from '../../../renderer/types';
 
 const mockGetConfig = vi.fn();
@@ -31,6 +32,93 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('useContextWindow', () => {
+	it('uses the selected provider override and tab model instead of agent defaults', async () => {
+		const session = makeSession({
+			customContextWindow: 200_000,
+			customModel: 'opus[1m]',
+			contextUsage: 80,
+			providerOverrides: { codex: { customContextWindow: 100_000 } },
+		});
+		const tab = createMockAITab({
+			tabProvider: 'codex',
+			turnProvider: 'claude-code',
+			usageStats: { inputTokens: 10_000, outputTokens: 5_000, contextWindow: 100_000 },
+		});
+		const { result } = renderHook(() => useContextWindow(session, tab));
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(100_000));
+		expect(result.current.activeTabContextTokens).toBe(15_000);
+		expect(result.current.activeTabContextUsage).toBe(15);
+		expect(mockGetConfig).not.toHaveBeenCalled();
+	});
+
+	it('honors a tab model marker before the provider default model', async () => {
+		const session = makeSession({ customModel: 'sonnet' });
+		const tab = createMockAITab({ customModel: 'opus[1m]' });
+		const { result } = renderHook(() => useContextWindow(session, tab));
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+		expect(mockGetConfig).not.toHaveBeenCalled();
+	});
+
+	it('clears last-good usage when provider or native identity changes in the same tab', async () => {
+		const session = makeSession({ customContextWindow: 200_000 });
+		const tab = createMockAITab({
+			agentSessionId: 'native-a',
+			usageStats: { inputTokens: 20_000, outputTokens: 0, contextWindow: 200_000 },
+		});
+		const { result, rerender } = renderHook(({ tab }) => useContextWindow(session, tab), {
+			initialProps: { tab },
+		});
+		await waitFor(() => expect(result.current.activeTabContextTokens).toBe(20_000));
+		rerender({ tab: { ...tab, agentSessionId: 'native-b', usageStats: undefined } });
+		expect(result.current.activeTabContextTokens).toBe(0);
+		rerender({ tab });
+		await waitFor(() => expect(result.current.activeTabContextTokens).toBe(20_000));
+		rerender({ tab: { ...tab, tabProvider: 'codex', usageStats: undefined } });
+		expect(result.current.activeTabContextTokens).toBe(0);
+	});
+
+	it('discards a pending config reply after changing provider within a tab', async () => {
+		let resolveClaude!: (value: { contextWindow: number }) => void;
+		mockGetConfig.mockImplementation((provider) =>
+			provider === 'claude-code'
+				? new Promise((resolve) => {
+						resolveClaude = resolve;
+					})
+				: Promise.resolve({ contextWindow: 128_000 })
+		);
+		const session = makeSession();
+		const tab = createMockAITab();
+		const { result, rerender } = renderHook(({ tab }) => useContextWindow(session, tab), {
+			initialProps: { tab },
+		});
+		rerender({ tab: { ...tab, tabProvider: 'codex' } });
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(128_000));
+		await act(async () => resolveClaude({ contextWindow: 1_000_000 }));
+		expect(result.current.activeTabContextWindow).toBe(128_000);
+		expect(mockGetConfig).toHaveBeenCalledWith('codex');
+	});
+
+	it('hides a previous provider config while the selected provider config is pending', async () => {
+		let resolveCodex!: (value: { contextWindow: number }) => void;
+		mockGetConfig.mockImplementation((provider) =>
+			provider === 'codex'
+				? new Promise((resolve) => {
+						resolveCodex = resolve;
+					})
+				: Promise.resolve({ contextWindow: 200_000 })
+		);
+		const session = makeSession();
+		const tab = createMockAITab();
+		const { result, rerender } = renderHook(({ tab }) => useContextWindow(session, tab), {
+			initialProps: { tab },
+		});
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(200_000));
+		rerender({ tab: { ...tab, tabProvider: 'codex' } });
+		expect(result.current.activeTabContextWindow).toBe(0);
+		await act(async () => resolveCodex({ contextWindow: 128_000 }));
+		expect(result.current.activeTabContextWindow).toBe(128_000);
+	});
+
 	it('returns zeros when no session', () => {
 		const { result } = renderHook(() => useContextWindow(null, null));
 

@@ -7,8 +7,46 @@ import {
 	installFeedbackLiveStateHook,
 } from '../../../renderer/services/feedbackLiveState';
 import { FEEDBACK_LIVE_STATE_GLOBAL } from '../../../shared/feedbackLiveState';
+import { createMockAITab } from '../../helpers/mockTab';
 
 describe('captureFeedbackLiveState', () => {
+	it('separates agent identity, selected tab provider and captured failure ownership', () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'mixed',
+					state: 'error',
+					agentErrorTabId: 'tab-1',
+					agentError: {
+						type: 'auth_expired',
+						agentId: 'codex',
+						recoverable: true,
+						timestamp: 10,
+						message: 'expired',
+					},
+					aiTabs: [
+						createMockAITab({ id: 'tab-1', tabProvider: 'claude-code', turnProvider: 'codex' }),
+					],
+					orphanedThinkingTabs: [
+						createMockAITab({
+							id: 'closed',
+							tabProvider: 'codex',
+							turnProvider: 'claude-code',
+							state: 'busy',
+						}),
+					],
+				}),
+			],
+		});
+		const [agent] = captureFeedbackLiveState(100).agents;
+		expect(agent.provider).toBe('claude-code');
+		expect(agent.error?.provider).toBe('codex');
+		expect(agent.tabs).toEqual([
+			{ id: 'tab-1', provider: 'claude-code', turnProvider: 'codex', state: 'idle' },
+			{ id: 'closed', provider: 'codex', turnProvider: 'claude-code', state: 'busy' },
+		]);
+	});
+
 	afterEach(() => {
 		useSessionStore.setState({ sessions: [] });
 		useAutoRunResumeStore.setState({ entries: {} });

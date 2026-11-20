@@ -326,4 +326,13 @@ describe('PeerAgentComposer', () => {
 			overrides: { readOnly: true, saveToHistory: true },
 		});
 	});
+
+	it("lists the host's models: discovery runs on the peer's remote, not this machine", async () => {
+		hydrateHost({ id: 't1', name: 'First' });
+		const getModels = vi.mocked(window.maestro.agents.getModels);
+		getModels.mockClear();
+		renderComposer();
+		await flush();
+		expect(getModels).toHaveBeenCalledWith('claude-code', false, 'r-build');
+	});
 });

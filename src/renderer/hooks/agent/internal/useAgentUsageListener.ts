@@ -1,3 +1,4 @@
+import { resolveTurnProvider } from '../../../utils/providerTabSessions';
 /**
  * useAgentUsageListener - registers `window.maestro.process.onUsage`
  *
@@ -56,7 +57,10 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			const sessionForUsage = getSessions().find((s) => s.id === baseSessionId);
 			if (!sessionForUsage) return;
 
-			const agentToolType = sessionForUsage.toolType;
+			const ownerTab =
+				sessionForUsage.aiTabs.find((tab) => tab.id === tabId) ??
+				sessionForUsage.orphanedThinkingTabs?.find((tab) => tab.id === tabId);
+			const agentToolType = resolveTurnProvider(ownerTab, sessionForUsage);
 			// ONE shared derivation of the window precedence, the occupancy source
 			// and the four skip guards (finding S1). Hydration replays main's raw
 			// captures through this exact function, so a restored timeline and a

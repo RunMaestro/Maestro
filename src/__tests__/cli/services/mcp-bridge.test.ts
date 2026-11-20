@@ -117,6 +117,77 @@ describe('createMcpBridge - callTool', () => {
 	});
 });
 
+describe('createMcpBridge - core tools', () => {
+	const proof = 'b'.repeat(64);
+	const retrieve = {
+		name: 'retrieve_compressed_original',
+		toolId: 'maestro:retrieve_compressed_original',
+		description: 'd',
+		inputSchema: { type: 'object' },
+	};
+
+	it('sends a valid run proof with tools/list so the app can name the caller', async () => {
+		const request = vi.fn(async () => ({ tools: [] }));
+		await createMcpBridge({ serverInfo, request, log, runToken: proof }).listTools();
+		expect(request.mock.calls[0]?.[0]).toEqual({ type: 'plugins_list_tools', runToken: proof });
+	});
+
+	it('sends no proof with tools/list when none is configured or it is invalid', async () => {
+		for (const deps of [{}, { runToken: null }, { runToken: 'nope' }]) {
+			const request = vi.fn(async () => ({ tools: [] }));
+			await createMcpBridge({ serverInfo, request, log, ...deps }).listTools();
+			expect(request.mock.calls[0]?.[0]).toEqual({ type: 'plugins_list_tools' });
+		}
+	});
+
+	it('passes the app instructions to initialize, and none when the app sends none', async () => {
+		const request = vi.fn();
+		request.mockResolvedValueOnce({ tools: [retrieve], instructions: 'Use it.' });
+		const bridge = createMcpBridge({ serverInfo, request, log, runToken: proof });
+		const init = { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} };
+		const withTool = (await bridge.server.handleMessage(init)) as {
+			result: Record<string, unknown>;
+		};
+		expect(withTool.result.instructions).toBe('Use it.');
+
+		request.mockResolvedValueOnce({ tools: [{ name: 'p__a', toolId: 'p/a' }] });
+		const without = (await bridge.server.handleMessage(init)) as {
+			result: Record<string, unknown>;
+		};
+		expect(without.result).not.toHaveProperty('instructions');
+
+		request.mockRejectedValueOnce(new Error('gone'));
+		const unreachable = (await bridge.server.handleMessage(init)) as {
+			result: Record<string, unknown>;
+		};
+		expect(unreachable.result).not.toHaveProperty('instructions');
+	});
+
+	it('shows a core tool error message even on a verified call', async () => {
+		const request = vi.fn();
+		request.mockResolvedValueOnce({ tools: [retrieve] });
+		const bridge = createMcpBridge({ serverInfo, request, log, runToken: proof });
+		await bridge.listTools();
+		request.mockResolvedValueOnce({ ok: false, toolError: 'No compressed block with hash x.' });
+		const result = await bridge.callTool('retrieve_compressed_original', { hash: 'x' });
+		expect(result).toEqual({
+			content: [{ type: 'text', text: 'Error: No compressed block with hash x.' }],
+			isError: true,
+		});
+		expect(request.mock.calls.at(-1)?.[0]).toEqual({
+			type: 'plugins_call_tool',
+			toolId: 'maestro:retrieve_compressed_original',
+			args: { hash: 'x' },
+			runToken: proof,
+		});
+
+		// A plugin failure on a verified call still hides its reason.
+		request.mockResolvedValueOnce({ ok: false, error: 'secret detail' });
+		const hidden = await bridge.callTool('retrieve_compressed_original', {});
+		expect(hidden.content[0].text).toBe('Error: PLUGIN_DENIED');
+	});
+});
+
 describe('actual mcpServe proof configuration', () => {
 	it.each([
 		{ file: undefined, content: undefined, configured: false, token: undefined },

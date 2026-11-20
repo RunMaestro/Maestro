@@ -16,6 +16,10 @@ import {
 } from '../../../renderer/utils/snoozeTranscriptMirror';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
+import {
+	persistTabStarred,
+	snapshotClosedTabTranscript,
+} from '../../../renderer/utils/starredSessions';
 import type { Session, SnoozedTabEntry } from '../../../renderer/types';
 
 const snapshot = () =>
@@ -57,8 +61,7 @@ function groupEntry(): SnoozedTabEntry {
 }
 
 beforeEach(() => {
-	snapshot().mockClear();
-	release().mockClear();
+	vi.clearAllMocks();
 });
 
 describe('mirrorSnoozedTranscript', () => {
@@ -107,5 +110,77 @@ describe('releaseSnoozedTranscript', () => {
 		const terminalEntry = { ...aiEntry(), type: 'terminal', tab: { id: 't1' } } as SnoozedTabEntry;
 		releaseSnoozedTranscript(session(), terminalEntry);
 		expect(release()).not.toHaveBeenCalled();
+	});
+});
+
+describe('Ensemble native transcript ownership', () => {
+	beforeEach(() => vi.clearAllMocks());
+	it.each([false, true])('mirrors and releases the native owner (pending=%s)', (pending) => {
+		const entry = aiEntry();
+		if (entry.type !== 'ai') throw new Error('Expected AI snooze');
+		entry.tab = createMockAITab({
+			agentSessionId: pending ? 'stale-destination' : 'codex-native',
+			tabProvider: 'codex',
+			pendingTranslation: pending ? 'claude-code' : undefined,
+			providerSessions: pending ? { 'claude-code': { agentSessionId: 'source' } } : undefined,
+		});
+		mirrorSnoozedTranscript(session(), entry);
+		releaseSnoozedTranscript(session(), entry);
+		const owner = pending ? 'claude-code' : 'codex';
+		const id = pending ? 'source' : 'codex-native';
+		expect(snapshot()).toHaveBeenCalledWith(owner, '/repo', id, undefined, 'snoozed');
+		expect(release()).toHaveBeenCalledWith(owner, '/repo', id);
+	});
+	it('stars and snapshots a pinned native session under its provider', async () => {
+		const tab = createMockAITab({
+			agentSessionId: 'codex-native',
+			tabProvider: 'codex',
+			starred: true,
+			name: 'Kept',
+		});
+		persistTabStarred(session(), tab, true);
+		snapshotClosedTabTranscript(session(), tab);
+		await Promise.resolve();
+		expect(window.maestro.agentSessions.setSessionStarred).toHaveBeenCalledWith(
+			'codex',
+			'/repo',
+			'codex-native',
+			true
+		);
+		expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		expect(snapshot()).toHaveBeenCalledWith('codex', '/repo', 'codex-native', 'Kept');
+	});
+	it('stars and snapshots the pending source instead of a stale destination', async () => {
+		const tab = createMockAITab({
+			agentSessionId: 'stale-codex',
+			tabProvider: 'codex',
+			pendingTranslation: 'claude-code',
+			providerSessions: { 'claude-code': { agentSessionId: 'source' } },
+			starred: true,
+			name: 'Pending',
+		});
+		persistTabStarred(session(), tab, false);
+		snapshotClosedTabTranscript(session(), tab);
+		await Promise.resolve();
+		expect(window.maestro.claude.updateSessionStarred).toHaveBeenCalledWith(
+			'/repo',
+			'source',
+			false
+		);
+		expect(snapshot()).toHaveBeenCalledWith('claude-code', '/repo', 'source', 'Pending');
+		expect(tab.agentSessionId).toBe('stale-codex');
+	});
+	it('never mirrors the destination when the pending source has no native ID yet', () => {
+		const tab = createMockAITab({
+			agentSessionId: 'stale-codex',
+			tabProvider: 'codex',
+			pendingTranslation: 'claude-code',
+			starred: true,
+		});
+		persistTabStarred(session(), tab, true);
+		snapshotClosedTabTranscript(session(), tab);
+		expect(snapshot()).not.toHaveBeenCalled();
+		expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
+		expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
 	});
 });

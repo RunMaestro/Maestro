@@ -4,13 +4,19 @@ import { buildExpandedPath, detectNodeVersionManagerBinPaths } from '../../pathU
 import { isWindows } from '../../platformDetection';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { buildSpawnPath, STANDARD_UNIX_PATHS } from './spawn-path';
-import { isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
+import {
+	applyEnvVarMerges,
+	isBlankEnvKey,
+	isBlankEnvValue,
+	type EnvVarMerge,
+} from '../../agentEnvironment';
 import {
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
 	CALLER_AUTORUN_ID_ENV_VAR,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 } from '../../agentDelegation';
+import { CONSULT_CHAIN_ENV_VAR, CONSULT_DEPTH_ENV_VAR } from '../../consultBudget';
 import { PROVIDER_ENV_VAR_SUGGESTIONS } from '../../envVarCatalog';
 
 /**
@@ -113,6 +119,10 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	// and attributing it to whichever agent launched Maestro would be a lie.
 	delete env[CALLER_AGENT_ID_ENV_VAR];
 	delete env[CALLER_TAB_ID_ENV_VAR];
+	// And for the consult chain: a terminal is where a chain STARTS, so a consult
+	// typed into one must not spend the budget of whichever turn launched Maestro.
+	delete env[CONSULT_CHAIN_ENV_VAR];
+	delete env[CONSULT_DEPTH_ENV_VAR];
 	delete env[CALLER_AUTORUN_ID_ENV_VAR];
 	delete env[CALLER_RUN_PROOF_FILE_ENV_VAR];
 
@@ -177,6 +187,12 @@ const STRIPPED_ENV_VARS = [
 	// is merged after this list is stripped, so only a stale inherited copy dies.
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	// The consult chain of whatever launched Maestro or `maestro-cli`. A chain
+	// reaches a child only when the spawner states it (the session layer again),
+	// at the child's own depth. An inherited copy would put every agent the app
+	// spawns in one stale chain and exhaust its budget for all of them.
+	CONSULT_CHAIN_ENV_VAR,
+	CONSULT_DEPTH_ENV_VAR,
 	CALLER_AUTORUN_ID_ENV_VAR,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	// Maestro's own NODE_ENV should not leak to agents
@@ -423,11 +439,44 @@ export interface AgentEnvLayers {
 	 */
 	sessionCustomEnvVars?: Record<string, string>;
 	/**
+	 * The base-URL variable the agent's Local Models gateway sets
+	 * (`resolveAgentGateway`). The launch plan passes it ONLY when the user
+	 * layer above does not set that variable itself, so where it sits relative
+	 * to that layer never decides a value; it sits above the provider defaults,
+	 * the global Settings vars and the inherited environment, because a gateway
+	 * chosen for one agent is more specific than any of them.
+	 */
+	gatewayEnvVars?: Record<string, string>;
+	/**
+	 * The variables the agent's model source sets (`resolveRunOnLaunch`): the
+	 * source's base URL and key, the model for each tier, the context size. The
+	 * launch plan passes only the ones the user layer does not set itself, and
+	 * never together with `gatewayEnvVars` (a model source takes the gateway's
+	 * place), so it sits in the same slot for the same reason.
+	 */
+	runOnEnvVars?: Record<string, string>;
+	/**
 	 * The provider's `readOnlyEnvOverrides`, passed only for a read-only turn.
 	 * Applied over everything the user set: read-only enforcement must not be
 	 * undone by a per-agent var.
 	 */
 	readOnlyEnvOverrides?: Record<string, string>;
+	/**
+	 * Variables the agent's model source ADDS TO instead of setting
+	 * (`resolveRunOnLaunch`'s `envVarMerges`): OpenCode's inline config, which
+	 * also carries Maestro's permission block and its read-only override. Each
+	 * merge is handed the value every layer above has settled on, the read-only
+	 * override included, and keeps all of it, so it is applied last and undoes
+	 * nothing.
+	 */
+	runOnEnvVarMerges?: Record<string, EnvVarMerge>;
+	/**
+	 * Variables the agent's Local Models gateway ADDS TO (`resolveAgentGateway`'s
+	 * `envVarMerges`): OpenCode's inline config again, for the same reason and
+	 * applied at the same point. Never together with `runOnEnvVarMerges`: a Run
+	 * on target takes the gateway's place.
+	 */
+	gatewayEnvVarMerges?: Record<string, EnvVarMerge>;
 }
 
 /**
@@ -435,9 +484,11 @@ export interface AgentEnvLayers {
  * first:
  *
  *   defaultEnvVars < batchModeEnvVars
- *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
+ *     < runOnEnvVars < readOnlyEnvOverrides
  *
- * The same on every surface. This is the record that crosses to an SSH remote,
+ * and then `gatewayEnvVarMerges` or `runOnEnvVarMerges`, each applied to the value that order settled
+ * on. The same on every surface. This is the record that crosses to an SSH remote,
  * where `process.env` does not exist, and the one Process Details shows. The
  * global Settings vars are NOT in it: on desktop they sit beneath this record.
  * They are not kept off the remote, though: desktop's SSH wrapper
@@ -452,8 +503,12 @@ export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, stri
 		...(layers.defaultEnvVars ?? {}),
 		...(layers.batchModeEnvVars ?? {}),
 		...(userEnvVars ?? {}),
+		...(layers.gatewayEnvVars ?? {}),
+		...(layers.runOnEnvVars ?? {}),
 		...(layers.readOnlyEnvOverrides ?? {}),
 	};
+	applyEnvVarMerges(merged, layers.gatewayEnvVarMerges);
+	applyEnvVarMerges(merged, layers.runOnEnvVarMerges);
 	for (const key of Object.keys(merged)) {
 		if (isBlankEnvKey(key)) delete merged[key];
 	}
@@ -512,8 +567,9 @@ export function buildAgentEnvironment(options: BuildAgentEnvironmentOptions): No
  * Desktop chat:
  *
  *   process.env < globalShellEnvVars < defaultEnvVars
- *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
- *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
+ *     < runOnEnvVars < readOnlyEnvOverrides < maestroEnvVars
+ *     < MAESTRO_QUERY_SOURCE
  *
  * `process.env` is inherited with the Electron/IDE/caller-identity vars in
  * `STRIPPED_ENV_VARS` removed, PATH rebuilt, and BROWSER disarmed (see
@@ -536,14 +592,15 @@ function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): No
 /**
  * The CLI (`maestro-cli send`, Auto Run, playbooks):
  *
- *   process.env < secretEnvVars
- *     < defaultEnvVars and batchModeEnvVars, which fill only what is NOT set
- *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
- *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *   process.env < secretEnvVars < defaultEnvVars and batchModeEnvVars fill only what the shell has NOT set
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
+ *     < runOnEnvVars < readOnlyEnvOverrides < maestroEnvVars
+ *     < MAESTRO_QUERY_SOURCE
  *
  * The shell wins over the provider defaults, so a value exported in the shell
  * that runs the command survives; the user's own vars override it, because the
- * user explicitly opted into them. `process.env` is inherited as it is, with
+ * user explicitly opted into them, and so do the agent's gateway and its model
+ * source, which the user set on this one agent. `process.env` is inherited as it is, with
  * PATH expanded. Values are written as given: no `~/` expansion, and a blank
  * value is exported blank. MAESTRO_SESSION_RESUMED is set for a resumed turn
  * and cleared otherwise, as on desktop, so a marker inherited from the shell
@@ -567,7 +624,13 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 		if (!env[key]) env[key] = value;
 	}
 	Object.assign(env, options.sessionCustomEnvVars ?? options.agentCustomEnvVars ?? {});
+	Object.assign(env, options.gatewayEnvVars ?? {});
+	Object.assign(env, options.runOnEnvVars ?? {});
 	Object.assign(env, options.readOnlyEnvOverrides ?? {});
+	// After every layer, the shell's own value included: a merge adds to
+	// whichever value this launch ended up with.
+	applyEnvVarMerges(env, options.gatewayEnvVarMerges);
+	applyEnvVarMerges(env, options.runOnEnvVarMerges);
 	Object.assign(env, options.maestroEnvVars ?? {});
 	env[QUERY_SOURCE_ENV_VAR] = options.querySource ?? DEFAULT_QUERY_SOURCE;
 	return env;
@@ -577,7 +640,8 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
  * Cue:
  *
  *   process.env < secretEnvVars < defaultEnvVars < (sessionCustomEnvVars ?? agentCustomEnvVars)
- *     < readOnlyEnvOverrides < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *     < gatewayEnvVars < runOnEnvVars < readOnlyEnvOverrides
+ *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
  *
  * `process.env` is inherited as it is, with PATH rebuilt the way the desktop
  * agent spawn rebuilds it (a Dock or Finder launch hands Maestro launchd's bare
@@ -592,7 +656,9 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
 	const inherited = isServerModeActive(options.isServerMode)
 		? filterServerProcessEnv(process.env)
-		: process.env;
+		: { ...process.env };
+	delete inherited[CONSULT_CHAIN_ENV_VAR];
+	delete inherited[CONSULT_DEPTH_ENV_VAR];
 	return {
 		...inherited,
 		...(options.secretEnvVars ?? {}),

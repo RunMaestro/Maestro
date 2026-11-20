@@ -220,6 +220,7 @@ async function sendClaimedDecision(
 				undefined,
 				true,
 				undefined,
+				undefined,
 				true,
 				...(native ? [record.id] : [])
 			);

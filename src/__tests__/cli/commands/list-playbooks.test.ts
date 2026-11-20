@@ -427,8 +427,11 @@ describe('list-playbooks command', () => {
 
 			expect(() => listPlaybooks({ agent: 'xyz', json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
-			expect(JSON.parse(errorOutput)).toEqual({ error: 'Agent not found: xyz' });
+			const errorOutput = consoleSpy.mock.calls[0][0];
+			expect(JSON.parse(errorOutput)).toEqual({
+				success: false,
+				error: 'Failed to list playbooks: Agent not found: xyz',
+			});
 		});
 
 		it('should handle readPlaybooks throwing an error', () => {
@@ -461,8 +464,11 @@ describe('list-playbooks command', () => {
 
 			expect(() => listPlaybooks({ json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
-			expect(JSON.parse(errorOutput)).toEqual({ error: 'Failed to read playbooks directory' });
+			const errorOutput = consoleSpy.mock.calls[0][0];
+			expect(JSON.parse(errorOutput)).toEqual({
+				success: false,
+				error: 'Failed to list playbooks: Failed to read playbooks directory',
+			});
 		});
 
 		it('should handle non-Error throws', () => {
@@ -482,8 +488,11 @@ describe('list-playbooks command', () => {
 
 			expect(() => listPlaybooks({ json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
-			expect(JSON.parse(errorOutput)).toEqual({ error: 'Unknown error' });
+			const errorOutput = consoleSpy.mock.calls[0][0];
+			expect(JSON.parse(errorOutput)).toEqual({
+				success: false,
+				error: 'Failed to list playbooks: Unknown error',
+			});
 		});
 	});
 

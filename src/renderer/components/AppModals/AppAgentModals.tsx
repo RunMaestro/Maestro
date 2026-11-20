@@ -23,6 +23,7 @@ import { TransferProgressModal } from '../TransferProgressModal';
 import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 // Re-export types used by consumers
 export type { RecoveryAction, MergeOptions, SendToAgentOptions };
@@ -171,7 +172,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 	// An account login names its own host: the outage's first blocked agent
 	// may be on a different account of the same provider.
 	const reauthSession = reauthOutage
-		? (reauthData?.host ?? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
+		? (reauthData?.host ??
+			reauthOutage.host ??
+			sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
 		: undefined;
 
 	return (
@@ -195,13 +198,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 				<AgentErrorModal
 					theme={theme}
 					error={effectiveAgentError}
-					agentName={
-						errorSession
-							? errorSession.toolType === 'claude-code'
-								? 'Claude Code'
-								: errorSession.toolType
-							: undefined
-					}
+					agentName={getAgentDisplayName(
+						effectiveAgentError.agentId || errorSession?.toolType || ''
+					)}
 					sessionName={errorSession?.name}
 					recoveryActions={recoveryActions}
 					onDismiss={onDismissAgentError}
@@ -213,6 +212,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 			{/* --- PROVIDER RE-AUTHENTICATION MODAL --- */}
 			{reauthOutage && reauthSession && (
 				<ReauthModal
+					key={reauthOutage.providerKey}
 					theme={theme}
 					outage={reauthOutage}
 					session={reauthSession}

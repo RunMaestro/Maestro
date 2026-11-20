@@ -122,6 +122,8 @@ import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { GraphLayoutMenu } from '../ui/GraphLayoutMenu';
+import { GraphToolbarButton } from '../ui/GraphToolbarButton';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -486,24 +488,6 @@ export function DocumentGraphView({
 			return () => unregisterLayer(id);
 		}
 	}, [showDepthSlider, registerLayer, unregisterLayer]);
-
-	/**
-	 * Register layout dropdown with layer stack when open
-	 */
-	useEffect(() => {
-		if (showLayoutDropdown) {
-			const id = registerLayer({
-				type: 'overlay',
-				priority: MODAL_PRIORITIES.DOCUMENT_GRAPH + 1,
-				blocksLowerLayers: false,
-				capturesFocus: false,
-				focusTrap: 'none',
-				allowClickOutside: true,
-				onEscape: () => setShowLayoutDropdown(false),
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [showLayoutDropdown, registerLayer, unregisterLayer]);
 
 	/**
 	 * Register legend with layer stack when expanded
@@ -1807,66 +1791,23 @@ export function DocumentGraphView({
 							)}
 						</div>
 
-						{/* Layout Algorithm Selector */}
-						<div className="relative">
-							<button
-								onClick={() => openDropdown('layout')}
-								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
-								style={{
-									backgroundColor: `${theme.colors.accent}10`,
-									color: theme.colors.textDim,
-								}}
-								onMouseEnter={(e) =>
-									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
-								}
-								onMouseLeave={(e) =>
-									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
-								}
-								title={`Layout: ${LAYOUT_LABELS[layoutType].name} (L to cycle)`}
-							>
-								<Network className="w-4 h-4" />
-								{LAYOUT_LABELS[layoutType].name}
-								<ChevronDown className="w-3 h-3" />
-							</button>
-
-							{showLayoutDropdown && (
-								<div
-									className="absolute top-full left-0 mt-2 py-1 rounded-lg z-50"
-									style={{
-										...elevatedSurfaceStyle(theme),
-										minWidth: 200,
-									}}
-								>
-									{MIND_MAP_LAYOUT_TYPES.map((type) => (
-										<button
-											key={type}
-											onClick={() => handleLayoutTypeChange(type)}
-											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
-											style={{
-												backgroundColor:
-													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
-												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
-											}}
-											onMouseEnter={(e) =>
-												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-											}
-											onMouseLeave={(e) =>
-												(e.currentTarget.style.backgroundColor =
-													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
-											}
-										>
-											<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
-											<span
-												className="text-xs whitespace-nowrap shrink-0"
-												style={{ color: theme.colors.textDim }}
-											>
-												{LAYOUT_LABELS[type].description}
-											</span>
-										</button>
-									))}
-								</div>
-							)}
-						</div>
+						<GraphLayoutMenu
+							theme={theme}
+							value={layoutType}
+							label={LAYOUT_LABELS[layoutType].name}
+							options={MIND_MAP_LAYOUT_TYPES.map((value) => ({
+								value,
+								label: LAYOUT_LABELS[value].name,
+								description: LAYOUT_LABELS[value].description,
+							}))}
+							onChange={handleLayoutTypeChange}
+							open={showLayoutDropdown}
+							onOpenChange={(open) => {
+								if (open) openDropdown('layout');
+								else setShowLayoutDropdown(false);
+							}}
+							priority={MODAL_PRIORITIES.DOCUMENT_GRAPH + 1}
+						/>
 
 						{/* Neighbor Depth Slider */}
 						<div className="relative">
@@ -2019,28 +1960,17 @@ export function DocumentGraphView({
 						    is the shipped default and a permanently-lit pill stops
 						    meaning anything. The label names what the wheel does
 						    right now, not what clicking would change it to. */}
-						<button
+						<GraphToolbarButton
+							theme={theme}
 							onClick={toggleScrollMode}
-							className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
-							style={{
-								backgroundColor:
-									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
-								color: scrollMode === 'pan' ? theme.colors.accent : theme.colors.textDim,
-							}}
-							onMouseEnter={(e) =>
-								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
-							}
-							onMouseLeave={(e) =>
-								(e.currentTarget.style.backgroundColor =
-									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`)
-							}
+							active={scrollMode === 'pan'}
+							icon={scrollMode === 'pan' ? <Move /> : <ZoomIn />}
 							title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
 							aria-pressed={scrollMode === 'pan'}
 							data-testid="document-graph-scroll-mode-toggle"
 						>
-							{scrollMode === 'pan' ? <Move className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
 							Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
-						</button>
+						</GraphToolbarButton>
 
 						{/* External Links Toggle */}
 						<button
@@ -2767,16 +2697,6 @@ export function DocumentGraphView({
 				</Modal>
 			)}
 
-			{/* Click outside dropdowns to close them */}
-			{showLayoutDropdown && (
-				<div
-					className="fixed inset-0 z-40"
-					onClick={(e) => {
-						e.stopPropagation();
-						setShowLayoutDropdown(false);
-					}}
-				/>
-			)}
 			{showDepthSlider && (
 				<div
 					className="fixed inset-0 z-40"

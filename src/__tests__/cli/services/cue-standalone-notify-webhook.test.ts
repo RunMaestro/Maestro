@@ -28,6 +28,7 @@ vi.mock('../../../main/cue/cue-cli-executor', () => ({ executeCueCli: vi.fn() })
 vi.mock('../../../main/cue/cue-notify-executor', () => ({ executeCueNotify }));
 vi.mock('../../../main/cue/cue-auth-detector', () => ({ detectCueAuthFailure }));
 vi.mock('../../../cli/services/storage', () => ({
+	readHarnessTierDefaults: () => ({}),
 	readSessions: () => [
 		{ id: 'agent-1', name: 'alpha', toolType: 'claude-code', cwd: '/p', projectRoot: '/p' },
 	],

@@ -5,6 +5,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import {
 	parseQueueSteerResult,
 	QUEUE_STEER_RENDERER_TIMEOUT_MS,
@@ -75,10 +76,12 @@ export function registerQueueCallbacks(
 			images?: string[],
 			background?: boolean,
 			held?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
 			dispatchCallback?: boolean,
 			control?: PianolaQueueControl,
-			turnOverrides?: TurnOverrides
+			turnOverrides?: TurnOverrides,
+			hostedTurn?: boolean
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -128,11 +131,14 @@ export function registerQueueCallbacks(
 					images,
 					background,
 					held,
+					consultChain,
 					mentionRouting,
 					dispatchCallback,
-					// Positional: the overrides follow `control`, which is then sent as undefined.
-					...(control || turnOverrides ? [control] : []),
-					...(turnOverrides ? [turnOverrides] : [])
+					// Positional: the overrides follow `control`, which is then sent as undefined, and
+					// the hosted-turn mark follows the overrides.
+					...(control || turnOverrides || hostedTurn ? [control] : []),
+					...(turnOverrides || hostedTurn ? [turnOverrides] : []),
+					...(hostedTurn ? [true] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

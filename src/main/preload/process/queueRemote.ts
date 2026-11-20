@@ -1,6 +1,7 @@
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
@@ -22,11 +23,14 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				/** A Federation sender's own tab chips for this one message (`TurnInput.overrides`). */
-				turnOverrides?: TurnOverrides
+				turnOverrides?: TurnOverrides,
+				/** Sent over the client protocol: a hosted agent's turn (`MAESTRO_HOSTED_TURN`). */
+				hostedTurn?: boolean
 			) => void
 		): (() => void) => {
 			/**
@@ -43,10 +47,12 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
-				turnOverrides?: TurnOverrides
+				turnOverrides?: TurnOverrides,
+				hostedTurn?: boolean
 			) => {
 				try {
 					const args: Parameters<typeof callback> = [
@@ -58,11 +64,13 @@ export function createQueueRemoteApi() {
 						images,
 						background,
 						held,
+						consultChain,
 						mentionRouting,
 						dispatchCallback,
 						control,
 					];
-					if (turnOverrides) args.push(turnOverrides);
+					if (turnOverrides || hostedTurn) args.push(turnOverrides);
+					if (hostedTurn) args.push(true);
 					callback(...args);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
 }));
 
 import { createContextApi } from '../../../main/preload/context';
+import { auditContextFootprint } from '../../../shared/contextFootprint';
 
 describe('Context Preload API', () => {
 	let api: ReturnType<typeof createContextApi>;
@@ -24,6 +25,24 @@ describe('Context Preload API', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		api = createContextApi();
+	});
+
+	describe('getFootprint', () => {
+		it('passes only the stored agent ID and preserves audit evidence', async () => {
+			const audit = auditContextFootprint({
+				subject: { agentId: 'selected', toolType: 'codex', projectRoot: '/fixture' },
+				components: [],
+				configured: [],
+				notes: [],
+			});
+			mockInvoke.mockResolvedValue(audit);
+			await expect(api.getFootprint('selected')).resolves.toBe(audit);
+			expect(mockInvoke).toHaveBeenCalledWith('context:getFootprint', 'selected');
+		});
+		it('propagates audit failures', async () => {
+			mockInvoke.mockRejectedValueOnce(new Error('agent unavailable'));
+			await expect(api.getFootprint('missing')).rejects.toThrow('agent unavailable');
+		});
 	});
 
 	describe('getStoredSession', () => {

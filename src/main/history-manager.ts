@@ -24,7 +24,7 @@ import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
 import { parseJsonWithBom, stripJsonBom } from '../shared/jsonUtils';
-import { HistoryEntry } from '../shared/types';
+import { HistoryEntry, type ToolType } from '../shared/types';
 import {
 	HISTORY_VERSION,
 	HISTORY_JSONL_EXT,
@@ -134,6 +134,13 @@ export class HistoryManager {
 	 * rotation check, and persisting it would reintroduce a per-append write.
 	 */
 	private appendsSinceRotationCheck = new Map<string, number>();
+	/**
+	 * Called after an entry reaches disk through {@link addEntry}. The one
+	 * in-process choke point for a new entry, so a consumer that must stay
+	 * current (the semantic indexer) hooks here instead of at each writer.
+	 * Entries appended by another process (`maestro-cli`) do not pass through.
+	 */
+	private entryAddedListeners = new Set<(sessionId: string, entry: HistoryEntry) => void>();
 
 	constructor() {
 		this.configDir = app.getPath('userData');
@@ -148,6 +155,18 @@ export class HistoryManager {
 	 */
 	setMaxEntriesResolver(resolver: () => number): void {
 		this.maxEntriesResolver = resolver;
+	}
+
+	/**
+	 * Listen for entries written through {@link addEntry}. Returns the
+	 * unsubscribe. A listener runs after the append succeeded and must not throw
+	 * work back at the writer: a failure in one is logged and the write stands.
+	 */
+	onEntryAdded(listener: (sessionId: string, entry: HistoryEntry) => void): () => void {
+		this.entryAddedListeners.add(listener);
+		return () => {
+			this.entryAddedListeners.delete(listener);
+		};
 	}
 
 	/**
@@ -465,6 +484,13 @@ export class HistoryManager {
 				return;
 			}
 
+			for (const listener of this.entryAddedListeners) {
+				try {
+					listener(sessionId, record);
+				} catch (error) {
+					logger.warn(`History entry listener failed: ${error}`, LOG_CONTEXT);
+				}
+			}
 			beforeWrite?.();
 
 			await this.maybeRotate(sessionId, limit);
@@ -784,9 +810,11 @@ export class HistoryManager {
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,
-		sessionName: string
+		sessionName: string,
+		provider?: ToolType,
+		ownerSessionId?: string
 	): Promise<number> {
-		const sessions = await this.listSessionsWithHistory();
+		const sessions = ownerSessionId ? [ownerSessionId] : await this.listSessionsWithHistory();
 		let updatedCount = 0;
 
 		// Per session, run the read-modify-write through the per-session write
@@ -800,7 +828,13 @@ export class HistoryManager {
 					let perSessionUpdates = 0;
 
 					for (const entry of entries) {
-						if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
+						if (
+							entry.agentSessionId === agentSessionId &&
+							entry.sessionName !== sessionName &&
+							(provider === undefined ||
+								entry.provider === provider ||
+								(entry.provider === undefined && ownerSessionId !== undefined))
+						) {
 							entry.sessionName = sessionName;
 							perSessionUpdates++;
 						}

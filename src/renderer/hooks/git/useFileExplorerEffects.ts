@@ -27,6 +27,7 @@ import { resolveFileReference } from '../../utils/fileLinks/resolve';
 import { getBasename } from '../../../shared/formatters';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
+import { canRevealOnHost, openFileForUser } from '../../services/hostShell';
 
 // ============================================================================
 // Dependencies interface
@@ -154,7 +155,7 @@ export function useFileExplorerEffects(
 
 			// Check if file should be opened externally (PDF, etc.)
 			if (!sshRemoteId && shouldOpenExternally(filename)) {
-				window.maestro.shell.openPath(fullPath);
+				void openFileForUser(fullPath);
 				return;
 			}
 
@@ -164,7 +165,10 @@ export function useFileExplorerEffects(
 				if (target.kind === 'directory') {
 					// A folder has no preview: take the user to it in the Files panel.
 					// One outside the tree can't be shown there, so hand it to the OS.
-					if (!revealPathInFileTree(currentSession.id, fullPath, { focus: true }) && !sshRemoteId) {
+					if (
+						!revealPathInFileTree(currentSession.id, fullPath, { focus: true }) &&
+						canRevealOnHost(sshRemoteId)
+					) {
 						void window.maestro.shell.openPath(fullPath);
 					}
 					return;

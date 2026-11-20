@@ -8,6 +8,7 @@ import type { Theme } from '../../types';
 import type { CueBundleClaudeAssetSelection } from '../../../shared/cue-bundle-types';
 import type { CueBundleExportOutcome } from '../../../main/cue-bundle-service';
 import { formatSize } from '../../../shared/formatters';
+import { hostShellAvailable } from '../../services/hostShell';
 
 type Tone = 'success' | 'warning' | 'error' | 'info';
 
@@ -183,14 +184,16 @@ export function ExportResultNotice({
 		<BundleNotice theme={theme} tone="success" title={`Exported ${manifest.name}`}>
 			<div className="flex items-center gap-2">
 				<span className="font-mono text-xs break-all">{result.outputPath}</span>
-				<button
-					onClick={() => void window.maestro.shell.showItemInFolder(result.outputPath)}
-					className="p-1 rounded hover:bg-white/10"
-					title="Show in folder"
-					aria-label="Show in folder"
-				>
-					<FolderOpen className="w-3.5 h-3.5" />
-				</button>
+				{hostShellAvailable() && (
+					<button
+						onClick={() => void window.maestro.shell.showItemInFolder(result.outputPath)}
+						className="p-1 rounded hover:bg-white/10"
+						title="Show in folder"
+						aria-label="Show in folder"
+					>
+						<FolderOpen className="w-3.5 h-3.5" />
+					</button>
+				)}
 			</div>
 			<div className="text-xs" style={{ color: theme.colors.textDim }}>
 				{formatSize(result.size)} · {manifest.agents.length} agent

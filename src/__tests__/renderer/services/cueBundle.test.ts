@@ -318,3 +318,18 @@ describe('useCueBundleAgentSync', () => {
 		});
 	});
 });
+
+it('preserves pinned tabs when a Cue bundle changes the agent default', async () => {
+	const pinned = {
+		id: 'pin',
+		tabProvider: 'codex',
+		agentSessionId: 'codex-native',
+		customModel: 'gpt-pinned',
+	};
+	useSessionStore.setState({ sessions: [{ ...existing, aiTabs: [pinned] } as unknown as Session] });
+	await applyImportedAgents({
+		created: [],
+		updated: [{ id: 'e1', toolType: 'claude-code', cwd: '/old' } as SessionInfo],
+	});
+	expect(useSessionStore.getState().sessions[0].aiTabs[0]).toEqual(pinned);
+});

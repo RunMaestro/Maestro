@@ -237,6 +237,46 @@ afterEach(() => {
 // ============================================================================
 
 describe('useMergeTransferHandlers', () => {
+	it.each(['idle', 'busy'] as const)(
+		'transfers a pinned source into a new default-provider target tab (%s)',
+		async (state) => {
+			const source = createMockSession({ id: 'source', toolType: 'claude-code' });
+			source.aiTabs[0].tabProvider = 'codex';
+			const target = createMockSession({
+				id: 'target',
+				toolType: 'opencode',
+				state,
+				customModel: 'target-model',
+				executionQueue: [],
+			});
+			target.aiTabs[0].tabProvider = 'claude-code';
+			useSessionStore.setState({ sessions: [source, target], activeSessionId: source.id });
+			const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+			await act(async () => {
+				await result.current.handleSendToAgent(target.id, {
+					groomContext: false,
+					targetSessionId: target.id,
+				});
+			});
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === target.id)!;
+			const tab = updated.aiTabs.find((t) => t.id === updated.activeTabId)!;
+			expect(tab.tabProvider).toBeUndefined();
+			if (state === 'busy') {
+				expect(updated.executionQueue[0].turnSettings).toMatchObject({
+					provider: 'opencode',
+					model: 'target-model',
+				});
+				expect(updated.executionQueue[0].text).toContain('using codex');
+			} else {
+				expect(tab.turnProvider).toBe('opencode');
+				expect(tab.logs[1].text).toContain('using codex');
+				expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({ toolType: 'opencode', sessionCustomModel: 'target-model' })
+				);
+			}
+		}
+	);
+
 	// ----------------------------------------------------------------
 	// Initialization
 	// ----------------------------------------------------------------

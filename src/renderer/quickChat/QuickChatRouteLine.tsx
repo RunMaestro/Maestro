@@ -14,9 +14,7 @@
  * Quick Chat panel while another app is active.
  */
 
-import { useEffect, useState } from 'react';
 import { Clock, History, MessagesSquare, Navigation, Plus, ThumbsDown } from 'lucide-react';
-import { formatDurationHuman } from '../../shared/duration';
 import type { QuickChatRoute, QuickChatRouteOrigin } from '../../shared/quickChat';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
 import { Spinner } from '../components/ui/Spinner';
@@ -34,28 +32,6 @@ const ORIGINS: Record<QuickChatRouteOrigin, { icon: typeof Plus; label: string }
 	reopened: { icon: History, label: 'Reopened a closed tab' },
 	new: { icon: Plus, label: 'Started a new tab' },
 };
-
-function useElapsedSeconds(since: number | null): number {
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (since === null) return;
-		setNow(Date.now());
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [since]);
-	return since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
-}
-
-/** The "Working for 12s" line under a reply that is still being written. */
-export function QuickChatWorkingLine({ since, theme }: { since: number | null; theme: Theme }) {
-	const elapsed = useElapsedSeconds(since);
-	return (
-		<div style={{ color: theme.colors.textDim }} data-testid="quick-chat-working">
-			{/* No known start: say so rather than freeze a "0s" that never moves. */}
-			{since === null ? 'Working…' : `Working for ${formatDurationHuman(elapsed * 1000)}`}
-		</div>
-	);
-}
 
 function Explained({
 	label,

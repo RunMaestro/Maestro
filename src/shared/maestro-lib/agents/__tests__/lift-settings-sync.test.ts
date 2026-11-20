@@ -8,9 +8,19 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRecord } from '../../store/records';
 import {
 	AGENT_PATCH_FEDERATION,
+	CONDUCTOR_ONLY_SETTINGS,
+	FEDERATION_FIELD_IDS,
+	HOSTED_SETTINGS_NOT_YET_SYNCED,
 	TAB_PATCH_FEDERATION,
 	applyLiftSyncPull,
+	buildLiftPeerIdMap,
+	describeFederationField,
+	describeFederationFields,
+	federationFieldRule,
 	liftFollowUpPatch,
+	liftSyncPendingIds,
+	peerRowsFromHost,
+	splitPeerRowsForHost,
 	liftSyncAgentValues,
 	liftSyncFieldLabel,
 	overlaySyncValues,
@@ -508,5 +518,177 @@ describe('the Federation decision table', () => {
 
 	it('shares no tab field through tabs.update', () => {
 		expect(Object.values(TAB_PATCH_FEDERATION).every((rule) => rule.scope !== 'shared')).toBe(true);
+	});
+});
+
+describe('peer grants across machines', () => {
+	// `lifted-local` was lifted to the same host as `host-builder`; `host-only` lives on the host;
+	// `laptop-only` is an agent on this machine the host does not hold.
+	const peerIds = buildLiftPeerIdMap(
+		[
+			{ id: 'local-1', liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } },
+			{ id: 'lifted-local', liftedTo: { peer: 'build-box', agentId: 'host-builder', at: 1 } },
+			{ id: 'elsewhere', liftedTo: { peer: 'other-box', agentId: 'other-1', at: 1 } },
+			{ id: 'laptop-only' },
+		],
+		'build-box',
+		['host-1', 'host-builder', 'host-only']
+	);
+	const rows = [
+		{ sessionId: 'lifted-local', read: true, write: false },
+		{ sessionId: 'host-only', read: false, write: true },
+		{ sessionId: 'laptop-only', read: true, write: true },
+	];
+
+	it('maps only agents lifted to this host', () => {
+		expect(peerIds.toHost).toEqual({ 'local-1': 'host-1', 'lifted-local': 'host-builder' });
+	});
+
+	it("splits rows into the host's ids and the rows it cannot honor", () => {
+		expect(splitPeerRowsForHost(rows, peerIds)).toEqual({
+			honored: [
+				{ sessionId: 'host-builder', read: true, write: false },
+				{ sessionId: 'host-only', read: false, write: true },
+			],
+			unhonored: [{ sessionId: 'laptop-only', read: true, write: true }],
+		});
+	});
+
+	it('gives the host rows their local ids back and keeps the unhonored rows', () => {
+		expect(
+			peerRowsFromHost([{ sessionId: 'host-builder', read: true, write: true }], peerIds, [
+				{ sessionId: 'laptop-only', read: true, write: false },
+			])
+		).toEqual([
+			{ sessionId: 'lifted-local', read: true, write: true },
+			{ sessionId: 'laptop-only', read: true, write: false },
+		]);
+	});
+
+	it('agrees when the pointer and the host hold the same honored rows', () => {
+		const plan = planLiftedSettingsSync({
+			local: local({ peerAgents: rows }),
+			host: host({
+				peerAgents: [
+					{ sessionId: 'host-only', read: false, write: true },
+					{ sessionId: 'host-builder', read: true, write: false },
+				],
+			}),
+			peerIds,
+			now: 0,
+		});
+		expect(plan.conflicts.map((conflict) => conflict.id)).not.toContain('peerAgents');
+		expect(plan.pushes).toEqual([]);
+	});
+
+	it("sends a pointer's new row in the host's id, never the row the host cannot honor", () => {
+		const hostRecord = host();
+		const baseline = agreed(local(), hostRecord);
+		const plan = planLiftedSettingsSync({
+			local: local({ peerAgents: rows, groupPeerAccess: { read: true, write: false } }),
+			host: hostRecord,
+			baseline,
+			peerIds,
+			now: 0,
+		});
+		expect(plan.pushes[0].action).toEqual({
+			kind: 'update-agent',
+			patch: {
+				peerAgents: [
+					{ sessionId: 'host-builder', read: true, write: false },
+					{ sessionId: 'host-only', read: false, write: true },
+				],
+				groupPeerAccess: { read: true, write: false },
+			},
+		});
+	});
+
+	it("writes a host change onto the pointer in local ids and keeps this machine's rows", () => {
+		const before = local({ peerAgents: [{ sessionId: 'laptop-only', read: true, write: false }] });
+		// Agreed under the same id map a real sync plans with: a row the host cannot
+		// honor (`laptop-only`) is this machine's own, never part of the baseline.
+		const baseline = planLiftedSettingsSync({
+			local: before,
+			host: host(),
+			peerIds,
+			now: 0,
+		}).baseline;
+		const plan = planLiftedSettingsSync({
+			local: before,
+			host: host({
+				peerAgents: [{ sessionId: 'host-builder', read: true, write: true }],
+				peerDescription: 'Owns the docs',
+			}),
+			baseline,
+			peerIds,
+			now: 0,
+		});
+		const pulled = applyLiftSyncPull(before, plan.pull, peerIds);
+		expect(pulled.peerAgents).toEqual([
+			{ sessionId: 'lifted-local', read: true, write: true },
+			{ sessionId: 'laptop-only', read: true, write: false },
+		]);
+		expect(pulled.peerDescription).toBe('Owns the docs');
+	});
+
+	it('rewrites rows to host ids in the follow-up a lift sends', () => {
+		expect(liftFollowUpPatch(local({ peerAgents: rows }), peerIds)).toEqual({
+			peerAgents: [
+				{ sessionId: 'host-builder', read: true, write: false },
+				{ sessionId: 'host-only', read: false, write: true },
+			],
+		});
+	});
+});
+
+describe('where each setting of a hosted agent lives', () => {
+	it('reads every scope from the tables', () => {
+		expect(federationFieldRule('model').scope).toBe('shared');
+		expect(federationFieldRule('ssh').scope).toBe('machine');
+		expect(federationFieldRule('additionalDirectories')).toEqual({
+			scope: 'not-synced',
+			why: HOSTED_SETTINGS_NOT_YET_SYNCED.additionalDirectories,
+		});
+		expect(federationFieldRule('gatewayUrl')).toEqual(CONDUCTOR_ONLY_SETTINGS.gatewayUrl);
+	});
+
+	it('lists every field of the three tables once', () => {
+		expect(new Set(FEDERATION_FIELD_IDS).size).toBe(FEDERATION_FIELD_IDS.length);
+		expect(FEDERATION_FIELD_IDS.length).toBe(
+			Object.keys(AGENT_PATCH_FEDERATION).length +
+				Object.keys(HOSTED_SETTINGS_NOT_YET_SYNCED).length +
+				Object.keys(CONDUCTOR_ONLY_SETTINGS).length
+		);
+	});
+
+	it('marks a shared field pending or in conflict by the sync ids it carries', () => {
+		const state = { pendingIds: ['customModel', 'env:FOO'], conflictIds: ['nudgeMessage'] };
+		expect(describeFederationField('model', state)).toMatchObject({
+			scope: 'shared',
+			pending: true,
+			conflict: false,
+		});
+		expect(describeFederationField('env', state).pending).toBe(true);
+		expect(describeFederationField('nudgeMessage', state).conflict).toBe(true);
+		expect(describeFederationField('effort', state)).toMatchObject({
+			pending: false,
+			conflict: false,
+		});
+	});
+
+	it('never marks a field that is not sent as pending', () => {
+		const statuses = describeFederationFields({ pendingIds: ['maestroPPath'] });
+		expect(statuses.find((status) => status.field === 'maestroPPath')).toMatchObject({
+			scope: 'machine',
+			pending: false,
+		});
+	});
+
+	it("finds a pointer's edits that have not reached the host from its baseline", () => {
+		const baseline = agreed();
+		expect(liftSyncPendingIds(local(), baseline)).toEqual([]);
+		expect(liftSyncPendingIds(local({ customModel: 'sonnet' }), baseline)).toEqual(['customModel']);
+		// Never compared: the first sync asks about it instead.
+		expect(liftSyncPendingIds(local({ customModel: 'sonnet' }), undefined)).toEqual([]);
 	});
 });

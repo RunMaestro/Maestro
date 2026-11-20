@@ -3,7 +3,9 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
 import { requestSteerSend } from '../../../services/chatSteering';
+import { requestHoldSend } from '../../../hooks/input/useInputKeyDown';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
+import { useModalStore } from '../../../stores/modalStore';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -243,6 +245,17 @@ export function buildFeatureCommands({
 					requestSteerSend();
 				},
 			});
+			// The Send menu's fourth row. No chord of its own, so the palette is
+			// its only keyboard path.
+			commands.push({
+				id: 'holdSend',
+				label: 'Queue Held',
+				subtext: 'Queue the draft paused; it waits on its card until you resume it',
+				action: () => {
+					setQuickActionOpen(false);
+					requestHoldSend();
+				},
+			});
 		}
 	}
 
@@ -295,6 +308,29 @@ export function buildFeatureCommands({
 			action: () => {
 				onSummarizeAndContinue();
 				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	// Context: Preview Continuity. Read only, so it is offered for any AI tab that
+	// has an entry to read, with no capability gate: it asks no provider anything.
+	// Opened straight on the modal store (the tab menu does the same), carrying the
+	// tab it was opened for. The palette closes first so it does not take the new
+	// modal's layer down with it.
+	const activeAiTab =
+		activeTabType === 'ai'
+			? activeSession?.aiTabs.find((t) => t.id === activeSession.activeTabId)
+			: undefined;
+	if (activeSession && activeAiTab && (activeAiTab.logs?.length ?? 0) >= 1) {
+		commands.push({
+			id: 'continuityPreview',
+			label: 'Context: Preview Continuity',
+			subtext: 'Read what a continuation of this tab would have to keep (read only)',
+			action: () => {
+				setQuickActionOpen(false);
+				useModalStore
+					.getState()
+					.openModal('continuityPreview', { sessionId: activeSession.id, tabId: activeAiTab.id });
 			},
 		});
 	}

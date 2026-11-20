@@ -58,7 +58,7 @@ import { resolveAgentBinary } from '../launch/agent-binary';
 import type { AgentConfig } from '../providers/definitions';
 import { calculateContextTokens } from '../parsers/usage-aggregator';
 import { logger, captureException } from '../host';
-import { appendToLog, readLog, saveImage } from './log';
+import { appendToLog, formatChatHistoryForPrompt, readLog, saveImage } from './log';
 import { createGroupChatModerators, type GroupChatProcessControl } from './moderator';
 import { createGroupChatParticipants } from './participants';
 import { createSessionRecovery, needsSessionRecovery } from './session-recovery';
@@ -1383,10 +1383,7 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				const chatHistory = await readLog(chat.logPath);
 				logger.debug(`[GroupChat:Debug] Chat history entries: ${chatHistory.length}`);
 
-				const historyContext = chatHistory
-					.slice(-20)
-					.map((m) => `[${m.from}]: ${m.content}`)
-					.join('\n');
+				const historyContext = formatChatHistoryForPrompt(chatHistory, { last: 20 });
 
 				// Build image context if user attached images
 				let imageContext = '';
@@ -2305,12 +2302,10 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 
 			// Get chat history for context
 			const chatHistory = await readLog(updatedChat.logPath);
-			const historyContext = chatHistory
-				.slice(-15)
-				.map(
-					(m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`
-				)
-				.join('\n');
+			const historyContext = formatChatHistoryForPrompt(chatHistory, {
+				last: 15,
+				maxContentChars: 500,
+			});
 
 			// One participant's delegation, from agent resolution through spawn. Lives
 			// as a closure so a delegation held back by a busy agent can be replayed
@@ -2433,6 +2428,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 							agents.providerEnvVars(participant.agentId),
 						agentConfigValues,
 						sshRemoteConfig: matchingSession?.sshRemoteConfig,
+						maestroAgentId: matchingSession?.id,
 						tokenMode: getClaudeTokenMode(matchingSession, {
 							sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
 						}),
@@ -2796,10 +2792,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		const chatHistory = await readLog(chat.logPath);
 		logger.debug(`[GroupChat:Debug] Chat history entries for synthesis: ${chatHistory.length}`);
 
-		const historyContext = chatHistory
-			.slice(-30)
-			.map((m) => `[${m.from}]: ${m.content}`)
-			.join('\n');
+		const historyContext = formatChatHistoryForPrompt(chatHistory, { last: 30 });
 
 		// Build participant context for potential follow-up @mentions
 		// Use normalized names (spaces → hyphens) so moderator can @mention them properly
@@ -2983,12 +2976,10 @@ Review the agent responses above. Either:
 
 		// Get chat history for additional context
 		const chatHistory = await readLog(chat.logPath);
-		const historyContext = chatHistory
-			.slice(-15)
-			.map(
-				(m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`
-			)
-			.join('\n');
+		const historyContext = formatChatHistoryForPrompt(chatHistory, {
+			last: 15,
+			maxContentChars: 500,
+		});
 
 		// Find matching session for cwd
 		const sessions = agents.list();
@@ -3069,6 +3060,7 @@ Review the agent responses above. Either:
 				configResolution.effectiveCustomEnvVars ?? agents.providerEnvVars(participant.agentId),
 			agentConfigValues,
 			sshRemoteConfig: matchingSession?.sshRemoteConfig,
+			maestroAgentId: matchingSession?.id,
 			tokenMode: getClaudeTokenMode(matchingSession, {
 				sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
 			}),

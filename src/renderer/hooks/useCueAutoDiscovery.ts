@@ -6,6 +6,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
 import { filterLiveAgents } from '../../shared/agentVisibility';
+import { flushSessionPersistenceNow } from '../services/sessionPersistenceFlush';
 
 /**
  * useCueAutoDiscovery - auto-discovers .maestro/cue.yaml files for sessions.
@@ -95,8 +96,12 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecy
 
 			if (prevRoot === undefined) {
 				if (root) {
-					window.maestro.cue
-						.refreshSession(session.id, root)
+					// Main resolves the agent from the persisted sessions store, which a
+					// new agent reaches only after the debounced save. Asking first made
+					// the refresh fail ("Cue session not found"), and nothing retried,
+					// so a new agent's subscriptions never ran until the next launch.
+					flushSessionPersistenceNow()
+						.then(() => window.maestro.cue.refreshSession(session.id, root))
 						.catch((err) =>
 							logger.error('[CueAutoDiscovery] Failed to refresh session:', undefined, err)
 						);
@@ -110,8 +115,10 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecy
 			// refresh against the new path (or leave cleared if root is empty).
 			window.maestro.cue
 				.removeSession(session.id)
-				.then(() => {
+				.then(async () => {
 					if (!root) return;
+					// The new root must be on disk before main resolves it (as above).
+					await flushSessionPersistenceNow();
 					return window.maestro.cue.refreshSession(session.id, root);
 				})
 				.catch((err) =>

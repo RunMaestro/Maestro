@@ -122,6 +122,17 @@ describe('releaseMentionHandoff', () => {
 		expect(tab('tab-2').pendingMentionHandoff).toEqual(handoff);
 	});
 
+	// The turn was started by another agent's `maestro-cli dispatch`, so the
+	// hand-off is a delegation that agent set off: main spends from its chain.
+	it('forwards the chain the hand-off was armed with', () => {
+		const chain = { chainId: 'chain-a', depth: 1 };
+		seed([...EARLIER, ...TURN], { ...handoff, sourceConsultChain: chain });
+
+		releaseMentionHandoff(SOURCE_ID, SOURCE_TAB, { failed: false });
+
+		expect(sendCrossAgentRequest.mock.calls[0][0].sourceConsultChain).toEqual(chain);
+	});
+
 	it('sends nothing for a failed turn, and says so', () => {
 		seed([...EARLIER, ...TURN], handoff);
 

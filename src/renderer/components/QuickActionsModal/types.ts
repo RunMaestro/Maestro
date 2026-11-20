@@ -20,6 +20,20 @@ export interface QuickAction {
 	label: string;
 	action: () => void | Promise<void>;
 	subtext?: string;
+	/**
+	 * Extra words this command should match, for when the label is not what a
+	 * user would type.
+	 *
+	 * Search is over the label, which is right for almost everything: the label
+	 * is the command's name. It breaks down when a feature's name and its verb
+	 * are different words - "Talk to Backend" is the clearest possible label for
+	 * starting a voice session, and it is invisible to someone typing "voice".
+	 *
+	 * Opt-in, so a command with no keywords matches exactly as it always did.
+	 * Keep them to words a user would actually type; this is a search hint, not a
+	 * place to stuff synonyms until everything matches everything.
+	 */
+	keywords?: string[];
 	shortcut?: Shortcut;
 	// Agents-mode only: marks an agent whose state is not 'idle' so we can
 	// bucket "active" agents at the top with a divider beneath them. Also true

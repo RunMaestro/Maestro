@@ -50,7 +50,7 @@ cannot unexpectedly navigate away from plugin management.
 
 `hostSettings` is an optional closed list, currently only `["media"]`, accepted
 only on settings panels. It draws a host-owned button to the existing
-`environment-host-media` section. The plugin never receives model-directory
+`local-models-host-media` section (Models > Sources). The plugin never receives model-directory
 paths or host setting values. Only the host renderer's validated persistence
 channel can change `mediaModelDirectory`; plugin `settings.set` remains confined
 to `plugins.<ownId>.*`, and `settings.get('mediaModelDirectory')` is denied.

@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { triggerGroupKey } from '../../../shared/cue/trigger-group-key';
+import { isSameTriggerGroup, triggerGroupKey } from '../../../shared/cue/trigger-group-key';
 import type { CueSubscription } from '../../../shared/cue';
 
 function sub(overrides: Partial<CueSubscription> = {}): CueSubscription {
@@ -49,6 +49,37 @@ describe('triggerGroupKey', () => {
 		);
 	});
 
+	it('separates triggers whose gate differs', () => {
+		const gated = sub({ gate: 'the comment reports a bug' });
+		expect(triggerGroupKey(sub())).not.toBe(triggerGroupKey(gated));
+		expect(triggerGroupKey(gated)).not.toBe(
+			triggerGroupKey(sub({ gate: 'the comment asks for a code change' }))
+		);
+		expect(triggerGroupKey(gated)).not.toBe(
+			triggerGroupKey(sub({ gate: 'the comment reports a bug', gate_on_unavailable: 'skip' }))
+		);
+	});
+
+	it('groups parallel branches that carry the same gate', () => {
+		const a = sub({ name: 'p1', gate: 'the comment reports a bug' });
+		const b = sub({ name: 'p1-chain-2', gate: 'the comment reports a bug' });
+		expect(triggerGroupKey(a)).toBe(triggerGroupKey(b));
+	});
+
+	it('separates triggers whose injection screen differs', () => {
+		expect(triggerGroupKey(sub())).not.toBe(triggerGroupKey(sub({ screen_injection: true })));
+		expect(triggerGroupKey(sub({ screen_injection: true }))).not.toBe(
+			triggerGroupKey(sub({ screen_injection: false }))
+		);
+		expect(triggerGroupKey(sub())).not.toBe(triggerGroupKey(sub({ injection_threshold: 0.5 })));
+	});
+
+	it('groups parallel branches that carry the same injection screen', () => {
+		const a = sub({ name: 'p1', screen_injection: true, injection_threshold: 0.6 });
+		const b = sub({ name: 'p1-chain-2', screen_injection: true, injection_threshold: 0.6 });
+		expect(triggerGroupKey(a)).toBe(triggerGroupKey(b));
+	});
+
 	it('separates github.label triggers that watch different kinds or labels', () => {
 		const base = sub({ event: 'github.label' });
 		expect(triggerGroupKey(base)).not.toBe(
@@ -80,5 +111,41 @@ describe('triggerGroupKey', () => {
 		expect(triggerGroupKey(sub({ ...base, name: 'renew-prompt' }))).toBe(
 			triggerGroupKey(sub({ ...base, name: 'renew-notify', action: 'notify' }))
 		);
+	});
+});
+
+describe('isSameTriggerGroup', () => {
+	it('matches the parallel branches of one trigger in one pipeline', () => {
+		const anchor = sub({ name: 'p1', pipeline_name: 'P' });
+		expect(isSameTriggerGroup(anchor, sub({ name: 'p1-cmd-a', pipeline_name: 'P' }))).toBe(true);
+		expect(isSameTriggerGroup(anchor, anchor)).toBe(true);
+	});
+
+	it('leaves out another pipeline, a different trigger config, and a chain step', () => {
+		const anchor = sub({ name: 'p1', pipeline_name: 'P' });
+		expect(isSameTriggerGroup(anchor, sub({ name: 'q1', pipeline_name: 'Q' }))).toBe(false);
+		expect(
+			isSameTriggerGroup(anchor, sub({ name: 'p2', pipeline_name: 'P', repo: 'o/other' }))
+		).toBe(false);
+		expect(
+			isSameTriggerGroup(
+				anchor,
+				sub({ name: 'p1-chain-1', pipeline_name: 'P', event: 'agent.completed' })
+			)
+		).toBe(false);
+	});
+
+	it('gives a chain step and an ungrouped subscription no siblings but themselves', () => {
+		const chain = sub({ name: 'c1', pipeline_name: 'P', event: 'agent.completed' });
+		expect(isSameTriggerGroup(chain, chain)).toBe(true);
+		expect(
+			isSameTriggerGroup(chain, sub({ name: 'c2', pipeline_name: 'P', event: 'agent.completed' }))
+		).toBe(false);
+
+		// No `pipeline_name` predates grouping: an identical twin is still a
+		// different subscription.
+		const legacy = sub({ name: 'legacy' });
+		expect(isSameTriggerGroup(legacy, legacy)).toBe(true);
+		expect(isSameTriggerGroup(legacy, sub({ name: 'legacy-2' }))).toBe(false);
 	});
 });

@@ -133,6 +133,7 @@ export type SteerBubbleState = 'pending' | Extract<SteeringVerdict, 'absorbed' |
 /** Why an injection was refused. Each maps to a different thing to tell the user. */
 export type SteeringRefusal =
 	| 'not-running' // no turn in flight; this is an ordinary message, not a steer
+	| 'unsupported-transport' // the turn runs on Codex exec, which accepts no input
 	| 'blocking-dialog' // a permission/plan/trust dialog owns the keyboard
 	| 'editor-unavailable' // editor not drawn and no dialog named it; unknown screen
 	| 'echo-missing' // typed, but the text never appeared; NOT submitted

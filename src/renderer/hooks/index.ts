@@ -78,6 +78,11 @@ export * from './tabs';
 export * from './groupChat';
 
 // ============================================================================
+// Local Models Module - model and native runtime listing, downloads, installs
+// ============================================================================
+export * from './localModels';
+
+// ============================================================================
 // Modal Module - Modal lifecycle handlers
 // ============================================================================
 export * from './modal';

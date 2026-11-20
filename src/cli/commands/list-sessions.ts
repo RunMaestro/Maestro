@@ -9,19 +9,13 @@
 // number the user can find in the app. See `overlayTabConversationStats` for how
 // the disk-based Claude path is reconciled with it.
 
-import os from 'os';
-import {
-	resolveAgentId,
-	getSessionById,
-	readStoredAiTabs,
-	readAgentConfig,
-	readSettings,
-} from '../services/storage';
-import { resolveAgentAccountDir } from '../../shared/agentAccountDir';
+import { resolveAgentId, getSessionById, readStoredAiTabs } from '../services/storage';
+import { resolveCliAgentAccountDir } from '../services/agent-account-dir';
 import { listClaudeSessions } from '../services/agent-sessions';
 import { formatSessions, formatError, SessionDisplay } from '../output/formatter';
 import { computeTabConversationStats } from '../../shared/tabConversationStats';
 import type { ToolType } from '../../shared/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface ListSessionsOptions {
 	limit?: string;
@@ -201,7 +195,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			} else {
 				console.error(formatError(`Agent not found: ${agentIdArg}`));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const limit = options.limit ? parseInt(options.limit, 10) : 25;
@@ -214,7 +208,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const skip = options.skip ? parseInt(options.skip, 10) : 0;
@@ -227,7 +221,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Use disk-based reader for Claude Code, tab-based reader for other agents.
@@ -243,21 +237,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				limit,
 				skip,
 				search: options.search,
-				configDir: resolveAgentAccountDir(
-					{
-						toolType: agent.toolType,
-						customEnvVars: agent.customEnvVars,
-						sshRemote: !!agent.sessionSshRemoteConfig?.enabled,
-					},
-					{
-						agentLevelEnvVars: readAgentConfig(agent.toolType).customEnvVars as
-							| Record<string, string>
-							| undefined,
-						globalShellEnvVars: readSettings().shellEnvVars as Record<string, string> | undefined,
-						env: process.env,
-						homeDir: os.homedir(),
-					}
-				),
+				configDir: resolveCliAgentAccountDir(agent),
 			});
 			result = {
 				totalCount: claudeResult.totalCount,
@@ -315,6 +295,6 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 		} else {
 			console.error(formatError(`Failed to list sessions: ${message}`));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

@@ -9,18 +9,31 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatRelativeTime } from '../utils/formatters';
-import { visibleAiTabs } from '../utils/tabHelpers';
+import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import {
 	searchTabsMessages,
 	flattenCrossTabMatches,
 	type CrossTabSearchMatch,
 } from '../utils/crossTabSearch';
+import { useSemanticSearch, useSemanticSearchReady } from '../hooks/localModels';
+import { SemanticMatchLine, SemanticSearchToggle } from './SemanticSearch';
+import type { EmbeddingSourceType } from '../../shared/local-models/embedding-index';
+
+/** What the modal's semantic mode searches: transcript turns, nothing else. */
+const TRANSCRIPT_SEMANTIC_SOURCES: readonly EmbeddingSourceType[] = ['transcript'];
+
+/** Most turns a semantic search lists. */
+const TRANSCRIPT_SEMANTIC_LIMIT = 30;
 
 export interface CrossTabSearchJumpTarget {
 	tabId: string;
 	logId: string;
-	/** The query that produced the hit, so the transcript's Find bar can adopt it. */
+	/**
+	 * The query that produced the hit, so the transcript's Find bar can adopt it.
+	 * Empty for a semantic hit: it matched by meaning, so there is no text for
+	 * the Find bar to look for, and the bar is left as it was.
+	 */
 	query: string;
 	regex: boolean;
 }
@@ -31,6 +44,12 @@ interface CrossTabSearchModalProps {
 	tabs: AITab[];
 	/** Highlighted so the user can tell "this hit is in the tab I'm already on". */
 	activeTabId: string | null;
+	/**
+	 * The agent the tabs belong to. Semantic mode searches the embedding index,
+	 * which files transcript turns by agent, so without it the mode is not
+	 * offered.
+	 */
+	agentId?: string;
 	shortcut?: Shortcut;
 	onJump: (target: CrossTabSearchJumpTarget) => void;
 	onClose: () => void;
@@ -104,6 +123,7 @@ export function CrossTabSearchModal({
 	theme,
 	tabs: allTabs,
 	activeTabId,
+	agentId,
 	shortcut,
 	onJump,
 	onClose,
@@ -140,8 +160,41 @@ export function CrossTabSearchModal({
 
 	const flat = useMemo(() => flattenCrossTabMatches(result), [result]);
 
+	// Semantic mode: find turns by MEANING through the embedding index (in
+	// main) instead of matching text in the open tabs' logs. Offered only while
+	// the Semantic search task would answer.
+	const semanticReady = useSemanticSearchReady();
+	const [semanticMode, setSemanticMode] = useState(false);
+	const semanticActive = semanticMode && semanticReady && agentId !== undefined;
+	const semantic = useSemanticSearch({
+		query,
+		enabled: semanticActive,
+		sourceTypes: TRANSCRIPT_SEMANTIC_SOURCES,
+		agentId,
+		limit: TRANSCRIPT_SEMANTIC_LIMIT,
+	});
+	// The index is built from what was persisted, which can trail the live tab
+	// strip: a hit in a tab closed since then has nowhere to jump to, so it is
+	// dropped. Names come from the live tab, so a rename shows at once.
+	const semanticRows = useMemo(() => {
+		const byId = new Map(tabs.map((tab) => [tab.id, tab]));
+		return semantic.hits.flatMap((hit) => {
+			const tab = hit.transcript ? byId.get(hit.transcript.tabId) : undefined;
+			return tab && hit.transcript
+				? [{ hit, tabId: tab.id, turnId: hit.transcript.turnId, tabName: getTabDisplayName(tab) }]
+				: [];
+		});
+	}, [semantic.hits, tabs]);
+
 	const handleSelect = useCallback(
 		(index: number) => {
+			if (semanticActive) {
+				const row = semanticRows[index];
+				if (!row) return;
+				onJump({ tabId: row.tabId, logId: row.turnId, query: '', regex: false });
+				onClose();
+				return;
+			}
 			const hit = flat[index];
 			if (!hit) return;
 			onJump({
@@ -152,11 +205,11 @@ export function CrossTabSearchModal({
 			});
 			onClose();
 		},
-		[flat, onJump, onClose, debouncedQuery, regexMode]
+		[flat, onJump, onClose, debouncedQuery, regexMode, semanticActive, semanticRows]
 	);
 
 	const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
-		listLength: flat.length,
+		listLength: semanticActive ? semanticRows.length : flat.length,
 		onSelect: handleSelect,
 		enablePageNavigation: true,
 		wrap: true,
@@ -217,36 +270,54 @@ export function CrossTabSearchModal({
 						ref={inputRef}
 						className="flex-1 min-w-0 bg-transparent outline-none text-lg placeholder-opacity-50 select-text"
 						placeholder={
-							regexMode ? 'Regex across all open tabs…' : 'Search messages across all open tabs…'
+							semanticActive
+								? 'Describe what you are looking for…'
+								: regexMode
+									? 'Regex across all open tabs…'
+									: 'Search messages across all open tabs…'
 						}
 						style={{ color: theme.colors.textMain }}
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 						onKeyDown={onInputKeyDown}
 					/>
-					{/* Same chip as the in-tab Find bar so the two searches read as one family */}
-					<button
-						onClick={() => setRegexMode((prev) => !prev)}
-						className="flex items-center justify-center gap-1.5 pl-1 pr-2 py-1 rounded border text-xs font-medium whitespace-nowrap transition-colors shrink-0"
-						style={{
-							borderColor: result.error ? theme.colors.error : theme.colors.accent,
-							backgroundColor: theme.colors.accent + '20',
-							color: theme.colors.accent,
-						}}
-						title={regexMode ? 'Switch to plain-text search' : 'Switch to regex search'}
-						aria-pressed={regexMode}
-					>
-						<span
-							className="px-1.5 py-0.5 rounded font-mono leading-none"
-							style={{
-								backgroundColor: theme.colors.accent,
-								color: theme.colors.accentForeground,
+					{semanticReady && agentId !== undefined && (
+						<SemanticSearchToggle
+							theme={theme}
+							variant={phone ? 'icon' : 'chip'}
+							active={semanticMode}
+							onToggle={() => {
+								setSemanticMode((prev) => !prev);
+								inputRef.current?.focus();
 							}}
+						/>
+					)}
+					{/* Same chip as the in-tab Find bar so the two searches read as one family.
+					    Hidden in semantic mode, where a pattern has nothing to match against. */}
+					{!semanticActive && (
+						<button
+							onClick={() => setRegexMode((prev) => !prev)}
+							className="flex items-center justify-center gap-1.5 pl-1 pr-2 py-1 rounded border text-xs font-medium whitespace-nowrap transition-colors shrink-0"
+							style={{
+								borderColor: result.error ? theme.colors.error : theme.colors.accent,
+								backgroundColor: theme.colors.accent + '20',
+								color: theme.colors.accent,
+							}}
+							title={regexMode ? 'Switch to plain-text search' : 'Switch to regex search'}
+							aria-pressed={regexMode}
 						>
-							{regexMode ? '.*' : 'Aa'}
-						</span>
-						{!phone && <span>{regexMode ? 'Regex' : 'Plain Text'}</span>}
-					</button>
+							<span
+								className="px-1.5 py-0.5 rounded font-mono leading-none"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+							>
+								{regexMode ? '.*' : 'Aa'}
+							</span>
+							{!phone && <span>{regexMode ? 'Regex' : 'Plain Text'}</span>}
+						</button>
+					)}
 					{shortcut && !phone && (
 						<span className="text-xs font-mono opacity-60" style={{ color: theme.colors.textDim }}>
 							{formatShortcutKeys(shortcut.keys)}
@@ -260,7 +331,18 @@ export function CrossTabSearchModal({
 					className="px-4 py-2 border-b flex items-center gap-2 text-xs"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					{result.error ? (
+					{semanticActive ? (
+						<>
+							<span>
+								{semantic.loading
+									? 'Searching by meaning…'
+									: `${semanticRows.length} ${semanticRows.length === 1 ? 'turn' : 'turns'} by meaning`}
+							</span>
+							{semantic.indexNote && (
+								<span style={{ color: theme.colors.warning }}>· {semantic.indexNote}</span>
+							)}
+						</>
+					) : result.error ? (
 						<span style={{ color: theme.colors.error }}>Invalid regex: {result.error}</span>
 					) : (
 						<>
@@ -280,7 +362,76 @@ export function CrossTabSearchModal({
 
 				{/* Results */}
 				<div className="flex-1 overflow-y-auto scrollbar-thin">
-					{flat.length === 0 ? (
+					{semanticActive ? (
+						semanticRows.length === 0 ? (
+							<div
+								className="px-4 py-10 text-center text-sm"
+								style={{ color: theme.colors.textDim }}
+							>
+								{!query.trim()
+									? 'Describe what you are looking for to search this agent by meaning'
+									: semantic.loading
+										? 'Searching by meaning…'
+										: (semantic.notice ?? 'No turns in the open tabs are close to that')}
+							</div>
+						) : (
+							semanticRows.map((row, index) => {
+								const isSelected = index === selectedIndex;
+								return (
+									<button
+										key={row.hit.sourceId}
+										ref={isSelected ? selectedRowRef : undefined}
+										onClick={() => handleSelect(index)}
+										onMouseEnter={() => setSelectedIndex(index)}
+										data-testid="semantic-result-row"
+										className="w-full text-left px-4 py-2 flex flex-col gap-1 transition-colors"
+										style={{
+											backgroundColor: isSelected ? `${theme.colors.accent}22` : 'transparent',
+											borderLeft: `2px solid ${isSelected ? theme.colors.accent : 'transparent'}`,
+										}}
+									>
+										<div className="flex items-center gap-2 text-2xs min-w-0">
+											<MessageSquare
+												className="w-3 h-3 shrink-0"
+												style={{ color: theme.colors.accent }}
+											/>
+											<span
+												className="truncate font-medium"
+												style={{ color: theme.colors.textMain }}
+											>
+												{row.tabName}
+											</span>
+											{row.tabId === activeTabId && (
+												<span
+													className="px-1.5 py-0.5 rounded-full leading-none shrink-0"
+													style={{
+														backgroundColor: `${theme.colors.accent}20`,
+														color: theme.colors.accent,
+													}}
+												>
+													current
+												</span>
+											)}
+											{row.hit.timestamp !== undefined && (
+												<span
+													className="shrink-0"
+													style={{ color: theme.colors.textDim, opacity: 0.7 }}
+												>
+													{formatRelativeTime(row.hit.timestamp)}
+												</span>
+											)}
+										</div>
+										<SemanticMatchLine
+											theme={theme}
+											score={row.hit.score}
+											snippet={row.hit.snippet}
+											query={semantic.searchedQuery}
+										/>
+									</button>
+								);
+							})
+						)
+					) : flat.length === 0 ? (
 						<div className="px-4 py-10 text-center text-sm" style={{ color: theme.colors.textDim }}>
 							{debouncedQuery.trim() && !result.error
 								? 'No matching messages'
@@ -381,7 +532,7 @@ export function CrossTabSearchModal({
 				>
 					<span>↑↓ navigate</span>
 					<span>↵ jump to message</span>
-					<span>{formatShortcutKeys(['Alt', 'Meta', 'r'])} regex</span>
+					{!semanticActive && <span>{formatShortcutKeys(['Alt', 'Meta', 'r'])} regex</span>}
 				</div>
 			</div>
 		</div>

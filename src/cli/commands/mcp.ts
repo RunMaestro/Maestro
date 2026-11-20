@@ -1,6 +1,7 @@
 /**
  * `maestro-cli mcp serve` - an MCP stdio server that exposes the running app's
- * registered plugin tools to an agent's model.
+ * registered plugin tools, and the core tools the app offers the calling agent
+ * (the token proxy's `retrieve_compressed_original`), to an agent's model.
  *
  * An agent (claude/codex/opencode/...) launches this as a subprocess and speaks
  * MCP over its stdin/stdout. We bridge `tools/list` / `tools/call` to the desktop

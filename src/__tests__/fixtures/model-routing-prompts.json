@@ -1,0 +1,194 @@
+{
+	"description": "The REPORT half of the model routing set: coding requests with the tier and the effort a careful person would pick. The routing eval (src/__tests__/main/local-models/model-routing-eval-e2e.test.ts) reports agreement on these and tunes nothing against them. The TUNE half is MODEL_ROUTING_EXAMPLES in src/shared/local-models/model-routing-examples.ts. A prompt belongs to one half only.",
+	"rubric": {
+		"low": "A lookup, a rename, a one-line fix, or a question about code already in context.",
+		"medium": "A change to a few files, or a bounded investigation.",
+		"high": "A design decision, a multi-file refactor, a hard bug, or anything where a wrong answer is costly."
+	},
+	"prompts": [
+		{ "text": "what port does the dev server listen on?", "tier": "low", "effort": "low" },
+		{
+			"text": "Rename getCwd to getWorkingDirectory in paths.ts and in its two callers.",
+			"tier": "low",
+			"effort": "low"
+		},
+		{ "text": "Add dist/ to the .gitignore.", "tier": "low", "effort": "low" },
+		{
+			"text": "The error toast says 'occured'. Fix the spelling.",
+			"tier": "low",
+			"effort": "low"
+		},
+		{ "text": "Which test file covers formatDuration?", "tier": "low", "effort": "low" },
+		{
+			"text": "Make the default page size 50 instead of 20.",
+			"tier": "low",
+			"effort": "low"
+		},
+		{
+			"text": "In the big billing refactor we merged last week, what did the new interface end up being called?",
+			"tier": "low",
+			"effort": "low"
+		},
+		{ "text": "Sort the imports in this file alphabetically.", "tier": "low", "effort": "low" },
+		{
+			"text": "What does the --frozen-lockfile flag do in our install step?",
+			"tier": "low",
+			"effort": "low"
+		},
+		{
+			"text": "Add a null check before we read user.profile.name on line 42.",
+			"tier": "low",
+			"effort": "low"
+		},
+		{
+			"text": "Print the current branch and tell me if the working tree is clean.",
+			"tier": "low",
+			"effort": "low"
+		},
+		{
+			"text": "Walk me through what this reducer does when it gets a RESET action.",
+			"tier": "low",
+			"effort": "medium"
+		},
+		{
+			"text": "Write a docstring for parse_duration: its arguments, what it returns, and the error it raises.",
+			"tier": "low",
+			"effort": "medium"
+		},
+		{
+			"text": "Add a --dry-run option to the cleanup script that prints what it would delete and deletes nothing.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "The date picker shows yesterday's date for users in Auckland. Find the cause and fix it.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Give the S3 upload helper a retry with exponential backoff, three attempts at most, and test it.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Move the feature flags out of environment variables into the config file, and update the three places that read them.",
+			"tier": "medium",
+			"effort": "low"
+		},
+		{
+			"text": "CI fails on Node 22 and passes on Node 20. Find out what differs and fix it.",
+			"tier": "medium",
+			"effort": "high"
+		},
+		{
+			"text": "Add a Cmd+Shift+K shortcut that clears the terminal, and list it in the shortcuts help.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Write an integration test for the password reset flow, from the request email to the new login.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Show a loading skeleton on the dashboard cards while the stats request is in flight.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "The image upload accepts files over the 10 MB limit. Enforce the limit on the client and on the server.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Replace moment with date-fns in the reports module.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Add an index for the orders.customer_id lookup and write the migration for it.",
+			"tier": "medium",
+			"effort": "low"
+		},
+		{
+			"text": "Profile the product list page and tell me which component re-renders the most.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Rate limit the public endpoints to 100 requests a minute per API key.",
+			"tier": "medium",
+			"effort": "medium"
+		},
+		{
+			"text": "Design how we store and sync user settings across devices, including what happens when two devices edit the same setting.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Customers are occasionally charged twice. Find out how a double charge can happen and close the hole.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Move the app from REST to GraphQL in stages. Propose the phases and what ships in each one.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Break the circular dependencies between the core, ui and data packages.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "p99 latency tripled after the last release and nothing obvious changed. Find the regression.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Add role-based access control to every endpoint, with an audit log of the requests it denies.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Replace the homegrown job queue with a durable one, and move the in-flight jobs over without losing any.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Polyrepo or monorepo for the next two years? Give me the costs on each side and a recommendation.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "The mobile app and the web app compute order totals differently in some cases. Find every divergence and unify the logic.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Make the editor usable on a document of a million lines without freezing.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Upgrade React from 17 to 19 across the app and fix everything that breaks.",
+			"tier": "high",
+			"effort": "medium"
+		},
+		{
+			"text": "Write a threat model for the file sharing feature and list the mitigations we are missing.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "Some users see another user's data for a moment after login. This is a P0, find it.",
+			"tier": "high",
+			"effort": "high"
+		},
+		{
+			"text": "intermittent 'database is locked' errors in prod since tuesday, root cause?",
+			"tier": "high",
+			"effort": "high"
+		}
+	]
+}

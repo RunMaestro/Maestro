@@ -98,7 +98,9 @@ function applyBundleUpdate(session: Session, fields: Partial<Session>): Session 
 		// and the bundle's fields below set the new provider's.
 		next = {
 			...next,
-			aiTabs: next.aiTabs.map((tab) => switchTabProvider(tab, session.toolType, toolType)),
+			aiTabs: next.aiTabs.map((tab) =>
+				tab.tabProvider === undefined ? switchTabProvider(tab, session.toolType, toolType) : tab
+			),
 			customPath: undefined,
 			customArgs: undefined,
 			customEnvVars: undefined,

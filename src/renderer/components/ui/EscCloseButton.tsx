@@ -7,6 +7,11 @@
  * an inert `<div>` in nine places, so it *looked* like the exit and did
  * nothing. This is the one implementation, and it is always a real button.
  *
+ * It carries its own focus ring rather than relying on the browser default,
+ * because it is the graphical exit: a control whose whole purpose is to be
+ * reachable when the keyboard shortcut is not available has to be visibly
+ * reachable BY keyboard too.
+ *
  * Variants:
  *   - `inline` (default) sits in a flex row next to the search input.
  *   - `adornment` is absolutely positioned inside a `relative` input wrapper,
@@ -81,7 +86,7 @@ export function EscCloseButton({
 			data-testid={testId}
 			className={`${VARIANT_CLASSES[variant]} ${
 				isTouch ? 'p-1.5' : 'px-2 py-0.5'
-			} rounded text-xs font-bold shrink-0 transition-colors cursor-pointer ${className}`.trim()}
+			} rounded text-xs font-bold shrink-0 transition-colors cursor-pointer focus-visible:ring-2 ${className}`.trim()}
 			style={{
 				backgroundColor: hovered ? theme.colors.border : theme.colors.bgMain,
 				color: hovered ? theme.colors.textMain : theme.colors.textDim,

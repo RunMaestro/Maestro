@@ -21,6 +21,7 @@ vi.mock('../../../renderer/components/ReauthModal', () => ({
 		<div
 			data-testid="reauth-modal"
 			data-session-name={props.session?.name}
+			data-provider={props.session?.toolType}
 			data-blocked={String(props.outage?.blocked?.length ?? 0)}
 		/>
 	),
@@ -209,6 +210,27 @@ describe('AppAgentModals', () => {
 		const modal = screen.getByTestId('reauth-modal');
 		expect(modal.getAttribute('data-blocked')).toBe('1');
 		expect(modal.getAttribute('data-session-name')).toBe('Pipeline Agent');
+	});
+
+	it('hosts recovery from captured tab configuration even after the agent is removed', () => {
+		const host = createMockSession({ id: 'auth-session', toolType: 'codex' });
+		useAuthOutageStore.setState({
+			outages: {
+				codex: {
+					providerKey: 'codex',
+					toolType: 'codex',
+					host,
+					message: 'expired',
+					startedAt: 1,
+					blocked: [{ sessionId: host.id, tabIds: ['failed'] }],
+					fromPipeline: false,
+					initiatedBy: 'failure',
+				},
+			},
+		});
+		useModalStore.getState().openModal('reauth', { providerKey: 'codex' });
+		render(<AppAgentModals {...defaultProps} sessions={[]} />);
+		expect(screen.getByTestId('reauth-modal')).toHaveAttribute('data-provider', 'codex');
 	});
 
 	it('does not render ReauthModal when the outage is gone', () => {

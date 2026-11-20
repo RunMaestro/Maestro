@@ -6,7 +6,10 @@ import { emptyTokenSpeedSummary } from '../../../shared/tokenSpeed';
 import { providerProfileKey } from '../../../shared/providerProfiles';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
-vi.mock('../../../cli/services/session-command', () => ({ exitIfMaestroNotRunning: vi.fn() }));
+vi.mock('../../../cli/services/session-command', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/session-command')>()),
+	exitIfMaestroNotRunning: vi.fn(),
+}));
 
 import { statsTokens } from '../../../cli/commands/stats';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -241,12 +244,17 @@ describe('stats-tokens accounting', () => {
 			sendCommand.mockRejectedValue(new Error('Usage unavailable'));
 			await expect(statsTokens({ json })).rejects.toThrow('process.exit');
 			expect(exitSpy).toHaveBeenCalledWith(1);
-			expect(logSpy).not.toHaveBeenCalled();
-			expect(errorSpy.mock.calls[0][0]).toContain('Usage unavailable');
-			if (json)
-				expect(JSON.parse(errorSpy.mock.calls[0][0] as string)).toEqual({
+			if (json) {
+				// failCommand writes a --json failure to stdout, and nothing else is printed.
+				expect(logSpy).toHaveBeenCalledTimes(1);
+				expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+					success: false,
 					error: 'Usage unavailable',
 				});
+			} else {
+				expect(logSpy).not.toHaveBeenCalled();
+				expect(errorSpy.mock.calls[0][0]).toContain('Usage unavailable');
+			}
 		}
 	);
 });
