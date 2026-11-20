@@ -275,6 +275,26 @@ describe('send', () => {
 		await vi.waitFor(() => expect(sent()[0].route?.status).toBe('running'));
 	});
 
+	it('follows its tab after the agent moves to another account between messages', async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValueOnce({ kind: 'open', tabId: 'b-main' });
+		await send('first');
+		reply('b', 'b-main', 'answer');
+		buildQuickChatSnapshot();
+		// Account rebalancing rewrites CLAUDE_CONFIG_DIR between turns.
+		updateSessionWith('b', (s) => ({
+			...s,
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/fixture/other-account' },
+		}));
+
+		const next = await send('and then?');
+		expect(next.message.route).toMatchObject({ status: 'running', tabId: 'b-main' });
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		// The finished turn keeps its tab and its reply.
+		const [first] = sent(next.snapshot.messages);
+		expect(first.route).toMatchObject({ status: 'done', tabId: 'b-main', tabOpen: true });
+		expect(next.snapshot.messages.map((m) => m.text)).toContain('answer');
+	});
+
 	it('starts a hidden tab in the background and runs the message in it', async () => {
 		const { message, snapshot } = await send('hello');
 		expect(message.route).toMatchObject({ status: 'running', origin: 'new', tabOpen: true });
@@ -1914,6 +1934,20 @@ describe('recent chats', () => {
 				expect(saved.turns[0].reply.map((m) => m.text)).toEqual(['observed reply']);
 			}
 		);
+
+		it('names what changed when it refuses, without showing the value', async () => {
+			patchTab('a', 'a-main', () => ({ agentSessionId: 'conv-a', nativeSessionBinding: binding }));
+			vi.mocked(routeQuickChatMessage).mockResolvedValueOnce({ kind: 'open', tabId: 'a-main' });
+			await send('first turn');
+			reply('a', 'a-main', 'retained reply');
+			buildQuickChatSnapshot();
+			updateSessionWith('a', (s) => ({ ...s, customEnvVars: { GROK_HOME: '/fixture/changed' } }));
+			const { snapshot } = await send('blocked');
+			const refusal = snapshot.messages.map((m) => m.text).find((t) => /changed since/.test(t))!;
+			expect(refusal).toMatch(/Agent a's account \(GROK_HOME\) changed since/);
+			expect(refusal).toMatch(/Pick its tab to continue there/);
+			expect(refusal).not.toContain('/fixture/changed');
+		});
 
 		it('requires explicit same-home selection to recover after repeated refusal', async () => {
 			patchTab('a', 'a-main', () => ({ agentSessionId: 'conv-a', nativeSessionBinding: binding }));

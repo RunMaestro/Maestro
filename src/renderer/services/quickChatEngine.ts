@@ -72,7 +72,9 @@ import { jumpToAgent } from './agentNavigation';
 import { enqueuePromptForTab, removeQueuedItem, sendQueuedItemNow } from './queuedPrompt';
 import { reopenClosedConversation, routeQuickChatMessage } from './quickChatRouter';
 import {
+	describeSelectionChange,
 	matchesNativeSessionBinding,
+	requiresNativeOwnership,
 	resumeSelectionKey,
 	SessionResumeRefusedError,
 } from './resumableSession';
@@ -430,7 +432,9 @@ function turnView(
 	if (
 		tab &&
 		session &&
-		((turn.selectionKey !== undefined && resumeSelectionKey(session) !== turn.selectionKey) ||
+		((turn.selectionKey !== undefined &&
+			requiresNativeOwnership(session.toolType, turn.nativeSessionBinding) &&
+			resumeSelectionKey(session) !== turn.selectionKey) ||
 			(turn.nativeSessionBinding !== undefined &&
 				!matchesNativeSessionBinding(turn.nativeSessionBinding, tab.nativeSessionBinding)) ||
 			(turn.agentSessionId && turn.agentSessionId !== tab.agentSessionId) ||
@@ -870,19 +874,23 @@ async function routeAndDeliver(
 		} else if (c.resumeRefusal) throw new SessionResumeRefusedError(c.resumeRefusal);
 		const previous = [...c.turns].reverse().find((t) => t !== turn && t.tabId === homeTabId);
 		const live = findSession(sessionId);
-		if (
-			!choice &&
-			live &&
-			((c.homeSelectionKey && c.homeSelectionKey !== resumeSelectionKey(live)) ||
+		if (!choice && live && requiresNativeOwnership(live.toolType, previous?.nativeSessionBinding)) {
+			const changed =
+				(c.homeSelectionKey && describeSelectionChange(c.homeSelectionKey, live)) ||
 				(previous?.nativeSessionBinding &&
-					!matchesNativeSessionBinding(
-						previous.nativeSessionBinding,
-						findTab(live, homeTabId)?.nativeSessionBinding
-					)))
-		) {
-			throw new SessionResumeRefusedError(
-				'The agent or conversation ownership changed. Choose a new chat or tab explicitly.'
-			);
+				!matchesNativeSessionBinding(
+					previous.nativeSessionBinding,
+					findTab(live, homeTabId)?.nativeSessionBinding
+				)
+					? 'conversation owner'
+					: null);
+			if (changed) {
+				throw new SessionResumeRefusedError(
+					`${live.name}'s ${changed} changed since this chat's last message, so Quick Chat ` +
+						'will not continue that conversation on its own. Pick its tab to continue there, ' +
+						'or start a new chat.'
+				);
+			}
 		}
 		if (!findSession(sessionId)) {
 			fail(turn, 'The agent is no longer available');

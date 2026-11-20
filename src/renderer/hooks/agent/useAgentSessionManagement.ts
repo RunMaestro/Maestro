@@ -31,6 +31,7 @@ import {
 import {
 	loadResumableSession,
 	matchesNativeSessionBinding,
+	requiresNativeOwnership,
 	resumeSelectionKey,
 	SessionResumeRefusedError,
 } from '../../services/resumableSession';
@@ -396,7 +397,7 @@ export function useAgentSessionManagement(
 			// A History entry names its native provider; a Grok (or any bound)
 			// conversation also has to match the native session it was bound to,
 			// on whichever slot of the tab holds that provider.
-			const scoped = native.provider === 'grok' || opts?.nativeSessionBinding !== undefined;
+			const scoped = requiresNativeOwnership(native.provider, opts?.nativeSessionBinding);
 			const matchesTab = (
 				tab: Session['aiTabs'][number],
 				binding = opts?.nativeSessionBinding,

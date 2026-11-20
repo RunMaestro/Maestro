@@ -43,6 +43,7 @@ import { isAiTabHidden } from '../utils/unifiedTabOrderUtils';
 import {
 	loadResumableSession,
 	matchesNativeSessionBinding,
+	requiresNativeOwnership,
 	resumeSelectionKey,
 	SessionResumeRefusedError,
 } from './resumableSession';
@@ -381,7 +382,7 @@ export async function reopenClosedConversation(
 	const binding =
 		conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding);
 	const scoped =
-		session.toolType === 'grok' || conversation.provider === 'grok' || binding !== undefined;
+		requiresNativeOwnership(session.toolType, binding) || conversation.provider === 'grok';
 	// An explicit, unscoped native owner (a History record that names its
 	// provider) does not move when the agent's default provider changes, so the
 	// default is left out of the selection check. Grok on either side keeps it.

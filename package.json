@@ -47,10 +47,10 @@
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:computer-history": "node scripts/build-maestro-computer-history.mjs",
 		"build:renderer": "vite build",
-		"package": "node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --mac --win --linux && npm run verify:native-packaging",
-		"package:mac": "node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --mac && npm run verify:native-packaging",
-		"package:win": "node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --win && npm run verify:native-packaging",
-		"package:linux": "node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --linux && npm run verify:native-packaging",
+		"package": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --mac --win --linux && npm run verify:native-packaging",
+		"package:mac": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --mac && npm run verify:native-packaging",
+		"package:win": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --win && npm run verify:native-packaging",
+		"package:linux": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && npm run rebuild:electron-native && node scripts/set-version.mjs electron-builder --linux && npm run verify:native-packaging",
 		"verify:native-packaging": "node scripts/verify-native-packaging.mjs",
 		"start": "node scripts/ensure-native-runtime.mjs electron && electron .",
 		"start:lite": "node scripts/ensure-native-runtime.mjs electron && electron . --lite",
@@ -220,7 +220,7 @@
 				}
 			]
 		},
-		"afterPack": "scripts/verify-computer-history-helper.js",
+		"afterPack": "scripts/after-pack.js",
 		"afterSign": "scripts/notarize.js",
 		"win": {
 			"target": [

@@ -71,11 +71,11 @@ Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network 
 
 **Auto Runs are unattended - the user starts one so they can walk away.** Work down this ladder and stop at the first rung that fits:
 
-1. **Make it agent work.** Verification becomes a test, a Playwright or CDP check, or a captured screenshot. A precondition is a command the agent runs and fixes if it fails. A missing credential becomes a mocked client, so the code and its tests still land.
+1. **Make it agent work.** Verification becomes a test, a Playwright or CDP check, or a captured screenshot. A precondition is a command the agent runs and fixes if it fails. A missing credential becomes a mocked client (an env var plus `.env.example`, or a test-mode key), so the code and its tests still land.
 
 2. **The default for real human work: Manual Follow-Up.** Visual polish, device testing, sign-off, review of finished work, a real API key. List it as plain `-` bullets under a trailing `## Manual Follow-Up (not executed by Auto Run)` section the engine never reads.
 
-3. **A HITL gate - rare.** Only when the user explicitly asked the run to stop at that point, or the very next tasks cannot execute at all without something only a person can supply and rungs 1 and 2 cannot absorb it. Never gate for review, approval, or a visual check of work already done. The default is zero gates. Write it on its own line above the dependent tasks:
+3. **A HITL gate - rare.** Only when the user explicitly asked the run to stop at that point, or the very next tasks cannot execute at all without something only a person can supply and rungs 1 and 2 cannot absorb it. Never gate for review, approval, or a visual check of work already done. The default is zero gates. When one is unavoidable, push it late: everything that does not need the person runs first, and the human steps sit at the END of the playbook, collected into one gate. Write it on its own line above the dependent tasks:
 
    ```markdown
    <!-- MAESTRO:HITL reason="You asked to review the migration before the backfill runs" artifact="db/migrations/0042_split_accounts.sql" -->

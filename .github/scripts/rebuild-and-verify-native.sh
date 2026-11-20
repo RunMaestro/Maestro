@@ -53,4 +53,9 @@ for entry in "${NATIVE_MODULES[@]}"; do
   fi
 done
 
+# --- ABI ---
+# Arch is not enough: a binary built for plain Node (npm test rebuilds it) has
+# the right arch and still will not load in Electron. Read the ABI it targets.
+node scripts/verify-native-abi.js
+
 echo "All native modules verified for $ARCH."
