@@ -118,4 +118,91 @@ describe('RecordDetailModal', () => {
 		expect(screen.getByText('notes')).toBeInTheDocument();
 		expect(screen.getByText('empty')).toBeInTheDocument();
 	});
+
+	it('draws a placeholder value apart from data and from an empty value, with no copy', () => {
+		renderModal({
+			fields: [
+				{ key: 'missing', value: 'NULL', placeholder: true },
+				{ key: 'literal', value: 'NULL' },
+				{ key: 'blank', value: '' },
+			],
+		});
+
+		const placeholder = screen.getByTestId('test-record-placeholder');
+		expect(placeholder).toHaveTextContent('NULL');
+		expect(placeholder).toHaveStyle({ fontStyle: 'italic' });
+		expect(placeholder.closest('tr')).toHaveTextContent('missing');
+		expect(screen.getByTestId('test-record-empty').closest('tr')).toHaveTextContent('blank');
+		expect(screen.getByRole('button', { name: 'Copy literal' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Copy missing' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Copy blank' })).not.toBeInTheDocument();
+	});
+
+	it('still finds a placeholder value through the filter', () => {
+		renderModal({
+			fields: [
+				{ key: 'missing', value: 'NULL', placeholder: true },
+				{ key: 'name', value: 'Ada' },
+			],
+		});
+
+		fireEvent.change(screen.getByTestId('test-record-search'), { target: { value: 'null' } });
+		expect(screen.getByTestId('test-record-fields')).toHaveTextContent('missing');
+		expect(screen.getByTestId('test-record-fields')).not.toHaveTextContent('Ada');
+	});
+
+	it("draws a field's action beside its value and calls it on click", () => {
+		const onClick = vi.fn();
+		renderModal({
+			fields: [
+				{ key: 'name', value: 'Ada' },
+				{
+					key: 'avatar',
+					value: 'BLOB 2.0 KB',
+					action: { icon: <span>save</span>, label: 'Save BLOB to file', onClick },
+				},
+			],
+		});
+
+		const actions = screen.getAllByTestId('test-record-action');
+		expect(actions).toHaveLength(1);
+		expect(actions[0].closest('tr')).toHaveTextContent('avatar');
+		expect(actions[0]).toHaveAccessibleName('Save BLOB to file: avatar');
+		expect(actions[0]).toHaveAttribute('title', 'Save BLOB to file');
+		fireEvent.click(actions[0]);
+		expect(onClick).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not call a disabled action', () => {
+		const onClick = vi.fn();
+		renderModal({
+			fields: [
+				{
+					key: 'avatar',
+					value: 'BLOB',
+					action: { icon: <span>save</span>, label: 'Save', onClick, disabled: true },
+				},
+			],
+		});
+		const action = screen.getByTestId('test-record-action');
+		expect(action).toBeDisabled();
+		fireEvent.click(action);
+		expect(onClick).not.toHaveBeenCalled();
+	});
+
+	it('draws header actions before the row navigation, and a notice under the filter', () => {
+		renderModal({
+			headerActions: <button data-testid="row-action">Delete row</button>,
+			notice: <span>FOREIGN KEY constraint failed</span>,
+		});
+		expect(screen.getByTestId('row-action')).toBeInTheDocument();
+		expect(screen.getByTestId('test-record-notice')).toHaveTextContent(
+			'FOREIGN KEY constraint failed'
+		);
+	});
+
+	it('draws no notice row without a notice', () => {
+		renderModal();
+		expect(screen.queryByTestId('test-record-notice')).not.toBeInTheDocument();
+	});
 });

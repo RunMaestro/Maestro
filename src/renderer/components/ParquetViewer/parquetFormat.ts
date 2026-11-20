@@ -7,6 +7,7 @@
  * grid, the record modal, and the clipboard all agree.
  */
 
+import { quoteFilterColumnName } from '../../../shared/parquet/filterExpression';
 import type {
 	ParquetCellValue,
 	ParquetColumnInfo,
@@ -117,14 +118,11 @@ export function columnTypeBadge(column: ParquetColumnInfo): string {
 }
 
 /**
- * Quote a column name for the filter language when it needs it.
- *
- * Bare identifiers stop at any operator or delimiter character, so a column
- * named `order id` or `total($)` has to be bracketed to survive the tokenizer.
+ * Quote a column name for the filter language when it needs it. The rule
+ * belongs to the language, so it lives beside the tokenizer
+ * (`quoteFilterColumnName()`); this name stays for the parquet call sites.
  */
-export function quoteColumnName(name: string): string {
-	return /^[^\s()=,!<>~^$&|'"`[\]]+$/.test(name) ? name : `[${name}]`;
-}
+export const quoteColumnName = quoteFilterColumnName;
 
 /**
  * Build the filter clause the user gets when they click a cell's "filter to

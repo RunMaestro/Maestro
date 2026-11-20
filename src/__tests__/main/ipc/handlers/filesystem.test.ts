@@ -4,6 +4,7 @@ import {
 	isParquetPreviewMarker,
 	parseParquetPreviewMarker,
 } from '../../../../shared/parquet/preview';
+import { isSqlitePreviewMarker, parseSqlitePreviewMarker } from '../../../../shared/sqlite/preview';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
@@ -103,6 +104,11 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	existsRemote: vi.fn(),
 }));
 
+// The header sniff reads real bytes off disk; each test decides the verdict.
+vi.mock('../../../../main/sqlite/sqlite-detect', () => ({
+	isSqliteDatabaseFile: vi.fn().mockResolvedValue(false),
+}));
+
 // Mock stores
 vi.mock('../../../../main/stores', () => ({
 	getSshRemoteById: vi.fn(),
@@ -112,6 +118,7 @@ import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesy
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
+import { isSqliteDatabaseFile } from '../../../../main/sqlite/sqlite-detect';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -425,6 +432,56 @@ describe('filesystem handlers', () => {
 			const remote = await handler!({}, '/remote/events.parquet', 'remote-7');
 			expect(isParquetPreviewMarker(remote)).toBe(true);
 			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('short-circuits a proven SQLite database to a marker instead of reading it', async () => {
+			// A database is binary, can be far larger than RAM, and may be a live
+			// app database, so the handler hands back a marker for the SQLite
+			// viewer once the header sniff proves the file is SQLite.
+			vi.mocked(isSqliteDatabaseFile).mockResolvedValueOnce(true);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/data/app.db');
+
+			expect(isSqlitePreviewMarker(result)).toBe(true);
+			expect(parseSqlitePreviewMarker(result)).toBe('/data/app.db');
+			expect(isSqliteDatabaseFile).toHaveBeenCalledWith('/data/app.db');
+			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('lets a .db that fails the header fall through to the ordinary read', async () => {
+			// `.db` is not a format: Berkeley DB, LevelDB, SQLCipher. A failed sniff
+			// must leave the old path (and so the binary card) exactly as it was.
+			vi.mocked(isSqliteDatabaseFile).mockResolvedValueOnce(false);
+			vi.mocked(fs.readFile).mockResolvedValue('\u0000\u0001leveldb' as any);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/data/cache.db');
+
+			expect(isSqlitePreviewMarker(result)).toBe(false);
+			expect(fs.readFile).toHaveBeenCalledWith('/data/cache.db', 'utf-8');
+		});
+
+		it('returns null when a .db vanished before its header could be sniffed', async () => {
+			vi.mocked(isSqliteDatabaseFile).mockRejectedValueOnce(
+				Object.assign(new Error('missing'), { code: 'ENOENT' })
+			);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			await expect(handler!({}, '/data/gone.db')).resolves.toBeNull();
+		});
+
+		it('never sniffs a remote file for a SQLite header', async () => {
+			// Remote databases are out of scope: the sniff reads the LOCAL disk,
+			// where a remote path either does not exist or names a different file.
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'remote-7' } as any);
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'remote bytes' });
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/remote/app.db', 'remote-7');
+
+			expect(result).toBe('remote bytes');
+			expect(isSqliteDatabaseFile).not.toHaveBeenCalled();
 		});
 
 		it('does not mistake a file inside a .parquet directory for a parquet file', async () => {

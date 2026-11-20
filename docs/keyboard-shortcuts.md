@@ -504,6 +504,39 @@ The field list is focused on open, so these work without clicking first.
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
 
+### SQLite Cell Editor
+
+Available while previewing a SQLite database with **Enable editing** on.
+Double-click a cell to open its editor.
+
+| Action               | macOS               | Windows/Linux        |
+| -------------------- | ------------------- | -------------------- |
+| Save the cell        | `Enter` or `Tab`    | `Enter` or `Tab`     |
+| Cancel the edit      | `Esc`               | `Esc`                |
+| Set the cell to NULL | `Opt+Cmd+Backspace` | `Alt+Ctrl+Backspace` |
+
+NULL and an empty string are different values. Clearing the text saves an empty
+string, and the empty box reads `empty string`. To store NULL, press the
+**NULL** button in the editor or the shortcut above; the box then reads a dimmed
+`NULL`. Typing, or pressing **NULL** again, turns NULL off.
+
+### SQLite Undo
+
+Available while previewing a SQLite database with **Enable editing** on, after
+the tab changed a cell, inserted a row, or deleted one.
+
+| Action               | macOS   | Windows/Linux |
+| -------------------- | ------- | ------------- |
+| Undo the last change | `Cmd+Z` | `Ctrl+Z`      |
+
+The shortcut works when the focus is not in a text field; inside the cell
+editor, the filter, or the SQL editor, `Cmd+Z` undoes typing as usual. The
+**Undo** button beside **Lock** does the same. Undo goes back one change only,
+and is refused if the row changed since (another tab, another program, or a
+trigger). A change whose triggers or foreign-key actions changed other rows
+reads **cannot undo**; the backup saved before the first change has the file as
+it was.
+
 ## Staged Images Organizer
 
 Opened with the expand button (⤢) beside the staged-image strip, with two or

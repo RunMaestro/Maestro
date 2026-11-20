@@ -20,35 +20,12 @@
  */
 
 import Database from 'better-sqlite3';
+import {
+	SQLITE_READ_ONLY_KEYWORDS,
+	isSqliteReadOnlyKeyword,
+	sqliteLeadingKeyword,
+} from '../../shared/sqlite/query';
 import { getStatsDB } from './singleton';
-
-/**
- * Statement kinds that are safe to run read-only. ATTACH/DETACH are deliberately
- * absent: SQLite reports them as read-only, but they can open arbitrary files.
- */
-const ALLOWED_LEADING_KEYWORDS = new Set(['SELECT', 'WITH', 'PRAGMA', 'EXPLAIN', 'VALUES']);
-
-/**
- * Extract the leading SQL keyword, skipping leading line (`--`) and block
- * (slash-star) comments and whitespace. Returns '' when none is found.
- */
-function leadingKeyword(sql: string): string {
-	let s = sql.trim();
-	// Strip leading comments that could otherwise hide the real first keyword.
-	for (;;) {
-		if (s.startsWith('--')) {
-			const nl = s.indexOf('\n');
-			s = nl === -1 ? '' : s.slice(nl + 1).trim();
-		} else if (s.startsWith('/*')) {
-			const end = s.indexOf('*/');
-			s = end === -1 ? '' : s.slice(end + 2).trim();
-		} else {
-			break;
-		}
-	}
-	const match = s.match(/^([a-zA-Z]+)/);
-	return match ? match[1].toUpperCase() : '';
-}
 
 /** Result of a read-only stats query. */
 export interface StatsQueryResult {
@@ -76,10 +53,11 @@ export function runReadonlyStatsQuery(sql: string, params: unknown[] = []): Stat
 		throw new Error('Empty SQL query');
 	}
 
-	const keyword = leadingKeyword(trimmed);
-	if (!ALLOWED_LEADING_KEYWORDS.has(keyword)) {
+	// The SQLite viewer's Query mode refuses by the same keyword list
+	// (src/shared/sqlite/query.ts); ATTACH/DETACH are absent from it on purpose.
+	if (!isSqliteReadOnlyKeyword(sqliteLeadingKeyword(trimmed))) {
 		throw new Error(
-			`Only read-only queries are permitted (allowed: ${[...ALLOWED_LEADING_KEYWORDS].join(', ')}).`
+			`Only read-only queries are permitted (allowed: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}).`
 		);
 	}
 

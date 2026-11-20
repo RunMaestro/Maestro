@@ -247,6 +247,7 @@ import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
+import { closeAllSqliteDatabases } from './sqlite/sqlite-database';
 import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
@@ -4000,6 +4001,8 @@ app
 		// out. The idle reaper would get to them eventually, but a preview tab
 		// left open otherwise holds a descriptor until the process dies.
 		app.on('will-quit', () => void closeAllParquetFiles());
+		// Same for the SQLite viewer's read-only connections.
+		app.on('will-quit', () => void closeAllSqliteDatabases());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
