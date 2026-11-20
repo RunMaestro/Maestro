@@ -77,7 +77,8 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    <!-- maestro:progress N | one-line rationale -->
    ```
 
-   - `N` is your honest **0–100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` is your honest **0-100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` may be a decimal (e.g. `48.35`). When the goal is large and you can measure it (items done out of a total), report that precision: a real gain smaller than 1% still counts as movement, while a whole number that stays flat for several iterations reads as a stall and stops the run.
    - The `| one-line rationale` is a short human-readable note describing where things stand (e.g. `data layer migrated, UI still pending`). It is optional but strongly encouraged - it shows up in the progress UI.
    - This marker is how the engine drives the progress bar and decides whether to run another iteration. **A response with no progress marker is treated as zero progress** and counts toward a stall.
 

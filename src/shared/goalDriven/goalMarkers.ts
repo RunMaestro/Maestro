@@ -115,11 +115,13 @@ export function parseGoalMarkers(agentText: string): GoalMarkers {
 	const progressMatch = lastMatch(PROGRESS_RE, agentText);
 
 	let progress: number | null = null;
+	let exactProgress: number | null = null;
 	let rationale: string | null = null;
 	if (progressMatch) {
 		const parsed = Number.parseFloat(progressMatch[1]);
 		if (Number.isFinite(parsed)) {
-			progress = clamp(Math.round(parsed), 0, 100);
+			exactProgress = clamp(parsed, 0, 100);
+			progress = Math.round(exactProgress);
 		}
 		rationale = trimToNull(progressMatch[2]);
 	}
@@ -131,5 +133,5 @@ export function parseGoalMarkers(agentText: string): GoalMarkers {
 	const deadlock = deadlockMatch !== null;
 	const deadlockReason = deadlockMatch ? trimToNull(deadlockMatch[1]) : null;
 
-	return { progress, rationale, complete, deadlock, deadlockReason };
+	return { progress, exactProgress, rationale, complete, deadlock, deadlockReason };
 }
