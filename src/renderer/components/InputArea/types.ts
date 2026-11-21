@@ -1,5 +1,8 @@
 import type React from 'react';
-import type { TabCompletionFilter, TabCompletionSuggestion } from '../../hooks';
+import type {
+	TabCompletionFilter,
+	TabCompletionSuggestion,
+} from '../../hooks/input/useTabCompletion';
 import type { MentionPickerItem, MentionCategory } from '../../hooks/input/useMentionPicker';
 import type { BatchRunState, Shortcut, Session, Theme, ThinkingMode } from '../../types';
 import type {

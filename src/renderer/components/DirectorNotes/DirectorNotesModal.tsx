@@ -9,7 +9,7 @@ import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
-import { useSettings } from '../../hooks';
+import { useSettings } from '../../hooks/settings/useSettings';
 import { useModalStore, selectModalData, getModalActions } from '../../stores/modalStore';
 import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
 import { ResizeHandles } from '../ui/ResizeHandles';

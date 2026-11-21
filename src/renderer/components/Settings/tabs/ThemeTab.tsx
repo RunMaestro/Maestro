@@ -7,7 +7,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { Moon, Sun, SunMoon, Sparkles, Check, Lightbulb } from 'lucide-react';
-import { useSettings } from '../../../hooks';
+import { useSettings } from '../../../hooks/settings/useSettings';
 import { CustomThemeBuilder } from '../../CustomThemeBuilder';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from './DisplayTab/components/SectionCard';

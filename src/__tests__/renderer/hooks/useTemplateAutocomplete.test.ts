@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useTemplateAutocomplete } from '../../../renderer/hooks';
+import { useTemplateAutocomplete } from '../../../renderer/hooks/input/useTemplateAutocomplete';
 import { TEMPLATE_VARIABLES, availableTemplateVariables } from '../../../shared/templateVariables';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 

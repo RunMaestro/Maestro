@@ -8,7 +8,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import React from 'react';
 import { TemplateAutocompleteDropdown } from '../../../renderer/components/TemplateAutocompleteDropdown';
 import type { Theme } from '../../../renderer/types';
-import type { AutocompleteState } from '../../../renderer/hooks';
+import type { AutocompleteState } from '../../../renderer/hooks/input/useTemplateAutocompleteEngine';
 import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 
 // Create a mock theme for testing

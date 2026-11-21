@@ -47,7 +47,7 @@ vi.mock('../../../renderer/hooks/ui/useLayerStack', () => {
 });
 
 // Import the mocked module to get access to the mock functions
-import { useLayerStack as useLayerStackHook } from '../../../renderer/hooks';
+import { useLayerStack as useLayerStackHook } from '../../../renderer/hooks/ui/useLayerStack';
 
 describe('LayerStackContext', () => {
 	let mockLayerStackAPI: ReturnType<typeof useLayerStackHook>;

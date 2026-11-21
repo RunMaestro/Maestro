@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import { useWorktreeValidation } from '../../../renderer/hooks';
+import { useWorktreeValidation } from '../../../renderer/hooks/batch/useWorktreeValidation';
 
 // Mock the window.maestro.git object
 const mockGit = {

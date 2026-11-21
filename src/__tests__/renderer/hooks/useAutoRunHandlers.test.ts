@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useAutoRunHandlers } from '../../../renderer/hooks';
+import { useAutoRunHandlers } from '../../../renderer/hooks/batch/useAutoRunHandlers';
 import type { Session, BatchRunConfig } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';

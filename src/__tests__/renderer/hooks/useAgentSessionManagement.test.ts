@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { RefObject } from 'react';
-import { useAgentSessionManagement } from '../../../renderer/hooks';
+import { useAgentSessionManagement } from '../../../renderer/hooks/agent/useAgentSessionManagement';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AITab, LogEntry } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';

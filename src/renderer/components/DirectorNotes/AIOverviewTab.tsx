@@ -22,7 +22,7 @@ import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { TocOverlay, computeTocWidth } from '../Toc';
 import { buildRichTocEntries, buildPlainTocEntries } from './directorNotesToc';
 import { useTocOverlay } from '../../hooks/ui/useTocOverlay';
-import { useSettings } from '../../hooks';
+import { useSettings } from '../../hooks/settings/useSettings';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { formatNumber } from '../../../shared/formatters';

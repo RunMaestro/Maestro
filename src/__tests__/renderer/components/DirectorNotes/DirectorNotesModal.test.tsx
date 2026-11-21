@@ -83,7 +83,8 @@ vi.mock('../../../../renderer/components/DirectorNotes/AIOverviewTab', () => ({
 	hasCachedSynopsis: () => false,
 }));
 
-vi.mock('../../../../renderer/hooks', () => ({
+vi.mock('../../../../renderer/hooks/settings/useSettings', async (importOriginal) => ({
+	...(await importOriginal()),
 	useSettings: () => ({
 		directorNotesSettings: { defaultLookbackDays: 7 },
 	}),

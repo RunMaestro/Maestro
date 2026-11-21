@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { Search, Star, MessageSquare, Bot, Wrench, Brain, AlertTriangle } from 'lucide-react';
 import type { AITab, LogEntry, Shortcut, Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
-import { useListNavigation } from '../hooks';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';

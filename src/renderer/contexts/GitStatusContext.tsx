@@ -4,7 +4,7 @@ import {
 	type GitStatusData,
 	type GitFileChange,
 	type UseGitStatusPollingOptions,
-} from '../hooks';
+} from '../hooks/git/useGitStatusPolling';
 import type { Session } from '../types';
 
 // ============================================================================

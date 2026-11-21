@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useAgentErrorRecovery } from '../../../renderer/hooks';
+import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
 import type { AgentError } from '../../../shared/types';
 
 const baseError: AgentError = {

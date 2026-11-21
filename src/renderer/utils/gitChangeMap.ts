@@ -1,5 +1,5 @@
 import type { FileChangeType } from '../types';
-import type { GitFileChange } from '../hooks';
+import type { GitFileChange } from '../hooks/git/useGitStatusPolling';
 
 /**
  * Map a 2-char git porcelain status code (XY) to a {@link FileChangeType}.

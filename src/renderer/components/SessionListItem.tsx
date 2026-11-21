@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { formatSize, formatRelativeTime } from '../utils/formatters';
-import type { ClaudeSession } from '../hooks';
+import type { ClaudeSession } from '../hooks/agent/useSessionViewer';
 
 /**
  * Search result info for content-based searches

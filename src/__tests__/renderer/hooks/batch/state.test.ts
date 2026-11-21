@@ -10,7 +10,7 @@ import {
 } from '../../../../renderer/hooks/batch/batchReducer';
 import type { AgentError } from '../../../../renderer/types';
 import { renderHook, act } from '@testing-library/react';
-import { useAutoRunHandlers } from '../../../../renderer/hooks';
+import { useAutoRunHandlers } from '../../../../renderer/hooks/batch/useAutoRunHandlers';
 import type { Session } from '../../../../renderer/types';
 import { createMockSession } from '../../../helpers/mockSession';
 import { useBatchStore as s2_useBatchStore } from '../../../../renderer/stores/batchStore';

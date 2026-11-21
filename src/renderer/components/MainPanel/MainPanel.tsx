@@ -9,7 +9,7 @@ import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { jumpToAgent } from '../../services/agentNavigation';
-import { useAgentCapabilities } from '../../hooks';
+import { useAgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import {
 	useAgentModelEffortOptions,
 	resolveModelEffort,

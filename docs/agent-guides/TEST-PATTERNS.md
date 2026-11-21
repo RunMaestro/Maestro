@@ -144,6 +144,7 @@ Most tests live under `src/__tests__/` mirroring the source structure. Some unit
 - Keep static imports, `vi.mock` factories, and `vi.hoisted` state at module scope. Leave suites separate when their mocks, dependency graphs, or global mutations are incompatible.
 - Preserve every original test and assertion. Compare runtime test-name multiplicities after removing only the added source-name prefix.
 - Keep file isolation and the configured worker limit unchanged; concurrency tuning is a separate change.
+- Import renderer hooks from their defining modules, not `src/renderer/hooks/index.ts`. The barrel loads every hook feature in each isolated worker, and a test double must target the module its subject actually imports.
 
 ---
 

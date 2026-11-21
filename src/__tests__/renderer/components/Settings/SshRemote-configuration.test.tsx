@@ -36,7 +36,7 @@ const configs: SshRemoteConfig[] = [
 	remote('3', 'maestro-ac', 'maestro-ac', 'maestro'),
 	remote('4', 'HVM JR', 'jennifer-tailcat', 'Jennifer'),
 ];
-vi.mock('../../../../renderer/hooks', async (importOriginal) => ({
+vi.mock('../../../../renderer/hooks/remote/useSshRemotes', async (importOriginal) => ({
 	...(await importOriginal()),
 	useSshRemotes: () => ({
 		configs,

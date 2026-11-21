@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useAgentExecution } from '../../../renderer/hooks';
+import { useAgentExecution } from '../../../renderer/hooks/agent/useAgentExecution';
 import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';

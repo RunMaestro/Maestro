@@ -5,7 +5,7 @@
  * while its feature is on - an off Encore Feature has nothing to configure.
  */
 
-import { useSettingsValues } from '../../../../hooks';
+import { useSettingsValues } from '../../../../hooks/settings/useSettings';
 import type { EncoreFeatureFlags } from '../../../../types';
 import type { SettingsSectionDef, SettingsSectionProps } from '../../settingsSections';
 import { CoworkingSetup } from '../../CoworkingSetup';

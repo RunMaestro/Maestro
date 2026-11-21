@@ -6,7 +6,7 @@ import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
-import { useListNavigation } from '../hooks';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';

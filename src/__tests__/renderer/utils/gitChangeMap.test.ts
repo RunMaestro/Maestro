@@ -4,7 +4,7 @@ import {
 	buildFileChangeMap,
 	buildChangedAncestors,
 } from '../../../renderer/utils/gitChangeMap';
-import type { GitFileChange } from '../../../renderer/hooks';
+import type { GitFileChange } from '../../../renderer/hooks/git/useGitStatusPolling';
 
 describe('classifyGitStatus', () => {
 	// `useGitStatusPolling` stores `file.status.trim()` on GitFileChange, so the

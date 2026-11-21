@@ -1,6 +1,6 @@
 import { forwardRef } from 'react';
 import type { Theme } from '../types';
-import type { AutocompleteState } from '../hooks';
+import type { AutocompleteState } from '../hooks/input/useTemplateAutocompleteEngine';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface TemplateAutocompleteDropdownProps {

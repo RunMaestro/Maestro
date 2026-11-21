@@ -1,7 +1,10 @@
 import React, { memo } from 'react';
 import type { MutableRefObject } from 'react';
 import { File, Folder, GitBranch, History, Tag } from 'lucide-react';
-import type { TabCompletionFilter, TabCompletionSuggestion } from '../../../hooks';
+import type {
+	TabCompletionFilter,
+	TabCompletionSuggestion,
+} from '../../../hooks/input/useTabCompletion';
 import type { Theme } from '../../../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 

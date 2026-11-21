@@ -15,7 +15,7 @@ import {
 import type { Theme } from '../types';
 import { blendColors, readableTextOn, transparentize } from '../../shared/colorContrast';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { useThrottledCallback } from '../hooks';
+import { useThrottledCallback } from '../hooks/utils/useThrottle';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';

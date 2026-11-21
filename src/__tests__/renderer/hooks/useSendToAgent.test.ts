@@ -4,7 +4,7 @@ import {
 	useSendToAgent,
 	useSendToAgentWithSessions,
 	type TransferRequest,
-} from '../../../renderer/hooks';
+} from '../../../renderer/hooks/agent/useSendToAgent';
 import type { Session, AITab, LogEntry, ToolType } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type { SendToAgentOptions } from '../../../renderer/components/SendToAgentModal';
