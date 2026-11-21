@@ -10,6 +10,8 @@ interface ActiveMediaPlayerProps {
 	item: MediaItem;
 	/** Measured height of the transport strip, for whoever sizes the frame. */
 	onTransportHeightChange?: (height: number) => void;
+	/** Measured width the transport needs to show every control (the frame's width floor). */
+	onTransportMinWidthChange?: (width: number) => void;
 	theme: Theme;
 }
 
@@ -30,6 +32,7 @@ interface ActiveMediaPlayerProps {
 export const ActiveMediaPlayer = memo(function ActiveMediaPlayer({
 	item,
 	onTransportHeightChange,
+	onTransportMinWidthChange,
 	theme,
 }: ActiveMediaPlayerProps) {
 	const items = useMediaPlaybackStore((s) => s.items);
@@ -105,6 +108,7 @@ export const ActiveMediaPlayer = memo(function ActiveMediaPlayer({
 			// learn how long it is for the queue and history lists.
 			onDurationKnown={handleDurationKnown}
 			onTransportHeightChange={onTransportHeightChange}
+			onTransportMinWidthChange={onTransportMinWidthChange}
 			onPrev={stepMediaItem(items, activeItemId, -1) ? () => navigate(-1) : undefined}
 			onNext={stepMediaItem(items, activeItemId, 1) ? () => navigate(1) : undefined}
 			toggleRequest={toggleRequest}
