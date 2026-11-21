@@ -42,6 +42,7 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 	parseHistoryFileData,
+	mergeEntriesById,
 } from '../shared/history';
 
 /**
@@ -176,7 +177,28 @@ export class HistoryManager {
 		// Check if migration is needed
 		if (await this.needsMigration()) {
 			await this.migrateFromLegacy();
+		} else if (!(await pathExists(this.migrationMarkerPath))) {
+			// A fresh data directory has nothing to migrate, but the marker is also
+			// how maestro-cli picks a format (`hasMigrated` in cli/services/storage.ts).
+			// Without it the CLI wrote send, run-doc, and playbook History to the
+			// legacy file, which this app never reads, and the next launch's
+			// migration then replaced the agents' per-session files with those
+			// entries. Writing it here puts both on the per-session format.
+			await this.writeMigrationMarker(0, 0);
 		}
+	}
+
+	private async writeMigrationMarker(
+		legacyEntryCount: number,
+		sessionsMigrated: number
+	): Promise<void> {
+		const marker: MigrationMarker = {
+			migratedAt: Date.now(),
+			version: HISTORY_VERSION,
+			legacyEntryCount,
+			sessionsMigrated,
+		};
+		await fsp.writeFile(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
 	}
 
 	/**
@@ -246,9 +268,17 @@ export class HistoryManager {
 			// distinct paths.
 			const writes = Array.from(entriesBySession.entries()).map(
 				async ([sessionId, sessionEntries]) => {
-					// Legacy order is newest-first; JSONL is append order, so the
-					// kept slice is reversed on the way to disk.
-					const kept = sessionEntries.slice(0, migrationLimit).reverse();
+					// A per-session file can already exist: the desktop writes that
+					// format whether or not this marker does, so a data directory
+					// that never had one held the app's own entries there while the
+					// CLI appended to the legacy file. Merge rather than replace, or
+					// the migration deletes the agent's desktop History.
+					const existing = (await this.readEntriesInFileOrder(sessionId)).reverse();
+					// Newest-first in, newest-first out; JSONL is append order, so
+					// the kept slice is reversed on the way to disk.
+					const kept = mergeEntriesById(existing, sessionEntries)
+						.slice(0, migrationLimit)
+						.reverse();
 					const filePath = this.getSessionFilePath(sessionId);
 					await atomicWriteFile(filePath, kept.map(serializeHistoryEntryLine).join(''));
 					logger.debug(
@@ -264,13 +294,7 @@ export class HistoryManager {
 			// have settled - otherwise a crash mid-migration could leave the
 			// marker in place with partial data on disk. Sequential here is
 			// load-bearing.
-			const marker: MigrationMarker = {
-				migratedAt: Date.now(),
-				version: HISTORY_VERSION,
-				legacyEntryCount: entries.length,
-				sessionsMigrated,
-			};
-			await fsp.writeFile(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
+			await this.writeMigrationMarker(entries.length, sessionsMigrated);
 
 			logger.info(
 				`History migration complete: ${entries.length} entries -> ${sessionsMigrated} session files`,

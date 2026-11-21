@@ -25,15 +25,16 @@ The target is a running app: the installed build, a packaged build under `releas
 
 ### 2. Data stores
 
-| Check                     | How                                                                | Pass when                                                         |
-| ------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| Sessions file             | Size and parse of `maestro-sessions.json`; list its largest fields | Parses; no field holds a cache (`fileTree`, `filePreviewHistory`) |
-| Agents and groups read    | `maestro-cli list agents`, `maestro-cli list groups`               | The counts match what the Left Bar shows                          |
-| Stats SQLite (`stats.db`) | `maestro-cli stats-agents`, `maestro-cli stats-activity`           | Rows return, no SQLite error                                      |
-| Cue SQLite (`cue.db`)     | `maestro-cli cue activity -n 5`                                    | Returns, no SQLite error                                          |
-| Semantic index            | `maestro-cli models index` (status)                                | Opens, or reports itself off                                      |
-| Dataview index            | `maestro-cli dataview index status`                                | Opens, or reports itself off                                      |
-| History and timeline      | `maestro-cli timeline --global --since 1h`                         | Recent entries appear                                             |
+| Check                          | How                                                                                                                                   | Pass when                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Sessions file                  | Size and parse of `maestro-sessions.json`; list its largest fields                                                                    | Parses; no field holds a cache (`fileTree`, `filePreviewHistory`)              |
+| Agents and groups read         | `maestro-cli list agents`, `maestro-cli list groups`                                                                                  | The counts match what the Left Bar shows                                       |
+| Stats SQLite (`stats.db`)      | `maestro-cli stats-agents`, `maestro-cli stats-activity`                                                                              | Rows return, no SQLite error                                                   |
+| Cue SQLite (`cue.db`)          | `maestro-cli cue activity -n 5`                                                                                                       | Returns, no SQLite error                                                       |
+| Semantic index                 | `maestro-cli models index` (status)                                                                                                   | Opens, or reports itself off                                                   |
+| Dataview index                 | `maestro-cli dataview index status`                                                                                                   | Opens, or reports itself off                                                   |
+| History and timeline           | `maestro-cli timeline --since 1h` (every agent by default)                                                                            | Recent entries appear                                                          |
+| CLI History survives a restart | On a fresh profile: `dispatch` one turn and `send` one turn to a stub agent, restart the app, then `maestro-cli timeline --since 10m` | Both turns appear before and after the restart; `history-migrated.json` exists |
 
 ### 3. Remote interface (web-desktop and phone)
 
@@ -94,6 +95,7 @@ Use a stub provider for write checks (`create-agent smoke -t claude-code --custo
 - **Packaged launch (`smoke:packaged`).** A release once shipped that would not start on Windows while every pipeline step was green.
 - **Native packaging.** A native module left inside `app.asar` works from source and fails only in the installed app.
 - **Startup log row (2026-11-21).** It named `maestro-cli logs`, which did not exist: the System Log Viewer had no CLI path, so the row could not be run. The verb now reads the viewer's own buffer.
+- **CLI History row (2026-11-21).** A fresh data directory never got `history-migrated.json`, so `send`, `run-doc` and `playbook` wrote History to the legacy file the app never reads. The next launch migrated that file over each agent's per-session History and deleted the desktop's own turns. Every unit test staged the marker or the legacy file, never both formats at once.
 - **Native ABI.** `npm test` rebuilds better-sqlite3 for plain Node. A package built after it shipped a Node binary; the app started, caught the load error, and ran without stats or Cue. The electron-builder afterPack hook now refuses such a package, and this row checks the working tree before you build.
 
 ## Adding a row
