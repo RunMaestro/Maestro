@@ -25,6 +25,8 @@ export interface TabNamingConfig {
 	};
 	/** Session-level custom env vars, forwarded so naming inherits the same provider auth as the chat. */
 	sessionCustomEnvVars?: Record<string, string>;
+	/** The agent's own binary (`Session.customPath`), so naming runs what the chat runs. */
+	sessionCustomPath?: string;
 	/** Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API. */
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';

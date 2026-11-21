@@ -38,6 +38,7 @@ import {
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand, newRemotePromptFileDestination } from '../../utils/ssh-command-builder';
+import { resolveAgentBinary } from '../../../shared/maestro-lib/launch/agent-binary';
 import { buildAgentLaunchPlan } from '../../../shared/maestro-lib/launch/launch-plan';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
@@ -118,6 +119,11 @@ export interface TabNamingConfig {
 	};
 	/** Active per-session auth overrides from the agent that owns this request. */
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * The agent's own binary (`Session.customPath`). Outranks the provider's, as on
+	 * the agent's chat spawn; see `resolveAgentBinary`.
+	 */
+	sessionCustomPath?: string;
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
@@ -202,6 +208,15 @@ export async function generateTabName(
 				? config.sessionSshRemoteConfig?.workingDirOverride || config.cwd
 				: config.cwd;
 		const customPath = configuredPath || (!customPaths ? agent.customPath : undefined);
+		// The agent's own binary, only when this turn runs on that agent's provider:
+		// a utility agent of another provider has a binary of its own. Without it a
+		// stub- or wrapper-pinned agent named its tabs with the provider's binary.
+		const sessionCustomPath =
+			effectiveAgentType === config.agentType
+				? config.sessionCustomPath?.trim() || undefined
+				: undefined;
+		// Over SSH the agent's own path names a file on the remote, used as given.
+		const ownRemoteBinary = sshRemote ? sessionCustomPath : undefined;
 
 		// Build the prompt: combine the tab naming prompt with the user's message.
 		// The message is fenced as data and the instruction is restated AFTER it:
@@ -285,7 +300,18 @@ export async function generateTabName(
 		}
 
 		// Determine command and working directory
-		let command = (agent.promptFile && customPath) || agent.path || agent.command;
+		const ownLocalBinary =
+			sessionCustomPath && !sshRemote
+				? await resolveAgentBinary({
+						sessionCustomPath,
+						sshEnabled: false,
+						// Undefined falls through to the provider rungs below.
+						getDetectedPath: async () => undefined,
+						onWarn: (message) => logger.warn(message, LOG_CONTEXT, { sessionId }),
+					})
+				: undefined;
+		if (signal?.aborted) return null;
+		let command = ownLocalBinary || (agent.promptFile && customPath) || agent.path || agent.command;
 		let cwd = effectiveCwd;
 		// Preserve legacy naming's environment merge. Explicit file turns below
 		// use the canonical planner's selected account layers, including an empty
@@ -370,7 +396,7 @@ export async function generateTabName(
 				surface: 'desktop',
 				agent,
 				command,
-				remoteCommand: customPath || agent.binaryName || agent.command,
+				remoteCommand: ownRemoteBinary || customPath || agent.binaryName || agent.command,
 				args: finalArgs,
 				cwd: effectiveCwd,
 				prompt: fullPrompt,
@@ -417,7 +443,7 @@ export async function generateTabName(
 		} else if (sshRemote) {
 			// Use the agent's command (not path) for remote execution
 			// since the path is local and remote host has its own binary location
-			let remoteCommand = agent.command;
+			let remoteCommand = ownRemoteBinary || agent.command;
 			const remoteCwd = config.sessionSshRemoteConfig?.workingDirOverride || config.cwd;
 
 			// For agents that support stream-json input, use stdin for the prompt

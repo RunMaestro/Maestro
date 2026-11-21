@@ -58,13 +58,14 @@ The target is a running app: the installed build, a packaged build under `releas
 
 Use a stub provider for write checks (`create-agent smoke -t claude-code --custom-path <stub.sh>`). See [[packaged-build-cli-smoke]] for the stub and its traps.
 
-| Check            | How                                                                | Pass when                                             |
-| ---------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
-| Desktop dispatch | `maestro-cli dispatch <agent> "ping"`                              | The tab shows the reply, the agent returns to idle    |
-| Headless send    | `maestro-cli send <agent> "ping"`                                  | JSON reply with the stub's text                       |
-| Consult          | `maestro-cli ask <agent> "ping" --from <caller>`                   | The answer prints; the target's open tab is untouched |
-| Auto Run         | `maestro-cli run-doc <one-task doc>`                               | The task is checked off                               |
-| Group chat       | `maestro-cli group-chat start` with two stub agents, then `status` | Both participants answer                              |
+| Check                     | How                                                                                                      | Pass when                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Desktop dispatch          | `maestro-cli dispatch <agent> "ping"`                                                                    | The tab shows the reply, the agent returns to idle                                         |
+| Every spawn runs the stub | Dispatch a first message to a NEW stub agent (no provider-level path set), then read the stub's argv log | The log shows the chat turn and the tab-naming turn; the tab is named with the stub's text |
+| Headless send             | `maestro-cli send <agent> "ping"`                                                                        | JSON reply with the stub's text                                                            |
+| Consult                   | `maestro-cli ask <agent> "ping" --from <caller>`                                                         | The answer prints; the target's open tab is untouched                                      |
+| Auto Run                  | `maestro-cli run-doc <one-task doc>`                                                                     | The task is checked off                                                                    |
+| Group chat                | `maestro-cli group-chat start` with two stub agents, then `status`                                       | Both participants answer                                                                   |
 
 ### 6. Automation
 
@@ -96,6 +97,7 @@ Use a stub provider for write checks (`create-agent smoke -t claude-code --custo
 - **Native packaging.** A native module left inside `app.asar` works from source and fails only in the installed app.
 - **Startup log row (2026-11-21).** It named `maestro-cli logs`, which did not exist: the System Log Viewer had no CLI path, so the row could not be run. The verb now reads the viewer's own buffer.
 - **CLI History row (2026-11-21).** A fresh data directory never got `history-migrated.json`, so `send`, `run-doc` and `playbook` wrote History to the legacy file the app never reads. The next launch migrated that file over each agent's per-session History and deleted the desktop's own turns. Every unit test staged the marker or the legacy file, never both formats at once.
+- **Stub spawn row (2026-11-21).** Tab auto-naming ignored the agent's own binary and ran the provider's, so a stub agent's first message made a real Claude call (the tab came back named "Ping Check"). `send` and group chat had the same bug, fixed earlier; tab naming was the last spawn path left.
 - **Native ABI.** `npm test` rebuilds better-sqlite3 for plain Node. A package built after it shipped a Node binary; the app started, caught the load error, and ran without stats or Cue. The electron-builder afterPack hook now refuses such a package, and this row checks the working tree before you build.
 
 ## Adding a row
