@@ -63,3 +63,8 @@ jobs:
       - run: npm run rebuild:node-native
         if: matrix.os != 'windows-latest'
       - run: npm run test -- --shard=${{ matrix.shard }}/2
+        env:
+          # Windows runners keep the workspace and runner.temp on D:, but the default
+          # user temp dir is on C:. Keep the suite's many temp files on D:.
+          TEMP: ${{ matrix.os == 'windows-latest' && runner.temp || '/tmp' }}
+          TMP: ${{ matrix.os == 'windows-latest' && runner.temp || '/tmp' }}
