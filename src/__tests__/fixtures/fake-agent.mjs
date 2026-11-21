@@ -60,7 +60,11 @@ function write(stream, text) {
 }
 
 if (process.env.FAKE_AGENT_STDIN_OUT) {
-	fs.writeFileSync(process.env.FAKE_AGENT_STDIN_OUT, await readStdin());
+	// Tests wait for this file to exist, so it must appear complete: write, then rename.
+	const file = process.env.FAKE_AGENT_STDIN_OUT;
+	const partial = `${file}.${process.pid}.partial`;
+	fs.writeFileSync(partial, await readStdin());
+	fs.renameSync(partial, file);
 }
 
 for (const chunk of recording.chunks ?? []) {
