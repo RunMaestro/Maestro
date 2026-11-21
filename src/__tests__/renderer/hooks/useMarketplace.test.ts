@@ -13,7 +13,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useMarketplace, type UseMarketplaceReturn } from '../../../renderer/hooks';
+import {
+	useMarketplace,
+	type UseMarketplaceReturn,
+} from '../../../renderer/hooks/batch/useMarketplace';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
 
 // Sample test data

@@ -11,7 +11,8 @@ import {
 	GitBranch,
 } from 'lucide-react';
 import type { Theme, OpenSpecCommand, OpenSpecMetadata } from '../types';
-import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut } from '../hooks/keyboard/useSaveShortcut';
+import { useTemplateAutocomplete } from '../hooks/input/useTemplateAutocomplete';
 import { CollapsedCommandsNotice, ToggleSwitch } from './ui';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';

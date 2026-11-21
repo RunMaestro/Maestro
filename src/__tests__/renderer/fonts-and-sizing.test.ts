@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
-import { useSettings } from '../../renderer/hooks';
+import { useSettings } from '../../renderer/hooks/settings/useSettings';
 import React from 'react';
 import { readFileSync, readdirSync } from 'fs';
 import path from 'path';

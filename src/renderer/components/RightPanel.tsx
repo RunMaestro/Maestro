@@ -29,7 +29,7 @@ import { AutoRunExpandedModal } from './AutoRun/AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { ConfirmModal } from './ConfirmModal';
-import { useResizablePanel } from '../hooks';
+import { useResizablePanel } from '../hooks/ui/useResizablePanel';
 import { useAutoRunAutoFollow } from '../hooks/batch/useAutoRunAutoFollow';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';

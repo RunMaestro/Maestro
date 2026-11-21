@@ -16,7 +16,7 @@ import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { GitStatusWidget } from '../GitStatusWidget';
 import { GitPillMenu } from '../GitPillMenu';
-import { useHoverTooltip } from '../../hooks';
+import { useHoverTooltip } from '../../hooks/ui/useHoverTooltip';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';

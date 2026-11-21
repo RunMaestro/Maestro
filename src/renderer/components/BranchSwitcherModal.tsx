@@ -15,7 +15,7 @@ import { EscCloseButton } from './ui/EscCloseButton';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useListNavigation } from '../hooks';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { useGitDetail } from '../contexts/GitStatusContext';
 import { notifyCenterFlash } from '../stores/centerFlashStore';

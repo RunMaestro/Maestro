@@ -15,13 +15,13 @@ import type { GroupChat } from '../../../shared/group-chat-types';
 
 // Stub the click-outside hook so we only measure the context menu's own keydown
 // listener in the leak assertion.
-vi.mock('../../../renderer/hooks', async (orig) => {
+vi.mock('../../../renderer/hooks/ui/useClickOutside', async (orig) => {
 	const actual = await (orig as () => Promise<Record<string, unknown>>)();
-	return {
-		...actual,
-		useClickOutside: vi.fn(),
-		useContextMenuPosition: () => ({ left: 0, top: 0, ready: true }),
-	};
+	return { ...actual, useClickOutside: vi.fn() };
+});
+vi.mock('../../../renderer/hooks/ui/useContextMenuPosition', async (orig) => {
+	const actual = await (orig as () => Promise<Record<string, unknown>>)();
+	return { ...actual, useContextMenuPosition: () => ({ left: 0, top: 0, ready: true }) };
 });
 
 const baseChat: GroupChat = {

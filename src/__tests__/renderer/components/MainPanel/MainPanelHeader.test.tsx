@@ -61,16 +61,6 @@ vi.mock('../../../../renderer/utils/runtimeContext', () => ({
 	isElectronDesktop: () => !runtimeMocks.isWebDesktop(),
 }));
 
-// The barrel pulls in far more than this component needs, so it's mocked - but
-// delegate to the REAL useHoverTooltip, since the git menu's open/close is
-// driven by it and a stubbed `isOpen: false` would make the menu untestable.
-vi.mock('../../../../renderer/hooks', async () => {
-	const actual = await vi.importActual<
-		typeof import('../../../../renderer/hooks/ui/useHoverTooltip')
-	>('../../../../renderer/hooks/ui/useHoverTooltip');
-	return { useHoverTooltip: actual.useHoverTooltip };
-});
-
 vi.mock('../../../../renderer/services/git', () => ({
 	gitService: { getDiff: vi.fn().mockResolvedValue({ diff: 'diff --git a/x b/x' }) },
 }));

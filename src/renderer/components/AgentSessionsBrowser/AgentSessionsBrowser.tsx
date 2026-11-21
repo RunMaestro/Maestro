@@ -5,12 +5,10 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { useCommandKeyShortcut } from '../../hooks/keyboard/useCommandKeyShortcut';
-import {
-	useSessionViewer,
-	useSessionPagination,
-	useFilteredAndSortedSessions,
-	useClickOutside,
-} from '../../hooks';
+import { useSessionViewer } from '../../hooks/agent/useSessionViewer';
+import { useSessionPagination } from '../../hooks/agent/useSessionPagination';
+import { useFilteredAndSortedSessions } from '../../hooks/agent/useFilteredAndSortedSessions';
+import { useClickOutside } from '../../hooks/ui/useClickOutside';
 import type { AgentSessionsBrowserProps } from './types';
 import { resolveSessionProjectPath } from './utils/sessionProjectPath';
 import { useAgentSessionsAggregateStats } from './hooks/useAgentSessionsAggregateStats';

@@ -16,7 +16,7 @@ import {
 	Search,
 } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useClickOutside } from '../../hooks';
+import { useClickOutside } from '../../hooks/ui/useClickOutside';
 import { getExplorerFileIcon } from '../../utils/theme';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';

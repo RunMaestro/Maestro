@@ -17,7 +17,8 @@ import type {
 } from '../hooks/agent/useAgentSessionManagement';
 import { HistoryDetailModal } from './HistoryDetailModal';
 import { HistoryHelpModal } from './HistoryHelpModal';
-import { useThrottledCallback, useListNavigation } from '../hooks';
+import { useThrottledCallback } from '../hooks/utils/useThrottle';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { useHistoryPagination } from '../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../hooks/history/useHistoryPagination';
 import { useExpandedCueGroups } from '../hooks/history/useExpandedCueGroups';

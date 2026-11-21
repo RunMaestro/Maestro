@@ -13,7 +13,7 @@ import {
 	Wand2,
 	Info,
 } from 'lucide-react';
-import { useSettings } from '../../hooks';
+import { useSettings } from '../../hooks/settings/useSettings';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';

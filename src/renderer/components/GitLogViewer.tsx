@@ -9,7 +9,7 @@ import { Diff, Hunk } from 'react-diff-view';
 import { parseGitDiff } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
 import { GitFilePathHeader } from './GitFilePathHeader';
-import { useListNavigation } from '../hooks';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { generateDiffViewStyles } from '../utils/markdownConfig';

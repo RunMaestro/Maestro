@@ -19,7 +19,7 @@ import {
 	saveColorPreferences,
 	type ParticipantColorInfo,
 } from '../utils/participantColors';
-import { useResizablePanel } from '../hooks';
+import { useResizablePanel } from '../hooks/ui/useResizablePanel';
 import { useGroupChatStore } from '../stores/groupChatStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { logger } from '../utils/logger';

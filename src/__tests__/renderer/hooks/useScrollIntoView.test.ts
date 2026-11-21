@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useScrollIntoView } from '../../../renderer/hooks';
+import { useScrollIntoView } from '../../../renderer/hooks/ui/useScrollIntoView';
 
 // Mock scrollIntoView since jsdom doesn't support it
 const mockScrollIntoView = vi.fn();

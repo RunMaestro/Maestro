@@ -16,7 +16,7 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import { ShortcutHint } from './ui/ShortcutHint';
 import type { Theme, Shortcut } from '../types';
-import { useClickOutside } from '../hooks';
+import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';

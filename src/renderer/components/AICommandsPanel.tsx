@@ -14,7 +14,8 @@ import {
 import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
 import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
-import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut } from '../hooks/keyboard/useSaveShortcut';
+import { useTemplateAutocomplete } from '../hooks/input/useTemplateAutocomplete';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { FilterInput } from './ui/FilterInput';

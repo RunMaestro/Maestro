@@ -16,6 +16,21 @@ afterEach(() => {
 		fs.rmSync(directory, { recursive: true, force: true });
 });
 
+// The transport is mocked. Drive the real pacing, retry, and deadline logic
+// without sleeping for the hosted provider's production rate limits.
+async function qualify(
+	gate: LocalMemoryRelevance,
+	...args: Parameters<LocalMemoryRelevance['selectRelevant']>
+) {
+	vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
+	try {
+		const [selections] = await Promise.all([gate.selectRelevant(...args), vi.runAllTimersAsync()]);
+		return selections;
+	} finally {
+		vi.useRealTimers();
+	}
+}
+
 describe('recall qualification configuration', () => {
 	it('defaults to the local model on the loopback interface', () => {
 		expect(DEFAULT_QUALIFICATION.provider).toBe('local');
@@ -154,7 +169,7 @@ describe('recall qualification configuration', () => {
 			endpoint: 'https://api.nan.builders',
 		});
 		try {
-			const selections = await gate.selectRelevant('Which cipher?', [
+			const selections = await qualify(gate, 'Which cipher?', [
 				{
 					memory: {
 						id: 'a',
@@ -207,7 +222,7 @@ describe('recall qualification configuration', () => {
 		});
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
-			const selections = await gate.selectRelevant('Which cipher?', [
+			const selections = await qualify(gate, 'Which cipher?', [
 				{
 					memory: {
 						id: 'a',
@@ -244,7 +259,7 @@ describe('recall qualification configuration', () => {
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
 			await expect(
-				gate.selectRelevant('Which cipher?', [
+				qualify(gate, 'Which cipher?', [
 					{
 						memory: {
 							id: 'a',
@@ -280,7 +295,7 @@ describe('recall qualification configuration', () => {
 		});
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
-			await gate.selectRelevant('Which cipher?', [
+			await qualify(gate, 'Which cipher?', [
 				{
 					memory: {
 						id: 'a',
@@ -320,7 +335,7 @@ describe('recall qualification configuration', () => {
 		});
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
-			const selections = await gate.selectRelevant('Which cipher?', [
+			const selections = await qualify(gate, 'Which cipher?', [
 				{
 					memory: {
 						id: 'a',
@@ -352,7 +367,7 @@ describe('recall qualification configuration', () => {
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
 			await expect(
-				gate.selectRelevant('Which cipher?', [
+				qualify(gate, 'Which cipher?', [
 					{
 						memory: {
 							id: 'a',
@@ -390,7 +405,7 @@ describe('recall qualification configuration', () => {
 		});
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
-			await gate.selectRelevant('Which cipher?', [
+			await qualify(gate, 'Which cipher?', [
 				{
 					memory: {
 						id: 'a',

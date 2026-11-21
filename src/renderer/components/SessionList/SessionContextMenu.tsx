@@ -31,7 +31,9 @@ import {
 	Play,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
-import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
+import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
+import { useClickOutside } from '../../hooks/ui/useClickOutside';
+import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';

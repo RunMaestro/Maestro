@@ -8,7 +8,7 @@
 
 import { Globe } from 'lucide-react';
 import { HostMediaSection } from '../HostMediaSection';
-import { useSettings } from '../../../hooks';
+import { useSettings } from '../../../hooks/settings/useSettings';
 import { useKnownAuthDirs } from '../../../hooks/agent/useKnownAuthDirs';
 import type { Theme } from '../../../types';
 import { EnvVarsEditor } from '../EnvVarsEditor';

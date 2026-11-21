@@ -27,7 +27,8 @@ import {
 import type { PrecomputedGraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
-import { useListNavigation, useThrottledCallback } from '../../hooks';
+import { useListNavigation } from '../../hooks/keyboard/useListNavigation';
+import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';

@@ -4,7 +4,7 @@ import {
 	useTabCompletion,
 	TabCompletionSuggestion,
 	TabCompletionFilter,
-} from '../../../renderer/hooks';
+} from '../../../renderer/hooks/input/useTabCompletion';
 import type { Session } from '../../../renderer/types';
 import type { FileNode } from '../../../renderer/types/fileTree';
 import { createMockSession } from '../../helpers/mockSession';

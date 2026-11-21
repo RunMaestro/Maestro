@@ -10,7 +10,7 @@ import {
 	ChevronRight,
 } from 'lucide-react';
 import type { Theme, BmadCommand, BmadMetadata } from '../types';
-import { useTemplateAutocomplete } from '../hooks';
+import { useTemplateAutocomplete } from '../hooks/input/useTemplateAutocomplete';
 import { captureException } from '../utils/sentry';
 import { CollapsedCommandsNotice, ToggleSwitch } from './ui';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';

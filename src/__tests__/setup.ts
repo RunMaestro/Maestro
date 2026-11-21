@@ -85,6 +85,14 @@ vi.mock('lucide-react', () => {
 	);
 });
 
+// The renderer Sentry SDK is never initialized in tests, so its capture calls are no-ops,
+// but loading it costs every file that reaches a store. Renderer code only calls these two;
+// a test that asserts on them declares its own vi.mock, which takes precedence.
+vi.mock('@sentry/electron/renderer', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
 // Global mock for shortcutFormatter to ensure platform-independent test output.
 // Without this, shortcutFormatter detects the platform via window.maestro.platform, producing
 // different output on macOS vs Linux CI. This mock always uses the non-Mac format (Ctrl+, Shift+, etc.)

@@ -18,7 +18,7 @@ import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
-import { useSettings } from '../hooks';
+import { useSettings } from '../hooks/settings/useSettings';
 import { Markdown } from './Markdown';
 import { openUrl } from '../utils/openUrl';
 import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';

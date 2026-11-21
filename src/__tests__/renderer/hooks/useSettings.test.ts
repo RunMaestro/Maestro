@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useSettings } from '../../../renderer/hooks';
+import { useSettings } from '../../../renderer/hooks/settings/useSettings';
 import type { AutoRunStats, OnboardingStats, CustomAICommand } from '../../../renderer/types';
 import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useHoverTooltip } from '../../../renderer/hooks';
+import { useHoverTooltip } from '../../../renderer/hooks/ui/useHoverTooltip';
 
 describe('useHoverTooltip', () => {
 	beforeEach(() => {

@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { useThrottledCallback } from '../../../hooks';
+import { useThrottledCallback } from '../../../hooks/utils/useThrottle';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import {
 	TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT,

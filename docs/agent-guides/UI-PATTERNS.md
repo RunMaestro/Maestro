@@ -1134,7 +1134,7 @@ Do NOT reach for it to add a global shortcut. Those belong in `constants/shortcu
 
 ### A Shortcut and Its Palette Entry Must Name Each Other
 
-Every user-reachable action wants both a chord and a command-palette entry, and the palette entry is where a user LEARNS the chord. Two silent failures live at that seam, and `src/__tests__/renderer/components/QuickActionsModal/paletteShortcutCoverage.test.ts` locks both down:
+Every user-reachable action wants both a chord and a command-palette entry, and the palette entry is where a user LEARNS the chord. Two silent failures live at that seam, and `src/__tests__/renderer/components/QuickActionsModal/palette-keyboard-and-active-tab.test.ts` locks both down:
 
 - **A dead lookup.** `shortcuts` and `tabShortcuts` are `Record<string, Shortcut>`, so `shortcuts.maestroCue` type-checks perfectly, evaluates to `undefined`, and renders an entry with no chord beside it. The real id was `openCue`; three more (`mergeSession`, `sendToAgent`, `summarizeAndContinue`) named shortcuts that never existed. Nothing in `tsc` or a render test catches this - the entry looks fine, it is simply missing the one thing that teaches the keyboard.
 - **A missing entry.** A shortcut with no palette command is reachable only by someone who already knows the chord, which is the opposite of what the palette is for.
