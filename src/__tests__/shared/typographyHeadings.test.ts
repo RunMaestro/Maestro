@@ -21,8 +21,10 @@ describe('heading typography registry', () => {
 	it('keeps the stylesheet size as the fallback and gives the family none', () => {
 		// The family must NOT carry a fallback: an unset variable then resolves
 		// to the inherited font, which is what headings rendered before.
+		// The override is scaled by the pane zoom on the heading itself; with no
+		// override the helper property is invalid and the em fallback wins.
 		expect(headingFontCss('h2', '1.5em')).toBe(
-			'font-size: var(--maestro-heading-h2-size, 1.5em); font-family: var(--maestro-heading-h2-font);'
+			'--maestro-heading-h2-scaled-size: calc(var(--maestro-heading-h2-size) * var(--fp-font-scale, 1)); font-size: var(--maestro-heading-h2-scaled-size, 1.5em); font-family: var(--maestro-heading-h2-font);'
 		);
 	});
 
@@ -45,8 +47,10 @@ describe('heading typography registry', () => {
 	});
 
 	it('estimates the default size from the base size', () => {
+		// The AI chat's scale: H2 at 1.75em, H6 at 1.1em.
 		expect(defaultHeadingSize('h1', 14)).toBe(28);
-		expect(defaultHeadingSize('h4', 14)).toBe(14);
+		expect(defaultHeadingSize('h2', 14)).toBe(25);
+		expect(defaultHeadingSize('h6', 8)).toBe(9);
 		expect(defaultHeadingSize('h1', 0)).toBe(28);
 	});
 });
@@ -66,10 +70,12 @@ describe('parseHeadingTypography', () => {
 				h3: { fontSize: '18' },
 				h7: { fontFamily: 'Comic Sans', fontSize: 20 },
 				h4: 'bogus',
+				h5: { fontFamily: 'Georgia', fontSize: { toString: null } },
 			})
 		).toEqual({
 			h1: { fontFamily: 'Georgia', fontSize: HEADING_FONT_SIZE_MAX },
 			h3: { fontFamily: '', fontSize: 18 },
+			h5: { fontFamily: 'Georgia', fontSize: 0 },
 		});
 	});
 });

@@ -78,8 +78,11 @@ export function FontSizeStepper({
 	const step = (delta: number) => {
 		// Stepping away from "inherit" starts at the size the user can currently
 		// see, so the first click nudges by one pixel rather than jumping to
-		// some unrelated default.
-		const next = effective + delta;
+		// some unrelated default. That first step is pulled into range: a
+		// default readout can sit below the minimum (a small H6), and a rejected
+		// step would leave an enabled button that does nothing.
+		const raw = effective + delta;
+		const next = inheriting ? Math.min(max, Math.max(SURFACE_FONT_SIZE_MIN, raw)) : raw;
 		if (next < SURFACE_FONT_SIZE_MIN || next > max) return;
 		onChange(next);
 	};

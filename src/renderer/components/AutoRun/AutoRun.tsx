@@ -7,6 +7,7 @@ import {
 	useMemo,
 	forwardRef,
 	useImperativeHandle,
+	type CSSProperties,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
@@ -64,6 +65,7 @@ import type { AutoRunProps, AutoRunHandle } from './types';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import { useFontScale } from '../../hooks/ui/useFontScale';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
+import { PANE_FONT_SCALE_VAR } from '../../../shared/typography';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { isAutoRunRunDocument } from '../../utils/autoRunDraft';
@@ -911,20 +913,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								}
 							}}
 							onScroll={handlePreviewScroll}
-							style={{
-								borderColor: theme.colors.border,
-								color: theme.colors.textMain,
-								// This IS a file preview - the same markdown the File Preview tab
-								// renders, in a different frame - so it follows that surface's
-								// font and size rather than a hard-coded 13px. Tailwind's
-								// `prose-sm` pins an absolute rem size, so the explicit size
-								// here is what actually wins; everything inside is in `em` and
-								// follows, so the pane's zoom carries headings, code, and lists
-								// with it. Rounded to a tenth of a px so a scaled size does not
-								// carry float noise into the style string.
-								fontFamily: previewTypography.fontFamily,
-								fontSize: `${Math.round(previewTypography.fontSize * previewFontScale.fontScale * 10) / 10}px`,
-							}}
+							style={
+								{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									// This IS a file preview - the same markdown the File Preview tab
+									// renders, in a different frame - so it follows that surface's
+									// font and size rather than a hard-coded 13px. Tailwind's
+									// `prose-sm` pins an absolute rem size, so the explicit size
+									// here is what actually wins; everything inside is in `em` and
+									// follows, so the pane's zoom carries headings, code, and lists
+									// with it. Rounded to a tenth of a px so a scaled size does not
+									// carry float noise into the style string.
+									fontFamily: previewTypography.fontFamily,
+									fontSize: `${Math.round(previewTypography.fontSize * previewFontScale.fontScale * 10) / 10}px`,
+									// A custom heading size is absolute px, so it reads the pane
+									// zoom from here, the same variable File Preview sets.
+									[PANE_FONT_SCALE_VAR]: String(previewFontScale.fontScale),
+								} as CSSProperties
+							}
 						>
 							<style>{proseStyles}</style>
 							<MemoizedMarkdownPreview

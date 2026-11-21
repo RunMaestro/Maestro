@@ -81,6 +81,7 @@ export function HeadingsSection({
 				</span>
 				<FontConfigurationPanel
 					compact
+					heading={`Heading ${number} font`}
 					fontFamily={style?.fontFamily ?? ''}
 					setFontFamily={(value) => setHeadingFontFamily(level, value)}
 					systemFonts={fontConfiguration.systemFonts}

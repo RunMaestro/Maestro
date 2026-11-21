@@ -38,7 +38,7 @@ import { createPrismCodeBlock } from '../components/Markdown/components/PrismCod
 import { InlineCode } from '../components/Markdown/components/InlineCode';
 import { CopyablePre } from '../components/CodeFence/CodeCopyButton';
 import { isWebUrl } from '../../shared/urlRoutingHint';
-import { headingFontCss } from '../../shared/typography';
+import { HEADING_DEFAULT_SCALE, headingFontCss } from '../../shared/typography';
 
 // ============================================================================
 // Types
@@ -797,12 +797,12 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} > *:first-child { margin-top: 0 !important; }
     ${s} > *:last-child { margin-bottom: 0 !important; }
     ${s} * { margin-top: 0; margin-bottom: 0; }
-    ${s} h1 { color: ${c.accent}; ${headingFontCss('h1', '2em')} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
-    ${s} h2 { color: ${c.success}; ${headingFontCss('h2', '1.75em')} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
-    ${s} h3 { color: ${c.warning}; ${headingFontCss('h3', '1.5em')} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
-    ${s} h4 { color: ${c.textMain}; ${headingFontCss('h4', '1.35em')} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
-    ${s} h5 { color: ${c.textMain}; ${headingFontCss('h5', '1.2em')} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
-    ${s} h6 { color: ${c.textDim}; ${headingFontCss('h6', '1.1em')} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
+    ${s} h1 { color: ${c.accent}; ${headingFontCss('h1', `${HEADING_DEFAULT_SCALE.h1}em`)} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
+    ${s} h2 { color: ${c.success}; ${headingFontCss('h2', `${HEADING_DEFAULT_SCALE.h2}em`)} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
+    ${s} h3 { color: ${c.warning}; ${headingFontCss('h3', `${HEADING_DEFAULT_SCALE.h3}em`)} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
+    ${s} h4 { color: ${c.textMain}; ${headingFontCss('h4', `${HEADING_DEFAULT_SCALE.h4}em`)} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
+    ${s} h5 { color: ${c.textMain}; ${headingFontCss('h5', `${HEADING_DEFAULT_SCALE.h5}em`)} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
+    ${s} h6 { color: ${c.textDim}; ${headingFontCss('h6', `${HEADING_DEFAULT_SCALE.h6}em`)} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
     ${s} p { color: ${c.textMain}; margin: 0 !important; line-height: 1.4; }
     ${s} p + p { margin-top: 0.5em !important; }
     ${s} p:empty { display: none; }

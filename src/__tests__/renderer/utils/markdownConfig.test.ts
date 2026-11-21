@@ -190,7 +190,7 @@ describe('generateProseStyles', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
 			// Compact heading margin is 0.25em 0
 			expect(css).toContain(
-				`.prose h1 { color: ${mockTheme.colors.textMain}; font-size: var(--maestro-heading-h1-size, 2em); font-family: var(--maestro-heading-h1-font); font-weight: bold; margin: 0.25em 0 !important`
+				`.prose h1 { color: ${mockTheme.colors.textMain}; --maestro-heading-h1-scaled-size: calc(var(--maestro-heading-h1-size) * var(--fp-font-scale, 1)); font-size: var(--maestro-heading-h1-scaled-size, 2em); font-family: var(--maestro-heading-h1-font); font-weight: bold; margin: 0.25em 0 !important`
 			);
 		});
 
@@ -1083,14 +1083,14 @@ describe('heading typography variables', () => {
 
 	it.each(sheets)('%s reads the H1 variables with its own fallback size', (_name, css, size) => {
 		expect(css).toContain(
-			`font-size: var(--maestro-heading-h1-size, ${size}); font-family: var(--maestro-heading-h1-font);`
+			`font-size: var(--maestro-heading-h1-scaled-size, ${size}); font-family: var(--maestro-heading-h1-font);`
 		);
 	});
 
 	it('document and chat prose cover all six levels', () => {
 		for (const [, css] of sheets.slice(0, 2)) {
 			for (const level of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) {
-				expect(css).toContain(`var(--maestro-heading-${level}-size,`);
+				expect(css).toContain(`var(--maestro-heading-${level}-scaled-size,`);
 				expect(css).toContain(`var(--maestro-heading-${level}-font)`);
 			}
 		}

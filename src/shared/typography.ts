@@ -349,17 +349,19 @@ export const HEADING_FONT_SIZE_MIN = SURFACE_FONT_SIZE_MIN;
 export const HEADING_FONT_SIZE_MAX = 72;
 
 /**
- * The browser's default heading scale, used to show what an un-overridden
- * level roughly renders at. Each prose stylesheet keeps its own exact scale;
- * this is only the number a size control starts stepping from.
+ * The AI chat's heading scale (`generateTerminalProseStyles` paints with it),
+ * used to show what an un-overridden level renders at in a chat reply. Other
+ * prose stylesheets keep their own scale; this is the number the Settings
+ * sample and size control start from, so it must match what the chat draws or
+ * a first "increase" could write a size smaller than the heading already is.
  */
 export const HEADING_DEFAULT_SCALE: Record<HeadingLevel, number> = {
 	h1: 2,
-	h2: 1.5,
-	h3: 1.17,
-	h4: 1,
-	h5: 0.83,
-	h6: 0.67,
+	h2: 1.75,
+	h3: 1.5,
+	h4: 1.35,
+	h5: 1.2,
+	h6: 1.1,
 };
 
 /** CSS custom property carrying a level's resolved family, when overridden. */
@@ -373,16 +375,35 @@ export function headingSizeVar(level: HeadingLevel): string {
 }
 
 /**
+ * The reading pane's own zoom multiplier (File Preview, Auto Run preview).
+ * Unset everywhere else, which reads as 1.
+ */
+export const PANE_FONT_SCALE_VAR = '--fp-font-scale';
+
+/** Per-element helper property: the override size times the pane zoom. */
+function headingScaledSizeVar(level: HeadingLevel): string {
+	return `--maestro-heading-${level}-scaled-size`;
+}
+
+/**
  * The font declarations a prose stylesheet writes for one heading level.
  *
  * The size falls back to the stylesheet's own value, so nothing changes until
- * the user overrides it. The family has NO fallback on purpose: an unset
- * variable makes the declaration invalid at computed-value time, and for an
- * inherited property like font-family that resolves to the parent's value -
- * exactly what a heading did before this declaration existed.
+ * the user overrides it. An override is an absolute px length, so it is
+ * multiplied by the pane zoom here, on the heading itself (a `var()` inside a
+ * custom property set on `:root` would resolve there, where the pane zoom is
+ * absent). When no override is published, the helper property references an
+ * unset variable and becomes invalid, so `font-size` takes the em fallback,
+ * which already follows the pane zoom through the parent's size.
+ *
+ * The family has NO fallback on purpose: an unset variable makes the
+ * declaration invalid at computed-value time, and for an inherited property
+ * like font-family that resolves to the parent's value - exactly what a
+ * heading did before this declaration existed.
  */
 export function headingFontCss(level: HeadingLevel, defaultSize: string): string {
-	return `font-size: var(${headingSizeVar(level)}, ${defaultSize}); font-family: var(${headingFontVar(level)});`;
+	const scaled = headingScaledSizeVar(level);
+	return `${scaled}: calc(var(${headingSizeVar(level)}) * var(${PANE_FONT_SCALE_VAR}, 1)); font-size: var(${scaled}, ${defaultSize}); font-family: var(${headingFontVar(level)});`;
 }
 
 /** Clamp a stored heading size. `0` passes through, meaning "default". */
@@ -411,7 +432,13 @@ export function parseHeadingTypography(raw: unknown): HeadingTypography {
 		if (!entry || typeof entry !== 'object') continue;
 		const rawFont = (entry as Record<string, unknown>).fontFamily;
 		const fontFamily = typeof rawFont === 'string' ? rawFont.trim() : '';
-		const fontSize = clampHeadingFontSize(Number((entry as Record<string, unknown>).fontSize ?? 0));
+		// Only numbers and numeric strings convert: `Number()` on an arbitrary
+		// object can throw (a `toString` that is not callable) and abort the
+		// whole parse.
+		const rawSize = (entry as Record<string, unknown>).fontSize;
+		const fontSize = clampHeadingFontSize(
+			typeof rawSize === 'number' || typeof rawSize === 'string' ? Number(rawSize) : 0
+		);
 		if (fontFamily || fontSize) result[level] = { fontFamily, fontSize };
 	}
 	return result;
