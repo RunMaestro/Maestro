@@ -33,12 +33,6 @@ Add a file there only after confirming its tests pass without the DOM or rendere
 setup mocks. Both Node projects keep per-file process isolation. To run both,
 use `--project 'node*'`.
 
-`--shard` splits files by measured duration (`vitest.shard-sequencer.mts`), not by
-count, so CI shards finish together. Weights come from hosted Windows test durations
-in `vitest.shard-timings.json`; a file missing there uses a default weight. Refresh
-the file from a recent CI run's per-file durations when one shard starts finishing
-well after the other.
-
 Coverage uses `v8` provider with `text`, `text-summary`, `json`, and `html` reporters.
 
 ### Running Tests
