@@ -16,7 +16,7 @@ import {
 	type AchievementState,
 	type PendingAchievement,
 	type UseAchievementsReturn,
-} from '../../../renderer/hooks';
+} from '../../../renderer/hooks/batch/useAchievements';
 import { CONDUCTOR_BADGES } from '../../../renderer/constants/conductorBadges';
 import type { AutoRunStats } from '../../../renderer/types';
 

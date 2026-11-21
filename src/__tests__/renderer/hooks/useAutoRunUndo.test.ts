@@ -14,7 +14,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useAutoRunUndo, type UseAutoRunUndoDeps, type UndoState } from '../../../renderer/hooks';
+import {
+	useAutoRunUndo,
+	type UseAutoRunUndoDeps,
+	type UndoState,
+} from '../../../renderer/hooks/batch/useAutoRunUndo';
 import React from 'react';
 
 // ============================================================================

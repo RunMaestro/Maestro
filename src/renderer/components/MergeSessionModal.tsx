@@ -22,7 +22,7 @@ import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
-import { useListNavigation } from '../hooks';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
 import { estimateTokensFromLogs } from '../../shared/formatters';

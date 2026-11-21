@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { useMainKeyboardHandler } from '../../../renderer/hooks';
+import { useMainKeyboardHandler } from '../../../renderer/hooks/keyboard/useMainKeyboardHandler';
 import { useKeyboardShortcutHelpers } from '../../../renderer/hooks/keyboard/useKeyboardShortcutHelpers';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import type { Shortcut } from '../../../renderer/types';

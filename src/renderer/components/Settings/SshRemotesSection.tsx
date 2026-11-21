@@ -38,7 +38,7 @@ import type { SshRemoteConfig } from '../../../shared/types';
 import type { SshRemoteRemediation } from '../../../shared/sshRemoteShell';
 import { formatSshTarget } from '../../../shared/formatters';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
-import { useSshRemotes } from '../../hooks';
+import { useSshRemotes } from '../../hooks/remote/useSshRemotes';
 import { SshRemoteModal } from './SshRemoteModal';
 import { SshRemediationNotice } from './SshRemediationNotice';
 import { logger } from '../../utils/logger';

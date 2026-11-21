@@ -1,0 +1,346 @@
+// Source: src/__tests__/main/agents/claude-account-identity.test.ts
+// Source: src/__tests__/main/agents/claude-mode-selector.test.ts
+import { describe as describeSourceSuite } from 'vitest';
+import { describe } from 'vitest';
+import { it } from 'vitest';
+import { expect } from 'vitest';
+import { vi } from 'vitest';
+import { beforeEach } from 'vitest';
+import path from 'path';
+import { readClaudeAccountIdentity } from '../../../main/agents/claude-account-identity';
+import { selectMode } from '../../../main/agents/claude-mode-selector';
+import { LIMIT_THRESHOLD_PERCENT } from '../../../main/agents/claude-mode-selector';
+import type { SelectModeInput } from '../../../main/agents/claude-mode-selector';
+import type { UsageSnapshot } from '../../../main/agents/claude-mode-selector';
+const { readFileMock, loggerWarnMock } = vi.hoisted(() => ({
+	readFileMock: vi.fn(),
+	loggerWarnMock: vi.fn(),
+}));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const promises = { ...actual.promises, readFile: readFileMock };
+	return { ...actual, promises, default: { ...actual, promises } };
+});
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { warn: loggerWarnMock, info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+}));
+describeSourceSuite('claude-account-identity', () => {
+	beforeEach(() => {
+		readFileMock.mockReset();
+		loggerWarnMock.mockReset();
+	});
+
+	describe('readClaudeAccountIdentity', () => {
+		it('reads .claude.json from the config dir and returns the account identity', async () => {
+			readFileMock.mockResolvedValue(
+				JSON.stringify({
+					oauthAccount: {
+						accountUuid: '8d3c60a2-9638-49e7-95ff-45813e8b35d8',
+						emailAddress: 'pedram@banaco.com',
+						organizationName: "pedram@banaco.com's Organization",
+					},
+				})
+			);
+
+			const identity = await readClaudeAccountIdentity('/Users/test/.claude-banaco');
+
+			expect(readFileMock).toHaveBeenCalledWith(
+				path.join('/Users/test/.claude-banaco', '.claude.json'),
+				'utf8'
+			);
+			expect(identity).toEqual({
+				accountUuid: '8d3c60a2-9638-49e7-95ff-45813e8b35d8',
+				email: 'pedram@banaco.com',
+				organizationName: "pedram@banaco.com's Organization",
+			});
+		});
+
+		it('returns null without logging when the file does not exist', async () => {
+			// A config dir that was never logged into is ordinary, not an error.
+			readFileMock.mockRejectedValue(Object.assign(new Error('nope'), { code: 'ENOENT' }));
+
+			expect(await readClaudeAccountIdentity('/Users/test/.claude-fresh')).toBeNull();
+			expect(loggerWarnMock).not.toHaveBeenCalled();
+		});
+
+		it('returns null and warns when the file is not valid JSON', async () => {
+			readFileMock.mockResolvedValue('{ this is not json');
+
+			expect(await readClaudeAccountIdentity('/Users/test/.claude')).toBeNull();
+			expect(loggerWarnMock).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to parse'),
+				expect.any(String),
+				expect.objectContaining({ configPath: path.join('/Users/test/.claude', '.claude.json') })
+			);
+		});
+
+		it('returns null when the JSON carries no oauthAccount', async () => {
+			readFileMock.mockResolvedValue(JSON.stringify({ userID: 'abc', projects: {} }));
+
+			expect(await readClaudeAccountIdentity('/Users/test/.claude')).toBeNull();
+			expect(loggerWarnMock).not.toHaveBeenCalled();
+		});
+
+		it('does not throw when the read rejects for a non-ENOENT reason', async () => {
+			readFileMock.mockRejectedValue(Object.assign(new Error('denied'), { code: 'EACCES' }));
+
+			await expect(readClaudeAccountIdentity('/Users/test/.claude')).resolves.toBeNull();
+		});
+	});
+});
+describeSourceSuite('claude-mode-selector', () => {
+	const NOW = new Date('2026-05-15T12:00:00Z');
+	const ONE_HOUR_MS = 60 * 60 * 1000;
+	const FIVE_HOURS_MS = 5 * ONE_HOUR_MS;
+	const ONE_WEEK_MS = 7 * 24 * ONE_HOUR_MS;
+
+	function snapshot(
+		overrides: {
+			sessionPercent?: number;
+			weekPercent?: number;
+			weekSonnetPercent?: number;
+			sessionResetsAt?: string;
+			weekResetsAt?: string;
+			weekSonnetResetsAt?: string;
+		} = {}
+	): UsageSnapshot {
+		return {
+			sampledAt: NOW.toISOString(),
+			configDirKey: '/Users/test/.claude',
+			session: {
+				percent: overrides.sessionPercent ?? 50,
+				resetsAt:
+					overrides.sessionResetsAt ?? new Date(NOW.getTime() + FIVE_HOURS_MS).toISOString(),
+			},
+			weekAllModels: {
+				percent: overrides.weekPercent ?? 20,
+				resetsAt: overrides.weekResetsAt ?? new Date(NOW.getTime() + ONE_WEEK_MS).toISOString(),
+			},
+			weekSonnetOnly: {
+				percent: overrides.weekSonnetPercent ?? 10,
+				resetsAt:
+					overrides.weekSonnetResetsAt ?? new Date(NOW.getTime() + ONE_WEEK_MS).toISOString(),
+			},
+		};
+	}
+
+	function input(overrides: Partial<SelectModeInput> = {}): SelectModeInput {
+		return {
+			perTabReason: 'auto',
+			usageSnapshot: snapshot(),
+			now: NOW,
+			...overrides,
+		};
+	}
+
+	describe('claude-mode-selector', () => {
+		describe('LIMIT_THRESHOLD_PERCENT', () => {
+			it('is exported as 99', () => {
+				expect(LIMIT_THRESHOLD_PERCENT).toBe(99);
+			});
+		});
+
+		describe('null snapshot', () => {
+			it('falls back to interactive/auto', () => {
+				expect(selectMode(input({ usageSnapshot: null }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+
+			it('null snapshot ignores sticky-limit (cannot prove window still open)', () => {
+				expect(selectMode(input({ usageSnapshot: null, perTabReason: 'limit' }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+		});
+
+		describe('under threshold', () => {
+			it('both windows under 99% → interactive/auto', () => {
+				expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 50 }) }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+
+			it('0% does not trigger', () => {
+				expect(
+					selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 0, weekPercent: 0 }) }))
+				).toEqual({ mode: 'interactive', reason: 'auto' });
+			});
+		});
+
+		describe('limit triggers', () => {
+			it('session >= 99% with window open → api/limit', () => {
+				expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 99 }) }))).toEqual({
+					mode: 'api',
+					reason: 'limit',
+				});
+			});
+
+			it('week >= 99% with window open → api/limit', () => {
+				expect(selectMode(input({ usageSnapshot: snapshot({ weekPercent: 99 }) }))).toEqual({
+					mode: 'api',
+					reason: 'limit',
+				});
+			});
+
+			it('both over threshold → still a single api/limit result', () => {
+				expect(
+					selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 99, weekPercent: 100 }) }))
+				).toEqual({ mode: 'api', reason: 'limit' });
+			});
+
+			it('weekSonnetOnly alone does NOT trigger (selector ignores it)', () => {
+				expect(selectMode(input({ usageSnapshot: snapshot({ weekSonnetPercent: 99 }) }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+
+			// Claude paints no "Resets ..." row for a window with nothing running in
+			// it, so `resetsAt` can be absent. An unknown reset must not veto a
+			// freshly-sampled 100% - the snapshot's own TTL bounds staleness.
+			it('week at threshold with no scraped reset time still triggers', () => {
+				const snap = snapshot({ weekPercent: 100 });
+				delete snap.weekAllModels.resetsAt;
+				expect(selectMode(input({ usageSnapshot: snap }))).toEqual({
+					mode: 'api',
+					reason: 'limit',
+				});
+			});
+
+			// The sticky path leans the other way: with no reset time there is no
+			// window left to wait out, so a prior fallback must not latch.
+			it('sticky-limit does NOT latch on a window with no scraped reset time', () => {
+				const snap = snapshot({ sessionPercent: 10, weekPercent: 10 });
+				delete snap.session?.resetsAt;
+				delete snap.weekAllModels.resetsAt;
+				expect(selectMode(input({ perTabReason: 'limit', usageSnapshot: snap }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+
+			// claude 2.1.317 paints no 5-hour window, so the snapshot carries no
+			// `session`. The weekly window alone must still decide the fallback.
+			it('a snapshot with no session window falls back on the weekly limit alone', () => {
+				const exhausted = snapshot({ weekPercent: 100 });
+				delete exhausted.session;
+				expect(selectMode(input({ usageSnapshot: exhausted }))).toEqual({
+					mode: 'api',
+					reason: 'limit',
+				});
+
+				const healthy = snapshot({ weekPercent: 20 });
+				delete healthy.session;
+				expect(selectMode(input({ usageSnapshot: healthy }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+
+			it('session at threshold but window already reset → no trigger', () => {
+				const closedSession = new Date(NOW.getTime() - ONE_HOUR_MS).toISOString();
+				expect(
+					selectMode(
+						input({
+							usageSnapshot: snapshot({ sessionPercent: 99, sessionResetsAt: closedSession }),
+						})
+					)
+				).toEqual({ mode: 'interactive', reason: 'auto' });
+			});
+		});
+
+		describe('threshold boundary', () => {
+			it('exactly 99% triggers (>=)', () => {
+				expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 99 }) }))).toEqual({
+					mode: 'api',
+					reason: 'limit',
+				});
+			});
+
+			it('98.9% does NOT trigger', () => {
+				expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 98.9 }) }))).toEqual({
+					mode: 'interactive',
+					reason: 'auto',
+				});
+			});
+		});
+
+		describe('sticky-limit', () => {
+			it('perTabReason "limit" with session window still open → stays api/limit', () => {
+				expect(
+					selectMode(
+						input({
+							perTabReason: 'limit',
+							usageSnapshot: snapshot({ sessionPercent: 50, weekPercent: 10 }),
+						})
+					)
+				).toEqual({ mode: 'api', reason: 'limit' });
+			});
+
+			it('perTabReason "limit" with only week window open → stays api/limit', () => {
+				const closedSession = new Date(NOW.getTime() - ONE_HOUR_MS).toISOString();
+				expect(
+					selectMode(
+						input({
+							perTabReason: 'limit',
+							usageSnapshot: snapshot({ sessionResetsAt: closedSession }),
+						})
+					)
+				).toEqual({ mode: 'api', reason: 'limit' });
+			});
+
+			it('perTabReason "limit" with both windows closed → flips back to interactive/auto', () => {
+				const closed = new Date(NOW.getTime() - ONE_HOUR_MS).toISOString();
+				expect(
+					selectMode(
+						input({
+							perTabReason: 'limit',
+							usageSnapshot: snapshot({
+								sessionResetsAt: closed,
+								weekResetsAt: closed,
+							}),
+						})
+					)
+				).toEqual({ mode: 'interactive', reason: 'auto' });
+			});
+
+			it('percent dropping below threshold mid-window does NOT break sticky-limit', () => {
+				expect(
+					selectMode(
+						input({
+							perTabReason: 'limit',
+							usageSnapshot: snapshot({ sessionPercent: 10, weekPercent: 5 }),
+						})
+					)
+				).toEqual({ mode: 'api', reason: 'limit' });
+			});
+
+			it('perTabReason "auto" with windows open but percents under threshold → interactive/auto (not sticky)', () => {
+				expect(
+					selectMode(
+						input({
+							perTabReason: 'auto',
+							usageSnapshot: snapshot({ sessionPercent: 50 }),
+						})
+					)
+				).toEqual({ mode: 'interactive', reason: 'auto' });
+			});
+		});
+
+		describe('purity', () => {
+			it('does not mutate input', () => {
+				const snap = Object.freeze(snapshot({ sessionPercent: 99 }));
+				expect(() => selectMode(input({ usageSnapshot: snap }))).not.toThrow();
+			});
+
+			it('returns the same result for the same input (determinism)', () => {
+				const inp = input({ usageSnapshot: snapshot({ sessionPercent: 99 }) });
+				expect(selectMode(inp)).toEqual(selectMode(inp));
+			});
+		});
+	});
+});

@@ -20,7 +20,8 @@ import type {
 } from '../../../renderer/types';
 
 // Import the exported functions directly
-import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../../renderer/hooks';
+import { countUnfinishedTasks, uncheckAllTasks } from '../../../renderer/hooks/batch/batchUtils';
+import { useBatchProcessor } from '../../../renderer/hooks/batch/useBatchProcessor';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';

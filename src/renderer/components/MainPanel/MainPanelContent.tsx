@@ -52,7 +52,10 @@ import type {
 	QueuedItemEditPatch,
 } from '../../types';
 import type { SlashCommand } from './types';
-import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
+import type {
+	TabCompletionSuggestion,
+	TabCompletionFilter,
+} from '../../hooks/input/useTabCompletion';
 import type { FileNode } from '../../types/fileTree';
 import { quoteIntoAgentComposer } from '../../services/quoteIntoComposer';
 import type {

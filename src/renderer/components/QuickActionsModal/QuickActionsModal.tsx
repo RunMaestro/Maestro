@@ -35,7 +35,7 @@ import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { visibleAiTabs } from '../../utils/tabHelpers';
-import { useListNavigation } from '../../hooks';
+import { useListNavigation } from '../../hooks/keyboard/useListNavigation';
 import { useUIStore } from '../../stores/uiStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import {

@@ -12,7 +12,8 @@ import {
 	Trash2,
 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
-import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { useClickOutside } from '../../hooks/ui/useClickOutside';
+import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 

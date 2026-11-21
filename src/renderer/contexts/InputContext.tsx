@@ -19,7 +19,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
-import type { TabCompletionFilter } from '../hooks';
+import type { TabCompletionFilter } from '../hooks/input/useTabCompletion';
 import type { MentionCategory } from '../hooks/input/useMentionPicker';
 
 /**

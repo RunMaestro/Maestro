@@ -31,8 +31,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
-import { useKeyboardNavigation } from '../../../renderer/hooks';
-import type { UseKeyboardNavigationDeps } from '../../../renderer/hooks';
+import { useKeyboardNavigation } from '../../../renderer/hooks/keyboard/useKeyboardNavigation';
+import type { UseKeyboardNavigationDeps } from '../../../renderer/hooks/keyboard/useKeyboardNavigation';
 import { useCycleSession } from '../../../renderer/hooks/session/useCycleSession';
 import type { UseCycleSessionDeps } from '../../../renderer/hooks/session/useCycleSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';

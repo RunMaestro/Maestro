@@ -4,7 +4,7 @@
  * settingsSections.ts).
  */
 
-import { useSettingsValues } from '../../../../hooks';
+import { useSettingsValues } from '../../../../hooks/settings/useSettings';
 import type { SettingsSectionDef, SettingsSectionProps } from '../../settingsSections';
 import {
 	AccessibilitySection,

@@ -62,17 +62,16 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { cueService } from '../services/cue';
 import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
+import { usePlaybookManagement, autoPlaybookName } from '../hooks/batch/usePlaybookManagement';
+import { useTaskSelectionRecommendation } from '../hooks/batch/useTaskSelectionRecommendation';
+import { useGoalDrivenConfig } from '../hooks/batch/useGoalDrivenConfig';
+import { usePromptComposerState } from '../hooks/batch/usePromptComposerState';
+import { useSpecDrivenConfig } from '../hooks/batch/useSpecDrivenConfig';
+import { useWorktreeRunTarget } from '../hooks/batch/useWorktreeRunTarget';
 import {
-	usePlaybookManagement,
-	useTaskSelectionRecommendation,
-	useGoalDrivenConfig,
-	usePromptComposerState,
-	useSpecDrivenConfig,
-	useWorktreeRunTarget,
-	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
 	buildDesktopAutoRunPrompt,
-} from '../hooks';
+} from '../hooks/batch/batchUtils';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { joinPath } from '../../shared/formatters';
 import { logger } from '../utils/logger';
@@ -81,7 +80,10 @@ import { ResizeHandles } from './ui/ResizeHandles';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 // Re-export for external consumers
-export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
+export {
+	DEFAULT_BATCH_PROMPT,
+	validateAgentPromptHasTaskReference,
+} from '../hooks/batch/batchUtils';
 
 interface BatchRunnerModalProps {
 	theme: Theme;

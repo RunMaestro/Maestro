@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Image, X, Search, PenLine } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
-import { imageCache } from '../../hooks';
+import { imageCache } from '../../hooks/batch/useAutoRunImageHandling';
 import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 import type { Theme } from '../../types';
 

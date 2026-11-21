@@ -11,7 +11,7 @@ import {
 	useHoverPopover,
 	HOVER_POPOVER_OPEN_DELAY_MS,
 	HOVER_POPOVER_CLOSE_DELAY_MS,
-} from '../../../renderer/hooks';
+} from '../../../renderer/hooks/ui/useHoverPopover';
 
 function Harness({ hoverEnabled = true, onAction = vi.fn() }) {
 	const triggerRef = useRef<HTMLButtonElement>(null);

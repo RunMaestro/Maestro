@@ -20,7 +20,8 @@ import {
 	ArrowDownAZ,
 } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
-import { useClickOutside, useContextMenuPosition } from '../hooks';
+import { useClickOutside } from '../hooks/ui/useClickOutside';
+import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 import { getStatusColor } from '../utils/theme';
 import { isGroupChatBusy, type GroupChatBusySnapshot } from '../utils/groupChatStatus';

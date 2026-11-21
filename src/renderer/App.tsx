@@ -40,106 +40,70 @@ import {
 import { GroupChatRightPanel } from './components/GroupChatRightPanel';
 
 // Import custom hooks
-import {
-	// Batch processing
-	useBatchHandlers,
-	useBatchedSessionUpdates,
-	// Settings
-	useSettings,
-	useDebouncedPersistence,
-	// Session management
-	useActivityTracker,
-	useWindowScopedActiveSession,
-	useWindowState,
-	useHandsOnTimeTracker,
-	useNavigationHistory,
-	useSessionNavigation,
-	useGroupManagement,
-	// Input processing
-	useInputHandlers,
-	// Keyboard handling
-	useKeyboardShortcutHelpers,
-	useKeyboardNavigation,
-	useMainKeyboardHandler,
-	useTilingShortcuts,
-	useTextEditorUndo,
-	useAppMenuBridge,
-	// Agent
-	useAgentSessionManagement,
-	useAgentExecution,
-	useAgentCapabilities,
-	useMergeTransferHandlers,
-	useForkConversation,
-	useSummarizeAndContinue,
-	// Git
-	useFileTreeManagement,
-	useFileExplorerEffects,
-	// Remote
-	useRemoteIntegration,
-	useRemoteHandlers,
-	useWebBroadcasting,
-	useCliActivityMonitoring,
-	useMobileLandscape,
-	useAppRemoteEventListeners,
-	useViewportBreakpoint,
-	useKeyboardVisibility,
-	useSwipeGestures,
-	// UI
-	useThemeStyles,
-	useAppHandlers,
-	// Auto Run
-	useAutoRunHandlers,
-	// Tab handlers
-	useTabHandlers,
-	useTerminalTabHandlers,
-	useSnoozeScheduler,
-	// Group chat handlers
-	useGroupChatHandlers,
-	// Modal handlers
-	useModalHandlers,
-	// Worktree handlers
-	useWorktreeHandlers,
-	// Session restoration
-	useSessionRestoration,
-	// Input keyboard handling
-	// App initialization effects
-	useAppInitialization,
-	// Session lifecycle operations
-	useSessionLifecycle,
-	useSessionCrud,
-	// Wizard handlers
-	useWizardHandlers,
-	// Interrupt handler
-	useInterruptHandler,
-	// Tour actions (right panel control from tour overlay)
-	useTourActions,
-	// Idle notification (fires command when all agents/batches finish)
-	useIdleNotification,
-	// Deferred update-restart (installs downloaded update on idle transition)
-	useRestartWhenIdle,
-	// Queue handlers (queue browser UI operations)
-	useQueueHandlers,
-	// Queue processing (execution queue processing + startup recovery)
-	useQueueProcessing,
-	// Tab export handlers (copy context, export HTML, publish gist)
-	useTabExportHandlers,
-	// Auto Run achievements (progress tracking, peak stats)
-	useAutoRunAchievements,
-	// Auto Run document loader (list, tree, task counts, file watching)
-	useAutoRunDocumentLoader,
-	// Prompt Composer modal handlers
-	usePromptComposerHandlers,
-	// Quick Actions modal handlers (Cmd+K)
-	useQuickActionsHandlers,
-	// Session cycling (Cmd+Shift+[/])
-	useCycleSession,
-	// Input mode toggle (Tier 3A)
-	useInputMode,
-	// Live mode management (Tier 3B)
-	useLiveMode,
-	// Session switching callbacks (navigate to session/tab from various UI surfaces)
-	useSessionSwitchCallbacks,
-} from './hooks';
+import { useBatchHandlers } from './hooks/batch/useBatchHandlers';
+import { useBatchedSessionUpdates } from './hooks/session/useBatchedSessionUpdates';
+import { useSettings } from './hooks/settings/useSettings';
+import { useDebouncedPersistence } from './hooks/utils/useDebouncedPersistence';
+import { useActivityTracker } from './hooks/session/useActivityTracker';
+import { useWindowScopedActiveSession } from './hooks/session/useWindowScopedActiveSession';
+import { useWindowState } from './hooks/ui/useWindowState';
+import { useHandsOnTimeTracker } from './hooks/session/useHandsOnTimeTracker';
+import { useNavigationHistory } from './hooks/session/useNavigationHistory';
+import { useSessionNavigation } from './hooks/session/useSessionNavigation';
+import { useGroupManagement } from './hooks/session/useGroupManagement';
+import { useInputHandlers } from './hooks/input/useInputHandlers';
+import { useKeyboardShortcutHelpers } from './hooks/keyboard/useKeyboardShortcutHelpers';
+import { useKeyboardNavigation } from './hooks/keyboard/useKeyboardNavigation';
+import { useMainKeyboardHandler } from './hooks/keyboard/useMainKeyboardHandler';
+import { useTilingShortcuts } from './hooks/keyboard/useTilingShortcuts';
+import { useTextEditorUndo } from './hooks/keyboard/useTextEditorUndo';
+import { useAppMenuBridge } from './hooks/keyboard/useAppMenuBridge';
+import { useAgentSessionManagement } from './hooks/agent/useAgentSessionManagement';
+import { useAgentExecution } from './hooks/agent/useAgentExecution';
+import { useAgentCapabilities } from './hooks/agent/useAgentCapabilities';
+import { useMergeTransferHandlers } from './hooks/agent/useMergeTransferHandlers';
+import { useForkConversation } from './hooks/agent/useForkConversation';
+import { useSummarizeAndContinue } from './hooks/agent/useSummarizeAndContinue';
+import { useFileTreeManagement } from './hooks/git/useFileTreeManagement';
+import { useFileExplorerEffects } from './hooks/git/useFileExplorerEffects';
+import { useRemoteIntegration } from './hooks/remote/useRemoteIntegration';
+import { useRemoteHandlers } from './hooks/remote/useRemoteHandlers';
+import { useWebBroadcasting } from './hooks/remote/useWebBroadcasting';
+import { useCliActivityMonitoring } from './hooks/remote/useCliActivityMonitoring';
+import { useMobileLandscape } from './hooks/remote/useMobileLandscape';
+import { useAppRemoteEventListeners } from './hooks/remote/useAppRemoteEventListeners';
+import { useViewportBreakpoint } from './hooks/ui/useViewportBreakpoint';
+import { useKeyboardVisibility } from './hooks/utils/useKeyboardVisibility';
+import { useSwipeGestures } from './hooks/utils/useSwipeGestures';
+import { useThemeStyles } from './hooks/ui/useThemeStyles';
+import { useAppHandlers } from './hooks/ui/useAppHandlers';
+import { useAutoRunHandlers } from './hooks/batch/useAutoRunHandlers';
+import { useTabHandlers } from './hooks/tabs/useTabHandlers';
+import { useTerminalTabHandlers } from './hooks/tabs/internal/useTerminalTabHandlers';
+import { useSnoozeScheduler } from './hooks/tabs/useSnoozeScheduler';
+import { useGroupChatHandlers } from './hooks/groupChat/useGroupChatHandlers';
+import { useModalHandlers } from './hooks/modal/useModalHandlers';
+import { useWorktreeHandlers } from './hooks/worktree/useWorktreeHandlers';
+import { useSessionRestoration } from './hooks/session/useSessionRestoration';
+import { useAppInitialization } from './hooks/ui/useAppInitialization';
+import { useSessionLifecycle } from './hooks/session/useSessionLifecycle';
+import { useSessionCrud } from './hooks/session/useSessionCrud';
+import { useWizardHandlers } from './hooks/wizard/useWizardHandlers';
+import { useInterruptHandler } from './hooks/agent/useInterruptHandler';
+import { useTourActions } from './hooks/ui/useTourActions';
+import { useIdleNotification } from './hooks/ui/useIdleNotification';
+import { useRestartWhenIdle } from './hooks/ui/useRestartWhenIdle';
+import { useQueueHandlers } from './hooks/agent/useQueueHandlers';
+import { useQueueProcessing } from './hooks/agent/useQueueProcessing';
+import { useTabExportHandlers } from './hooks/tabs/useTabExportHandlers';
+import { useAutoRunAchievements } from './hooks/batch/useAutoRunAchievements';
+import { useAutoRunDocumentLoader } from './hooks/batch/useAutoRunDocumentLoader';
+import { usePromptComposerHandlers } from './hooks/modal/usePromptComposerHandlers';
+import { useQuickActionsHandlers } from './hooks/modal/useQuickActionsHandlers';
+import { useCycleSession } from './hooks/session/useCycleSession';
+import { useInputMode } from './hooks/input/useInputMode';
+import { useLiveMode } from './hooks/remote/useLiveMode';
+import { useSessionSwitchCallbacks } from './hooks/session/useSessionSwitchCallbacks';
 import { SidebarNavSync } from './hooks/session/SidebarNavSync';
 import { usePluginFocusRequestListener } from './hooks/session/usePluginFocusRequestListener';
 import { useSidebarNavStore } from './stores/sidebarNavStore';

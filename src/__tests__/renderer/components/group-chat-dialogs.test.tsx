@@ -1,0 +1,946 @@
+// Source: src/__tests__/renderer/components/AppGroupModals.test.tsx
+// Source: src/__tests__/renderer/components/GroupChatHistoryPanel.test.tsx
+import { describe as describeSourceSuite } from 'vitest';
+import React from 'react';
+import { describe } from 'vitest';
+import { it } from 'vitest';
+import { expect } from 'vitest';
+import { vi } from 'vitest';
+import { beforeEach } from 'vitest';
+import { render } from '@testing-library/react';
+import { screen } from '@testing-library/react';
+import { AppGroupModals } from '../../../renderer/components/AppModals';
+import type { Theme } from '../../../renderer/types';
+import { afterEach } from 'vitest';
+import { fireEvent } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
+import { act } from '@testing-library/react';
+import { GroupChatHistoryPanel } from '../../../renderer/components/GroupChatHistoryPanel';
+import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { mockTheme } from '../../helpers/mockTheme';
+import type { GroupChatHistoryEntry } from '../../../shared/group-chat-types';
+import type { GroupChatHistoryEntryType } from '../../../shared/group-chat-types';
+vi.mock('../../../renderer/components/CreateGroupModal', () => ({
+	CreateGroupModal: (props: any) => <div data-testid="create-group-modal" />,
+}));
+vi.mock('../../../renderer/components/RenameGroupModal', () => ({
+	RenameGroupModal: (props: any) => <div data-testid="rename-group-modal" />,
+}));
+describeSourceSuite('AppGroupModals', () => {
+	const testTheme: Theme = {
+		id: 'test-theme',
+		name: 'Test Theme',
+		mode: 'dark',
+		colors: {
+			bgMain: '#1e1e1e',
+			bgSidebar: '#252526',
+			bgActivity: '#333333',
+			textMain: '#d4d4d4',
+			textDim: '#808080',
+			accent: '#007acc',
+			accentForeground: '#ffffff',
+			border: '#404040',
+			error: '#f14c4c',
+			warning: '#cca700',
+			success: '#89d185',
+		},
+	};
+
+	const defaultProps = {
+		theme: testTheme,
+		groups: [],
+		setGroups: vi.fn(),
+		createGroupModalOpen: false,
+		onCloseCreateGroupModal: vi.fn(),
+		renameGroupModalOpen: false,
+		renameGroupId: null,
+		renameGroupValue: '',
+		setRenameGroupValue: vi.fn(),
+		renameGroupEmoji: '',
+		setRenameGroupEmoji: vi.fn(),
+		renameGroupIcon: undefined,
+		setRenameGroupIcon: vi.fn(),
+		renameGroupColor: undefined,
+		setRenameGroupColor: vi.fn(),
+		onCloseRenameGroupModal: vi.fn(),
+	};
+
+	describe('AppGroupModals', () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('does not render any modals when all booleans are false', () => {
+			const { container } = render(<AppGroupModals {...defaultProps} />);
+			expect(screen.queryByTestId('create-group-modal')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('rename-group-modal')).not.toBeInTheDocument();
+		});
+
+		it('renders CreateGroupModal when createGroupModalOpen is true', () => {
+			render(<AppGroupModals {...defaultProps} createGroupModalOpen={true} />);
+			expect(screen.getByTestId('create-group-modal')).toBeInTheDocument();
+			expect(screen.queryByTestId('rename-group-modal')).not.toBeInTheDocument();
+		});
+
+		it('renders RenameGroupModal when renameGroupModalOpen is true and renameGroupId is set', () => {
+			render(
+				<AppGroupModals {...defaultProps} renameGroupModalOpen={true} renameGroupId="group-1" />
+			);
+			expect(screen.getByTestId('rename-group-modal')).toBeInTheDocument();
+			expect(screen.queryByTestId('create-group-modal')).not.toBeInTheDocument();
+		});
+
+		it('does not render RenameGroupModal when renameGroupId is null', () => {
+			render(<AppGroupModals {...defaultProps} renameGroupModalOpen={true} renameGroupId={null} />);
+			expect(screen.queryByTestId('rename-group-modal')).not.toBeInTheDocument();
+		});
+	});
+});
+describeSourceSuite('GroupChatHistoryPanel', () => {
+	// ============================================================================
+	// TEST HELPERS
+	// ============================================================================
+
+	const createMockEntry = (
+		overrides: Partial<GroupChatHistoryEntry> = {}
+	): GroupChatHistoryEntry => ({
+		id: `entry-${Math.random().toString(36).substring(7)}`,
+		timestamp: Date.now(),
+		summary: 'Test summary',
+		participantName: 'Agent A',
+		participantColor: '#ff0000',
+		type: 'response',
+		...overrides,
+	});
+
+	const mockParticipantColors: Record<string, string> = {
+		'Agent A': '#ff0000',
+		'Agent B': '#00ff00',
+		Moderator: '#0000ff',
+	};
+
+	const defaultProps = {
+		theme: mockTheme,
+		groupChatId: 'group-1',
+		entries: [] as GroupChatHistoryEntry[],
+		isLoading: false,
+		participantColors: mockParticipantColors,
+	};
+
+	describe('GroupChatHistoryPanel', () => {
+		beforeEach(() => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			useUIStore.setState({ groupChatHistorySearchFilterOpen: false, activeFocus: 'main' });
+			// The pills are per-chat store state now, so a toggle in one test would
+			// otherwise be restored by every later test sharing this groupChatId.
+			useGroupChatStore.setState({ groupChatViewPrefs: {} });
+			Element.prototype.scrollIntoView = vi.fn();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+		});
+
+		// ===== EMPTY / LOADING STATES =====
+		describe('loading and empty states', () => {
+			it('should show loading state', () => {
+				render(<GroupChatHistoryPanel {...defaultProps} isLoading={true} />);
+				expect(screen.getByText('Loading history...')).toBeInTheDocument();
+			});
+
+			it('should show empty state when no entries', () => {
+				render(<GroupChatHistoryPanel {...defaultProps} entries={[]} />);
+				expect(screen.getByText(/No task history yet/)).toBeInTheDocument();
+			});
+
+			it('should show filter empty state when type filters hide all entries', () => {
+				const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Verify entry is visible
+				expect(screen.getByText('A response')).toBeInTheDocument();
+
+				// Toggle off response filter
+				const responseFilter = screen.getByRole('button', { name: /Response/i });
+				fireEvent.click(responseFilter);
+
+				expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+			});
+
+			it('should show search empty state when search has no matches', () => {
+				const entries = [createMockEntry({ summary: 'Alpha task' })];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Open search
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
+
+				expect(screen.getByText(/No entries match "nonexistent"/)).toBeInTheDocument();
+			});
+		});
+
+		// ===== TYPE FILTER PILLS =====
+		describe('type filter pills', () => {
+			it('should render all four type filter pills', () => {
+				render(<GroupChatHistoryPanel {...defaultProps} />);
+
+				expect(screen.getByRole('button', { name: /Delegation/i })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Response/i })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Synthesis/i })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Error/i })).toBeInTheDocument();
+			});
+
+			it('prints short labels but keeps the full word as the accessible name', () => {
+				render(<GroupChatHistoryPanel {...defaultProps} />);
+
+				const shortByFull: Record<string, string> = {
+					You: 'You',
+					Delegation: 'Task',
+					Response: 'Reply',
+					Synthesis: 'Synth',
+					Error: 'Err',
+				};
+				for (const [full, short] of Object.entries(shortByFull)) {
+					const btn = screen.getByRole('button', { name: full });
+					expect(btn).toHaveTextContent(short);
+				}
+			});
+
+			// Each type carries its own hue so the chips read apart at a glance, the
+			// way the AI history's USER / AUTO / CUE chips do.
+			it('gives every type pill its own color', () => {
+				render(<GroupChatHistoryPanel {...defaultProps} />);
+
+				const colors = ['You', 'Delegation', 'Response', 'Synthesis', 'Error'].map(
+					(label) => screen.getByRole('button', { name: label }).style.color
+				);
+				expect(colors.every(Boolean)).toBe(true);
+				expect(new Set(colors).size).toBe(colors.length);
+			});
+
+			it('should have all filters active by default', () => {
+				render(<GroupChatHistoryPanel {...defaultProps} />);
+
+				const pills = ['Delegation', 'Response', 'Synthesis', 'Error'];
+				for (const label of pills) {
+					const btn = screen.getByRole('button', { name: new RegExp(label, 'i') });
+					expect(btn).toHaveClass('opacity-100');
+				}
+			});
+
+			it('should toggle a filter off and back on', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'Delegated work' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Agent responded' }),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				expect(screen.getByText('Delegated work')).toBeInTheDocument();
+				expect(screen.getByText('Agent responded')).toBeInTheDocument();
+
+				// Toggle off delegation
+				const delegationBtn = screen.getByRole('button', { name: /Delegation/i });
+				fireEvent.click(delegationBtn);
+
+				expect(screen.queryByText('Delegated work')).not.toBeInTheDocument();
+				expect(screen.getByText('Agent responded')).toBeInTheDocument();
+				expect(delegationBtn).toHaveClass('opacity-40');
+
+				// Toggle back on
+				fireEvent.click(delegationBtn);
+
+				expect(screen.getByText('Delegated work')).toBeInTheDocument();
+				expect(delegationBtn).toHaveClass('opacity-100');
+			});
+
+			it('should filter by error type', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'error', summary: 'Something failed' }),
+					createMockEntry({ id: 'e2', type: 'synthesis', summary: 'Moderator synthesis' }),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off error
+				fireEvent.click(screen.getByRole('button', { name: /Error/i }));
+
+				expect(screen.queryByText('Something failed')).not.toBeInTheDocument();
+				expect(screen.getByText('Moderator synthesis')).toBeInTheDocument();
+			});
+
+			it('should filter by synthesis type', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'synthesis', summary: 'Moderator summary' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Agent reply' }),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off synthesis
+				fireEvent.click(screen.getByRole('button', { name: /Synthesis/i }));
+
+				expect(screen.queryByText('Moderator summary')).not.toBeInTheDocument();
+				expect(screen.getByText('Agent reply')).toBeInTheDocument();
+			});
+		});
+
+		// ===== SEARCH FILTER =====
+		describe('search filter', () => {
+			it('should open search with Cmd+F', () => {
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} />);
+
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				expect(screen.getByPlaceholderText('Filter group chat history...')).toBeInTheDocument();
+			});
+
+			it('should open search with Ctrl+F', () => {
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} />);
+
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', ctrlKey: true });
+
+				expect(screen.getByPlaceholderText('Filter group chat history...')).toBeInTheDocument();
+			});
+
+			it('should close search with Escape and clear filter', () => {
+				const entries = [createMockEntry({ summary: 'Visible entry' })];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Open search
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
+
+				// Verify entry is hidden
+				expect(screen.queryByText('Visible entry')).not.toBeInTheDocument();
+
+				// Close with Escape
+				fireEvent.keyDown(searchInput, { key: 'Escape' });
+
+				// Search input should be gone and entry visible again
+				expect(
+					screen.queryByPlaceholderText('Filter group chat history...')
+				).not.toBeInTheDocument();
+				expect(screen.getByText('Visible entry')).toBeInTheDocument();
+			});
+
+			it('should filter by summary text', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', summary: 'Alpha task completed' }),
+					createMockEntry({ id: 'e2', summary: 'Beta implementation done' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Open search
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Alpha' } });
+
+				expect(screen.getByText('Alpha task completed')).toBeInTheDocument();
+				expect(screen.queryByText('Beta implementation done')).not.toBeInTheDocument();
+			});
+
+			it('should filter by fullResponse text', () => {
+				const entries = [
+					createMockEntry({
+						id: 'e1',
+						summary: 'Generic summary',
+						fullResponse: 'Contains unique keyword xyz123',
+					}),
+					createMockEntry({ id: 'e2', summary: 'Other entry' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'xyz123' } });
+
+				expect(screen.getByText('Generic summary')).toBeInTheDocument();
+				expect(screen.queryByText('Other entry')).not.toBeInTheDocument();
+			});
+
+			it('should filter by participant name', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', summary: 'Task by A', participantName: 'Agent A' }),
+					createMockEntry({ id: 'e2', summary: 'Task by B', participantName: 'Agent B' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Agent B' } });
+
+				expect(screen.queryByText('Task by A')).not.toBeInTheDocument();
+				expect(screen.getByText('Task by B')).toBeInTheDocument();
+			});
+
+			it('should be case-insensitive', () => {
+				const entries = [createMockEntry({ id: 'e1', summary: 'UPPERCASE Task' })];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'uppercase' } });
+
+				expect(screen.getByText('UPPERCASE Task')).toBeInTheDocument();
+			});
+
+			it('should show result count when searching', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', summary: 'Alpha one' }),
+					createMockEntry({ id: 'e2', summary: 'Alpha two' }),
+					createMockEntry({ id: 'e3', summary: 'Beta xyz' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Alpha' } });
+
+				const resultCount = container.querySelector('.text-right');
+				expect(resultCount?.textContent).toMatch(/2 results?/);
+			});
+
+			it('should combine search with type filters', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'Alpha delegation' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Alpha response' }),
+					createMockEntry({ id: 'e3', type: 'delegation', summary: 'Beta delegation' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off delegation
+				fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
+
+				// Open search
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Alpha' } });
+
+				// Only the response entry matching "Alpha" should be visible
+				expect(screen.queryByText('Alpha delegation')).not.toBeInTheDocument();
+				expect(screen.getByText('Alpha response')).toBeInTheDocument();
+				expect(screen.queryByText('Beta delegation')).not.toBeInTheDocument();
+			});
+		});
+
+		// ===== ENTRY RENDERING =====
+		describe('entry rendering', () => {
+			it('should render participant name pill with correct color', () => {
+				const entries = [createMockEntry({ participantName: 'Agent A' })];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const pill = screen.getByText('Agent A');
+				// Should use color from participantColors prop
+				expect(pill).toHaveStyle({ color: '#ff0000' });
+			});
+
+			it('should render entry summary', () => {
+				const entries = [createMockEntry({ summary: 'Completed the refactoring task' })];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				expect(screen.getByText('Completed the refactoring task')).toBeInTheDocument();
+			});
+
+			it('should render cost when present', () => {
+				const entries = [createMockEntry({ cost: 0.15 })];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				expect(screen.getByText('$0.15')).toBeInTheDocument();
+			});
+
+			it('should not render cost badge for zero cost', () => {
+				const entries = [createMockEntry({ cost: 0 })];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+			});
+
+			it('should not render cost badge when cost is undefined', () => {
+				const entries = [createMockEntry({ cost: undefined })];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// No dollar sign in the output
+				const costElements = screen.queryAllByText(/\$/);
+				expect(costElements.length).toBe(0);
+			});
+		});
+
+		// ===== CALLBACKS =====
+		describe('callbacks', () => {
+			it('should call onJumpToMessage when entry is clicked', () => {
+				const onJumpToMessage = vi.fn();
+				const entries = [createMockEntry({ timestamp: 1234567890 })];
+				render(
+					<GroupChatHistoryPanel
+						{...defaultProps}
+						entries={entries}
+						onJumpToMessage={onJumpToMessage}
+					/>
+				);
+
+				fireEvent.click(screen.getByText('Test summary'));
+
+				expect(onJumpToMessage).toHaveBeenCalledWith(1234567890);
+			});
+		});
+
+		// ===== BAR CLICK =====
+		describe('bar click navigation', () => {
+			it('should scroll to entry when bar is clicked', () => {
+				const now = Date.now();
+				const entries = [
+					createMockEntry({ id: 'recent', timestamp: now - 1000, summary: 'Recent entry' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Find clickable bars (those with cursor: pointer)
+				const bars = container.querySelectorAll('[style*="cursor: pointer"]');
+				if (bars.length > 0) {
+					fireEvent.click(bars[bars.length - 1]);
+					// scrollIntoView should have been called
+					expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+				}
+			});
+		});
+
+		// ===== MULTI-FILTER INTERACTIONS =====
+		describe('multi-filter interactions', () => {
+			it('should allow toggling off multiple type filters', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'Delegated task' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Agent replied' }),
+					createMockEntry({ id: 'e3', type: 'synthesis', summary: 'Synthesized output' }),
+					createMockEntry({ id: 'e4', type: 'error', summary: 'Error occurred' }),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off delegation and synthesis
+				fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
+				fireEvent.click(screen.getByRole('button', { name: /Synthesis/i }));
+
+				expect(screen.queryByText('Delegated task')).not.toBeInTheDocument();
+				expect(screen.getByText('Agent replied')).toBeInTheDocument();
+				expect(screen.queryByText('Synthesized output')).not.toBeInTheDocument();
+				expect(screen.getByText('Error occurred')).toBeInTheDocument();
+			});
+
+			it('should show filter empty state when all type filters are off', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'A' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'B' }),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off all types
+				fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
+				fireEvent.click(screen.getByRole('button', { name: /Response/i }));
+				fireEvent.click(screen.getByRole('button', { name: /Synthesis/i }));
+				fireEvent.click(screen.getByRole('button', { name: /Error/i }));
+
+				expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+			});
+
+			it('should correctly apply type filter + search filter together', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'Alpha task' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Alpha response' }),
+					createMockEntry({ id: 'e3', type: 'delegation', summary: 'Beta task' }),
+					createMockEntry({ id: 'e4', type: 'response', summary: 'Beta response' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off delegation type
+				fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
+
+				// Open search and filter for "Alpha"
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Alpha' } });
+
+				// Only "Alpha response" should remain (delegation hidden by type filter, Beta hidden by search)
+				expect(screen.queryByText('Alpha task')).not.toBeInTheDocument();
+				expect(screen.getByText('Alpha response')).toBeInTheDocument();
+				expect(screen.queryByText('Beta task')).not.toBeInTheDocument();
+				expect(screen.queryByText('Beta response')).not.toBeInTheDocument();
+			});
+
+			it('should show correct result count with combined filters', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'Shared keyword' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Shared keyword' }),
+					createMockEntry({ id: 'e3', type: 'response', summary: 'Other text' }),
+				];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Toggle off delegation
+				fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
+
+				// Search for "Shared"
+				const panel = container.querySelector('[tabIndex="0"]');
+				fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Shared' } });
+
+				// Only 1 result (response with "Shared keyword")
+				const resultCount = container.querySelector('.text-right');
+				expect(resultCount?.textContent).toMatch(/1 result$/);
+			});
+		});
+
+		// ===== ENTRY RENDERING DETAILS =====
+		describe('entry rendering details', () => {
+			it('should use participantColors prop color over entry participantColor', () => {
+				const entries = [
+					createMockEntry({
+						participantName: 'Agent A',
+						participantColor: '#999999', // entry-level color (fallback)
+					}),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const pill = screen.getByText('Agent A');
+				// Should use participantColors['Agent A'] = '#ff0000', not the entry's #999999
+				expect(pill).toHaveStyle({ color: '#ff0000' });
+			});
+
+			it('should fall back to entry participantColor when not in participantColors map', () => {
+				const entries = [
+					createMockEntry({
+						participantName: 'Unknown Agent',
+						participantColor: '#abcdef',
+					}),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				const pill = screen.getByText('Unknown Agent');
+				expect(pill).toHaveStyle({ color: '#abcdef' });
+			});
+
+			it('should render entries with data-entry-id attribute', () => {
+				const entries = [createMockEntry({ id: 'entry-abc' })];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				expect(container.querySelector('[data-entry-id="entry-abc"]')).toBeInTheDocument();
+			});
+
+			it('should render all four entry types with correct styling', () => {
+				const entries = [
+					createMockEntry({ id: 'e1', type: 'delegation', summary: 'Delegation entry' }),
+					createMockEntry({ id: 'e2', type: 'response', summary: 'Response entry' }),
+					createMockEntry({ id: 'e3', type: 'synthesis', summary: 'Synthesis entry' }),
+					createMockEntry({ id: 'e4', type: 'error', summary: 'Error entry' }),
+				];
+				render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				expect(screen.getByText('Delegation entry')).toBeInTheDocument();
+				expect(screen.getByText('Response entry')).toBeInTheDocument();
+				expect(screen.getByText('Synthesis entry')).toBeInTheDocument();
+				expect(screen.getByText('Error entry')).toBeInTheDocument();
+			});
+		});
+
+		// ===== LAYOUT =====
+		describe('layout', () => {
+			it('should render filter pills, activity graph area, and entry list vertically', () => {
+				const entries = [createMockEntry({ id: 'e1', summary: 'Test entry' })];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Main container should be flex-col (vertical stacking)
+				const mainPanel = container.querySelector('.flex-col.overflow-hidden');
+				expect(mainPanel).toBeInTheDocument();
+
+				// Filter pills should be rendered
+				expect(screen.getByRole('button', { name: /Delegation/i })).toBeInTheDocument();
+
+				// Entry should be in the scrollable list area
+				expect(screen.getByText('Test entry')).toBeInTheDocument();
+			});
+
+			it('should have activity graph with w-full class for full width', () => {
+				const entries = [createMockEntry({ timestamp: Date.now() - 1000, summary: 'Recent' })];
+				const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
+
+				// Activity graph should use w-full for full width
+				const graphContainer = container.querySelector('.w-full.flex.flex-col.relative');
+				expect(graphContainer).toBeInTheDocument();
+			});
+		});
+		// ===== KEYBOARD NAVIGATION =====
+		describe('keyboard navigation', () => {
+			const navEntries = [
+				createMockEntry({ id: 'e1', summary: 'First entry', timestamp: 3000 }),
+				createMockEntry({ id: 'e2', summary: 'Second entry', timestamp: 2000 }),
+				createMockEntry({ id: 'e3', summary: 'Third entry', timestamp: 1000 }),
+			];
+
+			const selectedId = (container: HTMLElement) =>
+				container.querySelector('[data-selected]')?.getAttribute('data-entry-id');
+
+			it('should move the selection down with ArrowDown', () => {
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+
+				// Nothing is selected until the first key, so it lands on the first entry.
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				expect(selectedId(container)).toBe('e1');
+
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				expect(selectedId(container)).toBe('e2');
+			});
+
+			it('should move the selection up with ArrowUp', () => {
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				fireEvent.keyDown(panel, { key: 'ArrowUp' });
+				expect(selectedId(container)).toBe('e2');
+			});
+
+			it('should stop at the ends of the list instead of wrapping', () => {
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+
+				fireEvent.keyDown(panel, { key: 'ArrowUp' });
+				expect(selectedId(container)).toBe('e1');
+
+				for (let i = 0; i < 5; i++) fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				expect(selectedId(container)).toBe('e3');
+			});
+
+			it('should scroll the selected entry into view', () => {
+				const scrollIntoView = vi.fn();
+				Element.prototype.scrollIntoView = scrollIntoView;
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+				scrollIntoView.mockClear();
+
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+
+				// Instant, not smooth: a held arrow key repeats faster than a smooth
+				// scroll animates, so smooth makes the list lurch instead of step.
+				expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest' });
+			});
+
+			it('should pad the scroll container so an edge selection is not pinned flat', () => {
+				// block: 'nearest' stops as soon as the row is inside the box, so
+				// without scroll padding the selection sits flush against the edge and
+				// a held arrow reads as the list having stopped moving.
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+
+				const scroller = container.querySelector('.overflow-y-auto');
+				expect(scroller).not.toBeNull();
+				expect(scroller!.className).toContain('scroll-p-2');
+			});
+
+			it('should jump to the selected entry on Enter', () => {
+				const onJumpToMessage = vi.fn();
+				const { container } = render(
+					<GroupChatHistoryPanel
+						{...defaultProps}
+						entries={navEntries}
+						onJumpToMessage={onJumpToMessage}
+					/>
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				fireEvent.keyDown(panel, { key: 'Enter' });
+
+				expect(onJumpToMessage).toHaveBeenCalledWith(2000);
+			});
+
+			it('should continue arrow navigation from a clicked entry', () => {
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+
+				fireEvent.click(screen.getByText('Third entry'));
+				expect(selectedId(container)).toBe('e3');
+
+				fireEvent.keyDown(panel, { key: 'ArrowUp' });
+				expect(selectedId(container)).toBe('e2');
+			});
+
+			it('should navigate only the entries left after filtering', () => {
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+				const panel = container.querySelector('[tabIndex="0"]')!;
+
+				fireEvent.keyDown(panel, { key: 'f', metaKey: true });
+				const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+				fireEvent.change(searchInput, { target: { value: 'Third' } });
+
+				fireEvent.keyDown(panel, { key: 'ArrowDown' });
+				expect(selectedId(container)).toBe('e3');
+			});
+
+			it('should take focus when the right panel is the active focus area', () => {
+				useUIStore.setState({ activeFocus: 'right' });
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+
+				expect(document.activeElement).toBe(container.querySelector('[tabIndex="0"]'));
+			});
+
+			it('should not take focus when another area is focused', () => {
+				useUIStore.setState({ activeFocus: 'main' });
+				const { container } = render(
+					<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+				);
+
+				expect(document.activeElement).not.toBe(container.querySelector('[tabIndex="0"]'));
+			});
+		});
+
+		// ===== PER-CHAT FILTER PERSISTENCE =====
+
+		describe('per-chat filter persistence', () => {
+			beforeEach(() => {
+				installLocalStorageMock();
+				useGroupChatStore.setState({ groupChatViewPrefs: {} });
+				// Back to "nothing saved" so a lookback stub from one test cannot
+				// answer another test's read.
+				vi.mocked(window.maestro.settings.get).mockResolvedValue(undefined);
+			});
+
+			it('swaps the pills when the chat changes, without a remount', () => {
+				// The panel is rendered without a `key`, so a chat switch is a prop
+				// change on the SAME instance. Rerendering here reproduces that: if the
+				// pills only loaded on mount, chat-b would inherit chat-a's filter.
+				const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+				const { rerender } = render(
+					<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" entries={entries} />
+				);
+
+				fireEvent.click(screen.getByRole('button', { name: /Response/i }));
+				expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+
+				// chat-b has never been configured, so every pill is on.
+				rerender(
+					<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" entries={entries} />
+				);
+				expect(screen.getByText('A response')).toBeInTheDocument();
+
+				// Back to chat-a, which keeps its own answer.
+				rerender(
+					<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" entries={entries} />
+				);
+				expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+			});
+
+			it('restores pills saved by an earlier session on first mount', () => {
+				useGroupChatStore.getState().setGroupChatHistoryTypes('chat-a', ['user']);
+
+				const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+				render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" entries={entries} />);
+
+				// Only 'user' is lit, so a response entry is filtered out immediately,
+				// with no click in this session.
+				expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+			});
+
+			it('does not carry one chat lookback over to a chat that has none', async () => {
+				// 1 hour is not a selectable option, and an unrecognised value renders
+				// as the 24h default, so chat A uses a real option (1 week) for the
+				// assertion to mean anything.
+				vi.mocked(window.maestro.settings.get).mockImplementation(async (key: string) =>
+					key === 'groupChatHistoryLookback:chat-a' ? 168 : undefined
+				);
+
+				const { rerender } = render(
+					<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />
+				);
+				await waitFor(() => expect(screen.getByTitle(/1 week/i)).toBeInTheDocument());
+
+				// chat-b saved nothing, so it must fall back to 24h rather than keep
+				// showing chat-a's window.
+				rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" />);
+				await waitFor(() => expect(screen.getByTitle(/24 hours/i)).toBeInTheDocument());
+
+				// chat-a still has its own.
+				rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+				await waitFor(() => expect(screen.getByTitle(/1 week/i)).toBeInTheDocument());
+			});
+
+			it('ignores a lookback read that lands after the chat changed again', async () => {
+				// The slow read belongs to chat-a. It resolves only after the panel has
+				// already moved to chat-b, and must not repaint chat-b with it.
+				let releaseSlowRead: (value: unknown) => void = () => {};
+				vi.mocked(window.maestro.settings.get).mockImplementation((key: string) => {
+					if (key === 'groupChatHistoryLookback:chat-a') {
+						return new Promise((resolve) => {
+							releaseSlowRead = resolve;
+						});
+					}
+					return Promise.resolve(undefined);
+				});
+
+				const { rerender } = render(
+					<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />
+				);
+				rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" />);
+
+				// Let the late resolution and every microtask behind it run to
+				// completion, then assert directly. A waitFor here would poll once
+				// before the value landed and pass even without the fix.
+				await act(async () => {
+					releaseSlowRead(168);
+					await Promise.resolve();
+					await Promise.resolve();
+				});
+
+				expect(screen.getByTitle(/24 hours/i)).toBeInTheDocument();
+			});
+
+			it('writes the chat id it was given, not the previously active one', () => {
+				const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+				render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" entries={entries} />);
+
+				fireEvent.click(screen.getByRole('button', { name: /Response/i }));
+
+				const prefs = useGroupChatStore.getState().groupChatViewPrefs;
+				expect(prefs['chat-b']?.historyTypes).not.toContain('response');
+				expect(prefs['chat-a']).toBeUndefined();
+			});
+		});
+	});
+});

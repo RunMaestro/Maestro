@@ -39,7 +39,7 @@ import {
 	type KeyValueRow,
 } from '../ui/KeyValueRows';
 import { validateSshOption } from '../../../shared/sshOptions';
-import { useSaveShortcut } from '../../hooks';
+import { useSaveShortcut } from '../../hooks/keyboard/useSaveShortcut';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { ToggleSwitch } from '../ui/ToggleSwitch';
 import { federationFieldFor, isFederationRemote } from '../../../shared/federationRemote';

@@ -8,7 +8,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Keyboard, MessageSquare, X } from 'lucide-react';
-import { useSettings } from '../../../hooks';
+import { useSettings } from '../../../hooks/settings/useSettings';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
 import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared/shortcutKeys';

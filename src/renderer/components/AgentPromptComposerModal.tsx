@@ -6,7 +6,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
-import { useTemplateAutocomplete } from '../hooks';
+import { useTemplateAutocomplete } from '../hooks/input/useTemplateAutocomplete';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { estimateTokenCount } from '../../shared/formatters';
 import { ResizeHandles } from './ui/ResizeHandles';

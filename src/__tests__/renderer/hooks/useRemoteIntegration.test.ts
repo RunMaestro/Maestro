@@ -4,7 +4,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 // Pull in Window.maestro. Test files sit outside tsconfig.json include, so the
 // IDE infers a bare DOM Window unless this module's global augmentation loads.
 import type {} from '../../../renderer/global';
-import { useRemoteIntegration } from '../../../renderer/hooks';
+import { useRemoteIntegration } from '../../../renderer/hooks/remote/useRemoteIntegration';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';

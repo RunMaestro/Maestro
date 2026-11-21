@@ -27,6 +27,12 @@ teardownTimeout: 5000;
 exclude: ['src/__tests__/integration/**', 'src/__tests__/e2e/**', 'src/__tests__/performance/**'];
 ```
 
+Tests that need the DOM or renderer setup mocks stay in `jsdom`. The
+`node-renderer` project runs only files listed in `vitest.renderer-node-tests.mts`.
+Add a file there only after confirming its tests pass without the DOM or renderer
+setup mocks. Both Node projects keep per-file process isolation. To run both,
+use `--project 'node*'`.
+
 Coverage uses `v8` provider with `text`, `text-summary`, `json`, and `html` reporters.
 
 ### Running Tests
@@ -41,6 +47,10 @@ For parameterized tests that need `TestContext` (for example, runtime `skip()` w
 For real POSIX-shell fixtures under Git for Windows, translate Git drive paths relative to the native fixture root and join them to the shell's `pwd -P` root. Do not assume `/c/...`: temporary directories can appear under `/tmp`.
 
 For spawn-parity checks, freeze only `Date` across compared launches; generated temp-file timestamps are not stable across real-clock calls. Compare observable spawn payloads, not incidental filename formats.
+
+For mocked transports, advance Vitest's fake clock through real pacing and retry
+logic instead of waiting for production backoff intervals. Fake both the timer
+and the clock that computes the deadline.
 
 ### maestro-p Live Suite
 
@@ -126,6 +136,15 @@ src/
 ### Co-located vs Centralized Tests
 
 Most tests live under `src/__tests__/` mirroring the source structure. Some unit tests are co-located in `__tests__/` directories next to their source files (mainly in `src/main/`). Both patterns are valid. The centralized `src/__tests__/` directory is preferred for new tests.
+
+### Consolidating Related Suites
+
+- Combine only closely related modules or contracts, using a descriptive domain filename without numbered `.merged` suffixes.
+- Keep each source's hooks, helpers, state, and original inner suite/test names in a source-named wrapper, such as `describe('cue-template-context-builder', ...)`. List the original source paths in comments.
+- Keep static imports, `vi.mock` factories, and `vi.hoisted` state at module scope. Leave suites separate when their mocks, dependency graphs, or global mutations are incompatible.
+- Preserve every original test and assertion. Compare runtime test-name multiplicities after removing only the added source-name prefix.
+- Keep file isolation and the configured worker limit unchanged; concurrency tuning is a separate change.
+- Import renderer hooks from their defining modules, not `src/renderer/hooks/index.ts`. The barrel loads every hook feature in each isolated worker, and a test double must target the module its subject actually imports.
 
 ---
 

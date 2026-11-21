@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useMobileLandscape } from '../../../renderer/hooks';
+import { useMobileLandscape } from '../../../renderer/hooks/remote/useMobileLandscape';
 
 describe('useMobileLandscape', () => {
 	// Store original values

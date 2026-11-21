@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { Session, Group, BatchRunConfig } from '../../renderer/types';
-import { useBatchProcessor } from '../../renderer/hooks';
+import { useBatchProcessor } from '../../renderer/hooks/batch/useBatchProcessor';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../renderer/stores/batchStore';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
