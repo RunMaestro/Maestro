@@ -103,6 +103,25 @@ describe('DisplayTab hooks', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledTimes(1);
 		});
 
+		it('shares one custom font list across mounted sections so no addition is lost', () => {
+			const fonts = renderHook(() => useFontConfigurationState());
+			const headings = renderHook(() => useFontConfigurationState());
+
+			act(() => {
+				fonts.result.current.addCustomFont('Iosevka');
+			});
+			act(() => {
+				headings.result.current.addCustomFont('Recursive Mono');
+			});
+
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith('customFonts', [
+				'Iosevka',
+				'Recursive Mono',
+			]);
+			expect(fonts.result.current.customFonts).toEqual(['Iosevka', 'Recursive Mono']);
+			expect(headings.result.current.customFonts).toEqual(['Iosevka', 'Recursive Mono']);
+		});
+
 		it('degrades to an unreliable list rather than an error when detection fails', async () => {
 			// On stock macOS and Windows there is no fontconfig, so a failed
 			// enumeration is the EXPECTED path. Reporting it as an error would

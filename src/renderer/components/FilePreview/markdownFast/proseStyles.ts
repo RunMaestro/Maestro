@@ -2,6 +2,7 @@ import type { Theme } from '../../../constants/themes';
 import { ALERT_TYPES } from '../../Markdown/remarkAlert';
 import { alertAccent, alertTint } from '../../Markdown/alertMeta';
 import { ALERT_TITLE_CLASS } from './alertTagger';
+import { headingFontCss } from '../../../../shared/typography';
 
 /** CSS class name applied to each rendered block by the component. */
 export const FAST_BLOCK_CLASS = 'markdown-fast-block';
@@ -50,12 +51,12 @@ export function generateProseCss(theme: Theme): string {
 	const c = theme.colors;
 	return `
 		.${FAST_BLOCK_CLASS} { color: ${c.textMain}; font-size: calc(0.875rem * var(--fp-font-scale, 1)); }
-		.${FAST_BLOCK_CLASS} h1 { color: ${c.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
-		.${FAST_BLOCK_CLASS} h2 { color: ${c.success}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
-		.${FAST_BLOCK_CLASS} h3 { color: ${c.warning}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }
-		.${FAST_BLOCK_CLASS} h4 { color: ${c.textMain}; font-size: 1em; font-weight: bold; margin: 1em 0; opacity: 0.9; }
-		.${FAST_BLOCK_CLASS} h5 { color: ${c.textMain}; font-size: 0.83em; font-weight: bold; margin: 1.17em 0; opacity: 0.8; }
-		.${FAST_BLOCK_CLASS} h6 { color: ${c.textDim}; font-size: 0.67em; font-weight: bold; margin: 1.33em 0; }
+		.${FAST_BLOCK_CLASS} h1 { color: ${c.accent}; ${headingFontCss('h1', '2em')} font-weight: bold; margin: 0.67em 0; }
+		.${FAST_BLOCK_CLASS} h2 { color: ${c.success}; ${headingFontCss('h2', '1.5em')} font-weight: bold; margin: 0.75em 0; }
+		.${FAST_BLOCK_CLASS} h3 { color: ${c.warning}; ${headingFontCss('h3', '1.17em')} font-weight: bold; margin: 0.83em 0; }
+		.${FAST_BLOCK_CLASS} h4 { color: ${c.textMain}; ${headingFontCss('h4', '1em')} font-weight: bold; margin: 1em 0; opacity: 0.9; }
+		.${FAST_BLOCK_CLASS} h5 { color: ${c.textMain}; ${headingFontCss('h5', '0.83em')} font-weight: bold; margin: 1.17em 0; opacity: 0.8; }
+		.${FAST_BLOCK_CLASS} h6 { color: ${c.textDim}; ${headingFontCss('h6', '0.67em')} font-weight: bold; margin: 1.33em 0; }
 		.${FAST_BLOCK_CLASS} p { color: ${c.textMain}; margin: 0.5em 0; }
 		.${FAST_BLOCK_CLASS} ul, .${FAST_BLOCK_CLASS} ol { color: ${c.textMain}; margin: 0.5em 0; padding-left: 1.5em; }
 		.${FAST_BLOCK_CLASS} li { margin: 0.25em 0; }

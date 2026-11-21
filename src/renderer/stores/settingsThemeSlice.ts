@@ -24,6 +24,11 @@ import {
 	canInherit,
 	clampFontZoom,
 	clampSurfaceFontSize,
+	parseHeadingTypography,
+	withHeadingStyle,
+	HEADING_TYPOGRAPHY_KEY,
+	type HeadingLevel,
+	type HeadingTypography,
 	type TypographySurface,
 } from '../../shared/typography';
 import {
@@ -51,6 +56,11 @@ export interface ThemeState {
 	filePreviewFontSize: number;
 	fileEditorFontSize: number;
 	documentGraphFontSize: number;
+	/**
+	 * Per-level font family and size overrides for rendered markdown headings.
+	 * Sparse: a level absent from the map renders as its stylesheet says.
+	 */
+	headingTypography: HeadingTypography;
 	/**
 	 * Cmd+= / Cmd+- multiplier, applied to every surface equally so zooming
 	 * preserves whatever proportions the user set between them.
@@ -101,6 +111,12 @@ export interface ThemeActions {
 	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
 	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
 	setFontZoom: (value: number) => void;
+	/** Override one heading level's family. Empty restores the surrounding text font. */
+	setHeadingFontFamily: (level: HeadingLevel, value: string) => void;
+	/** Override one heading level's size in px. 0 restores the default size. */
+	setHeadingFontSize: (level: HeadingLevel, value: number) => void;
+	/** Clear every heading override, or just one level's. */
+	resetHeadingTypography: (level?: HeadingLevel) => void;
 	/** Restore both fonts and sizes to a preset. The Factory Reset control. */
 	resetTypography: (id: TypographyPresetId) => void;
 	/** Copy the current fonts and sizes into the single snapshot slot. */
@@ -138,6 +154,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	filePreviewFontSize: 0,
 	fileEditorFontSize: 0,
 	documentGraphFontSize: 0,
+	headingTypography: {},
 	fontZoom: FONT_ZOOM_DEFAULT,
 	typographySnapshot: null,
 	activeThemeId: 'dracula',
@@ -214,6 +231,28 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		const zoom = clampFontZoom(value);
 		set({ fontZoom: zoom });
 		window.maestro.settings.set('fontZoom', zoom);
+	},
+
+	setHeadingFontFamily: (level, value) => {
+		const next = withHeadingStyle(get().headingTypography, level, { fontFamily: value });
+		set({ headingTypography: next });
+		window.maestro.settings.set(HEADING_TYPOGRAPHY_KEY, next);
+	},
+
+	setHeadingFontSize: (level, value) => {
+		const next = withHeadingStyle(get().headingTypography, level, { fontSize: value });
+		set({ headingTypography: next });
+		window.maestro.settings.set(HEADING_TYPOGRAPHY_KEY, next);
+	},
+
+	resetHeadingTypography: (level) => {
+		let next: HeadingTypography = {};
+		if (level) {
+			next = { ...get().headingTypography };
+			delete next[level];
+		}
+		set({ headingTypography: next });
+		window.maestro.settings.set(HEADING_TYPOGRAPHY_KEY, next);
 	},
 
 	resetTypography: (id) => {
@@ -385,6 +424,11 @@ export function hydrateThemeSettings(
 
 	if (allSettings['fontZoom'] !== undefined)
 		patch.fontZoom = clampFontZoom(Number(allSettings['fontZoom']));
+
+	// Narrowed: the map can be hand-edited or written by `settings set`, and a
+	// malformed level would otherwise publish a broken CSS variable.
+	if (allSettings[HEADING_TYPOGRAPHY_KEY] !== undefined)
+		patch.headingTypography = parseHeadingTypography(allSettings[HEADING_TYPOGRAPHY_KEY]);
 
 	// Narrowed rather than cast: this one persisted object can predate a
 	// surface, or arrive from a hand-edited settings file, and a malformed

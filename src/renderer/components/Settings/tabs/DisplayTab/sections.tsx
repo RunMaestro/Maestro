@@ -16,6 +16,7 @@ import {
 	FileTreeLinesSection,
 	FontsSection,
 	FontZoomSection,
+	HeadingsSection,
 	GroupChatSection,
 	IconThemeSection,
 	ProviderModePillSection,
@@ -87,6 +88,23 @@ function Fonts({ theme }: SettingsSectionProps) {
 			fontConfiguration={fontConfiguration}
 			setSurfaceFontFamily={settings.setSurfaceFontFamily}
 			setSurfaceFontSize={settings.setSurfaceFontSize}
+		/>
+	);
+}
+
+function Headings({ theme }: SettingsSectionProps) {
+	const settings = useSettingsValues();
+	const fontConfiguration = useFontConfigurationState();
+	return (
+		<HeadingsSection
+			theme={theme}
+			headingTypography={settings.headingTypography ?? {}}
+			chatFontSize={settings.chatFontSize}
+			baseFontSize={settings.fontSize}
+			fontConfiguration={fontConfiguration}
+			setHeadingFontFamily={settings.setHeadingFontFamily}
+			setHeadingFontSize={settings.setHeadingFontSize}
+			resetHeadingTypography={settings.resetHeadingTypography}
 		/>
 	);
 }
@@ -368,6 +386,7 @@ export const DISPLAY_SECTIONS: readonly SettingsSectionDef[] = [
 		Component: SavedTypography,
 	},
 	{ key: 'fonts', settingIds: ['display-fonts', 'display-custom-fonts'], Component: Fonts },
+	{ key: 'headings', settingIds: ['display-heading-typography'], Component: Headings },
 	{ key: 'fontZoom', settingIds: ['display-font-zoom'], Component: FontZoom },
 	{ key: 'maxLogBuffer', settingIds: ['display-max-log-buffer'], Component: MaxLogBuffer },
 	{ key: 'maxOutputLines', settingIds: ['display-max-output-lines'], Component: MaxOutputLines },

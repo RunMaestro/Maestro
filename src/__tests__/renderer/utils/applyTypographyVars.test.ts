@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
+	applyHeadingTypographyVars,
+	computeHeadingTypographyVars,
 	computeTypographyVars,
 	type TypographyVarInput,
 } from '../../../renderer/utils/applyTypographyVars';
-import { MONO_ACCENT_VAR, TYPOGRAPHY_SURFACE_SPECS } from '../../../shared/typography';
+import {
+	MONO_ACCENT_VAR,
+	TYPOGRAPHY_SURFACE_SPECS,
+	headingFontVar,
+	headingSizeVar,
+} from '../../../shared/typography';
 
 function input(overrides: Partial<TypographyVarInput> = {}): TypographyVarInput {
 	return {
@@ -113,5 +120,39 @@ describe('computeTypographyVars', () => {
 			input({ baseSize: 18, sizes: { ...input().sizes, interface: 0 } })
 		);
 		expect(vars['--maestro-size-interface']).toBe('18px');
+	});
+});
+
+describe('heading typography vars', () => {
+	it('publishes nothing for levels without an override', () => {
+		expect(computeHeadingTypographyVars({}, 1)).toEqual({});
+	});
+
+	it('publishes only the overridden field, with the zoom applied to the size', () => {
+		const vars = computeHeadingTypographyVars(
+			{ h1: { fontFamily: 'Georgia', fontSize: 0 }, h3: { fontFamily: '', fontSize: 20 } },
+			1.25
+		);
+		expect(vars[headingFontVar('h1')]).toMatch(/^Georgia, /);
+		expect(vars[headingSizeVar('h1')]).toBeUndefined();
+		expect(vars[headingFontVar('h3')]).toBeUndefined();
+		expect(vars[headingSizeVar('h3')]).toBe('25px');
+	});
+
+	it('removes a variable once its override is cleared', () => {
+		// A stand-in for the style object; this suite runs without a DOM.
+		const props = new Map<string, string>();
+		const root = {
+			style: {
+				setProperty: (name: string, value: string) => props.set(name, value),
+				removeProperty: (name: string) => props.delete(name),
+				getPropertyValue: (name: string) => props.get(name) ?? '',
+			},
+		} as unknown as HTMLElement;
+		applyHeadingTypographyVars({ h2: { fontFamily: 'Georgia', fontSize: 24 } }, 1, root);
+		expect(root.style.getPropertyValue(headingSizeVar('h2'))).toBe('24px');
+		applyHeadingTypographyVars({}, 1, root);
+		expect(root.style.getPropertyValue(headingSizeVar('h2'))).toBe('');
+		expect(root.style.getPropertyValue(headingFontVar('h2'))).toBe('');
 	});
 });

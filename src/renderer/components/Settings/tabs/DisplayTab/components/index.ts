@@ -6,6 +6,7 @@ export { FileEditPreviewSection } from './FileEditPreviewSection';
 export { FileIndexingSection } from './FileIndexingSection';
 export { FileTreeLinesSection } from './FileTreeLinesSection';
 export { FontsSection } from './FontsSection';
+export { HeadingsSection } from './HeadingsSection';
 export { CustomFontsRow } from './CustomFontsRow';
 export { FontZoomSection } from './FontZoomSection';
 export { IconThemeSection } from './IconThemeSection';

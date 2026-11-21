@@ -34,7 +34,7 @@ interface FontsSectionProps {
  * at the modal's default width but only 424px at its minimum, so the grid has
  * to collapse rather than assume the space is there.
  */
-const TWO_COLUMN_MIN_WIDTH = 560;
+export const TWO_COLUMN_MIN_WIDTH = 560;
 
 /**
  * Every font control in one card.
