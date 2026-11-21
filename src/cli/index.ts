@@ -1506,7 +1506,10 @@ program
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
-	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--ssh-cwd <path>',
+		'Working directory on the SSH remote (the agent runs there; defaults to --cwd)'
+	)
 	.option(
 		'--sync-history-to-remote <bool>',
 		'Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)'
