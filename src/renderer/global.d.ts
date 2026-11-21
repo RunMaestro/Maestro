@@ -730,7 +730,7 @@ interface MaestroAPI {
 				topic: string,
 				participantIds: string[],
 				responseChannel: string,
-				options?: { moderatorAgentId?: string; message?: string }
+				options?: { moderatorAgentId?: string; moderatorSshRemoteId?: string; message?: string }
 			) => void
 		) => () => void;
 		sendRemoteStartGroupChatResponse: (
@@ -3263,6 +3263,11 @@ interface MaestroAPI {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
+				sshRemoteConfig?: {
+					enabled: boolean;
+					remoteId: string | null;
+					workingDirOverride?: string;
+				};
 			},
 			requireIdleParticipants?: boolean
 		) => Promise<GroupChatData>;

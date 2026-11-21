@@ -71,6 +71,9 @@ export function handleStartGroupChat(
 	if (typeof message.moderatorAgentId === 'string' && message.moderatorAgentId) {
 		options.moderatorAgentId = message.moderatorAgentId;
 	}
+	if (typeof message.moderatorSshRemoteId === 'string' && message.moderatorSshRemoteId) {
+		options.moderatorSshRemoteId = message.moderatorSshRemoteId;
+	}
 	if (typeof message.message === 'string' && message.message.trim()) {
 		options.message = message.message;
 	}

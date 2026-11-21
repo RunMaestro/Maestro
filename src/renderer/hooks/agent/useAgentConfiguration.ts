@@ -213,11 +213,21 @@ export function useAgentConfiguration(
 		setSshRemoteConfig(undefined);
 	}, []);
 
+	// Detection runs where the agent will run: on the selected SSH remote when
+	// one is enabled, else locally. A local-only check hides every provider a
+	// machine with no local CLIs can still run over SSH (#1895).
+	const detectionRemoteId = sshRemoteConfig?.enabled
+		? sshRemoteConfig.remoteId || undefined
+		: undefined;
+	const latestDetectRequestRef = useRef(0);
+
 	// Detect agents
 	const detectAgents = useCallback(async () => {
+		const requestId = ++latestDetectRequestRef.current;
 		setIsDetecting(true);
 		try {
-			const agents = await window.maestro.agents.detect();
+			const agents = await window.maestro.agents.detect(detectionRemoteId);
+			if (latestDetectRequestRef.current !== requestId) return; // stale
 			const filtered = agentFilter
 				? agents.filter(agentFilter)
 				: agents.filter((a: AgentConfig) => a.available && !a.hidden);
@@ -230,9 +240,11 @@ export function useAgentConfiguration(
 		} catch (error) {
 			logger.error('Failed to detect agents:', undefined, error);
 		} finally {
-			setIsDetecting(false);
+			if (latestDetectRequestRef.current === requestId) {
+				setIsDetecting(false);
+			}
 		}
-	}, [agentFilter, autoSelect]);
+	}, [agentFilter, autoSelect, detectionRemoteId]);
 
 	// Load agent config
 	const loadAgentConfig = useCallback(
@@ -316,7 +328,7 @@ export function useAgentConfiguration(
 	const refreshAgent = useCallback(async () => {
 		setRefreshingAgent(true);
 		try {
-			const agents = await window.maestro.agents.detect();
+			const agents = await window.maestro.agents.detect(detectionRemoteId);
 			const filtered = agentFilter
 				? agents.filter(agentFilter)
 				: agents.filter((a: AgentConfig) => a.available && !a.hidden);
@@ -326,7 +338,7 @@ export function useAgentConfiguration(
 		} finally {
 			setRefreshingAgent(false);
 		}
-	}, [agentFilter]);
+	}, [agentFilter, detectionRemoteId]);
 
 	// Handle agent selection change - resets customizations and agent-scoped state
 	const handleAgentChange = useCallback(
@@ -359,14 +371,18 @@ export function useAgentConfiguration(
 		setIsConfigExpanded((prev) => !prev);
 	}, []);
 
-	// Detect agents and load SSH remotes when enabled
+	// Detect agents when enabled, and again when the SSH remote changes. Kept
+	// apart from the reset below so a remote change never wipes the form.
+	useEffect(() => {
+		if (enabled) detectAgents();
+	}, [enabled, detectAgents]);
+
+	// Reset when disabled; load SSH remotes when enabled
 	useEffect(() => {
 		if (!enabled) {
 			resetState();
 			return;
 		}
-
-		detectAgents();
 
 		if (shouldLoadSshRemotes) {
 			(async () => {
@@ -380,7 +396,7 @@ export function useAgentConfiguration(
 				}
 			})();
 		}
-	}, [enabled, detectAgents, resetState, shouldLoadSshRemotes]);
+	}, [enabled, resetState, shouldLoadSshRemotes]);
 
 	// Load config when expanding
 	useEffect(() => {

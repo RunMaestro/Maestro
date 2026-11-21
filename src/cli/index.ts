@@ -746,6 +746,10 @@ groupChat
 		'--moderator <agent-type>',
 		"Moderator agent type (e.g. claude-code); defaults to the first participant's type"
 	)
+	.option(
+		'--moderator-ssh-remote <id>',
+		'Run the moderator on this SSH remote (ID or unique prefix) instead of this machine'
+	)
 	.option('-m, --message <text>', 'Opening message for the moderator (defaults to the name)')
 	.option('--message-file <path>', 'Read the opening message from a file')
 	.option('--json', 'Output as JSON (for scripting)')

@@ -94,7 +94,7 @@ describe('startRemoteGroupChat', () => {
 
 		expect(result).toEqual({ chatId: 'gc-new' });
 		// Moderator defaults to the first participant's agent type.
-		expect(mockGroupChat.create).toHaveBeenCalledWith('Maestro Release', 'claude-code');
+		expect(mockGroupChat.create).toHaveBeenCalledWith('Maestro Release', 'claude-code', undefined);
 		expect(mockGroupChat.sendToModerator).toHaveBeenCalledWith(
 			'gc-new',
 			'@rc @RunMaestro.ai\n\nCut the RC.'
@@ -109,11 +109,19 @@ describe('startRemoteGroupChat', () => {
 	it('honors an explicit moderator and falls back to the topic as the opening message', async () => {
 		await startRemoteGroupChat('Ship it', ['id-web'], { moderatorAgentId: 'claude-code' });
 
-		expect(mockGroupChat.create).toHaveBeenCalledWith('Ship it', 'claude-code');
+		expect(mockGroupChat.create).toHaveBeenCalledWith('Ship it', 'claude-code', undefined);
 		expect(mockGroupChat.sendToModerator).toHaveBeenCalledWith(
 			'gc-new',
 			'@RunMaestro.ai\n\nShip it'
 		);
+	});
+
+	it('runs the moderator on the SSH remote it was given (#1895)', async () => {
+		await startRemoteGroupChat('Remote', ['id-web'], { moderatorSshRemoteId: 'remote-1' });
+
+		expect(mockGroupChat.create).toHaveBeenCalledWith('Remote', 'codex', {
+			sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
 	});
 
 	it('refuses an unknown agent before creating anything', async () => {

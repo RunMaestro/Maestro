@@ -97,6 +97,30 @@ async function participantBinary(
 	return resolved ?? providerCommand;
 }
 
+type SshRemoteRef = { enabled?: boolean; workingDirOverride?: string } | null | undefined;
+
+/**
+ * Whether a resolved agent can run this turn. Local detection only speaks for
+ * this machine: an agent that runs over SSH executes the remote's binary, so a
+ * provider that is not installed locally must not block it (#1895).
+ */
+export function canSpawnGroupChatAgent<T extends { available: boolean }>(
+	agent: T | null | undefined,
+	sshRemoteConfig: SshRemoteRef
+): agent is T {
+	return !!agent && (agent.available || !!sshRemoteConfig?.enabled);
+}
+
+/**
+ * The moderator's working directory. Locally it runs in the user's home. Over
+ * SSH the local home names nothing on the remote, so it runs in the remote's
+ * working directory override, or (empty string, no `cd`) the remote home (#1895).
+ */
+export function moderatorCwd(sshRemoteConfig: SshRemoteRef): string {
+	if (sshRemoteConfig?.enabled) return sshRemoteConfig.workingDirOverride?.trim() || '';
+	return os.homedir();
+}
+
 /**
  * Non-customizable protocol that connects moderator text to actual participant
  * processes. Keep this in the runtime prompt builder rather than the bundled
@@ -1213,10 +1237,12 @@ export async function routeUserMessage(
 			logger.debug(`[GroupChat:Debug] Agent resolved: ${agent?.command || 'null'}`);
 			logger.debug(`[GroupChat:Debug] Agent available: ${agent?.available ?? false}`);
 
-			if (!agent || !agent.available) {
+			const moderatorSsh = chat.moderatorConfig?.sshRemoteConfig;
+			if (!canSpawnGroupChatAgent(agent, moderatorSsh)) {
 				logger.debug(`[GroupChat:Debug] ERROR: Agent not available!`);
 				throw new Error(`Agent '${chat.moderatorAgentId}' is not available`);
 			}
+			const moderatorWorkingDir = moderatorCwd(moderatorSsh);
 
 			// Use custom path from moderator config if set, otherwise use resolved path
 			const command = chat.moderatorConfig?.customPath || agent.path || agent.command;
@@ -1330,7 +1356,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			const baseArgs = buildAgentArgs(agent, {
 				baseArgs: args,
 				prompt: fullPrompt,
-				cwd: os.homedir(),
+				cwd: moderatorWorkingDir,
 				readOnlyMode: true,
 			});
 			const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
@@ -1355,7 +1381,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			logger.debug(`[GroupChat:Debug] ========== SPAWNING MODERATOR PROCESS ==========`);
 			logger.debug(`[GroupChat:Debug] Session ID: ${sessionId}`);
 			logger.debug(`[GroupChat:Debug] Tool Type: ${chat.moderatorAgentId}`);
-			logger.debug(`[GroupChat:Debug] CWD: ${os.homedir()}`);
+			logger.debug(`[GroupChat:Debug] CWD: ${moderatorWorkingDir || '(remote home)'}`);
 			logger.debug(`[GroupChat:Debug] Command: ${command}`);
 			logger.debug(
 				`[GroupChat:Debug] ReadOnly: true (moderator always read-only), participants readOnly: ${readOnly ?? false}`
@@ -1379,7 +1405,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					agent,
 					command,
 					args: finalArgs,
-					cwd: os.homedir(),
+					cwd: moderatorWorkingDir,
 					prompt: fullPrompt,
 					customEnvVars:
 						configResolution.effectiveCustomEnvVars ??
@@ -2134,7 +2160,7 @@ export async function routeModeratorResponse(
 				`[GroupChat:Debug] Agent resolved: ${agent?.command || 'null'}, available: ${agent?.available ?? false}`
 			);
 
-			if (!agent || !agent.available) {
+			if (!canSpawnGroupChatAgent(agent, matchingSession?.sshRemoteConfig)) {
 				logger.error(
 					`[GroupChat:Debug] ERROR: Agent '${participant.agentId}' not available for ${participantName}`
 				);
@@ -2579,7 +2605,8 @@ export async function spawnModeratorSynthesis(
 		`[GroupChat:Debug] Agent resolved: ${agent?.command || 'null'}, available: ${agent?.available ?? false}`
 	);
 
-	if (!agent || !agent.available) {
+	const moderatorSsh = chat.moderatorConfig?.sshRemoteConfig;
+	if (!canSpawnGroupChatAgent(agent, moderatorSsh)) {
 		logger.error(`Agent '${chat.moderatorAgentId}' is not available for synthesis`, LOG_CONTEXT);
 		// Reset UI state and remove power block on early return
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
@@ -2648,7 +2675,7 @@ Review the agent responses above. Either:
 	const baseArgs = buildAgentArgs(agent, {
 		baseArgs: args,
 		prompt: synthesisPrompt,
-		cwd: os.homedir(),
+		cwd: moderatorCwd(moderatorSsh),
 		readOnlyMode: true,
 	});
 	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
@@ -2689,7 +2716,7 @@ Review the agent responses above. Either:
 			agent,
 			command,
 			args: finalArgs,
-			cwd: os.homedir(),
+			cwd: moderatorCwd(moderatorSsh),
 			prompt: synthesisPrompt,
 			customEnvVars:
 				configResolution.effectiveCustomEnvVars ??
@@ -2769,9 +2796,13 @@ export async function respawnParticipantWithRecovery(
 		throw new Error(`Participant not found: ${participantName}`);
 	}
 
+	// Find matching session for cwd and SSH execution
+	const sessions = getSessionsCallback?.() || [];
+	const matchingSession = findParticipantSourceAgent(participant, sessions);
+
 	// Get the agent configuration
 	const agent = await agentDetector.getAgent(participant.agentId);
-	if (!agent || !agent.available) {
+	if (!canSpawnGroupChatAgent(agent, matchingSession?.sshRemoteConfig)) {
 		throw new Error(`Agent not available: ${participant.agentId}`);
 	}
 
@@ -2789,9 +2820,6 @@ export async function respawnParticipantWithRecovery(
 		.map((m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`)
 		.join('\n');
 
-	// Find matching session for cwd
-	const sessions = getSessionsCallback?.() || [];
-	const matchingSession = findParticipantSourceAgent(participant, sessions);
 	const cwd = matchingSession?.cwd || os.homedir();
 
 	// Build the prompt with recovery context

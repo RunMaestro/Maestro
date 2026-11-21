@@ -6,6 +6,7 @@
  * - 'edit': Pre-populated from existing group chat, "Save" button, moderator change warning
  *
  * Allows user to:
+ * - Choose where the moderator runs (locally or on an SSH remote)
  * - Select a moderator agent from a dropdown of available agents
  * - Customize moderator settings (CLI args, path, ENV vars) via expandable panel
  * - Enter/edit a name for the group chat
@@ -20,6 +21,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, ToggleSwitch } from './ui';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
+import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { useAgentConfiguration } from '../hooks/agent';
 import { withBlankEnvVarRow } from '../../shared/envVarCatalog';
 
@@ -399,6 +401,21 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 					</div>
 				)}
 
+				{/* Where the moderator runs. Detection follows this choice, so a
+				    provider installed only on the remote is offered (#1895). */}
+				{ac.sshRemotes.length > 0 && (
+					<div className="mb-6">
+						<SshRemoteSelector
+							theme={theme}
+							sshRemotes={ac.sshRemotes}
+							sshRemoteConfig={ac.sshRemoteConfig}
+							onSshRemoteConfigChange={(config) =>
+								ac.setSshRemoteConfig(config.enabled ? config : undefined)
+							}
+						/>
+					</div>
+				)}
+
 				{/* Moderator Selection - Dropdown with Customize button */}
 				<div className="mb-6">
 					<label
@@ -420,7 +437,12 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 						</div>
 					) : availableTiles.length === 0 ? (
 						<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
-							No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.
+							{ac.sshRemoteConfig?.enabled
+								? 'No agents found on this SSH remote. Install one there, or pick another remote.'
+								: 'No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.'}
+							{!ac.sshRemoteConfig?.enabled &&
+								ac.sshRemotes.length > 0 &&
+								' To run the moderator on an SSH remote, choose one above.'}
 						</div>
 					) : (
 						<div className="flex items-center gap-2">

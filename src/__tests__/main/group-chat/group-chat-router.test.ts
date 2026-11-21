@@ -95,6 +95,8 @@ import {
 	noteGroupChatActivity,
 	addParticipantByAgentId,
 	findParticipantForMention,
+	canSpawnGroupChatAgent,
+	moderatorCwd,
 	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
@@ -2432,6 +2434,100 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+
+		// #1895: a Mac with no local agent CLIs still runs SSH agents.
+		const notInstalledLocally = () =>
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValue({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print'],
+				available: false,
+				capabilities: {},
+			} as never);
+
+		it('spawns an SSH participant whose provider is not installed locally', async () => {
+			const chat = await createTestChatWithModerator('SSH Not Local Participant');
+			const sshSession: GroupChatSessionInfo = {
+				id: 'ses-ssh-3',
+				name: 'RemoteOnly',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+			await addParticipant(
+				chat.id,
+				'RemoteOnly',
+				'claude-code',
+				mockProcessManager,
+				'/home/user/project',
+				mockAgentDetector,
+				{},
+				undefined,
+				{ sshRemoteName: 'PedTome', sshRemoteConfig },
+				mockSshStore
+			);
+			notInstalledLocally();
+			mockWrapSpawnWithSsh.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@RemoteOnly: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({ agentBinaryName: 'claude' }),
+				sshRemoteConfig,
+				mockSshStore
+			);
+		});
+
+		it.each([
+			['the remote home when no override is set', undefined, ''],
+			['the working directory override', '/home/dev/work/repo', '/home/dev/work/repo'],
+		])('runs an SSH moderator in %s, never the local home', async (_label, override, cwd) => {
+			const moderatorSsh = { enabled: true, remoteId: 'remote-1', workingDirOverride: override };
+			const chat = await createGroupChat('SSH Moderator Cwd', 'claude-code', {
+				sshRemoteConfig: moderatorSsh,
+			});
+			createdChats.push(chat.id);
+			await spawnModerator(chat, mockProcessManager);
+			setSshStore(mockSshStore);
+			notInstalledLocally();
+			mockWrapSpawnWithSsh.mockClear();
+
+			await routeUserMessage(chat.id, 'hello', mockProcessManager, mockAgentDetector);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({ cwd }),
+				moderatorSsh,
+				mockSshStore
+			);
+			expect(mockWrapSpawnWithSsh.mock.calls[0][0].cwd).not.toBe(os.homedir());
+		});
+	});
+
+	describe('canSpawnGroupChatAgent / moderatorCwd', () => {
+		it('lets an SSH spawn through when the provider is missing locally', () => {
+			expect(canSpawnGroupChatAgent({ available: false }, { enabled: true })).toBe(true);
+			expect(canSpawnGroupChatAgent({ available: false }, { enabled: false })).toBe(false);
+			expect(canSpawnGroupChatAgent({ available: false }, undefined)).toBe(false);
+			expect(canSpawnGroupChatAgent({ available: true }, undefined)).toBe(true);
+			expect(canSpawnGroupChatAgent(null, { enabled: true })).toBe(false);
+		});
+
+		it('keeps a local moderator in the local home', () => {
+			expect(moderatorCwd(undefined)).toBe(os.homedir());
+			expect(moderatorCwd({ enabled: false, workingDirOverride: '/x' })).toBe(os.homedir());
+			expect(moderatorCwd({ enabled: true })).toBe('');
+			expect(moderatorCwd({ enabled: true, workingDirOverride: ' /srv/app ' })).toBe('/srv/app');
 		});
 	});
 

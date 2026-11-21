@@ -357,6 +357,11 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					enableMaestroP?: boolean;
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
+					sshRemoteConfig?: {
+						enabled: boolean;
+						remoteId: string | null;
+						workingDirOverride?: string;
+					};
 				},
 				requireIdleParticipants?: boolean
 			): Promise<GroupChat> => {

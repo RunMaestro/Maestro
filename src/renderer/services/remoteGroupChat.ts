@@ -25,6 +25,8 @@ import { getAutoRunSessionsForGroupChat } from '../utils/groupChatAutoRunRegistr
 
 export interface RemoteStartGroupChatOptions {
 	moderatorAgentId?: string;
+	/** SSH remote the moderator runs on (`maestro-cli group-chat start --moderator-ssh-remote`). */
+	moderatorSshRemoteId?: string;
 	message?: string;
 }
 
@@ -93,7 +95,13 @@ export async function startRemoteGroupChat(
 	const moderatorAgentId = options.moderatorAgentId ?? participants[0].toolType;
 	let chat;
 	try {
-		chat = await window.maestro.groupChat.create(topic, moderatorAgentId);
+		chat = await window.maestro.groupChat.create(
+			topic,
+			moderatorAgentId,
+			options.moderatorSshRemoteId
+				? { sshRemoteConfig: { enabled: true, remoteId: options.moderatorSshRemoteId } }
+				: undefined
+		);
 	} catch (err) {
 		return { error: ipcErrorMessage(err, String(err)) };
 	}
