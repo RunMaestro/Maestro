@@ -88,6 +88,7 @@ import {
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import { handleQuickChat } from './quickChat';
 import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
+import { handleSystemLogsClear, handleSystemLogsRead } from './systemLogs';
 import { handleClaudeCanaryRun, handleClaudeCanaryStatus } from './claudeCanary';
 import {
 	handleSupportPackageCreate,
@@ -891,6 +892,14 @@ export class WebSocketMessageHandler {
 
 			case 'ssh_reachability_check':
 				void handleSshReachabilityCheck(this.ctx, client, message);
+				break;
+
+			case 'system_logs_read':
+				handleSystemLogsRead(this.ctx, client, message);
+				break;
+
+			case 'system_logs_clear':
+				handleSystemLogsClear(this.ctx, client, message);
 				break;
 
 			case 'claude_canary_status':

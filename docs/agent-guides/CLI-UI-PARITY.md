@@ -515,6 +515,7 @@ census cannot publish the operation. JSON returns the committed target and migra
 result, or `NeedsConfiguration`, `Denied` or `Unknown`; failures exit nonzero.
 No real host dialog is exercised by the fixture composition tests.
 | SSH outage dialog: which remotes are down, "Check Now" | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state) |
+| System Log Viewer: read (level and context filters), Clear | `logs [--level] [--context] [--since] [--limit] [--json]`, `logs --clear` |
 | File editor Vim keybindings (Settings -> Display -> File Edit & Preview) | `settings set fileEditVimMode true` |
 
 ## Open gaps

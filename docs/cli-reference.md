@@ -2332,6 +2332,23 @@ not.
 | `--check <remote-id>` | Probe this remote now; exits 2 if it is still unreachable | -       |
 | `--json`              | Output as JSON (for scripting)                            | -       |
 
+## `maestro-cli logs`
+
+Show the running app's system log (the System Log Viewer), or clear it
+
+Reads the same in-memory buffer the System Log Viewer shows. `--level` is a
+floor (`warn` shows warnings and errors). `--clear` is the viewer's Clear
+button. Needs the desktop running.
+
+| Option                | Description                                          | Default |
+| --------------------- | ---------------------------------------------------- | ------- |
+| `--level <level>`     | Lowest level to show: debug, info, warn, or error    | -       |
+| `--context <context>` | Only entries from this context (e.g. WebServer)      | -       |
+| `--since <time>`      | Only entries since then: 30m, 2h, ISO-8601, or epoch | -       |
+| `--limit <n>`         | Keep the newest N matching entries                   | -       |
+| `--clear`             | Clear the log, as the viewer's Clear button does     | -       |
+| `--json`              | Output as JSON (for scripting)                       | -       |
+
 ## `maestro-cli claude-canary`
 
 Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now

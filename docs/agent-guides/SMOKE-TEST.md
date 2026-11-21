@@ -20,7 +20,7 @@ The target is a running app: the installed build, a packaged build under `releas
 | Native addons match      | `node scripts/verify-native-abi.js`               | Every shipped addon targets Electron's ABI       |
 | Signature intact (macOS) | `codesign --verify --deep --strict <Maestro.app>` | No output, exit 0                                |
 | CLI matches the app      | `maestro-cli version` and `maestro-cli status`    | Versions match, the CLI reaches the app          |
-| No startup errors        | `maestro-cli logs` (errors since launch)          | No `error` entries from startup                  |
+| No startup errors        | `maestro-cli logs --level error`                  | No `error` entries from startup                  |
 | Health report            | `maestro-cli doctor`                              | Every check passes, or each warning is explained |
 
 ### 2. Data stores
@@ -93,6 +93,7 @@ Use a stub provider for write checks (`create-agent smoke -t claude-code --custo
 - **Remote interface rows (2026-11-15).** Writers that skipped the renderer's persistence prep stored every agent's file tree. The sessions file reached 112 MB and the web bootstrap reached 47 MB. The bridge closes a browser socket with 1013 when its queued output passes 8 MiB, and the client reconnected into the same wall forever. The phone showed "Could not load your agents". The CLI kept working, because it does not ask for chunked framing. `smoke:remote` dials the bridge the way the browser does, and it fails on this.
 - **Packaged launch (`smoke:packaged`).** A release once shipped that would not start on Windows while every pipeline step was green.
 - **Native packaging.** A native module left inside `app.asar` works from source and fails only in the installed app.
+- **Startup log row (2026-11-21).** It named `maestro-cli logs`, which did not exist: the System Log Viewer had no CLI path, so the row could not be run. The verb now reads the viewer's own buffer.
 - **Native ABI.** `npm test` rebuilds better-sqlite3 for plain Node. A package built after it shipped a Node binary; the app started, caught the load error, and ran without stats or Cue. The electron-builder afterPack hook now refuses such a package, and this row checks the working tree before you build.
 
 ## Adding a row

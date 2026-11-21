@@ -121,6 +121,7 @@ import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { testSshRemote } from './commands/test-ssh-remote';
 import { sshRemoteStatus } from './commands/ssh-remote-status';
+import { logs } from './commands/logs';
 import { claudeCanary } from './commands/claude-canary';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -2874,6 +2875,18 @@ program
 	.option('--check <remote-id>', 'Probe this remote now; exits 2 if it is still unreachable')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sshRemoteStatus);
+
+// Logs - the running app's system log (the System Log Viewer and its Clear button)
+program
+	.command('logs')
+	.description("Show the running app's system log (the System Log Viewer), or clear it")
+	.option('--level <level>', 'Lowest level to show: debug, info, warn, or error')
+	.option('--context <context>', 'Only entries from this context (e.g. WebServer)')
+	.option('--since <time>', 'Only entries since then: 30m, 2h, ISO-8601, or epoch')
+	.option('--limit <n>', 'Keep the newest N matching entries')
+	.option('--clear', "Clear the log, as the viewer's Clear button does")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(logs);
 
 // Claude TUI canary - did the installed Claude Code pass a maestro-p turn?
 program
