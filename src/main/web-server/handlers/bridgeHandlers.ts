@@ -32,6 +32,7 @@ import {
 	sanitizeRemoteConfiguration,
 	sanitizeRemoteResult,
 } from './bridgeDenyList';
+import { withHostAgentEnv } from './remoteSpawnEnv';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -314,7 +315,9 @@ export async function handleBridgeInvoke<
 				throw new Error('Invalid remote spawn configuration');
 			// Admission to the generic bridge proves no human origin for this turn.
 			// Override caller claims before the native handler can mint its proof.
-			args = [{ ...config, querySource: 'auto' }];
+			// The browser never sees the agent's own env vars (stripped from every
+			// reply), so restore them from the host record (#2088).
+			args = [{ ...withHostAgentEnv(config as Record<string, unknown>), querySource: 'auto' }];
 		}
 		if (channel === 'agents:setConfig') {
 			const incoming = args[1];
