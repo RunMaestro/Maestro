@@ -1475,16 +1475,20 @@ describe('replayAfterAuth', () => {
 		);
 	});
 
-	it('falls back to the active tab on auth replay when the original tab was closed', () => {
+	// No fallback onto the active tab: processQueuedItem refuses an item whose
+	// own tab is gone, so marking another tab busy for it would leave that tab
+	// pulsing with no turn behind it (see applyReplayDispatch).
+	it('does not move an auth replay onto the active tab when the original tab was closed', () => {
 		setupSession('sess-closed-tab', 'tab-other');
 		seedSnapshot('sess-closed-tab', 'tab-closed');
 
 		replayAfterAuth('sess-closed-tab', ['tab-closed']);
 
-		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem).not.toHaveBeenCalled();
 		const tab = useSessionStore.getState().sessions[0].aiTabs[0];
 		expect(tab.id).toBe('tab-other');
-		expect(tab.logs.some((l: any) => l.text === 'Re-sent after re-authentication.')).toBe(true);
+		expect(tab.state).not.toBe('busy');
+		expect(tab.logs.some((l: any) => l.text === 'Re-sent after re-authentication.')).toBe(false);
 	});
 
 	it('notifies and does not fall back to the active tab on install replay if the tab closes during persisted snapshot read', async () => {
