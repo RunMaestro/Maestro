@@ -199,6 +199,10 @@ describe('searchableSettings', () => {
 			['file editor font', 'display-fonts'],
 			['terminal font', 'display-fonts'],
 			['custom font', 'display-fonts'],
+			// Per-level heading styles (H1-H6) are their own card.
+			['heading font', 'display-heading-typography'],
+			['h2', 'display-heading-typography'],
+			['restore default headings', 'display-heading-typography'],
 			['ai response', 'display-message-alignment'],
 			['file indexing', 'display-file-indexing'],
 			['file panel', 'display-file-indexing'],

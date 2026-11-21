@@ -38,6 +38,7 @@ import { createPrismCodeBlock } from '../components/Markdown/components/PrismCod
 import { InlineCode } from '../components/Markdown/components/InlineCode';
 import { CopyablePre } from '../components/CodeFence/CodeCopyButton';
 import { isWebUrl } from '../../shared/urlRoutingHint';
+import { headingFontCss } from '../../shared/typography';
 
 // ============================================================================
 // Types
@@ -157,12 +158,12 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${compactSpacing ? `${s} > *:first-child { margin-top: 0 !important; }` : ''}
     ${compactSpacing ? `${s} > *:last-child { margin-bottom: 0 !important; }` : ''}
     ${compactSpacing ? `${s} * { margin-top: 0; margin-bottom: 0; }` : ''}
-    ${s} h1 { color: ${h1Color}; font-size: 2em; font-weight: bold; margin: ${headingMargin} !important; line-height: 1.4; }
-    ${s} h2 { color: ${h2Color}; font-size: 1.5em; font-weight: bold; margin: ${headingMargin} !important; line-height: 1.4; }
-    ${s} h3 { color: ${h3Color}; font-size: 1.17em; font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
-    ${s} h4 { color: ${h4Color}; font-size: 1em; font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
-    ${s} h5 { color: ${h5Color}; font-size: 0.83em; font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
-    ${s} h6 { color: ${h6Color}; font-size: 0.67em; font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
+    ${s} h1 { color: ${h1Color}; ${headingFontCss('h1', '2em')} font-weight: bold; margin: ${headingMargin} !important; line-height: 1.4; }
+    ${s} h2 { color: ${h2Color}; ${headingFontCss('h2', '1.5em')} font-weight: bold; margin: ${headingMargin} !important; line-height: 1.4; }
+    ${s} h3 { color: ${h3Color}; ${headingFontCss('h3', '1.17em')} font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
+    ${s} h4 { color: ${h4Color}; ${headingFontCss('h4', '1em')} font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
+    ${s} h5 { color: ${h5Color}; ${headingFontCss('h5', '0.83em')} font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
+    ${s} h6 { color: ${h6Color}; ${headingFontCss('h6', '0.67em')} font-weight: bold; margin: ${headingMarginSmall} !important; line-height: 1.4; }
     ${s} p { color: ${colors.textMain}; margin: ${paragraphMargin} !important; line-height: 1.4; }
     ${compactSpacing ? `${s} p + p { margin-top: 0.5em !important; }` : ''}
     ${compactSpacing ? `${s} p:empty { display: none; }` : ''}
@@ -599,9 +600,9 @@ export function generateInlineWizardPreviewProseStyles(
 	const checkHeight = isStreaming ? '8px' : '9px';
 
 	return `
-    ${s} h1 { color: ${c.textMain}; font-size: ${heading1Size}; font-weight: bold; margin: ${headingMargin}; }
-    ${s} h2 { color: ${c.textMain}; font-size: ${heading2Size}; font-weight: bold; margin: ${headingMargin}; }
-    ${s} h3 { color: ${c.textMain}; font-size: ${heading3Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} h1 { color: ${c.textMain}; ${headingFontCss('h1', heading1Size)} font-weight: bold; margin: ${headingMargin}; }
+    ${s} h2 { color: ${c.textMain}; ${headingFontCss('h2', heading2Size)} font-weight: bold; margin: ${headingMargin}; }
+    ${s} h3 { color: ${c.textMain}; ${headingFontCss('h3', heading3Size)} font-weight: bold; margin: ${headingMargin}; }
     ${s} p { color: ${c.textMain}; margin: ${paragraphMargin}; }
     ${s} ul, ${s} ol { color: ${c.textMain}; margin: ${listMargin}; padding-left: 1.5em; }
     ${s} ul { list-style-type: disc; }
@@ -796,12 +797,12 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} > *:first-child { margin-top: 0 !important; }
     ${s} > *:last-child { margin-bottom: 0 !important; }
     ${s} * { margin-top: 0; margin-bottom: 0; }
-    ${s} h1 { color: ${c.accent}; font-size: 2em; font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
-    ${s} h2 { color: ${c.success}; font-size: 1.75em; font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
-    ${s} h3 { color: ${c.warning}; font-size: 1.5em; font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
-    ${s} h4 { color: ${c.textMain}; font-size: 1.35em; font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
-    ${s} h5 { color: ${c.textMain}; font-size: 1.2em; font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
-    ${s} h6 { color: ${c.textDim}; font-size: 1.1em; font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
+    ${s} h1 { color: ${c.accent}; ${headingFontCss('h1', '2em')} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
+    ${s} h2 { color: ${c.success}; ${headingFontCss('h2', '1.75em')} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
+    ${s} h3 { color: ${c.warning}; ${headingFontCss('h3', '1.5em')} font-weight: bold; margin: 0.25em 0 !important; line-height: 1.4; }
+    ${s} h4 { color: ${c.textMain}; ${headingFontCss('h4', '1.35em')} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
+    ${s} h5 { color: ${c.textMain}; ${headingFontCss('h5', '1.2em')} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
+    ${s} h6 { color: ${c.textDim}; ${headingFontCss('h6', '1.1em')} font-weight: bold; margin: 0.2em 0 !important; line-height: 1.4; }
     ${s} p { color: ${c.textMain}; margin: 0 !important; line-height: 1.4; }
     ${s} p + p { margin-top: 0.5em !important; }
     ${s} p:empty { display: none; }

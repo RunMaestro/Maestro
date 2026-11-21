@@ -311,3 +311,127 @@ export function resolveTypographySurface(name: string): TypographySurfaceSpec | 
 	}
 	return null;
 }
+
+// ============================================================================
+// Heading typography (H1-H6)
+// ============================================================================
+//
+// Per-level overrides for rendered markdown headings, the way a word processor
+// lets you restyle "Heading 1" once and have every H1 follow. Kept apart from
+// the surface registry above because the semantics differ: a surface ALWAYS
+// renders at a resolved size, while a heading with no override must keep the
+// relative size its own stylesheet gives it (2em in a chat bubble, 1.75em in a
+// streaming preview), so "unset" here means "publish nothing", not "inherit".
+//
+// One settings key, `headingTypography`, holds a sparse map:
+//   { h1: { fontFamily: 'Georgia', fontSize: 28 }, h3: { fontSize: 18 } }
+// An empty `fontFamily` keeps the surrounding text's font; a `fontSize` of 0
+// keeps the stylesheet's relative size. Sizes are px before zoom, like every
+// other size in this file.
+
+export const HEADING_LEVELS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const;
+export type HeadingLevel = (typeof HEADING_LEVELS)[number];
+
+export interface HeadingStyle {
+	/** CSS font-family. Empty means "same as the surrounding text". */
+	fontFamily: string;
+	/** Size in px before zoom. 0 means "the stylesheet's default size". */
+	fontSize: number;
+}
+
+export type HeadingTypography = Partial<Record<HeadingLevel, HeadingStyle>>;
+
+/** Settings key holding the whole map. */
+export const HEADING_TYPOGRAPHY_KEY = 'headingTypography';
+
+/** Headings can run larger than body text, so their ceiling sits above the surfaces'. */
+export const HEADING_FONT_SIZE_MIN = SURFACE_FONT_SIZE_MIN;
+export const HEADING_FONT_SIZE_MAX = 72;
+
+/**
+ * The browser's default heading scale, used to show what an un-overridden
+ * level roughly renders at. Each prose stylesheet keeps its own exact scale;
+ * this is only the number a size control starts stepping from.
+ */
+export const HEADING_DEFAULT_SCALE: Record<HeadingLevel, number> = {
+	h1: 2,
+	h2: 1.5,
+	h3: 1.17,
+	h4: 1,
+	h5: 0.83,
+	h6: 0.67,
+};
+
+/** CSS custom property carrying a level's resolved family, when overridden. */
+export function headingFontVar(level: HeadingLevel): string {
+	return `--maestro-heading-${level}-font`;
+}
+
+/** CSS custom property carrying a level's resolved size in px, when overridden. */
+export function headingSizeVar(level: HeadingLevel): string {
+	return `--maestro-heading-${level}-size`;
+}
+
+/**
+ * The font declarations a prose stylesheet writes for one heading level.
+ *
+ * The size falls back to the stylesheet's own value, so nothing changes until
+ * the user overrides it. The family has NO fallback on purpose: an unset
+ * variable makes the declaration invalid at computed-value time, and for an
+ * inherited property like font-family that resolves to the parent's value -
+ * exactly what a heading did before this declaration existed.
+ */
+export function headingFontCss(level: HeadingLevel, defaultSize: string): string {
+	return `font-size: var(${headingSizeVar(level)}, ${defaultSize}); font-family: var(${headingFontVar(level)});`;
+}
+
+/** Clamp a stored heading size. `0` passes through, meaning "default". */
+export function clampHeadingFontSize(size: number): number {
+	if (!Number.isFinite(size) || size <= 0) return 0;
+	return Math.min(HEADING_FONT_SIZE_MAX, Math.max(HEADING_FONT_SIZE_MIN, Math.round(size)));
+}
+
+/** Whether a string names a heading level (`h1`, `H2`, `heading3`, `3`). */
+export function resolveHeadingLevel(name: string): HeadingLevel | null {
+	const match = /^(?:h|heading)?\s*([1-6])$/i.exec(name.trim());
+	return match ? (`h${match[1]}` as HeadingLevel) : null;
+}
+
+/**
+ * Narrow a persisted value into a clean map. The value can come from an older
+ * build, a hand-edited settings file, or `maestro-cli settings set`, so every
+ * field is checked; levels that end up with nothing overridden are dropped so
+ * "is anything customized" is just "is the map empty".
+ */
+export function parseHeadingTypography(raw: unknown): HeadingTypography {
+	const result: HeadingTypography = {};
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
+	for (const level of HEADING_LEVELS) {
+		const entry = (raw as Record<string, unknown>)[level];
+		if (!entry || typeof entry !== 'object') continue;
+		const rawFont = (entry as Record<string, unknown>).fontFamily;
+		const fontFamily = typeof rawFont === 'string' ? rawFont.trim() : '';
+		const fontSize = clampHeadingFontSize(Number((entry as Record<string, unknown>).fontSize ?? 0));
+		if (fontFamily || fontSize) result[level] = { fontFamily, fontSize };
+	}
+	return result;
+}
+
+/** A copy of `current` with one level's style patched, empty levels dropped. */
+export function withHeadingStyle(
+	current: HeadingTypography,
+	level: HeadingLevel,
+	patch: Partial<HeadingStyle>
+): HeadingTypography {
+	const prev = current[level] ?? { fontFamily: '', fontSize: 0 };
+	return parseHeadingTypography({ ...current, [level]: { ...prev, ...patch } });
+}
+
+/**
+ * The size a level renders at when the user has not overridden it, against a
+ * given base size, for display only. Rounded to a whole pixel.
+ */
+export function defaultHeadingSize(level: HeadingLevel, baseSize: number): number {
+	const base = baseSize > 0 ? baseSize : BASE_FONT_SIZE_DEFAULT;
+	return Math.round(base * HEADING_DEFAULT_SCALE[level]);
+}

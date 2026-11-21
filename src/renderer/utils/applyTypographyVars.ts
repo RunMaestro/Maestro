@@ -22,11 +22,16 @@
  */
 
 import {
+	HEADING_LEVELS,
 	MONO_ACCENT_VAR,
 	TYPOGRAPHY_SURFACE_LIST,
 	canInherit,
+	clampFontZoom,
+	headingFontVar,
+	headingSizeVar,
 	resolveInheritedFont,
 	resolveSurfaceFontSize,
+	type HeadingTypography,
 	type TypographySurface,
 } from '../../shared/typography';
 import { resolveSurfaceFont, withMonoFallback } from '../../shared/fontStack';
@@ -102,4 +107,49 @@ export function applyTypographyVars(input: TypographyVarInput, root?: HTMLElemen
 
 	const effectiveBase = resolveSurfaceFontSize(input.baseSize, input.baseSize, input.zoom);
 	target.style.fontSize = `${effectiveBase}px`;
+}
+
+/**
+ * The heading variables for the levels the user has overridden, and only those.
+ *
+ * A level with no override publishes nothing, so each prose stylesheet's own
+ * fallback (2em, 1.5em, ...) keeps rendering it exactly as before. Sizes take
+ * the zoom like every surface size, so Cmd+= scales a custom H1 with the text
+ * around it.
+ */
+export function computeHeadingTypographyVars(
+	headings: HeadingTypography,
+	zoom: number
+): Record<string, string> {
+	const vars: Record<string, string> = {};
+	for (const level of HEADING_LEVELS) {
+		const style = headings[level];
+		if (!style) continue;
+		if (style.fontFamily) vars[headingFontVar(level)] = withMonoFallback(style.fontFamily);
+		if (style.fontSize > 0) {
+			vars[headingSizeVar(level)] =
+				`${Math.round(style.fontSize * clampFontZoom(zoom) * 10) / 10}px`;
+		}
+	}
+	return vars;
+}
+
+/**
+ * Write the heading variables, removing any a previous call set that are no
+ * longer overridden - otherwise Restore Defaults would leave the old value
+ * painted until the next reload.
+ */
+export function applyHeadingTypographyVars(
+	headings: HeadingTypography,
+	zoom: number,
+	root?: HTMLElement
+): void {
+	const target = root ?? document.documentElement;
+	const vars = computeHeadingTypographyVars(headings, zoom);
+	for (const level of HEADING_LEVELS) {
+		for (const name of [headingFontVar(level), headingSizeVar(level)]) {
+			if (vars[name] !== undefined) target.style.setProperty(name, vars[name]);
+			else target.style.removeProperty(name);
+		}
+	}
 }

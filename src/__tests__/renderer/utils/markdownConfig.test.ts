@@ -190,7 +190,7 @@ describe('generateProseStyles', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
 			// Compact heading margin is 0.25em 0
 			expect(css).toContain(
-				`.prose h1 { color: ${mockTheme.colors.textMain}; font-size: 2em; font-weight: bold; margin: 0.25em 0 !important`
+				`.prose h1 { color: ${mockTheme.colors.textMain}; font-size: var(--maestro-heading-h1-size, 2em); font-family: var(--maestro-heading-h1-font); font-weight: bold; margin: 0.25em 0 !important`
 			);
 		});
 
@@ -1065,5 +1065,34 @@ describe('createMarkdownComponents source-line passthrough', () => {
 		expect(render1('p').props.node).toBeUndefined();
 		expect(render1('li').props.node).toBeUndefined();
 		expect(render1('blockquote').props.node).toBeUndefined();
+	});
+});
+
+describe('heading typography variables', () => {
+	// Every prose stylesheet must read the H1-H6 overrides, and keep its own
+	// size as the fallback so nothing moves until the user customizes a level.
+	const sheets: Array<[string, string, string]> = [
+		['document prose', generateProseStyles({ theme: mockTheme }), '2em'],
+		['chat prose', generateTerminalProseStyles(mockTheme, '.terminal-output'), '2em'],
+		[
+			'streaming wizard preview',
+			generateInlineWizardPreviewProseStyles(mockTheme, '.streaming-preview', 'streaming'),
+			'1.75em',
+		],
+	];
+
+	it.each(sheets)('%s reads the H1 variables with its own fallback size', (_name, css, size) => {
+		expect(css).toContain(
+			`font-size: var(--maestro-heading-h1-size, ${size}); font-family: var(--maestro-heading-h1-font);`
+		);
+	});
+
+	it('document and chat prose cover all six levels', () => {
+		for (const [, css] of sheets.slice(0, 2)) {
+			for (const level of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) {
+				expect(css).toContain(`var(--maestro-heading-${level}-size,`);
+				expect(css).toContain(`var(--maestro-heading-${level}-font)`);
+			}
+		}
 	});
 });
