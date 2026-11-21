@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Launch a PACKAGED Maestro build and prove it starts: the main process stays
 // up, the renderer loads from app://, React mounts, the preload bridge exists,
-// and nothing throws uncaught while it settles.
+// the stats database (better-sqlite3) opens, and nothing throws uncaught while
+// it settles.
 //
 // Why this exists: a release once shipped that would not start on Windows.
 // Every pipeline step was green, because nothing ever ran the packaged app.
-// This closes that gap. Release CI runs it on the Windows package before the
+// This closes that gap. Release CI runs it on every package before the
 // artifacts are uploaded, and it works locally on any platform:
 //
 //   node scripts/smoke-launch-packaged.mjs                 # this platform's release/ output
@@ -95,6 +96,22 @@ export function assessProbe(probe) {
 	if (!probe.hasBridge) failures.push('window.maestro (the preload bridge) is missing');
 	if (probe.errorBoundary) failures.push('the renderer is showing the error boundary');
 	return failures;
+}
+
+// The main process logs this line once better-sqlite3 has opened the stats
+// database. A wrong-ABI, wrong-arch or missing better_sqlite3.node never gets
+// there: startup catches the load error and carries on without stats, so the
+// renderer still mounts and every other check here still passes. Waiting for
+// the success line (not grepping for an error) also fails a build whose
+// failure text changes.
+export const STATS_READY_PATTERN = /Stats database initialized/;
+
+/** Failures read from the app's own stdout/stderr (empty = healthy). */
+export function assessAppOutput(output) {
+	if (STATS_READY_PATTERN.test(output)) return [];
+	return [
+		'the stats database (better-sqlite3) did not initialize: the app never logged "Stats database initialized"',
+	];
 }
 
 const PROBE_EXPRESSION = `({
@@ -234,6 +251,7 @@ async function run(options) {
 					check.close();
 				}
 				failures.push(...assessProbe(settled).map((f) => `after settling: ${f}`));
+				failures.push(...assessAppOutput(output));
 			}
 			for (const exception of session.exceptions) {
 				failures.push(`uncaught renderer exception: ${exception.split('\n')[0]}`);
@@ -252,7 +270,9 @@ async function run(options) {
 		console.error('\nLast app output:\n' + output.split('\n').slice(-60).join('\n'));
 		return 1;
 	}
-	console.log('SMOKE TEST PASSED: the packaged app starts and stays up.');
+	console.log(
+		'SMOKE TEST PASSED: the packaged app starts, opens its stats database, and stays up.'
+	);
 	return 0;
 }
 

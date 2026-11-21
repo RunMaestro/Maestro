@@ -6,13 +6,16 @@
  * takes part in Federation. Two stages, one modal:
  * 1. Set up, while the remote runs no host: install this app's maestro-cli there
  *    and start the host, the same `setupRemoteHost()` as `maestro-cli remote-host install --start`.
- * 2. Move, once the peer is connected: show the plan `maestro-cli lift --dry-run`
- *    prints (what moves, which env vars stay), then run the same lift the CLI runs. Afterwards the
- *    local agent keeps every tab and transcript and shows where it moved.
+ * 2. Move, once the peer is connected: show the `maestro-cli lift --dry-run` plan, drawn from its
+ *    summary (`MoveToHostPlan`, with the CLI text one click away), then run the same lift the CLI
+ *    runs. Afterwards the local agent keeps every tab and transcript and shows where it moved.
+ *
+ * A failure is pinned above the scrolling body, so it shows without a scroll. A host whose Maestro
+ * predates `import_agent` (`LIFT_HOST_TOO_OLD`) takes the body over with the steps that fix it.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { Download, ServerCog } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Copy, Download, RotateCw, ServerCog } from 'lucide-react';
 import type { Theme } from '../types';
 import type { DesktopLiftAnswer } from '../../main/federation/lift';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -25,6 +28,11 @@ import type { DesktopSetupHostOptions } from '../../main/federation/setup-host';
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import { BundleNotice, BundleOption } from './Bundles/bundleUi';
+import { MoveToHostPlan, liftPlanOneLine } from './MoveToHostPlan';
+import { LIFT_HOST_TOO_OLD } from '../../shared/federationCommands';
+import type { LiftPlanSummary } from '../../shared/maestro-lib/agents/lift-plan';
+import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 
 /** Mounts the Move to Host modal from the modal store. */
 export function MoveToHostModalHost({ theme }: { theme: Theme }) {
@@ -67,6 +75,100 @@ const SETUP_RETRY: Record<
 	},
 };
 
+/**
+ * The host's Maestro predates `import_agent`: only a newer Maestro on the remote fixes that, so
+ * the failure takes the body over with the steps instead of a line under the plan.
+ */
+function HostTooOldCard({
+	theme,
+	summary,
+	error,
+}: {
+	theme: Theme;
+	summary: LiftPlanSummary;
+	error: string;
+}) {
+	const [planOpen, setPlanOpen] = useState(false);
+	const remote = summary.remote.name;
+	const Chevron = planOpen ? ChevronDown : ChevronRight;
+	const steps = [`Update Maestro.app on ${remote}`, 'Relaunch it', 'Click Retry Move'];
+	return (
+		<>
+			<div
+				role="alert"
+				className="rounded-lg border p-4 space-y-3"
+				style={{
+					borderColor: theme.colors.error,
+					backgroundColor: `${theme.colors.error}14`,
+				}}
+				data-testid="move-to-host-too-old"
+			>
+				<div>
+					<div className="text-sm font-semibold" style={{ color: theme.colors.error }}>
+						{remote} can&apos;t accept this agent yet
+					</div>
+					<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+						Its Maestro build predates Move to Host. Nothing moved; this agent is unchanged.
+					</div>
+				</div>
+				<ol className="space-y-1.5">
+					{steps.map((step, index) => (
+						<li
+							key={step}
+							className="flex items-center gap-2 text-sm"
+							style={{ color: theme.colors.textMain }}
+						>
+							<span
+								className="w-5 h-5 shrink-0 rounded-full border flex items-center justify-center text-xs"
+								style={{ borderColor: theme.colors.textMain }}
+							>
+								{index + 1}
+							</span>
+							{step}
+						</li>
+					))}
+				</ol>
+				<div className="text-xs select-text" style={{ color: theme.colors.textDim }}>
+					No desktop app runs there? Run{' '}
+					<code className="font-mono" style={{ color: theme.colors.textMain }}>
+						maestro-cli remote-host install {remote} --restart --force
+					</code>{' '}
+					on this machine instead.
+				</div>
+				<details className="text-xs" style={{ color: theme.colors.textDim }}>
+					<summary className="cursor-pointer">Full error</summary>
+					<div className="mt-1 select-text">{error}</div>
+				</details>
+			</div>
+			<div
+				className="rounded-lg border"
+				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
+			>
+				<button
+					type="button"
+					onClick={() => setPlanOpen((open) => !open)}
+					className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs"
+					aria-expanded={planOpen}
+					data-testid="move-to-host-plan-fold"
+				>
+					<Chevron className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
+					<span className="font-semibold" style={{ color: theme.colors.textMain }}>
+						Plan
+					</span>
+					<span className="truncate" style={{ color: theme.colors.textDim }}>
+						{liftPlanOneLine(summary)}
+					</span>
+				</button>
+				{planOpen && (
+					<div className="px-3 pb-3">
+						<MoveToHostPlan theme={theme} summary={summary} />
+					</div>
+				)}
+			</div>
+		</>
+	);
+}
+
 export function MoveToHostModal({
 	theme,
 	sessionId,
@@ -83,7 +185,7 @@ export function MoveToHostModal({
 	const [withEnv, setWithEnv] = useState(false);
 	const [plan, setPlan] = useState<DesktopLiftAnswer | null>(null);
 	const [lifting, setLifting] = useState(false);
-	const [liftError, setLiftError] = useState<string | null>(null);
+	const [liftError, setLiftError] = useState<{ code: string; error: string } | null>(null);
 	const [settingUp, setSettingUp] = useState(false);
 	const [setupError, setSetupError] = useState<{ code: string; error: string } | null>(null);
 	const [setupNote, setSetupNote] = useState<string | null>(null);
@@ -141,11 +243,42 @@ export function MoveToHostModal({
 		const answer = await moveAgentToHost(sessionId, withEnv);
 		setLifting(false);
 		if (answer.ok) onClose();
-		else setLiftError(answer.error);
+		else setLiftError({ code: answer.code, error: answer.error });
 	}, [sessionId, withEnv, onClose]);
 
 	const planReady = hostReady && plan?.ok === true;
+	const planSummary = plan?.ok ? plan.result.plan : undefined;
+	const planText = plan?.ok ? plan.planText : undefined;
 	const retry = setupError ? SETUP_RETRY[setupError.code] : undefined;
+	const hostTooOld = liftError?.code === LIFT_HOST_TOO_OLD && planSummary !== undefined;
+
+	const handleCopyPlan = useCallback(async () => {
+		if (planText && (await safeClipboardWrite(planText)))
+			flashCopiedToClipboard('Move to Host plan');
+	}, [planText]);
+
+	// Failures sit above the scrolling body, so they show without a scroll however long the plan is.
+	let pinnedError: ReactNode = null;
+	if (!hostReady && setupError) {
+		pinnedError = (
+			<BundleNotice theme={theme} tone="error" title="The host is not set up">
+				<div className="select-text">{setupError.error}</div>
+				{retry && <div className="mt-1">{retry.hint}</div>}
+			</BundleNotice>
+		);
+	} else if (hostReady && plan && !plan.ok) {
+		pinnedError = (
+			<BundleNotice theme={theme} tone="error" title="This agent cannot move">
+				<div>{plan.error}</div>
+			</BundleNotice>
+		);
+	} else if (hostReady && liftError && !hostTooOld) {
+		pinnedError = (
+			<BundleNotice theme={theme} tone="error" title="The move failed. Nothing moved.">
+				<div>{liftError.error}</div>
+			</BundleNotice>
+		);
+	}
 
 	return (
 		<Modal
@@ -158,7 +291,7 @@ export function MoveToHostModal({
 			width={640}
 			resizeKey="moveToHost"
 			defaultSize={{ width: 640, height: 520 }}
-			contentClassName="p-5 overflow-y-auto flex-1 space-y-4 select-none"
+			contentClassName="flex-1 min-h-0 flex flex-col select-none"
 			footer={
 				<div className="flex gap-2 w-full justify-end">
 					<button
@@ -177,8 +310,14 @@ export function MoveToHostModal({
 							className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
 						>
-							{lifting ? <Spinner size={14} /> : <ServerCog className="w-3.5 h-3.5" />}
-							{lifting ? 'Moving…' : 'Move to Host'}
+							{lifting ? (
+								<Spinner size={14} />
+							) : liftError ? (
+								<RotateCw className="w-3.5 h-3.5" />
+							) : (
+								<ServerCog className="w-3.5 h-3.5" />
+							)}
+							{lifting ? 'Moving…' : liftError ? 'Retry Move' : 'Move to Host'}
 						</button>
 					) : (
 						<button
@@ -196,97 +335,94 @@ export function MoveToHostModal({
 				</div>
 			}
 		>
-			{!hostReady && (
-				<>
-					<p className="text-xs" style={{ color: theme.colors.textDim }}>
-						{remoteName} runs no Maestro host yet. Set Up Host copies this Maestro&apos;s
-						maestro-cli there, with Node.js and SQLite for that machine (Linux, macOS, or Windows
-						through Git Bash or WSL), into ~/.maestro as your SSH user, and starts the host. Then
-						this agent can move onto it. Same as maestro-cli remote-host install --start.
-					</p>
-					{!canSetUp && (
-						<BundleNotice theme={theme} tone="error" title="Federation does not reach this remote">
-							<div>
-								The remote is disabled, Federation is off for it, or Maestro has not checked it yet.
-								Check Settings &gt; SSH Hosts: the remote must be enabled with Federation on
-								(maestro-cli update-ssh-remote &lt;id&gt; --enabled true --federation on).
+			{pinnedError && (
+				<div className="px-5 pt-4 shrink-0" data-testid="move-to-host-pinned-error">
+					{pinnedError}
+				</div>
+			)}
+			<div className="p-5 overflow-y-auto flex-1 min-h-0 space-y-4">
+				{!hostReady && (
+					<>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							{remoteName} runs no Maestro host yet. Set Up Host copies this Maestro&apos;s
+							maestro-cli there, with Node.js and SQLite for that machine (Linux, macOS, or Windows
+							through Git Bash or WSL), into ~/.maestro as your SSH user, and starts the host. Then
+							this agent can move onto it. Same as maestro-cli remote-host install --start.
+						</p>
+						{!canSetUp && (
+							<BundleNotice
+								theme={theme}
+								tone="error"
+								title="Federation does not reach this remote"
+							>
+								<div>
+									The remote is disabled, Federation is off for it, or Maestro has not checked it
+									yet. Check Settings &gt; SSH Hosts: the remote must be enabled with Federation on
+									(maestro-cli update-ssh-remote &lt;id&gt; --enabled true --federation on).
+								</div>
+							</BundleNotice>
+						)}
+						{settingUp && (
+							<div
+								className="flex items-center gap-2 text-xs"
+								style={{ color: theme.colors.textDim }}
+								data-testid="move-to-host-setup-running"
+							>
+								<Spinner size={14} /> Installing and starting the host. A first install downloads
+								Node.js and builds SQLite, which can take a few minutes.
 							</div>
-						</BundleNotice>
-					)}
-					{settingUp && (
-						<div
-							className="flex items-center gap-2 text-xs"
-							style={{ color: theme.colors.textDim }}
-							data-testid="move-to-host-setup-running"
-						>
-							<Spinner size={14} /> Installing and starting the host. A first install downloads
-							Node.js and builds SQLite, which can take a few minutes.
-						</div>
-					)}
-					{setupError && (
-						<BundleNotice theme={theme} tone="error" title="The host is not set up">
-							<div className="select-text">{setupError.error}</div>
-							{retry && <div className="mt-1">{retry.hint}</div>}
-						</BundleNotice>
-					)}
-				</>
-			)}
-			{setupNote && (
-				<BundleNotice theme={theme} tone="warning" title="Host started">
-					<div className="select-text">{setupNote}</div>
-				</BundleNotice>
-			)}
-			{hostReady && (
-				<>
-					<p className="text-xs" style={{ color: theme.colors.textDim }}>
-						The agent moves to the maestro-cli host on its SSH remote and keeps running there with
-						this machine off. Every tab and transcript stays here too; this copy becomes a pointer,
-						and messages to it are refused. Same as maestro-cli lift.
-					</p>
+						)}
+					</>
+				)}
+				{setupNote && (
+					<BundleNotice theme={theme} tone="warning" title="Host started">
+						<div className="select-text">{setupNote}</div>
+					</BundleNotice>
+				)}
+				{hostReady && hostTooOld && planSummary && liftError && (
+					<HostTooOldCard theme={theme} summary={planSummary} error={liftError.error} />
+				)}
+				{hostReady && !hostTooOld && (
+					<>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							The agent moves to the maestro-cli host on its SSH remote and keeps running there with
+							this machine off. Every tab and transcript stays here too; this copy becomes a
+							pointer, and messages to it are refused. Same as maestro-cli lift.
+						</p>
 
-					<BundleOption
-						theme={theme}
-						label="Send secret env vars too"
-						hint="--with-env: keys that look like tokens or passwords stay here unless checked"
-						checked={withEnv}
-						disabled={lifting}
-						onChange={setWithEnv}
-					/>
+						<BundleOption
+							theme={theme}
+							label="Send secret env vars too"
+							hint="--with-env: keys that look like tokens or passwords stay here unless checked"
+							checked={withEnv}
+							disabled={lifting}
+							onChange={setWithEnv}
+						/>
 
-					{!plan && (
-						<div
-							className="flex items-center gap-2 text-xs"
-							style={{ color: theme.colors.textDim }}
-							data-testid="move-to-host-plan-loading"
-						>
-							<Spinner size={14} /> Building the plan…
-						</div>
-					)}
-					{plan && !plan.ok && (
-						<BundleNotice theme={theme} tone="error" title="This agent cannot move">
-							<div>{plan.error}</div>
-						</BundleNotice>
-					)}
-					{plan?.ok && (
-						<pre
-							className="text-xs font-mono whitespace-pre-wrap rounded border p-3 select-text"
-							style={{
-								borderColor: theme.colors.border,
-								backgroundColor: theme.colors.bgActivity,
-								color: theme.colors.textMain,
-							}}
-							data-testid="move-to-host-plan"
-						>
-							{plan.planText}
-						</pre>
-					)}
-					{liftError && (
-						<BundleNotice theme={theme} tone="error" title="The move failed">
-							<div>{liftError}</div>
-						</BundleNotice>
-					)}
-				</>
-			)}
+						{!plan && (
+							<div
+								className="flex items-center gap-2 text-xs"
+								style={{ color: theme.colors.textDim }}
+								data-testid="move-to-host-plan-loading"
+							>
+								<Spinner size={14} /> Building the plan…
+							</div>
+						)}
+						{planSummary && <MoveToHostPlan theme={theme} summary={planSummary} />}
+						{planText && (
+							<button
+								type="button"
+								onClick={() => void handleCopyPlan()}
+								className="flex items-center gap-1.5 text-xs hover:underline"
+								style={{ color: theme.colors.textDim }}
+								data-testid="move-to-host-copy-plan"
+							>
+								<Copy className="w-3 h-3" /> Copy Plan as Text
+							</button>
+						)}
+					</>
+				)}
+			</div>
 		</Modal>
 	);
 }

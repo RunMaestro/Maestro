@@ -16,6 +16,7 @@ import { isSynopsisRequest } from '../../utils/transcriptMessages';
 import {
 	loadResumableSession,
 	matchesNativeSessionBinding,
+	requiresNativeOwnership,
 	resumeSelectionKey,
 	SessionResumeRefusedError,
 } from '../../services/resumableSession';
@@ -331,7 +332,7 @@ export function useAgentSessionManagement(
 				(!!opts?.targetSessionId ||
 					useSessionStore.getState().activeSessionId === targetSession.id) &&
 				opts?.canResume?.(nextSession) !== false;
-			const scoped = targetSession.toolType === 'grok' || opts?.nativeSessionBinding !== undefined;
+			const scoped = requiresNativeOwnership(targetSession.toolType, opts?.nativeSessionBinding);
 			const matchesTab = (tab: Session['aiTabs'][number], binding = opts?.nativeSessionBinding) =>
 				tab.agentSessionId === agentSessionId &&
 				(!scoped || matchesNativeSessionBinding(tab.nativeSessionBinding, binding));

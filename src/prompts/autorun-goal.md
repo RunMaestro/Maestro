@@ -77,7 +77,8 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    <!-- maestro:progress N | one-line rationale -->
    ```
 
-   - `N` is your honest **0–100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` is your honest **0-100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` may be a decimal (e.g. `48.35`). When the goal is large and you can measure it (items done out of a total), report that precision: a real gain smaller than 1% still counts as movement, while a whole number that stays flat for several iterations reads as a stall and stops the run.
    - The `| one-line rationale` is a short human-readable note describing where things stand (e.g. `data layer migrated, UI still pending`). It is optional but strongly encouraged - it shows up in the progress UI.
    - This marker is how the engine drives the progress bar and decides whether to run another iteration. **A response with no progress marker is treated as zero progress** and counts toward a stall.
 
@@ -97,6 +98,8 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    ```
 
    The reason text is shown in the History panel. Reserve this for real dead-ends; do NOT use it for ordinary setbacks you can work around on the next iteration. When in doubt, report partial progress and continue instead of declaring a deadlock.
+
+   A blocker on one part of the goal is not a deadlock while other parts can still move. Before you declare one, recover: read the error, fix the cause, try a second approach. If a person must supply something (a credential, an approval, a judgment), build around it first: code against an environment variable, mock the service, put the change behind a flag, and keep advancing every part of the goal that does not need them. Record what the person must do in your rationale, and declare the deadlock only when nothing left can move without them, so the run stops near the finish rather than at the first gap.
 
 7. **Version control.** For any code or documentation changes, if we're in a GitHub repo: commit using a descriptive message prefixed with `MAESTRO:`, and push. Update CLAUDE.md / AGENTS.md / README.md when appropriate.
 

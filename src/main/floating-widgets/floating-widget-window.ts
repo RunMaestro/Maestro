@@ -252,7 +252,12 @@ export function createFloatingWidgetWindow(
 		});
 
 		created.setAlwaysOnTop(true, 'floating');
-		created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+		// skipTransformProcessType: without it Electron 41 turns the whole app into a UIElement
+		// process (no Dock icon, no menu bar, no main window) the moment this runs.
+		created.setVisibleOnAllWorkspaces(true, {
+			visibleOnFullScreen: true,
+			skipTransformProcessType: true,
+		});
 
 		const url = withWidgetParam(
 			deps.isDevelopment ? deps.devServerUrl : deps.rendererProductionUrl,

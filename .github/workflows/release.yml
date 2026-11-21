@@ -47,7 +47,10 @@ jobs:
             arch: x64
           # ARM64 Linux requires native ARM64 runner for node-pty native module
           # Cross-compilation from x64 doesn't work: https://github.com/electron-userland/electron-builder/issues/7608
-          - os: ubuntu-24.04-arm
+          # Pinned to ubuntu-22.04-arm for the same glibc reason as the x64 job above:
+          # ubuntu-24.04-arm ships glibc 2.39, which raises the floor of the arm64
+          # native modules past Ubuntu 22.04. Enforced by verify-glibc-floor.sh arm64.
+          - os: ubuntu-22.04-arm
             platform: linux-arm64
             arch: arm64
           - os: windows-latest
@@ -102,7 +105,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm build-essential
+          sudo apt-get install -y libarchive-tools rpm build-essential xvfb
 
       # Linux ARM64: Install build dependencies for native modules and electron-builder
       # Requires build-essential for compiling node-pty native module
@@ -111,7 +114,7 @@ jobs:
         if: matrix.platform == 'linux-arm64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm build-essential ruby ruby-dev rubygems
+          sudo apt-get install -y libarchive-tools rpm build-essential ruby ruby-dev rubygems xvfb
           sudo gem install --no-document fpm
 
       # Linux x64: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
@@ -487,6 +490,17 @@ jobs:
         timeout-minutes: 5
         run: npm run smoke:packaged -- --app release/mac-arm64/Maestro.app/Contents/MacOS/Maestro
 
+      # The x64 package runs under Rosetta 2 on this arm64 runner. Install Rosetta
+      # only when the image lacks it.
+      - name: Smoke test packaged app (macOS x64)
+        if: matrix.platform == 'mac'
+        timeout-minutes: 10
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          npm run smoke:packaged -- --app release/mac/Maestro.app/Contents/MacOS/Maestro
+
       - name: Package for Windows
         if: matrix.platform == 'win'
         shell: bash
@@ -620,8 +634,14 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           .github/scripts/verify-glibc-floor.sh 2.35 \
-            release/linux-unpacked/resources/app.asar.unpacked \
+            release/linux-unpacked/resources/app.asar.unpacked x64 \
             release/linux-unpacked/resources/native/maestro-computer-history
+
+      # Electron needs a display; xvfb-run gives it a virtual one.
+      - name: Smoke test packaged app (Linux x64)
+        if: matrix.platform == 'linux'
+        timeout-minutes: 5
+        run: xvfb-run -a npm run smoke:packaged -- --app release/linux-unpacked/maestro
 
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
@@ -701,6 +721,19 @@ jobs:
               release/linux-arm64-unpacked/resources/native/maestro-computer-history --version
               ;;
           esac
+
+      # Same glibc floor guard as Linux x64, for the arm64 package.
+      - name: Verify GLIBC floor (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        run: |
+          .github/scripts/verify-glibc-floor.sh 2.35 \
+            release/linux-arm64-unpacked/resources/app.asar.unpacked arm64 \
+            release/linux-arm64-unpacked/resources/native/maestro-computer-history
+
+      - name: Smoke test packaged app (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        timeout-minutes: 5
+        run: xvfb-run -a npm run smoke:packaged -- --app release/linux-arm64-unpacked/maestro
 
       # List what was built for debugging
       - name: List release artifacts
