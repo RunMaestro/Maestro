@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { rendererNodeTests } from './vitest.renderer-node-tests.mts';
+import { TimedShardSequencer } from './vitest.shard-sequencer.mts';
 
 // Directories excluded from the default unit-test run (have their own configs).
 const sharedExclude = [
@@ -89,6 +90,8 @@ export default defineConfig({
 		testTimeout: 10000,
 		hookTimeout: 10000,
 		teardownTimeout: 5000,
+		// --shard splits by measured duration so CI shards finish together.
+		sequence: { sequencer: TimedShardSequencer },
 		// Only DOM-dependent suites pay for jsdom. Backend and explicitly selected
 		// renderer suites run in plain Node with no browser setup.
 		projects: [
