@@ -17,6 +17,7 @@ import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostT
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
 import { checkCustomPath } from '../../main/agents/path-prober';
+import { resolveCueAgentBinary } from '../../main/cue/cue-agent-binary';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -153,6 +154,7 @@ type SpawnOverrides = Pick<
 	| 'querySource'
 	| 'maestroPMaxWaitSeconds'
 	| 'acceptWorkspaceTrust'
+	| 'sessionCustomPath'
 >;
 
 /**
@@ -442,6 +444,26 @@ export async function resolveLocalAgentCommand(toolType: ToolType): Promise<stri
 	return detection.available && detection.path ? detection.path : getAgentCommand(toolType);
 }
 
+/**
+ * The local binary for an agent that names its OWN custom path: that path when
+ * it is executable, else the provider's path or detection
+ * (`resolveLocalAgentCommand`), with a warning. The same order a desktop tab
+ * spawn and a Cue run use.
+ */
+async function resolveSessionAgentCommand(
+	toolType: ToolType,
+	sessionCustomPath: string
+): Promise<string> {
+	const fallback = () => resolveLocalAgentCommand(toolType);
+	const resolved = await resolveCueAgentBinary({
+		sessionCustomPath,
+		sshEnabled: false,
+		getDetectedPath: fallback,
+		onWarn: (message) => console.error(`Warning: ${message}`),
+	});
+	return resolved ?? (await fallback());
+}
+
 // Backward-compatible wrappers
 export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
@@ -452,8 +474,9 @@ export const getDroidCommand = () => getAgentCommand('factory-droid');
  * Spawn Claude Code with a prompt and return the result.
  *
  * Honors the same agent-level and session-level overrides as the desktop app:
- * custom model, effort, CLI args, env vars, and SSH remote execution. Custom
- * binary path is applied via getAgentCommand()/detectAgent().
+ * custom model, effort, CLI args, env vars, and SSH remote execution. The binary
+ * is the agent's own custom path (`overrides.sessionCustomPath`, already
+ * resolved by spawnAgentOnce), else the provider path via detectAgent().
  *
  * Claude uses a unique JSON format (stream-json) that differs from the
  * AgentOutputParser interface used by other agents, so it has its own spawner.
@@ -532,9 +555,10 @@ async function spawnClaudeAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const claudeCommand = sshRemoteConfig?.enabled
 		? getAgentCommand('claude-code')
-		: await resolveLocalAgentCommand('claude-code');
+		: (overrides.sessionCustomPath ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
-	const agentCustomPath = getAgentCustomPath('claude-code');
+	// maestro-p drives the binary the turn runs: the agent's own when it has one.
+	const agentCustomPath = overrides.sessionCustomPath ?? getAgentCustomPath('claude-code');
 
 	// Resolve the per-agent Claude token source through the SAME shared decision
 	// core the desktop uses, so CLI Auto Run / batch / `send` honor API vs TUI vs
@@ -893,8 +917,9 @@ function mergeUsageStats(
  * Handles Codex, OpenCode, Factory Droid, and any future agents with the same pattern.
  *
  * Honors the same agent-level and session-level overrides as the desktop app:
- * custom model, effort, CLI args, env vars, and SSH remote execution. Custom
- * binary path is applied via getAgentCommand()/detectAgent().
+ * custom model, effort, CLI args, env vars, and SSH remote execution. The binary
+ * is the agent's own custom path (`overrides.sessionCustomPath`, already
+ * resolved by spawnAgentOnce), else the provider path via detectAgent().
  */
 async function spawnJsonLineAgent(
 	toolType: ToolType,
@@ -1016,7 +1041,7 @@ async function spawnJsonLineAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType);
+		: (overrides.sessionCustomPath ?? (await resolveLocalAgentCommand(toolType)));
 
 	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
 	// WakaTime listener, so they beat from their own output stream.
@@ -1207,6 +1232,13 @@ export interface SpawnAgentOptions {
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
 	/**
+	 * The agent's OWN custom binary (`SessionInfo.customPath`). Wins over the
+	 * provider-level path, the same order a desktop tab spawn and a Cue run use
+	 * (`resolveCueAgentBinary`). Local runs only: an invalid path warns and falls
+	 * back to the provider's binary.
+	 */
+	sessionCustomPath?: string;
+	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
@@ -1303,7 +1335,14 @@ async function spawnAgentOnce(
 ): Promise<AgentResult> {
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
+	// The agent's own binary, resolved once for every local transport below. Over
+	// SSH the remote resolves its own binary, so the local path is not used there.
+	const sessionAgentCommand =
+		options?.sessionCustomPath && !sshRemoteConfig?.enabled
+			? await resolveSessionAgentCommand(toolType, options.sessionCustomPath)
+			: undefined;
 	const overrides: SpawnOverrides = {
+		sessionCustomPath: sessionAgentCommand,
 		customModel: options?.customModel,
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,

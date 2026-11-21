@@ -110,6 +110,8 @@ async function requestHandoffBlurb(
 					customModel: runOverrides.model ?? session.customModel,
 					customEffort: runOverrides.effort ?? session.customEffort,
 					customArgs: session.customArgs,
+					// The agent's own binary, as a desktop tab spawn uses it.
+					sessionCustomPath: session.customPath,
 					customEnvVars: session.customEnvVars,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					appendSystemPrompt,
@@ -250,6 +252,8 @@ export async function* runGoal(
 						customModel: runModel ?? session.customModel,
 						customEffort: runEffort ?? session.customEffort,
 						customArgs: session.customArgs,
+						// The agent's own binary, as a desktop tab spawn uses it.
+						sessionCustomPath: session.customPath,
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
 						appendSystemPrompt,

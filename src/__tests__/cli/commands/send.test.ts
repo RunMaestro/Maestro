@@ -93,6 +93,21 @@ describe('send command', () => {
 		vi.mocked(readStoredAiTabs).mockReturnValue([]);
 	});
 
+	it("runs the turn on the agent's own custom binary", async () => {
+		// A packaged-build smoke test caught `send` ignoring this: a stub agent's
+		// turn ran the real Claude while its desktop tab ran the stub.
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ customPath: '/agent/bin/claude' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'Done' });
+
+		await send('agent-abc', 'Do it', {});
+
+		expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({
+			sessionCustomPath: '/agent/bin/claude',
+		});
+	});
+
 	it('should query an agent and return JSON response for new session', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent());

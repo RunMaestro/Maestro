@@ -667,6 +667,8 @@ export async function* runPlaybook(
 								customModel: turnSettings.model,
 								customEffort: turnSettings.effort,
 								customArgs: session.customArgs,
+								// The agent's own binary, as a desktop tab spawn uses it.
+								sessionCustomPath: session.customPath,
 								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
@@ -768,6 +770,7 @@ export async function* runPlaybook(
 										customModel: cheapSynopsis().model ?? runModel ?? session.customModel,
 										customEffort: cheapSynopsis().effort ?? runEffort ?? session.customEffort,
 										customArgs: session.customArgs,
+										sessionCustomPath: session.customPath,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
