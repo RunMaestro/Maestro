@@ -3,6 +3,7 @@ import {
 	DEFAULT_MEDIA_ASPECT,
 	MEDIA_FLOAT_DEFAULT_WIDTH,
 	MEDIA_FLOAT_EDGE_MARGIN,
+	MEDIA_FLOAT_FRAME_BORDER_X,
 	MEDIA_FLOAT_MIN_WIDTH,
 	MEDIA_FLOAT_TITLE_BAR_HEIGHT,
 	MEDIA_FLOAT_TRANSPORT_FALLBACK_HEIGHT,
@@ -10,6 +11,7 @@ import {
 	initialMediaFloatRect,
 	mediaFloatChromeHeight,
 	mediaFloatHeight,
+	mediaFloatMinWidth,
 	mediaFloatResizeWidth,
 	mediaFloatWidthFor,
 	normalizeMediaAspect,
@@ -142,6 +144,32 @@ describe('fitMediaFloatRect', () => {
 		);
 	});
 
+	it('never goes narrower than the measured transport needs', () => {
+		// The controls row (prev/next, volume, speed, open externally) can be wider
+		// than the generic floor; a clipped row hides the buttons on its right.
+		const fit = { ...audioFit, minWidth: 430 };
+		expect(fitMediaFloatRect({ top: 0, left: 0, width: 380 }, fit, VIEW).width).toBe(430);
+		expect(fitMediaFloatRect({ top: 0, left: 0, width: 600 }, fit, VIEW).width).toBe(600);
+	});
+
+	it('keeps a tall video at least as wide as its controls', () => {
+		const fit = { ...videoFit, aspect: 9 / 16, minWidth: 460 };
+		const rect = fitMediaFloatRect({ top: 0, left: 0, width: 900 }, fit, {
+			width: 1600,
+			height: 500,
+		});
+		expect(rect.width).toBe(460);
+		expect(rect.height).toBeLessThanOrEqual(500);
+	});
+
+	it('lets a viewport narrower than the controls win', () => {
+		const fit = { ...audioFit, minWidth: 460 };
+		expect(fitMediaFloatRect({ top: 0, left: 0, width: 380 }, fit, VIEW).width).toBe(460);
+		expect(
+			fitMediaFloatRect({ top: 0, left: 0, width: 380 }, fit, { width: 400, height: 900 }).width
+		).toBe(400);
+	});
+
 	it('narrows a tall video instead of running it off the bottom', () => {
 		// A 9:16 clip at a wide width would be taller than the screen. The picture
 		// stays whole, just smaller.
@@ -164,6 +192,23 @@ describe('fitMediaFloatRect', () => {
 		expect(rect.height).toBe(80);
 		expect(rect.left).toBe(0);
 		expect(rect.top).toBe(0);
+	});
+});
+
+describe('mediaFloatMinWidth', () => {
+	it('falls back to the generic floor before the transport is measured', () => {
+		expect(mediaFloatMinWidth(null)).toBe(MEDIA_FLOAT_MIN_WIDTH);
+		expect(mediaFloatMinWidth(undefined)).toBe(MEDIA_FLOAT_MIN_WIDTH);
+		expect(mediaFloatMinWidth(0)).toBe(MEDIA_FLOAT_MIN_WIDTH);
+		expect(mediaFloatMinWidth(Number.NaN)).toBe(MEDIA_FLOAT_MIN_WIDTH);
+	});
+
+	it('adds the frame border to the measured transport, rounded up', () => {
+		expect(mediaFloatMinWidth(420.2)).toBe(421 + MEDIA_FLOAT_FRAME_BORDER_X);
+	});
+
+	it('never drops below the generic floor', () => {
+		expect(mediaFloatMinWidth(120)).toBe(MEDIA_FLOAT_MIN_WIDTH);
 	});
 });
 
