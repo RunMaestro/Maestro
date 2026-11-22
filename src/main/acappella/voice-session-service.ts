@@ -684,6 +684,12 @@ export class VoiceSessionService {
 		const sessionId = generateUUID();
 		this.sessionId = sessionId;
 		const startupIsCurrent = () => this.sessionId === sessionId && !this.stopping;
+		const snapshotAfterCancellation = async () => {
+			// The wake detector may be handing off capture. Don't tell it the
+			// arming attempt is over while teardown still reports an active owner.
+			await this.stopCompletion;
+			return this.getSnapshot();
+		};
 		this.scope = params.scope;
 		this.origin = params.origin ?? { kind: 'local' };
 		this.windowId = params.windowId ?? null;
@@ -713,7 +719,7 @@ export class VoiceSessionService {
 		// then discovered it has nowhere to send the audio has already cost the user
 		// a recording light and an OS permission prompt for nothing.
 		const readiness = await this.checkReadiness?.();
-		if (!startupIsCurrent()) return this.getSnapshot();
+		if (!startupIsCurrent()) return snapshotAfterCancellation();
 		if (readiness && !readiness.canStartSession) {
 			const blocked = readiness.blocking[0];
 			this.fail(
@@ -727,7 +733,7 @@ export class VoiceSessionService {
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
 		} catch (error) {
-			if (!startupIsCurrent()) return this.getSnapshot();
+			if (!startupIsCurrent()) return snapshotAfterCancellation();
 			if (isVoiceProviderError(error)) {
 				this.failFromProvider(error, this.providers.stt.id);
 			} else {
@@ -740,7 +746,7 @@ export class VoiceSessionService {
 			return this.getSnapshot();
 		}
 
-		if (!startupIsCurrent()) return this.getSnapshot();
+		if (!startupIsCurrent()) return snapshotAfterCancellation();
 
 		// Ahead of the first `listen-start`, so nothing that follows the stream
 		// opens a device it would then have to close.
