@@ -1427,8 +1427,13 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 				deviceId: readVoiceProviderSettings(settingsStore).inputDeviceId,
 			}),
 		stopCapture: () => {
-			// Never close a microphone a session is using.
-			if (!clipCapture?.isActive && (getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+			const state = getVoiceSessionService()?.getState() ?? 'idle';
+			if (
+				!clipCapture?.isActive &&
+				!wakeEnrollment?.isRecording &&
+				!wakeTestDetector &&
+				(state === 'idle' || state === 'error')
+			) {
 				sendAudioHostCommand({ kind: 'stop-capture' });
 			}
 		},
@@ -2189,6 +2194,7 @@ export async function stopVoiceSessionForWindow(
 export async function shutdownACappellaForDisable(): Promise<void> {
 	pendingVoiceStart = null;
 	voiceDisableGeneration += 1;
+	void handsFree?.sync();
 	// The advert and the phones go first. A device that still holds the floor
 	// would otherwise be able to reopen the microphone during the teardown below.
 	getACappellaTransport()?.standDown();

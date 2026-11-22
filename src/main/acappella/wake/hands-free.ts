@@ -27,7 +27,10 @@
  * device: the wake word toggle is its own, separate consent.
  */
 
-import type { VoiceSessionState } from '../../../shared/acappella/session-state';
+import {
+	isVoiceSessionActive,
+	type VoiceSessionState,
+} from '../../../shared/acappella/session-state';
 import { logger } from '../../utils/logger';
 import type { WakeEngine } from '../../../shared/acappella/voice-controls';
 import { wakeScorerFactory } from './transcription-wake';
@@ -84,6 +87,7 @@ export interface HandsFreeDeps {
 
 export class HandsFreeListener {
 	private detector: WakeDetector | null = null;
+	private wakeHandoff: { cancelled: boolean; released: boolean } | null = null;
 	/** The settings the armed detector was built from; a change re-arms it. */
 	private armedKey: string | null = null;
 	/** Borrowed by the Test button, which needs the same microphone. */
@@ -107,6 +111,15 @@ export class HandsFreeListener {
 	 * needed: settings changes, session transitions, the Test button finishing.
 	 */
 	sync(): Promise<void> {
+		if (
+			this.wakeHandoff &&
+			(!this.deps.readSettings().enabled || this.suspended || this.disposed)
+		) {
+			if (!this.wakeHandoff.cancelled) {
+				this.wakeHandoff.cancelled = true;
+				this.wakeHandoff.released = this.releaseHandoffCapture();
+			}
+		}
 		if (this.syncing) {
 			this.resyncRequested = true;
 			return this.syncing;
@@ -147,7 +160,7 @@ export class HandsFreeListener {
 
 	async dispose(): Promise<void> {
 		this.disposed = true;
-		await this.syncing?.catch(() => undefined);
+		await this.sync().catch(() => undefined);
 		await this.disarm({ closeMicrophone: true });
 	}
 
@@ -171,6 +184,7 @@ export class HandsFreeListener {
 			return;
 		}
 		this.lastRefusal = null;
+		if (this.wakeHandoff) return;
 		if (this.detector && this.armedKey === armKey(this.deps.readSettings())) return;
 		// A different phrase, engine, or sensitivity needs a new detector; keep the
 		// microphone open across the swap.
@@ -231,25 +245,40 @@ export class HandsFreeListener {
 	}
 
 	private onWake(detection: WakeDetection): void {
+		if (!this.detector || this.wakeHandoff) return;
 		logger.info(
 			`Hands-free wake: "${detection.phrase}" (${detection.score.toFixed(2)}) opening a session`,
 			LOG_CONTEXT
 		);
-		// Stop scoring but keep the microphone open: the session takes over the
-		// stream that is already flowing.
-		void this.disarm({ closeMicrophone: false }).then(async () => {
+		const handoff = { cancelled: false, released: false };
+		this.wakeHandoff = handoff;
+		void (async () => {
 			try {
-				await this.deps.startSession();
+				// Keep the stream warm until the incoming session accepts the floor.
+				await this.disarm({ closeMicrophone: false });
+				if (!handoff.cancelled && this.deps.readSettings().enabled) {
+					await this.deps.startSession();
+				}
 			} catch (err) {
 				logger.warn(
 					`Hands-free wake could not open a session: ${(err as Error).message}`,
 					LOG_CONTEXT
 				);
+			} finally {
+				this.wakeHandoff = null;
+				if (!handoff.released) {
+					this.releaseHandoffCapture();
+				}
+				await this.sync();
 			}
-			// Whatever happened, re-evaluate: a refused start leaves the session idle,
-			// and the listener must re-arm rather than go deaf.
-			await this.sync();
-		});
+		})();
+	}
+
+	private releaseHandoffCapture(): boolean {
+		const state = this.deps.getSessionState();
+		if (isVoiceSessionActive(state) || this.deps.isMicrophoneBorrowed?.()) return false;
+		this.deps.stopCapture();
+		return true;
 	}
 }
 
