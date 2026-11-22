@@ -10,6 +10,7 @@ import { canonicalJson } from '../../shared/canonicalJson';
 import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
 import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { ThemedSelect } from './shared/ThemedSelect';
+import { FormInput } from './ui/FormInput';
 
 export function BoardWorkerOptions({
 	worker,
@@ -95,15 +96,14 @@ export function BoardWorkerOptions({
 			</p>
 			<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 my-2">
 				<div>
-					<label htmlFor="board-worker-model">Model</label>
-					<input
+					<FormInput
+						theme={theme}
 						id="board-worker-model"
-						aria-label={`Worker model for ${session.name}`}
+						label={`Worker model for ${session.name}`}
 						disabled={disabled}
 						value={value('customModel')}
-						onChange={(event) => setPatch({ ...patch, customModel: event.target.value || null })}
-						style={inputStyle}
-						className="w-full border rounded p-1"
+						onChange={(value) => setPatch({ ...patch, customModel: value || null })}
+						className="focus-ring select-text"
 					/>
 					{loaded && models.length > 0 && (
 						<ThemedSelect
@@ -120,15 +120,14 @@ export function BoardWorkerOptions({
 					)}
 				</div>
 				<div>
-					<label htmlFor="board-worker-effort">Effort</label>
-					<input
+					<FormInput
+						theme={theme}
 						id="board-worker-effort"
-						aria-label={`Worker effort for ${session.name}`}
+						label={`Worker effort for ${session.name}`}
 						disabled={disabled}
 						value={value('customEffort')}
-						onChange={(event) => setPatch({ ...patch, customEffort: event.target.value || null })}
-						style={inputStyle}
-						className="w-full border rounded p-1"
+						onChange={(value) => setPatch({ ...patch, customEffort: value || null })}
+						className="focus-ring select-text"
 					/>
 					{loaded && efforts.length > 0 && (
 						<ThemedSelect
@@ -156,7 +155,7 @@ export function BoardWorkerOptions({
 							value={value(field)}
 							onChange={(event) => setPatch({ ...patch, [field]: event.target.value })}
 							style={inputStyle}
-							className="w-full border rounded p-1"
+							className="w-full border rounded p-1 focus-ring select-text"
 						/>
 						<button
 							type="button"

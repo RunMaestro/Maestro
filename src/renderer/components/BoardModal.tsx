@@ -59,6 +59,9 @@ import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch'
 import { observedWorkerRuns } from '../utils/boardWorkerStatus';
 import { BoardWorkerOptions } from './BoardWorkerOptions';
 import { ThemedSelect } from './shared/ThemedSelect';
+import { FormInput } from './ui/FormInput';
+import { FilterInput } from './ui/FilterInput';
+import { HeaderActionButton } from './ui/HeaderActionButton';
 
 export interface BoardModalProps {
 	theme: Theme;
@@ -1405,11 +1408,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	const inputStyle = useMemo(
 		() => ({
-			backgroundColor: theme.colors.bgActivity,
+			backgroundColor: 'transparent',
 			border: `1px solid ${theme.colors.border}`,
 			color: theme.colors.textMain,
 		}),
-		[theme.colors.bgActivity, theme.colors.border, theme.colors.textMain]
+		[theme.colors.border, theme.colors.textMain]
 	);
 
 	const projectFilterOptions = useMemo(() => {
@@ -1602,14 +1605,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					</div>
 					<div className="flex items-center gap-1 shrink-0">
 						{view === 'cards' && !draft && (!loading || board) && (
-							<button
+							<HeaderActionButton
+								theme={theme}
 								onClick={openNewCard}
-								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
-								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
 								title="Add a card"
+								icon={<Plus />}
+								className="focus-ring"
 							>
-								<Plus className="w-4 h-4" /> New card
-							</button>
+								New card
+							</HeaderActionButton>
 						)}
 						<button
 							onClick={() => void load(true)}
@@ -1672,19 +1676,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								if (newRoleName.trim() && !workerBusy) void createRole();
 							}}
 						>
-							<label htmlFor="board-new-role-name">New role</label>
-							<input
+							<FormInput
+								theme={theme}
 								id="board-new-role-name"
+								label="New role"
 								value={newRoleName}
 								disabled={workerBusy}
-								onChange={(event) => setNewRoleName(event.target.value)}
+								onChange={setNewRoleName}
 								placeholder="e.g. Reviewer"
-								className="rounded px-2 py-1"
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
+								className="focus-ring select-text"
 							/>
 							<button
 								type="submit"
@@ -1744,20 +1744,14 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						</button>
 					)}
 					{!selectedWorkerId && (
-						<label className="block">
-							Search workers and agents
-							<input
-								aria-label="Search workers and agents"
-								value={workerSearch}
-								onChange={(event) => setWorkerSearch(event.target.value)}
-								className="block w-full rounded border px-2 py-1"
-								style={{
-									borderColor: theme.colors.border,
-									backgroundColor: theme.colors.bgMain,
-									color: theme.colors.textMain,
-								}}
-							/>
-						</label>
+						<FilterInput
+							theme={theme}
+							ariaLabel="Search workers and agents"
+							placeholder="Search workers and agents"
+							value={workerSearch}
+							onChange={setWorkerSearch}
+							width="100%"
+						/>
 					)}
 					{!selectedWorkerId && <h3 className="font-semibold mt-3">Registered workers</h3>}
 					{workers
@@ -3115,7 +3109,7 @@ function CardEditor({
 					<button
 						type="button"
 						onClick={onRefreshCatalog}
-						className="underline focus-visible:ring-2 focus-visible:ring-blue-400"
+						className="underline focus-ring"
 						style={{ color: theme.colors.accent }}
 					>
 						Retry catalog
@@ -3129,7 +3123,7 @@ function CardEditor({
 					type="button"
 					disabled={!canAddReview || saving}
 					onClick={onAddReview}
-					className="rounded-md px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+					className="rounded-md px-3 py-1.5 text-sm focus-ring disabled:opacity-50"
 					style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
 				>
 					Add review
@@ -3181,7 +3175,7 @@ function CardEditor({
 								Review {field}
 								<input
 									readOnly
-									className="w-full rounded-md px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+									className="w-full rounded-md px-2 py-1.5 text-sm focus-ring disabled:opacity-50"
 									aria-label={`Review ${field}`}
 									value={draft.reviewContext![field]}
 									onChange={(e) =>
@@ -3284,22 +3278,16 @@ function CardEditor({
 							]}
 						/>
 					</div>
-					<label
-						className="block space-y-1 flex-1 min-w-0 basis-[180px]"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span className="text-xs">Working directory</span>
-						<input
-							aria-label="Working directory"
+					<div className="flex-1 min-w-0 basis-[180px]">
+						<FormInput
+							theme={theme}
+							label="Working directory"
 							value={draft.workingDirectory}
 							placeholder="Explicit absolute execution directory"
-							style={inputStyle}
-							className="w-full rounded-md px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
-							onChange={(e) =>
-								setDraft((p) => (p ? { ...p, workingDirectory: e.target.value } : p))
-							}
+							className="focus-ring select-text"
+							onChange={(value) => setDraft((p) => (p ? { ...p, workingDirectory: value } : p))}
 						/>
-					</label>
+					</div>
 					<div
 						className="block space-y-1 flex-1 min-w-0 basis-[180px]"
 						style={{ color: theme.colors.textDim }}
@@ -3350,7 +3338,7 @@ function CardEditor({
 
 				<button
 					type="button"
-					className="rounded-md px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+					className="rounded-md px-3 py-1.5 text-sm focus-ring disabled:opacity-50"
 					style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
 					onClick={() => {
 						void onRevalidateSource()
@@ -3366,18 +3354,14 @@ function CardEditor({
 				</button>
 				{repairMessage && <div role="status">{repairMessage}</div>}
 
-				<label className="block space-y-1">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Title
-					</span>
-					<input
-						value={draft.title}
-						onChange={(e) => setDraft((p) => (p ? { ...p, title: e.target.value } : p))}
-						placeholder="e.g. Design the schema"
-						className="w-full rounded-md px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
-						style={inputStyle}
-					/>
-				</label>
+				<FormInput
+					theme={theme}
+					label="Title"
+					value={draft.title}
+					onChange={(value) => setDraft((p) => (p ? { ...p, title: value } : p))}
+					placeholder="e.g. Design the schema"
+					className="focus-ring select-text"
+				/>
 
 				<label className="block space-y-1">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -3389,7 +3373,7 @@ function CardEditor({
 						onChange={(e) => setDraft((p) => (p ? { ...p, body: e.target.value } : p))}
 						placeholder="Instructions handed to the assignee agent."
 						rows={4}
-						className="w-full rounded-md px-2 py-1.5 text-sm resize-y focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+						className="w-full rounded-md px-2 py-1.5 text-sm resize-y focus-ring disabled:opacity-50"
 						style={{ ...inputStyle, ...bodyResize.style }}
 					/>
 				</label>
@@ -3500,7 +3484,7 @@ function CardEditor({
 							onChange={(e) =>
 								setDraft((p) => (p ? { ...p, worktreeEnabled: e.target.checked } : p))
 							}
-							className="cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+							className="cursor-pointer focus-ring disabled:opacity-50"
 							style={{ accentColor: theme.colors.accent }}
 						/>
 						<span className="text-xs" style={{ color: theme.colors.textMain }}>
@@ -3522,7 +3506,7 @@ function CardEditor({
 										setDraft((p) => (p ? { ...p, worktreePath: e.target.value } : p))
 									}
 									placeholder="auto: sibling worktrees/ folder"
-									className="w-full rounded-md px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+									className="w-full rounded-md px-2 py-1.5 text-sm focus-ring disabled:opacity-50"
 									style={inputStyle}
 								/>
 							</label>
@@ -3536,7 +3520,7 @@ function CardEditor({
 										setDraft((p) => (p ? { ...p, worktreeBranch: e.target.value } : p))
 									}
 									placeholder="auto: board/<board>/<card>"
-									className="w-full rounded-md px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+									className="w-full rounded-md px-2 py-1.5 text-sm focus-ring disabled:opacity-50"
 									style={inputStyle}
 								/>
 							</label>
@@ -3554,7 +3538,7 @@ function CardEditor({
 									onChange={(e) =>
 										setDraft((p) => (p ? { ...p, prOnDoneEnabled: e.target.checked } : p))
 									}
-									className="cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+									className="cursor-pointer focus-ring disabled:opacity-50"
 									style={{ accentColor: theme.colors.accent }}
 								/>
 								<span className="text-xs" style={{ color: theme.colors.textMain }}>
@@ -3575,7 +3559,7 @@ function CardEditor({
 											setDraft((p) => (p ? { ...p, prTargetBranch: e.target.value } : p))
 										}
 										placeholder="repo default branch"
-										className="w-full rounded-md px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+										className="w-full rounded-md px-2 py-1.5 text-sm focus-ring disabled:opacity-50"
 										style={inputStyle}
 									/>
 								</label>
@@ -3609,7 +3593,7 @@ function CardEditor({
 									>
 										<input
 											style={{ accentColor: theme.colors.accent }}
-											className="focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+											className="focus-ring disabled:opacity-50"
 											type="checkbox"
 											checked={checked}
 											disabled={!!draft.reviewContext && draft.parents[0] === c.id}
@@ -3637,15 +3621,15 @@ function CardEditor({
 				)}
 
 				<div className="flex items-center gap-2">
-					<button
+					<HeaderActionButton
+						theme={theme}
 						onClick={onSave}
 						disabled={!canSave}
-						className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-opacity disabled:opacity-40"
-						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						className="focus-ring"
+						icon={<Plus />}
 					>
-						<Plus className="w-4 h-4" />
 						{draft.id === null ? 'Create card' : 'Save changes'}
-					</button>
+					</HeaderActionButton>
 					<button
 						onClick={onCancel}
 						disabled={saving}

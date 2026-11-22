@@ -2171,6 +2171,10 @@ describe('Board worker discovery', () => {
 		expect(within(available).queryByText('Other')).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Registered.*Enabled/ })).not.toBeInTheDocument();
 		expect(registerWorker).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('button', { name: 'Clear filter', exact: true }));
+		expect(screen.getByRole('textbox', { name: 'Search workers and agents' })).toHaveValue('');
+		expect(within(available).getByText('Other')).toBeInTheDocument();
+		expect(registerWorker).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByRole('button', { name: /Candidate.*Available agent/ }));
 		fireEvent.click(screen.getByRole('button', { name: 'Add worker' }));
 		expect(registerWorker).toHaveBeenCalledWith('candidate');

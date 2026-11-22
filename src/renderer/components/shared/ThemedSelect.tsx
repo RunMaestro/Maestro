@@ -194,7 +194,7 @@ export function ThemedSelect({
 				aria-expanded={open && !disabled}
 				aria-haspopup="listbox"
 				onClick={handleOpen}
-				className={`focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1${className ? ` ${className}` : ''}`}
+				className={`focus-ring${className ? ` ${className}` : ''}`}
 				style={{
 					display: 'flex',
 					alignItems: 'center',
@@ -206,7 +206,6 @@ export function ThemedSelect({
 					color: theme.colors.textMain,
 					padding: '4px 8px',
 					fontSize: 12,
-					outline: 'none',
 					cursor: disabled ? 'not-allowed' : 'pointer',
 					opacity: disabled ? 0.5 : undefined,
 					textAlign: 'left',
