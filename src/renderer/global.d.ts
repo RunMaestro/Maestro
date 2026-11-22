@@ -381,7 +381,7 @@ interface MaestroAPI {
 		 */
 		setMany: (updates: any[], removeIds?: string[], baselines?: any[]) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
-		setActiveSessionId: (id: string) => Promise<void>;
+		setActiveSessionId: (id: string, windowOnly?: true) => Promise<void>;
 		publishTranscript: (
 			patch: import('../shared/sessionTranscript').SessionTranscriptPatch<
 				import('./types').LogEntry

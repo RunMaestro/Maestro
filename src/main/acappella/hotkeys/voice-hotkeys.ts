@@ -102,7 +102,7 @@ export interface VoiceHotkeyDeps {
 	/** The agent the user is looking at - in the FOCUSED window, when there are several. */
 	resolveFocusedAgent: () => VoiceScope | null;
 	/** Bring Maestro to the front. Only `voiceCurrentAgent` calls it. */
-	summon: () => void;
+	summon: (scope: VoiceScope) => void;
 	/** A press was refused. The seam a toast or HUD line binds to. */
 	onRefused?: (info: VoiceHotkeyRefusalInfo) => void;
 	/** Tap-vs-hold threshold, read per press so a settings change takes effect live. */
@@ -266,10 +266,6 @@ export class VoiceHotkeyController {
 
 		let scope: VoiceScope;
 		if (id === VOICE_AGENT_HOTKEY_ID) {
-			// Summoned BEFORE the scope is resolved: the window that comes forward is
-			// the one whose agent the session binds to, and reversing the order would
-			// let a focus change between the two steps bind the wrong agent.
-			this.deps.summon();
 			const focused = this.deps.resolveFocusedAgent();
 			if (!focused) {
 				// Deliberately not falling back to the Conductor. The user asked to
@@ -283,6 +279,7 @@ export class VoiceHotkeyController {
 				return null;
 			}
 			scope = focused;
+			this.deps.summon(scope);
 		} else {
 			scope = { kind: 'conductor' };
 		}

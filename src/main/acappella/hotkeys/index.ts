@@ -45,7 +45,7 @@ export interface InstallVoiceHotkeysDeps {
 	settingsStore: VoiceHotkeySettingsStore;
 	/** The floor's view of the session service. Supplied by the IPC layer. */
 	session: FloorControlSession;
-	getMainWindow: () => BrowserWindow | null;
+	getWindowForSession: (sessionId: string) => BrowserWindow | null;
 	/**
 	 * The agent the user is looking at, in the FOCUSED window when there are
 	 * several. Null when nothing is focused, which refuses the agent hotkey rather
@@ -158,8 +158,8 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 			const sessionId = deps.getFocusedAgentSessionId();
 			return sessionId ? { kind: 'agent', sessionId } : null;
 		},
-		summon: () => {
-			const win = deps.getMainWindow();
+		summon: (scope) => {
+			const win = scope.kind === 'agent' ? deps.getWindowForSession(scope.sessionId) : null;
 			if (win) summonMainWindow(win);
 		},
 		onRefused: deps.onRefused,

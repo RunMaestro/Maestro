@@ -267,6 +267,7 @@ import { filterLiveAgents } from '../shared/agentVisibility';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 import { usePeerMirrorBridge } from './hooks/federation/usePeerMirrorBridge';
+import { usePeerMirrorStore } from './stores/peerMirrorStore';
 import { useLiftedAgentSettingsSync } from './hooks/federation/useLiftedAgentSettingsSync';
 
 /** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
@@ -904,6 +905,19 @@ function MaestroConsoleInner() {
 			setInitiatorWindowId(currentWindowId);
 		}
 	}, [activeGroupChatId, currentWindowId, groupChatInitiatorWindowId, setInitiatorWindowId]);
+
+	const peerMirrorShown = usePeerMirrorStore((state) => state.activeMirror !== null);
+	const voiceFocusedSessionId =
+		peerMirrorShown ||
+		(activeGroupChatId && isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId))
+			? ''
+			: (activeSession?.id ?? '');
+	useEffect(() => {
+		if (isWebDesktop() || !encoreFeatures.aCappella) return;
+		// Hydration and keyboard cycling update this selection without changing the
+		// persisted startup preference.
+		void window.maestro.sessions.setActiveSessionId(voiceFocusedSessionId, true);
+	}, [encoreFeatures.aCappella, voiceFocusedSessionId]);
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
 	const {

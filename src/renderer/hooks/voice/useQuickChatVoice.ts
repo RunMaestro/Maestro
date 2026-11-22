@@ -106,7 +106,7 @@ export function useQuickChatVoice(): QuickChatVoice {
 	}, [enabled, reportStartError]);
 
 	const holdEnd = useCallback(() => {
-		void closeVoiceMic({ send: true });
+		void closeVoiceMic({ send: true, scope: QUICK_CHAT_VOICE_SCOPE });
 	}, []);
 
 	return {

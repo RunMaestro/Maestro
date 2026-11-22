@@ -977,11 +977,15 @@ export function registerPersistenceHandlers(
 		return sessionsStore.get('activeSessionId', '');
 	});
 
-	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string) => {
+	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string, windowOnly?: unknown) => {
 		// Browser navigation is client-local, never the host's persisted focus.
 		if (isBridgeInvokeEvent(event)) return;
+		// Window focus is independent of the persisted startup preference.
+		if (windowOnly === true) {
+			if (typeof id === 'string') deps.onActiveSessionChanged?.(event.sender, id);
+			return;
+		}
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
-		deps.onActiveSessionChanged?.(event.sender, id);
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
 		activeSessionIdTimer = setTimeout(flushActiveSessionId, ACTIVE_SESSION_ID_DEBOUNCE_MS);

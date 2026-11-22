@@ -184,10 +184,18 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 		this.resolveSource = options.resolveSource;
 	}
 
+	private startGeneration = 0;
+
 	async start(callbacks: SttCallbacks): Promise<void> {
-		this.engine = this.injectedEngine
+		const generation = ++this.startGeneration;
+		const engine = this.injectedEngine
 			? await this.openInjected(this.injectedEngine)
 			: await this.openShared();
+		if (generation !== this.startGeneration) {
+			await engine.release();
+			return;
+		}
+		this.engine = engine;
 		this.callbacks = callbacks;
 		this.resetUtterance();
 	}
@@ -241,6 +249,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	}
 
 	async stop(): Promise<void> {
+		this.startGeneration += 1;
 		this.callbacks = null;
 		this.buffer.clear();
 		this.resetUtterance();

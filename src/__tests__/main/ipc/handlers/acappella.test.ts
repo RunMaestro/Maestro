@@ -485,6 +485,30 @@ describe('A Cappella IPC handlers - shutdownACappellaForDisable', () => {
 		expect(getVoiceSessionService()?.getState()).toBe('idle');
 	});
 
+	it('ends an active wake enrollment without shutting down the shared audio host', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		const wakeEnrollment = handlerFor('acappella:wake-enrollment');
+		const phrase = 'voice disable regression test';
+		await expect(
+			wakeEnrollment({}, { action: 'record', phrase, kind: 'phrase' })
+		).resolves.toMatchObject({
+			ok: true,
+			status: { recording: 'phrase' },
+		});
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+
+		await expect(wakeEnrollment({}, { action: 'status', phrase })).resolves.toMatchObject({
+			ok: true,
+			status: { recording: null },
+		});
+		expect(audioCommands()).toContainEqual({ kind: 'stop-capture' });
+		expect(audioHost.exists).toBe(true);
+	});
+
 	it('stands the transport down, so no advert and no device outlive the switch', async () => {
 		const transport = getACappellaTransport();
 		expect(transport, 'registration must have built a transport').not.toBeNull();
@@ -803,6 +827,18 @@ describe('A Cappella IPC handlers - a Quick Chat session', () => {
 		await expect(handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE)).rejects.toThrow(
 			/Quick Chat is turned off/
 		);
+	});
+
+	it('cancels a pending start when the Quick Chat window is put away', async () => {
+		registerWith(makeQuickChat());
+		const start = handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE);
+		const refused = expect(start).rejects.toThrow('The voice start was cancelled.');
+
+		await stopVoiceSessionForWindow('window-quick', 'hidden');
+
+		await refused;
+		expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
+		expect(voiceEvents().some((event) => event.type === 'listen-start')).toBe(false);
 	});
 
 	it('ends when the Quick Chat window is put away', async () => {

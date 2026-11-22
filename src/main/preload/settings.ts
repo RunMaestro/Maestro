@@ -59,7 +59,10 @@ export function createSessionsApi() {
 		setMany: (updates: StoredSession[], removeIds: string[] = [], baselines?: StoredSession[]) =>
 			ipcRenderer.invoke('sessions:setMany', updates, removeIds, baselines),
 		getActiveSessionId: () => ipcRenderer.invoke('sessions:getActiveSessionId') as Promise<string>,
-		setActiveSessionId: (id: string) => ipcRenderer.invoke('sessions:setActiveSessionId', id),
+		setActiveSessionId: (id: string, windowOnly?: true) =>
+			windowOnly
+				? ipcRenderer.invoke('sessions:setActiveSessionId', id, true)
+				: ipcRenderer.invoke('sessions:setActiveSessionId', id),
 		publishTranscript: (patch: SessionTranscriptPatch, requestId?: string) =>
 			ipcRenderer.invoke('sessions:publishTranscript', patch, requestId),
 		onTranscriptSync: (handler: (patch: SessionTranscriptPatch) => void) => {

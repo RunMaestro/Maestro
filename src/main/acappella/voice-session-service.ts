@@ -419,6 +419,7 @@ export class VoiceSessionService {
 	private state: VoiceSessionState = 'idle';
 	/** A teardown is in flight. Guards the await inside `stopSession`. */
 	private stopping = false;
+	private stopCompletion: Promise<void> | null = null;
 	/**
 	 * The microphone is gated shut while the session stays alive. See
 	 * {@link setListening}. Announced as `listen-gate`, never inferred from state:
@@ -671,12 +672,18 @@ export class VoiceSessionService {
 		 * there is no moment of hot microphone before the first hold.
 		 */
 		paused?: boolean;
+		stillRequested?: () => boolean;
 	}): Promise<VoiceSessionSnapshot> {
+		if (this.stopCompletion) await this.stopCompletion;
+		if (params.stillRequested?.() === false) return this.getSnapshot();
 		if (this.state !== 'idle') {
 			await this.stopSession('replaced');
 		}
+		if (params.stillRequested?.() === false) return this.getSnapshot();
 
-		this.sessionId = generateUUID();
+		const sessionId = generateUUID();
+		this.sessionId = sessionId;
+		const startupIsCurrent = () => this.sessionId === sessionId && !this.stopping;
 		this.scope = params.scope;
 		this.origin = params.origin ?? { kind: 'local' };
 		this.windowId = params.windowId ?? null;
@@ -706,6 +713,7 @@ export class VoiceSessionService {
 		// then discovered it has nowhere to send the audio has already cost the user
 		// a recording light and an OS permission prompt for nothing.
 		const readiness = await this.checkReadiness?.();
+		if (!startupIsCurrent()) return this.getSnapshot();
 		if (readiness && !readiness.canStartSession) {
 			const blocked = readiness.blocking[0];
 			this.fail(
@@ -719,6 +727,7 @@ export class VoiceSessionService {
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
 		} catch (error) {
+			if (!startupIsCurrent()) return this.getSnapshot();
 			if (isVoiceProviderError(error)) {
 				this.failFromProvider(error, this.providers.stt.id);
 			} else {
@@ -730,6 +739,8 @@ export class VoiceSessionService {
 			}
 			return this.getSnapshot();
 		}
+
+		if (!startupIsCurrent()) return this.getSnapshot();
 
 		// Ahead of the first `listen-start`, so nothing that follows the stream
 		// opens a device it would then have to close.
@@ -761,13 +772,14 @@ export class VoiceSessionService {
 		// a second caller arriving inside that window (two hotkeys, a stop word and a
 		// window close) would find the state still non-idle and tear the same session
 		// down twice.
+		if (this.stopCompletion) return this.stopCompletion;
 		if (this.state === 'idle' || this.stopping) return;
 		this.stopping = true;
-		try {
-			await this.runStopSession(reason);
-		} finally {
+		this.stopCompletion = this.runStopSession(reason).finally(() => {
 			this.stopping = false;
-		}
+			this.stopCompletion = null;
+		});
+		return this.stopCompletion;
 	}
 
 	private async runStopSession(reason: VoiceStopReason): Promise<void> {
