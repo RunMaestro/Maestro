@@ -63,16 +63,14 @@ const ERROR_CLASS_PREFIX = /^[A-Za-z]*Error:\s*/;
  * fallback, non-Errors keep the renderer's existing String(value) contract.
  */
 export function ipcErrorMessage(error: unknown, fallback?: string): string {
-	if (!(error instanceof Error) || !error.message) {
-		if (fallback !== undefined) {
-			return typeof error === 'string' ? error.trim() || fallback : fallback;
-		}
-		return String(error);
-	}
-	const unwrapped = error.message.replace(IPC_PREFIX, '');
-	const message =
-		unwrapped === error.message
-			? error.message.trim()
-			: unwrapped.replace(ERROR_CLASS_PREFIX, '').trim();
-	return message || fallback || '';
+	const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+	if (!text) return fallback ?? String(error);
+
+	const unwrapped = text.replace(IPC_PREFIX, '');
+	if (unwrapped !== text) return unwrapped.replace(ERROR_CLASS_PREFIX, '').trim() || fallback || '';
+
+	// Forwarded IPC failures may already be strings. Keep unwrapped strings
+	// literal for legacy renderer callers without a fallback.
+	if (typeof error === 'string' && fallback === undefined) return error;
+	return text.trim() || fallback || '';
 }
