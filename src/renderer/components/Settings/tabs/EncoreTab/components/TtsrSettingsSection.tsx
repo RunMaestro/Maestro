@@ -1,5 +1,6 @@
 import { Plus, X } from 'lucide-react';
 import { TTSR_RULES_DIR } from '../../../../../../shared/maestro-paths';
+import { isImeComposing } from '../../../../../utils/ime';
 import type { Theme } from '../../../../../types';
 import type { TtsrSettingsState } from '../types';
 
@@ -94,7 +95,7 @@ export function TtsrSettingsSection({
 							value={ttsrState.newDisabledRule}
 							onChange={(event) => ttsrState.setNewDisabledRule(event.target.value)}
 							onKeyDown={(event) => {
-								if (event.key === 'Enter') {
+								if (event.key === 'Enter' && !isImeComposing(event)) {
 									event.preventDefault();
 									ttsrState.addDisabledRule();
 								}

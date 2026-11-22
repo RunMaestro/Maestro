@@ -21,6 +21,7 @@ import { buildRuleAuthoringPrompt, isTtsrRuleApiAvailable, ttsrService } from '.
 import { notifyToast } from '../../stores/notificationStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { matchKey, useTtsrStore } from '../../stores/ttsrStore';
+import { isImeComposing } from '../../utils/ime';
 import { logger } from '../../utils/logger';
 import type {
 	Theme,
@@ -287,7 +288,12 @@ export function TtsrRulesPanel({
 						value={request}
 						onChange={(e) => setRequest(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && request.trim()) {
+							if (
+								e.key === 'Enter' &&
+								!isImeComposing(e) &&
+								(e.metaKey || e.ctrlKey) &&
+								request.trim()
+							) {
 								e.preventDefault();
 								void authorRule(request, true);
 							}

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mockNotifyToast = vi.fn();
 vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
@@ -147,6 +147,22 @@ describe('TtsrRulesPanel', () => {
 
 		await waitFor(() => expect(onSendToAgent).toHaveBeenCalledTimes(1));
 		expect(onSendToAgent.mock.calls[0][0]).toContain('no console.log');
+	});
+
+	it('does not send a rule request when Enter confirms an IME candidate', async () => {
+		const onSendToAgent = vi.fn();
+		render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} onSendToAgent={onSendToAgent} />);
+		await waitFor(() => expect(window.maestro.ttsr.listRules).toHaveBeenCalled());
+		const compose = screen.getByPlaceholderText(/force-push/i);
+		fireEvent.change(compose, { target: { value: 'no console.log' } });
+
+		await act(async () => {
+			fireEvent.keyDown(compose, { key: 'Enter', ctrlKey: true, keyCode: 229 });
+		});
+		expect(onSendToAgent).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(compose, { key: 'Enter', ctrlKey: true });
+		await waitFor(() => expect(onSendToAgent).toHaveBeenCalledOnce());
 	});
 
 	it('clears the compose draft after sending it', async () => {
