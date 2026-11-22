@@ -1,6 +1,6 @@
 /**
- * TokenSpeedCards - average and peak tokens per second, split into input,
- * output, and total.
+ * TokenSpeedCards - average and peak tokens per second for output, input, and
+ * total, one card each with the average beside the peak.
  *
  * Shared by the Overview (where `OverviewTokenSpeed` fetches the range itself)
  * and the Tokens tab (which already holds the payload), so the two surfaces
@@ -15,7 +15,7 @@
 
 import { memo } from 'react';
 import { format } from 'date-fns';
-import { ArrowDownToLine, ArrowUpFromLine, Gauge, Zap } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Gauge } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../../shared/stats-types';
 import {
@@ -34,24 +34,17 @@ import { useTokenUsage } from './useTokenUsage';
 interface TokenSpeedCardsProps {
 	speed: TokenSpeedSummary;
 	theme: Theme;
-	/** Grid columns at the widest breakpoint (default 6). */
-	columns?: number;
 }
 
-function rate(tps: number): string {
-	const text = formatTokensPerSecond(tps);
-	return text === '-' ? text : `${text} tok/s`;
-}
+/** What a peak is, in the user's terms. Said once, by the surface's heading. */
+const TOKEN_SPEED_PEAK_NOTE = `peak = fastest model-hour (${TOKEN_SPEED_PEAK_MIN_BUCKET_MS / 60_000}+ min of calls)`;
 
-/** Where and on what the output peak happened, for the peak card's sub-line. */
+/** Where and on what the output peak happened, for the Output card's detail. */
 function peakContext(stats: TokenSpeedStats): string | null {
 	if (stats.peakOutputAtMs === undefined) return null;
 	const when = format(stats.peakOutputAtMs, 'MMM d, h a');
 	return stats.peakOutputModel ? `${stats.peakOutputModel} · ${when}` : when;
 }
-
-/** Sub-line for a peak card: what a peak is, in the user's terms. */
-const PEAK_NOTE = `fastest model-hour (${TOKEN_SPEED_PEAK_MIN_BUCKET_MS / 60_000}+ min of calls)`;
 
 /** "Claude Code, Codex and OpenCode": the providers whose speed can be measured. */
 function measurableAgentsText(agentIds: readonly string[]): string {
@@ -61,16 +54,22 @@ function measurableAgentsText(agentIds: readonly string[]): string {
 		: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
+/**
+ * Three cards (Output, Input, Total), each with its average beside its peak:
+ * the comparison a reader makes, and narrow enough that a rate never wraps.
+ * The unit sits on the label, so the figures stay bare numbers.
+ */
 export const TokenSpeedCards = memo(function TokenSpeedCards({
 	speed,
 	theme,
-	columns = 6,
 }: TokenSpeedCardsProps) {
 	const { overall } = speed;
-	const dim = (text: string) => (
-		<span className="text-xs" style={{ color: theme.colors.textDim }}>
-			{text}
-		</span>
+	const details = (...lines: (string | null)[]) => (
+		<div className="text-xs mt-2 space-y-0.5" style={{ color: theme.colors.textDim }}>
+			{lines.filter(Boolean).map((line) => (
+				<div key={line}>{line}</div>
+			))}
+		</div>
 	);
 
 	if (overall.calls === 0) {
@@ -87,76 +86,61 @@ export const TokenSpeedCards = memo(function TokenSpeedCards({
 		);
 	}
 
-	const peakNote = peakContext(overall);
-	const gridCols =
-		columns >= 6 ? 'lg:grid-cols-3 xl:grid-cols-6' : columns >= 3 ? 'lg:grid-cols-3' : '';
+	const peakAt = peakContext(overall);
+	const cards = [
+		{
+			icon: <ArrowUpFromLine size={16} />,
+			label: 'Output',
+			avg: overall.avgOutputTps,
+			peak: overall.peakOutputTps,
+			extra: details(
+				`${formatNumber(overall.calls)} calls measured${
+					speed.measuredAgents.length > 0
+						? ` (${speed.measuredAgents.map(getAgentDisplayName).join(', ')})`
+						: ''
+				}`,
+				peakAt && `peak on ${peakAt}`
+			),
+		},
+		{
+			icon: <ArrowDownToLine size={16} />,
+			label: 'Input',
+			avg: overall.avgInputTps,
+			peak: overall.peakInputTps,
+			extra: details('prompt tokens, cache reads included'),
+		},
+		{
+			icon: <Gauge size={16} />,
+			label: 'Total',
+			avg: overall.avgTotalTps,
+			peak: overall.peakTotalTps,
+			// The fleet figure is a different measure (tokens finished in one clock
+			// hour / 3,600 s, all agents together), so it is labeled as such
+			// rather than sitting beside a per-model peak as if it were one.
+			extra: details(
+				'input + output per second of call time',
+				speed.busiestHour &&
+					`all agents' busiest clock hour: ${formatTokensPerSecond(speed.busiestHour.totalTps)} tok/s`
+			),
+		},
+	];
 
 	return (
-		<div
-			className={`grid grid-cols-1 sm:grid-cols-2 ${gridCols} gap-3`}
-			data-testid="token-speed-cards"
-		>
-			<MetricCard
-				icon={<ArrowUpFromLine size={16} />}
-				label="Avg Output"
-				value={rate(overall.avgOutputTps)}
-				theme={theme}
-				animationIndex={0}
-				extra={dim(
-					`${formatNumber(overall.calls)} calls measured${
-						speed.measuredAgents.length > 0
-							? ` (${speed.measuredAgents.map(getAgentDisplayName).join(', ')})`
-							: ''
-					}`
-				)}
-			/>
-			<MetricCard
-				icon={<ArrowDownToLine size={16} />}
-				label="Avg Input"
-				value={rate(overall.avgInputTps)}
-				theme={theme}
-				animationIndex={1}
-				extra={dim('prompt tokens, cache reads included')}
-			/>
-			<MetricCard
-				icon={<Gauge size={16} />}
-				label="Avg Total"
-				value={rate(overall.avgTotalTps)}
-				theme={theme}
-				animationIndex={2}
-				extra={dim('input + output per second of call time')}
-			/>
-			<MetricCard
-				icon={<Zap size={16} />}
-				label="Peak Output"
-				value={rate(overall.peakOutputTps)}
-				theme={theme}
-				animationIndex={3}
-				extra={dim(peakNote ?? PEAK_NOTE)}
-			/>
-			<MetricCard
-				icon={<Zap size={16} />}
-				label="Peak Input"
-				value={rate(overall.peakInputTps)}
-				theme={theme}
-				animationIndex={4}
-				extra={dim(PEAK_NOTE)}
-			/>
-			<MetricCard
-				icon={<Zap size={16} />}
-				label="Peak Total"
-				value={rate(overall.peakTotalTps)}
-				theme={theme}
-				animationIndex={5}
-				// The fleet figure is a different measure (tokens finished in one clock
-				// hour / 3,600 s, all agents together), so it is labeled as such
-				// rather than sitting under a per-model peak as if it were one.
-				extra={dim(
-					speed.busiestHour
-						? `${PEAK_NOTE}; all agents' busiest clock hour averaged ${rate(speed.busiestHour.totalTps)}`
-						: PEAK_NOTE
-				)}
-			/>
+		<div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-testid="token-speed-cards">
+			{cards.map((card, i) => (
+				<MetricCard
+					key={card.label}
+					icon={card.icon}
+					label={card.label}
+					unit="tok/s"
+					valueLabel="Avg"
+					value={formatTokensPerSecond(card.avg)}
+					secondary={{ label: 'Peak', value: formatTokensPerSecond(card.peak) }}
+					theme={theme}
+					animationIndex={i}
+					extra={card.extra}
+				/>
+			))}
 		</div>
 	);
 });
@@ -189,6 +173,9 @@ export const OverviewTokenSpeed = memo(function OverviewTokenSpeed({
 	const heading = (
 		<h3 className="text-sm font-semibold mb-3" style={{ color: theme.colors.textMain }}>
 			Tokens per Second
+			<span className="ml-2 text-xs font-normal" style={{ color: theme.colors.textDim }}>
+				{TOKEN_SPEED_PEAK_NOTE}
+			</span>
 		</h3>
 	);
 
