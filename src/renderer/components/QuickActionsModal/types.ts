@@ -20,6 +20,7 @@ export interface QuickAction {
 	label: string;
 	action: () => void | Promise<void>;
 	subtext?: string;
+	keywords?: string[];
 	shortcut?: Shortcut;
 	// Agents-mode only: marks an agent whose state is not 'idle' so we can
 	// bucket "active" agents at the top with a divider beneath them. Also true

@@ -29,7 +29,10 @@ export function filterAndSortQuickActions(
 			if (isDebugCommand && !showDebugCommands) {
 				return false;
 			}
-			return a.label.toLowerCase().includes(searchLower);
+			return (
+				a.label.toLowerCase().includes(searchLower) ||
+				(a.keywords?.some((keyword) => keyword.toLowerCase().includes(searchLower)) ?? false)
+			);
 		})
 		.sort((a, b) => {
 			// Buckets outrank everything in agents mode: the list is drawn under
