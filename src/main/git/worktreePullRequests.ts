@@ -6,7 +6,10 @@ import type {
 } from '../../shared/worktreePullRequests';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { execFileNoThrow } from '../utils/execFile';
-import { execGitReadOnly } from '../utils/remote-git';
+import {
+	execWorktreeGitReadOnly,
+	scheduleWorktreePullRequestRead,
+} from './worktreePullRequestProcesses';
 
 // Deliberately accept only GitHub.com remotes: a different host needs its own
 // authenticated API routing, not a silent request to github.com.
@@ -84,14 +87,17 @@ export async function discoverWorktreePullRequest(
 		message: string
 	): WorktreePullRequestDiscoveryResult => ({ status: 'unavailable', reason, message });
 	try {
-		const sha = await execGitReadOnly(['rev-parse', '--verify', 'HEAD'], cwd);
+		const sha = await execWorktreeGitReadOnly(['rev-parse', '--verify', 'HEAD'], cwd);
 		if (sha.exitCode !== 0 || !sha.stdout.trim())
 			return unavailable('git', sha.stderr || 'Cannot read HEAD');
-		const branch = await execGitReadOnly(['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd);
+		const branch = await execWorktreeGitReadOnly(
+			['symbolic-ref', '--quiet', '--short', 'HEAD'],
+			cwd
+		);
 		if (branch.exitCode === 1) return { status: 'detached', localSha: sha.stdout.trim() };
 		if (branch.exitCode !== 0 || !branch.stdout.trim())
 			return unavailable('git', branch.stderr || 'Cannot read branch');
-		const remote = await execGitReadOnly(['remote', 'get-url', 'origin'], cwd);
+		const remote = await execWorktreeGitReadOnly(['remote', 'get-url', 'origin'], cwd);
 		if (remote.exitCode !== 0) return unavailable('git', remote.stderr || 'Cannot read origin');
 		const headRepo = githubRemote(remote.stdout);
 		if (!headRepo)
@@ -103,10 +109,12 @@ export async function discoverWorktreePullRequest(
 		};
 		const gh = await resolveGhPath();
 		const api = async (args: string[]) =>
-			execFileNoThrow(gh, ['api', '--hostname', 'github.com', ...args], cwd, {
-				timeout: 30000,
-				env: getExpandedEnv(),
-			});
+			scheduleWorktreePullRequestRead(() =>
+				execFileNoThrow(gh, ['api', '--hostname', 'github.com', ...args], cwd, {
+					timeout: 30000,
+					env: getExpandedEnv(),
+				})
+			);
 		const repoResult = await api([`repos/${headRepo.owner}/${headRepo.name}`]);
 		if (repoResult.exitCode !== 0)
 			return unavailable('gh', repoResult.stderr || 'GitHub repository lookup failed');
@@ -217,8 +225,11 @@ export async function readWorktreePullRequestCi(
 	let divergence: import('../../shared/worktreePullRequests').WorktreePullRequestDivergence =
 		unavailableDivergence('Local comparison failed.');
 	try {
-		const local = await execGitReadOnly(['rev-parse', '--verify', 'HEAD'], request.worktreePath);
-		const branch = await execGitReadOnly(
+		const local = await execWorktreeGitReadOnly(
+			['rev-parse', '--verify', 'HEAD'],
+			request.worktreePath
+		);
+		const branch = await execWorktreeGitReadOnly(
 			['symbolic-ref', '--quiet', '--short', 'HEAD'],
 			request.worktreePath
 		);
@@ -234,7 +245,7 @@ export async function readWorktreePullRequestCi(
 		if (head.localSha === headSha) {
 			divergence = { status: 'equal', localSha: head.localSha, pullRequestHeadSha: headSha };
 		} else {
-			const counts = await execGitReadOnly(
+			const counts = await execWorktreeGitReadOnly(
 				['rev-list', '--left-right', '--count', `${head.localSha}...${headSha}`],
 				request.worktreePath
 			);
@@ -264,10 +275,12 @@ export async function readWorktreePullRequestCi(
 			return { ci: unavailableCi('Invalid GitHub PR identity.'), divergence };
 		}
 		const api = (args: string[]) =>
-			execFileNoThrow(gh, ['api', '--hostname', 'github.com', ...args], request.worktreePath, {
-				timeout: 30000,
-				env: getExpandedEnv(),
-			});
+			scheduleWorktreePullRequestRead(() =>
+				execFileNoThrow(gh, ['api', '--hostname', 'github.com', ...args], request.worktreePath, {
+					timeout: 30000,
+					env: getExpandedEnv(),
+				})
+			);
 		const base = `repos/${repo.owner}/${repo.name}`;
 		const [runs, statuses, workflows] = await Promise.all([
 			api(['--paginate', '--slurp', `${base}/commits/${headSha}/check-runs?per_page=100`]),
@@ -387,11 +400,11 @@ export async function readWorktreePullRequestCi(
 		if (current.exitCode !== 0)
 			return { ci: unavailableCi(current.stderr || 'PR head verification failed.'), divergence };
 		const verified = pullFromApi(JSON.parse(current.stdout), repo);
-		const localAfter = await execGitReadOnly(
+		const localAfter = await execWorktreeGitReadOnly(
 			['rev-parse', '--verify', 'HEAD'],
 			request.worktreePath
 		);
-		const branchAfter = await execGitReadOnly(
+		const branchAfter = await execWorktreeGitReadOnly(
 			['symbolic-ref', '--quiet', '--short', 'HEAD'],
 			request.worktreePath
 		);

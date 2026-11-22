@@ -2,7 +2,7 @@ import type {
 	WorktreePullRequestDiscoveryRequest,
 	WorktreePullRequestSnapshot,
 } from '../../shared/worktreePullRequests';
-import { execGitReadOnly } from '../utils/remote-git';
+import { execWorktreeGitReadOnly } from './worktreePullRequestProcesses';
 import { discoverWorktreePullRequest, readWorktreePullRequestCi } from './worktreePullRequests';
 
 // No timer is retained: callers poll on their own lifecycle. Bound both age and memory.
@@ -25,9 +25,9 @@ export function invalidateWorktreePullRequest(worktreePath: string): void {
 
 async function checkout(request: WorktreePullRequestDiscoveryRequest): Promise<string | null> {
 	const [sha, branch, remote] = await Promise.all([
-		execGitReadOnly(['rev-parse', '--verify', 'HEAD'], request.worktreePath),
-		execGitReadOnly(['symbolic-ref', '--quiet', '--short', 'HEAD'], request.worktreePath),
-		execGitReadOnly(['remote', 'get-url', 'origin'], request.worktreePath),
+		execWorktreeGitReadOnly(['rev-parse', '--verify', 'HEAD'], request.worktreePath),
+		execWorktreeGitReadOnly(['symbolic-ref', '--quiet', '--short', 'HEAD'], request.worktreePath),
+		execWorktreeGitReadOnly(['remote', 'get-url', 'origin'], request.worktreePath),
 	]);
 	if (
 		sha.exitCode !== 0 ||

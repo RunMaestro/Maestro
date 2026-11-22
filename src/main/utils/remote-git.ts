@@ -183,15 +183,20 @@ export async function execGitReadOnly(
 	localCwd: string,
 	sshRemote?: SshRemoteConfig | null,
 	remoteCwd?: string,
-	timeoutMs: number = READ_ONLY_GIT_TIMEOUT_MS
+	timeoutMs: number = READ_ONLY_GIT_TIMEOUT_MS,
+	scheduleStart?: (start: () => Promise<ExecResult>) => Promise<ExecResult>
 ): Promise<ExecResult> {
 	const key = [sshRemote?.id ?? '', sshRemote ? (remoteCwd ?? '') : localCwd, ...args].join('\0');
 	let run = readOnlyGitInFlight.get(key);
 	if (!run) {
-		run = execGit(args, localCwd, sshRemote, remoteCwd, {
-			timeout: timeoutMs,
-			env: NO_OPTIONAL_LOCKS_ENV,
-		}).finally(() => {
+		const start = () =>
+			execGit(args, localCwd, sshRemote, remoteCwd, {
+				timeout: timeoutMs,
+				env: NO_OPTIONAL_LOCKS_ENV,
+			});
+		// Register the queued read before starting it, so background scheduling
+		// preserves single-flight and never reuses a completed checkout proof.
+		run = (scheduleStart ? scheduleStart(start) : start()).finally(() => {
 			readOnlyGitInFlight.delete(key);
 		});
 		readOnlyGitInFlight.set(key, run);
