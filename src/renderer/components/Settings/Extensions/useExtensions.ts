@@ -64,6 +64,10 @@ export interface UseExtensionsResult {
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 }
 
+import { useModalStore } from '../../../stores/modalStore';
+import { launchFromSettings } from '../../../utils/launchFromSettings';
+import { isWebDesktop } from '../../../utils/runtimeContext';
+
 export function useExtensions(): UseExtensionsResult {
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const setEncoreFeatures = useSettingsStore((s) => s.setEncoreFeatures);
@@ -136,6 +140,9 @@ export function useExtensions(): UseExtensionsResult {
 			const applyFlag = (value: boolean) => {
 				setEncoreFeatures({ ...encoreFeatures, [flag]: value });
 				if (flag === 'usageStats') setStatsCollectionEnabled(value);
+				if (flag === 'aCappella' && value && !isWebDesktop()) {
+					launchFromSettings(() => useModalStore.getState().openModal('voiceSetup'));
+				}
 			};
 			if (!isFirstPartyFlag(flag)) {
 				applyFlag(next);

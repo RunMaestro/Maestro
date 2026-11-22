@@ -20,7 +20,8 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { VoiceSetupModal } from '../Settings/ACappella/VoiceSetupModal';
+import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { GitLogModalData } from '../../stores/modalStore';
 
@@ -562,6 +563,16 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
 	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
 	// and option lists itself, so all it needs from here is the theme.
+	const voiceSetupOpen = useModalStore(selectModalOpen('voiceSetup'));
+	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
+	const closeVoiceSetup = useCallback(() => useModalStore.getState().closeModal('voiceSetup'), []);
+	const openVoiceSettings = useCallback(() => {
+		closeVoiceSetup();
+		useModalStore.getState().openModal('settings', {
+			tab: 'encore',
+			settingId: 'encore-a-cappella-voice-setup',
+		});
+	}, [closeVoiceSetup]);
 	const modelEffortOpen = useModalStore(selectModalOpen('modelEffort'));
 	const modelEffortData = useModalStore(selectModalData('modelEffort'));
 	const closeModelEffort = useCallback(
@@ -931,6 +942,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 			)}
 
 			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}
+			{voiceSetupOpen && voiceEnabled && (
+				<VoiceSetupModal
+					theme={theme}
+					enabled={voiceEnabled}
+					onClose={closeVoiceSetup}
+					onOpenSettings={openVoiceSettings}
+				/>
+			)}
 			{modelEffortOpen && modelEffortData && (
 				<ModelEffortModal theme={theme} tabId={modelEffortData.tabId} onClose={closeModelEffort} />
 			)}

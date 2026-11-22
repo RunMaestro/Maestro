@@ -3183,4 +3183,4 @@ export function getSettingsActions() {
 }
 
 export const selectACappellaEnabled = (state: SettingsStore) =>
-	state.encoreFeatures.aCappella === true;
+	!isWebDesktop() && state.encoreFeatures.aCappella === true;

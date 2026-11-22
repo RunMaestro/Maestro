@@ -460,6 +460,7 @@ export type ModalId =
 	| 'gitDiff'
 	| 'gitLog'
 	| 'gitCommandRunner'
+	| 'voiceSetup'
 	| 'branchSwitcher'
 	// Wizard & Tour
 	| 'wizardResume'

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
+import { VoiceStatusIndicator } from '../ACappella/VoiceStatusIndicator';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import { isImeComposing } from '../../utils/ime';
 import { NotificationCenter } from '../NotificationCenter';
@@ -1631,6 +1632,9 @@ function SessionListInner(props: SessionListProps) {
 							    the widget back with one click. Sheds its label on a narrow
 							    sidebar, the same way the LIVE pill below does. */}
 							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
+							{!isWebDesktop() && (
+								<VoiceStatusIndicator theme={theme} compact={nowPlayingCompact} />
+							)}
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
@@ -1747,6 +1751,7 @@ function SessionListInner(props: SessionListProps) {
 							/>
 						</GhostIconButton>
 						{notificationCenterEnabled && <NotificationCenter theme={theme} />}
+						{!isWebDesktop() && <VoiceStatusIndicator theme={theme} compact />}
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>

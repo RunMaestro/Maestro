@@ -1,3 +1,4 @@
+import { isWebDesktop } from '../../../../utils/runtimeContext';
 import { ACappellaSettingsBody } from '../../ACappella';
 /**
  * Encore Feature configuration sections. Each is the body of its feature tile's
@@ -142,6 +143,12 @@ function Dataview({ theme }: SettingsSectionProps) {
 }
 
 function ACappella({ theme }: SettingsSectionProps) {
+	if (isWebDesktop())
+		return (
+			<p className="text-xs" style={{ color: theme.colors.textDim }}>
+				A Cappella is configured in the desktop app.
+			</p>
+		);
 	return (
 		<div data-setting-id="encore-a-cappella">
 			<ACappellaSettingsBody theme={theme} enabled />

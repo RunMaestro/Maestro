@@ -279,7 +279,6 @@ import {
 // session, closed here when the Encore Feature is switched off).
 import { getVoiceSessionService } from './acappella';
 import type { VoiceWidgetState } from '../shared/floatingWidgets';
-import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 import {
 	shutdownACappellaForDisable,
 	stopVoiceSessionForWindow,
@@ -862,10 +861,15 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // read path to refresh plugin discovery.
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
-store.onDidChange('encoreFeatures', (encoreFeatures) => {
-	if (!resolveEncoreFeatures(encoreFeatures).aCappella) {
+store.onDidChange('encoreFeatures', (encoreFeatures, previousFeatures) => {
+	if (
+		resolveEncoreFeatures(previousFeatures).aCappella &&
+		!resolveEncoreFeatures(encoreFeatures).aCappella
+	) {
 		floatingWidgetControllers['acappella-voice'].close();
-		void shutdownACappellaForDisable().finally(() => closeAcappellaAudioHostWindow());
+		// Core Dictation can still own the common audio host. Stop the voice
+		// session and transport without closing that shared window.
+		void shutdownACappellaForDisable();
 	}
 	nativeCurrentTurns.setEnabled(resolveEncoreFeatures(encoreFeatures).pianola);
 	pianolaMemoryHost?.reconcile();

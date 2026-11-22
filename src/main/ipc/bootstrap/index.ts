@@ -283,7 +283,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
+	const activeVoiceTargets = new Map<string, string>();
 	const persistenceHandlers = registerPersistenceHandlers({
+		onActiveSessionChanged: (sender, sessionId) => {
+			const target = deps.windowRegistry.findBySender(sender);
+			if (target?.kind === 'app') activeVoiceTargets.set(target.id, sessionId);
+		},
 		getWindowForSession: (sessionId) => resolveSessionWindow(sessionId, deps),
 		settingsStore: deps.settingsStore,
 		sessionsStore: deps.sessionsStore,
@@ -424,11 +429,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// so the QR code cannot be produced without its token and port.
 		getWebServer: deps.getWebServer,
 		// What the `voiceCurrentAgent` hotkey binds to. The renderer is the only
-		// thing that knows which agent is on screen, and it persists that here on
-		// every switch, so main can answer without a round trip - which matters,
-		// because a global hotkey handler cannot await one.
-		getFocusedAgentSessionId: () =>
-			(deps.sessionsStore.get('activeSessionId') as string | undefined) || null,
+		// thing that knows which agent is on screen. Record its focus event before
+		// disk persistence is debounced so the hotkey can bind synchronously.
+		getFocusedAgentSessionId: () => {
+			const window = deps.windowRegistry.getFocusedAppWindow();
+			if (!window) return null;
+			const sessionId = activeVoiceTargets.get(window.id);
+			return sessionId && window.sessionIds.includes(sessionId) ? sessionId : null;
+		},
 		// The event source for the agent-output tap. It is the SAME emitter the
 		// desktop transcript listens to, which is what keeps what is spoken and what
 		// is on screen from drifting apart.
@@ -531,6 +539,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// A voice session is shown by exactly one window, so closing that window
 		// would otherwise leave an open microphone with no surface anywhere.
 		if (change.type === 'removed' && change.windowId) {
+			activeVoiceTargets.delete(change.windowId);
 			void stopVoiceSessionForWindow(change.windowId);
 		}
 	});

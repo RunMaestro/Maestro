@@ -1022,14 +1022,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openUrl,
 			logger,
 		}),
-		...buildVoiceCommands({
-			activeSession,
-			voiceActions,
-			openVoiceSetup: () => getModalActions().openSettings('encore'),
-			transcriptVisible: voiceTranscriptVisible,
-			toggleTranscript: toggleVoiceTranscript,
-			setQuickActionOpen,
-		}),
+		...(isWebDesktop()
+			? []
+			: buildVoiceCommands({
+					activeSession,
+					voiceActions,
+					openVoiceSetup: () => useModalStore.getState().openModal('voiceSetup'),
+					transcriptVisible: voiceTranscriptVisible,
+					toggleTranscript: toggleVoiceTranscript,
+					setQuickActionOpen,
+				})),
 		...buildRightPanelCommands({
 			autoRunDisabled: useSettingsStore.getState().autoRunDisabled,
 			autoRunSelectedDocument,

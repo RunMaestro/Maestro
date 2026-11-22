@@ -238,7 +238,14 @@ export class StaticRoutes {
 	 * no config injection at all - handing it the token would let it skip the one
 	 * flow it exists to exercise.
 	 */
-	private serveACappellaClient(reply: FastifyReply): void {
+	private serveACappellaClient(request: FastifyRequest, reply: FastifyReply): void {
+		const auth = resolveWebRequestAuth(request);
+		if (!isWebRequestAuthorized(auth)) {
+			const next = encodeURIComponent(request.url || `/${this.securityToken}/acappella`);
+			reply.redirect(`/${this.securityToken}/${WEB_LOGIN_PATHS.page}?next=${next}`, 302);
+			return;
+		}
+
 		const indexPath = this.webDesktopPath
 			? path.join(this.webDesktopPath, 'acappella-client', 'index.html')
 			: null;
@@ -357,11 +364,11 @@ export class StaticRoutes {
 
 		// The A Cappella reference client. Registered before the `/:token`
 		// catch-all, which would otherwise swallow it and serve the desktop SPA.
-		server.get(`/${token}/acappella`, async (_request, reply) => {
-			this.serveACappellaClient(reply);
+		server.get(`/${token}/acappella`, async (request, reply) => {
+			this.serveACappellaClient(request, reply);
 		});
-		server.get(`/${token}/acappella/`, async (_request, reply) => {
-			this.serveACappellaClient(reply);
+		server.get(`/${token}/acappella/`, async (request, reply) => {
+			this.serveACappellaClient(request, reply);
 		});
 
 		// Deprecated single-session deep link. The desktop app manages its own

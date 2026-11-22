@@ -2113,9 +2113,8 @@ function watchRosterChanges(): void {
 /**
  * Stop capture and drop the audio wiring, leaving the session service alone.
  *
- * Called when the Encore Feature is switched off: the audio host window goes
- * away with it, so a bridge still holding a running pipeline would be counting
- * frames from a device nobody owns.
+ * Called when the Encore Feature is switched off. The separate core Dictation
+ * bridge can continue to use the shared audio host window.
  */
 export function disposeACappellaAudioBridge(): void {
 	audioBridge?.dispose();

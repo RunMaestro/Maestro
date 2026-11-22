@@ -2,10 +2,20 @@ import { Puzzle } from 'lucide-react';
 import type { PanelContribution } from '../../../shared/plugins/contributions';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import type { Theme } from '../../types';
-import { useModalStore } from '../../stores/modalStore';
+import { useModalStore, type SettingsModalData } from '../../stores/modalStore';
 import { PluginPanelFrame } from '../plugins/PluginPanelFrame';
 import { SettingsSectionHeading } from './SettingsSectionHeading';
 import { SectionCard } from './tabs/DisplayTab/components/SectionCard';
+
+const HOST_SETTINGS = {
+	dictation: { label: 'Dictation settings', tab: 'general', settingId: 'general-dictation' },
+	media: { label: 'Host media tools', tab: 'environment', settingId: 'environment-host-media' },
+} satisfies Record<
+	NonNullable<PanelContribution['hostSettings']>[number],
+	SettingsModalData & {
+		label: string;
+	}
+>;
 
 /** Executable content remains in the existing isolated guest; links belong to the host. */
 export function PluginSettingsCard({ panel, theme }: { panel: PanelContribution; theme: Theme }) {
@@ -23,20 +33,20 @@ export function PluginSettingsCard({ panel, theme }: { panel: PanelContribution;
 				<div className="flex-1 min-h-0 min-w-0">
 					<PluginPanelFrame panel={panel} theme={theme} />
 				</div>
-				{panel.hostSettings?.includes('media') && (
-					<button
-						type="button"
-						className="w-full shrink-0 px-3 py-2 rounded border text-sm"
-						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
-						onClick={() =>
-							useModalStore
-								.getState()
-								.openModal('settings', { tab: 'environment', settingId: 'environment-host-media' })
-						}
-					>
-						Host media tools
-					</button>
-				)}
+				{panel.hostSettings?.map((id) => {
+					const { label, tab, settingId } = HOST_SETTINGS[id];
+					return (
+						<button
+							key={id}
+							type="button"
+							className="w-full shrink-0 px-3 py-2 rounded border text-sm"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
+							onClick={() => useModalStore.getState().openModal('settings', { tab, settingId })}
+						>
+							{label}
+						</button>
+					);
+				})}
 			</SectionCard>
 		</div>
 	);

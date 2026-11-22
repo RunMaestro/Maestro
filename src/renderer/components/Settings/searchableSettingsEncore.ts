@@ -20,7 +20,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-input-device',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Microphone',
@@ -42,7 +42,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-voice-setup',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Microphone and voice models',
@@ -67,7 +67,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-conversational-mode',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Talk it through first',
@@ -87,7 +87,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-hold-until-send',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Wait for me to say send',
@@ -107,7 +107,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-send-hold',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Send after',
@@ -117,7 +117,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-send-phrases',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Send phrases',
@@ -136,7 +136,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-turn-settle',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Finish my thought',
@@ -158,7 +158,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-diagnostics',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice diagnostics',
@@ -178,7 +178,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-copy-diagnostics',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Copy voice diagnostics',
@@ -196,7 +196,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-stt',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Transcription',
@@ -214,7 +214,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-tts',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice',
@@ -224,7 +224,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-brain',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Brain',
@@ -234,7 +234,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-wake-word',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Wake word',
@@ -254,7 +254,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-wake-phrase-training',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Train a wake phrase',
@@ -272,7 +272,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-agent-wake-phrases',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Per-agent phrases',
@@ -289,7 +289,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-stop-word',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Stop word',
@@ -308,7 +308,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-voice-hotkeys',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice hotkeys',
@@ -327,7 +327,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-floor-timing',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice timing',
@@ -337,7 +337,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-voice-audio-destination',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Audio destination',
@@ -355,7 +355,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-voice-selection',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice',
@@ -375,7 +375,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-speed-volume',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Speed and volume',
@@ -395,7 +395,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-background-announcements',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Background completions',
@@ -412,7 +412,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-hud',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice HUD',
@@ -434,7 +434,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-idle-timeout',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Idle timeout',
@@ -444,7 +444,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-paired-devices',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Add a voice device',
@@ -465,7 +465,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-device-list',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Paired devices',
@@ -483,7 +483,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-connection',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice connection (STUN and TURN)',
@@ -505,7 +505,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-models',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Manage voice models',
@@ -527,7 +527,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-self-test',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice self-test',
@@ -548,7 +548,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-run-self-test',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Run voice self-test',
@@ -558,7 +558,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-turn-latency',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Turn latency',
@@ -577,7 +577,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-read-turn-latency',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Read last turn',
@@ -587,7 +587,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-voice-providers',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice setup',
@@ -615,7 +615,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-audio-destination',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Where your audio goes',
@@ -633,7 +633,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-pipeline',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Voice setup preset',
@@ -655,7 +655,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-provider-stt',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Speech-to-Text engine',
@@ -665,7 +665,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-provider-tts',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Text-to-Speech engine',
@@ -674,7 +674,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-provider-brain',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Conductor Brain engine',
@@ -684,7 +684,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-key-openai',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'OpenAI API key',
@@ -694,7 +694,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-key-elevenlabs',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'ElevenLabs API key',
@@ -704,7 +704,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-a-cappella-key-anthropic',
-		encoreTile: 'aCappella',
+		requiresEncore: 'aCappella',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Anthropic API key',

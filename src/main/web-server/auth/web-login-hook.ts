@@ -42,6 +42,8 @@ const ALLOWED_EXACT = new Set([
 	'/login',
 	'/desktop',
 	'/desktop/',
+	'/acappella',
+	'/acappella/',
 	'/manifest.json',
 	'/sw.js',
 	'/ws',

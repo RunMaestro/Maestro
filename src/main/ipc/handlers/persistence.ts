@@ -13,7 +13,7 @@ import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, app, BrowserWindow } from 'electron';
+import { ipcMain, app, BrowserWindow, type WebContents } from 'electron';
 import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -230,6 +230,7 @@ function senderWebContentsIdOf(event: unknown): number | undefined {
  * Dependencies required for persistence handlers
  */
 export interface PersistenceHandlerDependencies {
+	onActiveSessionChanged?: (sender: WebContents, sessionId: string) => void;
 	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 	cancelQueueItem?: (agentId: string, tabId: string, itemId: string) => void;
 	settingsStore: Store<MaestroSettings>;
@@ -980,6 +981,7 @@ export function registerPersistenceHandlers(
 		// Browser navigation is client-local, never the host's persisted focus.
 		if (isBridgeInvokeEvent(event)) return;
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
+		deps.onActiveSessionChanged?.(event.sender, id);
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
 		activeSessionIdTimer = setTimeout(flushActiveSessionId, ACTIVE_SESSION_ID_DEBOUNCE_MS);

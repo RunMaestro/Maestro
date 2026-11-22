@@ -372,6 +372,24 @@ describe('StaticRoutes', () => {
 			}
 		});
 
+		it.each(['', '/'])(
+			'redirects an unauthenticated pairing link with suffix "%s" to login',
+			async (suffix) => {
+				webLogin.required = true;
+				const asked = `/${securityToken}/acappella${suffix}`;
+				const route = mockFastify.getRoute('GET', asked);
+				const reply = createMockReply();
+
+				await route!.handler({ headers: {}, url: asked }, reply);
+
+				expect(reply.redirect).toHaveBeenCalledWith(
+					`/${securityToken}/${WEB_LOGIN_PATHS.page}?next=${encodeURIComponent(asked)}`,
+					302
+				);
+				expect(reply.send).not.toHaveBeenCalled();
+			}
+		);
+
 		it('returns 503 when the bundle has not been built', async () => {
 			const noDesktopRoutes = new StaticRoutes(securityToken, webAssetsPath, null, concertoToken);
 			const noDesktopFastify = createMockFastify();

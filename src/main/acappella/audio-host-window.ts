@@ -24,10 +24,9 @@
  * - **Never throttled.** A hidden, never-painted window is exactly what
  *   Chromium's background throttling targets, and a throttled timer in the
  *   audio path is a dropout. `backgroundThrottling: false` opts out.
- * - **Lazily created, eagerly destroyed.** Built on the first session start
+ * - **Lazily created.** Built on the first session start
  *   ({@link ensureAcappellaAudioHostWindow}) rather than at boot, and torn down
- *   when the Encore Feature is switched off or the app quits, so a user who
- *   never speaks never pays for a second renderer or an open microphone.
+ *   when the app quits. Dictation can use it with A Cappella switched off.
  *
  * Deliberately NOT offscreen-rendered (`webPreferences.offscreen`): OSR exists
  * to get pixels out of a window, and this window has no pixels anyone wants. It
