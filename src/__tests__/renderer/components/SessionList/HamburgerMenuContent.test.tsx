@@ -93,3 +93,30 @@ describe('HamburgerMenuContent - Worktree PR and CI', () => {
 		expect(screen.queryByRole('button', { name: /Worktree PR and CI/ })).not.toBeInTheDocument();
 	});
 });
+
+describe('HamburgerMenuContent - Worktree Actions and Recovery', () => {
+	afterEach(() => {
+		useModalStore.getState().closeModal('worktreeActions');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+	it.each(['parent', 'empty', 'child'])('opens independently of PR details for %s', (kind) => {
+		const session = createMockSession({
+			id: kind,
+			isGitRepo: true,
+			...(kind === 'child' ? { parentSessionId: 'parent', worktreeBranch: 'feat/x' } : {}),
+		});
+		useSessionStore.setState({
+			sessions: kind === 'empty' ? [] : [session],
+			activeSessionId: kind,
+		});
+		const close = vi.fn();
+		renderMenu(close);
+		fireEvent.click(screen.getByRole('button', { name: /Worktree Actions and Recovery/ }));
+		expect(useModalStore.getState().isOpen('worktreeActions')).toBe(true);
+		expect(useModalStore.getState().getData('worktreeActions')?.sessionId).toBe(
+			kind === 'child' ? kind : undefined
+		);
+		expect(useModalStore.getState().isOpen('worktreePRDetails')).toBe(false);
+		expect(close).toHaveBeenCalledWith(false);
+	});
+});

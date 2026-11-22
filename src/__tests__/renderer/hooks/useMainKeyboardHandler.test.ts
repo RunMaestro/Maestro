@@ -3462,6 +3462,14 @@ describe('useMainKeyboardHandler', () => {
 			useModalStore.getState().closeModal('worktreePRDetails');
 		});
 
+		it('opens global worktree recovery from its configurable shortcut without a child', () => {
+			useModalStore.getState().closeModal('worktreeActions');
+			press('viewWorktreeActions');
+			expect(useModalStore.getState().isOpen('worktreeActions')).toBe(true);
+			expect(useModalStore.getState().getData('worktreeActions')?.sessionId).toBeUndefined();
+			useModalStore.getState().closeModal('worktreeActions');
+		});
+
 		it('withholds details for plain agents and group chat', () => {
 			useModalStore.getState().closeModal('worktreePRDetails');
 			press('viewWorktreePRDetails');

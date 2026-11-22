@@ -194,7 +194,7 @@ describe('desktop worktree cleanup', () => {
 		first.unmount();
 		render(<WorktreeCleanupResults sessionId="parent" />);
 		fireEvent.click(screen.getByText('View cleanup for Original child'));
-		expect(useModalStore.getState().getData('worktreePRDetails')).toEqual({ sessionId: 'child' });
+		expect(useModalStore.getState().getData('worktreeActions')).toEqual({ sessionId: 'child' });
 		expect(screen.queryByText('Dismiss result')).toBeNull();
 	});
 	it('shows explicit restart recovery without offering to adopt the old runner', async () => {
@@ -216,7 +216,7 @@ describe('desktop worktree cleanup', () => {
 	});
 });
 
-describe('startup cleanup recovery in the PR details surface', () => {
+describe('startup cleanup recovery in worktree actions', () => {
 	const target = { id: 'original-journal', sessionId: 'absent-child', path: '/removed/child' };
 	it('ignores a stale list response after a newer recovery refresh', async () => {
 		let finish!: (value: unknown) => void;

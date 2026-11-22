@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import { WorktreeActionsHost } from '../../../renderer/components/WorktreeActions';
 import { WorktreePullRequestDetailsHost } from '../../../renderer/components/WorktreePullRequestDetails';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
@@ -281,6 +282,7 @@ describe('SessionItem worktree collapse toggle', () => {
 describe('worktree PR summary', () => {
 	beforeEach(() => {
 		useModalStore.getState().closeModal('worktreePRDetails');
+		useModalStore.getState().closeModal('worktreeActions');
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 		useWorktreeCleanupStore.setState({
 			runs: {},
@@ -346,15 +348,12 @@ describe('worktree PR summary', () => {
 			'https://github.com/a/b/actions/runs/1'
 		);
 		expect(screen.getByText(/2 ahead, 1 behind/)).toBeInTheDocument();
-		// Opening status is read-only; mutation controls are revealed deliberately.
-		expect(screen.getByRole('button', { name: 'Check merge readiness' })).not.toBeVisible();
-		expect(screen.getByRole('button', { name: 'Prepare worktree cleanup' })).not.toBeVisible();
-		const mergeSection = screen
-			.getByText('Merge pull request', { selector: 'summary span' })
-			.closest('details')!;
-		expect(mergeSection).not.toHaveAttribute('open');
-		fireEvent.click(mergeSection.querySelector('summary')!);
-		expect(screen.getByRole('button', { name: 'Check merge readiness' })).toBeVisible();
+		expect(screen.queryByRole('button', { name: 'Check merge readiness' })).not.toBeInTheDocument();
+		expect(screen.queryByText('Prepare worktree cleanup')).not.toBeInTheDocument();
+		expect(screen.queryByText('Refresh cleanup recoveries')).not.toBeInTheDocument();
+		expect(screen.queryByText('Merge pull request')).not.toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'Example' })).toHaveClass('text-sm');
+		expect(screen.getByRole('button', { name: 'Refresh PR status' })).toBeInTheDocument();
 		expect(onSelect).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -473,10 +472,10 @@ describe('worktree PR summary', () => {
 		window.maestro.git.getWorktreeRetirementRecoveries = vi.fn().mockResolvedValue([]);
 		useSessionStore.setState({ sessions: [target, parent], activeSessionId: parent.id });
 		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
-		useModalStore.getState().openModal('worktreePRDetails', { sessionId: target.id });
+		useModalStore.getState().openModal('worktreeActions', { sessionId: target.id });
 		render(
 			<LayerStackProvider>
-				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+				<WorktreeActionsHost theme={defaultTheme} />
 			</LayerStackProvider>
 		);
 		fireEvent.click(screen.getByText('Prepare worktree cleanup'));
@@ -485,7 +484,7 @@ describe('worktree PR summary', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
 		act(() => {
 			useSessionStore.setState({ sessions: [parent] });
-			useModalStore.getState().openModal('worktreePRDetails', { sessionId: parent.id });
+			useModalStore.getState().openModal('worktreeActions', { sessionId: parent.id });
 		});
 		fireEvent.click(screen.getByText('View cleanup for Retiring child'));
 		expect(screen.getByRole('dialog')).toHaveTextContent('no longer available');

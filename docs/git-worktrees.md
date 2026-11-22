@@ -219,8 +219,12 @@ unknown or missing checks are not a passing result.
 
 The status card starts with the PR title, branches and CI summary. Expand the
 check list for individual results and links; failed checks are expanded by default.
-Refresh is available in the footer. Expand **Merge pull request**, then choose
-**Check merge readiness** to check the current PR and checkout
+Refresh is available in the footer. This dialog is informational.
+
+Open **Worktree Actions and Recovery** from the Left Bar hamburger menu or search
+**Git: Worktree Actions and Recovery** in the command palette. Agents can use
+`maestro-cli open worktree-actions`; a shortcut can be assigned in Settings.
+With a managed worktree selected, choose **Check merge readiness** to check its PR and checkout
 against GitHub. Local HEAD must match the reviewed PR head, so unpublished
 commits require a push and another refresh before merging. If eligible, choose an allowed merge method or add the PR to the
 repository's required merge queue. Maestro rechecks before the action and
@@ -232,7 +236,7 @@ Discovery and manual merge currently support local worktrees with a GitHub.com
 post-merge worktree cleanup is not available. Merging does not remove the
 checkout; use the explicit removal controls below when appropriate.
 
-Expand **Worktree cleanup** in PR details to find **Prepare worktree cleanup**,
+In **Worktree Actions and Recovery**, find **Prepare worktree cleanup**,
 followed by explicit
 **Confirm worktree removal** or **Keep checkout**. Preparation temporarily
 fences child and parent session updates, queued work, Auto Run starts, composer
@@ -248,9 +252,11 @@ merged PR head and refuses changed, untracked or ignored data. Saved chat is ret
 before Git runs, startup restores journal reservations, and desktop recovery
 checks disk and Git administration without repeating deletion.
 Uncertain outcomes remain reserved, with a same-token settlement retry in the
-details even after the child registration disappears. Closing or retargeting
+actions dialog even after the child registration disappears. Closing or retargeting
 the dialog parks active cleanup and its result. Reopen the original target, or
-choose **View cleanup for…** from another target's details, to resume settlement.
+choose **View cleanup for…** in **Worktree Actions and Recovery** to resume settlement.
+This entry remains available with only a parent or no agents selected, so startup
+recovery can be completed or cancelled even when the managed child is absent.
 Unused preparations are released on close; a lost keep reply retries only the
 keep action. A lost success reply can
 be replayed to its original sender without another Git removal. The transaction drains local

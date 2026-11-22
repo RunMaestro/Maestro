@@ -34,9 +34,11 @@ function fail(reason: string): never {
 }
 
 function modalBlocker(state: ModalStore): boolean {
-	// The lifecycle details surface is read-only during preparation. All other
+	// Lifecycle surfaces hold no editor drafts; cleanup actions use the owning token. Other
 	// dialogs may hold a local draft or a callback with a stale checkout path.
-	return [...state.modals].some(([id, entry]) => entry.open && id !== 'worktreePRDetails');
+	return [...state.modals].some(
+		([id, entry]) => entry.open && id !== 'worktreePRDetails' && id !== 'worktreeActions'
+	);
 }
 
 function editorBlocker(state: UIStore): boolean {

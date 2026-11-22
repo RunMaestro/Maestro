@@ -80,7 +80,7 @@ export function WorktreePullRequestMerge({
 	return (
 		<section aria-label="Manual merge" className="space-y-2">
 			<h3 className="font-bold">Manual merge</h3>
-			<p>
+			<p className="select-text">
 				{pullRequest.identity.repository.owner}/{pullRequest.identity.repository.name} #
 				{pullRequest.identity.number}: {pullRequest.headBranch} ({pullRequest.headSha.slice(0, 12)})
 				→ {pullRequest.baseBranch}
@@ -88,21 +88,27 @@ export function WorktreePullRequestMerge({
 			<button type="button" className="underline" disabled={busy || disabled} onClick={check}>
 				Check merge readiness
 			</button>
-			{disabled && <p>Refresh PR status before merging.</p>}
+			{disabled && <p className="select-text">Refresh PR status before merging.</p>}
 			{preflight?.status === 'blocked' &&
 				preflight.blockers.map((blocker, i) => (
-					<p role="status" key={i}>
+					<p className="select-text" role="status" key={i}>
 						{blocker.message}
 					</p>
 				))}
-			{preflight?.status === 'unavailable' && <p role="status">{preflight.message}</p>}
+			{preflight?.status === 'unavailable' && (
+				<p className="select-text" role="status">
+					{preflight.message}
+				</p>
+			)}
 			{(preflight?.status === 'merged' || preflight?.status === 'queued') && (
-				<p role="status">PR is {preflight.status}.</p>
+				<p className="select-text" role="status">
+					PR is {preflight.status}.
+				</p>
 			)}
 			{preflight?.status === 'ready' && (
 				<div className="space-y-2">
 					{preflight.queueRequired ? (
-						<p>This repository requires the merge queue.</p>
+						<p className="select-text">This repository requires the merge queue.</p>
 					) : (
 						<label>
 							Method{' '}
@@ -141,13 +147,19 @@ export function WorktreePullRequestMerge({
 			)}
 			{result?.status === 'blocked' &&
 				result.blockers.map((blocker, i) => (
-					<p role="status" key={i}>
+					<p className="select-text" role="status" key={i}>
 						{blocker.message}
 					</p>
 				))}
-			{result?.status === 'unknown' && <p role="status">Outcome unknown: {result.message}</p>}
+			{result?.status === 'unknown' && (
+				<p className="select-text" role="status">
+					Outcome unknown: {result.message}
+				</p>
+			)}
 			{(result?.status === 'merged' || result?.status === 'queued') && (
-				<p role="status">PR {result.status}.</p>
+				<p className="select-text" role="status">
+					PR {result.status}.
+				</p>
 			)}
 		</section>
 	);

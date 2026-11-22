@@ -1006,6 +1006,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.handleViewGitDiff();
 				trackShortcut('viewGitDiff');
+			} else if (ctx.isShortcut(e, 'viewWorktreeActions')) {
+				if (openUiSurface('worktree-actions').ok) {
+					e.preventDefault();
+					trackShortcut('viewWorktreeActions');
+				}
 			} else if (ctx.isShortcut(e, 'viewWorktreePRDetails') && !ctx.activeGroupChatId) {
 				if (openUiSurface('worktree-pr-details').ok) {
 					e.preventDefault();

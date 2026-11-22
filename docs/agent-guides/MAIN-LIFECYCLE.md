@@ -318,8 +318,10 @@ Concurrent commits share one runner, with no force or recursive fallback. Failur
 after Git starts retains the fence; settlement retries never rerun removal. The
 watcher callback, durable archive and renderer completion must all succeed before
 the parent is released. Real local Git fixtures exercise these paths with mocked
-GitHub responses. This transaction is not exposed through IPC yet: durable crash
-recovery, concrete watcher settlement and policy/UI admission remain prerequisites.
+GitHub responses. The desktop exposes this explicit transaction through
+`git:removeWorktreeRetirement` / `removeWorktreeRetirement(token)`, including
+durable intent, watcher settlement and renderer completion. Automatic cleanup
+policy and its opt-in trigger remain pending.
 
 Restored, fully present checkouts can be cancelled through the desktop Git API's
 `getWorktreeRetirementRecoveries()` / `cancelWorktreeRetirementRecovery(id)`.
@@ -330,8 +332,10 @@ releases that recovery token. Failed writes, reloads, replaced checkouts and
 removed/partial outcomes remain fenced. Cancellation preserves registrations,
 files and history; any later removal needs a new preparation and journal id.
 Startup retains cancelled journal history without restoring its fence. This API
-does not repeat Git removal or provide a cleanup UI; removed-outcome watcher and
-renderer recovery settlement still needs integration.
+does not repeat Git removal. Removed checkouts can be settled through
+`completeWorktreeRetirementRecovery(id)`, including watcher and renderer recovery.
+The independent **Worktree Actions and Recovery** surface exposes both recovery
+actions without requiring a managed child; PR details remain informational.
 
 ### Security Hardening
 

@@ -1,4 +1,3 @@
-import { useEffect, type ReactNode } from 'react';
 import {
 	ArrowRight,
 	CheckCircle2,
@@ -13,12 +12,8 @@ import {
 	Loader2,
 	Minus,
 	RefreshCw,
-	Trash2,
 	XCircle,
 } from 'lucide-react';
-import { WorktreeCleanup, WorktreeCleanupResults, useWorktreeCleanup } from './WorktreeCleanup';
-import { useWorktreeCleanupStore } from '../stores/worktreeCleanupStore';
-import { WorktreePullRequestMerge } from './WorktreePullRequestMerge';
 import { Modal } from './ui/Modal';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { resolveGitSshRemoteId } from '../hooks/git/useGitAgentActions';
@@ -60,12 +55,10 @@ export function WorktreePullRequestView({
 	session,
 	theme,
 	details = false,
-	cleanup,
 }: {
 	session: Session;
 	theme: Theme;
 	details?: boolean;
-	cleanup?: ReactNode;
 }) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const colors = colorBlindMode ? COLORBLIND_STATUS_COLORS : theme.colors;
@@ -178,7 +171,7 @@ export function WorktreePullRequestView({
 					? colors.warning
 					: theme.colors.textDim;
 	const detailsSummary =
-		'flex items-center justify-between gap-3 cursor-pointer list-none py-3 text-sm [&::-webkit-details-marker]:hidden';
+		'flex items-center justify-between gap-3 cursor-pointer list-none py-2 text-xs [&::-webkit-details-marker]:hidden';
 
 	if (!details) {
 		// Confirmed absence needs no extra sidebar furniture. Menu and keyboard routes remain.
@@ -212,7 +205,7 @@ export function WorktreePullRequestView({
 			portal
 			closeOnBackdropClick
 		>
-			<div className="select-none space-y-4" style={{ color: theme.colors.textMain }}>
+			<div className="select-none space-y-3 text-sm" style={{ color: theme.colors.textMain }}>
 				{stale && (
 					<p
 						role="status"
@@ -224,7 +217,7 @@ export function WorktreePullRequestView({
 				)}
 				{pr ? (
 					<>
-						<header className="space-y-3">
+						<header className="space-y-2">
 							<a
 								href={pr.url}
 								aria-label={`PR #${pr.identity.number}: ${pr.title}`}
@@ -239,7 +232,7 @@ export function WorktreePullRequestView({
 								<span className="font-semibold">#{pr.identity.number}</span>
 								<ExternalLink aria-hidden="true" className="h-3 w-3" />
 							</a>
-							<h2 className="select-text text-lg font-semibold leading-snug">{pr.title}</h2>
+							<h2 className="select-text text-sm font-bold break-words">{pr.title}</h2>
 							<div className="flex flex-wrap items-center gap-2 text-xs">
 								<span
 									className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 font-medium"
@@ -272,7 +265,7 @@ export function WorktreePullRequestView({
 							style={{ borderColor: theme.colors.border }}
 						>
 							<div
-								className="flex items-center gap-3 p-4"
+								className="flex items-center gap-3 p-3"
 								style={{ backgroundColor: theme.colors.bgActivity }}
 							>
 								<CiIcon
@@ -304,7 +297,7 @@ export function WorktreePullRequestView({
 									style={{ borderColor: theme.colors.border }}
 								>
 									<summary
-										className={`${detailsSummary} px-4 text-xs`}
+										className={`${detailsSummary} px-3`}
 										style={{ color: theme.colors.textDim }}
 									>
 										<span>
@@ -312,7 +305,7 @@ export function WorktreePullRequestView({
 										</span>
 										<ChevronDown aria-hidden="true" className="h-3.5 w-3.5 group-open:rotate-180" />
 									</summary>
-									<ul className="max-h-56 overflow-y-auto px-4 pb-2">
+									<ul className="max-h-56 overflow-y-auto px-3 pb-2">
 										{checks.map((check) => (
 											<li
 												key={`${check.kind}:${check.id}`}
@@ -366,44 +359,11 @@ export function WorktreePullRequestView({
 								{snapshot.divergence.behind} behind.
 							</p>
 						)}
-						{pr.state === 'OPEN' && (
-							<details className="group border-t" style={{ borderColor: theme.colors.border }}>
-								<summary className={detailsSummary}>
-									<span className="flex items-center gap-2">
-										<GitMerge aria-hidden="true" className="h-4 w-4" />
-										Merge pull request
-									</span>
-									<ChevronDown aria-hidden="true" className="h-3.5 w-3.5 group-open:rotate-180" />
-								</summary>
-								<div className="pb-3 text-sm">
-									<WorktreePullRequestMerge
-										key={JSON.stringify([session.cwd, sshRemoteId, pr])}
-										pullRequest={pr}
-										worktreePath={session.cwd}
-										sshRemoteId={sshRemoteId}
-										disabled={stale || loading || snapshot?.divergence?.status !== 'equal'}
-										refresh={refresh}
-									/>
-								</div>
-							</details>
-						)}
 					</>
 				) : (
 					<p role="status" className="text-sm select-text" style={{ color: theme.colors.textDim }}>
 						{label}
 					</p>
-				)}
-				{cleanup && (
-					<details className="group border-t" style={{ borderColor: theme.colors.border }}>
-						<summary className={detailsSummary}>
-							<span className="flex items-center gap-2">
-								<Trash2 aria-hidden="true" className="h-4 w-4" />
-								Worktree cleanup
-							</span>
-							<ChevronDown aria-hidden="true" className="h-3.5 w-3.5 group-open:rotate-180" />
-						</summary>
-						<div className="space-y-4 pb-3 text-sm select-text">{cleanup}</div>
-					</details>
 				)}
 				<footer
 					className="flex items-center justify-between gap-3 border-t pt-3 text-xs"
@@ -437,28 +397,6 @@ export function WorktreePullRequestDetailsHost({ theme }: { theme: Theme }) {
 	const open = useModalStore(selectModalOpen('worktreePRDetails'));
 	const data = useModalStore(selectModalData('worktreePRDetails'));
 	const session = useSessionStore((s) => s.sessions.find((entry) => entry.id === data?.sessionId));
-	const controller = useWorktreeCleanup(open ? data?.sessionId : undefined, {
-		path: session?.cwd,
-		name: session?.name,
-	});
-	useEffect(() => {
-		if (open && typeof window.maestro.git.getWorktreeRetirementRecoveries === 'function')
-			void useWorktreeCleanupStore.getState().refreshRecoveries();
-	}, [open]);
-	const cleanup = (
-		<>
-			<WorktreeCleanup
-				controller={controller}
-				path={session?.cwd}
-				eligible={
-					!!session?.parentSessionId &&
-					!resolveGitSshRemoteId(session) &&
-					!session.sessionSshRemoteConfig?.enabled
-				}
-			/>
-			<WorktreeCleanupResults sessionId={data?.sessionId} />
-		</>
-	);
 	const close = () => useModalStore.getState().closeModal('worktreePRDetails');
 	if (!open) return null;
 	if (!session)
@@ -472,8 +410,9 @@ export function WorktreePullRequestDetailsHost({ theme }: { theme: Theme }) {
 				resizeKey="worktree-pr-details"
 				closeOnBackdropClick
 			>
-				<p>The target worktree agent is no longer available.</p>
-				{cleanup}
+				<p className="text-sm select-text" style={{ color: theme.colors.textDim }}>
+					The target worktree agent is no longer available.
+				</p>
 			</Modal>
 		);
 	return (
@@ -488,7 +427,6 @@ export function WorktreePullRequestDetailsHost({ theme }: { theme: Theme }) {
 			session={session}
 			theme={theme}
 			details
-			cleanup={cleanup}
 		/>
 	);
 }

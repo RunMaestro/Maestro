@@ -111,6 +111,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
 	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
+	viewWorktreeActions: {
+		id: 'viewWorktreeActions',
+		label: 'Git: Worktree Actions and Recovery',
+		keys: [],
+	},
 	viewWorktreePRDetails: {
 		id: 'viewWorktreePRDetails',
 		label: 'Git: Worktree PR and CI',

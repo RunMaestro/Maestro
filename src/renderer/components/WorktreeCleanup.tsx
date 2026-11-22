@@ -45,14 +45,14 @@ export function WorktreeCleanup({
 	return (
 		<section aria-label="Worktree cleanup" className="space-y-2">
 			<h3 className="font-bold">Worktree cleanup</h3>
-			<p>
+			<p className="select-text">
 				Keep this checkout until you explicitly confirm removal. Merging alone does not remove it.
 			</p>
-			{(controller.path ?? path) && <p>{controller.path ?? path}</p>}
+			{(controller.path ?? path) && <p className="select-text">{controller.path ?? path}</p>}
 			{!eligible && !token && result?.status !== 'removed' && (
-				<p>Cleanup requires a registered local child worktree.</p>
+				<p className="select-text">Cleanup requires a registered local child worktree.</p>
 			)}
-			<p>
+			<p className="select-text">
 				Removal preserves the branch, saved chat and history. Close file tabs and editing dialogs,
 				stop target processes and external tools, and save or move all local data first.
 			</p>
@@ -63,7 +63,7 @@ export function WorktreeCleanup({
 			)}
 			{token && !(result?.status === 'pending' && result.recovery === 'restart-required') && (
 				<>
-					<p>
+					<p className="select-text">
 						The child and parent are temporarily frozen. Main rechecks merged PR identity, exact
 						HEAD and all local data before non-force removal. Preparation expires after 30 seconds.
 					</p>
@@ -86,19 +86,23 @@ export function WorktreeCleanup({
 					)}
 				</>
 			)}
-			{busy && <p role="status">Checking or settling cleanup…</p>}
+			{busy && (
+				<p className="select-text" role="status">
+					Checking or settling cleanup…
+				</p>
+			)}
 			{result?.status === 'removed' && (
-				<p role="status">
+				<p className="select-text" role="status">
 					Worktree removed. Saved chat and history are archived; the branch is preserved.
 				</p>
 			)}
 			{result && result.status !== 'removed' && (
-				<p role="status">
+				<p className="select-text" role="status">
 					Cleanup {result.status}: {result.reason}
 				</p>
 			)}
 			{result?.status === 'pending' && (
-				<p>
+				<p className="select-text">
 					The checkout remains reserved.{' '}
 					{result.recovery !== 'restart-required' && 'Retry with this preparation. '}
 					Recovery is available after the next application start if its owner document was reloaded
@@ -109,7 +113,7 @@ export function WorktreeCleanup({
 	);
 }
 
-/** Part of the existing PR details surface, including when its child is absent. */
+/** Reachable from worktree actions even when the managed child is absent. */
 export function WorktreeCleanupResults({ sessionId }: { sessionId?: string }) {
 	const runs = useWorktreeCleanupStore((state) => state.runs);
 	const recoveries = useWorktreeCleanupStore((state) => state.recoveries);
@@ -125,12 +129,14 @@ export function WorktreeCleanupResults({ sessionId }: { sessionId?: string }) {
 						type="button"
 						className="underline"
 						onClick={() =>
-							useModalStore.getState().openModal('worktreePRDetails', { sessionId: run.sessionId })
+							useModalStore.getState().openModal('worktreeActions', { sessionId: run.sessionId })
 						}
 					>
 						View cleanup for {run.name ?? run.path ?? run.sessionId}
 					</button>
-					<p>{run.busy ? 'Cleanup in progress' : (run.result?.status ?? 'Prepared')}</p>
+					<p className="select-text">
+						{run.busy ? 'Cleanup in progress' : (run.result?.status ?? 'Prepared')}
+					</p>
 					{!run.busy && !run.token && (
 						<button
 							type="button"
@@ -142,7 +148,7 @@ export function WorktreeCleanupResults({ sessionId }: { sessionId?: string }) {
 					)}
 				</div>
 			))}
-			<p>
+			<p className="select-text">
 				Startup recovery settles an already removed checkout or keeps a fully present checkout. It
 				never runs Git deletion. Partial or changed outcomes stay reserved for inspection.
 			</p>
@@ -153,11 +159,17 @@ export function WorktreeCleanupResults({ sessionId }: { sessionId?: string }) {
 			>
 				Refresh cleanup recoveries
 			</button>
-			{recoveryError && <p role="status">Recovery unavailable: {recoveryError}</p>}
-			{!recoveries.length && !recoveryError && <p>No startup cleanup recoveries.</p>}
+			{recoveryError && (
+				<p className="select-text" role="status">
+					Recovery unavailable: {recoveryError}
+				</p>
+			)}
+			{!recoveries.length && !recoveryError && (
+				<p className="select-text">No startup cleanup recoveries.</p>
+			)}
 			{recoveries.map((target) => (
 				<div key={target.id}>
-					<p>{target.path}</p>
+					<p className="select-text">{target.path}</p>
 					<button
 						type="button"
 						className="underline"
@@ -177,7 +189,7 @@ export function WorktreeCleanupResults({ sessionId }: { sessionId?: string }) {
 				</div>
 			))}
 			{Object.values(recoveryRuns).map((run) => (
-				<p role="status" key={run.target.id}>
+				<p className="select-text" role="status" key={run.target.id}>
 					{run.target.path}: {run.busy ? 'Recovering…' : run.message}
 				</p>
 			))}

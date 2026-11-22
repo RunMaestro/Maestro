@@ -6,6 +6,7 @@ import { formatGitChangeSummary } from '../../../../shared/gitUtils';
 import { captureException } from '../../../utils/sentry';
 import { useModalStore } from '../../../stores/modalStore';
 import type { QuickAction } from '../types';
+import { openUiSurface } from '../../../utils/openUiSurface';
 
 interface BuildGitWorktreeCommandsArgs {
 	activeSession: Session | undefined;
@@ -24,6 +25,7 @@ interface BuildGitWorktreeCommandsArgs {
 		viewGitDiff?: QuickAction['shortcut'];
 		viewGitLog?: QuickAction['shortcut'];
 		viewWorktreePRDetails?: QuickAction['shortcut'];
+		viewWorktreeActions?: QuickAction['shortcut'];
 		gitPull?: QuickAction['shortcut'];
 		gitPush?: QuickAction['shortcut'];
 		gitChangeBranch?: QuickAction['shortcut'];
@@ -54,8 +56,18 @@ export function buildGitWorktreeCommands({
 	openUrl,
 	logger,
 }: BuildGitWorktreeCommandsArgs): QuickAction[] {
-	if (!activeSession) return [];
-	const commands: QuickAction[] = [];
+	const commands: QuickAction[] = [
+		{
+			id: 'worktreeActions',
+			label: 'Git: Worktree Actions and Recovery',
+			shortcut: shortcuts.viewWorktreeActions,
+			action: () => {
+				openUiSurface('worktree-actions');
+				setQuickActionOpen(false);
+			},
+		},
+	];
+	if (!activeSession) return commands;
 
 	if (activeSession.isGitRepo) {
 		// Every entry below carries the `Git:` prefix. The palette filters on the

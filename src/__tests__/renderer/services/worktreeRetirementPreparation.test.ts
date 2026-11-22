@@ -208,7 +208,7 @@ describe('authoritative retirement store admission', () => {
 		expect(() => useSessionStore.setState({ activeSessionId: 'child' })).toThrow('frozen');
 	});
 
-	it('rejects late file tabs and dialogs before side effects while allowing the details surface', () => {
+	it('rejects late file tabs and dialogs before side effects while allowing lifecycle surfaces', () => {
 		prepare();
 		const unregister = registerExternalDestination(() => {
 			throw new Error('destination callback ran');
@@ -216,6 +216,7 @@ describe('authoritative retirement store admission', () => {
 		expect(() => useModalStore.getState().openModal('settings')).toThrow('frozen');
 		unregister();
 		useModalStore.getState().openModal('worktreePRDetails', { sessionId: 'child' });
+		useModalStore.getState().openModal('worktreeActions', { sessionId: 'child' });
 		expect(() => useUIStore.setState({ editingQueuedItemId: 'item' })).toThrow('frozen');
 		expect(() =>
 			useSessionStore
@@ -369,16 +370,19 @@ describe('layer stack retirement ownership', () => {
 		expect(result.current.getLayers()).toEqual([]);
 		unmount();
 	});
-	it('allows the lifecycle surface and drops an existing blocker synchronously on unregister', () => {
-		const { result, unmount } = renderHook(() => useLayerStack());
-		act(() => {
-			const id = result.current.registerLayer(layer);
-			result.current.unregisterLayer(id);
-			result.current.registerLayer({ ...layer, priority: MODAL_PRIORITIES.WORKTREE_PR_DETAILS });
-			expect(prepareRendererRetirement(request).ok).toBe(true);
-		});
-		unmount();
-	});
+	it.each([MODAL_PRIORITIES.WORKTREE_PR_DETAILS, MODAL_PRIORITIES.WORKTREE_ACTIONS])(
+		'allows lifecycle layer %s and drops an existing blocker synchronously on unregister',
+		(priority) => {
+			const { result, unmount } = renderHook(() => useLayerStack());
+			act(() => {
+				const id = result.current.registerLayer(layer);
+				result.current.unregisterLayer(id);
+				result.current.registerLayer({ ...layer, priority });
+				expect(prepareRendererRetirement(request).ok).toBe(true);
+			});
+			unmount();
+		}
+	);
 });
 
 describe('app-owned retirement IPC listener', () => {

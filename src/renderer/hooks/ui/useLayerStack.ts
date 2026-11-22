@@ -167,8 +167,11 @@ export function useLayerStack(): LayerStackAPI {
 		const id = generateId();
 		const newLayer: Layer = { ...layer, id } as Layer;
 		// All UI-local editor/overlay layers are conservative blockers. The
-		// lifecycle details surface owns the preparation UI itself.
-		if (layer.priority !== MODAL_PRIORITIES.WORKTREE_PR_DETAILS) {
+		// lifecycle surfaces own cleanup preparation and recovery themselves.
+		if (
+			layer.priority !== MODAL_PRIORITIES.WORKTREE_PR_DETAILS &&
+			layer.priority !== MODAL_PRIORITIES.WORKTREE_ACTIONS
+		) {
 			const owner = {};
 			setRetirementDialogOpen(owner, true);
 			retirementLayers.current.set(id, owner);

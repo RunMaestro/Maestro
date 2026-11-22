@@ -433,6 +433,7 @@ export type ModalId =
 	// Git
 	| 'gitDiff'
 	| 'worktreePRDetails'
+	| 'worktreeActions'
 	| 'gitLog'
 	| 'gitCommandRunner'
 	| 'branchSwitcher'
@@ -522,6 +523,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'agentSessions',
 	'memoryViewer',
 	'worktreePRDetails',
+	'worktreeActions',
 ]);
 
 /**
@@ -621,6 +623,7 @@ export interface ModalDataMap {
 	editGroupChat: GroupChatModalData;
 	gitDiff: GitDiffModalData;
 	worktreePRDetails: { sessionId: string };
+	worktreeActions: { sessionId?: string };
 	gitLog: GitLogModalData;
 	gitCommandRunner: GitCommandRunnerData;
 	branchSwitcher: BranchSwitcherModalData;

@@ -23,6 +23,7 @@ import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { WorktreePullRequestDetailsHost } from './WorktreePullRequestDetails';
+import { WorktreeActionsHost } from './WorktreeActions';
 import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
 import { GistPublishModal } from './GistPublishModal';
@@ -384,6 +385,7 @@ function AppStandaloneModalsInner({
 			{/* --- GIT PILL: STREAMING PULL/PUSH CONSOLE + BRANCH SWITCHER --- */}
 			<GitPillModals theme={theme} />
 			<WorktreePullRequestDetailsHost theme={theme} />
+			<WorktreeActionsHost theme={theme} />
 
 			{/* --- DEBUG: VIEW APPLICATION STATS --- */}
 			{debugApplicationStatsOpen && (

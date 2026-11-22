@@ -61,6 +61,16 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			useNotificationStore.getState().setNotificationCenterOpen(true);
 			return { ok: true };
 		}
+		case 'worktree-actions': {
+			const session = selectActiveSession(useSessionStore.getState());
+			useModalStore.getState().openModal('worktreeActions', {
+				sessionId:
+					session?.isGitRepo && session.parentSessionId && session.worktreeBranch
+						? session.id
+						: undefined,
+			});
+			return { ok: true };
+		}
 		case 'worktree-pr-details': {
 			const session = selectActiveSession(useSessionStore.getState());
 			if (!session?.isGitRepo || !session.parentSessionId || !session.worktreeBranch) {
