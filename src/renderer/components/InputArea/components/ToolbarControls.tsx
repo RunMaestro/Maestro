@@ -1,3 +1,5 @@
+import { DictationButton } from '../../ui/DictationButton';
+import type { DictationTarget } from '../../../utils/dictationTargets';
 import React, { memo, useCallback, useRef, useState, type ReactNode } from 'react';
 import {
 	ArrowUp,
@@ -82,6 +84,7 @@ export interface ToolbarControlsProps {
 	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
 	/** Whether the browser supports the Web Speech API (from useVoiceInput). */
+	dictationTarget?: DictationTarget;
 	voiceSupported?: boolean;
 	/** Whether voice dictation is currently listening. */
 	isVoiceListening?: boolean;
@@ -143,6 +146,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	enterToSend,
 	setEnterToSend,
 	setStagedImages,
+	dictationTarget,
 	voiceSupported,
 	isVoiceListening,
 	onToggleVoiceInput,
@@ -309,6 +313,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 							<Mic className="w-5 h-5" />
 						</button>
 					)}
+					{dictationTarget && !isTerminalMode && (
+						<DictationButton
+							theme={theme}
+							target={dictationTarget}
+							testId="composer-dictation-button"
+						/>
+					)}
 					{imageFileInput}
 					{/* Send sits in the MIDDLE, between the left actions and the "...", so
 					    it is the one control at the centre of the thumb's arc. */}
@@ -388,6 +399,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 					>
 						{terminalCwd}
 					</div>
+				)}
+				{dictationTarget && !isTerminalMode && (
+					<DictationButton
+						theme={theme}
+						target={dictationTarget}
+						testId="composer-dictation-button"
+					/>
 				)}
 				{onOpenPromptComposer && (
 					<button

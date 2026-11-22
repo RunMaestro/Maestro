@@ -44,13 +44,15 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
  * @param options - Standard `RequestInit`. Any `signal` here is composed with
  *   the timeout rather than replaced.
  * @param timeoutMs - Request budget in milliseconds
+ * @param fetchImpl - Optional transport for callers with an injected fetch (for example hosted voice).
  * @returns The `Response`, exactly as `fetch()` would return it. Non-2xx
  *   responses resolve normally; callers still check `response.ok`.
  */
 export async function fetchWithTimeout(
 	url: string,
 	options: RequestInit = {},
-	timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS
+	timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+	fetchImpl: (url: string, options?: RequestInit) => Promise<Response> = fetch
 ): Promise<Response> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => {
@@ -66,7 +68,7 @@ export async function fetchWithTimeout(
 		: controller.signal;
 
 	try {
-		return await fetch(url, { ...options, signal });
+		return await fetchImpl(url, { ...options, signal });
 	} finally {
 		// Release the timer as soon as the response lands. Letting it run to
 		// completion would pin the closure for the full budget on every call.

@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 16;
+const RC_TARGET_VERSION = 17;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -124,6 +124,26 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		);
 		expect(hasTable(db, 'multi_window_usage_daily')).toBe(true);
 		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('preserves Voice ledger rows while restoring RC token speed on an existing Voice database', () => {
+		const db = openDb();
+		runMigrations(db);
+		db.prepare(
+			`INSERT INTO local_model_runs
+			(id, task_id, source_type, model_id, started_at, duration_ms, outcome)
+			VALUES ('voice-run', 'voice-routing', 'system-one', 'voice-model', 1, 2, 'ok')`
+		).run();
+		db.exec('DROP TABLE token_speed_hourly');
+		db.pragma('user_version = 20');
+
+		runMigrations(db);
+		expect(getCurrentVersion(db)).toBe(20);
+		expect(hasTable(db, 'token_speed_hourly')).toBe(true);
+		expect(hasTable(db, 's1_decisions')).toBe(true);
+		expect(db.prepare('SELECT id, source_type FROM local_model_runs').all()).toEqual([
+			{ id: 'voice-run', source_type: 'system-one' },
+		]);
 	});
 
 	it('creates multi_window_usage_daily for a main-shaped v10 database', () => {

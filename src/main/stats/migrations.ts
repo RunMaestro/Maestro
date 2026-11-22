@@ -38,6 +38,16 @@ import {
 	CREATE_WIZARD_RUNS_SQL,
 	CREATE_WIZARD_RUNS_INDEXES_SQL,
 	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
+	CREATE_LOCAL_MODEL_RUNS_SQL,
+	CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL,
+	CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL,
+	CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL,
+	LOCAL_MODEL_RUNS_REBUILD_TABLE,
+	LOCAL_MODEL_RUNS_V15_COLUMNS,
+	CREATE_S1_DECISIONS_SQL,
+	CREATE_S1_DECISIONS_INDEXES_SQL,
+	ADD_S1_DECISION_TAB_ID_COLUMN_SQL,
+	ADD_S1_DECISION_CACHED_COLUMN_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -161,6 +171,17 @@ function getMigrations(): Migration[] {
 			description: 'Add token_speed_hourly table (token speed timed off the live stream)',
 			up: (db) => migrateV16(db),
 			isApplied: (db) => hasTable(db, 'token_speed_hourly'),
+		},
+		{
+			version: 17,
+			description: 'Ensure Local Models run and decision ledgers on RC and Voice databases',
+			up: migrateV17,
+			isApplied: (db) =>
+				localModelRunsIsCurrent(db) &&
+				hasColumn(db, 's1_decisions', 'tab_id') &&
+				hasColumn(db, 's1_decisions', 'cached') &&
+				hasIndex(db, 'idx_local_model_runs_agent') &&
+				hasIndex(db, 'idx_s1_decisions_task'),
 		},
 	];
 }
@@ -573,4 +594,85 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
  */
 function hasTable(db: Database.Database, table: string): boolean {
 	return !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(table);
+}
+
+/** Keep RC's existing versions 14-16 and detect the Voice ledger schema directly. */
+function migrateV17(db: Database.Database): void {
+	rebuildLocalModelRuns(db);
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+	db.prepare(CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL).run();
+	runStatements(db, CREATE_S1_DECISIONS_SQL);
+	if (!hasColumn(db, 's1_decisions', 'tab_id')) {
+		db.prepare(ADD_S1_DECISION_TAB_ID_COLUMN_SQL).run();
+	}
+	if (!hasColumn(db, 's1_decisions', 'cached')) {
+		db.prepare(ADD_S1_DECISION_CACHED_COLUMN_SQL).run();
+	}
+	runStatements(db, CREATE_S1_DECISIONS_INDEXES_SQL);
+}
+
+function hasIndex(db: Database.Database, index: string): boolean {
+	return !!db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?").get(index);
+}
+
+function localModelRunsIsCurrent(db: Database.Database): boolean {
+	if (!hasColumn(db, 'local_model_runs', 'agent_id')) return false;
+	const row = db
+		.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = 'local_model_runs'")
+		.get() as { sql: string } | undefined;
+	return !!row?.sql.includes("'system-one'");
+}
+
+/**
+ * Give `local_model_runs` its v20 shape without losing a row.
+ *
+ * SQLite cannot alter a CHECK constraint, so this is the table rebuild its
+ * documentation prescribes: create the new table beside the old one, copy
+ * every row, drop the old table, rename the new one into place, and put the
+ * indexes back (a dropped table takes its indexes with it). The migration
+ * runner holds one transaction around all of it, so a failure at any step
+ * leaves the old table exactly as it was.
+ *
+ * The row counts are compared before the old table is dropped. The copy has no
+ * WHERE clause and every old `source_type` satisfies the wider CHECK, so they
+ * cannot differ; if they ever do, the migration fails rather than drop data.
+ */
+function rebuildLocalModelRuns(db: Database.Database): void {
+	if (!hasTable(db, 'local_model_runs')) {
+		// Stamped past v15 by a build that never created it: there is nothing to copy.
+		runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
+		runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+		return;
+	}
+	if (localModelRunsIsCurrent(db)) return;
+
+	// A table that already carries `agent_id` under the old CHECK keeps its values.
+	const columns = [
+		...LOCAL_MODEL_RUNS_V15_COLUMNS,
+		...(hasColumn(db, 'local_model_runs', 'agent_id') ? ['agent_id'] : []),
+	].join(', ');
+
+	db.prepare(`DROP TABLE IF EXISTS ${LOCAL_MODEL_RUNS_REBUILD_TABLE}`).run();
+	db.prepare(CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL).run();
+	db.prepare(
+		`INSERT INTO ${LOCAL_MODEL_RUNS_REBUILD_TABLE} (${columns}) SELECT ${columns} FROM local_model_runs`
+	).run();
+
+	const before = countRows(db, 'local_model_runs');
+	const after = countRows(db, LOCAL_MODEL_RUNS_REBUILD_TABLE);
+	if (before !== after) {
+		throw new Error(
+			`local_model_runs rebuild copied ${after} of ${before} rows; the table was left as it was.`
+		);
+	}
+
+	db.prepare('DROP TABLE local_model_runs').run();
+	db.prepare(`ALTER TABLE ${LOCAL_MODEL_RUNS_REBUILD_TABLE} RENAME TO local_model_runs`).run();
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+
+	logger.info(`Rebuilt local_model_runs with ${after} row(s) carried over`, LOG_CONTEXT);
+}
+
+function countRows(db: Database.Database, table: string): number {
+	return (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
 }

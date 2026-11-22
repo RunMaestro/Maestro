@@ -13,6 +13,22 @@ const META_KEY_NAME = formatMetaKeyName();
 
 export const GENERAL_SETTINGS: SearchableSetting[] = [
 	{
+		id: 'general-dictation',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Dictation',
+		description: 'Choose a local speech recognition model and transcription language',
+		keywords: [
+			'dictation',
+			'microphone',
+			'audio',
+			'speech to text',
+			'whisper',
+			'german',
+			'english',
+		],
+	},
+	{
 		id: 'general-conductor-profile',
 		tab: 'general',
 		tabLabel: 'General',

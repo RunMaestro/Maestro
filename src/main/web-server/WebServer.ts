@@ -63,6 +63,7 @@ import {
 } from '../utils/network-address-watcher';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
+import { handleACappellaSignalDisconnect } from './handlers/messageHandlers/acappellaSignal';
 import { BroadcastService } from './services';
 import {
 	ApiRoutes,
@@ -1354,6 +1355,7 @@ export class WebServer {
 				logger.info(`Client connected: ${client.id} (total: ${this.webClients.size})`, LOG_CONTEXT);
 			},
 			onClientDisconnect: (clientId) => {
+				handleACappellaSignalDisconnect(clientId);
 				// Release only this connection's capture/input lease. Accepted host
 				// work and terminals survive disconnecting a browser or Lite.
 				void this.releaseWebClient(clientId);
@@ -1363,6 +1365,7 @@ export class WebServer {
 				);
 			},
 			onClientError: (clientId) => {
+				handleACappellaSignalDisconnect(clientId);
 				void this.releaseWebClient(clientId);
 			},
 			handleMessage: (clientId, message) => {

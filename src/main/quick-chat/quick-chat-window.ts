@@ -62,6 +62,7 @@ export interface QuickChatWindowDeps {
 	/** Development server URL. */
 	devServerUrl: string;
 	windowRegistry: WindowRegistry;
+	onHidden?: (windowId: string) => void;
 	boundsStore: QuickChatBoundsStore;
 }
 
@@ -115,6 +116,11 @@ export function getQuickChatWindow(): BrowserWindow | null {
  * waiting for a fresh window's first paint counts, so a status read right
  * after the show reports what the caller asked for.
  */
+/** The Quick Chat window's registry ID while it exists. */
+export function getQuickChatWindowId(): string | null {
+	return getQuickChatWindow() ? quickWindowId : null;
+}
+
 export function isQuickChatWindowVisible(): boolean {
 	const win = getQuickChatWindow();
 	return !!win && (win.isVisible() || revealPending);
@@ -328,7 +334,10 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	};
 	win.on('move', capture);
 	win.on('resize', capture);
-	win.on('hide', () => persist.flush());
+	win.on('hide', () => {
+		persist.flush();
+		if (quickWindow === win && quickWindowId) deps.onHidden?.(quickWindowId);
+	});
 	win.on('close', () => {
 		closing = true;
 		persist.flush();

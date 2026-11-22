@@ -186,3 +186,14 @@ export function stripBlankEnvVars(
 	}
 	return result;
 }
+
+/**
+ * Whether a layer sets a variable to a real value. A blank value is an absence
+ * ({@link isBlankEnvValue}), so it does not count as the user setting it.
+ */
+export function isEnvVarSet(vars: Record<string, string> | undefined, key: string): boolean {
+	const value = vars?.[key];
+	return typeof value === 'string' && !isBlankEnvValue(value);
+}
+
+export type EnvVarMerge = (current: string | undefined) => string;

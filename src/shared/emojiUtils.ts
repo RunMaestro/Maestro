@@ -24,6 +24,16 @@ const EMOJI_CLUSTER_CHARS = '\\p{Extended_Pictographic}\\p{Emoji_Modifier}\\p{Re
  */
 const EMOJI_JOINERS = '\\u200D|\\uFE0E|\\uFE0F|\\u20E3';
 
+// Match keycaps before their components so their ASCII digit/#/* goes too.
+// Emoji tag sequences (subdivision flags) also carry invisible tag letters.
+const EMOJI_RUN = new RegExp(
+	`[0-9#*]\\uFE0F?\\u20E3|[${EMOJI_CLUSTER_CHARS}](?:[${EMOJI_CLUSTER_CHARS}]|${EMOJI_JOINERS}|[\\u{E0020}-\\u{E007F}])*`,
+	'gu'
+);
+
+/** Remove emoji anywhere, without removing ordinary digits, # or *. */
+export const stripEmojis = (str: string): string => str.replace(EMOJI_RUN, '');
+
 /** A run of emoji-cluster characters and whitespace at the start of a string. */
 const LEADING_EMOJI_RUN = new RegExp(`^(?:[${EMOJI_CLUSTER_CHARS}]|${EMOJI_JOINERS}|\\s)+`, 'u');
 

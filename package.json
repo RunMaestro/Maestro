@@ -429,6 +429,7 @@
 		"@gitgraph/core": "^1.5.0",
 		"@gitgraph/react": "^1.6.0",
 		"@github/copilot-sdk": "^1.0.26",
+		"@huggingface/tokenizers": "^0.2.0",
 		"@huggingface/transformers": "3.8.1",
 		"@lezer/highlight": "^1.2.3",
 		"@napi-rs/keyring": "2.0.0",
@@ -476,6 +477,7 @@
 		"papaparse": "^5.7.0",
 		"parsimmon": "^1.18.1",
 		"perfect-freehand": "^1.2.3",
+		"phonemizer": "1.2.1",
 		"picomatch": "^4.0.3",
 		"qrcode": "^1.5.4",
 		"qrcode.react": "^4.2.0",
@@ -499,6 +501,7 @@
 		"shiki": "^4.0.2",
 		"smol-toml": "1.9.1",
 		"sqlite-vec": "0.1.7",
+		"tar": "^7.5.17",
 		"undici": "^7.29.1",
 		"ws": "^8.16.0",
 		"zustand": "^5.0.11"

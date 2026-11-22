@@ -1,3 +1,4 @@
+import type { VoiceSelfTestResponse } from '../main/preload/debug';
 import type { PianolaQueueControl } from '../shared/pianola/pianola-dispatch';
 import type {
 	TranslationRequest,
@@ -298,7 +299,14 @@ import type {
 	PromptLinkPublic,
 } from '../shared/promptLinks';
 
+import type { VoiceApi } from '../main/preload/acappella';
+import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
+import type { LocalModelsApi } from '../main/preload/localModels';
+
 interface MaestroAPI {
+	voice: VoiceApi;
+	voiceAudioHost: VoiceAudioHostApi;
+	localModels: LocalModelsApi;
 	// Context merging API (for session context transfer and grooming)
 	context: {
 		getStoredSession: (
@@ -3431,6 +3439,7 @@ interface MaestroAPI {
 	};
 	// Debug Package API
 	debug: {
+		voiceSelfTest: () => Promise<VoiceSelfTestResponse>;
 		createPackage: (options?: DebugPackageOptions) => Promise<{
 			success: boolean;
 			path?: string;

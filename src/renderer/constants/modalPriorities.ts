@@ -408,6 +408,7 @@ export const MODAL_PRIORITIES = {
 	/** Extension/plugin details pane inside Settings (above settings so Escape
 	 * goes back to the extensions grid instead of closing the whole modal). */
 	EXTENSION_DETAILS: 452,
+	WAKE_PHRASE_TRAINING: 453,
 
 	/** Settings modal */
 	SETTINGS: 450,
@@ -415,6 +416,8 @@ export const MODAL_PRIORITIES = {
 	/** Thought Stream introspection panel - floating, non-blocking; sits below
 	 * real modals so they take Escape/focus first, above git overlays. */
 	THOUGHT_STREAM: 210,
+	VOICE_HUD: 230,
+	VOICE_PILL_MENU: 232,
 	/** Header git pill dropdown - above the modals it launches so Escape closes
 	 * the menu first. */
 	GIT_PILL_MENU: 220,

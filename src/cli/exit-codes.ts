@@ -21,6 +21,8 @@ export enum ExitCode {
 	Unsupported = 4,
 	/** The app was reachable but did not respond in time. */
 	Timeout = 5,
+	Refused = 6,
+	NoAnswer = 7,
 }
 
 /** Exit the process with a typed code. Never returns. */

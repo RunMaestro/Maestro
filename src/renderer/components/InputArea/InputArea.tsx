@@ -1,3 +1,6 @@
+import { useComposerVoice } from '../../hooks/voice/useComposerVoice';
+import { controlledTextDictationTarget } from '../../utils/dictationTargets';
+import { registerDictationTarget } from '../../services/dictation';
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
@@ -17,7 +20,7 @@ import { ContextWarningSash } from '../ContextWarningSash';
 import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
-import { useAgentCapabilities, useScrollIntoView, useVoiceInput } from '../../hooks';
+import { useAgentCapabilities, useScrollIntoView } from '../../hooks';
 import { useThinkingItems } from '../../hooks/session/useThinkingItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
@@ -409,27 +412,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// setInputValue; the final transcript is appended to the value captured when
 	// listening began. Disabled in terminal mode (the button only renders in AI
 	// mode anyway). The hook is a no-op where the Web Speech API is unavailable.
-	const voice = useVoiceInput({
+	const voice = useComposerVoice({
+		session,
 		currentValue: inputValue,
 		onTranscriptionChange: setInputValue,
 		focusRef: inputRef,
 		disabled: isTerminalMode,
 	});
-	// toggleVoiceInput's identity changes on every keystroke (it closes over the
-	// live draft value), so wrap it in a stable callback. This keeps the memoized
-	// ToolbarControls from re-rendering on each keystroke - it only re-renders
-	// when isListening actually flips.
-	const voiceToggleRef = useRef(voice.toggleVoiceInput);
-	voiceToggleRef.current = voice.toggleVoiceInput;
-	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
-
 	const voiceBinding = useMemo<ChatComposerVoice>(
 		() => ({
 			supported: voice.voiceSupported,
 			listening: voice.isListening,
-			onToggle: handleToggleVoiceInput,
+			onToggle: voice.toggle,
 		}),
-		[voice.voiceSupported, voice.isListening, handleToggleVoiceInput]
+		[voice.voiceSupported, voice.isListening, voice.toggle]
 	);
 
 	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
@@ -439,7 +435,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// The AI-only toolbar fields. The toolbar is memoized field by field, so this
 	// bag's identity does not matter, only that each field is stable.
+	const dictationTarget = useMemo(
+		() =>
+			controlledTextDictationTarget({
+				getElement: () => inputRef.current,
+				setValue: setInputValue,
+			}),
+		[inputRef, setInputValue]
+	);
+	useEffect(() => {
+		if (isTerminalMode) return;
+		return registerDictationTarget(dictationTarget);
+	}, [dictationTarget, isTerminalMode]);
 	const toolbarProps: ChatComposerToolbarProps = {
+		dictationTarget: isTerminalMode ? undefined : dictationTarget,
 		isTerminalMode,
 		terminalCwd: isTerminalMode ? formatTerminalCwd(session) : undefined,
 		agentId: session.toolType,

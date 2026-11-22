@@ -1,3 +1,4 @@
+import { ACappellaSettingsBody } from '../../ACappella';
 /**
  * Encore Feature configuration sections. Each is the body of its feature tile's
  * Settings sub-tab, and reads its own settings so the Settings search can mount
@@ -140,6 +141,14 @@ function Dataview({ theme }: SettingsSectionProps) {
 	return <DataviewSection theme={theme} />;
 }
 
+function ACappella({ theme }: SettingsSectionProps) {
+	return (
+		<div data-setting-id="encore-a-cappella">
+			<ACappellaSettingsBody theme={theme} enabled />
+		</div>
+	);
+}
+
 export interface EncoreSettingsSectionDef extends SettingsSectionDef {
 	/** The Encore Feature whose tile shows this section. */
 	flag: keyof EncoreFeatureFlags;
@@ -164,6 +173,54 @@ function encoreSection(
  * back to their own affordance.
  */
 export const ENCORE_SECTIONS: readonly EncoreSettingsSectionDef[] = [
+	encoreSection(
+		'aCappella',
+		[
+			'encore-a-cappella',
+			'encore-a-cappella-agent-wake-phrases',
+			'encore-a-cappella-audio-destination',
+			'encore-a-cappella-background-announcements',
+			'encore-a-cappella-brain',
+			'encore-a-cappella-connection',
+			'encore-a-cappella-conversational-mode',
+			'encore-a-cappella-copy-diagnostics',
+			'encore-a-cappella-device-list',
+			'encore-a-cappella-diagnostics',
+			'encore-a-cappella-floor-timing',
+			'encore-a-cappella-hold-until-send',
+			'encore-a-cappella-hud',
+			'encore-a-cappella-idle-timeout',
+			'encore-a-cappella-input-device',
+			'encore-a-cappella-key-anthropic',
+			'encore-a-cappella-key-elevenlabs',
+			'encore-a-cappella-key-openai',
+			'encore-a-cappella-models',
+			'encore-a-cappella-paired-devices',
+			'encore-a-cappella-pipeline',
+			'encore-a-cappella-provider-brain',
+			'encore-a-cappella-provider-stt',
+			'encore-a-cappella-provider-tts',
+			'encore-a-cappella-read-turn-latency',
+			'encore-a-cappella-run-self-test',
+			'encore-a-cappella-self-test',
+			'encore-a-cappella-send-hold',
+			'encore-a-cappella-send-phrases',
+			'encore-a-cappella-speed-volume',
+			'encore-a-cappella-stop-word',
+			'encore-a-cappella-stt',
+			'encore-a-cappella-tts',
+			'encore-a-cappella-turn-latency',
+			'encore-a-cappella-turn-settle',
+			'encore-a-cappella-voice-audio-destination',
+			'encore-a-cappella-voice-hotkeys',
+			'encore-a-cappella-voice-providers',
+			'encore-a-cappella-voice-selection',
+			'encore-a-cappella-voice-setup',
+			'encore-a-cappella-wake-phrase-training',
+			'encore-a-cappella-wake-word',
+		],
+		ACappella
+	),
 	encoreSection('pianola', ['encore-pianola-auto-fix'], Pianola),
 	encoreSection('usageStats', ['encore-usage-stats'], UsageStats),
 	encoreSection('symphony', ['encore-symphony'], SymphonyRegistry),

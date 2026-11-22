@@ -9,6 +9,11 @@
  * - Participant management (add, send, remove)
  */
 
+import {
+	getGroupChatState,
+	groupChatEvents,
+	publishGroupChatState,
+} from '../../group-chat/emitters';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -1263,6 +1268,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * Called when a new message is added to any group chat.
 	 */
 	groupChatEmitters.emitMessage = (groupChatId: string, message: GroupChatMessage): void => {
+		groupChatEvents.emit('message', groupChatId, message);
 		safeSend('groupChat:message', groupChatId, message);
 	};
 
@@ -1274,7 +1280,6 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * from `emitStateChange` below, which is the single funnel every transition
 	 * already goes through.
 	 */
-	const lastModeratorState = new Map<string, GroupChatState>();
 
 	installGroupChatQueue({
 		broadcast: (groupChatId, state) => safeSend('groupChat:queueState', groupChatId, state),
@@ -1293,7 +1298,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 			});
 		},
 		// Absent means nothing has run yet, which is idle.
-		isIdle: (groupChatId) => (lastModeratorState.get(groupChatId) ?? 'idle') === 'idle',
+		isIdle: (groupChatId) => getGroupChatState(groupChatId) === 'idle',
 		steer: async (groupChatId, text, readOnly) => {
 			const processManager = getProcessManager();
 			const steer = processManager?.steer?.bind(processManager);
@@ -1313,7 +1318,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		// moderator free?". This emitter is the one funnel every state change
 		// already passes through, so the map is recorded here rather than being
 		// re-derived somewhere that could disagree with what clients were told.
-		lastModeratorState.set(groupChatId, state);
+		publishGroupChatState(groupChatId, state);
 		safeSend('groupChat:stateChange', groupChatId, state);
 		onModeratorStateChanged(groupChatId, state === 'idle');
 	};

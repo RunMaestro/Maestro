@@ -226,6 +226,8 @@ import {
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
+import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
+import { configureSystemOne } from './local-models/system-one/service';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { addParticipantByAgentId } from './group-chat/group-chat-router';
@@ -273,6 +275,18 @@ import {
 	claimDataDirForDesktop,
 	type QuitHandler,
 } from './app-lifecycle';
+// A Cappella's hidden audio host window (created lazily on the first voice
+// session, closed here when the Encore Feature is switched off).
+import { getVoiceSessionService } from './acappella';
+import type { VoiceWidgetState } from '../shared/floatingWidgets';
+import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
+import {
+	shutdownACappellaForDisable,
+	stopVoiceSessionForWindow,
+	syncACappellaAfterExternalSettingsChange,
+} from './ipc/handlers/acappella';
+import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
+import { hydrateUserLocalModels } from './local-models/user-models';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
@@ -280,7 +294,10 @@ import {
 	createFloatingWidgetWindow,
 	type FloatingWidgetController,
 } from './floating-widgets/floating-widget-window';
-import { createFloatingWidgetRelay } from './floating-widgets/floating-widget-relay';
+import {
+	createFloatingWidgetRelay,
+	type FloatingWidgetRelay,
+} from './floating-widgets/floating-widget-relay';
 import { restoreMediaWindowAtLaunch } from './floating-widgets/media-window-launch';
 import {
 	FLOATING_WIDGET_IDS,
@@ -731,6 +748,7 @@ const settingsWatcher = createSettingsWatcher({
 		// clear is unconditional because the previous value is not available
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
+		syncACappellaAfterExternalSettingsChange();
 	},
 	onAgentConfigsChangedExternally: () => {
 		// A provider's custom binary set outside the Settings UI (maestro-cli
@@ -812,6 +830,17 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
+// Same shape, different boot query: A Cappella's hidden audio host loads the
+// renderer bundle with `?acappellaAudio`. Nothing is created here - the window
+// is built on the first voice session start.
+const acappellaAudioHostDeps = {
+	isDevelopment,
+	preloadPath,
+	rendererProductionUrl,
+	devServerUrl,
+	windowRegistry,
+};
+
 // See src/main/cadenza-bridge/ and src/main/plugin-host-view-bridge/ for what
 // each of these does (Phase 5 refactoring).
 const { deliverCadenza } = createCadenzaDelivery({
@@ -834,6 +863,10 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	if (!resolveEncoreFeatures(encoreFeatures).aCappella) {
+		floatingWidgetControllers['acappella-voice'].close();
+		void shutdownACappellaForDisable().finally(() => closeAcappellaAudioHostWindow());
+	}
 	nativeCurrentTurns.setEnabled(resolveEncoreFeatures(encoreFeatures).pianola);
 	pianolaMemoryHost?.reconcile();
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
@@ -915,6 +948,7 @@ const quickChatController = createQuickChatController({
 			get: () => windowStateStore.get('quickChat'),
 			set: (bounds) => windowStateStore.set('quickChat', bounds),
 		},
+		onHidden: (windowId) => void stopVoiceSessionForWindow(windowId, 'hidden'),
 	},
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,
@@ -947,20 +981,55 @@ const floatingWidgetControllers = Object.fromEntries(
 			isEnabled:
 				id === 'throughput-gauge'
 					? () => resolveEncoreFeatures(store.get('encoreFeatures')).throughputGauge
-					: undefined,
+					: id === 'acappella-voice'
+						? () => resolveEncoreFeatures(store.get('encoreFeatures')).aCappella
+						: undefined,
 		}),
 	])
 ) as Record<FloatingWidgetId, FloatingWidgetController>;
 
-const floatingWidgetRelay = createFloatingWidgetRelay({
+const floatingWidgetRelay: FloatingWidgetRelay = createFloatingWidgetRelay({
 	controllers: floatingWidgetControllers,
 	// The gauge's rate engine runs in the primary app window; the media player
 	// owns its media element in its own window.
-	getAuthorityWindow: (id) =>
-		id === 'throughput-gauge'
-			? (windowRegistry.getPrimary()?.browserWindow ?? mainWindow)
-			: floatingWidgetControllers[id].getWindow(),
+	getAuthorityWindow: floatingWidgetRelayAuthority,
+	canPublishState: (id, senderId) =>
+		id !== 'acappella-voice' || floatingWidgetRelayAuthority(id)?.webContents.id === senderId,
+	canControlVisibility: (id, senderId) => {
+		if (id !== 'acappella-voice') return true;
+		const published = floatingWidgetRelay.getState(id) as VoiceWidgetState | null;
+		const ownerId = published?.session.windowId;
+		const owner = (ownerId ? windowRegistry.get(ownerId) : null) ?? windowRegistry.getPrimary();
+		return owner?.browserWindow.webContents.id === senderId;
+	},
 	getAllWindows: () => BrowserWindow.getAllWindows(),
+});
+
+function floatingWidgetRelayAuthority(id: FloatingWidgetId): BrowserWindow | null {
+	if (id === 'acappella-voice') {
+		// The protocol lives in main; HUD preferences and focus belong to the
+		// originating app window. Retain that owner after the service goes idle.
+		const published = floatingWidgetRelay.getState(id) as VoiceWidgetState | null;
+		const ownerId = getVoiceSessionService()?.getSnapshot().windowId ?? published?.session.windowId;
+		return (
+			(ownerId ? windowRegistry.get(ownerId)?.browserWindow : null) ??
+			windowRegistry.getPrimary()?.browserWindow ??
+			mainWindow
+		);
+	}
+	return id === 'throughput-gauge'
+		? (windowRegistry.getPrimary()?.browserWindow ?? mainWindow)
+		: floatingWidgetControllers[id].getWindow();
+}
+
+// Closing the originating app window also retires its HUD. The existing
+// registry bootstrap stops the voice session and releases its microphone.
+windowRegistry.onChange((change) => {
+	if (change.type !== 'removed') return;
+	const published = floatingWidgetRelay.getState('acappella-voice') as VoiceWidgetState | null;
+	if (published?.session.windowId === change.windowId) {
+		floatingWidgetControllers['acappella-voice'].close();
+	}
 });
 
 function closeFloatingWidgetWindows(): void {
@@ -3751,9 +3820,34 @@ app
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 		}
 
+		// Move model and runtime installs out of the legacy A Cappella roots before
+		// any IPC handler can read the stores. Runs whether or not voice is enabled:
+		// the stores belong to the core Local Models service. A failure leaves the
+		// installs where they were (nothing is deleted), so startup continues.
+		try {
+			await migrateLegacyLocalModelStorage();
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Local model storage migration failed: ${error}`, 'Migration');
+		}
+
+		// Put the models the user added from Hugging Face into the catalog before
+		// any handler lists, serves or loads one: every catalog lookup is
+		// synchronous. A file that cannot be read leaves the curated catalog alone.
+		try {
+			hydrateUserLocalModels();
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Could not read the user's added models: ${error}`, 'Startup');
+		}
+
+		configureModelServer({ safeSend });
+		configureSystemOne({ safeSend });
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers({
+			acappellaAudioHostDeps,
 			debugPackageDeps,
 			getMainWindow: () => mainWindow,
 			ensureMainWindow: () => {
@@ -4132,7 +4226,10 @@ quitHandler = createQuitHandler({
 	getWebServer: () => webServer,
 	getHistoryManager,
 	tunnelManager,
-	closeStatsDB,
+	closeStatsDB: () => {
+		stopModelServerNow();
+		closeStatsDB();
+	},
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

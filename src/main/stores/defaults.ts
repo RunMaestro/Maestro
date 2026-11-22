@@ -1,3 +1,4 @@
+import { DEFAULT_DOWNLOAD_BASE } from '../../shared/local-models/download-base';
 /**
  * Store Default Values
  *
@@ -78,6 +79,9 @@ export function resolveConfiguredShell(store: ShellSettingsReader): string {
 // ============================================================================
 
 export const SETTINGS_DEFAULTS: MaestroSettings = {
+	localModelEndpoints: [],
+	localModelAssignments: {},
+	localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
 	relayArchiveHours: 24,
 	activeThemeId: 'dracula',
 	shortcuts: {},

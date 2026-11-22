@@ -121,7 +121,10 @@ describe('searchableSettings', () => {
 			it('does not match a fragment of a word', () => {
 				expect(MIN_SUBSTRING_QUERY_LENGTH).toBe(3);
 				expect(searchSettings('qu')).toEqual([]);
-				expect(searchSettings('a')).toEqual([]);
+				expect(searchSettings('ap')).toEqual([]);
+				expect(searchSettings('a cappella').map((entry) => entry.id)).toContain(
+					'encore-a-cappella'
+				);
 			});
 
 			it('matches a whole word in a label or keyword', () => {
