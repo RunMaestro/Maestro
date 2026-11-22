@@ -2,6 +2,7 @@ import { isBoardEnabled, requireBoardEnabled } from './board-feature';
 /** The existing Cue heartbeat owns central intake. Desktop and CLI attach to
  * these same per-card runtime adapters; storage, owner and run service are shared. */
 import { yieldToEventLoop } from '../utils/concurrency';
+import { captureException } from '../utils/sentry';
 import { refreshBoardSources } from './board-source-host';
 import { queueBoardReviews } from './board-review';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -125,17 +126,29 @@ export class BoardCueHost {
 		const service: BoardRunService = {
 			...this.deps.service,
 			spawn: (spec, hooks) => {
-				requireBoardEnabled();
 				// Revoke this attempt's previous evidence before fresh launch IO.
 				prepared = { repository: null, reviewArtifact: null };
 				repositoryAccess = undefined;
-				const task = prepareAttempt(spec.key)
-					.then((fresh) => {
+				const task = (async () => {
+					try {
 						requireBoardEnabled();
-						prepared = fresh;
-						return this.deps.service.spawn(spec, hooks);
-					})
-					.finally(() => this.tasks.delete(task));
+						prepared = await prepareAttempt(spec.key);
+						requireBoardEnabled();
+					} catch (error) {
+						const disabled =
+							error instanceof Error && ['BoardDisabled', 'CueDisabled'].includes(error.message);
+						if (!disabled) void captureException(error, { operation: 'board:prepareAttempt' });
+						return {
+							output: '',
+							exitCode: null,
+							executionStarted: false,
+							error: disabled ? 'runtime-unavailable' : 'launch-preparation-failed',
+						};
+					}
+					// Native spawn can fail after launching, so its errors retain the
+					// runtime's existing uncertainty handling.
+					return this.deps.service.spawn(spec, hooks);
+				})().finally(() => this.tasks.delete(task));
 				this.tasks.add(task);
 				this.deps.onTask?.(task);
 				return task;
@@ -251,7 +264,7 @@ export class BoardCueHost {
 	async settle(): Promise<void> {
 		await Promise.allSettled([...this.tasks]);
 	}
-	stop(): void {
+	stop(): void | Promise<void> {
 		const stopped = new Set<string>();
 		for (const runtime of this.runtimes.values()) {
 			for (const row of runtime.storage.db
@@ -271,5 +284,6 @@ export class BoardCueHost {
 				}
 			}
 		}
+		if (this.tasks.size > 0) return this.settle();
 	}
 }

@@ -213,7 +213,7 @@ export interface CueEngineDeps {
 export interface CueEngineBoardDeps {
 	/** Central host intake replaces project-local dispatch when installed. */
 	tickGlobal?: () => Promise<void>;
-	stopGlobal?: () => void;
+	stopGlobal?: () => void | Promise<void>;
 	/**
 	 * Read the current Encore flags fresh each tick (the existing on-demand
 	 * idiom, no listener). The board pass runs only when BOTH `maestroCue` and
@@ -390,6 +390,7 @@ export class CueEngine {
 	 */
 	private boardDecomposeInFlight = new Map<string, AbortController>();
 	private boardTasks = new Set<Promise<unknown>>();
+	private boardShutdown: Promise<void> | null = null;
 	private globalBoardTickInFlight = false;
 
 	/** Native Board runs participate in the existing Cue drain accounting. */
@@ -851,6 +852,11 @@ export class CueEngine {
 	 */
 	async start(reason: SessionInitReason = 'user-toggle'): Promise<void> {
 		if (this.enabled) return;
+		if (this.boardShutdown) {
+			const generation = this.startGeneration;
+			await this.boardShutdown;
+			if (this.enabled || generation !== this.startGeneration) return;
+		}
 
 		// Cross-process guard (cue-engine-lock.ts): refuse to start a second
 		// engine loop over the same data directory - a standalone
@@ -1057,22 +1063,35 @@ export class CueEngine {
 
 	/** Disable the engine, clearing all timers and watchers */
 	stop(): void {
+		this.startGeneration++;
 		if (!this.enabled) return;
 
-		this.startGeneration++;
 		this.enabled = false;
 		this.pendingPluginRestoreIds = new Set();
 		this.deferredPluginRestoreOwners.clear();
 		this.confirmedRemovedCueOwners.clear();
 		this.startReason = null;
-		if (this.lockHeartbeat) {
-			clearInterval(this.lockHeartbeat);
-			this.lockHeartbeat = null;
+		// Board needs the current owner both to stop native work and to record
+		// its termination. Refuse a new engine cycle until that work settles.
+		const boardStopped = this.stopBoardWork();
+		const releaseLock = () => {
+			if (this.lockHeartbeat) {
+				clearInterval(this.lockHeartbeat);
+				this.lockHeartbeat = null;
+			}
+			releaseCueEngineLock();
+		};
+		if (boardStopped) {
+			this.boardShutdown = boardStopped.finally(() => {
+				try {
+					releaseLock();
+				} finally {
+					this.boardShutdown = null;
+				}
+			});
+		} else {
+			releaseLock();
 		}
-		// Release the cross-process lock acquired in start() so a standalone
-		// runner (or this same process restarting the engine) can acquire it.
-		// No-op if this process doesn't hold it - see cue-engine-lock.ts.
-		releaseCueEngineLock();
 		this.sessionRuntimeService.clearAll();
 		// Clear startup dedup keys so that re-enabling Cue fires app.startup
 		// subscriptions again for the new engine cycle.
@@ -1080,7 +1099,6 @@ export class CueEngine {
 
 		this.runManager.reset();
 		this.fanInTracker.reset();
-		this.stopBoardWork();
 
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
@@ -2302,8 +2320,16 @@ export class CueEngine {
 		this.boardTasks.add(task);
 	}
 
-	private stopBoardWork(): void {
-		this.deps.board?.stopGlobal?.();
+	private stopBoardWork(): void | Promise<void> {
+		let stopped: Promise<void> | undefined;
+		try {
+			const settling = this.deps.board?.stopGlobal?.();
+			stopped = settling?.catch((error) => {
+				void captureException(error, { operation: 'board:stop' });
+			});
+		} catch (error) {
+			void captureException(error, { operation: 'board:stop' });
+		}
 		for (const controller of this.boardDecomposeInFlight.values()) controller.abort();
 		for (const dispatcher of this.boardDispatchers.values()) {
 			try {
@@ -2313,6 +2339,7 @@ export class CueEngine {
 			}
 		}
 		this.boardDispatchers.clear();
+		return stopped;
 	}
 
 	/** Get (or lazily build) the dispatcher bound to one board at a project root. */
