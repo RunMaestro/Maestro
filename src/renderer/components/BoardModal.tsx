@@ -799,10 +799,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		closeEditor();
 	}, [isDraftDirty, closeEditor]);
 
-	/**
-	 * Escape closes the modal, asking first when the editor holds unsaved edits.
-	 */
-	const handleEscape = useCallback(() => {
+	const requestClose = useCallback(() => {
 		if (detailTarget) {
 			closeCardDetails();
 			return;
@@ -814,6 +811,16 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		onClose();
 	}, [isDraftDirty, onClose, detailTarget, closeCardDetails]);
 
+	const onEscapeRef = useRef(requestClose);
+	onEscapeRef.current = () => {
+		// The layer stack captures Escape before FilterInput can clear its query.
+		if (view === 'workers' && !selectedWorkerId && workerSearch) {
+			setWorkerSearch('');
+			return;
+		}
+		requestClose();
+	};
+	const handleEscape = useCallback(() => onEscapeRef.current(), []);
 	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', handleEscape);
 
 	// Initial focus lands on the dialog itself so Tab starts inside the modal and
@@ -1532,8 +1539,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			className="fixed inset-0 flex items-center justify-center select-none"
 			style={{ zIndex: MODAL_PRIORITIES.BOARD_MODAL }}
 			onClick={(e) => {
-				// Same guard as Escape: a backdrop click must not silently drop edits.
-				if (e.target === e.currentTarget) handleEscape();
+				if (e.target === e.currentTarget) requestClose();
 			}}
 		>
 			<div className="absolute inset-0 bg-black/50" />
@@ -1625,7 +1631,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							<RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
 						</button>
 						<button
-							onClick={handleEscape}
+							onClick={requestClose}
 							className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
 							aria-label="Close"

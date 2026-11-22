@@ -11,6 +11,8 @@ import { act, fireEvent, render, screen, waitFor, cleanup, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useModalStore, selectModalData } from '../../../renderer/stores/modalStore';
 import { BoardModal } from '../../../renderer/components/BoardModal';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
 import { observedWorkerRuns } from '../../../renderer/utils/boardWorkerStatus';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
@@ -2138,6 +2140,56 @@ describe('Board worker execution options', () => {
 });
 
 describe('Board worker discovery', () => {
+	it.each(['Escape', 'Close button', 'hidden filter'] as const)(
+		'handles %s when the Workers search contains text',
+		async (action) => {
+			installApis([{ id: 'b1', name: 'Board', cards: [] }]);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'candidate', name: 'Candidate' }),
+					createMockSession({ id: 'other', name: 'Other' }),
+				],
+			});
+			const onClose = vi.fn();
+			const { useModalLayer: realUseModalLayer } = await vi.importActual<
+				typeof import('../../../renderer/hooks/ui/useModalLayer')
+			>('../../../renderer/hooks/ui/useModalLayer');
+			await vi.mocked(useModalLayer).withImplementation(realUseModalLayer, async () => {
+				const { unmount } = render(
+					<LayerStackProvider>
+						<BoardModal theme={mockTheme} onClose={onClose} />
+					</LayerStackProvider>
+				);
+				try {
+					fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+					await screen.findByRole('button', { name: /Candidate.*Available agent/ });
+					const search = screen.getByRole('textbox', { name: 'Search workers and agents' });
+					search.focus();
+					fireEvent.change(search, { target: { value: 'candidate' } });
+					expect(screen.queryByRole('button', { name: /Other.*Available agent/ })).toBeNull();
+
+					if (action === 'Escape') {
+						fireEvent.keyDown(search, { key: 'Escape' });
+						expect(onClose).not.toHaveBeenCalled();
+						expect(search).toHaveValue('');
+						expect(search).toHaveFocus();
+						expect(screen.getByRole('button', { name: /Other.*Available agent/ })).toBeVisible();
+						fireEvent.keyDown(search, { key: 'Escape' });
+					} else if (action === 'Close button') {
+						fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+					} else {
+						const cards = screen.getByRole('tab', { name: 'Cards' });
+						fireEvent.click(cards);
+						fireEvent.keyDown(cards, { key: 'Escape' });
+					}
+					expect(onClose).toHaveBeenCalledTimes(1);
+				} finally {
+					unmount();
+				}
+			});
+		}
+	);
+
 	it('separates registered workers and filters available agents without registering them', async () => {
 		installApis([{ id: 'b1', name: 'Board', cards: [] }]);
 		const registerWorker = vi.fn().mockResolvedValue([]);
