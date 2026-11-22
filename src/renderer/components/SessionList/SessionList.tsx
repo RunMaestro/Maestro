@@ -2101,7 +2101,7 @@ function SessionListInner(props: SessionListProps) {
 											className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
 											style={{ color: theme.colors.textDim }}
 										>
-											{group.collapsed && !showUnreadAgentsOnly ? (
+											{group.collapsed ? (
 												<ChevronRight className="w-3 h-3" />
 											) : (
 												<ChevronDown className="w-3 h-3" />
