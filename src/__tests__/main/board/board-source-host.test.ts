@@ -799,3 +799,150 @@ it.each([
 		db.close();
 	}
 });
+
+it('keeps non-repository sources visible without spawning Git on every catalog refresh, and still imports later legacy input', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'source-without-git-'));
+	fs.mkdirSync(path.join(dir, '.maestro'));
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const git = vi.spyOn(remoteGit, 'execGitReadOnly');
+		const sessions = [{ id: 'ordinary-agent', dir }];
+		await discoverLocalBoardSources(storage, sessions);
+		await discoverLocalBoardSources(storage, sessions);
+		expect(git).not.toHaveBeenCalled();
+		expect(storage.query().sources.map((source) => source.location?.path)).toEqual([dir]);
+		expect(storage.query().collections).toEqual([]);
+		const legacy = Buffer.from(
+			JSON.stringify({
+				boards: [
+					{
+						id: 'later',
+						name: 'Existing user board',
+						cards: [
+							{
+								id: 'retained',
+								title: 'Retained user card',
+								body: 'Existing instructions',
+								status: 'todo',
+								parents: [],
+							},
+						],
+					},
+				],
+			})
+		);
+		fs.writeFileSync(path.join(dir, '.maestro/board.yaml'), legacy);
+		await discoverLocalBoardSources(storage, sessions);
+		expect(storage.query().collections).toHaveLength(1);
+		expect(storage.query().collections[0].board.cards).toEqual([
+			expect.objectContaining({ id: 'retained', title: 'Retained user card' }),
+		]);
+		const ledger = db.prepare('SELECT * FROM migrations').all();
+		await discoverLocalBoardSources(storage, sessions);
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual(ledger);
+		expect(fs.readFileSync(path.join(dir, '.maestro/board.yaml'))).toEqual(legacy);
+		expect(git).not.toHaveBeenCalled();
+	} finally {
+		db.close();
+	}
+});
+
+it.each(['directory', 'file'] as const)(
+	'discovers a later Git repository with a .git %s without caching a negative result',
+	async (entry) => {
+		dir = fs.mkdtempSync(path.join(isolation.contract.root, 'source-later-git-'));
+		const db = openBoardDb(isolation.contract.db);
+		try {
+			const storage = new BoardStorageFacade(db);
+			const git = vi.spyOn(remoteGit, 'execGitReadOnly');
+			const sessions = [{ id: 'ordinary-agent', dir }];
+			await discoverLocalBoardSources(storage, sessions);
+			expect(git).not.toHaveBeenCalled();
+			expect(storage.captureCatalog().repositories).toEqual([]);
+			execFileSync('git', [
+				'init',
+				'--quiet',
+				...(entry === 'file' ? ['--separate-git-dir', path.join(dir, 'git-metadata')] : []),
+				dir,
+			]);
+			await discoverLocalBoardSources(storage, sessions);
+			expect(git).toHaveBeenCalledTimes(1);
+			expect(storage.captureCatalog().repositories).toEqual([
+				expect.objectContaining({ workingDirectory: dir, validated: true }),
+			]);
+		} finally {
+			db.close();
+		}
+	}
+);
+
+it('preserves Git-entry filesystem errors instead of recording a false negative source proof', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'source-git-denied-'));
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const lstat = fs.promises.lstat.bind(fs.promises);
+		vi.spyOn(fs.promises, 'lstat').mockImplementation((...args) => {
+			if (args[0] === path.join(dir, '.git'))
+				return Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }));
+			return lstat(...args);
+		});
+		const before = snapshotSqlite(db);
+		await expect(
+			discoverLocalBoardSources(storage, [{ id: 'ordinary-agent', dir }])
+		).rejects.toMatchObject({
+			code: 'EACCES',
+		});
+		expect(snapshotSqlite(db)).toEqual(before);
+	} finally {
+		db.close();
+	}
+});
+
+it('retains the exact environment-selected working tree repository in the immutable first import', async () => {
+	dir = fs.mkdtempSync(path.join(isolation.contract.root, 'source-external-git-'));
+	const gitDir = path.join(dir, 'metadata.git');
+	const root = path.join(dir, 'working-tree');
+	fs.mkdirSync(root);
+	execFileSync('git', ['init', '--quiet', '--bare', gitDir]);
+	fs.mkdirSync(path.join(root, '.maestro'));
+	const legacy = Buffer.from(
+		JSON.stringify({ boards: [{ id: 'legacy', name: 'Existing board', cards: [] }] })
+	);
+	fs.writeFileSync(path.join(root, '.maestro/board.yaml'), legacy);
+	const previousDir = process.env.GIT_DIR;
+	const previousTree = process.env.GIT_WORK_TREE;
+	const db = openBoardDb(isolation.contract.db);
+	try {
+		process.env.GIT_DIR = gitDir;
+		process.env.GIT_WORK_TREE = root;
+		expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
+		expect(
+			execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim()
+		).toBe(root);
+		const storage = new BoardStorageFacade(db);
+		await discoverLocalBoardSources(storage, [{ id: 'ordinary-agent', dir: root }]);
+		expect(storage.captureCatalog().repositories).toEqual([
+			expect.objectContaining({ workingDirectory: root, validated: true }),
+		]);
+		const ledger = db.prepare('SELECT * FROM migrations').all();
+		expect(ledger).toHaveLength(1);
+		const snapshot = db.prepare('SELECT snapshot FROM migrations').get() as {
+			snapshot: Uint8Array;
+		};
+		expect(JSON.parse(Buffer.from(snapshot.snapshot).toString('utf8')).repository).toMatchObject({
+			workingDirectory: root,
+			validated: true,
+		});
+		await discoverLocalBoardSources(storage, [{ id: 'ordinary-agent', dir: root }]);
+		expect(db.prepare('SELECT * FROM migrations').all()).toEqual(ledger);
+		expect(fs.readFileSync(path.join(root, '.maestro/board.yaml'))).toEqual(legacy);
+	} finally {
+		if (previousDir === undefined) delete process.env.GIT_DIR;
+		else process.env.GIT_DIR = previousDir;
+		if (previousTree === undefined) delete process.env.GIT_WORK_TREE;
+		else process.env.GIT_WORK_TREE = previousTree;
+		db.close();
+	}
+});

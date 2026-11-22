@@ -134,14 +134,33 @@ export async function discoverLocalBoardSources(
 		const boardBytes = await read(BOARD_CONFIG_PATH);
 		const profileBytes = await read(PROFILES_CONFIG_PATH);
 		checkpoint();
-		const git = await execGitReadOnly(['rev-parse', '--show-toplevel'], physical);
+		// An inherited Git environment can select an exact working tree without
+		// a local .git entry. Keep canonical Git discovery for that case. Ordinary
+		// directories still avoid a process, and the entry is rechecked each pass.
+		let hasGitEntry = Boolean(
+			process.env.GIT_DIR || process.env.GIT_WORK_TREE || process.env.GIT_COMMON_DIR
+		);
+		if (!hasGitEntry) {
+			try {
+				await fs.promises.lstat(path.join(physical, '.git'));
+				hasGitEntry = true;
+			} catch (error) {
+				if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+					throw error;
+				hasGitEntry = false;
+			}
+		}
 		checkpoint();
 		let repository: { id: string; workingDirectory: string; validated: boolean } | null = null;
-		if (git.exitCode === 0) {
-			const gitRoot = await fs.promises.realpath(git.stdout.trim());
+		if (hasGitEntry) {
+			const git = await execGitReadOnly(['rev-parse', '--show-toplevel'], physical);
 			checkpoint();
-			if (gitRoot === physical)
-				repository = { id: `source:${sourceKey}`, workingDirectory: physical, validated: true };
+			if (git.exitCode === 0) {
+				const gitRoot = await fs.promises.realpath(git.stdout.trim());
+				checkpoint();
+				if (gitRoot === physical)
+					repository = { id: `source:${sourceKey}`, workingDirectory: physical, validated: true };
+			}
 		}
 		if (
 			boardBytes ||
