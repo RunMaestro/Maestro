@@ -25,8 +25,17 @@ let runtimeFor: (
 	key: BoardCardKey,
 	prepare?: boolean
 ) => BoardRuntime | null | Promise<BoardRuntime | null> = () => null;
-export function configureBoardRuntimeHost(provider: typeof runtimeFor): void {
+let isRuntimeActive = () => true;
+export function configureBoardRuntimeHost(
+	provider: typeof runtimeFor,
+	isActive = () => true
+): void {
 	runtimeFor = provider;
+	isRuntimeActive = isActive;
+}
+
+function canControlRuntime(): boolean {
+	return isRuntimeActive() && isBoardEnabled();
 }
 
 export async function executeBoardRuntimeCommand(
@@ -274,7 +283,8 @@ export async function executeBoardRuntimeCommand(
 			'stale-revision',
 			'Board project alias changed during runtime preparation'
 		);
-	if (!runtime) return failed('runtime-unavailable');
+	// The native lock can outlive Cue admission while a stopped run settles.
+	if (!runtime || !canControlRuntime()) return failed('runtime-unavailable');
 	const card = runtime.storage.workspace
 		.readCollection(key)
 		?.cards.find((c) => c.cardId === key.cardId);
@@ -296,6 +306,7 @@ export async function executeBoardRuntimeCommand(
 		)?.reviewHandoff;
 		if (!handoff || !(await prepareBoardReviewHandoff(runtime.storage, handoff)))
 			return failed('review-artifact-unresolved');
+		if (!canControlRuntime()) return failed('runtime-unavailable');
 		runtime.acceptWork(key, target.expectedRevision, command.cardRevision, principal);
 		return { ok: true, value: { accepted: true } };
 	}

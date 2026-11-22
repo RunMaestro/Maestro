@@ -62,6 +62,7 @@ let hooks: BoardRunHooks;
 let settle: (result: CardSpawnResult) => void;
 let lockValid: boolean;
 let engineForBoard: CueEngine | undefined;
+const isBoardRuntimeActive = () => engineForBoard?.isEnabled() ?? true;
 let createPr: ReturnType<typeof vi.fn<(request: CardPrRequest) => Promise<CardPrResult>>>;
 let completionTasks: Promise<unknown>[];
 let prepare: ReturnType<
@@ -194,7 +195,7 @@ beforeEach(() => {
 	}));
 	cue = new BoardCueHost({
 		storage: () => storage,
-		isActive: () => engineForBoard?.isEnabled() ?? true,
+		isActive: isBoardRuntimeActive,
 		lock: () => ({
 			info: { pid: 101, mode: 'desktop', bootTime: 1, startedAt: new Date(1).toISOString() },
 			verify: () =>
@@ -225,7 +226,7 @@ beforeEach(() => {
 		onTransitions: (receipts) => transitions.push(...receipts),
 		onWait: (key, reason) => waits.push({ cardId: key.cardId, reason }),
 	});
-	configureBoardRuntimeHost(cue.runtimeFor);
+	configureBoardRuntimeHost(cue.runtimeFor, isBoardRuntimeActive);
 });
 afterEach(() => {
 	configureBoardRuntimeHost(() => null);
@@ -321,12 +322,44 @@ describe('global Cue intake on the shared persistent runtime', () => {
 			try {
 				await tick();
 				expect(reserved()).toHaveLength(1);
+				const idle = storage.query().collections[1];
+				const prepareQuery = storage.prepareQuery.bind(storage);
+				let validateControl!: () => void;
+				const validation = new Promise<void>((resolve) => (validateControl = resolve));
+				let validationStarted!: () => void;
+				const validating = new Promise<void>((resolve) => (validationStarted = resolve));
+				vi.spyOn(storage, 'prepareQuery')
+					.mockImplementationOnce(prepareQuery)
+					.mockImplementationOnce(async (query) => {
+						validationStarted();
+						await validation;
+						return prepareQuery(query);
+					});
+				const pendingControl = executeBoardRuntimeCommand({
+					action: 'control',
+					operation: 'hold',
+					target: {
+						projectRoot: roots[1],
+						sourceKey: idle.sourceKey,
+						collectionKey: idle.collectionKey,
+						expectedRevision: idle.revision,
+					},
+					cardId: 'same',
+					cardRevision: idle.board.cards[0].storageRevision!,
+				});
+				await validating;
 				if (mode === 'encore')
 					configureBoardFeatures({ get: () => ({ board: true, maestroCue: false }) });
 				engine.stop();
 				expect(service.stop).toHaveBeenCalledTimes(1);
 				expect(readOwnedCueEngineLock()).not.toBeNull();
 				configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+				validateControl();
+				await expect(pendingControl).resolves.toMatchObject({
+					ok: false,
+					error: { code: 'runtime-unavailable' },
+				});
+				expect(storage.query().collections[1].revision).toBe(idle.revision);
 				const restart = mode === 'runtime' ? engine.start() : undefined;
 				const key = vi.mocked(service.spawn).mock.calls[0][0].key;
 				await expect(cue.runtimeFor(key, false)).rejects.toMatchObject({

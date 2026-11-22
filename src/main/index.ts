@@ -1851,7 +1851,7 @@ app
 				readBoardWorkerCapacity
 			)
 		);
-		configureBoardRuntimeHost(globalBoardHost.runtimeFor);
+		configureBoardRuntimeHost(globalBoardHost.runtimeFor, isBoardRuntimeActive);
 
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
