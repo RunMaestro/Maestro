@@ -1696,32 +1696,34 @@ describe('single-collection host batch deletion', () => {
 
 	it('keeps an intentionally empty card set empty after discovery while preserving worker and import ledger', async () => {
 		registerBoardWorker(db, 'a');
+		const boardBytes = Buffer.from(
+			JSON.stringify({
+				boards: [
+					{
+						id: 'legacy',
+						name: 'Legacy',
+						cards: [
+							{
+								id: 'original',
+								title: 'Imported task',
+								body: '',
+								parents: [],
+								status: 'todo',
+								createdAt: '',
+								updatedAt: '',
+							},
+						],
+					},
+				],
+			})
+		);
+		const profileBytes = Buffer.from(JSON.stringify({ profiles: [] }));
 		const legacyPlan = planBoardMigration({
 			source: { location: { kind: 'local' }, path: fixture.sources.two },
 			repository: { id: 'legacy-repo', workingDirectory: fixture.sources.two, validated: true },
-			profileBytes: Buffer.from(JSON.stringify({ profiles: [] })),
+			profileBytes,
 			workers: [],
-			boardBytes: Buffer.from(
-				JSON.stringify({
-					boards: [
-						{
-							id: 'legacy',
-							name: 'Legacy',
-							cards: [
-								{
-									id: 'original',
-									title: 'Imported task',
-									body: '',
-									parents: [],
-									status: 'todo',
-									createdAt: '',
-									updatedAt: '',
-								},
-							],
-						},
-					],
-				})
-			),
+			boardBytes,
 		});
 		applyBoardMigration(db, legacyPlan);
 		const preserved = () =>
@@ -1757,7 +1759,17 @@ describe('single-collection host batch deletion', () => {
 			})
 		).toMatchObject({ ok: true });
 		expect(applyBoardMigration(db, legacyPlan).status).toBe('already-imported');
-		await refreshBoardSources();
+		const config = path.join(fixture.sources.two, '.maestro');
+		fs.mkdirSync(config);
+		try {
+			const boardFile = path.join(config, 'board.yaml');
+			fs.writeFileSync(boardFile, boardBytes);
+			fs.writeFileSync(path.join(config, 'profiles.yaml'), profileBytes);
+			await refreshBoardSources();
+			expect(fs.readFileSync(boardFile)).toEqual(boardBytes);
+		} finally {
+			fs.rmSync(config, { recursive: true });
+		}
 		expect(facade.read(dir, 'b').cards).toEqual([]);
 		expect(facade.read(fixture.sources.two, 'legacy').cards).toEqual([]);
 		expect(preserved()).toEqual(before);

@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { execFileNoThrow } from '../../../main/utils/execFile';
 import { openBoardDb } from '../../../main/board/board-db';
 import { BoardStorageFacade, configureBoardStorage } from '../../../main/board/board-storage';
 import {
@@ -860,12 +861,13 @@ it.each(['directory', 'file'] as const)(
 			await discoverLocalBoardSources(storage, sessions);
 			expect(git).not.toHaveBeenCalled();
 			expect(storage.captureCatalog().repositories).toEqual([]);
-			execFileSync('git', [
+			const init = await execFileNoThrow('git', [
 				'init',
 				'--quiet',
 				...(entry === 'file' ? ['--separate-git-dir', path.join(dir, 'git-metadata')] : []),
 				dir,
 			]);
+			expect(init.exitCode, init.stderr).toBe(0);
 			await discoverLocalBoardSources(storage, sessions);
 			expect(git).toHaveBeenCalledTimes(1);
 			expect(storage.captureCatalog().repositories).toEqual([
@@ -905,7 +907,8 @@ it('retains the exact environment-selected working tree repository in the immuta
 	const gitDir = path.join(dir, 'metadata.git');
 	const root = path.join(dir, 'working-tree');
 	fs.mkdirSync(root);
-	execFileSync('git', ['init', '--quiet', '--bare', gitDir]);
+	const init = await execFileNoThrow('git', ['init', '--quiet', '--bare', gitDir]);
+	expect(init.exitCode, init.stderr).toBe(0);
 	fs.mkdirSync(path.join(root, '.maestro'));
 	const legacy = Buffer.from(
 		JSON.stringify({ boards: [{ id: 'legacy', name: 'Existing board', cards: [] }] })
@@ -918,9 +921,9 @@ it('retains the exact environment-selected working tree repository in the immuta
 		process.env.GIT_DIR = gitDir;
 		process.env.GIT_WORK_TREE = root;
 		expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
-		expect(
-			execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim()
-		).toBe(root);
+		const git = await remoteGit.execGitReadOnly(['rev-parse', '--show-toplevel'], root);
+		expect(git.exitCode, git.stderr).toBe(0);
+		expect(fs.realpathSync(git.stdout.trim())).toBe(fs.realpathSync(root));
 		const storage = new BoardStorageFacade(db);
 		await discoverLocalBoardSources(storage, [{ id: 'ordinary-agent', dir: root }]);
 		expect(storage.captureCatalog().repositories).toEqual([
