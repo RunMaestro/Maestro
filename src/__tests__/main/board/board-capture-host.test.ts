@@ -1694,6 +1694,76 @@ describe('single-collection host batch deletion', () => {
 		expect(facade.read(dir, 'b').cards.map((entry) => entry.id)).not.toContain('middle-a');
 	});
 
+	it('keeps an intentionally empty card set empty after discovery while preserving worker and import ledger', async () => {
+		registerBoardWorker(db, 'a');
+		const legacyPlan = planBoardMigration({
+			source: { location: { kind: 'local' }, path: fixture.sources.two },
+			repository: { id: 'legacy-repo', workingDirectory: fixture.sources.two, validated: true },
+			profileBytes: Buffer.from(JSON.stringify({ profiles: [] })),
+			workers: [],
+			boardBytes: Buffer.from(
+				JSON.stringify({
+					boards: [
+						{
+							id: 'legacy',
+							name: 'Legacy',
+							cards: [
+								{
+									id: 'original',
+									title: 'Imported task',
+									body: '',
+									parents: [],
+									status: 'todo',
+									createdAt: '',
+									updatedAt: '',
+								},
+							],
+						},
+					],
+				})
+			),
+		});
+		applyBoardMigration(db, legacyPlan);
+		const preserved = () =>
+			Object.fromEntries(
+				[
+					'workers',
+					'migrations',
+					'migration_worker_holds',
+					'migration_blockers',
+					'runs',
+					'reservations',
+				].map((table) => [table, db.prepare(`SELECT * FROM ${table}`).all()])
+			);
+		const before = preserved();
+		const board = facade.read(dir, 'b');
+		expect(board.cards.length).toBeGreaterThan(0);
+		expect(
+			await executeBoardCommand(deletionCommand(board.cards.map((card) => card.id)))
+		).toMatchObject({ ok: true });
+		expect(facade.read(dir, 'b').cards).toEqual([]);
+		const legacy = facade.read(fixture.sources.two, 'legacy');
+		expect(legacy.cards.map((card) => card.id)).toEqual(['original']);
+		expect(
+			await executeBoardCommand({
+				action: 'delete-cards',
+				target: {
+					projectRoot: fixture.sources.two,
+					sourceKey: legacy.storage!.sourceKey,
+					collectionKey: legacy.storage!.collectionKey,
+					expectedRevision: legacy.storage!.expectedRevision!,
+				},
+				cards: [{ cardId: 'original', cardRevision: legacy.storage!.cardRevisions.original }],
+			})
+		).toMatchObject({ ok: true });
+		expect(applyBoardMigration(db, legacyPlan).status).toBe('already-imported');
+		await refreshBoardSources();
+		expect(facade.read(dir, 'b').cards).toEqual([]);
+		expect(facade.read(fixture.sources.two, 'legacy').cards).toEqual([]);
+		expect(preserved()).toEqual(before);
+		expect(db.pragma('foreign_key_check')).toEqual([]);
+	});
+
 	it('commits only one of two competing requests from the same preview', async () => {
 		const batch = deletionCommand();
 		const save = vi.spyOn(facade, 'save');
