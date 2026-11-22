@@ -453,6 +453,28 @@ describe('useGroupChatHandlers', () => {
 			expect(modal?.open ?? false).toBe(false);
 		});
 
+		it('shows the complete handler context in the actual group-chat validation toast', async () => {
+			mockGroupChat.create.mockRejectedValueOnce(
+				new Error(
+					"Error invoking remote method 'groupChat:create': TypeError: Invalid moderator agent ID: Error: account unavailable"
+				)
+			);
+			useModalStore.getState().openModal('newGroupChat');
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleCreateGroupChat('Chat', 'bad-agent');
+			});
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Group Chat',
+					message: 'Invalid moderator agent ID: Error: account unavailable',
+				})
+			);
+			expect(useModalStore.getState().modals.get('newGroupChat')?.open ?? false).toBe(false);
+			expect(mockGroupChat.startModerator).not.toHaveBeenCalled();
+		});
+
 		it('re-throws unexpected errors after closing modal', async () => {
 			const unexpectedError = new Error('Network timeout');
 			mockGroupChat.create.mockRejectedValueOnce(unexpectedError);

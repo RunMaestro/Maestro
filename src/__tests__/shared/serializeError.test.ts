@@ -53,11 +53,13 @@ describe('toLoggableData', () => {
 });
 
 describe('ipcErrorMessage', () => {
-	it('strips the Electron IPC wrapper and every re-thrown Error: layer', () => {
+	it('strips the Electron wrapper while keeping the complete handler and SSH failure context', () => {
 		const err = new Error(
 			'Error invoking remote method \'fs:writeFile\': Error: Failed to write file: Error: Unable to connect to "pedtome" over SSH.'
 		);
-		expect(ipcErrorMessage(err)).toBe('Unable to connect to "pedtome" over SSH.');
+		expect(ipcErrorMessage(err)).toBe(
+			'Failed to write file: Error: Unable to connect to "pedtome" over SSH.'
+		);
 	});
 
 	it('handles a wrapper with no inner Error: prefix', () => {

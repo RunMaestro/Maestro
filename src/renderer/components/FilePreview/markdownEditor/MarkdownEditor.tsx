@@ -214,9 +214,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			if (!view) return;
 			const current = view.state.doc.toString();
 			if (current === value) return;
+			// Diff in CM coordinates so a CRLF does not insert a second line break.
+			const next = view.state.toText(value).toString();
+			if (current === next) return;
 			applyingExternalRef.current = true;
 			try {
-				view.dispatch({ changes: minimalReplacement(current, value) });
+				view.dispatch({ changes: minimalReplacement(current, next) });
 			} finally {
 				applyingExternalRef.current = false;
 			}
