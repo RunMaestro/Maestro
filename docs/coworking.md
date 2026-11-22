@@ -56,15 +56,15 @@ This is the part worth reading carefully, because an agent driving a signed-in b
 
 **On top of that, each agent has a confirm policy.** It decides which operations need your explicit per-call approval:
 
-| Policy      | Behavior                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------------- |
-| `off`       | No per-call approval. The per-agent permission alone gates.                                       |
-| `dangerous` | **Default.** Approve the sharp-edge operations: `navigate`, `eval`, `type`, `newTab`, `closeTab`. |
-| `all`       | Approve every interaction.                                                                        |
+| Policy in Settings       | Behavior                                                                 |
+| ------------------------ | ------------------------------------------------------------------------ |
+| Risky only (`dangerous`) | Default. Ask before navigation, JavaScript, and opening or closing tabs. |
+| Every action (`all`)     | Ask before every browser interaction.                                    |
+| Fewer prompts (`off`)    | Ask before JavaScript. Actions other than typing run immediately.        |
 
-`type` is on the dangerous list for a reason that is not obvious: a silent form fill can populate login fields or cross-site fields. `newTab` is navigation equivalent because it loads an arbitrary URL, and `closeTab` is destructive.
+**Typing has its own opt-in, off by default.** In **Settings -> Plugins -> Coworking Setup**, enable **Browser interaction** for a provider, then switch on **Allow typing without confirmation**. This lets that provider use `browser_type` in the permitted browser tabs of its own sessions, including on signed-in pages. Turning the switch off restores per-call confirmation for typing. Every action takes precedence and still asks before typing. This also applies to existing settings saved under the Fewer prompts policy.
 
-**`browser_eval` always requires approval, under every policy, including `off`.** It runs arbitrary JavaScript in a privileged in-app webview, so a page the agent just loaded must never be able to drive it unattended. That one is not configurable and should not be.
+**`browser_eval` always requires approval.** The typing permission covers the built-in field entry operation. Running arbitrary JavaScript in the page still requires its own approval on each call.
 
 **Every interaction is audited.** Maestro writes a redacted audit line for each one. URLs are stripped of query string and fragment before they are recorded, page content is reduced to character counts rather than stored, and the file is created owner-only (`0600`). It is an audit trail, not a copy of your browsing.
 
@@ -80,9 +80,7 @@ See the [CLI reference](/cli-reference) for the full flag list.
 
 ## Background browsers
 
-By default an agent reaches the browser tabs of the session it belongs to. There is an opt-in background webview host that allows cross-session browser access, with a small LRU cap (2 by default) so a long-running agent cannot accumulate hidden browser instances.
-
-Leave it off unless you specifically need an agent to reach a tab that lives in another session.
+Coworking scopes an agent to the browser tabs of its own session. The optional background webview host lets that agent reach those tabs while you are focused on another session. The host has a small LRU cap (2 by default) to limit hidden browser instances.
 
 ## Turning it off
 
@@ -94,13 +92,13 @@ Nothing about your terminals, tabs, or agents is destroyed by toggling the featu
 
 ## What Coworking can reach
 
-| Capability                                      | Why it needs it                                                                                                |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `settings:read`                                 | Re-read the Encore flag, the per-agent interaction toggles, and the confirm policy before serving any request  |
-| `agents:read`                                   | List installed agent CLIs and their config paths for setup status, and resolve the owning session at handshake |
-| `fs:write` (`~/.claude.json`)                   | Install or remove the MCP server entry in the Claude Code config                                               |
-| `fs:write` (`~/.codex/config.toml`)             | Install or remove the MCP server block in the Codex config                                                     |
-| `fs:write` (`~/.config/opencode/opencode.json`) | Install or remove the MCP server entry in the OpenCode config                                                  |
-| `fs:write` (`~/.factory/mcp.json`)              | Install or remove the MCP server entry in the Factory Droid config                                             |
+| Capability                                      | Why it needs it                                                                                                                  |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `settings:read`                                 | Re-read the Encore flag, the per-agent interaction toggles, the confirm policy, and the typing opt-in before serving any request |
+| `agents:read`                                   | List installed agent CLIs and their config paths for setup status, and resolve the owning session at handshake                   |
+| `fs:write` (`~/.claude.json`)                   | Install or remove the MCP server entry in the Claude Code config                                                                 |
+| `fs:write` (`~/.codex/config.toml`)             | Install or remove the MCP server block in the Codex config                                                                       |
+| `fs:write` (`~/.config/opencode/opencode.json`) | Install or remove the MCP server entry in the OpenCode config                                                                    |
+| `fs:write` (`~/.factory/mcp.json`)              | Install or remove the MCP server entry in the Factory Droid config                                                               |
 
 Note that the settings read happens **before every request**, not once at startup. Revoking an agent's interaction permission or tightening its confirm policy takes effect on the agent's next call rather than whenever something happens to restart.

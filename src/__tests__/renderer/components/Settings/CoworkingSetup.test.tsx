@@ -7,7 +7,7 @@
  * - Browser interaction switch bound to coworkingBrowserInteraction membership
  * - Ask-before-actions radiogroup with direct policy selection (no cycling)
  * - Policy description text switching per selected policy
- * - "Never asks" warning shown only when interaction is on AND policy is 'off'
+ * - Fewer prompts warning shown only when interaction is on AND policy is 'off'
  * - Background browsing switch and conditional Limit input
  * - getInstallStatus rejection surfaces a toast instead of crashing
  */
@@ -30,11 +30,12 @@ vi.mock('../../../../renderer/stores/notificationStore', () => ({
 // purpose: the component does not export these, and the visible wording is the
 // behavior under test.
 const DANGEROUS_DESCRIPTION =
-	'Asks before risky actions: navigating, running JavaScript, typing into fields, opening or closing tabs.';
+	'Asks before navigating, running JavaScript, and opening or closing tabs. Typing follows its own setting below.';
 const ALL_DESCRIPTION = 'Asks before every browser action, including clicks and screenshots.';
 const OFF_DESCRIPTION =
-	'Only asks before running JavaScript (always required); every other action runs immediately.';
-const WARNING_TEXT = 'This agent can drive your browser without ever asking you.';
+	'Asks before running JavaScript. Typing follows its own setting below. Other actions run immediately.';
+const WARNING_TEXT =
+	'This provider can navigate, click, and open or close its browser tabs without asking.';
 
 interface InstallStatusRow {
 	agentId: string;
@@ -61,7 +62,7 @@ describe('CoworkingSetup', () => {
 		return screen.getByRole('switch', { name: 'Browser interaction for Claude Code' });
 	}
 
-	function getRadio(label: 'Risky only' | 'Every action' | 'JS only'): HTMLElement {
+	function getRadio(label: 'Risky only' | 'Every action' | 'Fewer prompts'): HTMLElement {
 		return screen.getByRole('radio', { name: label });
 	}
 
@@ -81,6 +82,7 @@ describe('CoworkingSetup', () => {
 		useSettingsStore.setState({
 			coworkingBrowserInteraction: [],
 			coworkingBrowserInteractionConfirm: {},
+			coworkingBrowserTypingWithoutConfirmation: [],
 			coworkingBackgroundBrowsers: false,
 			coworkingBackgroundBrowsersLimit: 3,
 		});
@@ -174,7 +176,7 @@ describe('CoworkingSetup', () => {
 			'aria-checked',
 			'false'
 		);
-		expect(within(group).getByRole('radio', { name: 'JS only' })).toHaveAttribute(
+		expect(within(group).getByRole('radio', { name: 'Fewer prompts' })).toHaveAttribute(
 			'aria-checked',
 			'false'
 		);
@@ -182,7 +184,7 @@ describe('CoworkingSetup', () => {
 		expect(screen.queryByText(WARNING_TEXT)).not.toBeInTheDocument();
 	});
 
-	it("writes policy 'off' on a single click of JS only, swaps the description, and shows the warning", async () => {
+	it("writes policy 'off' on a single click of Fewer prompts, swaps the description, and shows the warning", async () => {
 		// Another agent's stored policy must survive the write (merge, not replace).
 		useSettingsStore.setState({
 			coworkingBrowserInteraction: ['claude-code'],
@@ -194,12 +196,12 @@ describe('CoworkingSetup', () => {
 
 		// One click straight from the 'dangerous' default to 'off' - a cycling
 		// control would land elsewhere.
-		fireEvent.click(getRadio('JS only'));
+		fireEvent.click(getRadio('Fewer prompts'));
 
 		const confirm = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
 		expect(confirm['claude-code']).toBe('off');
 		expect(confirm['codex']).toBe('all');
-		expect(getRadio('JS only')).toHaveAttribute('aria-checked', 'true');
+		expect(getRadio('Fewer prompts')).toHaveAttribute('aria-checked', 'true');
 		expect(getRadio('Risky only')).toHaveAttribute('aria-checked', 'false');
 		expect(screen.getByText(OFF_DESCRIPTION)).toBeInTheDocument();
 		expect(screen.queryByText(DANGEROUS_DESCRIPTION)).not.toBeInTheDocument();
@@ -223,9 +225,39 @@ describe('CoworkingSetup', () => {
 			'all'
 		);
 		expect(getRadio('Every action')).toHaveAttribute('aria-checked', 'true');
-		expect(getRadio('JS only')).toHaveAttribute('aria-checked', 'false');
+		expect(getRadio('Fewer prompts')).toHaveAttribute('aria-checked', 'false');
 		expect(screen.getByText(ALL_DESCRIPTION)).toBeInTheDocument();
 		expect(screen.queryByText(WARNING_TEXT)).not.toBeInTheDocument();
+	});
+
+	it('requires an explicit opt-in for typing even with a saved permissive policy and allows revocation', async () => {
+		useSettingsStore.setState({
+			coworkingBrowserInteraction: ['claude-code'],
+			coworkingBrowserInteractionConfirm: { 'claude-code': 'off' },
+			coworkingBrowserTypingWithoutConfirmation: ['codex'],
+		});
+		mockGetInstallStatus.mockResolvedValue([installedClaude]);
+		render(<CoworkingSetup theme={mockTheme} />);
+
+		const typingSwitch = await screen.findByRole('switch', {
+			name: 'Allow typing without confirmation for Claude Code',
+		});
+		expect(typingSwitch).toHaveAttribute('aria-checked', 'false');
+		fireEvent.click(typingSwitch);
+		expect(typingSwitch).toHaveAttribute('aria-checked', 'true');
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			'coworkingBrowserTypingWithoutConfirmation',
+			['codex', 'claude-code']
+		);
+
+		fireEvent.click(typingSwitch);
+		expect(typingSwitch).toHaveAttribute('aria-checked', 'false');
+		expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+			'coworkingBrowserTypingWithoutConfirmation',
+			['codex']
+		);
+		fireEvent.click(getInteractionSwitch());
+		expect(typingSwitch).not.toBeInTheDocument();
 	});
 
 	it('toggles background browsing and shows the Limit input only while on', async () => {

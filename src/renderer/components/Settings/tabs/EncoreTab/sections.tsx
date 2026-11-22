@@ -178,7 +178,15 @@ export const ENCORE_SECTIONS: readonly EncoreSettingsSectionDef[] = [
 		],
 		DirectorNotes
 	),
-	encoreSection('coworking', ['encore-coworking', 'coworking-background-browsers'], Coworking),
+	encoreSection(
+		'coworking',
+		[
+			'encore-coworking',
+			'coworking-background-browsers',
+			'coworking-browser-typing-without-confirmation',
+		],
+		Coworking
+	),
 	encoreSection('computerHistory', ['encore-computer-history'], ComputerHistory),
 	encoreSection('maestroRun', ['encore-maestro-run'], MaestroRun),
 	encoreSection(

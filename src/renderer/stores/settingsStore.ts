@@ -469,6 +469,7 @@ export interface SettingsStoreState
 	symphonyRegistryUrls: string[];
 	coworkingBrowserInteraction: string[];
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	coworkingBrowserTypingWithoutConfirmation: string[];
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	dataviewJsEnabled: boolean;
@@ -599,6 +600,7 @@ export interface SettingsStoreActions
 	setSymphonyRegistryUrls: (value: string[]) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	setCoworkingBrowserTypingWithoutConfirmation: (value: string[]) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDataviewJsEnabled: (value: boolean) => void;
@@ -867,6 +869,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		symphonyRegistryUrls: [],
 		coworkingBrowserInteraction: [],
 		coworkingBrowserInteractionConfirm: {},
+		coworkingBrowserTypingWithoutConfirmation: [],
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		dataviewJsEnabled: false,
@@ -1426,6 +1429,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCoworkingBrowserInteractionConfirm: (value) => {
 			set({ coworkingBrowserInteractionConfirm: value });
 			window.maestro.settings.set('coworkingBrowserInteractionConfirm', value);
+		},
+
+		setCoworkingBrowserTypingWithoutConfirmation: (value) => {
+			set({ coworkingBrowserTypingWithoutConfirmation: value });
+			window.maestro.settings.set('coworkingBrowserTypingWithoutConfirmation', value);
 		},
 
 		setCoworkingBackgroundBrowsers: (value) => {
@@ -2701,6 +2709,11 @@ export async function loadAllSettings(): Promise<void> {
 			}
 			patch.coworkingBrowserInteractionConfirm = out;
 		}
+
+		const rawTyping = allSettings['coworkingBrowserTypingWithoutConfirmation'];
+		patch.coworkingBrowserTypingWithoutConfirmation = Array.isArray(rawTyping)
+			? rawTyping.filter((id): id is string => typeof id === 'string')
+			: [];
 
 		if (typeof allSettings['coworkingBackgroundBrowsers'] === 'boolean') {
 			patch.coworkingBackgroundBrowsers = allSettings['coworkingBackgroundBrowsers'];

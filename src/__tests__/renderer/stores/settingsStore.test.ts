@@ -2030,6 +2030,29 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		it('hydrates explicit Coworking typing opt-ins and clears a missing or malformed grant', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				coworkingBrowserTypingWithoutConfirmation: ['codex', true],
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().coworkingBrowserTypingWithoutConfirmation).toEqual([
+				'codex',
+			]);
+
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				coworkingBrowserTypingWithoutConfirmation: 'codex',
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().coworkingBrowserTypingWithoutConfirmation).toEqual([]);
+
+			useSettingsStore.setState({ coworkingBrowserTypingWithoutConfirmation: ['codex'] });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				coworkingBrowserInteractionConfirm: { codex: 'off' },
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().coworkingBrowserTypingWithoutConfirmation).toEqual([]);
+		});
+
 		it.each([true, false])('restores worktree provider visibility: %s', async (enabled) => {
 			useSettingsStore.setState({ showWorktreeProvider: !enabled });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
