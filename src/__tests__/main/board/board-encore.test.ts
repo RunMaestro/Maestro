@@ -8,7 +8,11 @@ import { createBoardRunService } from '../../../main/board/board-spawn';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
-import { configureBoardFeatures } from '../../../main/board/board-feature';
+import {
+	configureBoardFeatures,
+	isBoardEnabled,
+	requireBoardEnabled,
+} from '../../../main/board/board-feature';
 import { executeBoardCommand } from '../../../main/board/board-command-host';
 import { getBoardStorage, getExistingBoardStorage } from '../../../main/board/board-storage';
 import { refreshBoardSources } from '../../../main/board/board-source-host';
@@ -147,4 +151,30 @@ it('rechecks a toggle after asynchronous native-owner preparation before source/
 	await expect(pending).rejects.toThrow('BoardDisabled');
 	expect(storage).not.toHaveBeenCalled();
 	expect(prepare).not.toHaveBeenCalled();
+});
+
+it('reads both gates once per admission and observes every later settings change', () => {
+	let flags = { board: true, maestroCue: true };
+	const get = vi.fn(() => flags);
+	configureBoardFeatures({ get });
+	expect(() => requireBoardEnabled()).not.toThrow();
+	expect(get).toHaveBeenCalledTimes(1);
+	flags = { board: true, maestroCue: false };
+	expect(() => requireBoardEnabled()).toThrow('CueDisabled');
+	expect(get).toHaveBeenCalledTimes(2);
+	flags = { board: false, maestroCue: true };
+	expect(() => requireBoardEnabled()).toThrow('BoardDisabled');
+	expect(get).toHaveBeenCalledTimes(3);
+});
+
+it('does not combine flags from different settings snapshots into an enabled admission', () => {
+	const snapshots = [
+		{ board: true, maestroCue: false },
+		{ board: false, maestroCue: true },
+	];
+	let reads = 0;
+	configureBoardFeatures({ get: () => snapshots[reads++ % snapshots.length] });
+	expect(isBoardEnabled()).toBe(false);
+	reads = 0;
+	expect(() => requireBoardEnabled()).toThrow('CueDisabled');
 });

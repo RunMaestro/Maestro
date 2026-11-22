@@ -15,13 +15,18 @@ export function configureBoardFeatures(reader: EncoreSettingsReader): void {
 
 /** Board activation requires both canonical Encore gates. */
 export function isBoardEnabled(): boolean {
+	// One fresh store snapshot per synchronous admission, never across checks.
+	const features = settings.get('encoreFeatures');
+	const snapshot = { get: () => features };
 	return (
-		isEncoreFeatureEnabled(settings, 'board') && isEncoreFeatureEnabled(settings, 'maestroCue')
+		isEncoreFeatureEnabled(snapshot, 'board') && isEncoreFeatureEnabled(snapshot, 'maestroCue')
 	);
 }
 
 /** Entry-point admission, before source IO, opening storage or acquiring an owner. */
 export function requireBoardEnabled(): void {
-	requireEncoreFeature(settings, 'board', 'BoardDisabled');
-	requireEncoreFeature(settings, 'maestroCue', 'CueDisabled');
+	const features = settings.get('encoreFeatures');
+	const snapshot = { get: () => features };
+	requireEncoreFeature(snapshot, 'board', 'BoardDisabled');
+	requireEncoreFeature(snapshot, 'maestroCue', 'CueDisabled');
 }
