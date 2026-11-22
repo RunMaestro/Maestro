@@ -15,6 +15,11 @@
  * A Cappella entries at all for users who never turned it on.
  */
 
+import {
+	getGlobalHotkeyDefinition,
+	VOICE_AGENT_HOTKEY_ID,
+	VOICE_CONDUCTOR_HOTKEY_ID,
+} from '../../../../shared/global-hotkeys';
 import type { VoiceAgentActions } from '../../../hooks/voice/useVoiceAgentActions';
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
@@ -38,7 +43,7 @@ interface BuildVoiceCommandsArgs {
 	 * capability here would otherwise never learn it answers from any app, and
 	 * the palette is the one place they are already looking.
 	 */
-	tabShortcuts?: Record<string, QuickAction['shortcut']>;
+	globalShortcuts?: Record<string, QuickAction['shortcut']>;
 }
 
 /**
@@ -59,10 +64,17 @@ export function buildVoiceCommands({
 	toggleTranscript,
 	setQuickActionOpen,
 	openVoiceSetup,
-	tabShortcuts,
+	globalShortcuts,
 }: BuildVoiceCommandsArgs): QuickAction[] {
 	if (!voiceActions.enabled) return [];
 
+	const globalShortcut = (id: string): QuickAction['shortcut'] => {
+		const defined = getGlobalHotkeyDefinition(id);
+		return (
+			globalShortcuts?.[id] ??
+			(defined ? { id, label: defined.label, keys: defined.defaultKeys } : undefined)
+		);
+	};
 	const commands: QuickAction[] = [];
 
 	if (activeSession) {
@@ -76,7 +88,7 @@ export function buildVoiceCommands({
 			subtext: voiceActions.wakePhrase
 				? `Or say "${voiceActions.wakePhrase}"`
 				: 'Open a voice session bound to this agent',
-			shortcut: tabShortcuts?.voiceCurrentAgent,
+			shortcut: globalShortcut(VOICE_AGENT_HOTKEY_ID),
 			action: () => {
 				void voiceActions.talkToAgent();
 				setQuickActionOpen(false);
@@ -89,7 +101,7 @@ export function buildVoiceCommands({
 		keywords: VOICE_KEYWORDS,
 		label: 'Talk to the Conductor',
 		subtext: 'Open a voice session that can route to any agent',
-		shortcut: tabShortcuts?.voiceConductor,
+		shortcut: globalShortcut(VOICE_CONDUCTOR_HOTKEY_ID),
 		action: () => {
 			void voiceActions.talkToConductor();
 			setQuickActionOpen(false);

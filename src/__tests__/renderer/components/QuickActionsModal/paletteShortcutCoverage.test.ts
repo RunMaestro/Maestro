@@ -40,6 +40,8 @@ const PALETTE_ROOT = join(__dirname, '../../../../renderer/components/QuickActio
 const NO_PALETTE_ENTRY_BY_DESIGN = new Set<string>([
 	// Opening the palette from the palette.
 	'quickAction',
+	// Uses the focused writable field, which the palette would replace.
+	'dictate',
 	// The palette's own agent-switcher mode; the palette is already open.
 	'agentSwitcher',
 ]);

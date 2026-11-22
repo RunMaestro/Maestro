@@ -17,6 +17,7 @@
  * The last two look alike and are not, which is exactly why both are here.
  */
 
+import { isImeComposing } from '../../utils/ime';
 import { useCallback, useState } from 'react';
 import { MessageSquare, Send, Square, Zap } from 'lucide-react';
 import type { Theme } from '../../types';
@@ -90,7 +91,7 @@ export function VoiceDevHarness({ theme, actions }: VoiceDevHarnessProps) {
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={(e) => {
-						if (e.key === 'Enter') handleSend();
+						if (e.key === 'Enter' && !isImeComposing(e)) handleSend();
 					}}
 					placeholder="Type an utterance..."
 					className="flex-1 min-w-0 px-2 py-1 text-xs-plus rounded outline-none border"

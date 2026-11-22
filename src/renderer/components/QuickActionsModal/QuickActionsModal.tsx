@@ -1027,6 +1027,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			: buildVoiceCommands({
 					activeSession,
 					voiceActions,
+					globalShortcuts: shortcuts,
 					openVoiceSetup: () => useModalStore.getState().openModal('voiceSetup'),
 					transcriptVisible: voiceTranscriptVisible,
 					toggleTranscript: toggleVoiceTranscript,

@@ -24,7 +24,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { EncoreTab } from '../../../../../renderer/components/Settings/tabs/EncoreTab';
 import type { AgentConfig } from '../../../../../renderer/types';
 
@@ -162,6 +162,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
 	// Sections read settings through useSettingsValues; both return the same mock.
 	const useSettings = () => ({
 		encoreFeatures: { directorNotes: false },
+		shortcuts: {},
+		setShortcuts: vi.fn(),
 		setEncoreFeatures: vi.fn(),
 		directorNotesSettings: {
 			provider: 'claude-code',
@@ -328,6 +330,7 @@ describe('EncoreTab', () => {
 			expect(screen.getByTestId('settings-body-maestroCue')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-directorNotes')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-quickChat')).toBeInTheDocument();
+			expect(screen.getByTestId('settings-body-aCappella')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-throughputGauge')).toBeInTheDocument();
 			// Repair permission is separate from the manager/rules modal.
 			expect(screen.getByTestId('settings-body-pianola')).toBeInTheDocument();
@@ -350,6 +353,7 @@ describe('EncoreTab', () => {
 				document.querySelector('[data-setting-id="encore-director-notes"]')
 			).toBeInTheDocument();
 			expect(document.querySelector('[data-setting-id="encore-quick-chat"]')).toBeInTheDocument();
+			expect(document.querySelector('[data-setting-id="encore-a-cappella"]')).toBeInTheDocument();
 			expect(
 				document.querySelector('[data-setting-id="encore-throughput-gauge"]')
 			).toBeInTheDocument();
@@ -663,7 +667,8 @@ describe('EncoreTab', () => {
 					vi.mocked(window.maestro.agents.getModels).mock.lastCall![0],
 					'reasoningEffort'
 				);
-				expect(screen.getByRole('status')).toHaveTextContent(
+				const notesSettings = screen.getByTestId('settings-body-directorNotes');
+				expect(within(notesSettings).getByRole('status')).toHaveTextContent(
 					'unavailable until the synopsis workspace is known'
 				);
 				expect(screen.getByTestId('agent-config-available-models')).toHaveTextContent('[]');

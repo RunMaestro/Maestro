@@ -20,6 +20,7 @@
  *     blame the wrong thing every time.
  */
 
+import { isImeComposing } from '../../../utils/ime';
 import { useCallback, useState } from 'react';
 import { Check, Radio, Smartphone, Trash2, Wifi, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -228,7 +229,7 @@ export function PairedDevicesPanel({ theme, enabled }: PairedDevicesPanelProps) 
 										onChange={(event) => setRenaming({ id: device.id, value: event.target.value })}
 										onBlur={() => void commitRename()}
 										onKeyDown={(event) => {
-											if (event.key === 'Enter') void commitRename();
+											if (event.key === 'Enter' && !isImeComposing(event)) void commitRename();
 											if (event.key === 'Escape') setRenaming(null);
 										}}
 										className="px-2 py-1 rounded border text-sm"

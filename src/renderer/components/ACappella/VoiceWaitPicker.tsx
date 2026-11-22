@@ -23,6 +23,7 @@
  * above the one surface designed to sit on top.
  */
 
+import { isImeComposing } from '../../utils/ime';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { RotateCcw } from 'lucide-react';
@@ -84,7 +85,7 @@ export function VoiceWaitPicker({ theme, sendWait, onPick, onSetPhrases }: Voice
 	}, [draft, onSetPhrases, storedPhrases]);
 
 	const handlePhraseKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
-		if (event.key === 'Enter') {
+		if (event.key === 'Enter' && !isImeComposing(event)) {
 			event.preventDefault();
 			event.currentTarget.blur();
 			return;

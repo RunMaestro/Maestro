@@ -29,7 +29,7 @@ import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { resolveFocusedAiTabId } from '../../utils/panelLayout';
 import { notifyVoiceStartFailed } from '../../services/voiceListening';
-import { useCallback } from 'react';
+import { useStableCallback } from '../utils/useStableCallback';
 import { useVoiceInput } from '../utils/useVoiceInput';
 import { useVoiceAgentActions } from './useVoiceAgentActions';
 import type { Session } from '../../types';
@@ -83,7 +83,7 @@ export function useComposerVoice({
 		disabled: disabled || usesACappella,
 	});
 
-	const toggle = useCallback(() => {
+	const toggle = useStableCallback(() => {
 		if (usesACappella) {
 			// With a session already bound to this agent, the button brings its HUD
 			// back (it may be minimized) and never ends it: only Escape on the HUD
@@ -111,7 +111,7 @@ export function useComposerVoice({
 			return;
 		}
 		webSpeech.toggleVoiceInput();
-	}, [usesACappella, voiceActions, webSpeech, session, hasComposerFloor]);
+	});
 
 	return {
 		// A Cappella needs no browser support check: the capability gate answers
