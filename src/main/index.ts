@@ -1628,13 +1628,14 @@ app
 
 		// One central owner, using Cue's already-held lock and existing process service.
 		const boardRegistry = new BoardRegistryRevision();
+		const isBoardRuntimeActive = () => cueEngine?.isEnabled() === true;
 		const boardIntakeState = (): Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> => {
 			const sessions = boardSpawnContext.getStoredSessions();
 			const flags = resolveEncoreFeatures(store.get('encoreFeatures'));
 			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			return {
 				dispatchEnabled:
-					cueEngine?.isEnabled() === true && flags.maestroCue === true && flags.board === true,
+					isBoardRuntimeActive() && flags.maestroCue === true && flags.board === true,
 				agentStates: Object.fromEntries(
 					sessions.map((session) => [
 						session.id,
@@ -1703,7 +1704,7 @@ app
 		const readBoardOwnerIdentity = createBoardOwnerHostIdentityReader();
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
 		const readBoardRuntimeLockSnapshot = () => {
-			if (!isBoardEnabled()) return null;
+			if (!isBoardRuntimeActive() || !isBoardEnabled()) return null;
 			const held = readOwnedCueEngineLock();
 			if (!held || !isCueEngineLockOwnedByThisProcess(held)) return null;
 			// Reuse acquisition's pinned identity. Diagnostics observe the current token
@@ -1757,6 +1758,7 @@ app
 		}));
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
+			isActive: isBoardRuntimeActive,
 			lock: readBoardRuntimeLock,
 			context: boardContext,
 			prepare: async (key) => {

@@ -61,7 +61,7 @@ let service: BoardRunService;
 let hooks: BoardRunHooks;
 let settle: (result: CardSpawnResult) => void;
 let lockValid: boolean;
-let verifyCueLock: boolean;
+let engineForBoard: CueEngine | undefined;
 let createPr: ReturnType<typeof vi.fn<(request: CardPrRequest) => Promise<CardPrResult>>>;
 let completionTasks: Promise<unknown>[];
 let prepare: ReturnType<
@@ -179,7 +179,7 @@ beforeEach(() => {
 		probe: vi.fn<BoardRunService['probe']>(() => 'unknown'),
 	};
 	lockValid = true;
-	verifyCueLock = false;
+	engineForBoard = undefined;
 	runtime = newRuntime();
 	expect(runtime.acquire()).toEqual({ ok: true });
 	configureBoardStorage(storage);
@@ -194,10 +194,11 @@ beforeEach(() => {
 	}));
 	cue = new BoardCueHost({
 		storage: () => storage,
+		isActive: () => engineForBoard?.isEnabled() ?? true,
 		lock: () => ({
 			info: { pid: 101, mode: 'desktop', bootTime: 1, startedAt: new Date(1).toISOString() },
 			verify: () =>
-				lockValid && (!verifyCueLock || readOwnedCueEngineLock())
+				lockValid && (!engineForBoard || readOwnedCueEngineLock())
 					? { ok: true }
 					: { ok: false, reason: 'lost' },
 		}),
@@ -298,48 +299,62 @@ it.each(['darwin', 'win32'] as const)(
 );
 
 describe('global Cue intake on the shared persistent runtime', () => {
-	it('stops an active Board attempt and records its result before releasing the Cue lock', async () => {
-		verifyCueLock = true;
-		const engine = new CueEngine(
-			createMockDeps({
-				getSessions: () => [],
-				board: {
-					stopGlobal: () => cue.stop(),
-					getEncoreFeatures: () => ({ board: true, maestroCue: true }),
-					getProjectRoots: () => [],
-					listBoards: () => [],
-					saveBoard: vi.fn(),
-					resolveOverrides: () => null,
-					spawnCard: vi.fn(),
-				},
-			})
-		);
-		await engine.start();
-		try {
-			await tick();
-			expect(reserved()).toHaveLength(1);
-			configureBoardFeatures({ get: () => ({ board: true, maestroCue: false }) });
-			engine.stop();
-			expect(service.stop).toHaveBeenCalledTimes(1);
-			expect(readOwnedCueEngineLock()).not.toBeNull();
-			settle(good);
-			await cue.settle();
-			expect(reserved()).toHaveLength(0);
-			const row = db.prepare('SELECT outcome_json FROM runs').get() as { outcome_json: string };
-			expect(JSON.parse(row.outcome_json)).toMatchObject({
-				result: good,
-				cardOutcome: { heldByUser: true },
-			});
-			await vi.waitFor(() => expect(readOwnedCueEngineLock()).toBeNull());
-			configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	it.each(['encore', 'runtime'] as const)(
+		'stops an active Board attempt and records its result before releasing the Cue lock (%s)',
+		async (mode) => {
+			const engine = new CueEngine(
+				createMockDeps({
+					getSessions: () => [],
+					board: {
+						stopGlobal: () => cue.stop(),
+						getEncoreFeatures: () => ({ board: true, maestroCue: true }),
+						getProjectRoots: () => [],
+						listBoards: () => [],
+						saveBoard: vi.fn(),
+						resolveOverrides: () => null,
+						spawnCard: vi.fn(),
+					},
+				})
+			);
+			engineForBoard = engine;
 			await engine.start();
-			expect(engine.isEnabled()).toBe(true);
-		} finally {
-			settle?.(good);
-			engine.stop();
-			await cue.settle();
+			try {
+				await tick();
+				expect(reserved()).toHaveLength(1);
+				if (mode === 'encore')
+					configureBoardFeatures({ get: () => ({ board: true, maestroCue: false }) });
+				engine.stop();
+				expect(service.stop).toHaveBeenCalledTimes(1);
+				expect(readOwnedCueEngineLock()).not.toBeNull();
+				configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+				const restart = mode === 'runtime' ? engine.start() : undefined;
+				const key = vi.mocked(service.spawn).mock.calls[0][0].key;
+				await expect(cue.runtimeFor(key, false)).rejects.toMatchObject({
+					code: 'runtime-unavailable',
+				});
+				expect(engine.isEnabled()).toBe(false);
+				settle(good);
+				await cue.settle();
+				expect(reserved()).toHaveLength(0);
+				const row = db.prepare('SELECT outcome_json FROM runs').get() as { outcome_json: string };
+				expect(JSON.parse(row.outcome_json)).toMatchObject({
+					result: good,
+					cardOutcome: { heldByUser: true },
+				});
+				if (restart) await restart;
+				else {
+					await vi.waitFor(() => expect(readOwnedCueEngineLock()).toBeNull());
+					await engine.start();
+				}
+				expect(engine.isEnabled()).toBe(true);
+				await expect(cue.runtimeFor(key, false)).resolves.not.toBeNull();
+			} finally {
+				settle?.(good);
+				engine.stop();
+				await cue.settle();
+			}
 		}
-	});
+	);
 
 	it('releases the reservation when Cue is disabled during pre-spawn preparation', async () => {
 		edit({ heldByUser: true }, 1);
@@ -362,8 +377,12 @@ describe('global Cue intake on the shared persistent runtime', () => {
 
 	it('keeps the reservation if the native spawn itself throws', async () => {
 		edit({ heldByUser: true }, 1);
-		vi.mocked(service.spawn).mockRejectedValueOnce(new Error('native spawn failed'));
+		let failSpawn!: (error: Error) => void;
+		vi.mocked(service.spawn).mockImplementationOnce(
+			() => new Promise<CardSpawnResult>((_resolve, reject) => (failSpawn = reject))
+		);
 		await tick();
+		failSpawn(new Error('native spawn failed'));
 		await cue.settle();
 		expect(service.spawn).toHaveBeenCalledTimes(1);
 		expect(reserved()).toHaveLength(1);

@@ -29,6 +29,7 @@ export type BoardPreparedContext = Pick<BoardClaimHostContext, 'repository' | 'r
 
 export interface BoardCueHostDeps {
 	storage: () => BoardStorageFacade;
+	isActive?: () => boolean;
 	lock: () => BoardRuntimeLock | null | Promise<BoardRuntimeLock | null>;
 	context: (
 		key: BoardCardKey,
@@ -49,10 +50,16 @@ export class BoardCueHost {
 	private tasks = new Set<Promise<unknown>>();
 	constructor(private readonly deps: BoardCueHostDeps) {}
 
+	private requireAdmission(): void {
+		requireBoardEnabled();
+		if (this.deps.isActive?.() === false)
+			throw new BoardStorageError('runtime-unavailable', 'Board runtime is unavailable');
+	}
+
 	readonly runtimeFor = async (key: BoardCardKey, prepare = true): Promise<BoardRuntime | null> => {
-		requireBoardEnabled();
+		this.requireAdmission();
 		const lock = await this.deps.lock();
-		requireBoardEnabled();
+		this.requireAdmission();
 		if (!lock)
 			throw new BoardStorageError(
 				'runtime-unavailable',
@@ -154,7 +161,7 @@ export class BoardCueHost {
 				return task;
 			},
 		};
-		requireBoardEnabled();
+		this.requireAdmission();
 		const runtime = new BoardRuntime(
 			this.deps.storage(),
 			lock,
