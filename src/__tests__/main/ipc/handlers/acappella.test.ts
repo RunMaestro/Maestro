@@ -17,6 +17,7 @@
  *   an error rather than a silent fall back to whichever agent is active.
  */
 
+import { DICTATION_MAX_CLIP_MS } from '../../../../shared/local-models/dictation';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { app, ipcMain, shell, systemPreferences } from 'electron';
 
@@ -507,6 +508,22 @@ describe('A Cappella IPC handlers - shutdownACappellaForDisable', () => {
 		});
 		expect(audioCommands()).toContainEqual({ kind: 'stop-capture' });
 		expect(audioHost.exists).toBe(true);
+	});
+
+	it('cancels a pending wake word Test when A Cappella is turned off', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		const starting = handlerFor('acappella:wake-test')({}, {});
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+
+		await expect(starting).resolves.toMatchObject({
+			started: false,
+			reason: 'The wake word Test was cancelled.',
+		});
+		expect(audioCommands().map((command) => command.kind)).not.toContain('start-capture');
 	});
 
 	it('stands the transport down, so no advert and no device outlive the switch', async () => {
@@ -1482,6 +1499,18 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 			// published on the voice event stream.
 			expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
 			expect(voiceEvents()).toEqual([]);
+		});
+
+		it('closes the microphone at the clip limit while keeping the recording available', async () => {
+			await startRecording();
+
+			pushFrames(DICTATION_MAX_CLIP_MS / 20);
+
+			expect(audioCommands().map((command) => command.kind)).toEqual([
+				'start-capture',
+				'stop-capture',
+			]);
+			expect((await microphone().stop()).audio.length).toBeGreaterThan(0);
 		});
 
 		it('is offered with the A Cappella Encore Feature switched off', async () => {

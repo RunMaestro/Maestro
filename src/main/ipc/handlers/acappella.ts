@@ -48,7 +48,9 @@ import type {
 	RosterAgent,
 	VoiceEvent,
 	VoiceScope,
+	VoiceOrigin,
 	VoiceWindowId,
+	WakeSource,
 } from '../../../shared/acappella/protocol';
 import { getSessionsStore } from '../../stores/getters';
 import { correctSpeechVocabulary } from '../../local-models/speech-vocabulary';
@@ -440,6 +442,7 @@ let wakeTestDetector: WakeDetector | null = null;
 let wakeEnrollment: WakeEnrollmentService | null = null;
 let pendingVoiceStart: { owner: VoiceWindowId } | null = null;
 let voiceDisableGeneration = 0;
+let wakeTestGeneration = 0;
 let releaseWakeEnrollment: (() => void) | null = null;
 
 /**
@@ -1119,8 +1122,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	const startSession = async (
 		rawScope: unknown,
 		windowId: VoiceWindowId,
-		paused: boolean
+		paused: boolean,
+		source: WakeSource = 'client-button',
+		origin?: VoiceOrigin
 	): Promise<VoiceStartSessionResult> => {
+		requireEnabled(settingsStore);
 		const scope = parseScope(rawScope);
 		// A Quick Chat session is shown by the Quick Chat window and by no other,
 		// whoever asked for it (the window's own microphone, or `maestro-cli voice
@@ -1151,7 +1157,8 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 			const snapshot = await service.startSession({
 				scope,
-				source: 'client-button',
+				source,
+				origin,
 				windowId: owner,
 				paused,
 				stillRequested,
@@ -1379,25 +1386,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// open, close, and interrupt, and nothing else.
 	const floorSession: FloorControlSession = {
 		getState: () => getVoiceSessionService()?.getState() ?? 'idle',
-		startSession: async ({ scope, source, origin }) => {
-			// A remote origin does NOT skip this: the desktop still opens its audio
-			// host, because that window is where the peer connection and the playback
-			// live. What it skips is nothing at all, which is the point - a remote
-			// session takes the same path as a local one.
-			await requestMicPermission();
-			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-			const { service } = await ensureService(deps);
-			return service.startSession({
-				scope,
-				source,
-				origin,
-				// No IPC sender to resolve: a global hotkey, a wake word, and a paired
-				// phone all arrive with no window behind them, so the HUD belongs to
-				// the window the user is looking at.
-				windowId: ownerWindowFor(scope, deps.resolveVoiceWindowId?.() ?? null),
-			});
-		},
+		startSession: async ({ scope, source, origin }) =>
+			(await startSession(scope, deps.resolveVoiceWindowId?.() ?? null, false, source, origin))
+				.snapshot,
 		stopSession: async (reason) => {
+			pendingVoiceStart = null;
 			await getVoiceSessionService()?.stopSession(reason);
 		},
 		interrupt: (source) => getVoiceSessionService()?.interrupt(source) ?? false,
@@ -1485,8 +1478,8 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 				deviceId: readVoiceProviderSettings(settingsStore).inputDeviceId,
 			}),
 		stopCapture: () => {
-			// Dictation or a voice session may have claimed capture during save.
-			if (!clipCapture?.isActive && (getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+			// Voice may have claimed capture after the clip started.
+			if ((getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
 				sendAudioHostCommand({ kind: 'stop-capture' });
 			}
 		},
@@ -1528,8 +1521,8 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			void handsFree?.sync();
 		},
 		closeMicrophone: async () => {
-			// Never close a microphone a session is using.
-			if ((getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+			// Dictation or a voice session may have claimed capture during save.
+			if (!clipCapture?.isActive && (getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
 				sendAudioHostCommand({ kind: 'stop-capture' });
 			}
 			void handsFree?.sync();
@@ -1626,9 +1619,9 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	);
 
 	const beginWakeTest = async (payload: unknown): Promise<WakeTestStartResult> => {
-		const result = await startWakeTest(deps, payload);
-		// A refused Test borrowed nothing; give the always-on wake word its microphone back.
-		if (!result.started) void handsFree?.resume();
+		const attempt = ++wakeTestGeneration;
+		const result = await startWakeTest(deps, payload, attempt);
+		if (!result.started && attempt === wakeTestGeneration) void handsFree?.resume();
 		return result;
 	};
 	const wrappedWakeTest = withIpcErrorLogging(handlerOpts('wakeTest'), beginWakeTest);
@@ -2233,11 +2226,19 @@ export async function shutdownACappellaForDisable(): Promise<void> {
  */
 async function startWakeTest(
 	deps: ACappellaHandlerDependencies,
-	payload: unknown
+	payload: unknown,
+	attempt: number
 ): Promise<WakeTestStartResult> {
-	await stopWakeTest();
-	// One microphone, one consumer: the Test borrows it from the always-on wake word.
+	const generation = voiceDisableGeneration;
+	const isCurrent = () =>
+		isACappellaEnabled(deps.settingsStore) &&
+		generation === voiceDisableGeneration &&
+		attempt === wakeTestGeneration;
+	const cancelled = { started: false as const, reason: 'The wake word Test was cancelled.' };
+	await stopWakeTest({ replacing: true });
+	if (!isCurrent()) return cancelled;
 	await handsFree?.suspend();
+	if (!isCurrent()) return cancelled;
 	const state = getVoiceSessionService()?.getState();
 	if (state && state !== 'idle') {
 		return { started: false, reason: 'End the voice session first, then test the wake word.' };
@@ -2253,6 +2254,7 @@ async function startWakeTest(
 	}
 
 	const readiness = await readVoiceReadiness(deps.settingsStore);
+	if (!isCurrent()) return cancelled;
 	const wakeSlot = readiness.slots.find((slot) => slot.slot === 'wake-word');
 	if (wakeSlot && !wakeSlot.satisfied) {
 		return {
@@ -2268,7 +2270,7 @@ async function startWakeTest(
 	const phrases: WakePhrase[] = [globalWakePhrase(phrase, sensitivity)];
 
 	await requestMicPermission();
-	ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+	if (!isCurrent()) return cancelled;
 
 	const detector = createWakeDetector({
 		// The same engine the always-on listener uses, so the Test tunes what will
@@ -2289,6 +2291,10 @@ async function startWakeTest(
 		},
 	});
 	await detector.start();
+	if (!isCurrent()) {
+		await detector.stop();
+		return cancelled;
+	}
 	if (!detector.isArmed) {
 		// The gate said yes and the scorer still would not build: report it rather
 		// than listening with nothing behind the microphone.
@@ -2298,6 +2304,15 @@ async function startWakeTest(
 			reason: 'The wake word model could not be loaded. Check System Logs.',
 		};
 	}
+	if (
+		clipCapture?.isActive ||
+		wakeEnrollment?.isRecording ||
+		(getVoiceSessionService()?.getState() ?? 'idle') !== 'idle'
+	) {
+		await detector.stop();
+		return { started: false, reason: 'The microphone is in use.' };
+	}
+	ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 	wakeTestDetector = detector;
 	startWakeTestCapture(deps);
 	return { started: true };
@@ -2340,9 +2355,13 @@ function startWakeTestCapture(deps: ACappellaHandlerDependencies): void {
 }
 
 /** End a tuning run and close the microphone it opened. Safe when none is running. */
-async function stopWakeTest(): Promise<void> {
+async function stopWakeTest({ replacing = false } = {}): Promise<void> {
+	if (!replacing) wakeTestGeneration += 1;
 	const detector = wakeTestDetector;
-	if (!detector) return;
+	if (!detector) {
+		if (!replacing) void handsFree?.resume();
+		return;
+	}
 	wakeTestDetector = null;
 	// Logged because a run that never fires is otherwise indistinguishable from
 	// one that never heard anything: zero frames is a capture problem, frames with
@@ -2357,7 +2376,7 @@ async function stopWakeTest(): Promise<void> {
 	// session was starting must not close that session's microphone.
 	const state = getVoiceSessionService()?.getState() ?? 'idle';
 	if (state === 'idle' && !clipCapture?.isActive) sendAudioHostCommand({ kind: 'stop-capture' });
-	void handsFree?.resume();
+	if (!replacing) void handsFree?.resume();
 }
 
 /**

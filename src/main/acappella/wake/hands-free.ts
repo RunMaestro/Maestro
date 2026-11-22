@@ -211,7 +211,7 @@ export class HandsFreeListener {
 			logger.warn('Hands-free wake word could not load its model', LOG_CONTEXT);
 			return;
 		}
-		if (this.disposed || (await this.refusalReason())) {
+		if ((await this.refusalReason()) || this.disposed || !this.deps.readSettings().enabled) {
 			await detector.stop();
 			return;
 		}
