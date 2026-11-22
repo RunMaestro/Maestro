@@ -118,15 +118,19 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		}
 	}, [ac.isDetecting, isOpen]);
 
-	// Auto-select the most preferred installed agent (create mode only) after
-	// detection, and revalidate if current selection is no longer available.
-	// The dropdown itself is alphabetical, so the default comes from
-	// AGENT_AUTOSELECT_ORDER rather than from whatever sorts first.
+	// Auto-select the most preferred installed agent after detection, and
+	// revalidate in both modes when the current selection is no longer
+	// available (an SSH remote change reruns detection, #1895). Edit mode keeps
+	// the chat's own moderator whenever the chosen host has it. The dropdown
+	// itself is alphabetical, so the default comes from AGENT_AUTOSELECT_ORDER
+	// rather than from whatever sorts first.
 	useEffect(() => {
-		if (mode !== 'create' || ac.isDetecting) return;
+		if (ac.isDetecting) return;
 
 		if (ac.detectedAgents.length === 0) {
-			ac.setSelectedAgent(null);
+			// Edit mode keeps the stored moderator so switching back to a host
+			// that has it restores it; canSubmit blocks Save meanwhile.
+			if (mode === 'create') ac.setSelectedAgent(null);
 			return;
 		}
 
@@ -137,7 +141,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			AGENT_TILES.some((tile) => tile.id === agentId && tile.supported) &&
 			ac.detectedAgents.some((a: AgentConfig) => a.id === agentId);
 
+		const original = mode === 'edit' ? groupChat?.moderatorAgentId : undefined;
 		const preferred =
+			(original && isSupportedAndDetected(original) ? original : undefined) ??
 			AGENT_AUTOSELECT_ORDER.find(isSupportedAndDetected) ??
 			AGENT_TILES.find((tile) => tile.supported && isSupportedAndDetected(tile.id))?.id;
 
@@ -146,7 +152,14 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		} else {
 			ac.setSelectedAgent(ac.detectedAgents[0].id);
 		}
-	}, [mode, ac.isDetecting, ac.detectedAgents, ac.selectedAgent, ac.setSelectedAgent]);
+	}, [
+		mode,
+		groupChat?.moderatorAgentId,
+		ac.isDetecting,
+		ac.detectedAgents,
+		ac.selectedAgent,
+		ac.setSelectedAgent,
+	]);
 
 	// Reset local state when modal closes
 	useEffect(() => {
@@ -277,8 +290,15 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		configWasModified,
 	]);
 
+	// The moderator must exist on the chosen host, and detection for that host
+	// must have finished, or Save would store a provider the remote cannot run.
+	const moderatorAvailable =
+		!ac.isDetecting && ac.detectedAgents.some((a: AgentConfig) => a.id === ac.selectedAgent);
 	const canSubmit =
-		name.trim().length > 0 && ac.selectedAgent !== null && (mode === 'create' || hasChanges());
+		name.trim().length > 0 &&
+		ac.selectedAgent !== null &&
+		moderatorAvailable &&
+		(mode === 'create' || hasChanges());
 
 	if (!isOpen) return null;
 	if (mode === 'edit' && !groupChat) return null;

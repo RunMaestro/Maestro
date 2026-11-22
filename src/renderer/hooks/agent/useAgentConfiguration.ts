@@ -220,6 +220,8 @@ export function useAgentConfiguration(
 		? sshRemoteConfig.remoteId || undefined
 		: undefined;
 	const latestDetectRequestRef = useRef(0);
+	const detectionRemoteIdRef = useRef(detectionRemoteId);
+	detectionRemoteIdRef.current = detectionRemoteId;
 
 	// Detect agents
 	const detectAgents = useCallback(async () => {
@@ -329,6 +331,8 @@ export function useAgentConfiguration(
 		setRefreshingAgent(true);
 		try {
 			const agents = await window.maestro.agents.detect(detectionRemoteId);
+			// The host changed while this ran: its detection owns the list now.
+			if (detectionRemoteIdRef.current !== detectionRemoteId) return;
 			const filtered = agentFilter
 				? agents.filter(agentFilter)
 				: agents.filter((a: AgentConfig) => a.available && !a.hidden);

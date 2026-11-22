@@ -416,6 +416,47 @@ describe('useAgentConfiguration', () => {
 			expect(result.current.detectedAgents).toHaveLength(3);
 			expect(result.current.refreshingAgent).toBe(false);
 		});
+
+		it('drops a refresh that finishes after the SSH remote changed', async () => {
+			const { result } = renderHook(() =>
+				useAgentConfiguration({ enabled: true, autoSelect: false })
+			);
+
+			await waitFor(() => {
+				expect(result.current.isDetecting).toBe(false);
+			});
+
+			// A local refresh is still running when the user picks a remote.
+			let resolveLocalRefresh: (agents: AgentConfig[]) => void = () => {};
+			mockDetect.mockImplementation((remoteId?: string) =>
+				remoteId === 'remote-1'
+					? Promise.resolve([agentCodex])
+					: new Promise((resolve) => {
+							resolveLocalRefresh = resolve;
+						})
+			);
+
+			let refresh: Promise<void> = Promise.resolve();
+			act(() => {
+				refresh = result.current.refreshAgent();
+			});
+			act(() => {
+				result.current.setSshRemoteConfig({ enabled: true, remoteId: 'remote-1' } as any);
+			});
+
+			await waitFor(() => {
+				expect(result.current.detectedAgents).toEqual([agentCodex]);
+			});
+
+			await act(async () => {
+				resolveLocalRefresh([agentClaude, agentCodex]);
+				await refresh;
+			});
+
+			// The remote's list stands; the late local refresh does not overwrite it.
+			expect(result.current.detectedAgents).toEqual([agentCodex]);
+			expect(result.current.refreshingAgent).toBe(false);
+		});
 	});
 
 	describe('SSH remotes', () => {
