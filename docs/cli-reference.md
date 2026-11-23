@@ -859,6 +859,77 @@ Send every current comment to the agent as one queued prompt
 | `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
 | `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
 
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
 ## `maestro-cli prompt-link`
 
 Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)

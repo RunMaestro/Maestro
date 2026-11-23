@@ -4,13 +4,13 @@
  * the agent as a single prompt.
  *
  * Everything here is pure, so the selection rules and the exact prompt the
- * agent receives can be pinned by tests. The `path:lines` reference and the
- * fenced block come from `quoteSelection.ts`, the same shape the File Preview
- * editor's Quote in Message / Send to Agent hand over.
+ * agent receives can be pinned by tests. The prompt's shape comes from
+ * `reviewPrompt.ts`, shared with the File Preview's line comments.
  */
 import { getChangeKey } from 'react-diff-view';
 import type { ChangeData, HunkData } from 'react-diff-view';
-import { formatFileLineReference, formatFileSelection } from './quoteSelection';
+import { formatFileLineReference } from './quoteSelection';
+import { formatCommentCount, formatReviewPrompt } from './reviewPrompt';
 import type { ParsedFileDiff } from './gitDiffParser';
 
 /**
@@ -342,35 +342,31 @@ export function formatDiffReviewPrompt(
 	const usable = comments.filter((c) => c.body.trim().length > 0).sort(compareComments);
 	if (usable.length === 0) return '';
 
-	const count = usable.length === 1 ? '1 comment' : `${usable.length} comments`;
-	const out: string[] = [
-		`I reviewed your changes in the git diff and left ${count} pinned to specific lines. Please address each one.`,
-		'',
+	const intro = [
+		`I reviewed your changes in the git diff and left ${formatCommentCount(usable.length)} pinned to specific lines. Please address each one.`,
 		'Each comment names the file and lines it is about, then quotes the diff hunk it was left on. Line numbers refer to the current version of the file, except where a comment says they refer to the previous version (the lines were removed).',
 	];
 	if (options.repoDir) {
-		out.push(
-			'',
+		intro.push(
 			`These changes are in \`${options.repoDir}\`, which is not your working directory. The file paths are as \`git diff\` printed them there; make the changes in that repository.`
 		);
 	}
 
-	usable.forEach((comment, index) => {
-		out.push('', `## Comment ${index + 1} of ${usable.length}`, '');
-		out.push(
-			formatFileSelection({
+	return formatReviewPrompt(
+		intro,
+		usable.map((comment) => ({
+			selection: {
 				path: comment.path,
 				startLine: comment.startLine,
 				endLine: comment.endLine,
 				text: comment.context,
 				language: 'diff',
-			})
-		);
-		if (comment.side === 'old') {
-			out.push('', 'These line numbers refer to the previous version of the file.');
-		}
-		out.push('', comment.body.trim());
-	});
-
-	return out.join('\n');
+			},
+			notes:
+				comment.side === 'old'
+					? ['These line numbers refer to the previous version of the file.']
+					: undefined,
+			body: comment.body,
+		}))
+	);
 }

@@ -26,6 +26,7 @@ import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { reopenClosedTabInAgent } from '../../services/reopenClosedTab';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import { runRemoteDiffReviewCommand } from '../../services/diffReview';
+import { runRemoteFileReviewCommand } from '../../services/fileReview';
 import type { DiffReviewCommandResult } from '../../../shared/diffReviewCommands';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
@@ -1800,19 +1801,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle a remote Git Diff review verb (`maestro-cli diff-review`). The
-	// pending comments are this renderer's state (the viewer draws them), so
-	// every verb is answered here, through the same service the viewer's Send
-	// Review and Edit in Composer buttons call.
+	// Handle a remote review verb: `maestro-cli diff-review` (Git Diff viewer)
+	// or `maestro-cli file-review` (File Preview line comments, which name a
+	// `file`). The pending comments are this renderer's state (the views draw
+	// them), so every verb is answered here, through the same service the
+	// views' Send Review and Edit in Composer buttons call.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteDiffReviewCommand(
 			(request, responseChannel) => {
 				const reply = (result: DiffReviewCommandResult) =>
 					window.maestro.process.sendRemoteDiffReviewCommandResponse(responseChannel, result);
-				runRemoteDiffReviewCommand(request)
+				const { file } = request;
+				(file
+					? runRemoteFileReviewCommand({ ...request, file })
+					: runRemoteDiffReviewCommand(request)
+				)
 					.then(reply)
 					.catch((error) => {
-						logger.error('[useRemoteIntegration] Diff review command failed', undefined, error);
+						logger.error('[useRemoteIntegration] Review command failed', undefined, error);
 						reply({
 							success: false,
 							error: error instanceof Error ? error.message : String(error),

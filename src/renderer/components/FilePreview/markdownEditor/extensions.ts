@@ -76,6 +76,12 @@ export interface BuildEditorExtensionsOptions {
 	 * main selection; anywhere else the native menu (spellcheck, copy) opens.
 	 */
 	onSelectionContextMenu?: (selection: EditorSelectionDetails, event: MouseEvent) => void;
+	/**
+	 * Right-click on a line's text outside the selection (or with only a
+	 * caret): receives the 1-based line. Skipped while spellcheck is on, so a
+	 * misspelled word still gets the native "Did you mean" menu.
+	 */
+	onLineContextMenu?: (lineNumber: number, event: MouseEvent) => void;
 }
 
 /**
@@ -193,16 +199,27 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 		);
 	}
 
-	if (opts.onSelectionContextMenu) {
+	const onLineContextMenu = opts.spellCheck ? undefined : opts.onLineContextMenu;
+	if (opts.onSelectionContextMenu || onLineContextMenu) {
 		exts.push(
 			EditorView.domEventHandlers({
 				contextmenu(event, view) {
-					const selection = mainSelectionDetails(view.state);
-					if (!selection) return false;
 					const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-					if (pos === null || pos < selection.from || pos > selection.to) return false;
+					if (pos === null) return false;
+					const selection = mainSelectionDetails(view.state);
+					if (
+						selection &&
+						opts.onSelectionContextMenu &&
+						pos >= selection.from &&
+						pos <= selection.to
+					) {
+						event.preventDefault();
+						opts.onSelectionContextMenu(selection, event);
+						return true;
+					}
+					if (!onLineContextMenu) return false;
 					event.preventDefault();
-					opts.onSelectionContextMenu?.(selection, event);
+					onLineContextMenu(view.state.doc.lineAt(pos).number, event);
 					return true;
 				},
 			})

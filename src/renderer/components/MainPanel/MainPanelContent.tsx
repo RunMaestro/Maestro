@@ -935,6 +935,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							// jumped, so subsequent re-renders don't re-scroll.
 							onSendSelectionToAgent={onFileSendSelectionToAgent}
 							onQuoteSelection={(text) => quoteIntoAgentComposer(activeSession.id, text)}
+							// Line review comments go to the agent this file tab belongs to.
+							reviewSessionId={activeSession.id}
 							pendingScrollToLine={activeFileTab.pendingScrollToLine}
 							onPendingScrollToLineConsumed={() =>
 								useTabStore.getState().clearFileTabPendingScrollToLine(activeFileTabId)

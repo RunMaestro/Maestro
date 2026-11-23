@@ -390,6 +390,8 @@ function TiledFilePane({
 					onShortcutUsed={actions?.onShortcutUsed}
 					onSendSelectionToAgent={actions?.onSendTextToAgent}
 					onQuoteSelection={(text) => quoteIntoAgentComposer(session.id, text)}
+					// Line review comments go to the agent this file tab belongs to.
+					reviewSessionId={session.id}
 					// Scroll + find-query memory, so switching away and back lands where
 					// the user left off instead of jumping to the top with a cleared term.
 					initialScrollTop={fileTab.scrollTop}
