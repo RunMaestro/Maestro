@@ -298,6 +298,12 @@ export interface WebClient {
 	 * browser must never touch (Computer History) refuse sockets without it.
 	 */
 	cli?: boolean;
+	/**
+	 * Direct TCP peer address from the WebSocket upgrade, omitted when the
+	 * connection arrived through a proxy or tunnel over loopback so pairing
+	 * approvals do not display a misleading `127.0.0.1`.
+	 */
+	remoteAddress?: string;
 }
 
 /**
