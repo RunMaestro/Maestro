@@ -83,6 +83,15 @@ export const OFFER_RATE_WINDOW_MS = 60_000;
  */
 export const AUTH_ATTEMPT_LIMIT = 5;
 
+/** 64 KiB covers any real WebRTC audio+data SDP offer with generous headroom. */
+export const MAX_SDP_LENGTH = 64 * 1024;
+/** Real RFC 8445 ICE candidate lines (even with mDNS or IPv6) are well under 2 KiB. */
+export const MAX_ICE_CANDIDATE_LENGTH = 2048;
+/** Media stream identification tags (`a=mid:`) are short tokens; 256 chars is far above normal. */
+export const MAX_ICE_SDP_MID_LENGTH = 256;
+/** RFC 8445 Section 15.4 caps `ice-ufrag` at 256 characters. */
+export const MAX_ICE_UFRAG_LENGTH = 256;
+
 // ---------------------------------------------------------------------------
 // Seams
 // ---------------------------------------------------------------------------
@@ -527,11 +536,25 @@ export function parseClientMessage(payload: unknown): SignalingClientMessage | n
 		case 'offer': {
 			const sdp = payload.sdp;
 			if (!isRecord(sdp) || typeof sdp.sdp !== 'string') return null;
+			if (sdp.sdp.length > MAX_SDP_LENGTH) return null;
 			return { op: 'offer', sdp: { type: 'offer', sdp: sdp.sdp } };
 		}
 		case 'ice-candidate': {
 			const candidate = payload.candidate;
 			if (!isRecord(candidate) || typeof candidate.candidate !== 'string') return null;
+			if (candidate.candidate.length > MAX_ICE_CANDIDATE_LENGTH) return null;
+			if (
+				typeof candidate.sdpMid === 'string' &&
+				candidate.sdpMid.length > MAX_ICE_SDP_MID_LENGTH
+			) {
+				return null;
+			}
+			if (
+				typeof candidate.usernameFragment === 'string' &&
+				candidate.usernameFragment.length > MAX_ICE_UFRAG_LENGTH
+			) {
+				return null;
+			}
 			return {
 				op: 'ice-candidate',
 				candidate: {

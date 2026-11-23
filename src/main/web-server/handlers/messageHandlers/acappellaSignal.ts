@@ -56,6 +56,7 @@ export function handleACappellaSignal(
 		clientId: client.id,
 		send: (payload: SignalingServerMessage) =>
 			ctx.send(client, { type: ACAPPELLA_SIGNAL_MESSAGE, payload }),
+		remoteAddress: client.remoteAddress,
 	});
 	void transport.handleSignalMessage(client.id, (message as { payload?: unknown }).payload);
 }

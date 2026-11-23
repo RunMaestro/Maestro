@@ -98,6 +98,18 @@ describe('handleACappellaSignal', () => {
 		expect(sent).toEqual([]);
 	});
 
+	it('forwards client.remoteAddress to registerClient for pairing approvals', () => {
+		const remoteClient = { id: 'client-2', remoteAddress: '192.168.1.42' } as unknown as WebClient;
+		handleACappellaSignal(ctx, remoteClient, frame);
+
+		expect(transport.registerClient).toHaveBeenCalledWith(
+			expect.objectContaining({
+				clientId: 'client-2',
+				remoteAddress: '192.168.1.42',
+			})
+		);
+	});
+
 	it('writes back through the socket it was given', () => {
 		handleACappellaSignal(ctx, client, frame);
 

@@ -111,11 +111,14 @@ coercion will break the day the parser tightens:
 - `auth` is once per socket; a second `auth` after `authenticated` is refused with `malformed` (open a new socket rather than re-authenticating on the same one).
 - `auth` whose `protocolVersion` is not a number is treated as version 0, which fails negotiation
   with `client-too-old`. Absent is not "unversioned"; it is "too old".
-- `offer` is accepted only when `sdp` is an object with a string `sdp` field. The `type` is forced to
-  `offer` regardless of what was sent, so a client cannot smuggle an answer through the offer path.
-- `ice-candidate` requires a string `candidate`. The three optional fields default to `null` when
-  they are the wrong type, which is why an end-of-candidates marker must be sent as an empty-string
-  `candidate` rather than as a null one.
+- `offer` is accepted only when `sdp` is an object with a string `sdp` field of at most 65,536
+  characters (`MAX_SDP_LENGTH`). The `type` is forced to `offer` regardless of what was sent, so a
+  client cannot smuggle an answer through the offer path.
+- `ice-candidate` requires a string `candidate` of at most 2,048 characters
+  (`MAX_ICE_CANDIDATE_LENGTH`). The three optional fields default to `null` when they are the wrong
+  type, which is why an end-of-candidates marker must be sent as an empty-string `candidate` rather
+  than as a null one. When provided as strings, `sdpMid` is bounded to 256 characters
+  (`MAX_ICE_SDP_MID_LENGTH`) and `usernameFragment` to 256 characters (`MAX_ICE_UFRAG_LENGTH`).
 - Anything else, including an unknown `op`, produces one
   `{op:'error', code:'malformed', message:'Unrecognised signaling message.'}` and no state change.
 

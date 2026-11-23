@@ -19,6 +19,10 @@ import { PairingService } from '../../../main/acappella/pairing/pairing-service'
 import { DEFAULT_ICE_SETTINGS } from '../../../main/acappella/transport/ice-config';
 import {
 	AUTH_ATTEMPT_LIMIT,
+	MAX_ICE_CANDIDATE_LENGTH,
+	MAX_ICE_SDP_MID_LENGTH,
+	MAX_ICE_UFRAG_LENGTH,
+	MAX_SDP_LENGTH,
 	OFFER_RATE_LIMIT,
 	OFFER_RATE_WINDOW_MS,
 	SignalingService,
@@ -309,6 +313,7 @@ describe('pairing over the socket', () => {
 		});
 		const pending = last('c1');
 		expect(pending).toMatchObject({ op: 'pair-pending' });
+		expect(pairing.pendingRequest()).toMatchObject({ remoteAddress: '192.168.1.20' });
 		if (!pending || pending.op !== 'pair-pending') return;
 
 		// Still nothing usable: the human has not approved.
@@ -475,5 +480,100 @@ describe('parseClientMessage', () => {
 		connect('c1');
 		await service.handleMessage('c1', { op: 'nonsense' });
 		expect(last('c1')).toMatchObject({ op: 'error', code: 'malformed' });
+	});
+
+	describe('field size bounds', () => {
+		it.each([
+			['just under', MAX_SDP_LENGTH - 1, true],
+			['at', MAX_SDP_LENGTH, true],
+			['just over', MAX_SDP_LENGTH + 1, false],
+		])('handles offer sdp.sdp %s MAX_SDP_LENGTH (%i)', (_label, length, accepted) => {
+			const parsed = parseClientMessage({
+				op: 'offer',
+				sdp: { type: 'offer', sdp: 'v'.repeat(length) },
+			});
+			if (accepted) {
+				expect(parsed).toMatchObject({ op: 'offer' });
+			} else {
+				expect(parsed).toBeNull();
+			}
+		});
+
+		it.each([
+			['just under', MAX_ICE_CANDIDATE_LENGTH - 1, true],
+			['at', MAX_ICE_CANDIDATE_LENGTH, true],
+			['just over', MAX_ICE_CANDIDATE_LENGTH + 1, false],
+		])(
+			'handles ice-candidate candidate %s MAX_ICE_CANDIDATE_LENGTH (%i)',
+			(_label, length, accepted) => {
+				const parsed = parseClientMessage({
+					op: 'ice-candidate',
+					candidate: { candidate: 'c'.repeat(length) },
+				});
+				if (accepted) {
+					expect(parsed).toMatchObject({ op: 'ice-candidate' });
+				} else {
+					expect(parsed).toBeNull();
+				}
+			}
+		);
+
+		it.each([
+			['just under', MAX_ICE_SDP_MID_LENGTH - 1, true],
+			['at', MAX_ICE_SDP_MID_LENGTH, true],
+			['just over', MAX_ICE_SDP_MID_LENGTH + 1, false],
+		])(
+			'handles ice-candidate sdpMid %s MAX_ICE_SDP_MID_LENGTH (%i)',
+			(_label, length, accepted) => {
+				const parsed = parseClientMessage({
+					op: 'ice-candidate',
+					candidate: { candidate: 'candidate:1', sdpMid: 'm'.repeat(length) },
+				});
+				if (accepted) {
+					expect(parsed).toMatchObject({ op: 'ice-candidate' });
+				} else {
+					expect(parsed).toBeNull();
+				}
+			}
+		);
+
+		it.each([
+			['just under', MAX_ICE_UFRAG_LENGTH - 1, true],
+			['at', MAX_ICE_UFRAG_LENGTH, true],
+			['just over', MAX_ICE_UFRAG_LENGTH + 1, false],
+		])(
+			'handles ice-candidate usernameFragment %s MAX_ICE_UFRAG_LENGTH (%i)',
+			(_label, length, accepted) => {
+				const parsed = parseClientMessage({
+					op: 'ice-candidate',
+					candidate: { candidate: 'candidate:1', usernameFragment: 'u'.repeat(length) },
+				});
+				if (accepted) {
+					expect(parsed).toMatchObject({ op: 'ice-candidate' });
+				} else {
+					expect(parsed).toBeNull();
+				}
+			}
+		);
+
+		it('replies malformed and skips peerHost for oversized offer or ice-candidate', async () => {
+			const credentials = await pairDevice();
+			connect('c1');
+			await authenticate('c1', credentials);
+
+			await service.handleMessage('c1', {
+				op: 'offer',
+				sdp: { type: 'offer', sdp: 'v'.repeat(MAX_SDP_LENGTH + 1) },
+			});
+			expect(last('c1')).toMatchObject({ op: 'error', code: 'malformed' });
+			expect(peerHost.acceptOffer).not.toHaveBeenCalled();
+
+			await service.handleMessage('c1', {
+				op: 'ice-candidate',
+				candidate: { candidate: 'c'.repeat(MAX_ICE_CANDIDATE_LENGTH + 1) },
+			});
+			expect(last('c1')).toMatchObject({ op: 'error', code: 'malformed' });
+			expect(peerHost.addIceCandidate).not.toHaveBeenCalled();
+		});
 	});
 });
