@@ -28,6 +28,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSettingValue: vi.fn(),
 	readLiveSessions: vi.fn(() => []),
 	readGroups: vi.fn(() => []),
+	readSettings: vi.fn(() => ({})),
 }));
 
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';

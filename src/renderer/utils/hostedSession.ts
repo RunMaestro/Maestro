@@ -244,3 +244,36 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 		busySource,
 	};
 }
+
+/**
+ * `session` with everything the host sync put in it that only the host can settle taken out: its
+ * queue cards (`hostQueued`), the live entries of a turn (`hostLive`), and the busy state of a host
+ * turn. Used once when hosted agents are switched off, so the record works as its SSH agent with no
+ * card or busy tab nobody here can finish. The host's conversations stay. Same reference back when
+ * there is nothing to take out.
+ */
+export function releaseHostedSession(session: Session): Session {
+	let changed = false;
+	const aiTabs = session.aiTabs.map((tab) => {
+		const logs = tab.logs?.some((entry) => entry.hostLive)
+			? tab.logs.filter((entry) => !entry.hostLive)
+			: tab.logs;
+		if (logs === tab.logs && tab.state !== 'busy') return tab;
+		changed = true;
+		return { ...tab, logs, state: 'idle' as const, thinkingStartTime: undefined };
+	});
+	const queue = session.executionQueue ?? [];
+	const executionQueue = queue.some((item) => item.hostQueued)
+		? queue.filter((item) => !item.hostQueued)
+		: queue;
+	if (executionQueue !== queue) changed = true;
+	const aiBusy = session.state === 'busy' && session.busySource !== 'terminal';
+	if (aiBusy) changed = true;
+	if (!changed) return session;
+	return {
+		...session,
+		aiTabs,
+		executionQueue,
+		...(aiBusy ? { state: 'idle' as const, busySource: undefined } : {}),
+	};
+}

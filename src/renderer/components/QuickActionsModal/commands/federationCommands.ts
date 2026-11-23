@@ -16,6 +16,11 @@ interface BuildFederationCommandsArgs {
 	moveToHost?: { sessionId: string; agentName: string; peerName: string; hostReady: boolean };
 	/** Open the Move to Host modal for an agent. */
 	requestMoveToHost: (sessionId: string) => void;
+	/**
+	 * The hosted-agents switch (`federationHostedAgents`), offered while any hosted agent exists.
+	 * Off: every hosted agent works as its SSH agent from this machine.
+	 */
+	hostedAgents?: { enabled: boolean; setEnabled: (enabled: boolean) => void };
 	/** The active agent is hosted: Move Back from Host (`maestro-cli unlift`) is offered. */
 	moveBackFromHost?: { sessionId: string; agentName: string; peerName: string };
 	requestMoveBackFromHost?: (sessionId: string, agentName: string, peerName: string) => void;
@@ -47,6 +52,7 @@ export function buildFederationCommands({
 	requestMoveToHost,
 	moveBackFromHost,
 	requestMoveBackFromHost,
+	hostedAgents,
 	editHostedAgent,
 	settingsConflictCount = 0,
 	openSettingsConflicts,
@@ -87,6 +93,19 @@ export function buildFederationCommands({
 				: 'Set up a Maestro host on the remote, then run this SSH agent there so it keeps working while this machine sleeps',
 			action: () => {
 				requestMoveToHost(moveToHost.sessionId);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+	if (hostedAgents) {
+		actions.push({
+			id: 'federation-toggle-hosted-agents',
+			label: hostedAgents.enabled ? 'Turn Hosted Agents Off' : 'Turn Hosted Agents On',
+			subtext: hostedAgents.enabled
+				? 'Every hosted agent works as its SSH agent from this machine; nothing on the host changes'
+				: 'Run hosted agents on their Maestro host again',
+			action: () => {
+				hostedAgents.setEnabled(!hostedAgents.enabled);
 				setQuickActionOpen(false);
 			},
 		});

@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
-import { mergeHostedLogs, projectHostedSession } from '../../../renderer/utils/hostedSession';
+import {
+	mergeHostedLogs,
+	projectHostedSession,
+	releaseHostedSession,
+} from '../../../renderer/utils/hostedSession';
 import { isRunnableQueueItem, nextRunnableQueueItem } from '../../../renderer/utils/executionQueue';
 import type { LogEntry } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -164,5 +168,34 @@ describe('projectHostedSession', () => {
 	it('returns the same record when it already matches the host', () => {
 		const first = projectHostedSession(hostedRow(), { agent: host() });
 		expect(projectHostedSession(first, { agent: host() })).toBe(first);
+	});
+});
+
+describe('releaseHostedSession', () => {
+	it('takes out host queue cards, live entries, and host busy state, keeping the conversation', () => {
+		const key = liveTurnKey('h1', 't1');
+		const projected = projectHostedSession(hostedRow(), {
+			agent: host({ aiTabs: [{ id: 't1', agentSessionId: 's1', state: 'busy' }] }),
+			transcripts: { [key]: { entries: [record('old'), record('done')], loaded: true } },
+			liveTurns: { [key]: { startedAt: 1, busy: true, entries: [record('streaming')] } },
+			queue: [
+				{ itemId: 'q1', tabId: 't1', text: 'next', queuedAt: 5, kind: 'message', paused: false },
+			],
+		});
+		const released = releaseHostedSession(projected);
+		expect(released.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['old', 'done']);
+		expect(released.aiTabs[0].state).toBe('idle');
+		expect(released.executionQueue).toEqual([]);
+		expect(released.state).toBe('idle');
+	});
+
+	it('returns the same record when there is nothing to take out', () => {
+		const session = hostedRow();
+		expect(releaseHostedSession(session)).toBe(session);
+	});
+
+	it('leaves a running terminal command alone', () => {
+		const session = { ...hostedRow(), state: 'busy' as const, busySource: 'terminal' as const };
+		expect(releaseHostedSession(session).state).toBe('busy');
 	});
 });

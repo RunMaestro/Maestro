@@ -8,13 +8,22 @@
  * write settles in one pass. It also reads the transcript of the tab on screen when the mirror has
  * none yet or the host marked it stale (`readMirrorTranscript()`), the same lazy rule the mirror
  * always used: a tab nobody looks at costs no read, and a host that is down is not polled.
+ *
+ * With hosted agents switched off (`hostingEnabled()`) it folds nothing in, and releases each
+ * hosted record once (`releaseHostedSession()`), so it works as its SSH agent.
  */
 
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
-import { projectHostedSession, type HostedProjectionInput } from '../utils/hostedSession';
+import { useSettingsStore } from '../stores/settingsStore';
+import {
+	projectHostedSession,
+	releaseHostedSession,
+	type HostedProjectionInput,
+} from '../utils/hostedSession';
+import { hostingEnabled } from './hostedTurns';
 import { readMirrorTranscript } from './peerMirror';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
@@ -42,8 +51,29 @@ function hostedInput(session: {
 	};
 }
 
+/** Records already released since hosted agents were switched off (see `releaseHostedSession()`). */
+const released = new Set<string>();
+
+/**
+ * Hosted agents are switched off: take what only the host can settle out of each hosted record,
+ * once, so it works as its SSH agent. Releasing again later would idle a local SSH turn.
+ */
+function releaseHostedAgents(): void {
+	for (const session of useSessionStore.getState().sessions) {
+		if (released.has(session.id) || !readLiftedTo(session.liftedTo)) continue;
+		released.add(session.id);
+		const next = releaseHostedSession(session);
+		if (next !== session) updateSessionWith(session.id, (current) => releaseHostedSession(current));
+	}
+}
+
 /** Fold the host into every hosted record, and read the shown tab when it needs it. */
 export function syncHostedAgents(): void {
+	if (!hostingEnabled()) {
+		releaseHostedAgents();
+		return;
+	}
+	released.clear();
 	if (!usePeerMirrorStore.getState().enabled) return;
 	const { sessions, activeSessionId } = useSessionStore.getState();
 	for (const session of sessions) {
@@ -79,6 +109,9 @@ export function startHostedAgentSync(): () => void {
 		});
 	};
 	const offMirror = usePeerMirrorStore.subscribe(schedule);
+	const offSettings = useSettingsStore.subscribe((state, prev) => {
+		if (state.federationHostedAgents !== prev.federationHostedAgents) schedule();
+	});
 	const offSessions = useSessionStore.subscribe((state, prev) => {
 		if (state.sessions !== prev.sessions || state.activeSessionId !== prev.activeSessionId) {
 			schedule();
@@ -87,6 +120,7 @@ export function startHostedAgentSync(): () => void {
 	schedule();
 	return () => {
 		offMirror();
+		offSettings();
 		offSessions();
 	};
 }

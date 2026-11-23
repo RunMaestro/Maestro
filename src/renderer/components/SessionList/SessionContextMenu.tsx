@@ -409,7 +409,7 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{canMoveToHost(federationStatus) && (
+			{canMoveToHost(federationStatus) && !session.liftedTo && (
 				<button
 					type="button"
 					onClick={() => {

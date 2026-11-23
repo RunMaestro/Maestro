@@ -18,6 +18,7 @@ import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { updateSessionWith } from '../stores/sessionStore';
 import type { AITab, Session } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
@@ -39,9 +40,18 @@ export interface HostedTarget {
 }
 
 /** Where a record's AI work runs, or undefined for an agent that is not hosted. */
+/**
+ * Whether hosted agents are on (`federationHostedAgents`, Settings > SSH Hosts). Off, every lifted
+ * record works as its SSH agent: nothing here routes to a host, and the host sync stops.
+ */
+export function hostingEnabled(): boolean {
+	return useSettingsStore.getState().federationHostedAgents !== false;
+}
+
 export function hostedTargetOf(
 	session: { liftedTo?: unknown } | null | undefined
 ): HostedTarget | undefined {
+	if (!hostingEnabled()) return undefined;
 	const pointer = session ? readLiftedTo(session.liftedTo) : undefined;
 	if (!pointer) return undefined;
 	const agent = usePeerMirrorStore

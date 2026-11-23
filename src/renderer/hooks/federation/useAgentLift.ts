@@ -7,6 +7,7 @@
 import { useMemo } from 'react';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { buildHostedAgentListings } from '../../services/hostedAgents';
 import {
 	agentFederationStatus,
@@ -20,7 +21,9 @@ export function useAgentFederationStatus(
 ): AgentFederationStatus {
 	const order = usePeerMirrorStore((s) => s.order);
 	const peers = usePeerMirrorStore((s) => s.peers);
-	const liftedTo = agent?.liftedTo;
+	// Hosted agents switched off: a hosted agent stands as the SSH agent it was.
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+	const liftedTo = hostingOn ? agent?.liftedTo : undefined;
 	const ssh = agent?.sessionSshRemoteConfig;
 	const sshEnabled = ssh?.enabled === true;
 	const remoteId = ssh?.remoteId ?? null;

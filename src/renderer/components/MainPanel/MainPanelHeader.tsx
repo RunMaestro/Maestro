@@ -135,6 +135,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
 	const showAgentName = useSettingsStore((s) => s.showAgentName);
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
@@ -398,7 +399,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					)}
 					{/* The one mark of a hosted agent: its turns run on the Federation host, everything
 					    else is the same agent. Hover it for what that means and how the host stands. */}
-					{activeSession.liftedTo && (
+					{activeSession.liftedTo && hostingOn && (
 						<SessionFederationBadge theme={theme} session={activeSession} />
 					)}
 					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the

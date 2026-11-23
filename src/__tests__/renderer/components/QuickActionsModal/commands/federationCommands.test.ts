@@ -81,6 +81,21 @@ describe('buildFederationCommands', () => {
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 
+	it('offers the hosted-agents switch only while a hosted agent exists, labeled by its state', () => {
+		expect(build().commands.some((c) => c.id === 'federation-toggle-hosted-agents')).toBe(false);
+		const setEnabled = vi.fn();
+		const { commands } = build({ hostedAgents: { enabled: true, setEnabled } });
+		const toggle = commands.find((c) => c.id === 'federation-toggle-hosted-agents');
+		expect(toggle?.label).toBe('Turn Hosted Agents Off');
+		toggle?.action();
+		expect(setEnabled).toHaveBeenCalledWith(false);
+		expect(
+			build({ hostedAgents: { enabled: false, setEnabled } }).commands.find(
+				(c) => c.id === 'federation-toggle-hosted-agents'
+			)?.label
+		).toBe('Turn Hosted Agents On');
+	});
+
 	it('offers Move Back from Host only for a hosted active agent', () => {
 		const requestMoveBackFromHost = vi.fn();
 		expect(

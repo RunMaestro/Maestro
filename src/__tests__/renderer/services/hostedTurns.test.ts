@@ -17,6 +17,7 @@ import {
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -53,6 +54,7 @@ const row = () =>
 describe('hostedTurns', () => {
 	beforeEach(() => {
 		resetStores(usePeerMirrorStore, useSessionStore);
+		useSettingsStore.setState({ federationHostedAgents: true });
 		act$.mockReset();
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
 		maestro.federation = { act: act$ };
@@ -60,6 +62,12 @@ describe('hostedTurns', () => {
 
 	afterEach(() => {
 		delete maestro.federation;
+	});
+
+	it('finds no host target while hosted agents are switched off', () => {
+		hydrateHost();
+		useSettingsStore.setState({ federationHostedAgents: false });
+		expect(hostedTargetOf(row())).toBeUndefined();
 	});
 
 	it('finds the host target only for a record with a pointer', () => {

@@ -601,6 +601,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const federationStatus = useAgentFederationStatus(activeSession);
+	const hostedAgentsOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+	const hasHostedAgents = sessions.some((session) => !!session.liftedTo);
 	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
 	const federationActions = buildFederationCommands({
@@ -613,7 +615,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		copyPeerAgentRef,
 		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
 		moveToHost:
-			activeSession && !activeMirror && canMoveToHost(federationStatus)
+			activeSession && !activeMirror && !activeSession.liftedTo && canMoveToHost(federationStatus)
 				? {
 						sessionId: activeSession.id,
 						agentName: activeSession.name,
@@ -633,6 +635,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					}
 				: undefined,
 		requestMoveBackFromHost,
+		// The switch that turns hosting off (and back on), offered while any hosted agent exists.
+		hostedAgents: hasHostedAgents
+			? {
+					enabled: hostedAgentsOn,
+					setEnabled: useSettingsStore.getState().setFederationHostedAgents,
+				}
+			: undefined,
 		editHostedAgent: (peerId, agentId) =>
 			useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId }),
 		settingsConflictCount,

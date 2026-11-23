@@ -275,6 +275,17 @@ maestro-cli lift docs --with-env   # also send secret env vars
 
 A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. To undo a lift, see [Move a hosted agent back](#move-a-hosted-agent-back). [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
 
+## Switch hosting off
+
+To go back to plain SSH agents without changing anything, turn off **Run hosted agents on their host** in Settings > SSH Hosts, or run **Turn Hosted Agents Off** from the command palette. Every hosted agent then works as the SSH agent it was, from this machine: its turns run over SSH, nothing is sent to its host, and nothing moves onto a host automatically. Nothing on the host or in the agent changes, so turning the switch back on restores hosting. From the CLI:
+
+```bash
+maestro-cli settings set federationHostedAgents false   # hosting off
+maestro-cli settings set federationHostedAgents true    # hosting on again
+```
+
+While hosting is off, do not drive the same agent from its host too: both would continue the same provider conversation.
+
 ## Move a hosted agent back
 
 Right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. The agent becomes an SSH agent again, with everything an SSH agent has (terminal mode, browser tabs, the full Main Window):
