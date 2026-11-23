@@ -464,10 +464,15 @@ export function useModalHandlers(
 	// runs in its own terminal dialog, which replays the failed turn on Retry.
 	const handleInstallAfterError = useCallback((sessionId: string) => {
 		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		const errorTab = session?.aiTabs.find((tab) => tab.id === session.agentErrorTabId);
+		const agentId = session
+			? resolveErrorProvider(errorTab, session, session.agentError ?? undefined)
+			: undefined;
 		getModalActions().setAgentErrorModalSessionId(null);
 		getModalActions().openProviderInstallModal({
 			sessionId,
 			tabId: session?.agentErrorTabId,
+			agentId,
 			reason: session?.agentError?.message,
 		});
 	}, []);

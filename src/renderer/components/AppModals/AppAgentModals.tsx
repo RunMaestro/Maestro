@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react';
 import { selectModalData, useModalStore } from '../../stores/modalStore';
 import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { resolveErrorProvider } from '../../utils/providerTabSessions';
 import { notifyToast } from '../../stores/notificationStore';
 import type {
 	Theme,
@@ -190,7 +191,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 		: undefined;
 	const handleProviderInstallRetry = useCallback(async () => {
 		if (!providerInstallData) return;
-		const { sessionId, tabId } = providerInstallData;
+		const { sessionId, tabId, agentId: failedAgentId } = providerInstallData;
 		closeReauthModal('providerInstall');
 		const initialSession = selectSessionById(sessionId)(useSessionStore.getState());
 		if (!initialSession) {
@@ -204,7 +205,11 @@ export const AppAgentModals = memo(function AppAgentModals({
 		}
 		// Refresh agent detection so a cached "not found" result does not survive
 		// into the retried spawn.
-		await window.maestro?.agents?.reprobe?.(initialSession.toolType)?.catch(() => undefined);
+		const failedTab = tabId ? initialSession.aiTabs?.find((t) => t.id === tabId) : undefined;
+		const reprobeTarget =
+			failedAgentId ??
+			resolveErrorProvider(failedTab, initialSession, initialSession.agentError ?? undefined);
+		await window.maestro?.agents?.reprobe?.(reprobeTarget)?.catch(() => undefined);
 		// Re-read live session/tab state after the await: the user may have closed
 		// the agent or tab while reprobe was running.
 		const liveSession = selectSessionById(sessionId)(useSessionStore.getState());
@@ -278,6 +283,8 @@ export const AppAgentModals = memo(function AppAgentModals({
 				<ProviderInstallModal
 					theme={theme}
 					session={providerInstallSession}
+					agentId={providerInstallData.agentId}
+					tabId={providerInstallData.tabId}
 					reason={providerInstallData.reason}
 					onClose={() => closeReauthModal('providerInstall')}
 					onRetry={handleProviderInstallRetry}

@@ -427,5 +427,31 @@ describe('AppAgentModals', () => {
 			expect(mockReplayAfterAuth).not.toHaveBeenCalled();
 			expect(mockClearAgentError).not.toHaveBeenCalled();
 		});
+
+		it('reprobes the failed tab provider rather than session.toolType on Retry', async () => {
+			const reprobe = vi.fn().mockResolvedValue({ status: 'ok' });
+			(window as any).maestro.agents = { ...(window as any).maestro.agents, reprobe };
+			const session = createMockSession({
+				id: 'install-sess',
+				toolType: 'claude-code',
+				activeTabId: 'tab-codex',
+				aiTabs: [{ id: 'tab-codex', tabProvider: 'codex', logs: [] } as any],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			useModalStore.getState().openModal('providerInstall', {
+				sessionId: 'install-sess',
+				tabId: 'tab-codex',
+				agentId: 'codex',
+			});
+
+			render(<AppAgentModals {...defaultProps} sessions={[session]} />);
+			fireEvent.click(screen.getByTestId('provider-install-retry-trigger'));
+
+			await waitFor(() => expect(reprobe).toHaveBeenCalledWith('codex'));
+			await waitFor(() =>
+				expect(mockReplayAfterAuth).toHaveBeenCalledWith('install-sess', ['tab-codex'], 'install')
+			);
+			expect(mockClearAgentError).toHaveBeenCalledWith('install-sess', 'tab-codex');
+		});
 	});
 });

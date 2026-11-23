@@ -29,18 +29,24 @@ import {
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
 import { getPlatform, isWindowsPlatform } from '../utils/platformUtils';
+import { projectTabProvider, resolveErrorProvider } from '../utils/providerTabSessions';
 import {
 	exitWithCommandStatus,
 	getAgentDisplayName,
 	loginShellSyntaxFor,
 } from '../../shared/agentMetadata';
 import { agentCliLabel, getAgentInstallInfo, toInstallPlatform } from '../../shared/agentInstall';
+import type { ToolType } from '../../shared/types';
 import type { Session, Theme } from '../types';
 
 export interface ProviderInstallModalProps {
 	theme: Theme;
-	/** The agent whose provider CLI is missing. */
+	/** The agent whose turn failed. */
 	session: Session;
+	/** The failed provider (defaults to the tab/session error provider when omitted). */
+	agentId?: ToolType;
+	/** The tab whose turn failed, used to project per-provider settings. */
+	tabId?: string;
 	/** Why the dialog opened (the classified error message), shown above the terminal. */
 	reason?: string;
 	onClose: () => void;
@@ -57,6 +63,8 @@ type Phase =
 export function ProviderInstallModal({
 	theme,
 	session,
+	agentId,
+	tabId,
 	reason,
 	onClose,
 	onRetry,
@@ -65,8 +73,16 @@ export function ProviderInstallModal({
 	const shellArgs = useSettingsStore((s) => s.shellArgs);
 	const shellEnvVars = useSettingsStore((s) => s.shellEnvVars);
 
-	const agentName = getAgentDisplayName(session.toolType);
-	const info = getAgentInstallInfo(session.toolType);
+	const failedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
+	const targetAgentId =
+		agentId ?? resolveErrorProvider(failedTab, session, session.agentError ?? undefined);
+	const effectiveSession = useMemo(
+		() => projectTabProvider(session, failedTab, targetAgentId).agent,
+		[session, failedTab, targetAgentId]
+	);
+
+	const agentName = getAgentDisplayName(targetAgentId);
+	const info = getAgentInstallInfo(targetAgentId);
 	const platform = toInstallPlatform(getPlatform());
 	const installCommand = info && platform ? (info.commands[platform] ?? null) : null;
 
@@ -91,13 +107,13 @@ export function ProviderInstallModal({
 		(code: number) => {
 			if (code === 0) {
 				// Start refreshing cached agent detection right away so Retry sees the new binary.
-				void window.maestro?.agents?.reprobe?.(session.toolType)?.catch(() => undefined);
+				void window.maestro?.agents?.reprobe?.(targetAgentId)?.catch(() => undefined);
 				setPhase({ kind: 'installed' });
 			} else {
 				setPhase({ kind: 'failed', message: `The install ended with exit code ${code}.` });
 			}
 		},
-		[session.toolType]
+		[targetAgentId]
 	);
 
 	const handleStatusChange = useCallback((status: LoginTerminalStatus, error: string | null) => {
@@ -119,7 +135,7 @@ export function ProviderInstallModal({
 		phase.kind === 'running'
 			? `Installing ${agentName}. Answer any prompts above.`
 			: phase.kind === 'installed'
-				? `${agentCliLabel(session.toolType)} installed. Retry to resend the message that failed.`
+				? `${agentCliLabel(targetAgentId)} installed. Retry to resend the message that failed.`
 				: phase.kind === 'failed'
 					? phase.message
 					: `Maestro has no one-line install for ${agentName} on this platform. Follow the install guide, then close and resend.`;
@@ -135,7 +151,7 @@ export function ProviderInstallModal({
 	return (
 		<Modal
 			theme={theme}
-			title={`Install ${agentCliLabel(session.toolType)}`}
+			title={`Install ${agentCliLabel(targetAgentId)}`}
 			priority={MODAL_PRIORITIES.PROVIDER_INSTALL}
 			onClose={onClose}
 			width={900}
@@ -245,9 +261,9 @@ export function ProviderInstallModal({
 							shell: installShell,
 							shellArgs,
 							shellEnvVars,
-							cwd: session.cwd || session.projectRoot,
-							toolType: session.toolType,
-							customEnvVars: session.customEnvVars,
+							cwd: effectiveSession.cwd || effectiveSession.projectRoot,
+							toolType: targetAgentId,
+							customEnvVars: effectiveSession.customEnvVars,
 						}}
 						onStatusChange={handleStatusChange}
 						onExit={handleExit}

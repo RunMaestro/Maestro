@@ -184,4 +184,50 @@ describe('ProviderInstallModal', () => {
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
 		expect(screen.getByTestId('provider-install-status')).toHaveTextContent('no one-line install');
 	});
+
+	it('installs and reprobes the failed tab provider rather than the agent toolType', async () => {
+		const claudeWithCodexTab = {
+			id: 'agent-2',
+			name: 'Claude Agent',
+			toolType: 'claude-code',
+			cwd: '/tmp/project',
+			projectRoot: '/tmp/project',
+			customEnvVars: { CLAUDE_ONLY: '1' },
+			providerOverrides: {
+				codex: { customEnvVars: { CODEX_ONLY: '1' } },
+			},
+			aiTabs: [{ id: 'tab-codex', tabProvider: 'codex', logs: [] }],
+		} as unknown as Session;
+
+		render(
+			<ProviderInstallModal
+				theme={mockTheme}
+				session={claudeWithCodexTab}
+				agentId="codex"
+				tabId="tab-codex"
+				onClose={vi.fn()}
+				onRetry={vi.fn()}
+			/>
+		);
+
+		const ptySessionId = await startInstall();
+		expect(screen.getByRole('heading', { name: 'Install Codex CLI' })).toBeInTheDocument();
+		expect(screen.getByTestId('provider-install-command')).toHaveTextContent(
+			'npm install -g @openai/codex'
+		);
+		expect(mockSpawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({
+				toolType: 'codex',
+				sessionCustomEnvVars: expect.objectContaining({ CODEX_ONLY: '1' }),
+			})
+		);
+		expect(mockSpawnTerminalTab.mock.calls[0][0].sessionCustomEnvVars).not.toHaveProperty(
+			'CLAUDE_ONLY'
+		);
+
+		await act(async () => {
+			exitHandler?.(ptySessionId, 0);
+		});
+		expect(mockReprobe).toHaveBeenCalledWith('codex');
+	});
 });

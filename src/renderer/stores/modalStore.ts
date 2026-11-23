@@ -15,7 +15,7 @@
  */
 
 import { create } from 'zustand';
-import type { Session, SettingsTab, AgentError } from '../types';
+import type { Session, SettingsTab, AgentError, ToolType } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
@@ -283,6 +283,8 @@ export interface ProviderInstallModalData {
 	sessionId: string;
 	/** The tab whose turn failed, replayed by Retry. */
 	tabId?: string;
+	/** The failed provider (e.g. a per-tab provider different from session.toolType). */
+	agentId?: ToolType;
 	/** The classified error message, shown above the install terminal. */
 	reason?: string;
 }
