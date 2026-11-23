@@ -187,26 +187,22 @@ maestro-cli federation reconnect build-box
 
 ## Drive a hosted agent
 
-Click a hosted agent's row to open it. Its view looks like a local agent's: the only difference is the **Hosted** badge beside its name in the header. Hover the badge to see which host runs it and how the connection stands. Its tabs, transcript, and live output come from the host. When the agent moved from this machine, the tabs it had before the move follow the host's tabs in the same strip. Each tab then carries a pill that says where it lives: the host's name, or `Local` for a tab this machine kept. A `Local` tab is read only: continue that conversation in a tab on the host. The composer works as it does for a local agent:
+A hosted agent is the same agent it was as an SSH agent. It opens in the same Main Window, with the same Right Bar (Files, History, Auto Run), the same header buttons, terminal mode (<kbd>Cmd</kbd>+<kbd>J</kbd>), file tabs, and browser tabs. The one mark that it is hosted is the **Hosted** badge beside its name in the header and in the Left Bar. Hover it to see which host runs it and how the connection stands.
 
-- **Send** a message, with images: paste, drop, or **Attach Image**, as for a local agent. While a tab is busy, the message queues on the host, not here. It shows as a queued card under the transcript, as a local queued message does, and leaves the list when the host starts it. **Remove** and **Hold** / **Resume** on a card act on the host's queue.
-- **Stop** the running turn. The Thinking pill above the composer shows a busy mirrored tab with its elapsed time, the same as a local one, and its Stop button stops the turn on the host.
-- **New tab**, **close**, **rename**, and **star** a tab, from the tab strip's own **+** button and each tab's hover menu, as for a local agent. A closed tab goes to the host's closed-tab history.
-- **Memory Viewer** and **Agent Sessions** from the header's right side (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> and <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>). They read the host's files over the agent's SSH remote. A past session opens in the host tab that holds it.
-- **Choose your model, effort, read-only, and save to History** for the tab with the chips under the message box. They are yours only: they go with each message you send and never change the tab for other conductors. See [Settings of a hosted agent](#settings-of-a-hosted-agent).
-- **Edit Agent** from the agent's right-click menu, to change the settings every conductor shares.
+What changes is where its AI turns run. A message you send goes to the Maestro host on the remote instead of starting the provider over SSH from here, so the turn keeps going while your laptop sleeps:
 
-Some things stay off because the host does not serve them:
+- **Send** a message, with images (paste, drop, or **Attach Image**). While a tab is busy, the message queues on the host. It shows as a queued card, and **Remove** and **Hold** / **Resume** on it act on the host's queue.
+- **Stop** a running turn from the Thinking pill or the shortcut. The Stop reaches the host.
+- **New tab**, **close**, **rename**, and **star** act on the host's tabs, from the tab strip and the shortcuts, as for any agent.
+- The model, effort, read-only, and save to History pills under the message box are yours: they go with each message you send and never change the tab for other conductors. See [Settings of a hosted agent](#settings-of-a-hosted-agent).
 
-- **Slash commands.** They run in your local window, and the host receives plain messages only. A send that starts with one is refused with a notice.
-- **Shell command mode.** It would run the command on your laptop, not on the host.
-- **Resuming a past session into a new tab.** Agent Sessions opens a past session only when a host tab already holds it.
+The tabs and transcripts you see are the host's, copied into this machine's record of the agent as they change, including the live output of a running turn. The copy stays here, so the agent still shows its last known state when the host is out of reach, and a later Move Back from Host keeps every conversation. Conversations this machine kept from before the move stay in the tab strip; a message sent in one of them continues in a new tab on the host.
 
-When the host is out of reach, a banner above the tabs offers **Reconnect** and **Start Host**.
+The Right Bar's History reads the host, where the agent's turns are recorded now. Files, Auto Run documents, the Memory Viewer, and Agent Sessions read the remote over SSH, as they did before the move.
 
-A send while the peer is disconnected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer.
+A send while the host is not connected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer. The Hosted badge turns red, and its hover card says why.
 
-A busy tab of a hosted agent in your Left Bar also shows on the Thinking pill while you look at a local agent, named `<agent> on <peer>`. Click it to open the hosted agent. Its Stop button stops that turn on the host.
+Not yet routed to the host: running an Auto Run, and resuming a past session from Agent Sessions into a new tab. Both still act on this machine.
 
 ### Close the lid, open it again
 
@@ -214,7 +210,7 @@ The queue and the turns belong to the host, so they keep going while your laptop
 
 ### History
 
-Toggle the Right Bar, or press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, to show a mirrored agent's History beside its transcript. It is the same History panel a local agent has: the activity graph, the type, host, and sender filters, search, and the detail view. It is read-only, because the host owns the entries.
+The Right Bar's History tab (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>) shows a hosted agent's History. It is the same History panel a local agent has: the activity graph, the type, host, and sender filters, search, and the detail view. It is read-only, because the host owns the entries.
 
 The entries come from the host. They are the agent's own History, plus the shared History of its project (`<project>/.maestro/history/`). That is the same shared History desktops already use when several people work one project over SSH, so the host's entries and theirs appear together:
 
@@ -237,7 +233,7 @@ maestro-cli tab star active --agent build-box:docs
 
 A hosted agent's settings belong to its host, and every conductor that drives it follows them. When Maestro connects to a peer it loads the host's settings. While it stays connected, the host sends every change as it happens, so when one conductor changes the agent's default model, everyone else sees it.
 
-Change the shared settings with **Edit Agent**: **Edit Agent...** in the right-click menu of a hosted agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
+Change the shared settings with **Edit Agent**: **Edit Agent...** in the right-click menu of a hosted agent, or **Edit Agent on Host** in the command palette. A hosted agent's own **Edit Agent** and `maestro-cli update-agent` changes go to the host. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
 
 - **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
 - **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you.

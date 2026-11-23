@@ -21,9 +21,7 @@ import type {
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../shared/federationCommands';
 import { getModalActions, useModalStore } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
-import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
-import { liftedMirrorTarget, type LiftableAgent } from '../utils/peerMirrorView';
 import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 
 /**
@@ -117,29 +115,6 @@ export async function moveAgentToHost(
 		});
 	}
 	return answer;
-}
-
-/**
- * Show the mirrored agent a lifted agent points at. False (with a toast) when the mirror does not
- * hold it right now: the peer is not connected, or the host removed the agent.
- */
-export function openLiftedAgent(agent: Pick<LiftableAgent, 'liftedTo'>): boolean {
-	const state = usePeerMirrorStore.getState();
-	const target = liftedMirrorTarget(agent, state.peers);
-	if (!target) return false;
-	if (!target.mirrored) {
-		const peer = state.peers[target.peerId];
-		notifyToast({
-			color: 'red',
-			title: `${target.ref} is not available`,
-			message: peer
-				? `Peer "${target.peerId}" does not show that agent right now (${peer.connection}).`
-				: `Peer "${target.peerId}" is not mirrored. Turn Federation on for its SSH remote.`,
-		});
-		return false;
-	}
-	state.selectMirroredAgent(target.peerId, target.agentId);
-	return true;
 }
 
 async function callUnlift(

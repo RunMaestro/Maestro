@@ -18,7 +18,8 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
-import { useSessionStore } from '../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import { setActiveTab } from '../utils/tabHelpers';
 import { findLiftedAgent } from '../../shared/maestro-lib/agents/lift-pointer';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -245,9 +246,14 @@ export function openMirroredAgentByKey(key: string, tabId?: string): boolean {
 		);
 		if (!agent) continue;
 		const row = findLiftedAgent(useSessionStore.getState().sessions, peerId, agent.id);
-		// Selecting the row follows its pointer to the hosted agent (`followLiftedPointer`).
-		if (row) useSessionStore.getState().setActiveSessionId(row.id);
-		else store.selectMirroredAgent(peerId, agent.id);
+		if (row) {
+			// The row IS the hosted agent: it draws through the Main Window, with the host's tab
+			// ids (`startHostedAgentSync()`), so the tab is selected on the row itself.
+			useSessionStore.getState().setActiveSessionId(row.id);
+			if (tabId) updateSessionWith(row.id, (s) => setActiveTab(s, tabId)?.session ?? s);
+			return true;
+		}
+		store.selectMirroredAgent(peerId, agent.id);
 		if (tabId) store.selectMirrorTab(peerId, agent.id, tabId);
 		return true;
 	}

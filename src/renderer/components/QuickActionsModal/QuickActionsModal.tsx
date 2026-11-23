@@ -100,15 +100,10 @@ import {
 } from '../../stores/hostedAgentSettingsStore';
 import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
-import {
-	openLiftedAgent,
-	requestMoveBackFromHost,
-	requestMoveToHost,
-} from '../../services/agentLift';
+import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
 	useAddableHostedAgentCount,
-	useLiftedMirrorTarget,
 } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
@@ -606,7 +601,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const federationStatus = useAgentFederationStatus(activeSession);
-	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
 	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
 	const federationActions = buildFederationCommands({
@@ -639,10 +633,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					}
 				: undefined,
 		requestMoveBackFromHost,
-		liftedTarget: activeMirror ? undefined : liftedTarget,
-		openLiftedAgent: () => {
-			if (activeSession) openLiftedAgent(activeSession);
-		},
 		editHostedAgent: (peerId, agentId) =>
 			useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId }),
 		settingsConflictCount,

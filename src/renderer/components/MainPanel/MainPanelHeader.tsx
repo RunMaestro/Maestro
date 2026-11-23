@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { SessionFederationBadge } from '../SessionList/SessionFederationBadge';
 // Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
 // Actions button, neither of which exists on main's header.
 import {
@@ -394,6 +395,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							fill={theme.colors.accent}
 							data-testid="bookmark-icon"
 						/>
+					)}
+					{/* The one mark of a hosted agent: its turns run on the Federation host, everything
+					    else is the same agent. Hover it for what that means and how the host stands. */}
+					{activeSession.liftedTo && (
+						<SessionFederationBadge theme={theme} session={activeSession} />
 					)}
 					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the
 					    header runs out of room. A hard cap truncates a name that had space to

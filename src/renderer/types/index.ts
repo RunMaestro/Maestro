@@ -238,6 +238,11 @@ export interface FileArtifact {
 export interface LogEntry {
 	id: string;
 	timestamp: number;
+	/**
+	 * A hosted agent's live entry: part of a turn still streaming on its Federation host. Display
+	 * only: every host sync drops these and rebuilds them (`projectHostedSession()`).
+	 */
+	hostLive?: boolean;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;
@@ -551,6 +556,11 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	/**
+	 * Waits in a hosted agent's HOST queue (`projectHostedSession()`): drawn as a queued card here,
+	 * never run here. Remove and Hold / Resume act on the host.
+	 */
+	hostQueued?: boolean;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a
@@ -958,8 +968,8 @@ export interface AITab {
 // A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
 /**
- * The agent fields the Thinking pill reads. A local agent passes its `Session`; a Federation peer's
- * mirrored agent passes a view built by `buildMirrorThinkingItems()`, which is never a `Session`.
+ * The agent fields the Thinking pill reads. An agent passes its `Session`, hosted agents included
+ * (their Left Bar record, kept in step with the host).
  */
 export type ThinkingItemAgent = Pick<
 	Session,

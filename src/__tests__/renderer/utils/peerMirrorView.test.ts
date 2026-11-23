@@ -17,14 +17,12 @@ import type { QueuedTurn } from '../../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
 	agentFederationStatus,
-	buildMirrorThinkingItems,
 	canMoveToHost,
 	isPeerFederated,
 	buildMirrorViewSession,
 	hostedLocalTabs,
 	hostedViewTabIds,
 	isPeerDisconnected,
-	liftedMirrorTarget,
 	MIRROR_COMPOSER_UNAVAILABLE,
 	mirrorSendBlockReason,
 	mirrorLogEntry,
@@ -190,78 +188,6 @@ describe('buildMirrorViewSession', () => {
 	});
 });
 
-describe('buildMirrorThinkingItems', () => {
-	const hostAgent: AgentRecord = {
-		id: 'a1',
-		name: 'Builder',
-		toolType: 'codex',
-		aiTabs: [
-			{ id: 't1', name: 'Work', state: 'busy', thinkingStartTime: 50 },
-			{ id: 't2', state: 'busy' },
-			{ id: 't3', state: 'busy', hidden: true },
-			{ id: 't4', state: 'idle' },
-		],
-	};
-	const peerOf = (
-		peerId: string,
-		agents: AgentRecord[],
-		connection: MirroredPeer['connection'] = 'connected'
-	): MirroredPeer =>
-		setPeerConnection(
-			replacePeerAgents(
-				createMirroredPeer({ peerId, remoteId: `r-${peerId}`, name: `Peer ${peerId}` }),
-				agents,
-				[],
-				1
-			).peer,
-			connection
-		).peer;
-
-	it('lists each visible busy tab of a connected peer, keyed and named for the mirror', () => {
-		const peer = peerOf('box', [hostAgent]);
-		const items = buildMirrorThinkingItems({ box: peer }, ['box'], new Set(['box:a1']));
-		expect(items.map((item) => item.tab?.id)).toEqual(['t1', 't2']);
-		expect(items[0].session).toEqual({ id: 'box:a1', name: 'Builder on Peer box', state: 'busy' });
-		expect(items[0].mirror).toEqual({ peerId: 'box', agentId: 'a1' });
-		expect(items[0].tab?.thinkingStartTime).toBe(50);
-		expect(items[0].tab?.name).toBe('Work');
-	});
-
-	it('falls back to the live turn start when the host sent none', () => {
-		const peer: MirroredPeer = {
-			...peerOf('box', [hostAgent]),
-			liveTurns: { [liveTurnKey('a1', 't2')]: { startedAt: 77, entries: [], busy: true } },
-		};
-		const items = buildMirrorThinkingItems({ box: peer }, ['box'], new Set(['box:a1']));
-		expect(items.find((item) => item.tab?.id === 't2')?.tab?.thinkingStartTime).toBe(77);
-	});
-
-	it('shows nothing for a peer that is not connected, or one missing from the map', () => {
-		const lost = peerOf('box', [hostAgent], 'lost');
-		expect(buildMirrorThinkingItems({ box: lost }, ['box'], new Set(['box:a1']))).toEqual([]);
-		expect(buildMirrorThinkingItems({}, ['gone'], new Set(['gone:a1']))).toEqual([]);
-	});
-
-	it('leaves out a host agent the Left Bar does not show', () => {
-		const peer = peerOf('box', [hostAgent]);
-		expect(buildMirrorThinkingItems({ box: peer }, ['box'], new Set())).toEqual([]);
-		expect(buildMirrorThinkingItems({ box: peer }, ['box'], new Set(['box:other']))).toEqual([]);
-	});
-
-	it('follows the peer order and skips an agent with no busy tab', () => {
-		const idle: AgentRecord = { id: 'a2', name: 'Idle', toolType: 'codex', aiTabs: [{ id: 'x' }] };
-		const peers = {
-			box: peerOf('box', [hostAgent, idle]),
-			gpu: peerOf('gpu', [{ ...hostAgent, id: 'g1', aiTabs: [{ id: 'gt', state: 'busy' }] }]),
-		};
-		const shown = new Set(['box:a1', 'box:a2', 'gpu:g1']);
-		const ids = buildMirrorThinkingItems(peers, ['gpu', 'box'], shown).map(
-			(item) => item.session.id
-		);
-		expect(ids).toEqual(['gpu:g1', 'box:a1', 'box:a1']);
-	});
-});
-
 describe('isPeerDisconnected', () => {
 	it('reads a peer as disconnected unless it is connected or connecting', () => {
 		expect(isPeerDisconnected({ connection: 'lost' })).toBe(true);
@@ -295,27 +221,6 @@ describe('Move to Host (FED-SSH-06)', () => {
 			'connected'
 		).peer;
 	const ssh = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
-
-	it('liftedMirrorTarget reads the pointer and whether the mirror holds the agent', () => {
-		const peers = { box: connected('box', 'r1') };
-		expect(liftedMirrorTarget({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }, peers)).toEqual({
-			peerId: 'box',
-			agentId: 'h1',
-			ref: 'box:h1',
-			mirrored: true,
-		});
-		expect(
-			liftedMirrorTarget({ liftedTo: { peer: 'box', agentId: 'gone', at: 1 } }, peers)?.mirrored
-		).toBe(false);
-		expect(liftedMirrorTarget({ liftedTo: { peer: 'nope', agentId: 'h1', at: 1 } }, {})).toEqual({
-			peerId: 'nope',
-			agentId: 'h1',
-			ref: 'nope:h1',
-			mirrored: false,
-		});
-		expect(liftedMirrorTarget({}, peers)).toBeUndefined();
-		expect(liftedMirrorTarget({ liftedTo: { peer: 1 } }, peers)).toBeUndefined();
-	});
 });
 
 describe('Federation status of a local agent', () => {

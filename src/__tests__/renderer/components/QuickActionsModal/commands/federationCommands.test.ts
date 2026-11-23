@@ -20,7 +20,6 @@ function build(overrides: Partial<Parameters<typeof buildFederationCommands>[0]>
 		reconnectPeer: vi.fn(),
 		copyPeerAgentRef: vi.fn(),
 		requestMoveToHost: vi.fn(),
-		openLiftedAgent: vi.fn(),
 		setQuickActionOpen: vi.fn(),
 		...overrides,
 	};
@@ -98,15 +97,6 @@ describe('buildFederationCommands', () => {
 		back?.action();
 		expect(requestMoveBackFromHost).toHaveBeenCalledWith('s1', 'Docs', 'Build Box');
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
-	});
-
-	it('offers to open a lifted agent on its host', () => {
-		expect(build().commands.some((c) => c.id === 'federation-open-lifted-agent')).toBe(false);
-		const { deps, commands } = build({ liftedTarget: { ref: 'buildbox:h1' } });
-		const open = commands.find((c) => c.id === 'federation-open-lifted-agent');
-		expect(open?.label).toBe('Open on Host (buildbox:h1)');
-		open?.action();
-		expect(deps.openLiftedAgent).toHaveBeenCalled();
 	});
 
 	it('offers the same Move to Host when the remote runs no host yet, saying it sets one up', () => {

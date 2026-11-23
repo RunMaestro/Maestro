@@ -10,7 +10,7 @@
  * action, pins, an agent error to retry) are not copied, so nothing in the view can act on them.
  */
 
-import { liveTurnKey, type LiveTurn } from '../../shared/maestro-lib/client/live-turn';
+import type { LiveTurn } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { MirroredPeer } from '../../shared/maestro-lib/client/peer-mirror';
 import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
@@ -22,14 +22,7 @@ import {
 	type LogEntryRecord,
 	type LogEntrySource,
 } from '../../shared/maestro-lib/store/transcript';
-import type {
-	AITab,
-	LogEntry,
-	QueuedItem,
-	ThinkingItem,
-	ThinkingItemAgent,
-	ToolType,
-} from '../types';
+import type { AITab, LogEntry, QueuedItem, ToolType } from '../types';
 import type { TranscriptViewSession } from '../components/TerminalOutput/types';
 
 const KNOWN_SOURCES = new Set<string>(LOG_ENTRY_SOURCES);
@@ -182,48 +175,6 @@ export function buildMirrorViewSession(input: {
 	};
 }
 
-/**
- * The Thinking pill's entries for the hosted agents the person keeps in the Left Bar: one per
- * visible tab the host reports busy, the same rule `buildThinkingItems()` applies to a local agent.
- * `shown` is `liftedAgentKeys()` of the local records: a host's other agents belong to whoever runs
- * that host and never show here. Each item carries `mirror`, so a click opens the hosted agent and
- * Stop reaches its host. A peer that is not connected shows nothing: its last known state may be
- * long over, and a Stop there could not reach it.
- */
-export function buildMirrorThinkingItems(
-	peers: Readonly<Record<string, MirroredPeer>>,
-	order: readonly string[],
-	shown: ReadonlySet<string>
-): ThinkingItem[] {
-	const items: ThinkingItem[] = [];
-	if (shown.size === 0) return items;
-	for (const peerId of order) {
-		const peer = peers[peerId];
-		if (!peer || peer.connection !== 'connected') continue;
-		for (const agent of peer.agents) {
-			if (!shown.has(mirrorKey(peerId, agent.id))) continue;
-			const busyTabs = (agent.aiTabs ?? []).filter((tab) => !tab.hidden && tab.state === 'busy');
-			if (busyTabs.length === 0) continue;
-			const session: ThinkingItemAgent = {
-				id: mirrorKey(peerId, agent.id),
-				name: `${agent.name} on ${peer.name}`,
-				state: 'busy',
-			};
-			for (const record of busyTabs) {
-				const tab = mirrorTab(record);
-				// The host sent no start time (the client learned of the turn from its stream): use
-				// the first event this desktop saw.
-				if (tab.thinkingStartTime === undefined) {
-					const startedAt = peer.liveTurns[liveTurnKey(agent.id, record.id)]?.startedAt;
-					if (startedAt !== undefined) tab.thinkingStartTime = startedAt;
-				}
-				items.push({ session, tab, mirror: { peerId, agentId: agent.id } });
-			}
-		}
-	}
-	return items;
-}
-
 /** Whether a peer's agents are the last known state rather than live. */
 export function isPeerDisconnected(peer: Pick<MirroredPeer, 'connection'>): boolean {
 	return peer.connection !== 'connected' && peer.connection !== 'connecting';
@@ -322,30 +273,4 @@ export function canMoveToHost(
 	status: AgentFederationStatus
 ): status is Extract<AgentFederationStatus, { kind: 'ssh' }> & { peer: MirroredPeer } {
 	return status.kind === 'ssh' && status.peer !== undefined;
-}
-
-/** Where a lifted agent's pointer leads, and whether the mirror holds that agent right now. */
-export interface LiftedMirrorTarget {
-	peerId: string;
-	agentId: string;
-	/** `peer:agentId`, the address maestro-cli takes. */
-	ref: string;
-	/** The mirror shows this peer's agent, so a click can open it. */
-	mirrored: boolean;
-}
-
-/** The pointer of a lifted agent as the Left Bar shows it, or undefined for one that never moved. */
-export function liftedMirrorTarget(
-	agent: Pick<LiftableAgent, 'liftedTo'>,
-	peers: Readonly<Record<string, MirroredPeer>>
-): LiftedMirrorTarget | undefined {
-	const pointer = readLiftedTo(agent.liftedTo);
-	if (!pointer) return undefined;
-	const peer = peers[pointer.peer];
-	return {
-		peerId: pointer.peer,
-		agentId: pointer.agentId,
-		ref: mirrorKey(pointer.peer, pointer.agentId),
-		mirrored: Boolean(peer?.agents.some((candidate) => candidate.id === pointer.agentId)),
-	};
 }

@@ -28,6 +28,9 @@ import {
 	replacePeerAgents,
 } from '../../../shared/maestro-lib/client/peer-mirror';
 import { resetStores } from '../../helpers';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
 const act$ = vi.fn();
@@ -52,7 +55,7 @@ function hydrate() {
 
 describe('services/peerMirror', () => {
 	beforeEach(() => {
-		resetStores(usePeerMirrorStore);
+		resetStores(usePeerMirrorStore, useSessionStore);
 		act$.mockReset();
 		maestro.federation = { act: act$ };
 		vi.mocked(notifyToast).mockClear();
@@ -76,6 +79,24 @@ describe('services/peerMirror', () => {
 			expect(openMirroredAgentByKey('box:a1')).toBe(true);
 			expect(selectActiveMirrorKey(usePeerMirrorStore.getState())).toBe('box:a1');
 			expect(usePeerMirrorStore.getState().activeTabIds).toEqual({});
+		});
+
+		it("selects a hosted agent's own Left Bar row and its tab, never the mirror view", () => {
+			hydrate();
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'row-b1',
+						liftedTo: { peer: 'gpu', agentId: 'b1', at: 1 },
+						activeTabId: 't1',
+						aiTabs: [createMockAITab({ id: 't1' }), createMockAITab({ id: 't2' })],
+					}),
+				],
+			});
+			expect(openMirroredAgentByKey('gpu:b1', 't2')).toBe(true);
+			expect(useSessionStore.getState().activeSessionId).toBe('row-b1');
+			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('t2');
+			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
 		});
 
 		it('answers false for a key no mirrored agent has, such as a local agent id', () => {

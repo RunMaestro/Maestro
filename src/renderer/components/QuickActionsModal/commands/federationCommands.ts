@@ -19,10 +19,6 @@ interface BuildFederationCommandsArgs {
 	/** The active agent is hosted: Move Back from Host (`maestro-cli unlift`) is offered. */
 	moveBackFromHost?: { sessionId: string; agentName: string; peerName: string };
 	requestMoveBackFromHost?: (sessionId: string, agentName: string, peerName: string) => void;
-	/** The active local agent's lift pointer (`useLiftedMirrorTarget()`). */
-	liftedTarget?: { ref: string };
-	/** Show the mirrored agent the active local agent moved to. */
-	openLiftedAgent: () => void;
 	/** Open Edit Agent for a mirrored agent, saved to its host (`HostedAgentSettingsModal`). */
 	editHostedAgent?: (peerId: string, agentId: string) => void;
 	/** Fields of hosted agents waiting for the person (`hostedAgentSettingsStore`). */
@@ -38,8 +34,8 @@ interface BuildFederationCommandsArgs {
  * The Federation entries: add a host's agent to the Left Bar (`maestro-cli federation add`),
  * reconnect a peer (a hosted row's menu and `maestro-cli federation reconnect`), and, while a
  * hosted agent is shown, copy its `peer:agent` address. For the active local agent: Move to Host
- * (`maestro-cli lift`) while its remote is a connected peer, or, once it moved, open it on the
- * host and Move Back from Host (`maestro-cli unlift`). Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher
+ * (`maestro-cli lift`) while its remote is a connected peer, or, once it moved, Move Back from
+ * Host (`maestro-cli unlift`). Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher
  * lists them.
  */
 export function buildFederationCommands({
@@ -51,8 +47,6 @@ export function buildFederationCommands({
 	requestMoveToHost,
 	moveBackFromHost,
 	requestMoveBackFromHost,
-	liftedTarget,
-	openLiftedAgent,
 	editHostedAgent,
 	settingsConflictCount = 0,
 	openSettingsConflicts,
@@ -109,17 +103,6 @@ export function buildFederationCommands({
 					moveBackFromHost.agentName,
 					moveBackFromHost.peerName
 				);
-				setQuickActionOpen(false);
-			},
-		});
-	}
-	if (liftedTarget) {
-		actions.push({
-			id: 'federation-open-lifted-agent',
-			label: `Open on Host (${liftedTarget.ref})`,
-			subtext: 'This agent moved to a Federation host',
-			action: () => {
-				openLiftedAgent();
 				setQuickActionOpen(false);
 			},
 		});

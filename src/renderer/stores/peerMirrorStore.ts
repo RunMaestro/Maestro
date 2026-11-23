@@ -32,7 +32,7 @@ import {
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { generateId } from '../utils/ids';
-import { hostedViewTabIds, liftedMirrorTarget, resolveMirrorTabId } from '../utils/peerMirrorView';
+import { hostedViewTabIds, resolveMirrorTabId } from '../utils/peerMirrorView';
 import { useGroupChatStore } from './groupChatStore';
 
 /** The mirrored agent the Main Window shows. */
@@ -92,8 +92,9 @@ export interface PeerMirrorActions {
 	selectMirroredAgent(peerId: string, agentId: string): void;
 	clearMirrorSelection(): void;
 	/**
-	 * Follow a local agent that was just chosen: show the hosted agent its pointer names when the
-	 * mirror holds it, else leave any mirror shown so the local agent is what the Main Window shows.
+	 * Follow a Left Bar row that was just chosen: leave any mirror, so the row's own agent is what
+	 * the Main Window shows. A hosted agent's row draws through the Main Window like any agent
+	 * (`startHostedAgentSync()` keeps it in step with its host), so no row opens the mirror view.
 	 */
 	followLiftedPointer(agent: { liftedTo?: unknown } | undefined): void;
 	selectMirrorTab(peerId: string, agentId: string, tabId: string): void;
@@ -409,10 +410,8 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 		if (get().activeMirror) set({ activeMirror: null });
 	},
 
-	followLiftedPointer: (agent) => {
-		const target = agent ? liftedMirrorTarget(agent, get().peers) : undefined;
-		if (target?.mirrored) get().selectMirroredAgent(target.peerId, target.agentId);
-		else get().clearMirrorSelection();
+	followLiftedPointer: () => {
+		get().clearMirrorSelection();
 	},
 
 	selectMirrorTab: (peerId, agentId, tabId) =>

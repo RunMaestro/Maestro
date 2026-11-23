@@ -8,7 +8,9 @@
  * it, so nothing the service sent in between is lost. `federation:reset` empties the store.
  *
  * It also keeps the mirror selection exclusive with a group chat: opening a group chat leaves
- * the mirror, the way it leaves a local agent.
+ * the mirror, the way it leaves a local agent. And it starts the hosted-agent sync
+ * (`startHostedAgentSync()`), which folds each hosted agent's host state into its Left Bar record,
+ * so a hosted agent draws through the same Main Window and Right Bar as any agent.
  */
 
 import { useEffect } from 'react';
@@ -17,6 +19,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useFederationAutoStore } from '../../stores/federationAutoStore';
 import { logger } from '../../utils/logger';
+import { startHostedAgentSync } from '../../services/hostedAgentSync';
 
 export function usePeerMirrorBridge(): void {
 	useEffect(() => {
@@ -55,6 +58,8 @@ export function usePeerMirrorBridge(): void {
 			}
 		});
 
+		const stopHostedSync = startHostedAgentSync();
+
 		const replay = () => {
 			const queued = pending ?? [];
 			pending = null;
@@ -83,6 +88,7 @@ export function usePeerMirrorBridge(): void {
 			offReset();
 			offAuto?.();
 			offGroupChat();
+			stopHostedSync();
 			useFederationAutoStore.getState().reset();
 			usePeerMirrorStore.getState().reset();
 		};

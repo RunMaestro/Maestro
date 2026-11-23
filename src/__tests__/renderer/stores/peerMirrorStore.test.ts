@@ -391,26 +391,20 @@ describe('peerMirrorStore', () => {
 			expect(isMirrorShown()).toBe(false);
 		});
 
-		it("selecting a hosted agent's Left Bar row shows the agent its host runs", () => {
+		it("selecting a hosted agent's Left Bar row shows the row itself, never the mirror view", () => {
 			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
 			useSessionStore.setState({
 				sessions: [
 					{ id: 'row-1', liftedTo: { peer: 'buildbox', agentId: 'a1', at: 1 } },
-					{ id: 'row-2', liftedTo: { peer: 'buildbox', agentId: 'gone', at: 1 } },
 					{ id: 'local-1' },
 				] as never,
 			});
+			// A mirror left on screen goes away: the row draws through the Main Window.
+			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
 			useSessionStore.getState().setActiveSessionId('row-1');
-			expect(usePeerMirrorStore.getState().activeMirror?.key).toBe('buildbox:a1');
-
-			// Cycling onto a local agent leaves the mirror; back onto the row shows it again.
-			useSessionStore.getState().setActiveSessionIdInternal('local-1');
 			expect(isMirrorShown()).toBe(false);
-			useSessionStore.getState().setActiveSessionIdInternal('row-1');
-			expect(usePeerMirrorStore.getState().activeMirror?.key).toBe('buildbox:a1');
-
-			// The host does not show the agent its pointer names: the local copy shows instead.
-			useSessionStore.getState().setActiveSessionId('row-2');
+			expect(useSessionStore.getState().activeSessionId).toBe('row-1');
+			useSessionStore.getState().setActiveSessionIdInternal('local-1');
 			expect(isMirrorShown()).toBe(false);
 			useSessionStore.setState({ sessions: [] });
 		});
