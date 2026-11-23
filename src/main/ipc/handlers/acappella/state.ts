@@ -30,6 +30,8 @@ export interface SharedACappellaState {
 	handsFree: HandsFreeListener | null;
 	/** Dictation microphone capture (audio-host + wake). */
 	clipCapture: ClipCapture | null;
+	/** Monotonic counter bumped on disable/reset to cancel in-flight starts. */
+	voiceDisableGeneration: number;
 }
 
 export const sharedState: SharedACappellaState = {
@@ -41,6 +43,7 @@ export const sharedState: SharedACappellaState = {
 	wakeTestTaps: new Set(),
 	handsFree: null,
 	clipCapture: null,
+	voiceDisableGeneration: 0,
 };
 
 export function clearActiveProviderKey(): void {

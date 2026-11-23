@@ -625,6 +625,22 @@ describe('A Cappella IPC handlers - shutdownACappellaForDisable', () => {
 		expect(getVoiceSessionService()?.getState()).toBe('idle');
 	});
 
+	it('cancels a pending wake word Test when A Cappella is turned off', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		const starting = handlerFor('acappella:wake-test')({}, {});
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+
+		await expect(starting).resolves.toMatchObject({
+			started: false,
+			reason: 'The wake word Test was cancelled.',
+		});
+		expect(audioCommands().map((command) => command.kind)).not.toContain('start-capture');
+	});
+
 	it('stands the transport down, so no advert and no device outlive the switch', async () => {
 		const transport = getACappellaTransport();
 		expect(transport, 'registration must have built a transport').not.toBeNull();

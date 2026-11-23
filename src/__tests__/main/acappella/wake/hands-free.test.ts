@@ -161,6 +161,54 @@ describe('HandsFreeListener', () => {
 		expect(deps.stopCapture).not.toHaveBeenCalled();
 	});
 
+	it('does not arm when the wake toggle is turned off while readiness is resolving', async () => {
+		const readiness = Promise.withResolvers<boolean>();
+		const { listener, deps, settings } = harness({
+			canRunHandsFree: vi.fn(() => readiness.promise),
+		});
+
+		const syncing = listener.sync();
+		await vi.waitFor(() => expect(deps.canRunHandsFree).toHaveBeenCalledOnce());
+		settings.enabled = false;
+		readiness.resolve(true);
+		await syncing;
+
+		expect(listener.isListening).toBe(false);
+		expect(deps.startCapture).not.toHaveBeenCalled();
+	});
+
+	it('closes pre-wake capture if disabled while the detector is giving up the microphone', async () => {
+		const { listener, deps, detectors, settings } = harness();
+		await listener.sync();
+		const stopping = Promise.withResolvers<void>();
+		vi.mocked(detectors.created[0].detector.stop).mockReturnValueOnce(stopping.promise);
+
+		detectors.fire();
+		settings.enabled = false;
+		await listener.sync();
+
+		expect(deps.stopCapture).toHaveBeenCalledOnce();
+		stopping.resolve();
+		await stopping.promise;
+		await listener.sync();
+		expect(deps.startSession).not.toHaveBeenCalled();
+		expect(deps.stopCapture).toHaveBeenCalledOnce();
+	});
+
+	it('gives up pre-wake capture before re-arming after a refused session', async () => {
+		const { listener, deps, detectors } = harness({
+			startSession: vi.fn(async () => {
+				throw new Error('readiness refused');
+			}),
+		});
+		await listener.sync();
+
+		detectors.fire();
+		await vi.waitFor(() => expect(deps.startCapture).toHaveBeenCalledTimes(2));
+
+		expect(deps.stopCapture).toHaveBeenCalledOnce();
+	});
+
 	it('replaces the detector when the phrase is retrained', async () => {
 		// The armed detector loaded the old model; nothing else about the settings
 		// changed, so only the revision can say it is stale.
