@@ -6,10 +6,15 @@
  * `Session`: `TabBar` (select only), `TerminalOutput` (no pins, no save, no local history paging),
  * which draws each entry through `LogItem`, and `PeerAgentComposer`.
  *
+ * It must look like a local agent's Main Window: the only mark that the agent lives elsewhere is
+ * the Hosted badge in the header (its hover card says what hosted means and how the host
+ * connection stands). The header's right side carries the same Memory Viewer and Agent Sessions
+ * buttons, reading the host's files over the agent's SSH remote.
+ *
  * Input (FED-SSH-06) goes to the host through `services/peerMirror.ts` and the main-process mirror
- * service, never through a local handler: send and Stop from the composer, and new tab, rename,
- * and star from the controls beside the tab strip. The strip itself stays select-only, because
- * its own menu offers local actions (close, merge, send to agent, ...) the host does not serve.
+ * service, never through a local handler: send and Stop from the composer, and new tab, close,
+ * rename, and star from the tab strip's own controls (the + button and each tab's hover menu).
+ * The strip offers only the actions the host serves: merge, send to agent, and the rest stay off.
  *
  * A tab's transcript is read lazily from the host when it is shown, and again when the host marks
  * it stale; a turn in flight shows as a live tail after it. The messages waiting in the host's
@@ -26,20 +31,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Pencil, Plus, RefreshCw, Settings, Star } from 'lucide-react';
+import { Brain, List, Play, RefreshCw } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import { mirrorKey } from '../../../shared/maestro-lib/client/peer-mirror';
-import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { findLiftedAgent } from '../../../shared/maestro-lib/agents/lift-pointer';
-import { useHostedAgentSettingsStore } from '../../stores/hostedAgentSettingsStore';
+import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import {
-	copyPeerAgentRef,
+	closeMirrorTab,
 	openMirrorTab,
 	readMirrorTranscript,
 	reconnectPeer,
@@ -48,22 +54,22 @@ import {
 	setMirrorQueuedItemPaused,
 	starMirrorTab,
 } from '../../services/peerMirror';
+import { startPeerHost } from '../../services/agentLift';
 import {
 	buildMirrorViewSession,
 	hostedLocalTabs,
 	isPeerDisconnected,
-	mirroredAgentState,
 	mirrorTabEntries,
 	mirrorTabs,
-	peerConnectionDotState,
-	peerConnectionLabel,
 	resolveMirrorTabId,
 } from '../../utils/peerMirrorView';
-import { getStatusColor } from '../../utils/theme';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { TabBar } from '../TabBar';
 import { TerminalOutput } from '../TerminalOutput';
 import type { TerminalOutputProps } from '../TerminalOutput/types';
-import { MiniBadge } from '../ui/MiniBadge';
+import { FederationBadge } from '../SessionList/FederationBadge';
+import { AgentSessionsBrowser } from '../AgentSessionsBrowser';
+import { MemoryViewer } from '../MemoryViewer';
 import { SkeletonBox } from '../ui/SkeletonBox';
 import { RenameTabModal } from '../RenameTabModal';
 import { PeerAgentComposer } from './PeerAgentComposer';
@@ -74,8 +80,6 @@ export interface PeerAgentPanelProps {
 	/** The app's image lightbox opener (the same one MainPanel gets). */
 	setLightboxImage: TerminalOutputProps['setLightboxImage'];
 }
-
-const noop = () => {};
 
 /** The view a kept local tab renders through: this machine's copy, read only, no queue. */
 function localTabViewSession(local: Session, tabId: string): TerminalOutputProps['session'] {
@@ -124,6 +128,9 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 	const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const historyOpen = useUIStore((s) => s.rightPanelOpen);
+	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const agentSessionsOpen = useModalStore(selectModalOpen('agentSessions'));
+	const memoryViewerOpen = useModalStore(selectModalOpen('memoryViewer'));
 
 	// Find-bar state is the view's own: Cmd+F is a local shortcut and stays blocked here, so the
 	// bar only ever opens from a future control of this panel.
@@ -208,6 +215,68 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 		if (selection && tabId) void readMirrorTranscript(selection.peerId, selection.agentId, tabId);
 	}, [selection, tabId]);
 
+	// The strip's own controls, answered on the host. A tab this machine kept from before the move
+	// is a read-only copy: it has nothing on the host to rename, star, or close.
+	const isHostTab = useCallback((id: string) => hostTabs.some((tab) => tab.id === id), [hostTabs]);
+	const handleNewTab = useCallback(() => {
+		if (selection) void openMirrorTab(selection.peerId, selection.agentId);
+	}, [selection]);
+	const handleTabClose = useCallback(
+		(closingTabId: string) => {
+			if (!selection) return;
+			if (!isHostTab(closingTabId)) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Tab not closed',
+					message:
+						'This conversation is the copy kept from before the agent moved. It stays read only.',
+				});
+				return;
+			}
+			void closeMirrorTab(selection.peerId, selection.agentId, closingTabId);
+		},
+		[selection, isHostTab]
+	);
+	const handleRequestRename = useCallback(
+		(renameTabId: string) => {
+			if (isHostTab(renameTabId)) setRenamingTabId(renameTabId);
+		},
+		[isHostTab]
+	);
+	const handleTabStar = useCallback(
+		(starTabId: string, starred: boolean) => {
+			if (selection && isHostTab(starTabId)) {
+				void starMirrorTab(selection.peerId, selection.agentId, starTabId, starred);
+			}
+		},
+		[selection, isHostTab]
+	);
+	// Agent Sessions: a past conversation opens in the host tab that holds it. The host cannot yet
+	// resume a provider session into a new tab, so one no tab holds is a notice.
+	const handleResumeSession = useCallback(
+		(agentSessionId: string) => {
+			if (!selection) return;
+			const holder = agent?.aiTabs?.find((tab) => tab.agentSessionId === agentSessionId);
+			getModalActions().setAgentSessionsOpen(false);
+			if (holder) {
+				usePeerMirrorStore
+					.getState()
+					.selectMirrorTab(selection.peerId, selection.agentId, holder.id);
+				return;
+			}
+			notifyToast({
+				color: 'yellow',
+				title: 'Not resumed',
+				message: `No open tab on ${peer?.name ?? 'the host'} holds that conversation, and the host cannot resume one into a new tab yet.`,
+			});
+		},
+		[selection, agent, peer?.name]
+	);
+	const handleNewSession = useCallback(() => {
+		getModalActions().setAgentSessionsOpen(false);
+		handleNewTab();
+	}, [handleNewTab]);
+
 	const tabRecord = useMemo(
 		() => (agent && tabId ? agent.aiTabs?.find((tab) => tab.id === tabId) : undefined),
 		[agent, tabId]
@@ -221,8 +290,46 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 	if (!selection || !peer || !agent) return null;
 
 	const ref = mirrorKey(peer.peerId, agent.id);
+	const provider = getAgentCapabilities(agent.toolType);
+	// The viewers read the agent's own Left Bar record: its cwd and its SSH remote, the host.
+	const canBrowseSessions = !!local && provider.supportsSessionStorage === true;
+	const canViewMemory = !!local && provider.supportsProjectMemory === true;
 	const showSkeleton = !slot?.loaded && !slot?.error && entries.length === 0;
 	const showReadError = !!slot?.error && !slot.loaded;
+
+	// The Agent Sessions browser and the Memory Viewer take the Main Window over, as they do for a
+	// local agent.
+	if (agentSessionsOpen && canBrowseSessions) {
+		return (
+			<div
+				className="flex-1 flex flex-col min-w-0 relative"
+				style={{ backgroundColor: theme.colors.bgMain }}
+			>
+				<AgentSessionsBrowser
+					theme={theme}
+					activeSession={local}
+					activeAgentSessionId={null}
+					onClose={() => getModalActions().setAgentSessionsOpen(false)}
+					onResumeSession={handleResumeSession}
+					onNewSession={handleNewSession}
+				/>
+			</div>
+		);
+	}
+	if (memoryViewerOpen && canViewMemory) {
+		return (
+			<div
+				className="flex-1 flex flex-col min-w-0 relative"
+				style={{ backgroundColor: theme.colors.bgMain }}
+			>
+				<MemoryViewer
+					theme={theme}
+					activeSession={local}
+					onClose={() => getModalActions().setMemoryViewerOpen(false)}
+				/>
+			</div>
+		);
+	}
 
 	return (
 		<div
@@ -231,67 +338,50 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 			data-testid="peer-agent-panel"
 		>
 			<div className="flex-1 flex flex-col min-w-0">
-				{/* Header: who this is, where it lives, and that it is a mirror. */}
+				{/* Header: the same shape as a local agent's. The Hosted badge is the only difference. */}
 				<div
-					className="flex items-center gap-2 px-4 py-2 border-b shrink-0 select-none"
+					className="chrome-sheen header-container h-16 border-b flex items-center justify-between gap-4 px-6 shrink-0 relative z-20 select-none"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+					data-testid="peer-agent-panel-header"
 				>
-					<span
-						className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-							mirroredAgentState(agent) === 'busy' ? 'animate-pulse' : ''
-						}`}
-						style={{
-							backgroundColor: getStatusColor(mirroredAgentState(agent), theme),
-							opacity: disconnected ? 0.4 : 1,
-						}}
-					/>
-					<span className="font-bold truncate" style={{ color: theme.colors.textMain }}>
-						{agent.name}
-					</span>
-					<MiniBadge
-						label="Hosted"
-						theme={theme}
-						title={`Hosted on ${peer.name}: its host runs it`}
-						testId="peer-agent-panel-badge"
-					/>
-					<span className="text-xs truncate" style={{ color: theme.colors.textDim }}>
-						{peer.name} · {getAgentDisplayName(agent.toolType)}
-					</span>
-					<span
-						className={`w-2 h-2 rounded-full shrink-0 ${
-							peerConnectionDotState(peer.connection) === 'connecting' ? 'animate-pulse' : ''
-						}`}
-						style={{
-							backgroundColor: getStatusColor(peerConnectionDotState(peer.connection), theme),
-						}}
-						title={peerConnectionLabel(peer)}
-					/>
-					<span className="flex-1" />
-					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
-						Mirror of <code className="select-text">{ref}</code>
-					</span>
-					<button
-						type="button"
-						onClick={() => void copyPeerAgentRef(peer.peerId, agent.id)}
-						className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-						title={`Copy ${ref}`}
-						aria-label={`Copy ${ref}`}
-					>
-						<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-					</button>
-					<button
-						type="button"
-						onClick={() =>
-							useHostedAgentSettingsStore
-								.getState()
-								.openEditor({ peerId: peer.peerId, agentId: agent.id })
-						}
-						className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-						title={`Edit Agent on ${peer.name}: settings every conductor shares`}
-						aria-label={`Edit agent settings on ${peer.name}`}
-					>
-						<Settings className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-					</button>
+					<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
+						<span className="header-session-name truncate" style={{ color: theme.colors.textMain }}>
+							{agent.name}
+						</span>
+						<FederationBadge
+							theme={theme}
+							mode={{
+								kind: 'hosted',
+								peerName: peer.name,
+								connection: peer.connection,
+								...(peer.error ? { error: peer.error } : {}),
+							}}
+						/>
+					</div>
+					<div className="flex items-center gap-2 shrink-0">
+						{canViewMemory && (
+							<button
+								type="button"
+								onClick={() => getModalActions().setMemoryViewerOpen(true)}
+								aria-label="Memory Viewer"
+								className="header-secondary-btn p-2 rounded hover:bg-white/5"
+								title={`Memory Viewer (${formatShortcutKeys(shortcuts.openMemoryViewer?.keys ?? ['Meta', 'Shift', 'm'])})`}
+							>
+								<Brain className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+							</button>
+						)}
+						{canBrowseSessions && (
+							<button
+								type="button"
+								onClick={() => getModalActions().setAgentSessionsOpen(true)}
+								aria-label="Agent Sessions"
+								className="header-secondary-btn p-2 rounded hover:bg-white/5"
+								title={`Agent Sessions (${formatShortcutKeys(shortcuts.agentSessions?.keys ?? ['Meta', 'Shift', 'l'])})`}
+							>
+								<List className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+							</button>
+						)}
+					</div>
 				</div>
 
 				{disconnected && (
@@ -317,75 +407,33 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 							<RefreshCw className="w-3 h-3" />
 							Reconnect
 						</button>
+						<button
+							type="button"
+							onClick={() => void startPeerHost(peer.remoteId, peer.name)}
+							className="flex items-center gap-1 px-2 py-0.5 rounded border shrink-0 hover:opacity-80"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							title="Install or upgrade maestro-cli on the remote if needed, then start its host (maestro-cli remote-host install --start)"
+							data-testid="peer-agent-panel-start-host"
+						>
+							<Play className="w-3 h-3" />
+							Start Host
+						</button>
 					</div>
 				)}
 
-				<div className="flex items-stretch shrink-0 min-w-0">
-					<div className="flex-1 min-w-0">
-						{tabs.length > 0 && shownTabId && (
-							<TabBar
-								tabs={tabs}
-								activeTabId={shownTabId}
-								theme={theme}
-								onTabSelect={handleTabSelect}
-								onTabClose={noop}
-								onNewTab={noop}
-								readOnly
-								tabLocations={tabLocations}
-							/>
-						)}
-					</div>
-					{/* The host's own tab actions, for the shown tab. */}
-					<div
-						className="flex items-center gap-0.5 px-2 shrink-0 select-none"
-						data-testid="peer-agent-tab-actions"
-					>
-						{tabRecord && (
-							<>
-								<button
-									type="button"
-									onClick={() =>
-										void starMirrorTab(peer.peerId, agent.id, tabRecord.id, !tabRecord.starred)
-									}
-									className="p-1 rounded hover:bg-white/10 transition-colors"
-									title={
-										tabRecord.starred
-											? `Unstar this tab on ${peer.name}`
-											: `Star this tab on ${peer.name}`
-									}
-									aria-label={tabRecord.starred ? 'Unstar tab' : 'Star tab'}
-									aria-pressed={tabRecord.starred === true}
-								>
-									<Star
-										className="w-3.5 h-3.5"
-										style={{
-											color: tabRecord.starred ? theme.colors.warning : theme.colors.textDim,
-										}}
-										fill={tabRecord.starred ? 'currentColor' : 'none'}
-									/>
-								</button>
-								<button
-									type="button"
-									onClick={() => setRenamingTabId(tabRecord.id)}
-									className="p-1 rounded hover:bg-white/10 transition-colors"
-									title={`Rename this tab on ${peer.name}`}
-									aria-label="Rename tab"
-								>
-									<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								</button>
-							</>
-						)}
-						<button
-							type="button"
-							onClick={() => void openMirrorTab(peer.peerId, agent.id)}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							title={`New tab on ${peer.name}`}
-							aria-label="New tab"
-						>
-							<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						</button>
-					</div>
-				</div>
+				{tabs.length > 0 && shownTabId && (
+					<TabBar
+						tabs={tabs}
+						activeTabId={shownTabId}
+						theme={theme}
+						onTabSelect={handleTabSelect}
+						onTabClose={handleTabClose}
+						onNewTab={handleNewTab}
+						onRequestRename={handleRequestRename}
+						onTabStar={handleTabStar}
+						tabLocations={tabLocations}
+					/>
+				)}
 
 				<div className="flex-1 min-h-0 flex flex-col relative">
 					{localView ? (
@@ -413,10 +461,18 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 						/>
 					) : !tabId ? (
 						<div
-							className="flex-1 flex items-center justify-center text-sm"
+							className="flex-1 flex flex-col items-center justify-center gap-2 text-sm"
 							style={{ color: theme.colors.textDim }}
 						>
 							This agent has no open tabs on {peer.name}.
+							<button
+								type="button"
+								onClick={handleNewTab}
+								className="flex items-center gap-1 px-2 py-0.5 rounded border text-xs hover:opacity-80"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								New Tab
+							</button>
 						</div>
 					) : showReadError ? (
 						<div
@@ -491,6 +547,7 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 						agentName={agent.name}
 						agent={agent}
 						tab={tabRecord}
+						onOpenLightbox={setLightboxImage}
 					/>
 				)}
 

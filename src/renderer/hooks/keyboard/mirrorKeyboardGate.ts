@@ -10,7 +10,8 @@
  *
  * Tab cycling is answered here, on the mirror's own tabs, instead of passing through. So are New
  * Tab and Toggle Tab Star (FED-SSH-06): they go to the host through the mirror service, the same
- * path as the controls beside the mirrored tab strip.
+ * path as the tab strip's own controls. Agent Sessions and Memory Viewer open the hosted view's
+ * own viewers, as the header buttons do.
  */
 
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
@@ -21,6 +22,11 @@ import { openMirrorTab, starMirrorTab } from '../../services/peerMirror';
 import { hostedLocalTabs, resolveMirrorTabId } from '../../utils/peerMirrorView';
 import { useSessionStore } from '../../stores/sessionStore';
 import { findLiftedAgent } from '../../../shared/maestro-lib/agents/lift-pointer';
+import {
+	getAgentCapabilities,
+	type AgentCapabilities,
+} from '../../../shared/maestro-lib/providers/capabilities';
+import { getModalActions } from '../../stores/modalStore';
 
 /**
  * Shortcuts that never read or write the active agent: they open a global surface, move between
@@ -115,6 +121,24 @@ function toggleShownMirrorTabStar(peerId: string, agentId: string): void {
 }
 
 /**
+ * The hosted view's Memory Viewer and Agent Sessions read the agent's own Left Bar record (its cwd
+ * and SSH remote), so they open only when one points at the shown agent and its provider has the
+ * capability, the same rule as the header buttons.
+ */
+function shownAgentRowCan(
+	peerId: string,
+	agentId: string,
+	capability: keyof AgentCapabilities
+): boolean {
+	const agent = usePeerMirrorStore
+		.getState()
+		.peers[peerId]?.agents.find((candidate) => candidate.id === agentId);
+	if (!agent) return false;
+	if (!findLiftedAgent(useSessionStore.getState().sessions, peerId, agentId)) return false;
+	return getAgentCapabilities(agent.toolType)[capability] === true;
+}
+
+/**
  * Decide what a keydown may do while a mirror is shown. Call only when one is
  * (`isMirrorShown()`); otherwise every key passes.
  */
@@ -156,6 +180,27 @@ export function gateKeyForMirror(
 	if (selection && matchers.isShortcut(e, 'toggleTabStar')) {
 		e.preventDefault();
 		if (!matchers.hasOpenLayers?.()) toggleShownMirrorTabStar(selection.peerId, selection.agentId);
+		return 'handled';
+	}
+
+	if (selection && matchers.isShortcut(e, 'agentSessions')) {
+		e.preventDefault();
+		if (
+			!matchers.hasOpenLayers?.() &&
+			shownAgentRowCan(selection.peerId, selection.agentId, 'supportsSessionStorage')
+		) {
+			getModalActions().setAgentSessionsOpen(true);
+		}
+		return 'handled';
+	}
+	if (selection && matchers.isShortcut(e, 'openMemoryViewer')) {
+		e.preventDefault();
+		if (
+			!matchers.hasOpenLayers?.() &&
+			shownAgentRowCan(selection.peerId, selection.agentId, 'supportsProjectMemory')
+		) {
+			getModalActions().setMemoryViewerOpen(true);
+		}
 		return 'handled';
 	}
 

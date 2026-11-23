@@ -82,6 +82,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'new-tab': 'Could not open a tab',
 	'rename-tab': 'Could not rename the tab',
 	'star-tab': 'Could not change the star',
+	'close-tab': 'Could not close the tab',
 	'remove-queued': 'Could not remove the queued message',
 	'pause-queued': 'Could not hold or resume the queued message',
 	'update-agent': 'Could not change the agent on its host',
@@ -141,7 +142,8 @@ export async function sendToMirroredTab(
 	agentId: string,
 	tabId: string,
 	text: string,
-	overrides?: TurnOverrides
+	overrides?: TurnOverrides,
+	images?: readonly string[]
 ): Promise<boolean> {
 	const clean = normalizeTurnOverrides(overrides);
 	return (
@@ -149,6 +151,7 @@ export async function sendToMirroredTab(
 			kind: 'send',
 			tabId,
 			text,
+			...(images && images.length > 0 ? { images: [...images] } : {}),
 			...(clean ? { overrides: clean } : {}),
 		})) !== null
 	);
@@ -249,6 +252,15 @@ export function openMirroredAgentByKey(key: string, tabId?: string): boolean {
 		return true;
 	}
 	return false;
+}
+
+/** Close a mirrored tab on its host: it moves to the host's closed-tab history. */
+export async function closeMirrorTab(
+	peerId: string,
+	agentId: string,
+	tabId: string
+): Promise<void> {
+	await actOnMirroredAgent(peerId, agentId, { kind: 'close-tab', tabId });
 }
 
 /** Star or unstar a mirrored tab on its host. */

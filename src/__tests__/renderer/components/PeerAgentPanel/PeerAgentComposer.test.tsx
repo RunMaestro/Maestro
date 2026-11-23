@@ -1,10 +1,12 @@
 /**
- * Tests for PeerAgentComposer, the composer of a mirrored Federation agent (FED-SSH-06).
+ * Tests for PeerAgentComposer, the composer of a hosted Federation agent (FED-SSH-06). It is the
+ * shared ChatComposer, so it types, pastes, and attaches images the way a local agent's does.
  *
  * The real `services/peerMirror` runs against a stand-in `window.maestro.federation`, so each case
- * checks the action that reaches the main-process service: a send, a Stop (from the shared Thinking
- * pill, fed by the mirror store), nothing at all for a slash command or an image. A refused send (the peer is down) is one call, a red toast, and the
- * draft kept: never queued, never retried. Nothing here may touch `sessionStore`.
+ * checks the action that reaches the main-process service: a send (with its images), a Stop (from
+ * the shared Thinking pill, fed by the mirror store), nothing at all for a slash command. A refused
+ * send (the peer is down) is one call, a red toast, and the draft kept: never queued, never
+ * retried. Nothing here may touch `sessionStore`.
  */
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
@@ -49,7 +51,21 @@ function renderComposer(tab: AITabRecord = { id: 't1', name: 'First' }) {
 	);
 }
 
-const textbox = () => screen.getByLabelText('Message Builder on Build Box') as HTMLTextAreaElement;
+const textbox = () =>
+	screen.getByPlaceholderText('Talking to Builder powered by Claude Code') as HTMLTextAreaElement;
+const sendButton = () => screen.getByTitle('Send to Builder');
+
+/** A paste carrying one PNG, the way the clipboard hands it over. */
+function pasteImage(target: HTMLElement) {
+	const file = new File(['png-bytes'], 'shot.png', { type: 'image/png' });
+	fireEvent.paste(target, {
+		clipboardData: {
+			items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+			files: [file],
+			getData: () => '',
+		},
+	});
+}
 const draft = () => usePeerMirrorStore.getState().drafts[mirrorDraftKey('build', 'a1', 't1')];
 const flush = () => act(async () => undefined);
 
@@ -112,7 +128,7 @@ describe('PeerAgentComposer', () => {
 		});
 		renderComposer();
 		fireEvent.change(textbox(), { target: { value: 'are you there' } });
-		fireEvent.click(screen.getByTitle('Send to Builder on Build Box'));
+		fireEvent.click(sendButton());
 		await flush();
 		expect(act$).toHaveBeenCalledTimes(1);
 		expect(notifyToast).toHaveBeenCalledWith(
@@ -246,34 +262,70 @@ describe('PeerAgentComposer', () => {
 		expect(act$).toHaveBeenCalledTimes(1);
 	});
 
-	it('draws slash commands, shell mode, and image attach greyed out with the reason', () => {
+	it('stages a pasted image and sends it to the host with the message', async () => {
 		renderComposer();
-		const cases: Array<[string, string]> = [
-			['Slash commands (not available)', MIRROR_COMPOSER_UNAVAILABLE.slashCommands],
-			['Shell command mode (not available)', MIRROR_COMPOSER_UNAVAILABLE.shellMode],
-			['Attach image (not available)', MIRROR_COMPOSER_UNAVAILABLE.images],
-		];
-		for (const [label, reason] of cases) {
-			const control = screen.getByLabelText(label);
-			expect(control).toHaveAttribute('aria-disabled', 'true');
-			expect(control).toHaveAttribute('title', reason);
-			fireEvent.click(control);
-		}
+		pasteImage(textbox());
+		await vi.waitFor(() => expect(screen.getAllByRole('img').length).toBeGreaterThan(0));
+		fireEvent.change(textbox(), { target: { value: 'look at this' } });
+		fireEvent.click(sendButton());
+		await flush();
+		expect(act$).toHaveBeenCalledWith('build', 'a1', {
+			kind: 'send',
+			tabId: 't1',
+			text: 'look at this',
+			images: [expect.stringMatching(/^data:image\/png;base64,/)],
+		});
+		// The host took it: the strip empties with the draft.
+		expect(screen.queryAllByRole('img')).toHaveLength(0);
+	});
+
+	it('sends an image with no text', async () => {
+		renderComposer();
+		pasteImage(textbox());
+		await vi.waitFor(() => expect(sendButton()).not.toBeDisabled());
+		fireEvent.click(sendButton());
+		await flush();
+		expect(act$).toHaveBeenCalledWith('build', 'a1', {
+			kind: 'send',
+			tabId: 't1',
+			text: '',
+			images: [expect.stringMatching(/^data:image\/png;base64,/)],
+		});
+	});
+
+	it('keeps the staged image when the peer refuses the send', async () => {
+		act$.mockResolvedValue({ ok: false, error: 'Not connected. Nothing was sent.' });
+		renderComposer();
+		pasteImage(textbox());
+		await vi.waitFor(() => expect(screen.getAllByRole('img').length).toBeGreaterThan(0));
+		fireEvent.click(sendButton());
+		await flush();
+		expect(act$).toHaveBeenCalledTimes(1);
+		expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
+	});
+
+	it("refuses a pasted image when the agent's provider cannot read images", async () => {
+		render(
+			<PeerAgentComposer
+				theme={mockTheme}
+				peerId="build"
+				peerName="Build Box"
+				agentId="a1"
+				agentName="Builder"
+				agent={{ id: 'a1', name: 'Builder', toolType: 'terminal', aiTabs: [{ id: 't1' }] }}
+				tab={{ id: 't1' }}
+			/>
+		);
+		const box = screen.getByRole('textbox') as HTMLTextAreaElement;
+		pasteImage(box);
+		await flush();
+		expect(screen.queryAllByRole('img')).toHaveLength(0);
 		expect(act$).not.toHaveBeenCalled();
 	});
 
-	it('does not attach a pasted image', () => {
+	it('offers Attach Image, as a local composer does', () => {
 		renderComposer();
-		fireEvent.paste(textbox(), {
-			clipboardData: {
-				items: [{ type: 'image/png' }],
-				getData: () => '',
-			},
-		});
-		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ message: MIRROR_COMPOSER_UNAVAILABLE.images })
-		);
-		expect(act$).not.toHaveBeenCalled();
+		expect(screen.getAllByTitle('Attach Image').length).toBeGreaterThan(0);
 	});
 
 	it('shows the Thinking pill while the tab works, stops that tab on the host, and queues a send there', async () => {
@@ -302,13 +354,13 @@ describe('PeerAgentComposer', () => {
 
 	it('disables Send while the draft is empty', () => {
 		renderComposer();
-		expect(screen.getByTitle('Send to Builder on Build Box')).toBeDisabled();
+		expect(sendButton()).toBeDisabled();
 	});
 
 	it("sends this conductor's own tab choices with the message, and keeps them off the host tab", async () => {
 		renderComposer({ id: 't1', name: 'First' });
-		fireEvent.click(screen.getByRole('button', { name: /Read-only/ }));
-		fireEvent.click(screen.getByRole('button', { name: /History/ }));
+		fireEvent.click(screen.getByText('Full Access'));
+		fireEvent.click(screen.getByTitle(/^Save to History/));
 		expect(
 			useHostedAgentSettingsStore.getState().tabChoices[mirrorDraftKey('build', 'a1', 't1')]
 		).toEqual({

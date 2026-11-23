@@ -1,50 +1,56 @@
 /**
- * PeerAgentComposer - the composer of a Federation peer's mirrored agent (FED-SSH-06).
+ * PeerAgentComposer - the composer of a hosted agent (a Federation peer's agent, FED-SSH-06).
  *
- * It types and sends the way the AI composer does for a local agent: Enter or Cmd+Enter per the
- * tab's Enter-to-send setting, Shift+Enter for a newline, an IME guard, trimmed text pastes, an
- * auto-growing box, the shared Send column, and the same Thinking pill above it, which lists every
- * busy tab (local and mirrored) and stops this tab's turn on the host. A message to a busy tab
- * waits in the HOST's queue, as a local one waits in the local queue.
+ * It is the shared `ChatComposer`, the same shell the local AI composer and the Group Chat
+ * composer draw through, so a hosted agent's composer looks and types like a local one: Enter or
+ * Cmd+Enter per the Enter-to-send setting, the IME guard, verbatim text pastes, image paste, drop,
+ * and Attach Image with the staged-images strip, voice, the read-only, save to History, model, and
+ * effort pills, and the Send column. The Thinking pill sits above it, as it does for a local agent,
+ * and its Stop stops this tab's turn on the host. A message to a busy tab waits in the HOST's
+ * queue, as a local one waits in the local queue.
  *
  * What it does NOT do is reach anything local. Every send goes through `sendToMirroredTab()` to
- * the main-process mirror service; nothing here touches `sessionStore` or the local execution
- * queue. A send while the peer is disconnected fails at once with a toast and keeps the draft:
- * it is never queued. Slash commands, shell command mode, and image attach are drawn but greyed
- * out, with a tooltip that says why, because the host serves none of them.
+ * the main-process mirror service, with the staged images as data URLs; nothing here touches
+ * `sessionStore` or the local execution queue. A send while the peer is disconnected fails at once
+ * with a toast and keeps the draft and the images: it is never queued. A slash command is refused
+ * with a notice, because it would reach the host's provider as plain text.
  *
- * The model, effort, read-only, and save to History chips are THIS conductor's own choice for
- * the tab (`hostedAgentSettingsStore.tabChoices`). They ride along on each message sent from here
+ * The model, effort, read-only, and save to History pills are THIS conductor's own choice for the
+ * tab (`hostedAgentSettingsStore.tabChoices`). They ride along on each message sent from here
  * (`TurnOverrides`) and are never written to the host tab, so another conductor on the same tab
  * keeps theirs. The agent's own defaults, which every conductor shares, are in Edit Agent.
  */
 
-import { useCallback, useRef, useState } from 'react';
-import { Eye, History, Image as ImageIcon, Slash, Terminal } from 'lucide-react';
+import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import type { Theme } from '../../types';
 import type { AgentRecord, AITabRecord } from '../../../shared/maestro-lib/store/records';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
 import { useHostedAgentSettingsStore } from '../../stores/hostedAgentSettingsStore';
 import {
 	resolveModelEffort,
 	useAgentModelEffortOptions,
 } from '../../hooks/agent/useAgentModelEffortOptions';
-import { ModelEffortPills } from '../InputArea/components/ModelEffortPills';
 import { useModelEffortMenus } from '../InputArea/hooks/useModelEffortMenus';
-import { ComposerSendColumn, clipboardHasImage } from '../ChatComposer';
+import {
+	ChatComposer,
+	deriveAiComposerCapabilities,
+	stageImageFiles,
+	type ChatComposerToolbarProps,
+} from '../ChatComposer';
+import type { PermissionMode } from '../InputArea/components/ComposerOptionsSheet';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
-import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
-import { handleComposerSendKey } from '../../hooks/input/composerKeyDown';
-import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../utils/textareaSizing';
 import { mirrorDraftKey, usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { interruptMirroredAgent, sendToMirroredTab } from '../../services/peerMirror';
 import { jumpToAgent } from '../../services/agentNavigation';
 import { useThinkingItems } from '../../hooks/session/useThinkingItems';
 import { mirrorKey } from '../../../shared/maestro-lib/client/peer-mirror';
-import { MIRROR_COMPOSER_UNAVAILABLE, mirrorSendBlockReason } from '../../utils/peerMirrorView';
+import { mirrorSendBlockReason } from '../../utils/peerMirrorView';
+import { imageFilesIn } from '../../utils/imageData';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 export interface PeerAgentComposerProps {
 	theme: Theme;
@@ -56,70 +62,14 @@ export interface PeerAgentComposerProps {
 	agent: AgentRecord;
 	/** The host's record of the tab the composer sends to. */
 	tab: AITabRecord;
+	/** The app's image lightbox, for the staged-images strip. */
+	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 }
 
-/** A composer chip this conductor toggles for their own messages. */
-function ChoiceChip({
-	theme,
-	active,
-	tone,
-	onClick,
-	title,
-	children,
-}: {
-	theme: Theme;
-	active: boolean;
-	tone: string;
-	onClick: () => void;
-	title: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			aria-pressed={active}
-			className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-				active ? '' : 'opacity-40 hover:opacity-70'
-			}`}
-			style={{
-				backgroundColor: active ? `${tone}25` : 'transparent',
-				color: active ? tone : theme.colors.textDim,
-				border: active ? `1px solid ${tone}50` : '1px solid transparent',
-			}}
-			title={title}
-		>
-			{children}
-		</button>
-	);
-}
+const EMPTY_IMAGES: string[] = [];
 
-/** A control the host does not serve: drawn, never clickable, with the reason as its tooltip. */
-function UnavailableControl({
-	theme,
-	title,
-	label,
-	children,
-}: {
-	theme: Theme;
-	title: string;
-	label: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<button
-			type="button"
-			// `aria-disabled` rather than `disabled`, so the tooltip still shows on hover.
-			aria-disabled="true"
-			aria-label={label}
-			onClick={(e) => e.preventDefault()}
-			className="p-1 rounded opacity-30 cursor-not-allowed"
-			style={{ color: theme.colors.textDim }}
-			title={title}
-		>
-			{children}
-		</button>
-	);
+function flash(message: string): void {
+	notifyCenterFlash({ message, color: 'yellow' });
 }
 
 export function PeerAgentComposer({
@@ -130,6 +80,7 @@ export function PeerAgentComposer({
 	agentName,
 	agent,
 	tab,
+	onOpenLightbox,
 }: PeerAgentComposerProps) {
 	const tabId = tab.id;
 	const draftKey = mirrorDraftKey(peerId, agentId, tabId);
@@ -155,19 +106,41 @@ export function PeerAgentComposer({
 	);
 	const value = usePeerMirrorStore((s) => s.drafts[draftKey] ?? '');
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
-	const spellCheck = useSettingsStore((s) => s.spellCheck);
+	const setEnterToSendAI = useSettingsStore((s) => s.setEnterToSendAI);
 	const enterToSend = tab.enterToSend ?? enterToSendAI;
 	const busy = tab.state === 'busy';
 	const [sending, setSending] = useState(false);
-	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const thinkingItems = useThinkingItems();
 
-	useAutosizeTextarea({
-		textareaRef: inputRef,
-		value,
-		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
-		resetKey: draftKey,
-	});
+	// Staged images, per host tab, so switching tabs keeps what each one has staged.
+	const [imagesByDraft, setImagesByDraft] = useState<Record<string, string[]>>({});
+	const stagedImages = imagesByDraft[draftKey] ?? EMPTY_IMAGES;
+	const setStagedImages: Dispatch<SetStateAction<string[]>> = useCallback(
+		(next) =>
+			setImagesByDraft((all) => {
+				const prev = all[draftKey] ?? EMPTY_IMAGES;
+				const resolvedNext = typeof next === 'function' ? next(prev) : next;
+				return { ...all, [draftKey]: resolvedNext };
+			}),
+		[draftKey]
+	);
+
+	// The agent's own provider decides what the composer offers, as it does for a local agent.
+	// Nothing runs in command mode here, and the host has no tab to stream reasoning settings to.
+	const capabilities = useMemo(() => {
+		const provider = getAgentCapabilities(agent.toolType);
+		return {
+			...deriveAiComposerCapabilities({
+				inputMode: 'ai',
+				commandMode: 'off',
+				isResumingSession: !!tab.agentSessionId,
+				hasCapability: (capability) => provider[capability] === true,
+				supportsThinking: false,
+			}),
+			// Uploading puts files on the web-desktop's own host, not the agent's.
+			upload: false,
+		};
+	}, [agent.toolType, tab.agentSessionId]);
 
 	const setValue = useCallback(
 		(next: string) => usePeerMirrorStore.getState().setMirrorDraft(peerId, agentId, tabId, next),
@@ -176,7 +149,8 @@ export function PeerAgentComposer({
 
 	const handleSend = useCallback(async () => {
 		const text = value.trim();
-		if (!text || sending) return;
+		const images = stagedImages;
+		if ((!text && images.length === 0) || sending) return;
 		const blocked = mirrorSendBlockReason(text);
 		if (blocked) {
 			notifyToast({ color: 'yellow', title: 'Not sent', message: blocked });
@@ -184,155 +158,123 @@ export function PeerAgentComposer({
 		}
 		setSending(true);
 		try {
-			// The draft is cleared only once the host took the message, so a refusal (a peer that
-			// is down) leaves the text in place for the person to send again.
-			if (await sendToMirroredTab(peerId, agentId, tabId, text, choice)) {
+			// The draft and the images are cleared only once the host took the message, so a refusal
+			// (a peer that is down) leaves them in place for the person to send again.
+			if (await sendToMirroredTab(peerId, agentId, tabId, text, choice, images)) {
 				usePeerMirrorStore.getState().setMirrorDraft(peerId, agentId, tabId, '');
+				setStagedImages(EMPTY_IMAGES);
 			}
 		} finally {
 			setSending(false);
 		}
-	}, [value, sending, peerId, agentId, tabId, choice]);
+	}, [value, stagedImages, sending, peerId, agentId, tabId, choice, setStagedImages]);
 
-	const handleKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			handleComposerSendKey(e, {
-				enterToSend,
-				send: () => void handleSend(),
-				inputRef,
-				isolateFromWindowKeys: true,
-			});
-		},
-		[enterToSend, handleSend]
+	const stageFiles = useCallback(
+		(files: File[]) =>
+			stageImageFiles(files, {
+				setStagedImages,
+				showFlashNotification: flash,
+				reportComponent: 'PeerAgentComposer',
+			}),
+		[setStagedImages]
 	);
 
-	const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-		if (clipboardHasImage(e.clipboardData)) {
+	// ChatComposer hands over only a paste that carries an image; a text paste lands natively.
+	const handlePaste = useCallback(
+		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 			e.preventDefault();
-			notifyToast({
-				color: 'yellow',
-				title: 'Image not attached',
-				message: MIRROR_COMPOSER_UNAVAILABLE.images,
-			});
-			return;
-		}
-		// A text paste lands verbatim (native paste, no trimming).
-	}, []);
+			if (!capabilities.imageAttach) {
+				flash(`${agentName} cannot read images`);
+				return;
+			}
+			stageFiles(imageFilesIn(e.clipboardData));
+		},
+		[capabilities.imageAttach, agentName, stageFiles]
+	);
 
-	const sendTitle = busy
-		? `Queue on ${peerName}: the agent is busy, so the host runs it next`
-		: `Send to ${agentName} on ${peerName}`;
+	const handleDrop = useCallback(
+		(e: React.DragEvent<HTMLTextAreaElement>) => {
+			e.stopPropagation();
+			const files = imageFilesIn(e.dataTransfer);
+			if (e.dataTransfer.files.length === 0) return;
+			e.preventDefault();
+			if (files.length === 0) return;
+			if (!capabilities.imageAttach) {
+				flash(`${agentName} cannot read images`);
+				return;
+			}
+			stageFiles(files);
+		},
+		[capabilities.imageAttach, agentName, stageFiles]
+	);
+
+	const permissionMode: PermissionMode = readOnly ? 'readonly' : 'full';
+	const toolbarProps: ChatComposerToolbarProps = {
+		agentId: agent.toolType,
+		permissionMode,
+		onPermissionModeChange: (mode) => setChoice({ readOnly: mode === 'readonly' }),
+		tabSaveToHistory: saveToHistory,
+		onToggleTabSaveToHistory: () => setChoice({ saveToHistory: !saveToHistory }),
+		currentModel: resolved.model,
+		currentEffort: resolved.effort,
+		availableModels: modelOptions.models,
+		availableEfforts: modelOptions.efforts,
+		onModelChange: (model) => setChoice({ model }),
+		onEffortChange: (effort) => setChoice({ effort }),
+		onRefreshModels: () => void modelOptions.refreshModels(),
+		refreshingModels: modelOptions.refreshingModels,
+		...menus,
+	};
+
+	const hasDraft = value.trim().length > 0 || stagedImages.length > 0;
 
 	return (
-		<div
-			className="border-t shrink-0 px-4 py-3"
-			style={{ borderColor: theme.colors.border }}
-			data-testid="peer-agent-composer"
-		>
-			{/* The same pill a local agent's composer shows. A mirrored entry opens its mirror; a local
-			    one jumps to that agent. Stop on this tab's entry stops it on the host. */}
-			<ThinkingStatusPill
-				thinkingItems={thinkingItems}
+		<div className="shrink-0" data-testid="peer-agent-composer">
+			<ChatComposer
 				theme={theme}
-				onSessionClick={(sessionId, targetTabId) => {
-					jumpToAgent(sessionId, targetTabId ? { tabId: targetTabId } : {});
-				}}
-				activeSessionId={mirrorKey(peerId, agentId)}
-				activeTabId={tabId}
-				onInterrupt={busy ? () => void interruptMirroredAgent(peerId, agentId, tabId) : undefined}
-			/>
-			<div className="flex gap-3 items-end">
-				<div
-					className="flex-1 flex flex-col rounded-lg border"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-				>
-					<textarea
-						ref={inputRef}
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						onKeyDown={handleKeyDown}
-						onPaste={handlePaste}
-						onDrop={(e) => {
-							if (e.dataTransfer.files.length > 0) e.preventDefault();
+				value={value}
+				onChange={setValue}
+				draftKey={draftKey}
+				capabilities={capabilities}
+				isBusy={busy}
+				warningBorder={readOnly}
+				placeholder={`Talking to ${agentName} powered by ${getAgentDisplayName(agent.toolType)}`}
+				stagedImages={stagedImages}
+				setStagedImages={setStagedImages}
+				imageInputId={`peer-image-input-${draftKey}`}
+				imageReportComponent="PeerAgentComposer"
+				onOpenLightbox={onOpenLightbox}
+				enterToSend={enterToSend}
+				setEnterToSend={setEnterToSendAI}
+				isolateFromWindowKeys
+				onPaste={handlePaste}
+				onDrop={handleDrop}
+				showFlashNotification={flash}
+				toolbarProps={toolbarProps}
+				onSubmit={() => void handleSend()}
+				sendTitle={
+					busy
+						? `Queue on ${peerName}: the agent is busy, so the host runs it next`
+						: `Send to ${agentName}`
+				}
+				sendDisabled={sending || !hasDraft}
+				aboveComposer={
+					/* The same pill a local agent's composer shows. A hosted entry opens its view; a
+					   local one jumps to that agent. Stop on this tab's entry stops it on the host. */
+					<ThinkingStatusPill
+						thinkingItems={thinkingItems}
+						theme={theme}
+						onSessionClick={(sessionId, targetTabId) => {
+							jumpToAgent(sessionId, targetTabId ? { tabId: targetTabId } : {});
 						}}
-						onFocus={() => useUIStore.getState().setActiveFocus('main')}
-						placeholder={
-							busy
-								? `Type to queue a message on ${peerName}...`
-								: `Message ${agentName} on ${peerName}...`
+						activeSessionId={mirrorKey(peerId, agentId)}
+						activeTabId={tabId}
+						onInterrupt={
+							busy ? () => void interruptMirroredAgent(peerId, agentId, tabId) : undefined
 						}
-						spellCheck={spellCheck}
-						rows={1}
-						aria-label={`Message ${agentName} on ${peerName}`}
-						className="bg-transparent text-sm outline-none px-3 pt-3 resize-none min-h-[2.5rem] scrollbar-thin"
-						style={{ color: theme.colors.textMain, maxHeight: '11rem' }}
 					/>
-					<div className="flex items-center gap-1 px-2 pb-2 pt-1 select-none">
-						<UnavailableControl
-							theme={theme}
-							title={MIRROR_COMPOSER_UNAVAILABLE.slashCommands}
-							label="Slash commands (not available)"
-						>
-							<Slash className="w-4 h-4" />
-						</UnavailableControl>
-						<UnavailableControl
-							theme={theme}
-							title={MIRROR_COMPOSER_UNAVAILABLE.shellMode}
-							label="Shell command mode (not available)"
-						>
-							<Terminal className="w-4 h-4" />
-						</UnavailableControl>
-						<UnavailableControl
-							theme={theme}
-							title={MIRROR_COMPOSER_UNAVAILABLE.images}
-							label="Attach image (not available)"
-						>
-							<ImageIcon className="w-4 h-4" />
-						</UnavailableControl>
-						<span className="flex-1" />
-						<ChoiceChip
-							theme={theme}
-							active={readOnly}
-							tone={theme.colors.warning}
-							onClick={() => setChoice({ readOnly: !readOnly })}
-							title="Read-only for your messages on this tab. Yours only: other conductors keep their own."
-						>
-							<Eye className="w-3 h-3" />
-							<span>Read-only</span>
-						</ChoiceChip>
-						<ChoiceChip
-							theme={theme}
-							active={saveToHistory}
-							tone={theme.colors.accent}
-							onClick={() => setChoice({ saveToHistory: !saveToHistory })}
-							title="Save your messages' turns to History on the host. Yours only."
-						>
-							<History className="w-3 h-3" />
-							<span>History</span>
-						</ChoiceChip>
-						<ModelEffortPills
-							isVisible
-							theme={theme}
-							currentModel={resolved.model}
-							currentEffort={resolved.effort}
-							availableModels={modelOptions.models}
-							availableEfforts={modelOptions.efforts}
-							onModelChange={(model) => setChoice({ model })}
-							onEffortChange={(effort) => setChoice({ effort })}
-							onRefreshModels={() => void modelOptions.refreshModels()}
-							refreshingModels={modelOptions.refreshingModels}
-							{...menus}
-						/>
-					</div>
-				</div>
-				<ComposerSendColumn
-					theme={theme}
-					onSend={() => void handleSend()}
-					sendTitle={sendTitle}
-					sendDisabled={sending || !value.trim()}
-					sendTone={busy ? 'warning' : 'accent'}
-				/>
-			</div>
+				}
+			/>
 		</div>
 	);
 }

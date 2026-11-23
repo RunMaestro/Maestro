@@ -3,7 +3,8 @@
  *
  * The local active agent is hidden behind the mirror, not replaced, so the gate is an allowlist:
  * a global shortcut passes, a local one (close tab, kill agent, ...) is swallowed, tab cycling
- * walks the mirror's own tabs, and New Tab and Toggle Tab Star go to the host (FED-SSH-06).
+ * walks the mirror's own tabs, New Tab and Toggle Tab Star go to the host (FED-SSH-06), and
+ * Agent Sessions and Memory Viewer open the hosted view's own viewers.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +29,7 @@ import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore'
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { selectModalOpen, useModalStore } from '../../../../renderer/stores/modalStore';
 import { buildEventFromKeys } from '../../../../renderer/utils/shortcutRecorder';
 import { eventMatchesShortcutKeys } from '../../../../renderer/utils/shortcutMatch';
 import { resetStores } from '../../../helpers';
@@ -73,7 +75,7 @@ function showMirror(): void {
 
 describe('gateKeyForMirror', () => {
 	beforeEach(() => {
-		resetStores(usePeerMirrorStore, useSessionStore, useUIStore);
+		resetStores(usePeerMirrorStore, useSessionStore, useUIStore, useModalStore);
 		vi.mocked(openMirrorTab).mockClear();
 		vi.mocked(starMirrorTab).mockClear();
 	});
@@ -197,5 +199,40 @@ describe('gateKeyForMirror', () => {
 		const event = eventFor('goToHistory');
 		expect(gateKeyForMirror(event, matchers)).toBe('pass');
 		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('opens Agent Sessions and the Memory Viewer for a hosted agent its Left Bar row points at', () => {
+		showMirror();
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'row-1',
+					name: 'Builder',
+					toolType: 'claude-code',
+					liftedTo: { peer: 'buildbox', agentId: 'a1', at: 1 },
+					aiTabs: [],
+				},
+			] as never,
+		});
+		for (const [id, modal] of [
+			['agentSessions', 'agentSessions'],
+			['openMemoryViewer', 'memoryViewer'],
+		] as const) {
+			const event = eventFor(id);
+			expect(gateKeyForMirror(event, matchers)).toBe('handled');
+			expect(event.defaultPrevented).toBe(true);
+			expect(selectModalOpen(modal)(useModalStore.getState())).toBe(true);
+		}
+	});
+
+	it('opens neither viewer without a Left Bar row to read from', () => {
+		showMirror();
+		for (const [id, modal] of [
+			['agentSessions', 'agentSessions'],
+			['openMemoryViewer', 'memoryViewer'],
+		] as const) {
+			expect(gateKeyForMirror(eventFor(id), matchers)).toBe('handled');
+			expect(selectModalOpen(modal)(useModalStore.getState())).toBe(false);
+		}
 	});
 });

@@ -163,7 +163,7 @@ maestro-cli remote-host status build-box
 maestro-cli remote-host start build-box
 ```
 
-`remote-host status` reports whether Maestro is installed, whether a host runs, and whether its version differs from yours. `remote-host start` starts a stopped host. Neither prints the host's token or secret. In the desktop app, right-click a hosted agent whose host went down and choose **Start Host**: it installs or upgrades `maestro-cli` first when it needs to. To keep the host running across reboots, see [Durability](#durability).
+`remote-host status` reports whether Maestro is installed, whether a host runs, and whether its version differs from yours. `remote-host start` starts a stopped host. Neither prints the host's token or secret. In the desktop app, open a hosted agent whose host went down and choose **Start Host** in the banner above its tabs: it installs or upgrades `maestro-cli` first when it needs to. To keep the host running across reboots, see [Durability](#durability).
 
 ### See the host's agents
 
@@ -187,19 +187,22 @@ maestro-cli federation reconnect build-box
 
 ## Drive a hosted agent
 
-Click a hosted agent's row to open it. Its tabs, transcript, and live output come from the host. When the agent moved from this machine, the tabs it had before the move follow the host's tabs in the same strip. Each tab then carries a pill that says where it lives: the host's name, or `Local` for a tab this machine kept. A `Local` tab is read only: continue that conversation in a tab on the host. The composer works as it does for a local agent:
+Click a hosted agent's row to open it. Its view looks like a local agent's: the only difference is the **Hosted** badge beside its name in the header. Hover the badge to see which host runs it and how the connection stands. Its tabs, transcript, and live output come from the host. When the agent moved from this machine, the tabs it had before the move follow the host's tabs in the same strip. Each tab then carries a pill that says where it lives: the host's name, or `Local` for a tab this machine kept. A `Local` tab is read only: continue that conversation in a tab on the host. The composer works as it does for a local agent:
 
-- **Send** a message. While a tab is busy, the message queues on the host, not here. It shows as a queued card under the transcript, as a local queued message does, and leaves the list when the host starts it. **Remove** and **Hold** / **Resume** on a card act on the host's queue.
+- **Send** a message, with images: paste, drop, or **Attach Image**, as for a local agent. While a tab is busy, the message queues on the host, not here. It shows as a queued card under the transcript, as a local queued message does, and leaves the list when the host starts it. **Remove** and **Hold** / **Resume** on a card act on the host's queue.
 - **Stop** the running turn. The Thinking pill above the composer shows a busy mirrored tab with its elapsed time, the same as a local one, and its Stop button stops the turn on the host.
-- **New tab**, **rename**, and **star** a tab, from the controls beside the tab strip.
+- **New tab**, **close**, **rename**, and **star** a tab, from the tab strip's own **+** button and each tab's hover menu, as for a local agent. A closed tab goes to the host's closed-tab history.
+- **Memory Viewer** and **Agent Sessions** from the header's right side (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> and <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>). They read the host's files over the agent's SSH remote. A past session opens in the host tab that holds it.
 - **Choose your model, effort, read-only, and save to History** for the tab with the chips under the message box. They are yours only: they go with each message you send and never change the tab for other conductors. See [Settings of a hosted agent](#settings-of-a-hosted-agent).
-- **Edit Agent** from the gear beside the agent's name, to change the settings every conductor shares.
+- **Edit Agent** from the agent's right-click menu, to change the settings every conductor shares.
 
-Some things stay off, with a tooltip that says why, because the host does not serve them:
+Some things stay off because the host does not serve them:
 
-- **Slash commands.** They run in your local window, and the host receives plain messages only.
+- **Slash commands.** They run in your local window, and the host receives plain messages only. A send that starts with one is refused with a notice.
 - **Shell command mode.** It would run the command on your laptop, not on the host.
-- **Images.** The host receives text only for now.
+- **Resuming a past session into a new tab.** Agent Sessions opens a past session only when a host tab already holds it.
+
+When the host is out of reach, a banner above the tabs offers **Reconnect** and **Start Host**.
 
 A send while the peer is disconnected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer.
 
@@ -234,7 +237,7 @@ maestro-cli tab star active --agent build-box:docs
 
 A hosted agent's settings belong to its host, and every conductor that drives it follows them. When Maestro connects to a peer it loads the host's settings. While it stays connected, the host sends every change as it happens, so when one conductor changes the agent's default model, everyone else sees it.
 
-Change the shared settings with **Edit Agent**: the gear beside the agent's name in its view, **Edit Agent...** in the right-click menu of a mirrored agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
+Change the shared settings with **Edit Agent**: **Edit Agent...** in the right-click menu of a hosted agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
 
 - **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
 - **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you.

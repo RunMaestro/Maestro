@@ -12,10 +12,7 @@
 
 import { liveTurnKey, type LiveTurn } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
-import type {
-	MirroredPeer,
-	PeerMirrorConnection,
-} from '../../shared/maestro-lib/client/peer-mirror';
+import type { MirroredPeer } from '../../shared/maestro-lib/client/peer-mirror';
 import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { visibleAiTabs } from './unifiedTabOrderUtils';
@@ -29,7 +26,6 @@ import type {
 	AITab,
 	LogEntry,
 	QueuedItem,
-	SessionState,
 	ThinkingItem,
 	ThinkingItemAgent,
 	ToolType,
@@ -228,25 +224,6 @@ export function buildMirrorThinkingItems(
 	return items;
 }
 
-/** The agent dot: the host's state, yellow while any of its tabs is busy. */
-export function mirroredAgentState(agent: AgentRecord): SessionState {
-	if ((agent.aiTabs ?? []).some((tab) => tab.state === 'busy')) return 'busy';
-	return agent.state ?? 'idle';
-}
-
-/** The agent state whose color a peer's connection dot borrows, so it reads like an agent dot. */
-export function peerConnectionDotState(connection: PeerMirrorConnection): SessionState {
-	switch (connection) {
-		case 'connected':
-			return 'idle';
-		case 'connecting':
-		case 'reconnecting':
-			return 'connecting';
-		default:
-			return 'error';
-	}
-}
-
 /** Whether a peer's agents are the last known state rather than live. */
 export function isPeerDisconnected(peer: Pick<MirroredPeer, 'connection'>): boolean {
 	return peer.connection !== 'connected' && peer.connection !== 'connecting';
@@ -269,34 +246,14 @@ export function isPeerFederated(
 	);
 }
 
-/** A tooltip line for a peer's connection. */
-export function peerConnectionLabel(peer: Pick<MirroredPeer, 'connection' | 'error'>): string {
-	switch (peer.connection) {
-		case 'connected':
-			return 'Connected';
-		case 'connecting':
-			return 'Connecting';
-		case 'reconnecting':
-			return 'Reconnecting';
-		case 'lost':
-			return peer.error ? `Disconnected: ${peer.error}` : 'Disconnected';
-		default:
-			return peer.error ?? 'Not connected';
-	}
-}
-
 /**
- * Why a mirrored agent's composer offers a control a local one has, but greys it out. The host
- * serves a plain message (`enqueue_command`) and nothing else: no slash commands (they run in the
- * local renderer), no shell command mode (it runs on THIS machine), and no images (FED-SSH-06
- * sends text only).
+ * What a hosted agent's composer refuses. The host serves a message with its images
+ * (`enqueue_command`); a slash command runs in the local renderer, so sent as text it would reach
+ * the host's provider instead.
  */
 export const MIRROR_COMPOSER_UNAVAILABLE = {
 	slashCommands:
 		"Slash commands are not available for a peer's agent: they run in this window, and the host receives only plain messages.",
-	shellMode:
-		"Shell command mode is not available for a peer's agent: it would run the command on this machine, not on the host.",
-	images: "Images are not available for a peer's agent yet: the host receives text only.",
 } as const;
 
 /** A leading `/command` (not a path such as `/Users/me`), the way a local slash command starts. */

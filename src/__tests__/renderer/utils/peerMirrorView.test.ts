@@ -26,14 +26,12 @@ import {
 	isPeerDisconnected,
 	liftedMirrorTarget,
 	MIRROR_COMPOSER_UNAVAILABLE,
-	mirroredAgentState,
 	mirrorSendBlockReason,
 	mirrorLogEntry,
 	mirrorQueuedItem,
 	mirrorTab,
 	mirrorTabEntries,
 	mirrorTabs,
-	peerConnectionDotState,
 	resolveMirrorTabId,
 } from '../../../renderer/utils/peerMirrorView';
 
@@ -264,18 +262,8 @@ describe('buildMirrorThinkingItems', () => {
 	});
 });
 
-describe('state dots', () => {
-	it('shows an agent busy while any tab is busy', () => {
-		expect(mirroredAgentState(agent)).toBe('busy');
-		expect(mirroredAgentState({ ...agent, aiTabs: [], state: 'error' })).toBe('error');
-	});
-
-	it('maps a peer connection onto the agent dot colors', () => {
-		expect(peerConnectionDotState('connected')).toBe('idle');
-		expect(peerConnectionDotState('reconnecting')).toBe('connecting');
-		expect(peerConnectionDotState('connecting')).toBe('connecting');
-		expect(peerConnectionDotState('lost')).toBe('error');
-		expect(peerConnectionDotState('host-down')).toBe('error');
+describe('isPeerDisconnected', () => {
+	it('reads a peer as disconnected unless it is connected or connecting', () => {
 		expect(isPeerDisconnected({ connection: 'lost' })).toBe(true);
 		expect(isPeerDisconnected({ connection: 'connecting' })).toBe(false);
 	});

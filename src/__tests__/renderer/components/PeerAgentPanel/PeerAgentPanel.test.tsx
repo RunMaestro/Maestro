@@ -1,11 +1,12 @@
 /**
- * Tests for PeerAgentPanel, the Main Window for a mirrored Federation agent: the lazy transcript
- * read, its loading and error states, the select-only TabBar and read-only TerminalOutput it
- * composes, the disconnected banner, the composer (FED-SSH-06), and the tab actions beside the
- * strip, which go to the host through `services/peerMirror` and never touch `sessionStore`.
+ * Tests for PeerAgentPanel, the Main Window for a hosted (Federation) agent: the lazy transcript
+ * read, its loading and error states, the header (Hosted badge, Memory Viewer and Agent Sessions),
+ * the TabBar whose own controls (new tab, close, rename, star) act on the host, the read-only
+ * TerminalOutput, the disconnected banner, and the composer (FED-SSH-06). Host actions go through
+ * `services/peerMirror` and never touch `sessionStore`.
  *
- * `TabBar` and `TerminalOutput` are stood in for by stubs that record their props: their own
- * suites cover rendering, and what matters here is that the mirror hands them read-only views.
+ * `TabBar`, `TerminalOutput`, the composer, and the two viewers are stood in for by stubs that
+ * record their props: their own suites cover rendering.
  */
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
@@ -14,6 +15,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const tabBarProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 const terminalProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 const historyPanelProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+const composerProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+const sessionsBrowserProps = vi.hoisted(() => ({
+	current: null as Record<string, unknown> | null,
+}));
+const memoryViewerProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 
 vi.mock('../../../../renderer/components/TabBar', () => ({
 	TabBar: (props: Record<string, unknown>) => {
@@ -27,6 +33,27 @@ vi.mock('../../../../renderer/components/TerminalOutput', () => ({
 		return <div data-testid="terminal-output-stub" />;
 	},
 }));
+vi.mock('../../../../renderer/components/PeerAgentPanel/PeerAgentComposer', () => ({
+	PeerAgentComposer: (props: Record<string, unknown>) => {
+		composerProps.current = props;
+		return <div data-testid="peer-agent-composer" />;
+	},
+}));
+vi.mock('../../../../renderer/components/AgentSessionsBrowser', () => ({
+	AgentSessionsBrowser: (props: Record<string, unknown>) => {
+		sessionsBrowserProps.current = props;
+		return <div data-testid="agent-sessions-stub" />;
+	},
+}));
+vi.mock('../../../../renderer/components/MemoryViewer', () => ({
+	MemoryViewer: (props: Record<string, unknown>) => {
+		memoryViewerProps.current = props;
+		return <div data-testid="memory-viewer-stub" />;
+	},
+}));
+vi.mock('../../../../renderer/services/agentLift', () => ({
+	startPeerHost: vi.fn(async () => true),
+}));
 // The History panel has its own suite; here it records what the mirror's column hands it.
 vi.mock('../../../../renderer/components/HistoryPanel', () => ({
 	HistoryPanel: (props: Record<string, unknown>) => {
@@ -37,8 +64,8 @@ vi.mock('../../../../renderer/components/HistoryPanel', () => ({
 vi.mock('../../../../renderer/services/peerMirror', () => ({
 	readMirrorTranscript: vi.fn(async () => undefined),
 	reconnectPeer: vi.fn(async () => undefined),
-	copyPeerAgentRef: vi.fn(async () => undefined),
 	openMirrorTab: vi.fn(async () => undefined),
+	closeMirrorTab: vi.fn(async () => undefined),
 	renameMirrorTab: vi.fn(async () => undefined),
 	starMirrorTab: vi.fn(async () => undefined),
 	sendToMirroredTab: vi.fn(async () => true),
@@ -51,7 +78,7 @@ vi.mock('../../../../renderer/services/peerMirror', () => ({
 import { PeerAgentPanel } from '../../../../renderer/components/PeerAgentPanel';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import {
-	copyPeerAgentRef,
+	closeMirrorTab,
 	openMirrorTab,
 	readMirrorTranscript,
 	reconnectPeer,
@@ -60,7 +87,9 @@ import {
 	setMirrorQueuedItemPaused,
 	starMirrorTab,
 } from '../../../../renderer/services/peerMirror';
+import { startPeerHost } from '../../../../renderer/services/agentLift';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import type { HistorySource } from '../../../../renderer/components/History/historySource';
@@ -127,13 +156,17 @@ function landRead(tabId: string, entries: LogEntryRecord[] = ENTRIES) {
 
 describe('PeerAgentPanel', () => {
 	beforeEach(() => {
-		resetStores(usePeerMirrorStore, useSessionStore, useUIStore);
+		resetStores(usePeerMirrorStore, useSessionStore, useUIStore, useModalStore);
 		tabBarProps.current = null;
+		composerProps.current = null;
+		sessionsBrowserProps.current = null;
+		memoryViewerProps.current = null;
 		terminalProps.current = null;
 		historyPanelProps.current = null;
 		vi.mocked(readMirrorTranscript).mockClear();
 		vi.mocked(reconnectPeer).mockClear();
-		vi.mocked(copyPeerAgentRef).mockClear();
+		vi.mocked(closeMirrorTab).mockClear();
+		vi.mocked(startPeerHost).mockClear();
 		vi.mocked(openMirrorTab).mockClear();
 		vi.mocked(renameMirrorTab).mockClear();
 		vi.mocked(starMirrorTab).mockClear();
@@ -215,19 +248,16 @@ describe('PeerAgentPanel', () => {
 		expect(terminalProps.current?.onTogglePauseQueuedItem).toBeTypeOf('function');
 	});
 
-	it('shows a select-only TabBar and switches tabs in peerMirrorStore only', () => {
+	it('draws the strip with its own controls and switches tabs in peerMirrorStore only', () => {
 		show();
 		renderPanel();
-		expect(tabBarProps.current?.readOnly).toBe(true);
+		expect(tabBarProps.current?.readOnly).toBeUndefined();
 		expect(tabBarProps.current?.activeTabId).toBe('t1');
 		const select = tabBarProps.current?.onTabSelect as (tabId: string) => void;
 		act(() => select('t2'));
 		expect(usePeerMirrorStore.getState().activeTabIds).toEqual({ build: { a1: 't2' } });
 		expect(readMirrorTranscript).toHaveBeenLastCalledWith('build', 'a1', 't2');
-		// The required close and new-tab callbacks are inert.
-		(tabBarProps.current?.onTabClose as (id: string) => void)('t1');
-		(tabBarProps.current?.onNewTab as () => void)();
-		expect(usePeerMirrorStore.getState().peers.build.agents[0].aiTabs).toHaveLength(2);
+		expect(useSessionStore.getState().sessions).toEqual([]);
 	});
 
 	it('reads again when the host marks the shown tab stale', () => {
@@ -266,21 +296,29 @@ describe('PeerAgentPanel', () => {
 		expect(banner).toHaveTextContent('socket closed');
 		fireEvent.click(screen.getByText('Reconnect'));
 		expect(reconnectPeer).toHaveBeenCalledWith('build');
+		fireEvent.click(screen.getByTestId('peer-agent-panel-start-host'));
+		expect(startPeerHost).toHaveBeenCalledWith('r-build', 'Build Box');
 	});
 
-	it('marks the agent as a peer, copies its address, and shows the composer for the shown tab', () => {
+	it("draws a local agent's header: the name and the Hosted badge, no address or settings", () => {
 		show();
 		renderPanel();
-		expect(screen.getByTestId('peer-agent-panel-badge')).toBeInTheDocument();
-		expect(screen.getByText('build:a1')).toBeInTheDocument();
-		fireEvent.click(screen.getByLabelText('Copy build:a1'));
-		expect(copyPeerAgentRef).toHaveBeenCalledWith('build', 'a1');
-		expect(screen.getByTestId('peer-agent-composer')).toBeInTheDocument();
-		expect(screen.getByLabelText('Message Builder on Build Box')).toBeInTheDocument();
-		expect(screen.queryByTestId('peer-agent-panel-readonly-footer')).not.toBeInTheDocument();
+		const header = screen.getByTestId('peer-agent-panel-header');
+		expect(header).toHaveTextContent('Builder');
+		expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('Hosted');
+		expect(screen.queryByText(/Mirror of/)).not.toBeInTheDocument();
+		expect(screen.queryByText('build:a1')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Copy/)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Edit agent settings/)).not.toBeInTheDocument();
+		// No Left Bar row points at it, so there is no cwd or SSH remote for the viewers to read.
+		expect(screen.queryByLabelText('Memory Viewer')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Agent Sessions')).not.toBeInTheDocument();
+		expect(composerProps.current).toMatchObject({ peerId: 'build', agentId: 'a1' });
+		expect((composerProps.current?.tab as { id: string }).id).toBe('t1');
+		expect(composerProps.current?.onOpenLightbox).toBeTypeOf('function');
 	});
 
-	it('opens a new tab, stars, and renames the shown tab on the host', () => {
+	it("opens a new tab, closes, stars, and renames through the strip's own controls, on the host", () => {
 		show(
 			peerWith([
 				agent({
@@ -292,12 +330,16 @@ describe('PeerAgentPanel', () => {
 			])
 		);
 		renderPanel();
-		fireEvent.click(screen.getByLabelText('New tab'));
+		act(() => (tabBarProps.current?.onNewTab as () => void)());
 		expect(openMirrorTab).toHaveBeenCalledWith('build', 'a1');
-		fireEvent.click(screen.getByLabelText('Star tab'));
+		act(() => (tabBarProps.current?.onTabClose as (id: string) => void)('t2'));
+		expect(closeMirrorTab).toHaveBeenCalledWith('build', 'a1', 't2');
+		act(() =>
+			(tabBarProps.current?.onTabStar as (id: string, starred: boolean) => void)('t1', true)
+		);
 		expect(starMirrorTab).toHaveBeenCalledWith('build', 'a1', 't1', true);
 
-		fireEvent.click(screen.getByLabelText('Rename tab'));
+		act(() => (tabBarProps.current?.onRequestRename as (id: string) => void)('t1'));
 		const input = screen.getByDisplayValue('First');
 		fireEvent.change(input, { target: { value: 'Renamed' } });
 		fireEvent.click(screen.getByText('Rename'));
@@ -305,13 +347,6 @@ describe('PeerAgentPanel', () => {
 		// The host's update renames the tab; nothing local changed.
 		expect(usePeerMirrorStore.getState().peers.build.agents[0].aiTabs?.[0].name).toBe('First');
 		expect(useSessionStore.getState().sessions).toEqual([]);
-	});
-
-	it('offers Unstar on a starred tab', () => {
-		show(peerWith([agent({ aiTabs: [{ id: 't1', name: 'First', starred: true }] })]));
-		renderPanel();
-		fireEvent.click(screen.getByLabelText('Unstar tab'));
-		expect(starMirrorTab).toHaveBeenCalledWith('build', 'a1', 't1', false);
 	});
 
 	it('says so when the agent has no open tab, and reads nothing', () => {
@@ -322,7 +357,7 @@ describe('PeerAgentPanel', () => {
 		expect(tabBarProps.current).toBeNull();
 		// No tab to send to, but a new one can still be opened on the host.
 		expect(screen.queryByTestId('peer-agent-composer')).not.toBeInTheDocument();
-		fireEvent.click(screen.getByLabelText('New tab'));
+		fireEvent.click(screen.getByText('New Tab'));
 		expect(openMirrorTab).toHaveBeenCalledWith('build', 'a1');
 	});
 
@@ -458,6 +493,52 @@ describe('PeerAgentPanel', () => {
 			);
 			expect(readMirrorTranscript).not.toHaveBeenCalled();
 			expect((tabBarProps.current as { activeTabId: string }).activeTabId).toBe('kept');
+		});
+
+		it('leaves a kept tab alone when the strip asks to close, rename, or star it', () => {
+			withLocalRow();
+			show();
+			renderPanel();
+			act(() => (tabBarProps.current?.onTabClose as (id: string) => void)('kept'));
+			act(() => (tabBarProps.current?.onRequestRename as (id: string) => void)('kept'));
+			act(() =>
+				(tabBarProps.current?.onTabStar as (id: string, starred: boolean) => void)('kept', true)
+			);
+			expect(closeMirrorTab).not.toHaveBeenCalled();
+			expect(starMirrorTab).not.toHaveBeenCalled();
+			expect(screen.queryByDisplayValue('Old work')).not.toBeInTheDocument();
+		});
+
+		it('offers the Memory Viewer and Agent Sessions on the Left Bar row, as a local agent does', () => {
+			withLocalRow();
+			show();
+			renderPanel();
+			fireEvent.click(screen.getByLabelText('Memory Viewer'));
+			expect(screen.getByTestId('memory-viewer-stub')).toBeInTheDocument();
+			expect((memoryViewerProps.current?.activeSession as { id: string }).id).toBe('row-1');
+			act(() => (memoryViewerProps.current?.onClose as () => void)());
+			fireEvent.click(screen.getByLabelText('Agent Sessions'));
+			expect(screen.getByTestId('agent-sessions-stub')).toBeInTheDocument();
+			expect((sessionsBrowserProps.current?.activeSession as { id: string }).id).toBe('row-1');
+		});
+
+		it('resumes a past conversation into the host tab that holds it', () => {
+			withLocalRow();
+			show(
+				peerWith([
+					agent({
+						aiTabs: [
+							{ id: 't1', name: 'First' },
+							{ id: 't2', name: 'Second', agentSessionId: 'sess-2' },
+						],
+					}),
+				])
+			);
+			renderPanel();
+			fireEvent.click(screen.getByLabelText('Agent Sessions'));
+			act(() => (sessionsBrowserProps.current?.onResumeSession as (id: string) => void)('sess-2'));
+			expect(usePeerMirrorStore.getState().activeTabIds).toEqual({ build: { a1: 't2' } });
+			expect(screen.queryByTestId('agent-sessions-stub')).not.toBeInTheDocument();
 		});
 
 		it('draws no location pills while the agent kept nothing here', () => {
