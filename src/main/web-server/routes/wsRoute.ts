@@ -182,12 +182,14 @@ export class WsRoute {
 					? (this.callbacks.resumeBridgeClient?.(epochParam, Number(sinceParam), sessionId) ?? null)
 					: null;
 
+			const remoteAddress = resolveClientRemoteAddress(request);
 			const client: WebClient = {
 				socket,
 				id: clientId,
 				connectedAt: Date.now(),
 				cliAuthenticated: auth.cli,
 				subscribedSessionId: sessionId,
+				...(remoteAddress ? { remoteAddress } : {}),
 				// Resolved once, here: the cookie is only on the upgrade request, so
 				// there is no later point at which a frame can say who sent it.
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
@@ -405,4 +407,27 @@ export class WsRoute {
 
 		logger.debug('WebSocket route registered', LOG_CONTEXT);
 	}
+}
+
+/**
+ * Resolve the peer IP for display on pairing approvals.
+ *
+ * When a connection arrives over loopback with proxy forwarding headers
+ * (e.g. a Cloudflare quick tunnel or local reverse proxy), `127.0.0.1` is the
+ * tunnel process rather than the connecting device, so omit it rather than
+ * showing a misleading local address.
+ */
+function resolveClientRemoteAddress(request: FastifyRequest): string | undefined {
+	const rawIp =
+		typeof request.ip === 'string' && request.ip.length > 0
+			? request.ip
+			: request.raw?.socket?.remoteAddress;
+	if (!rawIp) return undefined;
+	const normalized = rawIp.startsWith('::ffff:') ? rawIp.slice('::ffff:'.length) : rawIp;
+	const isLoopback = normalized === '127.0.0.1' || normalized === '::1';
+	const headers = request.headers ?? {};
+	const hasForwarded =
+		headers['x-forwarded-for'] !== undefined || headers['cf-connecting-ip'] !== undefined;
+	if (isLoopback && hasForwarded) return undefined;
+	return normalized;
 }
