@@ -12,7 +12,10 @@ import type {
 	VoiceWindowId,
 	WakeSource,
 } from '../../../../shared/acappella/protocol';
-import { requireACappellaEnabled } from '../../../../shared/acappella/feature-flag';
+import {
+	ACAPPELLA_DISABLED_ERROR,
+	requireACappellaEnabled,
+} from '../../../../shared/acappella/feature-flag';
 import {
 	clampSendWaitOverrideMs,
 	resolveSendWait,
@@ -45,7 +48,7 @@ import {
 	type ACappellaHandlerDependencies,
 	type VoiceStartSessionResult,
 } from './shared';
-import { sharedState } from './state';
+import { captureEnableFence, sharedState } from './state';
 import { stopWakeTest } from './wake';
 
 /**
@@ -206,6 +209,11 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		origin?: VoiceOrigin
 	): Promise<VoiceStartSessionResult> => {
 		requireACappellaEnabled(deps.settingsStore);
+		const stillEnabled = captureEnableFence(deps.settingsStore);
+		const assertStillEnabled = (): void => {
+			requireACappellaEnabled(deps.settingsStore);
+			if (!stillEnabled()) throw new Error(ACAPPELLA_DISABLED_ERROR);
+		};
 		const scope = parseScope(rawScope);
 		// A Quick Chat session is shown by the Quick Chat window and by no other,
 		// whoever asked for it (the window's own microphone, or `maestro-cli voice
@@ -223,10 +231,12 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		// recovery; throwing a second, differently-worded error from here would
 		// give the same problem two voices.
 		await requestMicPermission();
+		assertStillEnabled();
 		// First start is what pays for the audio host: enabling the Encore
 		// Feature opens no device and builds no second renderer.
 		if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 		const { service, substitutions } = await ensureService();
+		assertStillEnabled();
 		const snapshot = await service.startSession({
 			scope,
 			source,

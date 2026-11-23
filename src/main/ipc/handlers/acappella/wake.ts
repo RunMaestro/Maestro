@@ -46,7 +46,7 @@ import {
 	type WakeTestEvent,
 	type WakeTestStartResult,
 } from './shared';
-import { sharedState } from './state';
+import { captureEnableFence, sharedState } from './state';
 
 /**
  * The global voice hotkeys. Module state because they outlive any one session
@@ -79,11 +79,8 @@ async function startWakeTest(
 	payload: unknown,
 	attempt: number
 ): Promise<WakeTestStartResult> {
-	const generation = sharedState.voiceDisableGeneration;
-	const isCurrent = () =>
-		isACappellaEnabled(deps.settingsStore) &&
-		generation === sharedState.voiceDisableGeneration &&
-		attempt === wakeTestGeneration;
+	const stillEnabled = captureEnableFence(deps.settingsStore);
+	const isCurrent = () => stillEnabled() && attempt === wakeTestGeneration;
 	const cancelled = { started: false as const, reason: 'The wake word Test was cancelled.' };
 	await stopWakeTest({ replacing: true });
 	if (!isCurrent()) return cancelled;
