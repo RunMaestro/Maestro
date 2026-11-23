@@ -2758,6 +2758,67 @@ describe('agent-detector', () => {
 			]);
 		});
 
+		it('re-reads an expired catalogue and does not keep it when the re-read fails', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			try {
+				let ok = true;
+				mockExecFileNoThrow.mockImplementation(async (cmd, args) =>
+					cmd === '/usr/bin/agy' && args[0] === 'models'
+						? ok
+							? { stdout: AGY_MODELS, stderr: '', exitCode: 0 }
+							: { stdout: '', stderr: 'offline', exitCode: 1 }
+						: { stdout: '', stderr: '', exitCode: 1 }
+				);
+				await detector.discoverModels('antigravity', true);
+				vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+				ok = false;
+				expect(await detector.discoverModels('antigravity')).toEqual([]);
+				expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+					'',
+					'low',
+					'medium',
+					'high',
+					'xhigh',
+				]);
+				ok = true;
+				expect(await detector.discoverModels('antigravity')).toContain('gpt-oss-120b');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('shares one `agy models` read and drops a read a refresh overtook', async () => {
+			const pending: Array<(stdout: string) => void> = [];
+			mockExecFileNoThrow.mockImplementation((cmd, args) =>
+				cmd === '/usr/bin/agy' && args[0] === 'models'
+					? new Promise((resolve) => {
+							modelsCalls++;
+							pending.push((stdout) => resolve({ stdout, stderr: '', exitCode: 0 }));
+						})
+					: Promise.resolve({ stdout: '', stderr: '', exitCode: 1 })
+			);
+			detector.clearModelCache('antigravity');
+			const staleEffort = detector.discoverConfigOptions('antigravity', 'effort');
+			const staleModels = detector.discoverModels('antigravity');
+			await vi.waitFor(() => expect(pending).toHaveLength(1));
+			expect(modelsCalls).toBe(1);
+			// A forced refresh starts while the first read is still out.
+			const fresh = detector.discoverModels('antigravity', true);
+			await vi.waitFor(() => expect(pending).toHaveLength(2));
+			pending[1]('gemini-4-carbon-low\tC\ngemini-4-carbon-high\tC\n');
+			expect(await fresh).toEqual(['gemini-4-carbon']);
+			pending[0](AGY_MODELS);
+			await staleEffort;
+			await staleModels;
+			// The overtaken read neither replaced the catalogue nor cached its menus.
+			expect(await detector.discoverModels('antigravity')).toEqual(['gemini-4-carbon']);
+			expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+				'',
+				'low',
+				'high',
+			]);
+		});
+
 		it('refreshes the effort menu with the models when either is forced', async () => {
 			let stdout = AGY_MODELS;
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) =>

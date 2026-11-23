@@ -2268,18 +2268,19 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 		expect(result.effort).toBe('low');
 	});
 
-	it('drops an effort the selected model already refused', () => {
+	it('keeps an effort the user chose after agy refused it, so the turn fails with its own message', () => {
 		noteEffortRejection('antigravity', {
 			value: 'high',
-			model: 'gpt-oss-120b',
-			supported: ['medium'],
+			model: 'gemini-4-neon',
+			supported: ['low', 'medium'],
 		});
 		try {
 			const result = applyAgentConfigOverrides(antigravity(), [], {
-				agentConfigValues: { model: 'gpt-oss-120b', effort: 'high' },
+				agentConfigValues: { model: 'gemini-4-neon', effort: 'low' },
+				sessionCustomArgs: '--effort=high',
 			});
-			expect(result.args).not.toContain('--effort');
-			expect(result.effort).toBeUndefined();
+			expect(readAntigravityModelEffortArgs(result.args).effort).toBe('high');
+			expect(result.effort).toBe('high');
 		} finally {
 			resetEffortRejections();
 		}

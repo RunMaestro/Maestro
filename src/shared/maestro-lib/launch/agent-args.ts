@@ -9,7 +9,6 @@ import {
 	readAntigravityModelEffortArgs,
 	resolveAntigravityModelEffortArgs,
 	resolveAntigravitySelection,
-	isAntigravityEffortRefused,
 } from '../../antigravityModels';
 import { logger } from '../host';
 
@@ -659,9 +658,6 @@ export function applyAgentConfigOverrides(
 		// names that axis.
 		const flags = readAntigravityModelEffortArgs(finalArgs);
 		const selected = resolveAntigravitySelection(flags.model ?? modelId, flags.effort ?? effort);
-		if (selected.effort && isAntigravityEffortRefused(selected.model, selected.effort)) {
-			delete selected.effort;
-		}
 		modelId = selected.model;
 		effort = selected.effort;
 	}

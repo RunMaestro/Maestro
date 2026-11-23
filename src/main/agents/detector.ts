@@ -452,6 +452,10 @@ export class AgentDetector {
 	private configOptionCache: Map<string, { options: string[]; timestamp: number }> = new Map();
 	/** The last `agy models` read, so effort discovery reuses it instead of a second probe. */
 	private antigravityCatalog: { catalog: AntigravityModelCatalog; timestamp: number } | null = null;
+	/** Bumped by every Antigravity cache clear; a read started before it may not write after. */
+	private antigravityGeneration = 0;
+	/** The one `agy models` read in flight, shared by the model and effort menus. */
+	private antigravityRead: Promise<AntigravityModelCatalog | null> | null = null;
 	// Configurable cache TTL (useful for testing or different environments)
 	private readonly modelCacheTtlMs: number;
 	private readonly deps: AgentDetectorDeps;
@@ -694,7 +698,11 @@ export class AgentDetector {
 	 * Clear the model cache for a specific agent or all agents
 	 */
 	clearModelCache(agentId?: string): void {
-		if (!agentId || agentId === 'antigravity') this.antigravityCatalog = null;
+		if (!agentId || agentId === 'antigravity') {
+			this.antigravityCatalog = null;
+			this.antigravityGeneration++;
+			this.antigravityRead = null;
+		}
 		if (agentId) {
 			for (const key of this.modelCache.keys()) {
 				if (key === agentId || key.startsWith(`${agentId}:`)) this.modelCache.delete(key);
@@ -758,6 +766,7 @@ export class AgentDetector {
 		// Run agent-specific model discovery command. The model and effort menus
 		// share one `agy models` read, so a forced refresh of either drops both.
 		if (forceRefresh && agentId === 'antigravity') this.clearModelCache('antigravity');
+		const antigravityGeneration = this.antigravityGeneration;
 		const models = await this.runModelDiscovery(agentId, agent);
 
 		// A transient `omp models --json` failure returns an empty list. Don't cache
@@ -766,8 +775,9 @@ export class AgentDetector {
 		if (agentId === 'omp' && models.length === 0) {
 			return models;
 		}
-		// Same for a failed `agy models` (signed out, CLI updating): retry next time.
-		if (agentId === 'antigravity' && !this.antigravityCatalog) {
+		// Same for a failed `agy models` (signed out, CLI updating), and for a read
+		// a refresh overtook: retry next time rather than cache a stale menu.
+		if (agentId === 'antigravity' && !this.antigravityCatalogCurrent(antigravityGeneration)) {
 			return models;
 		}
 
@@ -1185,28 +1195,49 @@ export class AgentDetector {
 	}
 
 	/**
-	 * Read `agy models` once per cache window. A failed or empty read is not
-	 * cached, so a CLI that was mid-update or signed out is asked again next time.
+	 * Read `agy models` once per cache window, shared by the model and effort
+	 * menus. A failed or empty read is not cached, so a CLI that was mid-update or
+	 * signed out is asked again next time; an expired catalogue is dropped before
+	 * the refresh so it cannot stand in for a failed one. A read that a cache
+	 * clear overtook does not write its result.
 	 */
-	private async readAntigravityCatalog(
+	private readAntigravityCatalog(
 		command: string,
 		env: NodeJS.ProcessEnv
 	): Promise<AntigravityModelCatalog | null> {
 		const cached = this.antigravityCatalog;
-		if (cached && Date.now() - cached.timestamp < this.modelCacheTtlMs) return cached.catalog;
-		const result = await execFileNoThrow(command, ['models'], undefined, env);
-		if (result.exitCode !== 0) {
-			logger.warn(
-				`CLI model discovery failed for antigravity: exit code ${result.exitCode}`,
-				LOG_CONTEXT,
-				{ stderr: result.stderr }
-			);
-			return null;
+		if (cached && Date.now() - cached.timestamp < this.modelCacheTtlMs) {
+			return Promise.resolve(cached.catalog);
 		}
-		const catalog = parseAntigravityModelList(result.stdout);
-		if (catalog.models.length === 0) return null;
-		this.antigravityCatalog = { catalog, timestamp: Date.now() };
-		return catalog;
+		this.antigravityCatalog = null;
+		if (this.antigravityRead) return this.antigravityRead;
+		const generation = this.antigravityGeneration;
+		const read = (async () => {
+			const result = await execFileNoThrow(command, ['models'], undefined, env);
+			if (result.exitCode !== 0) {
+				logger.warn(
+					`CLI model discovery failed for antigravity: exit code ${result.exitCode}`,
+					LOG_CONTEXT,
+					{ stderr: result.stderr }
+				);
+				return null;
+			}
+			const catalog = parseAntigravityModelList(result.stdout);
+			if (catalog.models.length === 0) return null;
+			if (generation === this.antigravityGeneration) {
+				this.antigravityCatalog = { catalog, timestamp: Date.now() };
+			}
+			return catalog;
+		})().finally(() => {
+			if (this.antigravityRead === read) this.antigravityRead = null;
+		});
+		this.antigravityRead = read;
+		return read;
+	}
+
+	/** True when menus read under `generation` came from the current catalogue. */
+	private antigravityCatalogCurrent(generation: number): boolean {
+		return this.antigravityCatalog !== null && generation === this.antigravityGeneration;
 	}
 
 	/**
@@ -1248,10 +1279,14 @@ export class AgentDetector {
 		}
 
 		if (forceRefresh && agentId === 'antigravity') this.clearModelCache('antigravity');
+		const antigravityGeneration = this.antigravityGeneration;
 		const options = await this.runConfigOptionDiscovery(agentId, optionKey);
-		// A failed `agy models` read falls back to the static menu; keep that
-		// uncached so the discovered menu replaces it once the CLI answers.
-		if (agentId === 'antigravity' && !this.antigravityCatalog) return options;
+		// A failed `agy models` read falls back to the static menu, and a read a
+		// refresh overtook is stale; keep both uncached so the next request asks
+		// the current catalogue.
+		if (agentId === 'antigravity' && !this.antigravityCatalogCurrent(antigravityGeneration)) {
+			return options;
+		}
 		this.configOptionCache.set(cacheKey, { options, timestamp: Date.now() });
 		return options;
 	}

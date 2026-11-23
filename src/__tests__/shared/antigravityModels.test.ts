@@ -163,25 +163,15 @@ describe('resolveAntigravityModelEffortArgs', () => {
 		expect(resolveAntigravityModelEffortArgs(args)).toBe(args);
 	});
 
-	it('drops an --effort this model already refused, and keeps it for other models', () => {
+	it('never drops an effort the user chose, even one agy refused before', () => {
 		noteEffortRejection('antigravity', {
 			value: 'high',
 			model: 'gpt-oss-120b',
 			supported: ['medium'],
 		});
 		try {
-			expect(
-				resolveAntigravityModelEffortArgs([
-					'--model',
-					'gpt-oss-120b',
-					'--effort',
-					'high',
-					'-p',
-					'x',
-				])
-			).toEqual(['--model', 'gpt-oss-120b', '-p', 'x']);
-			const neon = ['--model', 'gemini-4-neon', '--effort', 'high'];
-			expect(resolveAntigravityModelEffortArgs(neon)).toBe(neon);
+			const args = ['--model', 'gpt-oss-120b', '--effort', 'high', '-p', 'x'];
+			expect(resolveAntigravityModelEffortArgs(args)).toBe(args);
 		} finally {
 			resetEffortRejections();
 		}
