@@ -510,6 +510,57 @@ describe('agentStore', () => {
 			expect(updated.aiTabs[1].agentError).toBeUndefined();
 		});
 
+		it('leaves a newer session-level error intact when clearing a different tab by tabId', () => {
+			const tab1Error = { type: 'agent_not_installed', message: 'missing' } as any;
+			const tab2Error = { type: 'rate_limited', message: 'limit' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: tab2Error,
+				agentErrorTabId: 'tab-2',
+				agentErrorPaused: true,
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						agentError: tab1Error,
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						agentError: tab2Error,
+					},
+				],
+				activeTabId: 'tab-2',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useAgentStore.getState().clearAgentError('session-1', 'tab-1');
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			expect(updated.aiTabs[1].agentError).toEqual(tab2Error);
+			expect(updated.agentError).toEqual(tab2Error);
+			expect(updated.agentErrorTabId).toBe('tab-2');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+		});
+
 		it('handles IPC clearError rejection without throwing', () => {
 			mockClearError.mockRejectedValueOnce(new Error('IPC down'));
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});

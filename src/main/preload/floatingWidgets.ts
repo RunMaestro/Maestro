@@ -66,6 +66,14 @@ export function createFloatingWidgetsApi() {
 			ipcRenderer.invoke('floatingWidgets:setBounds', id, bounds),
 
 		/**
+		 * Keep the widget's window at least `width` px wide (not saved): the OS
+		 * window refuses a narrower drag and a narrower window is widened. 0 puts
+		 * the widget's own minimum back. Resolves with where the window ended up.
+		 */
+		setMinWidth: (id: FloatingWidgetId, width: number): Promise<Electron.Rectangle | null> =>
+			ipcRenderer.invoke('floatingWidgets:setMinWidth', id, width),
+
+		/**
 		 * Borrow room past the widget's card for content taller than it (not
 		 * saved). `need` is how far each side would have to grow; resolves with
 		 * what the window granted. A zero need gives the room back.

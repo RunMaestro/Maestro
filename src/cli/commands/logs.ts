@@ -3,9 +3,10 @@
  *
  * `logs` reads what the viewer shows: Maestro's own log and every file source
  * (the model server's log), interleaved newest first. `--source` is the source
- * pills, `--level` the level pills, `--search` the search box, `--output` the
- * Export button (the same text, written to a file). `logs clear` is the Clear
- * button: it empties Maestro's own log and never touches a file source.
+ * pills, `--level` the level pills, `--context` / `--since` narrow by context
+ * and time, `--search` the search box, `--output` the Export button (the same
+ * text, written to a file). `logs clear` is the Clear button: it empties
+ * Maestro's own log and never touches a file source.
  *
  * Both go to `readSystemLogs()` / `clearSystemLogs()` in the running app, the
  * functions the viewer's reads and its Clear button reach.
@@ -19,6 +20,7 @@ import {
 	type SystemLogsQuery,
 	type SystemLogsResult,
 } from '../../shared/logSources';
+import { parseTimeInput } from '../../shared/timeInput';
 import { formatSuccess, formatWarning } from '../output/formatter';
 import { failCommand, sendBridgeCommand } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
@@ -29,6 +31,8 @@ const LOGS_TIMEOUT_MS = 30_000;
 export interface LogsOptions {
 	source?: string;
 	level?: string;
+	context?: string;
+	since?: string;
 	search?: string;
 	limit?: string;
 	output?: string;
@@ -55,6 +59,17 @@ export async function logs(options: LogsOptions): Promise<void> {
 	if (sources) query.sources = sources;
 	const levels = listFlag(options.level);
 	if (levels) query.levels = levels;
+	if (options.context) query.context = options.context;
+	if (options.since !== undefined) {
+		const since = parseTimeInput(options.since, Date.now());
+		if (since === null) {
+			failCommand(
+				`Could not read --since "${options.since}" (use 30m, 2h, ISO, or epoch)`,
+				options.json
+			);
+		}
+		query.since = since;
+	}
 	if (options.search) query.search = options.search;
 	if (options.limit !== undefined) query.limit = Number(options.limit);
 

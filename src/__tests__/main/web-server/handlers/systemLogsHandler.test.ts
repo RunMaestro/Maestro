@@ -1,7 +1,7 @@
 // Covers the system_logs and system_logs_clear WebSocket messages that back
-// `maestro-cli logs`. They validate the query, reach `readSystemLogs()` /
-// `clearSystemLogs()`, and ALWAYS answer with the request id, since the CLI
-// process blocks on that reply.
+// `maestro-cli logs`. They refuse non-CLI clients, validate the query, reach
+// `readSystemLogs()` / `clearSystemLogs()`, and ALWAYS answer with the request
+// id, since the CLI process blocks on that reply.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
@@ -25,11 +25,12 @@ import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/me
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 import { clearSystemLogs, readSystemLogs } from '../../../../main/system-logs';
 
-function createMockClient(): WebClient {
+function createMockClient(cli = true): WebClient {
 	return {
 		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
-		id: 'client-1',
+		id: cli ? 'cli-1' : 'browser-1',
 		connectedAt: 0,
+		cli,
 	};
 }
 
@@ -47,8 +48,33 @@ describe('system_logs handlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		handler = new WebSocketMessageHandler();
-		client = createMockClient();
+		client = createMockClient(true);
 		handler.setCallbacks({} as never);
+	});
+
+	it('refuses non-CLI clients for both read and clear', async () => {
+		const browser = createMockClient(false);
+
+		handler.handleMessage(browser, { type: 'system_logs', requestId: 'req-b1' });
+		await flush();
+		expect(lastResponse(browser)).toMatchObject({
+			type: 'system_logs_result',
+			success: false,
+			error: 'The system log is available to maestro-cli only',
+			requestId: 'req-b1',
+		});
+
+		handler.handleMessage(browser, { type: 'system_logs_clear', requestId: 'req-b2' });
+		await flush();
+		expect(lastResponse(browser)).toMatchObject({
+			type: 'system_logs_clear_result',
+			success: false,
+			error: 'The system log is available to maestro-cli only',
+			requestId: 'req-b2',
+		});
+
+		expect(readSystemLogs).not.toHaveBeenCalled();
+		expect(clearSystemLogs).not.toHaveBeenCalled();
 	});
 
 	it('reads with the validated query and answers with the result', async () => {
@@ -58,11 +84,16 @@ describe('system_logs handlers', () => {
 		handler.handleMessage(client, {
 			type: 'system_logs',
 			requestId: 'req-1',
-			query: { sources: ['maestro'], levels: ['error'] },
+			query: { sources: ['maestro'], levels: ['error'], context: 'WebServer', since: 1000 },
 		} as never);
 		await flush();
 
-		expect(readSystemLogs).toHaveBeenCalledWith({ sources: ['maestro'], levels: ['error'] });
+		expect(readSystemLogs).toHaveBeenCalledWith({
+			sources: ['maestro'],
+			levels: ['error'],
+			context: 'WebServer',
+			since: 1000,
+		});
 		expect(lastResponse(client)).toMatchObject({
 			type: 'system_logs_result',
 			success: true,

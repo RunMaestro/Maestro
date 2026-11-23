@@ -602,6 +602,83 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		// An agent pinned to its own binary (a stub, a wrapper, another account) must
+		// name its tabs with that binary. Using the provider's ran real Claude for a
+		// stub agent in the 1.1.1-RC packaged smoke test.
+		it("runs the agent's own binary when it names its tabs", async () => {
+			mockProcessManager.on.mockImplementation(() => {});
+
+			void invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				// Any executable file passes the custom-path check.
+				sessionCustomPath: process.execPath,
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+			expect(mockProcessManager.spawn.mock.calls[0][0].command).toBe(process.execPath);
+		});
+
+		it("ignores the agent's own binary when a utility agent of another provider names the tab", async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'codex',
+				name: 'OpenAI Codex',
+				command: 'codex',
+				path: '/usr/local/bin/codex',
+				args: [],
+			} as AgentConfig);
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
+				key === 'modelMap' ? housekeepingProvider('codex', 'gpt-4o-mini') : (defaultValue ?? {})
+			);
+			mockProcessManager.on.mockImplementation(() => {});
+
+			void invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionCustomPath: process.execPath,
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+			expect(mockProcessManager.spawn.mock.calls[0][0].command).toBe('/usr/local/bin/codex');
+		});
+
+		it("runs the agent's own binary on its SSH remote, as given", async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'test-remote', host: 'test.example.com', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: '/usr/bin/ssh', args: [] });
+			mockProcessManager.on.mockImplementation(() => {});
+
+			void invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me with SSH remote feature',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'test-remote-id' },
+				// The API route, where the chat spawn also runs the agent's own binary
+				// (the TUI route runs maestro-p on the remote instead).
+				enableMaestroP: false,
+				// A path on the remote: never checked against this machine.
+				sessionCustomPath: '/remote/bin/claude-wrapper',
+			});
+
+			await vi.waitFor(() => {
+				expect(buildSshCommand).toHaveBeenCalled();
+			});
+			expect(buildSshCommand).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ command: '/remote/bin/claude-wrapper' })
+			);
+		});
+
 		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
 			// Regression guard: without forwarding promptArgs, ChildProcessSpawner falls back
 			// to `-- <prompt>` which breaks copilot-cli (needs `-p <prompt>`) and factory-droid

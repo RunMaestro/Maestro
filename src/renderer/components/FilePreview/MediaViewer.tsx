@@ -90,6 +90,12 @@ interface MediaViewerProps {
 	 * measured here rather than assumed by the frame.
 	 */
 	onTransportHeightChange?: (height: number) => void;
+	/**
+	 * Narrowest the transport can be without clipping a control. The floating
+	 * frame uses it as its width floor; the set of buttons varies (prev/next,
+	 * fullscreen, the speed label), so no fixed minimum is right for all of them.
+	 */
+	onTransportMinWidthChange?: (width: number) => void;
 	/** Widget navigation. Rendered inside the transport when provided. */
 	onPrev?: () => void;
 	onNext?: () => void;
@@ -106,6 +112,25 @@ interface MediaViewerProps {
 const SKIP_SECONDS = 10;
 /** Seconds jumped by shift+arrow, for fine scrubbing. */
 const FINE_SKIP_SECONDS = 5;
+
+/**
+ * Width the transport needs to show every control, whatever width it has now.
+ *
+ * The controls row pushes loop/speed/open right with a `flex-1` spacer, so the
+ * row's content width is its scroll width minus whatever the spacer absorbed:
+ * with room to spare the spacer holds the slack, and in a row too narrow for its
+ * buttons the spacer is zero and the scroll width is the overflowing content.
+ * The transport's own padding and border are added back on top.
+ */
+function transportMinWidth(
+	transport: HTMLElement,
+	controls: HTMLElement,
+	spacer: HTMLElement
+): number {
+	const rowContent = controls.scrollWidth - spacer.getBoundingClientRect().width;
+	const transportInset = transport.offsetWidth - controls.clientWidth;
+	return Math.ceil(rowContent + transportInset);
+}
 
 interface PlaybackRateMenuProps {
 	/** The speed button the list hangs above. */
@@ -194,6 +219,7 @@ export const MediaViewer = memo(function MediaViewer({
 	onAspectChange,
 	onDurationKnown,
 	onTransportHeightChange,
+	onTransportMinWidthChange,
 	onPrev,
 	onNext,
 	toggleRequest = 0,
@@ -202,6 +228,8 @@ export const MediaViewer = memo(function MediaViewer({
 	const mediaRef = useRef<HTMLMediaElement | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const transportRef = useRef<HTMLDivElement>(null);
+	const controlsRowRef = useRef<HTMLDivElement>(null);
+	const controlsSpacerRef = useRef<HTMLDivElement>(null);
 	const rateButtonRef = useRef<HTMLButtonElement>(null);
 	const rateMenuRef = useRef<HTMLDivElement>(null);
 
@@ -305,24 +333,45 @@ export const MediaViewer = memo(function MediaViewer({
 		onPlayingChange?.(playing);
 	}, [playing, onPlayingChange]);
 
-	// Measure the transport for the floating frame's height math. Measured, not
-	// assumed: the strip's height comes out of font metrics, so it differs
-	// between platforms and any hard-coded number would letterbox video on the
-	// ones it was not tuned on. Observed rather than read once, since the row
-	// gains buttons (prev/next, fullscreen) depending on the queue and the file.
+	// Measure the transport for the floating frame's size math. Measured, not
+	// assumed: the strip's height and the width its controls need both come out
+	// of font metrics, so they differ between platforms and any hard-coded number
+	// would letterbox video or clip buttons on the ones it was not tuned on.
+	// Observed rather than read once, since the row gains buttons (prev/next,
+	// fullscreen) depending on the queue and the file.
+	const hasPrev = Boolean(onPrev);
+	const hasNext = Boolean(onNext);
 	useEffect(() => {
-		const element = transportRef.current;
-		if (!element || !onTransportHeightChange) return;
+		const transport = transportRef.current;
+		const controls = controlsRowRef.current;
+		const spacer = controlsSpacerRef.current;
+		if (!transport || (!onTransportHeightChange && !onTransportMinWidthChange)) return;
 		const report = () => {
-			const height = element.getBoundingClientRect().height;
-			if (height > 0) onTransportHeightChange(height);
+			const height = transport.getBoundingClientRect().height;
+			if (height > 0) onTransportHeightChange?.(height);
+			if (controls && spacer && onTransportMinWidthChange) {
+				const minWidth = transportMinWidth(transport, controls, spacer);
+				if (minWidth > 0) onTransportMinWidthChange(minWidth);
+			}
 		};
 		report();
 		if (typeof ResizeObserver === 'undefined') return;
 		const observer = new ResizeObserver(report);
-		observer.observe(element);
+		observer.observe(transport);
+		// The spacer shrinks when a button joins a row that still fits, which the
+		// transport's own box never reports. A row that already overflows has a
+		// zero-width spacer, so the deps below cover that case.
+		if (spacer) observer.observe(spacer);
 		return () => observer.disconnect();
-	}, [onTransportHeightChange]);
+	}, [
+		onTransportHeightChange,
+		onTransportMinWidthChange,
+		hasPrev,
+		hasNext,
+		isVideo,
+		playbackRate,
+		loadState,
+	]);
 
 	// Report position continuously rather than only on unmount: React gives no
 	// "about to unmount with fresh DOM state" hook, and the element is gone by
@@ -728,7 +777,7 @@ export const MediaViewer = memo(function MediaViewer({
 				</div>
 
 				{/* Controls */}
-				<div className="flex items-center gap-1">
+				<div ref={controlsRowRef} className="flex items-center gap-1">
 					{onPrev && (
 						<GhostIconButton
 							onClick={onPrev}
@@ -800,7 +849,7 @@ export const MediaViewer = memo(function MediaViewer({
 						/>
 					</div>
 
-					<div className="flex-1" />
+					<div ref={controlsSpacerRef} className="flex-1" />
 
 					<GhostIconButton
 						onClick={toggleLoop}

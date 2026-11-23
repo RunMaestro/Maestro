@@ -60,7 +60,7 @@ isBetaAgent(agentId): boolean                      // Check beta status
 getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
 getAgentLoginCommand(agentId, customPath?)         // Re-auth command, or null
 formatAgentLoginCommand(login, syntax?)            // Render it as a shell line
-loginShellSyntaxFor(shellId, isWindows)            // 'posix' | 'powershell' | 'cmd'
+loginShellSyntaxFor(shellId, isWindows)            // 'posix' | 'fish' | 'powershell' | 'cmd'
 ```
 
 **Provider pickers** all read `AGENT_PICKER_META`. The New Agent modal's

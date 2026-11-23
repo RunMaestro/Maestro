@@ -54,6 +54,7 @@ import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { version } from './commands/version';
+import { installCommand } from './commands/install-command';
 import {
 	groupChatList,
 	groupChatSend,
@@ -2420,6 +2421,18 @@ federation
 	.option('--value <text>', 'A merged text to use instead (free-text fields only)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, field: string, options) => federationResolve(agent, field, options));
+// Install-command - print the install line for a provider CLI (the error dialog's Install action)
+program
+	.command('install-command <provider>')
+	.description(
+		'Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing'
+	)
+	.option(
+		'--platform <platform>',
+		'Target platform: darwin, linux, or win32 (default: this machine)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((provider: string, options) => installCommand(provider, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -2472,7 +2485,10 @@ program
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
-	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--ssh-cwd <path>',
+		'Working directory on the SSH remote (the agent runs there; defaults to --cwd)'
+	)
 	.option(
 		'--sync-history-to-remote <bool>',
 		'Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)'
@@ -5797,6 +5813,8 @@ logsCommand
 	.description('Print the logs the viewer shows, in its Export format')
 	.option('--source <ids>', `Sources to read, comma-separated (default: all): ${LOGS_SOURCE_HELP}`)
 	.option('--level <levels>', `Levels to keep, comma-separated (default: all): ${LOGS_LEVEL_HELP}`)
+	.option('--context <context>', 'Only entries from this context (e.g. WebServer)')
+	.option('--since <time>', 'Only entries since then: 30m, 2h, ISO-8601, or epoch')
 	.option('--search <text>', 'Keep entries whose message, context or data contain this text')
 	.option('--limit <n>', 'Keep only the newest n matching entries')
 	.option('-o, --output <file>', 'Write the entries to a file instead, as Export does')

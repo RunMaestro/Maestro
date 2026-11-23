@@ -64,6 +64,7 @@ import { FloatingWidgetFrame } from './FloatingWidgetFrame';
 import {
 	mediaListOverflowNeed,
 	mediaWindowBaselineAfter,
+	mediaWindowMinWidth,
 	planMediaWindowSize,
 	sanitizeMediaWindowBaseline,
 	type MediaWindowBaseline,
@@ -94,17 +95,25 @@ function writeMediaWindowBaseline(baseline: MediaWindowBaseline | null): void {
 }
 
 /**
- * Size the window to the loaded media while the user has not resized it.
+ * Size the window to the loaded media while the user has not resized it, and
+ * keep the OS window from going narrower than the transport's controls.
  *
  * Runs when the kind changes and when what the size is computed from arrives
- * (a video's aspect, the transport's measured height). Each pass reads the
- * window's bounds and the baseline fresh, and passes run one at a time, so a
- * pass never plans against a size an earlier pass is still setting.
+ * (a video's aspect, the transport's measured height and width). Each pass
+ * reads the window's bounds and the baseline fresh, and passes run one at a
+ * time, so a pass never plans against a size an earlier pass is still setting.
+ *
+ * The width floor goes to main AFTER the plan reads the bounds and BEFORE the
+ * plan's resize: a floor that widens the window first would read as a user
+ * resize, and a floor lowered after the resize would clamp it to the old one.
+ * It goes to main even when the plan leaves a user-sized window alone, since
+ * the floor is what protects that window.
  */
 function useMediaWindowSizing(
 	kind: MediaKind | null,
 	aspect: number | undefined,
-	transportHeight: number | null
+	transportHeight: number | null,
+	transportMinWidth: number | null
 ): void {
 	const queue = useRef<Promise<void>>(Promise.resolve());
 
@@ -112,7 +121,12 @@ function useMediaWindowSizing(
 		const api = window.maestro?.floatingWidgets;
 		if (!kind || !api) return;
 		let cancelled = false;
-		const fit = { kind, aspect: kind === 'video' ? aspect : undefined, transportHeight };
+		const fit = {
+			kind,
+			aspect: kind === 'video' ? aspect : undefined,
+			transportHeight,
+			transportMinWidth,
+		};
 
 		const pass = async () => {
 			if (cancelled) return;
@@ -121,6 +135,11 @@ function useMediaWindowSizing(
 			if (cancelled) return;
 			const stored = readMediaWindowBaseline();
 			const plan = planMediaWindowSize(fit, current, stored);
+			// 0 before the row is measured puts the window's own minimum back.
+			// No cancel check after this: a floor that widened the window must be
+			// followed by the plan's resize and baseline, or the next pass would
+			// read the widening as the user's.
+			await api.setMinWidth(WIDGET_ID, mediaWindowMinWidth(transportMinWidth) ?? 0);
 			if (!plan.apply) {
 				if (plan.baseline !== stored) writeMediaWindowBaseline(plan.baseline);
 				return;
@@ -137,7 +156,7 @@ function useMediaWindowSizing(
 		return () => {
 			cancelled = true;
 		};
-	}, [kind, aspect, transportHeight]);
+	}, [kind, aspect, transportHeight, transportMinWidth]);
 }
 
 /**
@@ -218,10 +237,13 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 	// The transport is the same strip whatever is loaded, so one measurement
 	// serves every file (the in-app player does the same).
 	const [transportHeight, setTransportHeight] = useState<number | null>(null);
+	// The width floor is re-measured as the row changes: prev/next and
+	// fullscreen come and go with the queue and the file.
+	const [transportMinWidth, setTransportMinWidth] = useState<number | null>(null);
 
 	useEffect(() => installMediaPlaybackAuthority(), []);
 
-	useMediaWindowSizing(active?.kind ?? null, aspect, transportHeight);
+	useMediaWindowSizing(active?.kind ?? null, aspect, transportHeight, transportMinWidth);
 
 	// Queue writes are debounced, so a window closing mid-debounce would lose the
 	// last position (or the last thing queued). Flush before it goes away.
@@ -326,6 +348,7 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 				<ActiveMediaPlayer
 					item={active}
 					onTransportHeightChange={setTransportHeight}
+					onTransportMinWidthChange={setTransportMinWidth}
 					theme={theme}
 				/>
 			</div>

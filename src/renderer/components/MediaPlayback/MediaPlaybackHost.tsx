@@ -61,6 +61,9 @@ function InAppMediaPlayer({ theme }: MediaPlaybackHostProps) {
 	// One measurement for the whole app: the transport is the same strip whatever
 	// is loaded, so re-measuring per file would only re-report the same number.
 	const [transportHeight, setTransportHeight] = useState<number | null>(null);
+	// The width floor is re-measured as the row changes: prev/next and
+	// fullscreen come and go with the queue and the file.
+	const [transportMinWidth, setTransportMinWidth] = useState<number | null>(null);
 
 	// Queue writes are debounced, so a window closing mid-debounce would lose the
 	// last position (or the last thing queued). Flush before it goes away.
@@ -81,10 +84,16 @@ function InAppMediaPlayer({ theme }: MediaPlaybackHostProps) {
 			kind={active.kind}
 			aspect={aspects[active.id]}
 			transportHeight={transportHeight}
+			transportMinWidth={transportMinWidth}
 			hidden={dismissed}
 			theme={theme}
 		>
-			<ActiveMediaPlayer item={active} onTransportHeightChange={setTransportHeight} theme={theme} />
+			<ActiveMediaPlayer
+				item={active}
+				onTransportHeightChange={setTransportHeight}
+				onTransportMinWidthChange={setTransportMinWidth}
+				theme={theme}
+			/>
 		</FloatingMediaPlayer>
 	);
 }
