@@ -1140,6 +1140,15 @@ Diagnose CLI connectivity, version skew, and configuration
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli install-command <provider>`
+
+Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
+| `--json`                | Output as JSON (for scripting)                                   | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)
@@ -1171,7 +1180,7 @@ Create a new agent in the Maestro desktop app
 | `--context-window <size>`         | Context window size in tokens                                                                               | -               |
 | `--provider-path <path>`          | Custom provider path                                                                                        | -               |
 | `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
+| `--ssh-cwd <path>`                | Working directory on the SSH remote (the agent runs there; defaults to --cwd)                               | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)           | -               |
 | `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |

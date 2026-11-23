@@ -28,6 +28,8 @@ export function mapSessionsForMentions(
 			name: s.name,
 			toolType: s.toolType,
 			cwd: s.cwd || s.fullPath || os.homedir(),
+			// The agent's own binary, so a participant runs what its tab runs.
+			customPath: s.customPath,
 			customArgs: s.customArgs,
 			customEnvVars: s.customEnvVars,
 			customModel: s.customModel,
