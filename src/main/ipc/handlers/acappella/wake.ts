@@ -46,7 +46,7 @@ import {
 	type WakeTestEvent,
 	type WakeTestStartResult,
 } from './shared';
-import { sharedState } from './state';
+import { captureEnableFence, sharedState } from './state';
 
 /**
  * The global voice hotkeys. Module state because they outlive any one session
@@ -54,6 +54,7 @@ import { sharedState } from './state';
  */
 let voiceHotkeys: VoiceHotkeyInstallation | null = null;
 let releaseWakeEnrollment: (() => void) | null = null;
+let wakeTestGeneration = 0;
 
 export function syncVoiceHotkeys(): void {
 	voiceHotkeys?.sync();
@@ -75,11 +76,17 @@ export function releaseWakeEnrollmentRegistration(): void {
  */
 async function startWakeTest(
 	deps: ACappellaHandlerDependencies,
-	payload: unknown
+	payload: unknown,
+	attempt: number
 ): Promise<WakeTestStartResult> {
-	await stopWakeTest();
+	const stillEnabled = captureEnableFence(deps.settingsStore);
+	const isCurrent = () => stillEnabled() && attempt === wakeTestGeneration;
+	const cancelled = { started: false as const, reason: 'The wake word Test was cancelled.' };
+	await stopWakeTest({ replacing: true });
+	if (!isCurrent()) return cancelled;
 	// One microphone, one consumer: the Test borrows it from the always-on wake word.
 	await sharedState.handsFree?.suspend();
+	if (!isCurrent()) return cancelled;
 	const state = getVoiceSessionService()?.getState();
 	if (state && state !== 'idle') {
 		return { started: false, reason: 'End the voice session first, then test the wake word.' };
@@ -95,6 +102,7 @@ async function startWakeTest(
 	}
 
 	const readiness = await readVoiceReadiness(deps.settingsStore);
+	if (!isCurrent()) return cancelled;
 	const wakeSlot = readiness.slots.find((slot) => slot.slot === 'wake-word');
 	if (wakeSlot && !wakeSlot.satisfied) {
 		return {
@@ -110,7 +118,7 @@ async function startWakeTest(
 	const phrases: WakePhrase[] = [globalWakePhrase(phrase, sensitivity)];
 
 	await requestMicPermission();
-	ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+	if (!isCurrent()) return cancelled;
 
 	const detector = createWakeDetector({
 		// The same engine the always-on listener uses, so the Test tunes what will
@@ -131,6 +139,10 @@ async function startWakeTest(
 		},
 	});
 	await detector.start();
+	if (!isCurrent()) {
+		await detector.stop();
+		return cancelled;
+	}
 	if (!detector.isArmed) {
 		// The gate said yes and the scorer still would not build: report it rather
 		// than listening with nothing behind the microphone.
@@ -140,15 +152,28 @@ async function startWakeTest(
 			reason: 'The wake word model could not be loaded. Check System Logs.',
 		};
 	}
+	if (
+		sharedState.clipCapture?.isActive ||
+		sharedState.wakeEnrollment?.isRecording ||
+		(getVoiceSessionService()?.getState() ?? 'idle') !== 'idle'
+	) {
+		await detector.stop();
+		return { started: false, reason: 'The microphone is in use.' };
+	}
+	ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 	sharedState.wakeTestDetector = detector;
 	startWakeTestCapture(deps);
 	return { started: true };
 }
 
 /** End a tuning run and close the microphone it opened. Safe when none is running. */
-export async function stopWakeTest(): Promise<void> {
+export async function stopWakeTest({ replacing = false } = {}): Promise<void> {
+	if (!replacing) wakeTestGeneration += 1;
 	const detector = sharedState.wakeTestDetector;
-	if (!detector) return;
+	if (!detector) {
+		if (!replacing) void sharedState.handsFree?.resume();
+		return;
+	}
 	sharedState.wakeTestDetector = null;
 	// Logged because a run that never fires is otherwise indistinguishable from
 	// one that never heard anything: zero frames is a capture problem, frames with
@@ -162,8 +187,10 @@ export async function stopWakeTest(): Promise<void> {
 	// Only when no session owns the device: a tuning run that ended while a
 	// session was starting must not close that session's microphone.
 	const state = getVoiceSessionService()?.getState() ?? 'idle';
-	if (state === 'idle') sendAudioHostCommand({ kind: 'stop-capture' });
-	void sharedState.handsFree?.resume();
+	if (state === 'idle' && !sharedState.clipCapture?.isActive) {
+		sendAudioHostCommand({ kind: 'stop-capture' });
+	}
+	if (!replacing) void sharedState.handsFree?.resume();
 }
 
 export function initHandsFree(
@@ -204,8 +231,13 @@ export function initHandsFree(
 				deviceId: readVoiceProviderSettings(settingsStore).inputDeviceId,
 			}),
 		stopCapture: () => {
-			// Never close a microphone a session is using.
-			if ((getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+			const state = getVoiceSessionService()?.getState() ?? 'idle';
+			if (
+				!sharedState.clipCapture?.isActive &&
+				!sharedState.wakeEnrollment?.isRecording &&
+				!sharedState.wakeTestDetector &&
+				(state === 'idle' || state === 'error')
+			) {
 				sendAudioHostCommand({ kind: 'stop-capture' });
 			}
 		},
@@ -242,8 +274,11 @@ export function initWakeEnrollment(deps: ACappellaHandlerDependencies): void {
 			void sharedState.handsFree?.sync();
 		},
 		closeMicrophone: async () => {
-			// Never close a microphone a session is using.
-			if ((getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+			// Dictation or a voice session may have claimed capture during save.
+			if (
+				!sharedState.clipCapture?.isActive &&
+				(getVoiceSessionService()?.getState() ?? 'idle') === 'idle'
+			) {
 				sendAudioHostCommand({ kind: 'stop-capture' });
 			}
 			void sharedState.handsFree?.sync();
@@ -292,9 +327,11 @@ export function createWakeHandlers(deps: ACappellaHandlerDependencies) {
 	);
 
 	const beginWakeTest = async (payload: unknown): Promise<WakeTestStartResult> => {
-		const result = await startWakeTest(deps, payload);
-		// A refused Test borrowed nothing; give the always-on wake word its microphone back.
-		if (!result.started) void sharedState.handsFree?.resume();
+		const attempt = ++wakeTestGeneration;
+		const result = await startWakeTest(deps, payload, attempt);
+		// A refused Test borrowed nothing; give the always-on wake word its microphone back
+		// unless a newer Test attempt superseded this one.
+		if (!result.started && attempt === wakeTestGeneration) void sharedState.handsFree?.resume();
 		return result;
 	};
 	const wrappedWakeTest = withIpcErrorLogging(handlerOpts('wakeTest'), beginWakeTest);

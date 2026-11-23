@@ -740,6 +740,12 @@ export class VoiceSessionService {
 
 		const mySessionId = generateUUID();
 		this.sessionId = mySessionId;
+		const snapshotAfterCancellation = async () => {
+			// The wake detector may be handing off capture. Don't tell it the
+			// arming attempt is over while teardown still reports an active owner.
+			await this.stopPromise;
+			return this.getSnapshot();
+		};
 		this.scope = params.scope;
 		this.origin = params.origin ?? { kind: 'local' };
 		this.windowId = params.windowId ?? null;
@@ -769,8 +775,13 @@ export class VoiceSessionService {
 		// then discovered it has nowhere to send the audio has already cost the user
 		// a recording light and an OS permission prompt for nothing.
 		const readiness = await this.checkReadiness?.();
-		if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
-			return this.getSnapshot();
+		if (
+			this.disposed ||
+			this.stopping ||
+			this.sessionId !== mySessionId ||
+			this.state !== 'arming'
+		) {
+			return snapshotAfterCancellation();
 		}
 		if (readiness && !readiness.canStartSession) {
 			const blocked = readiness.blocking[0];
@@ -786,8 +797,13 @@ export class VoiceSessionService {
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
 		} catch (error) {
-			if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
-				return this.getSnapshot();
+			if (
+				this.disposed ||
+				this.stopping ||
+				this.sessionId !== mySessionId ||
+				this.state !== 'arming'
+			) {
+				return snapshotAfterCancellation();
 			}
 			if (isVoiceProviderError(error)) {
 				this.failFromProvider(error, this.providers.stt.id);
@@ -801,10 +817,16 @@ export class VoiceSessionService {
 			return this.getSnapshot();
 		}
 
-		if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
+		if (
+			this.disposed ||
+			this.stopping ||
+			this.sessionId !== mySessionId ||
+			this.state !== 'arming'
+		) {
 			// Teardown ran while stt.start() was in flight; stop the recognizer
-			// unless a newer startSession is still holding or starting it.
-			if (this.sttStartGeneration === mySttGen || this.getState() === 'error') {
+			// unless stopSession() is already tearing it down or a newer startSession
+			// is still holding or starting it.
+			if (!this.stopping && (this.sttStartGeneration === mySttGen || this.getState() === 'error')) {
 				try {
 					await this.providers.stt.stop();
 				} catch (error) {
@@ -814,7 +836,7 @@ export class VoiceSessionService {
 					});
 				}
 			}
-			return this.getSnapshot();
+			return snapshotAfterCancellation();
 		}
 
 		// Ahead of the first `listen-start`, so nothing that follows the stream

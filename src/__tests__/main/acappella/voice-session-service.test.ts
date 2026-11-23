@@ -3144,4 +3144,28 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		expect(h.stt.stop).toHaveBeenCalledTimes(2);
 		expect(recognizerActive).toBe(false);
 	});
+
+	it('reports cancellation to the wake microphone handoff after teardown finishes', async () => {
+		const startup = deferred();
+		const stopping = deferred();
+		const h = makeHarness();
+		const startStt = vi.spyOn(h.stt, 'start').mockReturnValue(startup.promise);
+		const stopStt = vi.spyOn(h.stt, 'stop').mockReturnValue(stopping.promise);
+		const completed = vi.fn();
+		const pending = h.service.startSession({ scope: { kind: 'conductor' }, source: 'wake-word' });
+		void pending.then(completed);
+		await vi.waitFor(() => expect(startStt).toHaveBeenCalledOnce());
+
+		const stop = h.service.stopSession('shutdown');
+		expect(stopStt).toHaveBeenCalledOnce();
+		startup.resolve();
+		await startup.promise;
+		await Promise.resolve();
+		expect(completed).not.toHaveBeenCalled();
+
+		stopping.resolve();
+		await stop;
+		await expect(pending).resolves.toMatchObject({ state: 'idle' });
+		expect(h.types()).not.toContain('listen-start');
+	});
 });

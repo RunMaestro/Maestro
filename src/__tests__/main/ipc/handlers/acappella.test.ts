@@ -62,6 +62,16 @@ vi.mock('../../../../main/acappella/audio-host-window', async (importOriginal) =
 		isAcappellaAudioHostContents: vi.fn(() => audioHost.isHostContents),
 	};
 });
+vi.mock('../../../../main/acappella/permissions/mic-permission', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/acappella/permissions/mic-permission')>();
+	return {
+		...actual,
+		requestMicPermission: vi.fn((...args: Parameters<typeof actual.requestMicPermission>) =>
+			actual.requestMicPermission(...args)
+		),
+	};
+});
 /**
  * The core dictation service is not under test here; what is, is that these
  * handlers hand it a microphone. The registration is captured so a test can
@@ -295,6 +305,10 @@ import {
 	type VoiceStartSessionResult,
 	type WakeTestStartResult,
 } from '../../../../main/ipc/handlers/acappella';
+import { ensureAcappellaAudioHostWindow } from '../../../../main/acappella/audio-host-window';
+import { installVoiceHotkeys } from '../../../../main/acappella/hotkeys';
+import { requestMicPermission } from '../../../../main/acappella/permissions/mic-permission';
+import type { MicPermission } from '../../../../shared/acappella/protocol';
 import { HandsFreeListener } from '../../../../main/acappella/wake/hands-free';
 import { WakeEnrollmentService } from '../../../../main/acappella/wake/wake-enrollment-service';
 import { setWakeEnrollmentRoot } from '../../../../main/acappella/wake/wake-enrollment-store';
@@ -623,6 +637,94 @@ describe('A Cappella IPC handlers - shutdownACappellaForDisable', () => {
 		await shutdownACappellaForDisable();
 
 		expect(getVoiceSessionService()?.getState()).toBe('idle');
+	});
+
+	it('cancels a pending wake word Test when A Cappella is turned off', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		const starting = handlerFor('acappella:wake-test')({}, {});
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+
+		await expect(starting).resolves.toMatchObject({
+			started: false,
+			reason: 'The wake word Test was cancelled.',
+		});
+		expect(audioCommands().map((command) => command.kind)).not.toContain('start-capture');
+	});
+
+	it('cancels an in-flight IPC start when A Cappella is turned off during mic permission', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		vi.mocked(ensureAcappellaAudioHostWindow).mockClear();
+		vi.mocked(requestMicPermission).mockClear();
+
+		const micGate = Promise.withResolvers<MicPermission>();
+		vi.mocked(requestMicPermission).mockReturnValueOnce(micGate.promise);
+
+		const starting = handlerFor('acappella:start-session')({});
+		await vi.waitFor(() => expect(requestMicPermission).toHaveBeenCalledOnce());
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+		micGate.resolve('granted');
+
+		await expect(starting).rejects.toThrow('ACappellaDisabled');
+		expect(ensureAcappellaAudioHostWindow).not.toHaveBeenCalled();
+		expect(getVoiceSessionService()).toBeNull();
+	});
+
+	it('cancels an in-flight floor-control start when A Cappella is turned off during mic permission', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		vi.mocked(installVoiceHotkeys).mockClear();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		vi.mocked(ensureAcappellaAudioHostWindow).mockClear();
+		vi.mocked(requestMicPermission).mockClear();
+
+		const floorSession = vi.mocked(installVoiceHotkeys).mock.calls.at(-1)![0].session;
+		const micGate = Promise.withResolvers<MicPermission>();
+		vi.mocked(requestMicPermission).mockReturnValueOnce(micGate.promise);
+
+		const starting = floorSession.startSession({
+			scope: { kind: 'conductor' },
+			source: 'hotkey',
+		});
+		await vi.waitFor(() => expect(requestMicPermission).toHaveBeenCalledOnce());
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+		micGate.resolve('granted');
+
+		await expect(starting).rejects.toThrow('ACappellaDisabled');
+		expect(ensureAcappellaAudioHostWindow).not.toHaveBeenCalled();
+		expect(getVoiceSessionService()).toBeNull();
+	});
+
+	it('completes an ordinary start when A Cappella stays on across mic permission', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+		vi.mocked(ensureAcappellaAudioHostWindow).mockClear();
+		vi.mocked(requestMicPermission).mockClear();
+
+		const micGate = Promise.withResolvers<MicPermission>();
+		vi.mocked(requestMicPermission).mockReturnValueOnce(micGate.promise);
+
+		const starting = handlerFor('acappella:start-session')({});
+		await vi.waitFor(() => expect(requestMicPermission).toHaveBeenCalledOnce());
+
+		micGate.resolve('granted');
+
+		const result = (await starting) as VoiceStartSessionResult;
+		expect(result.snapshot.state).toBe('listening');
+		expect(ensureAcappellaAudioHostWindow).toHaveBeenCalledOnce();
 	});
 
 	it('stands the transport down, so no advert and no device outlive the switch', async () => {

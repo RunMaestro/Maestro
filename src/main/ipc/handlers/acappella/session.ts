@@ -7,9 +7,15 @@ import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
 import type {
 	InterruptSource,
+	VoiceOrigin,
 	VoiceScope,
 	VoiceWindowId,
+	WakeSource,
 } from '../../../../shared/acappella/protocol';
+import {
+	ACAPPELLA_DISABLED_ERROR,
+	requireACappellaEnabled,
+} from '../../../../shared/acappella/feature-flag';
 import {
 	clampSendWaitOverrideMs,
 	resolveSendWait,
@@ -42,7 +48,7 @@ import {
 	type ACappellaHandlerDependencies,
 	type VoiceStartSessionResult,
 } from './shared';
-import { sharedState } from './state';
+import { captureEnableFence, sharedState } from './state';
 import { stopWakeTest } from './wake';
 
 /**
@@ -57,6 +63,7 @@ let sendWaitOverrideMs: number | null = null;
 
 export function resetSessionState(): void {
 	sendWaitOverrideMs = null;
+	sharedState.voiceDisableGeneration += 1;
 }
 
 /** The send wait in force, and where it came from. */
@@ -153,6 +160,8 @@ export async function stopVoiceSessionForWindow(
  * own settings watcher; the transport stands down and stays reusable.
  */
 export async function shutdownACappellaForDisable(): Promise<void> {
+	sharedState.voiceDisableGeneration += 1;
+	void sharedState.handsFree?.sync();
 	// The advert and the phones go first. A device that still holds the floor
 	// would otherwise be able to reopen the microphone during the teardown below.
 	getACappellaTransport()?.standDown();
@@ -195,8 +204,16 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 	const startSession = async (
 		rawScope: unknown,
 		windowId: VoiceWindowId,
-		paused: boolean
+		paused: boolean,
+		source: WakeSource = 'client-button',
+		origin?: VoiceOrigin
 	): Promise<VoiceStartSessionResult> => {
+		requireACappellaEnabled(deps.settingsStore);
+		const stillEnabled = captureEnableFence(deps.settingsStore);
+		const assertStillEnabled = (): void => {
+			requireACappellaEnabled(deps.settingsStore);
+			if (!stillEnabled()) throw new Error(ACAPPELLA_DISABLED_ERROR);
+		};
 		const scope = parseScope(rawScope);
 		// A Quick Chat session is shown by the Quick Chat window and by no other,
 		// whoever asked for it (the window's own microphone, or `maestro-cli voice
@@ -214,13 +231,16 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		// recovery; throwing a second, differently-worded error from here would
 		// give the same problem two voices.
 		await requestMicPermission();
+		assertStillEnabled();
 		// First start is what pays for the audio host: enabling the Encore
 		// Feature opens no device and builds no second renderer.
 		if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 		const { service, substitutions } = await ensureService();
+		assertStillEnabled();
 		const snapshot = await service.startSession({
 			scope,
-			source: 'client-button',
+			source,
+			origin,
 			windowId: owner,
 			paused,
 		});
@@ -338,24 +358,12 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 	// open, close, and interrupt, and nothing else.
 	const floorSession: FloorControlSession = {
 		getState: () => getVoiceSessionService()?.getState() ?? 'idle',
-		startSession: async ({ scope, source, origin }) => {
-			// A remote origin does NOT skip this: the desktop still opens its audio
-			// host, because that window is where the peer connection and the playback
-			// live. What it skips is nothing at all, which is the point - a remote
-			// session takes the same path as a local one.
-			await requestMicPermission();
-			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-			const { service } = await ensureService();
-			return service.startSession({
-				scope,
-				source,
-				origin,
-				// No IPC sender to resolve: a global hotkey, a wake word, and a paired
-				// phone all arrive with no window behind them, so the HUD belongs to
-				// the window the user is looking at.
-				windowId: ownerWindowFor(scope, deps.resolveVoiceWindowId?.() ?? null),
-			});
-		},
+		startSession: async ({ scope, source, origin }) =>
+			// No IPC sender to resolve: a global hotkey, a wake word, and a paired
+			// phone all arrive with no window behind them, so the HUD belongs to
+			// the window the user is looking at.
+			(await startSession(scope, deps.resolveVoiceWindowId?.() ?? null, false, source, origin))
+				.snapshot,
 		stopSession: async (reason) => {
 			await getVoiceSessionService()?.stopSession(reason);
 		},

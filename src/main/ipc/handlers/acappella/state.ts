@@ -11,6 +11,10 @@ import type { HandsFreeListener } from '../../../acappella/wake/hands-free';
 import type { WakeDetector } from '../../../acappella/wake/wake-detector';
 import type { WakeEnrollmentService } from '../../../acappella/wake/wake-enrollment-service';
 import type { ClipCapture } from '../../../../shared/local-models/clip-capture';
+import {
+	isACappellaEnabled,
+	type EncoreFlagStore,
+} from '../../../../shared/acappella/feature-flag';
 import type { WakeTestEvent } from './shared';
 
 export interface SharedACappellaState {
@@ -30,6 +34,8 @@ export interface SharedACappellaState {
 	handsFree: HandsFreeListener | null;
 	/** Dictation microphone capture (audio-host + wake). */
 	clipCapture: ClipCapture | null;
+	/** Monotonic counter bumped on disable/reset to cancel in-flight starts. */
+	voiceDisableGeneration: number;
 }
 
 export const sharedState: SharedACappellaState = {
@@ -41,10 +47,20 @@ export const sharedState: SharedACappellaState = {
 	wakeTestTaps: new Set(),
 	handsFree: null,
 	clipCapture: null,
+	voiceDisableGeneration: 0,
 };
 
 export function clearActiveProviderKey(): void {
 	sharedState.activeProviderKey = null;
+}
+
+/**
+ * Capture the current disable generation and return a predicate that stays
+ * true only while A Cappella remains enabled and no disable/reset has occurred.
+ */
+export function captureEnableFence(store: EncoreFlagStore): () => boolean {
+	const generation = sharedState.voiceDisableGeneration;
+	return () => isACappellaEnabled(store) && sharedState.voiceDisableGeneration === generation;
 }
 
 export function disposeHandsFree(): void {
