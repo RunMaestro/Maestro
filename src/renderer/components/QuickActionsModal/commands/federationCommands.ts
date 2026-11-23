@@ -16,6 +16,9 @@ interface BuildFederationCommandsArgs {
 	moveToHost?: { sessionId: string; agentName: string; peerName: string; hostReady: boolean };
 	/** Open the Move to Host modal for an agent. */
 	requestMoveToHost: (sessionId: string) => void;
+	/** The active agent is hosted: Move Back from Host (`maestro-cli unlift`) is offered. */
+	moveBackFromHost?: { sessionId: string; agentName: string; peerName: string };
+	requestMoveBackFromHost?: (sessionId: string, agentName: string, peerName: string) => void;
 	/** The active local agent's lift pointer (`useLiftedMirrorTarget()`). */
 	liftedTarget?: { ref: string };
 	/** Show the mirrored agent the active local agent moved to. */
@@ -36,7 +39,7 @@ interface BuildFederationCommandsArgs {
  * reconnect a peer (a hosted row's menu and `maestro-cli federation reconnect`), and, while a
  * hosted agent is shown, copy its `peer:agent` address. For the active local agent: Move to Host
  * (`maestro-cli lift`) while its remote is a connected peer, or, once it moved, open it on the
- * host. Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher
+ * host and Move Back from Host (`maestro-cli unlift`). Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher
  * lists them.
  */
 export function buildFederationCommands({
@@ -46,6 +49,8 @@ export function buildFederationCommands({
 	copyPeerAgentRef,
 	moveToHost,
 	requestMoveToHost,
+	moveBackFromHost,
+	requestMoveBackFromHost,
 	liftedTarget,
 	openLiftedAgent,
 	editHostedAgent,
@@ -88,6 +93,22 @@ export function buildFederationCommands({
 				: 'Set up a Maestro host on the remote, then run this SSH agent there so it keeps working while this machine sleeps',
 			action: () => {
 				requestMoveToHost(moveToHost.sessionId);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+	if (moveBackFromHost && requestMoveBackFromHost) {
+		actions.push({
+			id: 'federation-move-back-from-host',
+			label: `Move Back from Host: ${moveBackFromHost.agentName} (${moveBackFromHost.peerName})`,
+			subtext:
+				'Make this hosted agent an SSH agent again; its conversations on the host come back here',
+			action: () => {
+				requestMoveBackFromHost(
+					moveBackFromHost.sessionId,
+					moveBackFromHost.agentName,
+					moveBackFromHost.peerName
+				);
 				setQuickActionOpen(false);
 			},
 		});

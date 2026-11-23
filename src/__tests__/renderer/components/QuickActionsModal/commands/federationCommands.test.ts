@@ -82,6 +82,24 @@ describe('buildFederationCommands', () => {
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 
+	it('offers Move Back from Host only for a hosted active agent', () => {
+		const requestMoveBackFromHost = vi.fn();
+		expect(
+			build({ requestMoveBackFromHost }).commands.some(
+				(c) => c.id === 'federation-move-back-from-host'
+			)
+		).toBe(false);
+		const { deps, commands } = build({
+			moveBackFromHost: { sessionId: 's1', agentName: 'Docs', peerName: 'Build Box' },
+			requestMoveBackFromHost,
+		});
+		const back = commands.find((c) => c.id === 'federation-move-back-from-host');
+		expect(back?.label).toBe('Move Back from Host: Docs (Build Box)');
+		back?.action();
+		expect(requestMoveBackFromHost).toHaveBeenCalledWith('s1', 'Docs', 'Build Box');
+		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
 	it('offers to open a lifted agent on its host', () => {
 		expect(build().commands.some((c) => c.id === 'federation-open-lifted-agent')).toBe(false);
 		const { deps, commands } = build({ liftedTarget: { ref: 'buildbox:h1' } });

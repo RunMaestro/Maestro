@@ -102,7 +102,7 @@ A blocked agent is tried again when its record or its remote changes, or after a
 
 Maestro never replaces a running host on its own to upgrade it, because that would interrupt its work. A host on an older version keeps running and gets agents, and the status names the upgrade command.
 
-Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
+An agent you moved back with **Move Back from Host** is never moved automatically again. Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
 
 ### When Maestro needs you
 
@@ -277,7 +277,17 @@ maestro-cli lift docs              # move it
 maestro-cli lift docs --with-env   # also send secret env vars
 ```
 
-A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. A lift is one way: there is no automatic move back to an SSH agent. [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
+A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. To undo a lift, see [Move a hosted agent back](#move-a-hosted-agent-back). [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
+
+## Move a hosted agent back
+
+Right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. The agent becomes an SSH agent again, with everything an SSH agent has (terminal mode, browser tabs, the full Main Window):
+
+- The host's tabs come back with their transcripts and provider session IDs. A tab that moved lands on its own tab here, and a tab started on the host arrives as a new tab. The next turn over SSH resumes the same conversation. No tab is dropped.
+- The host's copy is removed, so the agent has one owner again.
+- Automatic moves leave the agent an SSH agent from then on. **Move to Host** hosts it again.
+
+It refuses while a turn runs on the host or messages wait in its queue there. When the host cannot be reached, it offers to move the agent back with only this machine's copy; conversations started on the host then stay there, and its copy there is not removed. From the CLI: `maestro-cli unlift <agent>` (see [Move a Hosted Agent Back](./cli#move-a-hosted-agent-back)).
 
 ## Durability
 

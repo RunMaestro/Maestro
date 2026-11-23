@@ -105,8 +105,9 @@ export function withLiftPointer(
 ): Record<string, unknown> {
 	const moved = new Set(movedQueueItemIds);
 	const queue = Array.isArray(record.executionQueue) ? record.executionQueue : undefined;
+	const { hostedOptOut: _hostedOptOut, ...rest } = record;
 	return {
-		...record,
+		...rest,
 		liftedTo: pointer,
 		...(queue
 			? {
@@ -119,17 +120,20 @@ export function withLiftPointer(
 	};
 }
 
+/** Who owns this machine's agent store right now: the running desktop, a headless host, or none. */
+export function localStoreOwner(): LocalStoreOwner {
+	const info = readCliServerInfo();
+	if (!info || !isPidAlive(info.pid)) return 'none';
+	return info.hostKind === 'headless' ? 'headless-host' : 'desktop';
+}
+
 const defaultDeps: LiftDeps = {
 	readAgents: () => readSessions() as unknown as AgentRecord[],
 	readRemotes: () => readSshRemotes(),
 	resolveAgentId: (ref) => resolveAgentId(ref),
 	providerEnvVars: (provider) => providerEnvVarsOf(readAgentConfig(provider).customEnvVars),
 	cliBusy: (agentId) => checkAgentBusy(agentId),
-	localStoreOwner: () => {
-		const info = readCliServerInfo();
-		if (!info || !isPidAlive(info.pid)) return 'none';
-		return info.hostKind === 'headless' ? 'headless-host' : 'desktop';
-	},
+	localStoreOwner,
 	connect: (peerRef) => connectPeer(peerRef),
 	setPointerInDesktop: (agentId, pointer, movedQueueItemIds) =>
 		sendSimpleCommand(

@@ -359,4 +359,10 @@ describe('withLiftPointer', () => {
 			liftedTo: pointer,
 		});
 	});
+
+	it('clears an earlier Move Back opt-out, so the agent is hosted again', () => {
+		const pointer = { peer: 'build-box', agentId: 'host-1', at: NOW };
+		const lifted = withLiftPointer({ id: 'agent-1', hostedOptOut: true }, pointer, []);
+		expect(lifted).toEqual({ id: 'agent-1', liftedTo: pointer });
+	});
 });

@@ -100,7 +100,11 @@ import {
 } from '../../stores/hostedAgentSettingsStore';
 import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
-import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import {
+	openLiftedAgent,
+	requestMoveBackFromHost,
+	requestMoveToHost,
+} from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
 	useAddableHostedAgentCount,
@@ -624,6 +628,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					}
 				: undefined,
 		requestMoveToHost,
+		// The hosted view is the active agent's own row (`followLiftedPointer`), so this is offered
+		// while it is shown.
+		moveBackFromHost:
+			activeSession && federationStatus.kind === 'moved'
+				? {
+						sessionId: activeSession.id,
+						agentName: activeSession.name,
+						peerName: federationStatus.peer?.name ?? federationStatus.peerId,
+					}
+				: undefined,
+		requestMoveBackFromHost,
 		liftedTarget: activeMirror ? undefined : liftedTarget,
 		openLiftedAgent: () => {
 			if (activeSession) openLiftedAgent(activeSession);

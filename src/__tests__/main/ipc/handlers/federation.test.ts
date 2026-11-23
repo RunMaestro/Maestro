@@ -117,7 +117,7 @@ describe('federation IPC handlers', () => {
 		});
 	});
 
-	it('registers the thirteen federation channels', () => {
+	it('registers the fourteen federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'federation:act',
 			'federation:autoRun',
@@ -132,6 +132,7 @@ describe('federation IPC handlers', () => {
 			'federation:snapshot',
 			'federation:status',
 			'federation:transcript',
+			'federation:unlift',
 		]);
 	});
 

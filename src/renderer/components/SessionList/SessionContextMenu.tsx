@@ -27,6 +27,7 @@ import {
 	Check,
 	PackageOpen,
 	ServerCog,
+	Undo2,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -43,7 +44,7 @@ import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { useAgentFederationStatus } from '../../hooks/federation/useAgentLift';
 import { canMoveToHost } from '../../utils/peerMirrorView';
-import { requestMoveToHost } from '../../services/agentLift';
+import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agentLift';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -233,9 +234,11 @@ export function SessionContextMenu({
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	// Federation (FED-SSH-06): Move to Host for an SSH agent whose remote takes part (it sets a host
-	// up first when there is none). A hosted agent's menu is a local agent's menu: its host
-	// connection (reconnect, start the host) lives in its view's disconnected banner and the palette.
+	// up first when there is none), and its reverse, Move Back from Host, for a hosted agent. Those
+	// are the only Federation rows: the host connection (reconnect, start the host) lives in the
+	// hosted view's disconnected banner and the palette.
 	const federationStatus = useAgentFederationStatus(session);
+	const hosted = federationStatus.kind === 'moved' ? federationStatus : undefined;
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -424,6 +427,23 @@ export function SessionContextMenu({
 				>
 					<ServerCog className="w-3.5 h-3.5" />
 					Move to Host ({federationStatus.peer.name})...
+				</button>
+			)}
+
+			{hosted && (
+				<button
+					type="button"
+					onClick={() => {
+						requestMoveBackFromHost(session.id, session.name, hosted.peer?.name ?? hosted.peerId);
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					title={`Make it an SSH agent again: its conversations on ${hosted.peer?.name ?? hosted.peerId} come back here, and automatic moves leave it alone`}
+					data-testid="session-menu-move-back-from-host"
+				>
+					<Undo2 className="w-3.5 h-3.5" />
+					Move Back from Host ({hosted.peer?.name ?? hosted.peerId})...
 				</button>
 			)}
 
