@@ -198,6 +198,8 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 			// Forward session env so naming uses the same provider auth as the chat.
 			sessionCustomEnvVars: providerSession.customEnvVars,
+			// And the agent's own binary, so naming runs the program the chat runs.
+			sessionCustomPath: providerSession.customPath,
 			// Honor the agent's Claude token source for the naming spawn. Shared
 			// extractor guarantees the SAME complete triple the chat spawn forwards -
 			// no partial/drifting forward possible.

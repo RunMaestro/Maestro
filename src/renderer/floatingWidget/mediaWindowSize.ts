@@ -61,6 +61,27 @@ export interface MediaWindowFit {
 	aspect?: number;
 	/** Measured transport height, or null before the first measurement. */
 	transportHeight: number | null;
+	/**
+	 * Narrowest the transport can be without clipping a control (from
+	 * `MediaViewer`'s `onTransportMinWidthChange`), or null before the first
+	 * measurement. The row gains prev/next and fullscreen with the queue and the
+	 * file, so this moves while the window is open.
+	 */
+	transportMinWidth?: number | null;
+}
+
+/**
+ * Window width that shows every transport control: the measured row plus the
+ * frame's border on each side, or null before the row has been measured.
+ *
+ * Not `mediaFloatMinWidth()`: that one also floors at the in-app frame's own
+ * minimum (300). This window's floor below the controls is its spec minimum,
+ * which main already enforces, so adding the in-app floor here would only
+ * widen a window whose controls fit.
+ */
+export function mediaWindowMinWidth(transportMinWidth?: number | null): number | null {
+	if (typeof transportMinWidth !== 'number' || !(transportMinWidth > 0)) return null;
+	return Math.ceil(transportMinWidth) + 2 * MEDIA_WINDOW_FRAME_BORDER;
 }
 
 /**
@@ -81,7 +102,12 @@ export function mediaWindowSizeFor(fit: MediaWindowFit): MediaWindowSize {
 		typeof fit.transportHeight === 'number' && fit.transportHeight > 0
 			? Math.round(fit.transportHeight)
 			: MEDIA_FLOAT_TRANSPORT_FALLBACK_HEIGHT;
-	const width = MEDIA_WINDOW_WIDTH[fit.kind];
+	// Never narrower than the controls: a clipped transport hides buttons (the
+	// "Open in default app" one first) that the user cannot reach another way.
+	const width = Math.max(
+		MEDIA_WINDOW_WIDTH[fit.kind],
+		mediaWindowMinWidth(fit.transportMinWidth) ?? 0
+	);
 	const chrome = MEDIA_WINDOW_STRIP_HEIGHT + transport + 2 * MEDIA_WINDOW_FRAME_BORDER;
 	if (fit.kind !== 'video') return { width, height: chrome };
 	const stageWidth = width - 2 * MEDIA_WINDOW_FRAME_BORDER;

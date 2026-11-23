@@ -156,13 +156,19 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		return;
 	}
 
-	// `--cwd` is required unless the group names a working directory. A remote
-	// directory (the group runs on an SSH remote) means nothing on this machine,
-	// so it is passed as stored and never made absolute.
+	// `--cwd` is required unless `--ssh-cwd` (over SSH) or the group names a
+	// working directory. Over SSH the working directory is a path on the REMOTE,
+	// and the New Agent dialog stores it as both the agent's cwd and its
+	// workingDirOverride: AI turns spawn in cwd, terminals and git read the
+	// override. A remote directory is passed as stored and never made absolute.
 	const seededRemote =
 		!options.sshRemote && groupDefaults?.sessionSshRemoteConfig?.enabled === true;
+	const remoteCwd =
+		options.sshRemote || seededRemote ? options.sshCwd?.trim() || undefined : undefined;
 	let cwd: string;
-	if (options.cwd !== undefined) {
+	if (remoteCwd) {
+		cwd = remoteCwd;
+	} else if (options.cwd !== undefined) {
 		cwd = resolveAgentCwdArg(options.cwd);
 	} else if (groupDefaults?.projectRoot) {
 		cwd = seededRemote ? groupDefaults.projectRoot : path.resolve(groupDefaults.projectRoot);
@@ -236,7 +242,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		sessionSshRemoteConfig = {
 			enabled: true,
 			remoteId: options.sshRemote,
-			workingDirOverride: options.sshCwd,
+			workingDirOverride: cwd,
 			syncHistory,
 		};
 	} else if (groupSsh?.enabled && (options.sshCwd !== undefined || syncHistory !== undefined)) {

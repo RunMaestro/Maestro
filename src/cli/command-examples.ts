@@ -78,6 +78,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'prompt-link list': ['maestro-cli prompt-link list', 'maestro-cli prompt-link list --all --json'],
 	'prompt-link revoke': ['maestro-cli prompt-link revoke <id>'],
 	'claude-canary': ['maestro-cli claude-canary', 'maestro-cli claude-canary --run --json'],
+	'install-command': [
+		'maestro-cli install-command codex',
+		'maestro-cli install-command claude-code --platform linux --json',
+	],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],

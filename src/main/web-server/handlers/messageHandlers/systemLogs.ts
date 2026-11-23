@@ -4,17 +4,41 @@
  * Handles: system_logs, system_logs_clear. The CLI's route (`maestro-cli logs`)
  * to `readSystemLogs()` and `clearSystemLogs()`, the same reads and the same
  * clear the System Log Viewer performs.
+ *
+ * CLI only. Log entries carry paths, prompts, and error detail; the web
+ * interface has the viewer itself and no reason to pull the raw buffer.
  */
 
 import { clearSystemLogs, readSystemLogs } from '../../../system-logs';
+import { logger } from '../../../utils/logger';
 import { parseSystemLogsQuery } from '../../../../shared/logSources';
+import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+function refuseNonCli(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage,
+	resultType: string
+): boolean {
+	if (client.cli) return false;
+	logger.warn(`Refused ${message.type} from non-CLI client ${client.id}`, LOG_CONTEXT);
+	ctx.send(client, {
+		type: resultType,
+		success: false,
+		error: 'The system log is available to maestro-cli only',
+		requestId: message.requestId,
+	});
+	return true;
+}
 
 export async function handleSystemLogs(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): Promise<void> {
+	if (refuseNonCli(ctx, client, message, 'system_logs_result')) return;
+
 	const parsed = parseSystemLogsQuery((message as { query?: unknown }).query);
 	if ('error' in parsed) {
 		ctx.send(client, {
@@ -48,6 +72,8 @@ export function handleSystemLogsClear(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
+	if (refuseNonCli(ctx, client, message, 'system_logs_clear_result')) return;
+
 	clearSystemLogs();
 	ctx.send(client, {
 		type: 'system_logs_clear_result',

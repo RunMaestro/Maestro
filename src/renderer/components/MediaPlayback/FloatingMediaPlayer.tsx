@@ -27,6 +27,7 @@ import {
 	fitMediaFloatRect,
 	initialMediaFloatRect,
 	mediaFloatChromeHeight,
+	mediaFloatMinWidth,
 	mediaFloatFootprint,
 	mediaFloatResizeWidth,
 	mediaFloatWidthFor,
@@ -54,6 +55,11 @@ interface FloatingMediaPlayerProps {
 	 * measured rather than assumed.
 	 */
 	transportHeight?: number | null;
+	/**
+	 * Measured width the transport inside `children` needs to show every
+	 * control. The frame never shrinks below it, so no button is ever clipped.
+	 */
+	transportMinWidth?: number | null;
 	/**
 	 * Minimized to the Left Bar: the frame hides itself instead of being
 	 * unmounted by the caller.
@@ -121,6 +127,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	kind,
 	aspect = DEFAULT_MEDIA_ASPECT,
 	transportHeight,
+	transportMinWidth,
 	hidden = false,
 	children,
 	theme,
@@ -149,11 +156,17 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	topInsetRef.current = topInset;
 	const viewport = useCallback(() => measureViewport(topInsetRef.current), []);
 
-	// Everything that decides the frame's height. Held in a ref too, so the
-	// window-level drag handlers can read it without re-subscribing.
+	// Everything that decides the frame's height and its width floor. Held in a
+	// ref too, so the window-level drag handlers can read it without
+	// re-subscribing.
 	const fit: MediaFloatFit = useMemo(
-		() => ({ kind, aspect, chromeHeight: mediaFloatChromeHeight(transportHeight) }),
-		[kind, aspect, transportHeight]
+		() => ({
+			kind,
+			aspect,
+			chromeHeight: mediaFloatChromeHeight(transportHeight),
+			minWidth: mediaFloatMinWidth(transportMinWidth),
+		}),
+		[kind, aspect, transportHeight, transportMinWidth]
 	);
 	const fitRef = useRef(fit);
 	fitRef.current = fit;

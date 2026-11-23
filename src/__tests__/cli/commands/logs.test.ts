@@ -75,11 +75,13 @@ describe('logs command', () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
 
-	it('sends the pills, levels, search and limit as the query', async () => {
+	it('sends the pills, levels, context, since, search and limit as the query', async () => {
 		const cap = mockSend({ success: true, result: RESULT });
 		await logs({
 			source: 'model-server, maestro',
 			level: 'warn,error',
+			context: 'WebServer',
+			since: '2026-11-13T04:00:00.000Z',
 			search: 'load',
 			limit: '2',
 		});
@@ -89,6 +91,8 @@ describe('logs command', () => {
 			query: {
 				sources: ['model-server', 'maestro'],
 				levels: ['warn', 'error'],
+				context: 'WebServer',
+				since: Date.parse('2026-11-13T04:00:00.000Z'),
 				search: 'load',
 				limit: 2,
 			},
@@ -99,6 +103,12 @@ describe('logs command', () => {
 		const cap = mockSend({ success: true, result: RESULT });
 		await logs({});
 		expect(cap.payload).toEqual({ type: 'system_logs', query: {} });
+	});
+
+	it('rejects an unparseable --since before dialing the app', async () => {
+		await expect(logs({ since: 'not-a-time' })).rejects.toThrow('__exit__');
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 	});
 
 	it("prints the entries in the viewer's Export format, with the source notes", async () => {
