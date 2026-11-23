@@ -3,10 +3,12 @@ import {
 	antigravityEffortUnion,
 	antigravitySdkSelection,
 	parseAntigravityModelList,
+	readAntigravityModelEffortArgs,
 	resolveAntigravityModelEffortArgs,
 	resolveAntigravitySelection,
 	splitAntigravityModelEffort,
 } from '../../shared/antigravityModels';
+import { noteEffortRejection, resetEffortRejections } from '../../shared/effortRejection';
 
 // Verbatim `agy models` output on agy 1.5.14.
 const AGY_MODELS = `Fetching available models...
@@ -161,9 +163,55 @@ describe('resolveAntigravityModelEffortArgs', () => {
 		expect(resolveAntigravityModelEffortArgs(args)).toBe(args);
 	});
 
+	it('drops an --effort this model already refused, and keeps it for other models', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		try {
+			expect(
+				resolveAntigravityModelEffortArgs([
+					'--model',
+					'gpt-oss-120b',
+					'--effort',
+					'high',
+					'-p',
+					'x',
+				])
+			).toEqual(['--model', 'gpt-oss-120b', '-p', 'x']);
+			const neon = ['--model', 'gemini-4-neon', '--effort', 'high'];
+			expect(resolveAntigravityModelEffortArgs(neon)).toBe(neon);
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	it('leaves args with no model or effort flag untouched', () => {
 		const args = ['--output-format', 'stream-json', '-p', 'x'];
 		expect(resolveAntigravityModelEffortArgs(args)).toBe(args);
+	});
+});
+
+describe('readAntigravityModelEffortArgs', () => {
+	it('reads the last --model and --effort in either spelling', () => {
+		expect(
+			readAntigravityModelEffortArgs([
+				'--model',
+				'a',
+				'--effort=low',
+				'-p',
+				'x',
+				'--model=b',
+				'--effort',
+				'high',
+			])
+		).toEqual({ model: 'b', effort: 'high' });
+	});
+
+	it('leaves out an axis no flag names', () => {
+		expect(readAntigravityModelEffortArgs(['--effort', 'low'])).toEqual({ effort: 'low' });
+		expect(readAntigravityModelEffortArgs(['-p', 'x'])).toEqual({});
 	});
 });
 

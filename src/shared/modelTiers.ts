@@ -35,6 +35,7 @@
 import type { ToolType } from './types';
 import { FALLBACK_CONTEXT_WINDOW, getModelContextWindowOverride } from './agentConstants';
 import { getEffortRejection, type EffortRejection } from './effortRejection';
+import { splitAntigravityModelEffort } from './antigravityModels';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -160,10 +161,11 @@ export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | 
 export function resolveEffortLevel(
 	toolType: ToolType,
 	level: EffortLevel,
-	supportedEfforts?: readonly string[]
+	supportedEfforts?: readonly string[],
+	model?: string
 ): string | undefined {
 	const value = EFFORT_LADDERS[toolType]?.[level];
-	if (value === undefined || rejectedEffortForLevel(toolType, level)) return undefined;
+	if (value === undefined || rejectedEffortForLevel(toolType, level, model)) return undefined;
 	if (toolType === 'grok' && !supportedEfforts?.includes(value)) return undefined;
 	return value;
 }
@@ -177,13 +179,21 @@ export function resolveEffortLevel(
  * `undefined` - inherit the agent's own effort - instead of sending a value
  * that is known to fail the turn. Callers that explain an unmapped level to the
  * user read the refusal from here so they can say what actually happened.
+ *
+ * `model` is the model the turn will run. Antigravity refusals are per model
+ * (each model lists its own efforts), so one model's refusal withdraws the
+ * level for that model only; other providers ignore it.
  */
 export function rejectedEffortForLevel(
 	toolType: ToolType,
-	level: EffortLevel
+	level: EffortLevel,
+	model?: string
 ): EffortRejection | undefined {
 	const value = EFFORT_LADDERS[toolType]?.[level];
-	return value === undefined ? undefined : getEffortRejection(toolType, value);
+	if (value === undefined) return undefined;
+	const lookupModel =
+		toolType === 'antigravity' && model ? splitAntigravityModelEffort(model).base : model;
+	return getEffortRejection(toolType, value, lookupModel);
 }
 
 /**
@@ -238,7 +248,12 @@ export function cheapTurnSettings(
 } {
 	return {
 		model: resolveTierModel(toolType, 'low'),
-		effort: resolveEffortLevel(toolType, 'low', supportedEfforts),
+		effort: resolveEffortLevel(
+			toolType,
+			'low',
+			supportedEfforts,
+			resolveTierModel(toolType, 'low')
+		),
 	};
 }
 

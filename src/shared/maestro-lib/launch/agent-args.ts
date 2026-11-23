@@ -6,8 +6,10 @@ import type {
 } from '../../types';
 import { describeEffortRejection, getEffortRejection } from '../../effortRejection';
 import {
+	readAntigravityModelEffortArgs,
 	resolveAntigravityModelEffortArgs,
 	resolveAntigravitySelection,
+	isAntigravityEffortRefused,
 } from '../../antigravityModels';
 import { logger } from '../host';
 
@@ -652,7 +654,14 @@ export function applyAgentConfigOverrides(
 		// custom args) sends one the CLI accepts. The SDK path reads modelId and
 		// effort, so they get the same resolution.
 		finalArgs = resolveAntigravityModelEffortArgs(finalArgs);
-		const selected = resolveAntigravitySelection(modelId, effort);
+		// The SDK path sends modelId and effort, so they come from the same
+		// last-wins flags the CLI reads; a configured value stands when no flag
+		// names that axis.
+		const flags = readAntigravityModelEffortArgs(finalArgs);
+		const selected = resolveAntigravitySelection(flags.model ?? modelId, flags.effort ?? effort);
+		if (selected.effort && isAntigravityEffortRefused(selected.model, selected.effort)) {
+			delete selected.effort;
+		}
 		modelId = selected.model;
 		effort = selected.effort;
 	}

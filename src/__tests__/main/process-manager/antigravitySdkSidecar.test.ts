@@ -90,9 +90,22 @@ describe.skipIf(!PYTHON_AVAILABLE)('Antigravity SDK sidecar', () => {
 		child = undefined;
 	});
 
-	function runSidecar(stub: string, params: Record<string, unknown>) {
+	// The sidecar picks a Vertex endpoint from these; never inherit the developer's.
+	const GEMINI_API_ENV = {
+		GOOGLE_GENAI_USE_VERTEXAI: 'false',
+		GOOGLE_GENAI_USE_ENTERPRISE: 'false',
+	};
+
+	function runSidecar(
+		stub: string,
+		params: Record<string, unknown>,
+		env: Record<string, string> = GEMINI_API_ENV
+	) {
 		const wrapper = `${stub}\nexec(compile(${JSON.stringify(ANTIGRAVITY_SDK_SIDECAR)}, "sidecar.py", "exec"))\n`;
-		child = spawn(PYTHON, ['-u', '-c', wrapper], { stdio: ['pipe', 'pipe', 'pipe'] });
+		child = spawn(PYTHON, ['-u', '-c', wrapper], {
+			stdio: ['pipe', 'pipe', 'pipe'],
+			env: { ...process.env, ...env },
+		});
 		let buffer = '';
 		const texts: string[] = [];
 		const completed = Promise.withResolvers<number>();
@@ -141,6 +154,17 @@ describe.skipIf(!PYTHON_AVAILABLE)('Antigravity SDK sidecar', () => {
 		});
 		await expect(run.code).resolves.toBe(0);
 		expect(run.texts).toEqual(['gemini-4-neon GeminiAPIEndpoint EXTRA_HIGH TEXT']);
+		child!.stdin.end();
+	}, 15_000);
+
+	it('carries the effort on a Vertex model target when Vertex is selected', async () => {
+		const run = runSidecar(
+			STUB + EFFORT_STUB,
+			{ permission_mode: 'full', model: 'gemini-4-hydrogen', effort: 'low' },
+			{ GOOGLE_GENAI_USE_VERTEXAI: 'true', GOOGLE_GENAI_USE_ENTERPRISE: 'false' }
+		);
+		await expect(run.code).resolves.toBe(0);
+		expect(run.texts).toEqual(['gemini-4-hydrogen VertexEndpoint LOW TEXT']);
 		child!.stdin.end();
 	}, 15_000);
 

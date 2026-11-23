@@ -438,6 +438,24 @@ describe('Antigravity tiers and effort', () => {
 			model: 'gpt-oss-120b',
 			supported: ['medium'],
 		});
-		expect(resolveEffortLevel('antigravity', 'high')).toBe('high');
+		expect(resolveEffortLevel('antigravity', 'high', undefined, 'gemini-4-neon')).toBe('high');
+		resetEffortRejections();
+	});
+
+	it('withdraws a level only for the model that refused it, suffixed or not', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		expect(resolveEffortLevel('antigravity', 'high', undefined, 'gpt-oss-120b')).toBeUndefined();
+		expect(
+			resolveEffortLevel('antigravity', 'high', undefined, 'gpt-oss-120b-medium')
+		).toBeUndefined();
+		expect(rejectedEffortForLevel('antigravity', 'high', 'gpt-oss-120b')?.supported).toEqual([
+			'medium',
+		]);
+		expect(rejectedEffortForLevel('antigravity', 'high', 'gemini-4-neon')).toBeUndefined();
+		resetEffortRejections();
 	});
 });

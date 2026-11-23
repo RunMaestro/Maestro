@@ -20,6 +20,8 @@
  * - An effort the base does not list is refused, naming the ones it does.
  */
 
+import { getEffortRejection } from './effortRejection';
+
 /** Every effort word `agy --effort` accepts, in ladder order. */
 export const ANTIGRAVITY_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -109,38 +111,78 @@ export function resolveAntigravitySelection(
 }
 
 /**
- * Rewrite `--model` / `--effort` in an `agy` argument list so the pair is one
- * the CLI accepts (see {@link resolveAntigravitySelection}). Both `--flag value`
- * and `--flag=value` spellings are read; the last occurrence of each wins, the
- * way the CLI's own flag parser reads them. Everything else keeps its place.
+ * True when agy refused `effort` for this model earlier in this process (see
+ * `effortRejection.ts`). agy names the base id in its refusal, so a suffixed id
+ * is looked up by its base.
  */
-export function resolveAntigravityModelEffortArgs(args: string[]): string[] {
-	let model: string | undefined;
-	let effort: string | undefined;
-	const rest: string[] = [];
-	const modelAt: number[] = [];
-	const effortAt: number[] = [];
+export function isAntigravityEffortRefused(model: string | undefined, effort: string): boolean {
+	const base = model ? splitAntigravityModelEffort(model).base : undefined;
+	return getEffortRejection('antigravity', effort, base) !== undefined;
+}
+
+interface ScannedModelEffortArgs {
+	model?: string;
+	effort?: string;
+	rest: string[];
+	modelAt: number[];
+	effortAt: number[];
+}
+
+function scanModelEffortArgs(args: readonly string[]): ScannedModelEffortArgs {
+	const scanned: ScannedModelEffortArgs = { rest: [], modelAt: [], effortAt: [] };
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
-		const flag = arg === '--model' || arg.startsWith('--model=') ? 'model' : null;
-		const effortFlag = arg === '--effort' || arg.startsWith('--effort=') ? 'effort' : null;
-		const which = flag ?? effortFlag;
+		const which =
+			arg === '--model' || arg.startsWith('--model=')
+				? 'model'
+				: arg === '--effort' || arg.startsWith('--effort=')
+					? 'effort'
+					: null;
 		if (!which) {
-			rest.push(arg);
+			scanned.rest.push(arg);
 			continue;
 		}
 		const equals = arg.indexOf('=');
 		const value = equals >= 0 ? arg.slice(equals + 1) : args[++i];
-		if (which === 'model') {
-			model = value;
-			modelAt.push(rest.length);
-		} else {
-			effort = value;
-			effortAt.push(rest.length);
-		}
+		scanned[which] = value;
+		(which === 'model' ? scanned.modelAt : scanned.effortAt).push(scanned.rest.length);
 	}
+	return scanned;
+}
+
+/**
+ * The `--model` and `--effort` an `agy` argument list ends up selecting: the
+ * last occurrence of each, in either the `--flag value` or `--flag=value`
+ * spelling, the way the CLI's own flag parser reads them. A flag that is absent
+ * is absent from the result.
+ */
+export function readAntigravityModelEffortArgs(args: readonly string[]): {
+	model?: string;
+	effort?: string;
+} {
+	const { model, effort } = scanModelEffortArgs(args);
+	const read: { model?: string; effort?: string } = {};
+	if (model?.trim()) read.model = model.trim();
+	if (effort?.trim()) read.effort = effort.trim();
+	return read;
+}
+
+/**
+ * Rewrite `--model` / `--effort` in an `agy` argument list so the pair is one
+ * the CLI accepts (see {@link resolveAntigravitySelection}), reading the flags
+ * as {@link readAntigravityModelEffortArgs} does. Everything else keeps its place.
+ *
+ * An effort this model already refused in this process
+ * ({@link isAntigravityEffortRefused}) is dropped, so the turn runs at the CLI's
+ * default effort instead of failing the same way again.
+ */
+export function resolveAntigravityModelEffortArgs(args: string[]): string[] {
+	const { model, effort, rest, modelAt, effortAt } = scanModelEffortArgs(args);
 	if (modelAt.length === 0 && effortAt.length === 0) return args;
 	const selected = resolveAntigravitySelection(model, effort);
+	if (selected.effort && isAntigravityEffortRefused(selected.model, selected.effort)) {
+		delete selected.effort;
+	}
 	// Only a real conflict is rewritten; anything agy accepts keeps its spelling.
 	const readModel = model?.trim() || undefined;
 	const readEffort = effort?.trim() || undefined;

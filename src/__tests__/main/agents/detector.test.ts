@@ -2727,6 +2727,54 @@ describe('agent-detector', () => {
 				'xhigh',
 			]);
 		});
+
+		it('retries a failed `agy models` on the next ordinary request instead of caching it', async () => {
+			let signedIn = false;
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd !== '/usr/bin/agy' || args[0] !== 'models') {
+					return { stdout: '', stderr: '', exitCode: 1 };
+				}
+				modelsCalls++;
+				return signedIn
+					? { stdout: AGY_MODELS, stderr: '', exitCode: 0 }
+					: { stdout: '', stderr: 'You are not logged into Antigravity.', exitCode: 1 };
+			});
+			expect(await detector.discoverModels('antigravity', true)).toEqual([]);
+			expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+				'',
+				'low',
+				'medium',
+				'high',
+				'xhigh',
+			]);
+			signedIn = true;
+			expect(await detector.discoverModels('antigravity')).toContain('gpt-oss-120b');
+			expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+				'',
+				'low',
+				'medium',
+				'high',
+				'xhigh',
+			]);
+		});
+
+		it('refreshes the effort menu with the models when either is forced', async () => {
+			let stdout = AGY_MODELS;
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) =>
+				cmd === '/usr/bin/agy' && args[0] === 'models'
+					? { stdout, stderr: '', exitCode: 0 }
+					: { stdout: '', stderr: '', exitCode: 1 }
+			);
+			await detector.discoverModels('antigravity', true);
+			expect(await detector.discoverConfigOptions('antigravity', 'effort')).toContain('xhigh');
+			stdout = 'gemini-4-carbon-low\tC\ngemini-4-carbon-high\tC\n';
+			expect(await detector.discoverModels('antigravity', true)).toEqual(['gemini-4-carbon']);
+			expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+				'',
+				'low',
+				'high',
+			]);
+		});
 	});
 
 	describe('discoverConfigOptions', () => {

@@ -366,6 +366,25 @@ describe('resolveTurnSettings', () => {
 		}
 	});
 
+	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		try {
+			const hint = findActiveModelHint(`<!-- MAESTRO:MODEL effort="high" -->\n- [ ] x`);
+			const refused = resolveTurnSettings('antigravity', hint, 'gpt-oss-120b', 'medium');
+			expect(refused.effort).toBe('medium');
+			expect(refused.warnings.join(' ')).toContain('gpt-oss-120b');
+			const other = resolveTurnSettings('antigravity', hint, 'gemini-4-neon', 'medium');
+			expect(other.effort).toBe('high');
+			expect(other.warnings).toEqual([]);
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	describe('after the provider refused the value a level maps to', () => {
 		afterEach(() => {
 			resetEffortRejections();

@@ -755,14 +755,19 @@ export class AgentDetector {
 			}
 		}
 
-		// Run agent-specific model discovery command
-		if (forceRefresh && agentId === 'antigravity') this.antigravityCatalog = null;
+		// Run agent-specific model discovery command. The model and effort menus
+		// share one `agy models` read, so a forced refresh of either drops both.
+		if (forceRefresh && agentId === 'antigravity') this.clearModelCache('antigravity');
 		const models = await this.runModelDiscovery(agentId, agent);
 
 		// A transient `omp models --json` failure returns an empty list. Don't cache
 		// that, or the picker stays empty for the whole TTL even after the CLI
 		// recovers; let the next call retry. (omp always has a non-empty catalog.)
 		if (agentId === 'omp' && models.length === 0) {
+			return models;
+		}
+		// Same for a failed `agy models` (signed out, CLI updating): retry next time.
+		if (agentId === 'antigravity' && !this.antigravityCatalog) {
 			return models;
 		}
 
@@ -1242,8 +1247,11 @@ export class AgentDetector {
 			}
 		}
 
-		if (forceRefresh && agentId === 'antigravity') this.antigravityCatalog = null;
+		if (forceRefresh && agentId === 'antigravity') this.clearModelCache('antigravity');
 		const options = await this.runConfigOptionDiscovery(agentId, optionKey);
+		// A failed `agy models` read falls back to the static menu; keep that
+		// uncached so the discovered menu replaces it once the CLI answers.
+		if (agentId === 'antigravity' && !this.antigravityCatalog) return options;
 		this.configOptionCache.set(cacheKey, { options, timestamp: Date.now() });
 		return options;
 	}

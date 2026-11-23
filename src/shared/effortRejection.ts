@@ -27,6 +27,10 @@
  * models until restart. That is the safe direction - the turn runs at the
  * agent's configured effort instead of failing.
  *
+ * Antigravity is the exception: `agy` checks efforts per model (GPT-OSS takes
+ * only medium, Neon goes to xhigh) and names the model in every refusal, so its
+ * refusals are keyed by model too. Its callers pass the model the turn runs.
+ *
  * It only ever affects values Maestro chose through the ladder. An effort the
  * user picked on a tab or an agent is never rewritten here: that turn keeps
  * failing with the provider's own message, which is the user's to act on.
