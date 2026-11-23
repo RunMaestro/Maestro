@@ -2671,6 +2671,8 @@ describe('agent-detector', () => {
 			'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)',
 			'',
 		].join('\n');
+		// A catalogue whose effort union differs from the static fallback menu.
+		const CARBON_ONLY = 'gemini-4-carbon-low\tC\ngemini-4-carbon-high\tC\n';
 		let modelsCalls = 0;
 
 		beforeEach(async () => {
@@ -2736,7 +2738,7 @@ describe('agent-detector', () => {
 				}
 				modelsCalls++;
 				return signedIn
-					? { stdout: AGY_MODELS, stderr: '', exitCode: 0 }
+					? { stdout: CARBON_ONLY, stderr: '', exitCode: 0 }
 					: { stdout: '', stderr: 'You are not logged into Antigravity.', exitCode: 1 };
 			});
 			expect(await detector.discoverModels('antigravity', true)).toEqual([]);
@@ -2748,13 +2750,12 @@ describe('agent-detector', () => {
 				'xhigh',
 			]);
 			signedIn = true;
-			expect(await detector.discoverModels('antigravity')).toContain('gpt-oss-120b');
+			expect(await detector.discoverModels('antigravity')).toEqual(['gemini-4-carbon']);
+			// Differs from the static fallback, so this proves the menu recovered.
 			expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
 				'',
 				'low',
-				'medium',
 				'high',
-				'xhigh',
 			]);
 		});
 
@@ -2762,10 +2763,11 @@ describe('agent-detector', () => {
 			vi.useFakeTimers({ toFake: ['Date'] });
 			try {
 				let ok = true;
+				let stdout = AGY_MODELS;
 				mockExecFileNoThrow.mockImplementation(async (cmd, args) =>
 					cmd === '/usr/bin/agy' && args[0] === 'models'
 						? ok
-							? { stdout: AGY_MODELS, stderr: '', exitCode: 0 }
+							? { stdout, stderr: '', exitCode: 0 }
 							: { stdout: '', stderr: 'offline', exitCode: 1 }
 						: { stdout: '', stderr: '', exitCode: 1 }
 				);
@@ -2781,7 +2783,41 @@ describe('agent-detector', () => {
 					'xhigh',
 				]);
 				ok = true;
-				expect(await detector.discoverModels('antigravity')).toContain('gpt-oss-120b');
+				stdout = CARBON_ONLY;
+				expect(await detector.discoverModels('antigravity')).toEqual(['gemini-4-carbon']);
+				expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+					'',
+					'low',
+					'high',
+				]);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('expires each menu with the catalogue it was derived from', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			try {
+				let stdout = AGY_MODELS;
+				mockExecFileNoThrow.mockImplementation(async (cmd, args) =>
+					cmd === '/usr/bin/agy' && args[0] === 'models'
+						? { stdout, stderr: '', exitCode: 0 }
+						: { stdout: '', stderr: '', exitCode: 1 }
+				);
+				const start = Date.now();
+				await detector.discoverModels('antigravity', true);
+				// The effort menu is derived just before the catalogue expires...
+				vi.setSystemTime(start + 4 * 60 * 1000 + 59 * 1000);
+				expect(await detector.discoverConfigOptions('antigravity', 'effort')).toContain('xhigh');
+				// ...and the model menu loads a newer catalogue just after.
+				vi.setSystemTime(start + 5 * 60 * 1000 + 1000);
+				stdout = CARBON_ONLY;
+				expect(await detector.discoverModels('antigravity')).toEqual(['gemini-4-carbon']);
+				expect(await detector.discoverConfigOptions('antigravity', 'effort')).toEqual([
+					'',
+					'low',
+					'high',
+				]);
 			} finally {
 				vi.useRealTimers();
 			}

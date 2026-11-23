@@ -782,7 +782,7 @@ export class AgentDetector {
 		}
 
 		// Cache the results
-		this.modelCache.set(agentId, { models, timestamp: Date.now() });
+		this.modelCache.set(agentId, { models, timestamp: this.menuCacheTimestamp(agentId) });
 
 		return models;
 	}
@@ -1235,6 +1235,18 @@ export class AgentDetector {
 		return read;
 	}
 
+	/**
+	 * When a menu cache entry starts aging. Antigravity's model and effort menus
+	 * are derived from one `agy models` read, so they carry that read's time and
+	 * expire with it; a menu derived late in the catalogue's window must not
+	 * outlive it while a sibling menu has already moved to a newer read.
+	 */
+	private menuCacheTimestamp(agentId: string): number {
+		return agentId === 'antigravity' && this.antigravityCatalog
+			? this.antigravityCatalog.timestamp
+			: Date.now();
+	}
+
 	/** True when menus read under `generation` came from the current catalogue. */
 	private antigravityCatalogCurrent(generation: number): boolean {
 		return this.antigravityCatalog !== null && generation === this.antigravityGeneration;
@@ -1287,7 +1299,7 @@ export class AgentDetector {
 		if (agentId === 'antigravity' && !this.antigravityCatalogCurrent(antigravityGeneration)) {
 			return options;
 		}
-		this.configOptionCache.set(cacheKey, { options, timestamp: Date.now() });
+		this.configOptionCache.set(cacheKey, { options, timestamp: this.menuCacheTimestamp(agentId) });
 		return options;
 	}
 
