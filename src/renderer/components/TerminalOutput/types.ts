@@ -152,12 +152,9 @@ export interface LogItemProps {
 }
 
 /**
- * The fields of an agent the transcript view reads, and no others. A local agent
- * passes its `Session`; a Federation peer's mirrored agent passes a view object
- * built by `buildMirrorViewSession()`, which is never a `Session` and never in
- * `sessionStore`. The optional fields only feed history backfill and the Claude
- * mode pill: a mirror leaves them out, so backfill (a local provider read) has
- * no project root to read from.
+ * The fields of an agent the transcript view reads, and no others. An agent passes
+ * its `Session` (a hosted agent too: its Left Bar record). The optional fields only
+ * feed history backfill and the Claude mode pill.
  */
 export type TranscriptViewSession = Pick<
 	Session,

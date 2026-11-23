@@ -53,7 +53,6 @@ describe('useThinkingItems', () => {
 		useSessionStore.setState({ sessions: [session] });
 		const { result } = renderHook(() => useThinkingItems());
 		expect(result.current.map((item) => item.session.id)).toEqual(['local-1']);
-		expect(result.current[0].mirror).toBeUndefined();
 	});
 
 	it("lists a hosted agent once, from its own record, never again from the host's mirror", () => {
@@ -68,7 +67,6 @@ describe('useThinkingItems', () => {
 		hydrateBusyPeer();
 		const { result } = renderHook(() => useThinkingItems());
 		expect(result.current.map((item) => item.session.id)).toEqual(['row-a1']);
-		expect(result.current[0].mirror).toBeUndefined();
 	});
 
 	it("never lists a host's busy agent on its own", () => {

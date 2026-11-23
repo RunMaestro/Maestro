@@ -99,7 +99,7 @@ import {
 	useHostedAgentSettingsStore,
 } from '../../stores/hostedAgentSettingsStore';
 import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
-import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
+import { reconnectPeer } from '../../services/peerMirror';
 import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
@@ -126,7 +126,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		sessions,
 		visibleSessions: visibleSessionsProp,
 		setSessions,
-		activeSessionId: localActiveSessionId,
+		activeSessionId,
 		groups,
 		setGroups,
 		shortcuts,
@@ -465,11 +465,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const modalRef = useRef<HTMLDivElement>(null);
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
-	// While a Federation peer's mirrored agent is on screen the local active agent is hidden, not
-	// gone. Resolve NO active agent then, so every builder below bails out of its agent commands
-	// (rename, move, tabs, git, context, ...) instead of acting on an agent the user cannot see.
-	const mirrorShown = usePeerMirrorStore((s) => s.activeMirror !== null);
-	const activeSessionId = mirrorShown ? '' : localActiveSessionId;
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
 	// The group a "Move Group to ..." command carries: a worktree child is filed
 	// under its parent's group, the same unit the window move relocates.
@@ -599,7 +594,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const mirrorOrder = usePeerMirrorStore((s) => s.order);
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
-	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const federationStatus = useAgentFederationStatus(activeSession);
 	const hostedAgentsOn = useSettingsStore((s) => s.federationHostedAgents !== false);
 	const hasHostedAgents = sessions.some((session) => !!session.liftedTo);
@@ -610,12 +604,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		peers: mirrorOrder.flatMap((peerId) =>
 			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
 		),
-		activeMirror,
 		reconnectPeer,
-		copyPeerAgentRef,
-		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
 		moveToHost:
-			activeSession && !activeMirror && !activeSession.liftedTo && canMoveToHost(federationStatus)
+			activeSession && !activeSession.liftedTo && canMoveToHost(federationStatus)
 				? {
 						sessionId: activeSession.id,
 						agentName: activeSession.name,
@@ -624,8 +615,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					}
 				: undefined,
 		requestMoveToHost,
-		// The hosted view is the active agent's own row (`followLiftedPointer`), so this is offered
-		// while it is shown.
 		moveBackFromHost:
 			activeSession && federationStatus.kind === 'moved'
 				? {
@@ -642,8 +631,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					setEnabled: useSettingsStore.getState().setFederationHostedAgents,
 				}
 			: undefined,
-		editHostedAgent: (peerId, agentId) =>
-			useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId }),
 		settingsConflictCount,
 		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
 		addableHostedAgentCount,

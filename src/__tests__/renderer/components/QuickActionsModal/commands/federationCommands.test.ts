@@ -16,9 +16,7 @@ const peer: MirroredPeer = replacePeerAgents(
 function build(overrides: Partial<Parameters<typeof buildFederationCommands>[0]> = {}) {
 	const deps = {
 		peers: [peer],
-		activeMirror: null,
 		reconnectPeer: vi.fn(),
-		copyPeerAgentRef: vi.fn(),
 		requestMoveToHost: vi.fn(),
 		setQuickActionOpen: vi.fn(),
 		...overrides,
@@ -55,17 +53,6 @@ describe('buildFederationCommands', () => {
 		const { deps, commands } = build();
 		commands.find((c) => c.id === 'federation-reconnect-buildbox')?.action();
 		expect(deps.reconnectPeer).toHaveBeenCalledWith('buildbox');
-	});
-
-	it('offers to copy the peer:agent address only while a mirror is shown', () => {
-		expect(build().commands.some((c) => c.id === 'federation-copy-peer-agent-ref')).toBe(false);
-		const { deps, commands } = build({
-			activeMirror: { key: 'buildbox:a1', peerId: 'buildbox', agentId: 'a1' },
-		});
-		const copy = commands.find((c) => c.id === 'federation-copy-peer-agent-ref');
-		expect(copy?.label).toContain('buildbox:a1');
-		copy?.action();
-		expect(deps.copyPeerAgentRef).toHaveBeenCalledWith('buildbox', 'a1');
 	});
 
 	it('offers Move to Host for the active agent only when it can move', () => {
@@ -125,22 +112,6 @@ describe('buildFederationCommands', () => {
 		expect(entries[0].subtext).toMatch(/^Set up a Maestro host/);
 		entries[0].action();
 		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
-		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
-	});
-
-	it('offers Edit Agent on Host only while a mirror is shown', () => {
-		const editHostedAgent = vi.fn();
-		expect(
-			build({ editHostedAgent }).commands.some((c) => c.id === 'federation-edit-hosted-agent')
-		).toBe(false);
-		const { deps, commands } = build({
-			editHostedAgent,
-			activeMirror: { key: 'buildbox:a1', peerId: 'buildbox', agentId: 'a1' },
-		});
-		const edit = commands.find((c) => c.id === 'federation-edit-hosted-agent');
-		expect(edit?.label).toBe('Edit Agent on Host (buildbox:a1)');
-		edit?.action();
-		expect(editHostedAgent).toHaveBeenCalledWith('buildbox', 'a1');
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 

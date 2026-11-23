@@ -979,11 +979,6 @@ export type ThinkingItemAgent = Pick<
 export interface ThinkingItem<S extends ThinkingItemAgent = ThinkingItemAgent> {
 	session: S;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
-	/**
-	 * Set for a peer's mirrored agent: `session.id` is then its mirror key (`peerId:agentId`), a
-	 * click opens the mirror, and Stop reaches the host.
-	 */
-	mirror?: { peerId: string; agentId: string };
 }
 
 // An Auto Run in progress on an agent other than the one being viewed. Auto Run

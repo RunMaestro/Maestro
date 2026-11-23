@@ -233,7 +233,7 @@ maestro-cli tab star active --agent build-box:docs
 
 A hosted agent's settings belong to its host, and every conductor that drives it follows them. When Maestro connects to a peer it loads the host's settings. While it stays connected, the host sends every change as it happens, so when one conductor changes the agent's default model, everyone else sees it.
 
-Change the shared settings with **Edit Agent**: **Edit Agent...** in the right-click menu of a hosted agent, or **Edit Agent on Host** in the command palette. A hosted agent's own **Edit Agent** and `maestro-cli update-agent` changes go to the host. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
+Change the shared settings with the agent's own **Edit Agent**, as for any agent: its changes and `maestro-cli update-agent` go to the host. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
 
 - **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
 - **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you.
@@ -342,7 +342,7 @@ Run the host as the same user your SSH agents run as. The host then reads the sa
 - **No worktrees for host-owned agents.** You cannot create or scan worktrees for a mirrored agent.
 - **No `@mention` of a mirrored agent** from a local composer. Use `maestro-cli ask peer:agent` instead.
 - **Auto Run and Cue status are not mirrored.** They run on the host. Check them there with `maestro-cli` over SSH.
-- **History of Auto Run and Cue runs refreshes on the next turn.** The History column reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
+- **History of Auto Run and Cue runs refreshes on the next turn.** A hosted agent's History reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
 - **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, and resume a message. Edit, merge, reorder, Force Send, and steer stay off, because the host does not serve them.
 - **The queue lives in the host's memory.** If the host process stops or the machine reboots, the messages still waiting are lost, and a turn that was running is recorded as interrupted. Run the host as a service (see [Durability](#durability)).
 - **Some agent settings stay on this machine for now.** Extra directories, the Agent Resilience retry switches, Codex automatic reset, and env vars you parked with the eye button are not sent to the host yet, so a hosted agent runs without them. Set them on the host's own Maestro if you need them there.

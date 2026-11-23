@@ -75,7 +75,6 @@ import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
-import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import {
 	readReturnedFromHost,
 	returnRestoreRefusal,
@@ -1927,10 +1926,6 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				) as unknown as Session;
 			const restored = applyReturn(session);
 			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
-			// The agent on screen leaves its hosted view for the local one.
-			if (useSessionStore.getState().activeSessionId === sessionId) {
-				usePeerMirrorStore.getState().followLiftedPointer(restored);
-			}
 			try {
 				await window.maestro.sessions.setMany([restored as any], []);
 			} catch (persistErr) {

@@ -10,7 +10,6 @@
  * answers an error at once, shown as a toast.
  */
 
-import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
 import { normalizeTurnOverrides, type TurnOverrides } from '../../shared/maestro-lib/client/types';
 import type {
 	PeerAgentAction,
@@ -18,12 +17,7 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
-import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
-import { setActiveTab } from '../utils/tabHelpers';
-import { findLiftedAgent } from '../../shared/maestro-lib/agents/lift-pointer';
 import { notifyToast } from '../stores/notificationStore';
-import { safeClipboardWrite } from '../utils/clipboard';
-import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 
 /** Newest entries a tab shows. The host keeps the rest; "load earlier" is a follow-up. */
@@ -68,12 +62,6 @@ export async function reconnectPeer(peerId: string): Promise<void> {
 	if (error) {
 		notifyToast({ color: 'red', title: `Could not reconnect to ${peerId}`, message: error });
 	}
-}
-
-/** Copy the `peer:agent` address maestro-cli takes for a mirrored agent. */
-export async function copyPeerAgentRef(peerId: string, agentId: string): Promise<void> {
-	const ref = mirrorKey(peerId, agentId);
-	if (await safeClipboardWrite(ref)) flashCopiedToClipboard(ref);
 }
 
 /** The toast title for a failed action, by kind. */
@@ -171,14 +159,6 @@ export async function interruptMirroredAgent(
 	);
 }
 
-/** Open a new tab on the host and show it once the host's update lands. */
-export async function openMirrorTab(peerId: string, agentId: string): Promise<void> {
-	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'new-tab' });
-	if (result?.kind === 'new-tab') {
-		usePeerMirrorStore.getState().selectMirrorTab(peerId, agentId, result.tabId);
-	}
-}
-
 /** Rename a mirrored tab on its host. An empty name clears it. */
 export async function renameMirrorTab(
 	peerId: string,
@@ -231,33 +211,6 @@ export async function setMirrorQueuedItemPaused(
 			message: 'It no longer waits on the host: it may have started already.',
 		});
 	}
-}
-
-/**
- * Show the mirrored agent `key` (`peerId:agentId`) names, on `tabId` when given. False when no
- * mirrored agent has that key, so a caller can treat the id as a local agent's instead. When a
- * Left Bar row points at the agent, the row is selected too, so the Left Bar shows where it is.
- */
-export function openMirroredAgentByKey(key: string, tabId?: string): boolean {
-	const store = usePeerMirrorStore.getState();
-	for (const peerId of store.order) {
-		const agent = store.peers[peerId]?.agents.find(
-			(candidate) => mirrorKey(peerId, candidate.id) === key
-		);
-		if (!agent) continue;
-		const row = findLiftedAgent(useSessionStore.getState().sessions, peerId, agent.id);
-		if (row) {
-			// The row IS the hosted agent: it draws through the Main Window, with the host's tab
-			// ids (`startHostedAgentSync()`), so the tab is selected on the row itself.
-			useSessionStore.getState().setActiveSessionId(row.id);
-			if (tabId) updateSessionWith(row.id, (s) => setActiveTab(s, tabId)?.session ?? s);
-			return true;
-		}
-		store.selectMirroredAgent(peerId, agent.id);
-		if (tabId) store.selectMirrorTab(peerId, agent.id, tabId);
-		return true;
-	}
-	return false;
 }
 
 /** Close a mirrored tab on its host: it moves to the host's closed-tab history. */

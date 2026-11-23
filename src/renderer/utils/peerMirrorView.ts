@@ -1,29 +1,19 @@
 /**
  * The one adapter from a Federation peer's library records (`AgentRecord`, `AITabRecord`,
- * `LogEntryRecord`, `QueuedTurn`) to the view types the transcript, the queued cards, the tab strip,
- * and the Thinking pill render (`TranscriptViewSession`, `QueuedItem`, `AITab`, `LogEntry`,
- * `ThinkingItem`).
- *
- * What it builds is a VIEW object for props, never a `Session`: it is not in `sessionStore`, and
- * the narrowed `TranscriptViewSession` type proves no local-agent field slips in. Fields that would
- * point a local action at the host's data (a cross-agent jump to a host session id, a recovery
- * action, pins, an agent error to retry) are not copied, so nothing in the view can act on them.
+ * `LogEntryRecord`, `QueuedTurn`) to the renderer's types (`AITab`, `LogEntry`, `QueuedItem`), used
+ * by the host sync (`projectHostedSession()`), plus how a local agent stands with Federation.
  */
 
-import type { LiveTurn } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { MirroredPeer } from '../../shared/maestro-lib/client/peer-mirror';
-import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
-import { visibleAiTabs } from './unifiedTabOrderUtils';
-import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
+import type { AITabRecord } from '../../shared/maestro-lib/store/records';
 import {
 	LOG_ENTRY_SOURCES,
 	type LogEntryRecord,
 	type LogEntrySource,
 } from '../../shared/maestro-lib/store/transcript';
-import type { AITab, LogEntry, QueuedItem, ToolType } from '../types';
-import type { TranscriptViewSession } from '../components/TerminalOutput/types';
+import type { AITab, LogEntry, QueuedItem } from '../types';
 
 const KNOWN_SOURCES = new Set<string>(LOG_ENTRY_SOURCES);
 const TOOL_STATUSES = new Set(['running', 'completed', 'error', 'failed']);
@@ -95,91 +85,6 @@ export function mirrorQueuedItem(item: QueuedTurn): QueuedItem {
 	};
 }
 
-/** The tabs the strip draws for a mirrored agent (hidden consult tabs have no chip). */
-export function mirrorTabs(agent: AgentRecord): AITab[] {
-	return (agent.aiTabs ?? []).filter((tab) => !tab.hidden).map(mirrorTab);
-}
-
-/**
- * The tabs a hosted agent's own Left Bar record still holds on this machine: the conversations it
- * had before it moved (a lift keeps every tab). The hosted view lists them after the host's tabs,
- * read only, so one list holds everything the agent ever said. Blank tabs (an added agent's
- * starting tab) and hidden consult tabs are left out.
- */
-export function hostedLocalTabs(local: { aiTabs?: AITab[] } | undefined): AITab[] {
-	return visibleAiTabs(local?.aiTabs).filter(
-		(tab) => (tab.logs?.length ?? 0) > 0 || !!tab.agentSessionId
-	);
-}
-
-/** The hosted view's tab ids in strip order: the host's visible tabs, then this machine's. */
-export function hostedViewTabIds(agent: AgentRecord, localTabIds: readonly string[]): string[] {
-	return [
-		...(agent.aiTabs ?? []).filter((tab) => !tab.hidden).map((tab) => tab.id),
-		...localTabIds,
-	];
-}
-
-/**
- * The tab to show: the one the user picked in this window, else the host's active tab, else the
- * first. Undefined when the agent has no visible tab.
- */
-export function resolveMirrorTabId(agent: AgentRecord, preferred?: string): string | undefined {
-	const visible = (agent.aiTabs ?? []).filter((tab) => !tab.hidden);
-	if (preferred && visible.some((tab) => tab.id === preferred)) return preferred;
-	if (agent.activeTabId && visible.some((tab) => tab.id === agent.activeTabId)) {
-		return agent.activeTabId;
-	}
-	return visible[0]?.id;
-}
-
-/** What a mirrored tab shows: the host's persisted transcript, then the live tail of a turn. */
-export function mirrorTabEntries(
-	persisted: readonly LogEntryRecord[],
-	liveTurn: LiveTurn | undefined,
-	carryover?: readonly LogEntryRecord[]
-): LogEntry[] {
-	const tail = liveTurn?.entries ?? carryover ?? [];
-	const seen = new Set(persisted.map((entry) => entry.id));
-	const entries = persisted.map(mirrorLogEntry);
-	// A re-read can already hold an entry the live turn showed (the user message): draw it once.
-	for (const record of tail) if (!seen.has(record.id)) entries.push(mirrorLogEntry(record));
-	return entries;
-}
-
-/**
- * The view object `TerminalOutput` renders for one mirrored tab. Its id is the mirror key, which
- * no local store knows, so any store lookup by it finds nothing.
- */
-export function buildMirrorViewSession(input: {
-	peerId: string;
-	agent: AgentRecord;
-	tabId: string;
-	entries: LogEntry[];
-	/** What waits in the agent's host queue (`MirroredPeer.queues`). */
-	queue?: readonly QueuedTurn[];
-}): TranscriptViewSession {
-	const { peerId, agent, tabId, entries, queue } = input;
-	const tabs = (agent.aiTabs ?? []).map(mirrorTab);
-	return {
-		id: mirrorKey(peerId, agent.id),
-		activeTabId: tabId,
-		aiTabs: tabs.map((tab) => (tab.id === tabId ? { ...tab, logs: entries } : tab)),
-		inputMode: 'ai',
-		toolType: agent.toolType as ToolType,
-		cwd: agent.cwd ?? '',
-		executionQueue: (queue ?? []).map(mirrorQueuedItem),
-		deferredContent: undefined,
-		// The host runs the agent; this desktop has no path or remote of its own for it.
-		sessionSshRemoteConfig: undefined,
-	};
-}
-
-/** Whether a peer's agents are the last known state rather than live. */
-export function isPeerDisconnected(peer: Pick<MirroredPeer, 'connection'>): boolean {
-	return peer.connection !== 'connected' && peer.connection !== 'connecting';
-}
-
 /**
  * Whether a peer has a Maestro host to show. Federation probes every SSH remote that has not opted
  * out, so most probes find no host (`not-installed`, `host-down`): those remotes stay plain SSH
@@ -195,29 +100,6 @@ export function isPeerFederated(
 		peer.lastSyncAt !== undefined ||
 		peer.agents.length > 0
 	);
-}
-
-/**
- * What a hosted agent's composer refuses. The host serves a message with its images
- * (`enqueue_command`); a slash command runs in the local renderer, so sent as text it would reach
- * the host's provider instead.
- */
-export const MIRROR_COMPOSER_UNAVAILABLE = {
-	slashCommands:
-		"Slash commands are not available for a peer's agent: they run in this window, and the host receives only plain messages.",
-} as const;
-
-/** A leading `/command` (not a path such as `/Users/me`), the way a local slash command starts. */
-const SLASH_COMMAND_PATTERN = /^\/[A-Za-z][\w:-]*(?:\s|$)/;
-
-/**
- * Why `text` cannot be sent to a mirrored agent as it stands, or undefined when it can. Only a
- * slash command is refused: sent as text it would reach the host's provider, not run here.
- */
-export function mirrorSendBlockReason(text: string): string | undefined {
-	return SLASH_COMMAND_PATTERN.test(text.trimStart())
-		? MIRROR_COMPOSER_UNAVAILABLE.slashCommands
-		: undefined;
 }
 
 /** The slice of a local agent "Move to Host" and its pointer read. */

@@ -19,18 +19,9 @@ import {
 	agentFederationStatus,
 	canMoveToHost,
 	isPeerFederated,
-	buildMirrorViewSession,
-	hostedLocalTabs,
-	hostedViewTabIds,
-	isPeerDisconnected,
-	MIRROR_COMPOSER_UNAVAILABLE,
-	mirrorSendBlockReason,
 	mirrorLogEntry,
 	mirrorQueuedItem,
 	mirrorTab,
-	mirrorTabEntries,
-	mirrorTabs,
-	resolveMirrorTabId,
 } from '../../../renderer/utils/peerMirrorView';
 
 const entry = (id: string, text: string, extra: Partial<LogEntryRecord> = {}): LogEntryRecord => ({
@@ -84,20 +75,6 @@ describe('mirrorLogEntry', () => {
 });
 
 describe('tabs', () => {
-	it('hides consult tabs and keeps name, star, and busy state without a transcript', () => {
-		const tabs = mirrorTabs(agent);
-		expect(tabs.map((tab) => tab.id)).toEqual(['t1', 't2']);
-		expect(tabs[0]).toMatchObject({ name: 'First', starred: true, logs: [], inputValue: '' });
-		expect(tabs[1].state).toBe('busy');
-	});
-
-	it('resolves the picked tab, else the host active tab, else the first visible one', () => {
-		expect(resolveMirrorTabId(agent, 't1')).toBe('t1');
-		expect(resolveMirrorTabId(agent, 't3')).toBe('t2');
-		expect(resolveMirrorTabId({ ...agent, activeTabId: 't3' })).toBe('t1');
-		expect(resolveMirrorTabId({ ...agent, aiTabs: [] })).toBeUndefined();
-	});
-
 	it('carries the host turn start only on a busy tab', () => {
 		expect(mirrorTab({ id: 't1', state: 'busy', thinkingStartTime: 42 }).thinkingStartTime).toBe(
 			42
@@ -135,77 +112,6 @@ describe('mirrorQueuedItem', () => {
 		expect(item.type).toBe('message');
 		expect(item.text).toBe('/x y');
 		expect(item.paused).toBe(true);
-	});
-});
-
-describe('mirrorTabEntries', () => {
-	it('shows the persisted transcript, then the live tail, once per entry id', () => {
-		const persisted = [entry('u1', 'question', { source: 'user' })];
-		const live = {
-			startedAt: 1,
-			busy: true,
-			entries: [entry('u1', 'question', { source: 'user' }), entry('s1', 'answer so far')],
-		};
-		expect(mirrorTabEntries(persisted, live).map((e) => e.id)).toEqual(['u1', 's1']);
-	});
-
-	it('falls back to the carryover when no turn is live', () => {
-		expect(mirrorTabEntries([], undefined, [entry('s1', 'kept')]).map((e) => e.text)).toEqual([
-			'kept',
-		]);
-	});
-});
-
-describe('buildMirrorViewSession', () => {
-	it('builds a view keyed by the mirror key with only the shown tab holding entries', () => {
-		const view = buildMirrorViewSession({
-			peerId: 'buildbox',
-			agent,
-			tabId: 't1',
-			entries: [mirrorLogEntry(entry('e1', 'hello'))],
-		});
-		expect(view.id).toBe('buildbox:a1');
-		expect(view.activeTabId).toBe('t1');
-		expect(view.inputMode).toBe('ai');
-		expect(view.executionQueue).toEqual([]);
-		expect(view.sessionSshRemoteConfig).toBeUndefined();
-		// No project root: transcript backfill (a LOCAL provider read) has nowhere to read from.
-		expect(view.projectRoot).toBeUndefined();
-		expect(view.aiTabs.find((tab) => tab.id === 't1')?.logs).toHaveLength(1);
-		expect(view.aiTabs.find((tab) => tab.id === 't2')?.logs).toEqual([]);
-	});
-
-	it('fills the execution queue from the host queue, in order', () => {
-		const view = buildMirrorViewSession({
-			peerId: 'buildbox',
-			agent,
-			tabId: 't1',
-			entries: [],
-			queue: [queued('q1'), queued('q2', { paused: true })],
-		});
-		expect(view.executionQueue.map((item) => item.id)).toEqual(['q1', 'q2']);
-		expect(view.executionQueue[1].paused).toBe(true);
-	});
-});
-
-describe('isPeerDisconnected', () => {
-	it('reads a peer as disconnected unless it is connected or connecting', () => {
-		expect(isPeerDisconnected({ connection: 'lost' })).toBe(true);
-		expect(isPeerDisconnected({ connection: 'connecting' })).toBe(false);
-	});
-});
-
-describe('mirrorSendBlockReason', () => {
-	it('refuses a leading slash command, which would not run on the host', () => {
-		for (const text of ['/compact', '/clear now', '  /speckit:plan x', '/review-pr 12']) {
-			expect(mirrorSendBlockReason(text)).toBe(MIRROR_COMPOSER_UNAVAILABLE.slashCommands);
-		}
-	});
-
-	it('lets a message through that starts with a path or merely holds a slash', () => {
-		for (const text of ['/Users/me/plan.md says hi', 'use a/b here', '/ alone', '!ls', 'hello']) {
-			expect(mirrorSendBlockReason(text)).toBeUndefined();
-		}
 	});
 });
 
@@ -275,33 +181,5 @@ describe('Federation status of a local agent', () => {
 		expect(canMoveToHost(agentFederationStatus(ssh, []))).toBe(false);
 		expect(canMoveToHost({ kind: 'local' })).toBe(false);
 		expect(canMoveToHost({ kind: 'moved', peerId: 'build', agentId: 'a1' })).toBe(false);
-	});
-});
-
-describe('one tab strip for a hosted agent', () => {
-	const tab = (id: string, extra: Record<string, unknown> = {}) =>
-		({ id, agentSessionId: null, logs: [], ...extra }) as never;
-
-	it('keeps the local tabs that hold a conversation, never a blank or hidden one', () => {
-		const local = {
-			aiTabs: [
-				tab('blank'),
-				tab('talked', { logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'hi' }] }),
-				tab('resumed', { agentSessionId: 'sess-1' }),
-				tab('consult', { agentSessionId: 'sess-2', hidden: true }),
-			],
-		};
-		expect(hostedLocalTabs(local).map((entry) => entry.id)).toEqual(['talked', 'resumed']);
-		expect(hostedLocalTabs(undefined)).toEqual([]);
-	});
-
-	it('orders the host tabs first, then the local ones, skipping hidden host tabs', () => {
-		const host: AgentRecord = {
-			id: 'a1',
-			name: 'Builder',
-			toolType: 'codex',
-			aiTabs: [{ id: 'h1' }, { id: 'h2', hidden: true }, { id: 'h3' }],
-		};
-		expect(hostedViewTabIds(host, ['l1', 'l2'])).toEqual(['h1', 'h3', 'l1', 'l2']);
 	});
 });

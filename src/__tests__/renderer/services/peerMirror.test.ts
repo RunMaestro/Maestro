@@ -1,7 +1,6 @@
 /**
- * Tests for services/peerMirror: opening a mirrored agent by its mirror key (the Thinking pill's
- * click), and the queued-card actions on a host queue, whose "no longer waits" answer is a yellow
- * notice rather than a red failure toast.
+ * Tests for services/peerMirror: the queued-card actions on a host queue, whose "no longer waits"
+ * answer is a yellow notice rather than a red failure toast.
  */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,48 +13,19 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	callMirroredAgentAction,
-	openMirroredAgentByKey,
 	removeMirrorQueuedItem,
 	setMirrorQueuedItemPaused,
 } from '../../../renderer/services/peerMirror';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
-import {
-	selectActiveMirrorKey,
-	usePeerMirrorStore,
-} from '../../../renderer/stores/peerMirrorStore';
-import {
-	createMirroredPeer,
-	replacePeerAgents,
-} from '../../../shared/maestro-lib/client/peer-mirror';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { resetStores } from '../../helpers';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { createMockSession } from '../../helpers/mockSession';
-import { createMockAITab } from '../../helpers/mockTab';
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
 const act$ = vi.fn();
 
-function hydrate() {
-	const peerOf = (peerId: string, agentId: string) =>
-		replacePeerAgents(
-			createMirroredPeer({ peerId, remoteId: `r-${peerId}`, name: peerId }),
-			[
-				{
-					id: agentId,
-					name: `agent ${agentId}`,
-					toolType: 'claude-code',
-					aiTabs: [{ id: 't1' }, { id: 't2' }],
-				},
-			],
-			[],
-			1
-		).peer;
-	usePeerMirrorStore.getState().hydrate([peerOf('box', 'a1'), peerOf('gpu', 'b1')]);
-}
-
 describe('services/peerMirror', () => {
 	beforeEach(() => {
-		resetStores(usePeerMirrorStore, useSessionStore);
+		resetStores(usePeerMirrorStore);
 		act$.mockReset();
 		maestro.federation = { act: act$ };
 		vi.mocked(notifyToast).mockClear();
@@ -63,48 +33,6 @@ describe('services/peerMirror', () => {
 
 	afterEach(() => {
 		delete maestro.federation;
-	});
-
-	describe('openMirroredAgentByKey', () => {
-		it('shows the mirrored agent the key names, on the given tab', () => {
-			hydrate();
-			expect(openMirroredAgentByKey('gpu:b1', 't2')).toBe(true);
-			const state = usePeerMirrorStore.getState();
-			expect(selectActiveMirrorKey(state)).toBe('gpu:b1');
-			expect(state.activeTabIds).toEqual({ gpu: { b1: 't2' } });
-		});
-
-		it('shows the agent without picking a tab when none is given', () => {
-			hydrate();
-			expect(openMirroredAgentByKey('box:a1')).toBe(true);
-			expect(selectActiveMirrorKey(usePeerMirrorStore.getState())).toBe('box:a1');
-			expect(usePeerMirrorStore.getState().activeTabIds).toEqual({});
-		});
-
-		it("selects a hosted agent's own Left Bar row and its tab, never the mirror view", () => {
-			hydrate();
-			useSessionStore.setState({
-				sessions: [
-					createMockSession({
-						id: 'row-b1',
-						liftedTo: { peer: 'gpu', agentId: 'b1', at: 1 },
-						activeTabId: 't1',
-						aiTabs: [createMockAITab({ id: 't1' }), createMockAITab({ id: 't2' })],
-					}),
-				],
-			});
-			expect(openMirroredAgentByKey('gpu:b1', 't2')).toBe(true);
-			expect(useSessionStore.getState().activeSessionId).toBe('row-b1');
-			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('t2');
-			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
-		});
-
-		it('answers false for a key no mirrored agent has, such as a local agent id', () => {
-			hydrate();
-			expect(openMirroredAgentByKey('local-session-1', 't1')).toBe(false);
-			expect(openMirroredAgentByKey('box:nope')).toBe(false);
-			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
-		});
 	});
 
 	describe('queued-card actions', () => {

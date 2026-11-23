@@ -157,8 +157,6 @@ describe('hostedAgents', () => {
 			});
 			expect(setMany()).toHaveBeenCalledWith([record], []);
 			expect(useSessionStore.getState().activeSessionId).toBe(record.id);
-			// The row IS the hosted agent: it draws through the Main Window, never the mirror view.
-			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
 		});
 
 		it('starts in step with the host settings, and leaves the selection alone in the background', async () => {

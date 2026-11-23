@@ -6,13 +6,11 @@
  * mirrored agent NEVER enters `sessionStore`, `maestro-sessions.json`, or any persisted store:
  * this store has no `persist` middleware and nothing here calls an IPC writer, so a disconnect or
  * a removed peer can never change local data. Input (FED-SSH-06) goes out through
- * `services/peerMirror.ts`; the only input state kept here is the composer's unsent drafts.
+ * `services/peerMirror.ts`.
  *
- * Selection is separate from the local one. `activeMirror` is set only while the Main Window
- * shows a mirrored agent; `activeSessionId` keeps holding a LOCAL id the whole time, so no
- * `selectActiveSession()` consumer ever sees a peer's agent. Selecting a local agent
- * (`setActiveSessionId`) clears `activeMirror`, and selecting a mirror clears the active group
- * chat. Agents are keyed `peerId:agentId` (`mirrorKey()`), the string maestro-cli addresses.
+ * There is no view of its own: a hosted agent draws through the Main Window as its own Left Bar
+ * record, which `startHostedAgentSync()` keeps in step with what this store holds. Agents are keyed
+ * `peerId:agentId` (`mirrorKey()`), the string maestro-cli addresses.
  *
  * Folding reuses the shared rules in `src/shared/maestro-lib/client/peer-mirror.ts`, the same ones
  * the main service runs, so a window and main cannot disagree about a peer.
@@ -32,16 +30,6 @@ import {
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { generateId } from '../utils/ids';
-import { hostedViewTabIds, resolveMirrorTabId } from '../utils/peerMirrorView';
-import { useGroupChatStore } from './groupChatStore';
-
-/** The mirrored agent the Main Window shows. */
-export interface MirrorSelection {
-	/** `mirrorKey(peerId, agentId)`. */
-	key: string;
-	peerId: string;
-	agentId: string;
-}
 
 /** One tab's transcript as the host persisted it, read lazily when the tab is opened. */
 export interface MirrorTranscriptSlot {
@@ -70,11 +58,6 @@ export interface PeerMirrorData {
 	peers: Record<string, MirroredPeer>;
 	/** By peer id, then `liveTurnKey(agentId, tabId)`. */
 	transcripts: Record<string, Record<string, MirrorTranscriptSlot>>;
-	activeMirror: MirrorSelection | null;
-	/** View state: the tab shown per mirrored agent, by peer id then agent id. */
-	activeTabIds: Record<string, Record<string, string>>;
-	/** Unsent composer text per mirrored tab, by `mirrorDraftKey()`. Memory only. */
-	drafts: Record<string, string>;
 	/**
 	 * Bumped per mirrored agent (by `mirrorKey()`) whenever its History on the host may have moved:
 	 * a turn of the agent ended, or the peer reloaded. A History panel reads again on a change.
@@ -83,28 +66,12 @@ export interface PeerMirrorData {
 }
 
 export interface PeerMirrorActions {
-	/** Replace everything with a snapshot from main. Keeps the selection when it still exists. */
+	/** Replace everything with a snapshot from main. */
 	hydrate(peers: MirroredPeer[]): void;
 	/** Drop everything: the feature turned off, or this window stopped following the mirror. */
 	reset(): void;
 	/** Fold one `federation:event` push. The only writer of `peers` besides `hydrate`. */
 	applyPush(push: MirrorPush): void;
-	selectMirroredAgent(peerId: string, agentId: string): void;
-	clearMirrorSelection(): void;
-	/**
-	 * Follow a Left Bar row that was just chosen: leave any mirror, so the row's own agent is what
-	 * the Main Window shows. A hosted agent's row draws through the Main Window like any agent
-	 * (`startHostedAgentSync()` keeps it in step with its host), so no row opens the mirror view.
-	 */
-	followLiftedPointer(agent: { liftedTo?: unknown } | undefined): void;
-	selectMirrorTab(peerId: string, agentId: string, tabId: string): void;
-	/**
-	 * Step the shown mirrored agent's tab, wrapping (the tab-cycling shortcut). `localTabIds` are
-	 * the tabs its Left Bar record keeps on this machine (`hostedLocalTabs()`), after the host's.
-	 */
-	cycleMirrorTab(direction: 1 | -1, localTabIds?: readonly string[]): void;
-	/** Keep (or, with an empty text, drop) the composer draft of one mirrored tab. */
-	setMirrorDraft(peerId: string, agentId: string, tabId: string, text: string): void;
 	/** Mark a tab's read in flight. Returns the stale version the read must report back. */
 	beginTranscriptRead(peerId: string, agentId: string, tabId: string): number;
 	finishTranscriptRead(
@@ -124,28 +91,8 @@ const EMPTY: PeerMirrorData = {
 	order: [],
 	peers: {},
 	transcripts: {},
-	activeMirror: null,
-	activeTabIds: {},
-	drafts: {},
 	historyVersions: {},
 };
-
-/** The key of one mirrored tab's composer draft. */
-export function mirrorDraftKey(peerId: string, agentId: string, tabId: string): string {
-	return `${mirrorKey(peerId, agentId)}\u0000${tabId}`;
-}
-
-/** Drop the drafts of one peer's agents (the peer was removed). */
-function withoutPeerDrafts(drafts: Record<string, string>, peerId: string): Record<string, string> {
-	const prefix = `${peerId}:`;
-	let changed = false;
-	const next: Record<string, string> = {};
-	for (const [key, text] of Object.entries(drafts)) {
-		if (key.startsWith(prefix)) changed = true;
-		else next[key] = text;
-	}
-	return changed ? next : drafts;
-}
 
 /** Bump the History version of one agent, or of every agent the peer has. */
 function bumpHistory(
@@ -222,20 +169,13 @@ function pruneSlots(
 	return next;
 }
 
-/** Drop a selection, view state, and slots that point at agents the peer no longer has. */
+/** Store the peer, and drop the transcript slots of tabs it no longer has. */
 function settlePeer(state: PeerMirrorData, peerId: string, peer: MirroredPeer): PeerMirrorData {
-	const agentIds = new Set(peer.agents.map((agent) => agent.id));
-	const tabIds = { ...(state.activeTabIds[peerId] ?? {}) };
-	for (const agentId of Object.keys(tabIds)) if (!agentIds.has(agentId)) delete tabIds[agentId];
-	const selectionGone =
-		state.activeMirror?.peerId === peerId && !agentIds.has(state.activeMirror.agentId);
 	return {
 		...state,
 		peers: { ...state.peers, [peerId]: peer },
 		order: state.order.includes(peerId) ? state.order : [...state.order, peerId],
 		transcripts: { ...state.transcripts, [peerId]: pruneSlots(state.transcripts[peerId], peer) },
-		activeTabIds: { ...state.activeTabIds, [peerId]: tabIds },
-		activeMirror: selectionGone ? null : state.activeMirror,
 	};
 }
 
@@ -357,10 +297,7 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				peers: withoutKey(state.peers, peerId),
 				order: state.order.filter((id) => id !== peerId),
 				transcripts: withoutKey(state.transcripts, peerId),
-				activeTabIds: withoutKey(state.activeTabIds, peerId),
-				drafts: withoutPeerDrafts(state.drafts, peerId),
 				historyVersions: withoutPeerVersions(state.historyVersions, peerId),
-				activeMirror: state.activeMirror?.peerId === peerId ? null : state.activeMirror,
 			};
 		}
 		default:
@@ -375,19 +312,12 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 		set((state) => {
 			const record: Record<string, MirroredPeer> = {};
 			for (const peer of peers) record[peer.peerId] = peer;
-			const selection = state.activeMirror;
-			const keep =
-				selection &&
-				record[selection.peerId]?.agents.some((agent) => agent.id === selection.agentId);
 			return {
 				enabled: true,
 				order: peers.map((peer) => peer.peerId),
 				peers: record,
 				// A fresh snapshot may be ahead of anything read before it.
 				transcripts: {},
-				activeMirror: keep ? selection : null,
-				activeTabIds: {},
-				drafts: state.drafts,
 				// A fresh snapshot may be ahead of any History a panel read before it.
 				historyVersions: bumpAll(state.historyVersions, peers),
 			};
@@ -396,56 +326,6 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 	reset: () => set({ ...EMPTY }),
 
 	applyPush: (push) => set((state) => reducePeerMirrorPush(state, push)),
-
-	selectMirroredAgent: (peerId, agentId) => {
-		const peer = get().peers[peerId];
-		if (!peer?.agents.some((agent) => agent.id === agentId)) return;
-		set({ activeMirror: { key: mirrorKey(peerId, agentId), peerId, agentId } });
-		// One thing in the Main Window at a time: a group chat yields to the mirror, the same way
-		// it yields to a local agent.
-		useGroupChatStore.getState().setActiveGroupChatId(null);
-	},
-
-	clearMirrorSelection: () => {
-		if (get().activeMirror) set({ activeMirror: null });
-	},
-
-	followLiftedPointer: () => {
-		get().clearMirrorSelection();
-	},
-
-	selectMirrorTab: (peerId, agentId, tabId) =>
-		set((state) => ({
-			activeTabIds: {
-				...state.activeTabIds,
-				[peerId]: { ...(state.activeTabIds[peerId] ?? {}), [agentId]: tabId },
-			},
-		})),
-
-	cycleMirrorTab: (direction, localTabIds = []) => {
-		const state = get();
-		const selection = state.activeMirror;
-		if (!selection) return;
-		const agent = state.peers[selection.peerId]?.agents.find((a) => a.id === selection.agentId);
-		if (!agent) return;
-		const ids = hostedViewTabIds(agent, localTabIds);
-		if (ids.length < 2) return;
-		const preferred = state.activeTabIds[selection.peerId]?.[selection.agentId];
-		const current =
-			preferred && localTabIds.includes(preferred)
-				? preferred
-				: resolveMirrorTabId(agent, preferred);
-		const index = Math.max(0, ids.indexOf(current ?? ''));
-		const next = ids[(index + direction + ids.length) % ids.length];
-		get().selectMirrorTab(selection.peerId, selection.agentId, next);
-	},
-
-	setMirrorDraft: (peerId, agentId, tabId, text) =>
-		set((state) => {
-			const key = mirrorDraftKey(peerId, agentId, tabId);
-			if (!text) return key in state.drafts ? { drafts: withoutKey(state.drafts, key) } : {};
-			return state.drafts[key] === text ? {} : { drafts: { ...state.drafts, [key]: text } };
-		}),
 
 	beginTranscriptRead: (peerId, agentId, tabId) => {
 		const key = liveTurnKey(agentId, tabId);
@@ -492,13 +372,3 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 			}));
 		}),
 }));
-
-/** The mirror key the Main Window shows, or null while it shows a local agent or a group chat. */
-export function selectActiveMirrorKey(state: PeerMirrorData): string | null {
-	return state.activeMirror?.key ?? null;
-}
-
-/** Whether the Main Window shows a mirrored agent right now. Read at event time by local gates. */
-export function isMirrorShown(): boolean {
-	return usePeerMirrorStore.getState().activeMirror !== null;
-}

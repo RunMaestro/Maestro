@@ -29,7 +29,6 @@ import { ImageContextMenu, type ImageContextMenuState } from './ImageContextMenu
 import { ImageDestinationModal, type ImageDestination } from './ImageDestinationModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useActiveSession } from '../hooks/session/useActiveSession';
-import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import {
 	isSvgElement,
 	saveImageToProject,
@@ -86,10 +85,7 @@ export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 	// Images are saved into the project they were rendered in. Every surface that
 	// shows one lives inside the active agent's view, so the active session is
 	// the project - no host has to thread a path down to the menu.
-	// A Federation peer's mirrored agent on screen is NOT the active session (that local agent is
-	// hidden behind it), and the image came from another machine: no project to save into.
-	const mirrorShown = usePeerMirrorStore((s) => s.activeMirror !== null);
-	const projectRoot = mirrorShown ? '' : session?.projectRoot || session?.cwd || '';
+	const projectRoot = session?.projectRoot || session?.cwd || '';
 
 	useEventListener(
 		'contextmenu',
