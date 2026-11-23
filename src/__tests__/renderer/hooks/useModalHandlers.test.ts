@@ -2647,4 +2647,47 @@ describe('useModalHandlers', () => {
 			}
 		);
 	});
+
+	describe('handleInstallAfterError / recoveryActions', () => {
+		it('opens ProviderInstallModal with the failed tab provider instead of session.toolType', () => {
+			const session = createMockSession({
+				id: 'session-install',
+				toolType: 'claude-code',
+				activeTabId: 'tab-codex',
+				agentErrorTabId: 'tab-codex',
+				agentError: {
+					type: 'agent_not_installed',
+					message: 'Codex CLI not found',
+					recoverable: true,
+					timestamp: Date.now(),
+					agentId: 'codex',
+				},
+				aiTabs: [createMockAITab({ id: 'tab-codex', tabProvider: 'codex' })],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			getModalActions().setAgentErrorModalSessionId(session.id);
+
+			renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), { current: vi.fn() })
+			);
+
+			expect(useAgentErrorRecovery).toHaveBeenLastCalledWith(
+				expect.objectContaining({ agentId: 'codex', sessionId: session.id })
+			);
+			const lastCall = vi.mocked(useAgentErrorRecovery).mock.calls.at(-1)?.[0];
+			expect(lastCall?.onInstall).toBeTypeOf('function');
+
+			act(() => {
+				lastCall?.onInstall?.();
+			});
+
+			expect(useModalStore.getState().isOpen('providerInstall')).toBe(true);
+			expect(useModalStore.getState().modals.get('providerInstall')?.data).toEqual({
+				sessionId: 'session-install',
+				tabId: 'tab-codex',
+				agentId: 'codex',
+				reason: 'Codex CLI not found',
+			});
+		});
+	});
 });

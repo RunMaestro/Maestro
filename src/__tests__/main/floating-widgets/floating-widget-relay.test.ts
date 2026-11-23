@@ -109,6 +109,7 @@ function makeController(id: FloatingWidgetId, windowId: number) {
 		getWindow: vi.fn(() => (state.window ? asWindow(state.window) : null)),
 		getBounds: vi.fn(() => null),
 		setBounds: vi.fn(() => ({ x: 1, y: 2, width: 300, height: 200 })),
+		setMinWidth: vi.fn(() => ({ x: 1, y: 2, width: 460, height: 96 })),
 		setOverflow: vi.fn(() => ({ above: 0, below: 120 })),
 		isReady: vi.fn(() => state.ready),
 		markReady: vi.fn(() => {
@@ -212,6 +213,7 @@ describe('init', () => {
 				'floatingWidgets:hide',
 				'floatingWidgets:isVisible',
 				'floatingWidgets:setBounds',
+				'floatingWidgets:setMinWidth',
 				'floatingWidgets:setOverflow',
 				'floatingWidgets:show',
 				'floatingWidgets:toggle',
@@ -224,7 +226,7 @@ describe('init', () => {
 				'floatingWidgets:ready',
 			].sort()
 		);
-		expect(ipcMain.handle).toHaveBeenCalledTimes(8);
+		expect(ipcMain.handle).toHaveBeenCalledTimes(9);
 		expect(ipcMain.on).toHaveBeenCalledTimes(3);
 	});
 });
@@ -304,6 +306,18 @@ describe('window control channels', () => {
 			).toThrow('Floating widget bounds must be an object');
 		}
 		expect(media.controller.setBounds).toHaveBeenCalledTimes(1);
+	});
+
+	it('setMinWidth passes a number through, and anything else as 0', () => {
+		const { relay, media } = setup();
+		relay.init();
+
+		const result = handlers.get('floatingWidgets:setMinWidth')!(sender(1), 'media-player', 460);
+		expect(media.controller.setMinWidth).toHaveBeenCalledWith(460);
+		expect(result).toEqual({ x: 1, y: 2, width: 460, height: 96 });
+
+		handlers.get('floatingWidgets:setMinWidth')!(sender(1), 'media-player', 'wide');
+		expect(media.controller.setMinWidth).toHaveBeenLastCalledWith(0);
 	});
 
 	it('setOverflow passes a sanitized need through and returns what was granted', () => {

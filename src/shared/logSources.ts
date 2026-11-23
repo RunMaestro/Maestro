@@ -284,6 +284,10 @@ export interface SystemLogsQuery {
 	sources?: LogSourceId[];
 	/** The levels to keep; every level when absent. */
 	levels?: MainLogLevel[];
+	/** Only entries from this context (case-insensitive). */
+	context?: string;
+	/** Only entries at or after this epoch-ms timestamp. */
+	since?: number;
 	/** Text to search for in message, context and data (any case). */
 	search?: string;
 	/** The newest this many entries, after filtering. */
@@ -357,6 +361,16 @@ export function parseSystemLogsQuery(raw: unknown): { query: SystemLogsQuery } |
 		}
 		query.levels = [...new Set(input.levels as MainLogLevel[])];
 	}
+	if (typeof input.context === 'string' && input.context.trim()) {
+		query.context = input.context.trim();
+	}
+	if (input.since !== undefined) {
+		const since = Number(input.since);
+		if (!Number.isFinite(since)) {
+			return { error: 'The since timestamp must be a valid number.' };
+		}
+		query.since = since;
+	}
 	if (typeof input.search === 'string' && input.search.trim()) query.search = input.search;
 	if (input.limit !== undefined) {
 		const limit = Number(input.limit);
@@ -368,14 +382,20 @@ export function parseSystemLogsQuery(raw: unknown): { query: SystemLogsQuery } |
 	return { query };
 }
 
-/** The entries of a merged list that pass a query's level and search filters. */
+/** The entries of a merged list that pass a query's level, context, since and search filters. */
 export function filterLogEntries(
 	entries: readonly SourcedLogEntry[],
-	query: Pick<SystemLogsQuery, 'levels' | 'search'>
+	query: Pick<SystemLogsQuery, 'levels' | 'context' | 'since' | 'search'>
 ): SourcedLogEntry[] {
 	const levels = query.levels ? new Set<string>(query.levels) : null;
+	const context = query.context?.trim().toLowerCase() ?? '';
+	const since = query.since;
 	const search = query.search?.trim().toLowerCase() ?? '';
 	return entries.filter(
-		(entry) => (!levels || levels.has(entry.level)) && logEntryMatchesSearch(entry, search)
+		(entry) =>
+			(!levels || levels.has(entry.level)) &&
+			(!context || (entry.context ?? '').toLowerCase() === context) &&
+			(since === undefined || entry.timestamp >= since) &&
+			logEntryMatchesSearch(entry, search)
 	);
 }

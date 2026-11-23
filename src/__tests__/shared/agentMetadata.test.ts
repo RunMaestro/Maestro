@@ -14,6 +14,7 @@ import {
 	resolveTabPermissionMode,
 	hasStandardApprovalChannel,
 	formatAgentLoginCommand,
+	exitWithCommandStatus,
 	loginShellSyntaxFor,
 	AGENT_DISPLAY_NAMES,
 	BETA_AGENTS,
@@ -399,13 +400,48 @@ describe('agentMetadata', () => {
 			expect(formatAgentLoginCommand(login)).toBe(formatAgentLoginCommand(login, 'posix'));
 			expect(formatAgentLoginCommand(login)).toBe('"/Apps/My Tools/claude" /login');
 		});
+
+		it('quotes spaces without the PowerShell call operator for fish', () => {
+			expect(
+				formatAgentLoginCommand({ binary: '/Apps/My Tools/claude', args: '/login' }, 'fish')
+			).toBe('"/Apps/My Tools/claude" /login');
+		});
+	});
+
+	describe('exitWithCommandStatus', () => {
+		it('uses $? for posix shells and defaults to posix', () => {
+			expect(exitWithCommandStatus('gh auth login')).toBe('gh auth login; exit $?');
+			expect(exitWithCommandStatus('gh auth login', 'posix')).toBe('gh auth login; exit $?');
+		});
+
+		it('uses $status for fish because fish rejects $?', () => {
+			expect(exitWithCommandStatus('gh auth login', 'fish')).toBe('gh auth login; exit $status');
+		});
+
+		it('checks $? before $LASTEXITCODE in PowerShell so missing commands exit non-zero', () => {
+			expect(exitWithCommandStatus('gh auth login', 'powershell')).toBe(
+				'gh auth login; if ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }'
+			);
+		});
+
+		it('uses && / || for cmd.exe because %ERRORLEVEL% expands at parse time', () => {
+			expect(exitWithCommandStatus('gh auth login', 'cmd')).toBe(
+				'gh auth login && exit 0 || exit 1'
+			);
+		});
 	});
 
 	describe('loginShellSyntaxFor', () => {
-		it('treats every shell as posix off Windows', () => {
-			for (const shell of ['zsh', 'bash', 'fish', 'powershell']) {
+		it('treats non-fish shells as posix off Windows', () => {
+			for (const shell of ['zsh', 'bash', 'sh', 'tcsh', 'powershell']) {
 				expect(loginShellSyntaxFor(shell, false)).toBe('posix');
 			}
+		});
+
+		it('maps fish to fish on and off Windows, regardless of case or whitespace', () => {
+			expect(loginShellSyntaxFor('fish', false)).toBe('fish');
+			expect(loginShellSyntaxFor('  FISH  ', false)).toBe('fish');
+			expect(loginShellSyntaxFor('fish', true)).toBe('fish');
 		});
 
 		it('maps the Windows shell ids to their dialects', () => {
@@ -415,8 +451,9 @@ describe('agentMetadata', () => {
 		});
 
 		// Git Bash and WSL run a posix shell even though the host is Windows.
-		it('treats Git Bash and WSL as posix', () => {
+		it('treats Git Bash, sh, and WSL as posix on Windows', () => {
 			expect(loginShellSyntaxFor('bash', true)).toBe('posix');
+			expect(loginShellSyntaxFor('sh', true)).toBe('posix');
 			expect(loginShellSyntaxFor('wsl', true)).toBe('posix');
 		});
 

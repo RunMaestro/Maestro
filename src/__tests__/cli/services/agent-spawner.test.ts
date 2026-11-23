@@ -4266,7 +4266,8 @@ Some text with [x] in it that's not a checkbox
 		it("falls back to the provider's binary, with a warning, when the agent's own path is not executable", async () => {
 			mockGetAgentCustomPath.mockReturnValue('/provider/bin/claude');
 			vi.mocked(fs.promises.stat).mockImplementation(async (p) => {
-				if (String(p) === '/agent/bin/missing') throw new Error('ENOENT');
+				// Windows also probes `missing.exe` / `.cmd`, so match the stem.
+				if (String(p).startsWith('/agent/bin/missing')) throw new Error('ENOENT');
 				return { isFile: () => true } as fs.Stats;
 			});
 			vi.mocked(fs.promises.access).mockResolvedValue(undefined);

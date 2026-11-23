@@ -92,7 +92,7 @@ describe('verify-native-abi: shippedModuleDirs', () => {
 			'node_modules/not-installed/**/*',
 			'resources/other/**',
 		]);
-		expect(dirs.map((d) => path.relative(nm, d)).sort()).toEqual([
+		expect(dirs.map((d) => path.relative(nm, d).split(path.sep).join('/')).sort()).toEqual([
 			'@napi-rs/keyring',
 			'@napi-rs/keyring-darwin-arm64',
 			'better-sqlite3',

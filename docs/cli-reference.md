@@ -2432,6 +2432,15 @@ Force the desktop to reconnect to a peer and reload its agent list
 maestro-cli federation reconnect <peer>
 ```
 
+## `maestro-cli install-command <provider>`
+
+Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
+| `--json`                | Output as JSON (for scripting)                                   | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)
@@ -2473,7 +2482,7 @@ Create a new agent in the Maestro desktop app. With --group, the agent starts fr
 | `--context-window <size>`          | Context window size in tokens                                                                                                                                                                                                              | -               |
 | `--provider-path <path>`           | Custom provider path                                                                                                                                                                                                                       | -               |
 | `--ssh-remote <id>`                | SSH remote ID for remote execution                                                                                                                                                                                                         | -               |
-| `--ssh-cwd <path>`                 | Working directory override on SSH remote                                                                                                                                                                                                   | -               |
+| `--ssh-cwd <path>`                 | Working directory on the SSH remote (the agent runs there; defaults to --cwd)                                                                                                                                                              | -               |
 | `--sync-history-to-remote <bool>`  | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                                                                                                                           | -               |
 | `--auto-run-folder <path>`         | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                                                                                                                          | -               |
 | `--gateway-url <url\|none>`        | Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode                                         | -               |
@@ -6982,6 +6991,8 @@ Print the logs the viewer shows, in its Export format
 | --------------------- | --------------------------------------------------------------------------------------------- | ------- |
 | `--source <ids>`      | Sources to read, comma-separated (default: all): maestro, model-server                        | -       |
 | `--level <levels>`    | Levels to keep, comma-separated (default: all): debug, info, warn, error, toast, autorun, cue | -       |
+| `--context <context>` | Only entries from this context (e.g. WebServer)                                               | -       |
+| `--since <time>`      | Only entries since then: 30m, 2h, ISO-8601, or epoch                                          | -       |
 | `--search <text>`     | Keep entries whose message, context or data contain this text                                 | -       |
 | `--limit <n>`         | Keep only the newest n matching entries                                                       | -       |
 | `-o, --output <file>` | Write the entries to a file instead, as Export does                                           | -       |

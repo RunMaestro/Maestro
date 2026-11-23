@@ -26,12 +26,19 @@ import { mockTheme } from '../../helpers/mockTheme';
 
 /** Counts constructions of the player element; a re-render reuses it. */
 const mountCount = vi.fn();
+/** The mounted viewer's transport-width callback, so a test can report a measurement. */
+let reportTransportMinWidth: ((width: number) => void) | undefined;
 
 vi.mock('../../../renderer/components/FilePreview/MediaViewer', () => ({
-	MediaViewer: () => {
+	MediaViewer: ({
+		onTransportMinWidthChange,
+	}: {
+		onTransportMinWidthChange?: (width: number) => void;
+	}) => {
 		useEffect(() => {
 			mountCount();
 		}, []);
+		reportTransportMinWidth = onTransportMinWidthChange;
 		return <div data-testid="media-viewer" />;
 	},
 }));
@@ -70,6 +77,7 @@ let api: {
 	onCommand: ReturnType<typeof vi.fn>;
 	getBounds: ReturnType<typeof vi.fn>;
 	setBounds: ReturnType<typeof vi.fn>;
+	setMinWidth: ReturnType<typeof vi.fn>;
 	setOverflow: ReturnType<typeof vi.fn>;
 };
 /** What main grants the next time the widget asks for list room. */
@@ -102,6 +110,7 @@ const renderWidget = () => render(<MediaPlayerWidget theme={mockTheme} />);
 beforeEach(() => {
 	vi.clearAllMocks();
 	commandHandler = null;
+	reportTransportMinWidth = undefined;
 	api = {
 		show: vi.fn().mockResolvedValue(true),
 		hide: vi.fn().mockResolvedValue(false),
@@ -118,6 +127,7 @@ beforeEach(() => {
 			bounds = { ...bounds, ...next };
 			return Promise.resolve({ ...bounds });
 		}),
+		setMinWidth: vi.fn(() => Promise.resolve({ ...bounds })),
 		setOverflow: vi.fn((_id: string, need: { above: number; below: number }) =>
 			Promise.resolve(need.above === 0 && need.below === 0 ? need : grant)
 		),
@@ -274,6 +284,41 @@ describe('MediaPlayerWidget', () => {
 				useMediaPlaybackStore.setState({ items: [podcast, movie], activeItemId: movie.id })
 			);
 			await waitFor(() => expect(api.getBounds).toHaveBeenCalledTimes(2));
+			await act(async () => {});
+			expect(api.setBounds).toHaveBeenCalledTimes(1);
+		});
+
+		it('widens past the default when the controls need more, and floors the OS window', async () => {
+			load(podcast);
+			renderWidget();
+			await waitFor(() => expect(api.setBounds).toHaveBeenCalledWith('media-player', audioSize));
+			// Unmeasured: the window keeps its own minimum.
+			expect(api.setMinWidth).toHaveBeenLastCalledWith('media-player', 0);
+
+			act(() => reportTransportMinWidth?.(520));
+			const wide = mediaWindowSizeFor({
+				kind: 'audio',
+				transportHeight: null,
+				transportMinWidth: 520,
+			});
+			expect(wide.width).toBeGreaterThan(audioSize.width);
+			await waitFor(() => expect(api.setBounds).toHaveBeenLastCalledWith('media-player', wide));
+			expect(api.setMinWidth).toHaveBeenLastCalledWith('media-player', wide.width);
+			// The floor is in place before the resize, so main does not clamp it.
+			expect(api.setMinWidth.mock.invocationCallOrder.at(-1)).toBeLessThan(
+				api.setBounds.mock.invocationCallOrder.at(-1)!
+			);
+		});
+
+		it('floors a window the user resized without resizing it', async () => {
+			load(podcast);
+			renderWidget();
+			await waitFor(() => expect(api.setBounds).toHaveBeenCalledTimes(1));
+
+			// The user drags the window narrower, then the row gains buttons.
+			bounds = { ...bounds, width: 300 };
+			act(() => reportTransportMinWidth?.(520));
+			await waitFor(() => expect(api.setMinWidth).toHaveBeenLastCalledWith('media-player', 522));
 			await act(async () => {});
 			expect(api.setBounds).toHaveBeenCalledTimes(1);
 		});
