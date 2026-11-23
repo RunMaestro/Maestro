@@ -91,6 +91,11 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// even minimal is absent from some native menus. Never clamp to a different
 	// rung or automatically request none; resolveEffortLevel requires evidence.
 	grok: { low: 'minimal', medium: 'medium', high: 'max' },
+	// Ladder (`agy --effort`): low, medium, high, xhigh, max, but each model
+	// accepts a subset (see antigravityModels.ts). `high` is the top rung every
+	// tier model below lists; `xhigh` is Neon and Hydrogen only, and no model
+	// takes `max`. A model that refuses a rung is recognized by effortRejection.ts.
+	antigravity: { low: 'low', medium: 'medium', high: 'high' },
 };
 
 /**
@@ -105,6 +110,13 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
  * - `factory-droid` takes one model family so the three tiers are genuinely
  *   comparable. The IDs are versioned and will need revising, but they are
  *   already hard-coded in the agent definition, so this is no new exposure.
+ * - `antigravity` maps the Gemini 4 family by the use Google states for each
+ *   (blog.google, "Introducing Gemini 4 Neon"): Hydrogen for fast everyday
+ *   execution, Neon for the balance of depth and efficiency, Carbon for the
+ *   hardest long-horizon work. The ids are base names with no effort suffix,
+ *   so the effort hint stays its own axis. Argon (the older model) and the
+ *   Orchestrator workflows are not tiers. Carbon needs an AI Ultra plan in
+ *   Antigravity; on a plan without it the CLI refuses the model by name.
  *
  * Absent on purpose: `codex` and `copilot-cli` discover their catalogues at
  * runtime (`models_cache.json`, models.dev) and their IDs churn per release;
@@ -121,6 +133,7 @@ const TIER_MODELS: Partial<Record<ToolType, Record<ModelTier, string>>> = {
 		medium: 'claude-sonnet-4-5-20250929',
 		high: 'claude-opus-4-5-20251101',
 	},
+	antigravity: { low: 'gemini-4-hydrogen', medium: 'gemini-4-neon', high: 'gemini-4-carbon' },
 };
 
 /**

@@ -407,3 +407,37 @@ describe('isLadderEffortValue', () => {
 		expect(isLadderEffortValue('not-a-provider', 'low')).toBe(false);
 	});
 });
+
+describe('Antigravity tiers and effort', () => {
+	it('maps tiers to the Gemini 4 model Google positions for that use, by base name', () => {
+		// Hydrogen: fast everyday execution. Neon: depth and efficiency. Carbon:
+		// the hardest long-horizon work. Base names, so effort stays its own axis.
+		expect(resolveTierModel('antigravity', 'low')).toBe('gemini-4-hydrogen');
+		expect(resolveTierModel('antigravity', 'medium')).toBe('gemini-4-neon');
+		expect(resolveTierModel('antigravity', 'high')).toBe('gemini-4-carbon');
+		expect(supportsTierSelection('antigravity')).toBe(true);
+	});
+
+	it('maps effort levels to rungs every tier model accepts', () => {
+		// Carbon stops at high, so the ladder does too; xhigh is Neon/Hydrogen only.
+		expect(resolveEffortLevel('antigravity', 'low')).toBe('low');
+		expect(resolveEffortLevel('antigravity', 'medium')).toBe('medium');
+		expect(resolveEffortLevel('antigravity', 'high')).toBe('high');
+		expect(supportsEffortSelection('antigravity')).toBe(true);
+	});
+
+	it('runs cheap turns on Hydrogen at low effort', () => {
+		expect(cheapTurnSettings('antigravity')).toEqual({ model: 'gemini-4-hydrogen', effort: 'low' });
+	});
+
+	it('keeps a ladder value available after another model refused it', () => {
+		// gpt-oss-120b accepts only medium. Its refusal of high must not withdraw
+		// high from the Gemini models that accept it.
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		expect(resolveEffortLevel('antigravity', 'high')).toBe('high');
+	});
+});

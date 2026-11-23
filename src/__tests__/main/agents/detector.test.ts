@@ -2659,6 +2659,76 @@ describe('agent-detector', () => {
 		});
 	});
 
+	describe('antigravity model and effort discovery', () => {
+		// Verbatim shape of `agy models` on agy 1.5.14 (trimmed).
+		const AGY_MODELS = [
+			'Fetching available models...',
+			'gemini-4-neon-high\tGemini 4 Neon (High)',
+			'gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)',
+			'gemini-4-neon-low\tGemini 4 Neon (Low)',
+			'gemini-4-carbon-medium\tGemini 4 Carbon (Medium)',
+			'gemini-pro-orchestrator-neon\tOrchestrator (Neon)',
+			'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)',
+			'',
+		].join('\n');
+		let modelsCalls = 0;
+
+		beforeEach(async () => {
+			modelsCalls = 0;
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'agy') return { stdout: '/usr/bin/agy\n', stderr: '', exitCode: 0 };
+				if (args[0] === 'bash') return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				if (cmd === '/usr/bin/agy' && args[0] === 'models') {
+					modelsCalls++;
+					return { stdout: AGY_MODELS, stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+			await detector.detectAgents();
+		});
+
+		it('lists base models from `agy models`, without the heading or labels', async () => {
+			expect(await detector.discoverModels('antigravity', true)).toEqual([
+				'gemini-4-neon',
+				'gemini-4-carbon',
+				'gemini-pro-orchestrator-neon',
+				'gpt-oss-120b',
+			]);
+		});
+
+		it('offers every effort any model lists, in ladder order, with the default first', async () => {
+			expect(await detector.discoverConfigOptions('antigravity', 'effort', true)).toEqual([
+				'',
+				'low',
+				'medium',
+				'high',
+				'xhigh',
+			]);
+		});
+
+		it('reads `agy models` once for both the model and effort menus', async () => {
+			await detector.discoverModels('antigravity', true);
+			await detector.discoverConfigOptions('antigravity', 'effort');
+			expect(modelsCalls).toBe(1);
+		});
+
+		it('falls back to the static effort options when `agy models` fails', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) =>
+				cmd === '/usr/bin/agy' && args[0] === 'models'
+					? { stdout: '', stderr: 'You are not logged into Antigravity.', exitCode: 1 }
+					: { stdout: '', stderr: '', exitCode: 1 }
+			);
+			expect(await detector.discoverModels('antigravity', true)).toEqual([]);
+			expect(await detector.discoverConfigOptions('antigravity', 'effort', true)).toEqual([
+				'',
+				'low',
+				'medium',
+				'high',
+				'xhigh',
+			]);
+		});
+	});
+
 	describe('discoverConfigOptions', () => {
 		it('should discover effort levels for Claude Code from --help output', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {

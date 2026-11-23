@@ -52,6 +52,11 @@ import {
 	type BuildAgentEnvironmentOptions,
 } from '../../shared/maestro-lib/launch/env';
 import type { SshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
+import {
+	antigravityEffortUnion,
+	parseAntigravityModelList,
+	type AntigravityModelCatalog,
+} from '../../shared/antigravityModels';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -445,6 +450,8 @@ export class AgentDetector {
 	private modelCache: Map<string, { models: string[]; timestamp: number }> = new Map();
 	// Cache for config option discovery: "agentId:optionKey" -> { options, timestamp }
 	private configOptionCache: Map<string, { options: string[]; timestamp: number }> = new Map();
+	/** The last `agy models` read, so effort discovery reuses it instead of a second probe. */
+	private antigravityCatalog: { catalog: AntigravityModelCatalog; timestamp: number } | null = null;
 	// Configurable cache TTL (useful for testing or different environments)
 	private readonly modelCacheTtlMs: number;
 	private readonly deps: AgentDetectorDeps;
@@ -687,6 +694,7 @@ export class AgentDetector {
 	 * Clear the model cache for a specific agent or all agents
 	 */
 	clearModelCache(agentId?: string): void {
+		if (!agentId || agentId === 'antigravity') this.antigravityCatalog = null;
 		if (agentId) {
 			for (const key of this.modelCache.keys()) {
 				if (key === agentId || key.startsWith(`${agentId}:`)) this.modelCache.delete(key);
@@ -748,6 +756,7 @@ export class AgentDetector {
 		}
 
 		// Run agent-specific model discovery command
+		if (forceRefresh && agentId === 'antigravity') this.antigravityCatalog = null;
 		const models = await this.runModelDiscovery(agentId, agent);
 
 		// A transient `omp models --json` failure returns an empty list. Don't cache
@@ -1067,6 +1076,15 @@ export class AgentDetector {
 					return models;
 				}
 
+				case 'antigravity': {
+					const catalog = await this.readAntigravityCatalog(command, env);
+					logger.info(
+						`Discovered ${catalog?.models.length ?? 0} models for ${agentId} from \`agy models\``,
+						LOG_CONTEXT
+					);
+					return catalog?.models ?? [];
+				}
+
 				case 'copilot-cli': {
 					// Copilot CLI: fetch available models from models.dev API (github-copilot
 					// provider) and merge with the user's configured model from
@@ -1162,6 +1180,31 @@ export class AgentDetector {
 	}
 
 	/**
+	 * Read `agy models` once per cache window. A failed or empty read is not
+	 * cached, so a CLI that was mid-update or signed out is asked again next time.
+	 */
+	private async readAntigravityCatalog(
+		command: string,
+		env: NodeJS.ProcessEnv
+	): Promise<AntigravityModelCatalog | null> {
+		const cached = this.antigravityCatalog;
+		if (cached && Date.now() - cached.timestamp < this.modelCacheTtlMs) return cached.catalog;
+		const result = await execFileNoThrow(command, ['models'], undefined, env);
+		if (result.exitCode !== 0) {
+			logger.warn(
+				`CLI model discovery failed for antigravity: exit code ${result.exitCode}`,
+				LOG_CONTEXT,
+				{ stderr: result.stderr }
+			);
+			return null;
+		}
+		const catalog = parseAntigravityModelList(result.stdout);
+		if (catalog.models.length === 0) return null;
+		this.antigravityCatalog = { catalog, timestamp: Date.now() };
+		return catalog;
+	}
+
+	/**
 	 * Discover available values for a dynamic select config option.
 	 * Returns an array of option values, or empty array if discovery is not supported.
 	 *
@@ -1199,6 +1242,7 @@ export class AgentDetector {
 			}
 		}
 
+		if (forceRefresh && agentId === 'antigravity') this.antigravityCatalog = null;
 		const options = await this.runConfigOptionDiscovery(agentId, optionKey);
 		this.configOptionCache.set(cacheKey, { options, timestamp: Date.now() });
 		return options;
@@ -1325,6 +1369,22 @@ export class AgentDetector {
 								LOG_CONTEXT
 							);
 						}
+					}
+					break;
+				}
+
+				case 'antigravity': {
+					if (optionKey === 'effort') {
+						// The efforts any model offers, read off the `agy models` suffixes.
+						// A per-model subset is enforced at launch by the CLI itself, and a
+						// refusal there is recognized by effortRejection.ts.
+						const agent = await this.getAgent(agentId);
+						const catalog = await this.readAntigravityCatalog(
+							agent?.path || agent?.command || 'agy',
+							getExpandedEnv()
+						);
+						const levels = catalog ? antigravityEffortUnion(catalog) : [];
+						if (levels.length > 0) return ['', ...levels];
 					}
 					break;
 				}

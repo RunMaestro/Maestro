@@ -5,6 +5,10 @@ import type {
 	AgentDiscoverySelection,
 } from '../../types';
 import { describeEffortRejection, getEffortRejection } from '../../effortRejection';
+import {
+	resolveAntigravityModelEffortArgs,
+	resolveAntigravitySelection,
+} from '../../antigravityModels';
 import { logger } from '../host';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -641,6 +645,16 @@ export function applyAgentConfigOverrides(
 	}
 	if (agent?.id === 'grok') {
 		finalArgs = resolveGrokModelEffortArgs(finalArgs, overrides.grokEffortMenu);
+	}
+	if (agent?.id === 'antigravity') {
+		// An effort-suffixed model id plus a different --effort is a hard error in
+		// agy; resolve the pair here so every surface (tab, Auto Run hint, Cue,
+		// custom args) sends one the CLI accepts. The SDK path reads modelId and
+		// effort, so they get the same resolution.
+		finalArgs = resolveAntigravityModelEffortArgs(finalArgs);
+		const selected = resolveAntigravitySelection(modelId, effort);
+		modelId = selected.model;
+		effort = selected.effort;
 	}
 
 	// Env vars: agent defaults (lowest), then ONE user-configured set on top. The
