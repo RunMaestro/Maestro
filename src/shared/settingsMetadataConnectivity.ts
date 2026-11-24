@@ -37,7 +37,7 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	notificationCenterEnabled: {
 		description:
-			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell.',
+			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell. Every toast also goes to the System Log Viewer either way, filterable to Toast only.',
 		type: 'boolean',
 		default: false,
 		category: 'notifications',
