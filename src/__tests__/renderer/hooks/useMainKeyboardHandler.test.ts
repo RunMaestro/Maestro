@@ -4862,7 +4862,9 @@ describe('useMainKeyboardHandler - openPromptComposer', () => {
  * Inside a room, Toggle Tab Unread flips the room's own Left Bar dot.
  */
 describe('group chat unread toggle', () => {
-	const pressToggleUnread = (overrides: Record<string, unknown>) => {
+	// Mounts ONE handler and returns a press function, so a second press does
+	// not land on a second live listener (which would toggle twice).
+	const mountToggleUnread = (overrides: Record<string, unknown>) => {
 		const toggleTabUnread = vi.fn();
 		const { result } = renderHook(() => useMainKeyboardHandler());
 		result.current.keyboardHandlerRef.current = createMockContext({
@@ -4873,18 +4875,19 @@ describe('group chat unread toggle', () => {
 			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
 			...overrides,
 		});
-		act(() => {
-			window.dispatchEvent(
-				new KeyboardEvent('keydown', {
-					key: 'u',
-					metaKey: true,
-					shiftKey: true,
-					bubbles: true,
-					cancelable: true,
-				})
-			);
-		});
-		return toggleTabUnread;
+		const press = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'u',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+		return { press, toggleTabUnread };
 	};
 
 	beforeEach(() => {
@@ -4892,16 +4895,18 @@ describe('group chat unread toggle', () => {
 	});
 
 	it('marks the open room unread, then read again, without touching the agent tab', () => {
-		const toggleTabUnread = pressToggleUnread({ activeGroupChatId: 'chat-1' });
+		const { press, toggleTabUnread } = mountToggleUnread({ activeGroupChatId: 'chat-1' });
+		press();
 		expect(useGroupChatStore.getState().unreadGroupChatIds.has('chat-1')).toBe(true);
 		expect(toggleTabUnread).not.toHaveBeenCalled();
 
-		pressToggleUnread({ activeGroupChatId: 'chat-1' });
+		press();
 		expect(useGroupChatStore.getState().unreadGroupChatIds.has('chat-1')).toBe(false);
 	});
 
 	it('leaves the chord to the agent tab when no room is open', () => {
-		const toggleTabUnread = pressToggleUnread({ activeGroupChatId: null });
+		const { press, toggleTabUnread } = mountToggleUnread({ activeGroupChatId: null });
+		press();
 		expect(toggleTabUnread).toHaveBeenCalled();
 		expect(useGroupChatStore.getState().unreadGroupChatIds.size).toBe(0);
 	});
