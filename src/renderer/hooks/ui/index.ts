@@ -148,7 +148,7 @@ export { usePagination } from './usePagination';
 export type { UsePaginationResult } from './usePagination';
 
 // ResizeObserver-backed element width, for JS-computed layout
-export { useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
+export { useElementSize, useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
 
 // Composer rects the toast stack lifts itself above
 export { useToastAvoidZone, useToastAvoidZoneStore, toastBottomInset } from './useToastAvoidZone';

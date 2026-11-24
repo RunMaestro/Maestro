@@ -3562,6 +3562,377 @@ describe('BrowserTabView', () => {
 			});
 		});
 
+		describe('viewport presets', () => {
+			const size = { width: 1000, height: 600 };
+			const hostReports: Array<() => void> = [];
+
+			/** Hands the test the callbacks of whichever observers watch the tab's host. */
+			class HostResizeObserver {
+				constructor(private readonly callback: ResizeObserverCallback) {}
+				observe(target: Element) {
+					if (target.getAttribute('data-testid') === 'browser-tab-host') {
+						hostReports.push(() => this.callback([], this as unknown as ResizeObserver));
+					}
+				}
+				disconnect() {}
+			}
+
+			/**
+			 * What jsdom cannot lay out: the tab is `size`, the stage is the width a
+			 * preset gave it (the whole tab at Fit), and the overlay fills the stage.
+			 */
+			function sizeOf(element: HTMLElement, axis: 'width' | 'height'): number {
+				const id = element.getAttribute('data-testid');
+				if (id === 'browser-tab-design-mode-layer' && element.parentElement) {
+					return sizeOf(element.parentElement, axis);
+				}
+				if (id === 'browser-tab-stage' && axis === 'width') {
+					return parseFloat(element.style.width) || size.width;
+				}
+				return id === 'browser-tab-host' || id === 'browser-tab-stage' ? size[axis] : 0;
+			}
+
+			let restoreLayout: Array<() => void> = [];
+
+			beforeEach(() => {
+				size.width = 1000;
+				size.height = 600;
+				hostReports.length = 0;
+				vi.stubGlobal('ResizeObserver', HostResizeObserver);
+				const width = vi
+					.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+					.mockImplementation(function (this: HTMLElement) {
+						return sizeOf(this, 'width');
+					});
+				const height = vi
+					.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+					.mockImplementation(function (this: HTMLElement) {
+						return sizeOf(this, 'height');
+					});
+				restoreLayout = [() => width.mockRestore(), () => height.mockRestore()];
+			});
+
+			afterEach(() => {
+				restoreLayout.forEach((restore) => restore());
+			});
+
+			const stage = () => screen.getByTestId('browser-tab-stage');
+
+			/** The tab is resized and its observers say so. */
+			function resizeTab(next: { width: number; height: number }) {
+				size.width = next.width;
+				size.height = next.height;
+				act(() => hostReports.forEach((report) => report()));
+			}
+
+			function viewportWrites(onUpdateTab: ReturnType<typeof vi.fn>) {
+				return onUpdateTab.mock.calls
+					.map(([, updates]) => (updates as Partial<BrowserTab>).viewportPreset)
+					.filter((value) => value !== undefined);
+			}
+
+			/** The probe the page answers with: a box in a viewport of the given width. */
+			function pageAt(webview: MockWebview, viewport: { width: number; height: number }) {
+				webview.executeJavaScript = vi.fn(async (code: string) => {
+					const req = guestRequest(code);
+					if (!req) return undefined;
+					if (req.type === 'probe') {
+						return {
+							rect: { x: 144, y: 80, width: 288, height: 160 },
+							label: 'section.hero',
+							depth: req.depth,
+							viewport,
+						};
+					}
+					return true;
+				});
+			}
+
+			it('offers a viewport control with Fit chosen', async () => {
+				await setupReady();
+
+				expect(screen.getByRole('radiogroup', { name: 'Viewport width' })).toBeTruthy();
+				expect(screen.getByTestId('browser-tab-viewport-fit').getAttribute('aria-checked')).toBe(
+					'true'
+				);
+				expect(stage().getAttribute('data-viewport-preset')).toBe('fit');
+			});
+
+			it('offers no viewport control where the page cannot be shown (web build)', () => {
+				vi.mocked(isWebDesktop).mockReturnValue(true);
+				render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+				expect(screen.queryByTestId('browser-tab-viewport')).toBeNull();
+				expect(screen.queryByTestId('browser-tab-stage')).toBeNull();
+			});
+
+			it('keeps the control next to the Design Mode button', async () => {
+				await setupReady(vi.fn());
+
+				const control = screen.getByTestId('browser-tab-viewport');
+				const toggle = screen.getByTestId('browser-tab-design-mode-toggle');
+				expect(control.parentElement?.nextElementSibling).toBe(toggle);
+			});
+
+			it('at Fit the page fills the tab, as it always has', async () => {
+				const { webview } = await setupReady();
+
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.right).toBe('0px');
+				expect(stage().style.width).toBe('');
+				expect(stage().style.boxShadow).toBe('');
+				expect(webview.style.width).toBe('100%');
+				expect(webview.style.height).toBe('100%');
+				expect(webview.style.transform).toBe('');
+				expect(webview.style.position).toBe('');
+			});
+
+			it('writes the chosen preset to the tab, and nothing for the one already chosen', async () => {
+				const { onUpdateTab } = await setupReady();
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-fit'));
+				expect(viewportWrites(onUpdateTab)).toEqual([]);
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-phone'));
+				expect(viewportWrites(onUpdateTab)).toEqual(['phone']);
+				expect(screen.getByTestId('browser-tab-viewport-phone').getAttribute('aria-checked')).toBe(
+					'true'
+				);
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-phone'));
+				expect(viewportWrites(onUpdateTab)).toEqual(['phone']);
+			});
+
+			it('puts a phone page in the middle of a wide tab at its own width and the tab’s height', async () => {
+				const { webview } = await setupReady();
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-phone'));
+
+				// The stage is the page's box: 390 wide, centered in 1000, full height.
+				expect(stage().getAttribute('data-viewport-preset')).toBe('phone');
+				expect(stage().style.left).toBe('305px');
+				expect(stage().style.width).toBe('390px');
+				expect(stage().style.boxShadow).not.toBe('');
+				// The page sees a 390 x 600 viewport and is not scaled.
+				expect(webview.style.position).toBe('absolute');
+				expect(webview.style.width).toBe('390px');
+				expect(webview.style.height).toBe('600px');
+				expect(webview.style.transform).toBe('');
+			});
+
+			it('shows a desktop page in a narrow tab at 1440 wide, scaled down to the tab', async () => {
+				size.width = 900;
+				size.height = 500;
+				const { webview } = await setupReady();
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-desktop'));
+
+				// Never wider than the tab: the stage is the whole 900.
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.width).toBe('900px');
+				// The page sees 1440 wide; its height is the tab's divided by the scale, so the
+				// scaled page ends at the tab's bottom edge.
+				expect(webview.style.width).toBe('1440px');
+				expect(webview.style.height).toBe('800px');
+				expect(webview.style.transform).toBe('scale(0.625)');
+				expect(webview.style.transformOrigin).toMatch(/^0(px)? 0(px)?$/);
+			});
+
+			it('goes back to filling the tab when Fit is chosen again', async () => {
+				size.width = 900;
+				size.height = 500;
+				const { webview } = await setupReady();
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-desktop'));
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-fit'));
+
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.right).toBe('0px');
+				expect(stage().style.width).toBe('');
+				expect(webview.style.width).toBe('100%');
+				expect(webview.style.height).toBe('100%');
+				expect(webview.style.transform).toBe('');
+				expect(webview.style.position).toBe('');
+			});
+
+			it('opens a tab saved with a preset already at it', async () => {
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'tablet' },
+				});
+
+				expect(stage().style.left).toBe('116px');
+				expect(stage().style.width).toBe('768px');
+				expect(webview.style.width).toBe('768px');
+				expect(screen.getByTestId('browser-tab-viewport-tablet').getAttribute('aria-checked')).toBe(
+					'true'
+				);
+			});
+
+			it('keeps the preset when the page loads or the webview reports it is ready again', async () => {
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'phone' },
+				});
+				expect(webview.style.width).toBe('390px');
+
+				await act(async () => {
+					webview.dispatchEvent(new Event('dom-ready'));
+					webview.dispatchEvent(new Event('did-stop-loading'));
+				});
+
+				// Both events used to size the webview to the whole tab.
+				expect(webview.style.width).toBe('390px');
+				expect(webview.style.height).toBe('600px');
+			});
+
+			it('follows the tab when it is resized, so a side bar folding re-centers the page', async () => {
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'phone' },
+				});
+				expect(stage().style.left).toBe('305px');
+
+				resizeTab({ width: 1400, height: 800 });
+				expect(stage().style.left).toBe('505px');
+				expect(webview.style.height).toBe('800px');
+
+				// Narrower than the phone: the page is scaled down to fit.
+				resizeTab({ width: 300, height: 500 });
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.width).toBe('300px');
+				expect(webview.style.width).toBe('390px');
+				expect(webview.style.transform).toMatch(/^scale\(0\.76923/);
+			});
+
+			it('fills the tab until the tab has a size, rather than draw a page in a zero-wide box', async () => {
+				size.width = 0;
+				size.height = 0;
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'phone' },
+				});
+
+				expect(stage().style.width).toBe('');
+				expect(webview.style.width).toBe('100%');
+			});
+
+			it('writes the preset through the handle, and a read right after sees it', async () => {
+				const { ref, onUpdateTab } = await setupReady();
+				expect(ref.current!.getViewportPreset()).toBe('fit');
+
+				act(() => ref.current!.setViewportPreset('tablet'));
+
+				expect(ref.current!.getViewportPreset()).toBe('tablet');
+				expect(viewportWrites(onUpdateTab)).toEqual(['tablet']);
+				expect(stage().getAttribute('data-viewport-preset')).toBe('tablet');
+
+				// Setting what is already set is not a write.
+				act(() => ref.current!.setViewportPreset('tablet'));
+				expect(viewportWrites(onUpdateTab)).toEqual(['tablet']);
+			});
+
+			describe('with Design Mode on', () => {
+				it('puts the overlay in the stage, as big as the scaled page, so its points map onto the page', async () => {
+					size.width = 900;
+					size.height = 500;
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'desktop' },
+					});
+					pageAt(webview, { width: 1440, height: 800 });
+
+					const layer = await arm();
+
+					// Beside the scaled webview, never inside a transform.
+					expect(layer.parentElement).toBe(stage());
+					expect(webview.parentElement).toBe(stage());
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual({
+							type: 'probe',
+							x: 450,
+							y: 250,
+							depth: 0,
+							// The overlay is the scaled page: 900 x 500 over a 1440 x 800 viewport.
+							frame: { width: 900, height: 500 },
+						})
+					);
+					// 0.625 overlay px per page px: the page's box lands where it is drawn.
+					await waitFor(() => {
+						const outline = screen.getByTestId('browser-tab-design-mode-outline');
+						expect(outline.style.left).toBe('88px');
+						expect(outline.style.top).toBe('48px');
+						expect(outline.style.width).toBe('184px');
+						expect(outline.style.height).toBe('104px');
+					});
+				});
+
+				it('sizes the overlay to a phone page in the middle of a wide tab', async () => {
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'phone' },
+					});
+					pageAt(webview, { width: 390, height: 600 });
+
+					await arm();
+
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual({
+							type: 'probe',
+							x: 195,
+							y: 300,
+							depth: 0,
+							frame: { width: 390, height: 600 },
+						})
+					);
+				});
+
+				it('asks the page again when a preset changes its width but not the overlay’s box', async () => {
+					// Desktop and Laptop both fill a 900 px tab: the overlay stays 900 x 500
+					// while the page reflows from 1440 to 1280.
+					size.width = 900;
+					size.height = 500;
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'desktop' },
+					});
+					pageAt(webview, { width: 1440, height: 800 });
+					const layer = await arm();
+					await act(async () => {
+						fireEvent.mouseMove(layer, { clientX: 300, clientY: 120 });
+					});
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual(
+							expect.objectContaining({ x: 300, y: 120 })
+						)
+					);
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					fireEvent.click(screen.getByTestId('browser-tab-viewport-laptop'));
+					await act(async () => {
+						await new Promise((resolve) => setTimeout(resolve, 300));
+					});
+
+					const probes = guestCalls(webview, 'probe');
+					expect(probes.length).toBe(probesBefore + 1);
+					expect(probes.at(-1)).toMatchObject({
+						x: 300,
+						y: 120,
+						frame: { width: 900, height: 500 },
+					});
+				});
+
+				it('does not probe again when the preset did not change', async () => {
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'desktop' },
+					});
+					await arm();
+					await waitFor(() => expect(guestCalls(webview, 'probe').length).toBeGreaterThan(0));
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					fireEvent.click(screen.getByTestId('browser-tab-viewport-desktop'));
+					await act(async () => {
+						await new Promise((resolve) => setTimeout(resolve, 300));
+					});
+
+					expect(guestCalls(webview, 'probe').length).toBe(probesBefore);
+				});
+			});
+		});
+
 		it('the imperative toggle and inspectElement reach the same path', async () => {
 			const { ref, webview } = await setupReady(vi.fn());
 			await act(async () => {

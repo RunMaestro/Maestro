@@ -15,7 +15,14 @@
  * A finished page load (`pageLoadCount`) is not an exit: the layer probes the
  * new document at the same point. So does a change in the layer's own size (the
  * side bars fold as Design Mode comes on, the window is resized), once it has
- * settled: the outline was measured for the old size.
+ * settled: the outline was measured for the old size. A viewport preset moves
+ * the page without always moving the layer (`layoutKey`), and does the same.
+ *
+ * The layer fills the box the page is shown in and nothing more. Under a
+ * viewport preset that box is the SCALED page, so the host places the layer
+ * outside the scaled element and sizes it to that box: `layerFrame()` (layout
+ * pixels) and `layerPointAt()` (client pixels) then agree, and
+ * `designOverlayScale()` comes out as the page's scale with no extra math.
  *
  * Keys (the overlay holds focus): Enter picks, ArrowUp / ArrowDown walk to the
  * parent / back toward the child, Escape drops a drag in progress, closes the
@@ -91,6 +98,13 @@ export interface BrowserDesignModeLayerProps {
 	 * probes again at the same point.
 	 */
 	pageLoadCount: number;
+	/**
+	 * Names how the page is laid out (the tab's viewport preset). A change means
+	 * the page reflowed to another width, which the layer's own size does not
+	 * always show (Desktop and Laptop both fill a narrow tab), so the layer
+	 * probes again once the layout settles, as it does after a size change.
+	 */
+	layoutKey?: string;
 	/** Leave Design Mode. */
 	onExit: () => void;
 	/**
@@ -401,6 +415,7 @@ export function BrowserDesignModeLayer({
 	theme,
 	access,
 	pageLoadCount,
+	layoutKey,
 	onExit,
 	onDeliver,
 	onQueue,
@@ -800,29 +815,39 @@ export function BrowserDesignModeLayer({
 	// again where the pointer is once the size has settled. probe() stands aside
 	// while the page has the pointer or a drag draws its box; an open card is
 	// frozen on purpose, and its probe only refreshes what shows when it closes.
+	// The same goes for a new layout key: a viewport preset reflows the page at
+	// another width even when the layer's box stays put.
+	const seenLayoutKeyRef = useRef(layoutKey);
 	useEffect(() => {
 		const layer = layerRef.current;
 		if (!layer || typeof ResizeObserver === 'undefined') return;
 		let width = layer.clientWidth;
 		let height = layer.clientHeight;
 		let timer: number | null = null;
-		const observer = new ResizeObserver(() => {
-			// Observing reports once, and a change that nets out is no change.
-			if (layer.clientWidth === width && layer.clientHeight === height) return;
-			width = layer.clientWidth;
-			height = layer.clientHeight;
+		const settle = () => {
 			if (timer !== null) window.clearTimeout(timer);
 			timer = window.setTimeout(() => {
 				timer = null;
 				void probe();
 			}, RESIZE_SETTLE_MS);
+		};
+		const observer = new ResizeObserver(() => {
+			// Observing reports once, and a change that nets out is no change.
+			if (layer.clientWidth === width && layer.clientHeight === height) return;
+			width = layer.clientWidth;
+			height = layer.clientHeight;
+			settle();
 		});
 		observer.observe(layer);
+		if (seenLayoutKeyRef.current !== layoutKey) {
+			seenLayoutKeyRef.current = layoutKey;
+			settle();
+		}
 		return () => {
 			observer.disconnect();
 			if (timer !== null) window.clearTimeout(timer);
 		};
-	}, [probe]);
+	}, [probe, layoutKey]);
 
 	useEffect(() => {
 		if (card) noteRef.current?.focus();

@@ -270,6 +270,48 @@ describe('browserTabPersistence', () => {
 			expect(sanitizeBrowserTabForPersistence(damaged, 's1')).not.toHaveProperty('designMode');
 		});
 
+		it('keeps a viewport preset across a restart, and only a real one', () => {
+			const tab: BrowserTab = {
+				id: 'browser-4',
+				url: 'https://example.com',
+				title: 'Example',
+				createdAt: 1,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			};
+			// The user's choice for this tab, not guest runtime state.
+			for (const preset of ['desktop', 'laptop', 'tablet', 'phone'] as const) {
+				expect(
+					rehydrateBrowserTab(
+						sanitizeBrowserTabForPersistence({ ...tab, viewportPreset: preset }, 's1'),
+						's1'
+					).viewportPreset
+				).toBe(preset);
+			}
+			// Fit is what an unset preset means, so it is not stored.
+			expect(sanitizeBrowserTabForPersistence(tab, 's1')).not.toHaveProperty('viewportPreset');
+			expect(
+				sanitizeBrowserTabForPersistence({ ...tab, viewportPreset: 'fit' }, 's1')
+			).not.toHaveProperty('viewportPreset');
+			// A damaged store value is dropped rather than shown at a width nobody chose.
+			for (const damaged of ['wide', '390', 390, null, {}, true]) {
+				expect(
+					sanitizeBrowserTabForPersistence(
+						{ ...tab, viewportPreset: damaged } as unknown as BrowserTab,
+						's1'
+					)
+				).not.toHaveProperty('viewportPreset');
+			}
+			// A hand-edited store with the right name in the wrong case is repaired.
+			expect(
+				sanitizeBrowserTabForPersistence(
+					{ ...tab, viewportPreset: 'Tablet' } as unknown as BrowserTab,
+					's1'
+				).viewportPreset
+			).toBe('tablet');
+		});
+
 		describe('ephemeral (incognito) partitions', () => {
 			const baseTab: BrowserTab = {
 				id: 'browser-eph',

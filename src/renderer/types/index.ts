@@ -64,6 +64,7 @@ export type {
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { DesignPickKind } from '../../shared/designPickCommands';
+import type { BrowserViewportPreset } from '../../shared/browserViewport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1090,6 +1091,10 @@ export interface BrowserTab {
 	// the active surface again. Only Escape and the Design Mode toggle (toolbar
 	// button, shortcut, command palette) turn it off. Persisted.
 	designMode?: boolean;
+	// The width this tab shows its page at: 'fit' (or unset) fills the tab, any other
+	// preset lays the page out at that CSS width and scales it down to fit. Chosen by
+	// the user for this tab, so it survives page loads and restarts. Persisted.
+	viewportPreset?: BrowserViewportPreset;
 	// Runtime-only: populated by the embedded Electron browser surface, never persisted
 	webContentsId?: number;
 }

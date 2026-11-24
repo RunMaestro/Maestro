@@ -3,6 +3,8 @@ import React, {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from 'react';
@@ -23,8 +25,10 @@ import {
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { BrowserDesignModeLayer } from './BrowserDesignModeLayer';
+import { BrowserViewportControl } from './BrowserViewportControl';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useDesignModePanelCollapse } from '../../hooks/ui/useDesignModePanelCollapse';
+import { useElementSize } from '../../hooks/ui/useElementWidth';
 import { shortcutSuffix } from '../ui/ShortcutHint';
 import type { BrowserTab, Theme } from '../../types';
 import {
@@ -36,6 +40,11 @@ import {
 	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { computeBrowserViewportBox, type BrowserViewportBox } from '../../utils/browserViewport';
+import {
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	type BrowserViewportPreset,
+} from '../../../shared/browserViewport';
 import {
 	captureDesignPick,
 	captureDesignRegion,
@@ -155,6 +164,12 @@ export interface BrowserTabViewHandle {
 	 *  on is a no-op on a tab that cannot offer it (blank page, web build);
 	 *  turning it off always works. */
 	toggleDesignMode(): void;
+	/** The width this tab shows its page at ('fit' fills the tab). Reads the
+	 *  preset a `setViewportPreset` just chose, before the tab store hands it back. */
+	getViewportPreset(): BrowserViewportPreset;
+	/** Show the page at a preset's width (toolbar control, palette, CLI): laid
+	 *  out at that CSS width and scaled down to fit the tab. 'fit' fills the tab. */
+	setViewportPreset(preset: BrowserViewportPreset): void;
 	/** Describe the first element matching `selector` and crop its screenshot,
 	 *  the same payload a click in Design Mode builds (`maestro-cli browser-pick`). */
 	inspectElement(selector: string): Promise<DesignModeCapture | DesignModeMiss | null>;
@@ -263,13 +278,43 @@ function applyBlankGuestBackground(webview: ElectronWebviewElement | null, color
 	void webview.insertCSS(css).catch(() => {});
 }
 
-function syncWebviewLayout(webview: ElectronWebviewElement | null) {
+/**
+ * Size the webview inside its stage. With no `box` the page fills the stage. With
+ * one, the webview is the preset's CSS size, which is the viewport the page lays
+ * itself out for, and a transform scales it down to the stage from its top-left
+ * corner (the stage is the scaled box, so nothing else needs to move).
+ *
+ * This is CSS rather than `webContents.enableDeviceEmulation()` on purpose: the
+ * emulation is a main-process call on the guest (a webContentsId round trip for
+ * every resize) with a second copy of the size, while the stage already holds
+ * the box the overlay needs. The guest still renders at the preset width, so
+ * screenshots stay sharp, and Chromium hit-tests pointer events through a
+ * transformed guest, so input needs no mapping of ours. If a platform ever maps
+ * input wrongly through the transform, switch to emulation.
+ */
+function syncWebviewLayout(webview: ElectronWebviewElement | null, box: BrowserViewportBox | null) {
 	if (!webview) return;
 
 	webview.style.display = 'flex';
-	webview.style.width = '100%';
-	webview.style.height = '100%';
-	webview.style.flex = '1 1 auto';
+	if (box) {
+		webview.style.position = 'absolute';
+		webview.style.top = '0';
+		webview.style.left = '0';
+		webview.style.width = `${box.width}px`;
+		webview.style.height = `${box.height}px`;
+		webview.style.flex = '0 0 auto';
+		webview.style.transformOrigin = '0 0';
+		webview.style.transform = box.scale === 1 ? '' : `scale(${box.scale})`;
+	} else {
+		webview.style.position = '';
+		webview.style.top = '';
+		webview.style.left = '';
+		webview.style.width = '100%';
+		webview.style.height = '100%';
+		webview.style.flex = '1 1 auto';
+		webview.style.transformOrigin = '';
+		webview.style.transform = '';
+	}
 
 	const shadowHost = (webview as HTMLElement & { shadowRoot?: ShadowRoot | null }).shadowRoot;
 	const guestElement = shadowHost?.querySelector<HTMLElement>('object, embed, iframe, webview');
@@ -357,6 +402,38 @@ export const BrowserTabView = React.memo(
 			designModeRef.current = on;
 			onUpdateTabRef.current(latestTabRef.current.id, { designMode: on });
 		}, []);
+		// Viewport preset: the width this tab shows its page at, so a page that
+		// picks its layout by width (a laptop with both side bars open can land on
+		// the phone layout) can be seen at the width the user cares about. 'fit', the
+		// default, fills the tab. Any other preset lays the page out at that CSS
+		// width and scales it down to the tab; the stage in the JSX below is the box
+		// that scaled page fills, and the Design Mode layer is sized to it. Per-tab
+		// state on the tab itself, like Design Mode, written through onUpdateTab.
+		const viewportPreset = tab.viewportPreset ?? DEFAULT_BROWSER_VIEWPORT_PRESET;
+		const viewportPresetRef = useRef(viewportPreset);
+		viewportPresetRef.current = viewportPreset;
+		const setViewportPreset = useCallback((preset: BrowserViewportPreset) => {
+			if (viewportPresetRef.current === preset) return;
+			// The ref moves ahead of the store round trip, so a read right after
+			// this write (the handle, the CLI) already sees the new preset.
+			viewportPresetRef.current = preset;
+			onUpdateTabRef.current(latestTabRef.current.id, { viewportPreset: preset });
+		}, []);
+		// The tab's size is watched only while a preset needs it.
+		const hostSize = useElementSize(
+			hostRef,
+			viewportPreset !== DEFAULT_BROWSER_VIEWPORT_PRESET && !webDesktop
+		);
+		const viewportBox = useMemo(
+			() => computeBrowserViewportBox(viewportPreset, hostSize),
+			[viewportPreset, hostSize]
+		);
+		// The webview listeners below are set up once per tab and read it from here.
+		const viewportBoxRef = useRef(viewportBox);
+		viewportBoxRef.current = viewportBox;
+		useLayoutEffect(() => {
+			syncWebviewLayout(webviewRef.current, viewportBox);
+		}, [viewportBox]);
 		// The overlay is up only while this tab is the active surface. A hidden or
 		// covered tab keeps the flag but draws no picker, so it swallows nothing,
 		// and showing the tab again re-arms it: a fresh layer that takes focus and
@@ -564,6 +641,12 @@ export const BrowserTabView = React.memo(
 					if (designModeRef.current) setDesignMode(false);
 					else if (designModeAvailableRef.current) setDesignMode(true);
 				},
+				getViewportPreset(): BrowserViewportPreset {
+					return viewportPresetRef.current;
+				},
+				setViewportPreset(preset: BrowserViewportPreset): void {
+					setViewportPreset(preset);
+				},
 				async inspectElement(selector: string) {
 					const webview = webviewRef.current;
 					if (!webview) throw new Error('Browser webview is not available');
@@ -713,7 +796,7 @@ export const BrowserTabView = React.memo(
 				// every main-frame nav; if dom-ready does not fire again before
 				// stop-loading, readWebviewState would bail and leave the spinner stuck.
 				isDomReadyRef.current = true;
-				syncWebviewLayout(webview);
+				syncWebviewLayout(webview, viewportBoxRef.current);
 				updateNavigationState();
 			};
 			const handleNavigate = (event: Event) => {
@@ -879,7 +962,7 @@ export const BrowserTabView = React.memo(
 
 			const handleDomReady = () => {
 				isDomReadyRef.current = true;
-				syncWebviewLayout(webview);
+				syncWebviewLayout(webview, viewportBoxRef.current);
 				updateNavigationState();
 				setAddressBarHidden(false);
 				injectGuestListeners();
@@ -926,12 +1009,12 @@ export const BrowserTabView = React.memo(
 			const resizeObserver =
 				typeof ResizeObserver === 'undefined'
 					? null
-					: new ResizeObserver(() => syncWebviewLayout(webview));
+					: new ResizeObserver(() => syncWebviewLayout(webview, viewportBoxRef.current));
 			if (resizeObserver && hostRef.current) {
 				resizeObserver.observe(hostRef.current);
 			}
 
-			syncWebviewLayout(webview);
+			syncWebviewLayout(webview, viewportBoxRef.current);
 
 			return () => {
 				isDomReadyRef.current = false;
@@ -1251,6 +1334,13 @@ export const BrowserTabView = React.memo(
 								) : null}
 							</div>
 						</form>
+						{!webDesktop ? (
+							<BrowserViewportControl
+								theme={theme}
+								value={viewportPreset}
+								onChange={setViewportPreset}
+							/>
+						) : null}
 						{onDesignPick && !webDesktop ? (
 							<button
 								type="button"
@@ -1355,29 +1445,51 @@ export const BrowserTabView = React.memo(
 							</p>
 						</div>
 					) : (
-						<webview
-							ref={(element) => {
-								webviewRef.current = element as unknown as ElectronWebviewElement | null;
-							}}
-							// The element paints this until the guest produces its first frame,
-							// so a loading or empty tab matches the theme instead of flashing
-							// Chromium's white.
-							style={{ backgroundColor: theme.colors.bgMain }}
-							className="w-full h-full border-0"
-							partition={tab.partition}
-							src={initialSrcRef.current}
-						/>
+						// The stage is the box the page is shown in. At Fit it is the whole
+						// tab; at a preset it is the scaled page, centered, with the tab's
+						// own background on both sides. The Design Mode layer lives in it,
+						// beside the scaled webview rather than inside any transform, so the
+						// layer is exactly as big as the page looks and its pointer math
+						// (overlay px over viewport px) comes out as the page's scale.
+						<div
+							className="absolute top-0 bottom-0 overflow-hidden"
+							style={
+								viewportBox
+									? {
+											left: viewportBox.frame.left,
+											width: viewportBox.frame.width,
+											boxShadow: `0 0 0 1px ${theme.colors.border}`,
+										}
+									: { left: 0, right: 0 }
+							}
+							data-testid="browser-tab-stage"
+							data-viewport-preset={viewportPreset}
+						>
+							<webview
+								ref={(element) => {
+									webviewRef.current = element as unknown as ElectronWebviewElement | null;
+								}}
+								// The element paints this until the guest produces its first frame,
+								// so a loading or empty tab matches the theme instead of flashing
+								// Chromium's white.
+								style={{ backgroundColor: theme.colors.bgMain }}
+								className="w-full h-full border-0"
+								partition={tab.partition}
+								src={initialSrcRef.current}
+							/>
+							{designModeArmed ? (
+								<BrowserDesignModeLayer
+									theme={theme}
+									access={designAccessRef.current}
+									pageLoadCount={pageLoadCount}
+									layoutKey={viewportPreset}
+									onExit={exitDesignMode}
+									onDeliver={handleDesignDeliver}
+									onQueue={onDesignQueue ? handleDesignQueue : undefined}
+								/>
+							) : null}
+						</div>
 					)}
-					{designModeArmed ? (
-						<BrowserDesignModeLayer
-							theme={theme}
-							access={designAccessRef.current}
-							pageLoadCount={pageLoadCount}
-							onExit={exitDesignMode}
-							onDeliver={handleDesignDeliver}
-							onQueue={onDesignQueue ? handleDesignQueue : undefined}
-						/>
-					) : null}
 					{findOpen ? (
 						<div
 							className="absolute top-2 right-3 z-10 flex items-center gap-1 rounded-md border px-2 py-1 shadow-md"

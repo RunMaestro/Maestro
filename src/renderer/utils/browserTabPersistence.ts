@@ -1,5 +1,9 @@
 import type { BrowserTab } from '../types';
 import { PERSISTENT_BROWSER_TAB_PARTITION_PATTERN } from '../../shared/browserTabPartition';
+import {
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	parseBrowserViewportPreset,
+} from '../../shared/browserViewport';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
 // Ephemeral (incognito) browser tabs use a partition WITHOUT the `persist:`
@@ -227,11 +231,15 @@ export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: str
 	// Design Mode is the user's choice for this tab, not guest runtime state, so it
 	// survives a restart (the picker re-arms when the tab is shown). Only a literal
 	// true counts; anything else is dropped rather than read as truthy.
-	const { designMode, ...rest } = tab;
+	// The viewport preset is the same kind of choice. Fit is what an unset preset
+	// means, so it is not stored, and a value that is not a preset is dropped.
+	const { designMode, viewportPreset, ...rest } = tab;
+	const preset = parseBrowserViewportPreset(viewportPreset);
 
 	return {
 		...rest,
 		...(designMode === true ? { designMode: true } : {}),
+		...(preset && preset !== DEFAULT_BROWSER_VIEWPORT_PRESET ? { viewportPreset: preset } : {}),
 		url,
 		title,
 		partition: getSafeBrowserTabPartition(tab.partition, sessionId),

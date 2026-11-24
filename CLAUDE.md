@@ -156,6 +156,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Taking the user to an agent:** `jumpToAgent(sessionId, { tabId? })`, `revealAgentInSidebar(session)`, `openAgentSettings(session)` in `src/renderer/services/agentNavigation.ts`
 - **Dismissing a drawer after the user picks something in it:** `closeLeftSidebarForNavigation()` / `closeRightPanelForNavigation()` in `src/renderer/stores/uiStore.ts`, over `isNarrowViewportNow()` in `src/renderer/hooks/ui/useViewportBreakpoint.ts`.
 - **Folding the Left Bar and Right Bar while a surface needs the room, then giving back only what it closed:** `collapseSidePanels()` (returns the restore function) in `src/renderer/utils/sidePanelCollapse.ts`, driven for Design Mode by `useDesignModePanelCollapse(shown)` in `src/renderer/hooks/ui/useDesignModePanelCollapse.ts`.
+- **Showing a browser tab's page at a set width (Fit / Desktop / Laptop / Tablet / Phone):** `BROWSER_VIEWPORT_PRESETS`, `BROWSER_VIEWPORT_WIDTHS`, `parseBrowserViewportPreset()`, `browserViewportWidth()`, `describeBrowserViewport()` in `src/shared/browserViewport.ts` (CLI-safe), the box a preset gives the page by `computeBrowserViewportBox()` in `src/renderer/utils/browserViewport.ts`, applied by `BrowserTabView` and picked with `BrowserViewportControl`.
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`.
 - **Reading settings without the lifecycle effects:** `useSettingsValues()` in `src/renderer/hooks/settings/useSettings.ts`.
 - **A Settings section the search can show inline:** `GENERAL_SECTIONS` / `DISPLAY_SECTIONS` / `ENCORE_SECTIONS` in each tab's `sections.tsx`, looked up by `findSettingsSection(settingId)` in `src/renderer/components/Settings/settingsSections.ts`.
@@ -251,7 +252,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active, startInset?, endInset? })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`.
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect keyed on the selected index, never a `ref` on the selected row; in a NON-virtualized list use `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`.
 - **Adding a control to the Left Bar header:** the row is three zones (identity, indicators, menu) in `SessionList.tsx`; a status control goes in the CENTER band, and the wordmark is drawn in full or dropped (`showWordmark`), never truncated.
-- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`.
+- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`, and `useElementSize(ref, enabled?)` beside it when the height matters too.
 - **Keeping toasts off a surface the user works in:** `useToastAvoidZone()`, `toastBottomInset()` in `src/renderer/hooks/ui/useToastAvoidZone.ts`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`.
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
