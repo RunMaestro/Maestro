@@ -31,108 +31,112 @@ export function AgentTileButton({
 }: AgentTileButtonProps): JSX.Element {
 	const canSelect = tile.supported && isDetected;
 
+	// The Customize action is a sibling of the tile, not a child: a disabled
+	// <button> swallows clicks and focus for everything inside it, which left an
+	// uninstalled provider's custom path unreachable (#1895).
 	return (
-		<button
-			key={tile.id}
-			ref={(element) => setTileRef(index, element)}
-			onClick={() => onTileClick(tile, index)}
-			onFocus={() => onFocusTile(index)}
-			disabled={!canSelect}
-			className={`
+		<div className="relative flex flex-none">
+			<button
+				ref={(element) => setTileRef(index, element)}
+				onClick={() => onTileClick(tile, index)}
+				onFocus={() => onFocusTile(index)}
+				disabled={!canSelect}
+				className={`
 				relative flex flex-none flex-col items-center justify-center pt-7 px-6 pb-11 rounded-xl
 				border-2 transition-all duration-200 outline-none w-[220px]
 				${canSelect ? 'cursor-pointer' : 'cursor-not-allowed'}
 			`}
-			style={{
-				backgroundColor: isSelected
-					? `${tile.brandColor || theme.colors.accent}15`
-					: theme.colors.bgSidebar,
-				borderColor: isSelected
-					? tile.brandColor || theme.colors.accent
-					: isFocused && canSelect
-						? theme.colors.accent
-						: theme.colors.border,
-				opacity: tile.supported ? 1 : 0.5,
-				boxShadow: isSelected
-					? `0 0 0 3px ${tile.brandColor || theme.colors.accent}30`
-					: isFocused && canSelect
-						? `0 0 0 2px ${theme.colors.accent}40`
-						: 'none',
-			}}
-			aria-label={`${tile.name}${canSelect ? '' : tile.supported ? ' (not installed)' : ' (coming soon)'}`}
-			aria-pressed={isSelected}
-		>
-			{isSelected && (
-				<div
-					className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-					style={{ backgroundColor: tile.brandColor || theme.colors.accent }}
-				>
-					<Check className="w-3 h-3" style={{ color: '#fff' }} />
-				</div>
-			)}
-
-			{tile.supported && !isSelected && (
-				<div
-					className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-					style={{ backgroundColor: isDetected ? '#22c55e20' : '#ef444420' }}
-					title={isDetected ? 'Installed' : 'Not found'}
-				>
-					{isDetected ? (
-						<Check className="w-3 h-3" style={{ color: '#22c55e' }} />
-					) : (
-						<X className="w-3 h-3" style={{ color: '#ef4444' }} />
-					)}
-				</div>
-			)}
-
-			<div className="mb-3">
-				<AgentLogo
-					agentId={tile.id}
-					supported={tile.supported}
-					detected={isDetected}
-					brandColor={tile.brandColor}
-					theme={theme}
-				/>
-			</div>
-
-			<h4
-				className="text-base font-medium mb-0.5"
-				style={{ color: tile.supported ? theme.colors.textMain : theme.colors.textDim }}
+				style={{
+					backgroundColor: isSelected
+						? `${tile.brandColor || theme.colors.accent}15`
+						: theme.colors.bgSidebar,
+					borderColor: isSelected
+						? tile.brandColor || theme.colors.accent
+						: isFocused && canSelect
+							? theme.colors.accent
+							: theme.colors.border,
+					opacity: tile.supported ? 1 : 0.5,
+					boxShadow: isSelected
+						? `0 0 0 3px ${tile.brandColor || theme.colors.accent}30`
+						: isFocused && canSelect
+							? `0 0 0 2px ${theme.colors.accent}40`
+							: 'none',
+				}}
+				aria-label={`${tile.name}${canSelect ? '' : tile.supported ? ' (not installed)' : ' (coming soon)'}`}
+				aria-pressed={isSelected}
 			>
-				{tile.name}
-			</h4>
+				{isSelected && (
+					<div
+						className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+						style={{ backgroundColor: tile.brandColor || theme.colors.accent }}
+					>
+						<Check className="w-3 h-3" style={{ color: '#fff' }} />
+					</div>
+				)}
 
-			<p className="text-xs text-center" style={{ color: theme.colors.textDim }}>
-				{tile.supported ? (isDetected ? tile.description : 'Not installed') : 'Coming soon'}
-			</p>
+				{tile.supported && !isSelected && (
+					<div
+						className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+						style={{ backgroundColor: isDetected ? '#22c55e20' : '#ef444420' }}
+						title={isDetected ? 'Installed' : 'Not found'}
+					>
+						{isDetected ? (
+							<Check className="w-3 h-3" style={{ color: '#22c55e' }} />
+						) : (
+							<X className="w-3 h-3" style={{ color: '#ef4444' }} />
+						)}
+					</div>
+				)}
 
-			{!tile.supported && (
-				<span
-					className="absolute top-2 left-2 px-1.5 py-0.5 text-2xs rounded-full font-medium"
-					style={{
-						backgroundColor: theme.colors.border,
-						color: theme.colors.textDim,
-					}}
+				<div className="mb-3">
+					<AgentLogo
+						agentId={tile.id}
+						supported={tile.supported}
+						detected={isDetected}
+						brandColor={tile.brandColor}
+						theme={theme}
+					/>
+				</div>
+
+				<h4
+					className="text-base font-medium mb-0.5"
+					style={{ color: tile.supported ? theme.colors.textMain : theme.colors.textDim }}
 				>
-					Soon
-				</span>
-			)}
+					{tile.name}
+				</h4>
 
-			{tile.supported && isBetaAgent(tile.id) && (
-				<span
-					className="absolute top-2 left-2 px-1.5 py-0.5 text-3xs rounded font-bold uppercase"
-					style={{
-						backgroundColor: theme.colors.warning + '30',
-						color: theme.colors.warning,
-					}}
-				>
-					Beta
-				</span>
-			)}
+				<p className="text-xs text-center" style={{ color: theme.colors.textDim }}>
+					{tile.supported ? (isDetected ? tile.description : 'Not installed') : 'Coming soon'}
+				</p>
+
+				{!tile.supported && (
+					<span
+						className="absolute top-2 left-2 px-1.5 py-0.5 text-2xs rounded-full font-medium"
+						style={{
+							backgroundColor: theme.colors.border,
+							color: theme.colors.textDim,
+						}}
+					>
+						Soon
+					</span>
+				)}
+
+				{tile.supported && isBetaAgent(tile.id) && (
+					<span
+						className="absolute top-2 left-2 px-1.5 py-0.5 text-3xs rounded font-bold uppercase"
+						style={{
+							backgroundColor: theme.colors.warning + '30',
+							color: theme.colors.warning,
+						}}
+					>
+						Beta
+					</span>
+				)}
+			</button>
 
 			{tile.supported && (
-				<div
-					role="button"
+				<button
+					type="button"
 					onClick={(event) => {
 						event.stopPropagation();
 						onOpenConfig(tile.id);
@@ -152,8 +156,8 @@ export function AgentTileButton({
 				>
 					<Settings className="w-3 h-3" />
 					Customize
-				</div>
+				</button>
 			)}
-		</button>
+		</div>
 	);
 }

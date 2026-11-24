@@ -1405,6 +1405,8 @@ export type GroupChatState = RemoteGroupChatState;
 export interface StartGroupChatOptions {
 	/** Agent type that moderates (e.g. 'claude-code'). Defaults to the first participant's type. */
 	moderatorAgentId?: string;
+	/** SSH remote the moderator runs on. Omitted = this machine. */
+	moderatorSshRemoteId?: string;
 	/** Opening message for the moderator. Defaults to the topic. */
 	message?: string;
 }

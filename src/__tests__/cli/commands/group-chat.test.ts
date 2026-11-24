@@ -17,6 +17,7 @@ vi.mock('../../../cli/services/storage', () => ({
 		if (ref === 'missing') throw new Error(`Agent not found: ${ref}`);
 		return `id-${ref}`;
 	}),
+	resolveSshRemoteId: vi.fn((ref: string) => `remote-${ref}`),
 }));
 
 import {
@@ -118,6 +119,16 @@ describe('group-chat commands', () => {
 			});
 			expect(timeouts[0]).toBeGreaterThan(60_000);
 			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('chat-9'));
+		});
+
+		it('resolves --moderator-ssh-remote and sends it with the request (#1895)', async () => {
+			const { sent } = mockBridge({
+				start_group_chat: { type: 'start_group_chat_result', success: true, chatId: 'c' },
+			});
+
+			await groupChatStart('R', { participant: ['rc'], moderatorSshRemote: 'box' });
+
+			expect(sent[0]).toMatchObject({ moderatorSshRemoteId: 'remote-box' });
 		});
 
 		it('reads the opening message from --message-file', async () => {

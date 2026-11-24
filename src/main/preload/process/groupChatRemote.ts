@@ -28,7 +28,7 @@ export function createGroupChatRemoteApi() {
 				topic: string,
 				participantIds: string[],
 				responseChannel: string,
-				options?: { moderatorAgentId?: string; message?: string }
+				options?: { moderatorAgentId?: string; moderatorSshRemoteId?: string; message?: string }
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -36,7 +36,7 @@ export function createGroupChatRemoteApi() {
 				topic: string,
 				participantIds: string[],
 				responseChannel: string,
-				options?: { moderatorAgentId?: string; message?: string }
+				options?: { moderatorAgentId?: string; moderatorSshRemoteId?: string; message?: string }
 			) => callback(topic, participantIds, responseChannel, options);
 			ipcRenderer.on('remote:startGroupChat', handler);
 			return () => ipcRenderer.removeListener('remote:startGroupChat', handler);

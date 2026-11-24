@@ -6,6 +6,7 @@
  * - 'edit': Pre-populated from existing group chat, "Save" button, moderator change warning
  *
  * Allows user to:
+ * - Choose where the moderator runs (locally or on an SSH remote)
  * - Select a moderator agent from a dropdown of available agents
  * - Customize moderator settings (CLI args, path, ENV vars) via expandable panel
  * - Enter/edit a name for the group chat
@@ -20,6 +21,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, ToggleSwitch } from './ui';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
+import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { useAgentConfiguration } from '../hooks/agent';
 import { withBlankEnvVarRow } from '../../shared/envVarCatalog';
 
@@ -116,15 +118,19 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		}
 	}, [ac.isDetecting, isOpen]);
 
-	// Auto-select the most preferred installed agent (create mode only) after
-	// detection, and revalidate if current selection is no longer available.
-	// The dropdown itself is alphabetical, so the default comes from
-	// AGENT_AUTOSELECT_ORDER rather than from whatever sorts first.
+	// Auto-select the most preferred installed agent after detection, and
+	// revalidate in both modes when the current selection is no longer
+	// available (an SSH remote change reruns detection, #1895). Edit mode keeps
+	// the chat's own moderator whenever the chosen host has it. The dropdown
+	// itself is alphabetical, so the default comes from AGENT_AUTOSELECT_ORDER
+	// rather than from whatever sorts first.
 	useEffect(() => {
-		if (mode !== 'create' || ac.isDetecting) return;
+		if (ac.isDetecting) return;
 
 		if (ac.detectedAgents.length === 0) {
-			ac.setSelectedAgent(null);
+			// Edit mode keeps the stored moderator so switching back to a host
+			// that has it restores it; canSubmit blocks Save meanwhile.
+			if (mode === 'create') ac.setSelectedAgent(null);
 			return;
 		}
 
@@ -135,7 +141,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			AGENT_TILES.some((tile) => tile.id === agentId && tile.supported) &&
 			ac.detectedAgents.some((a: AgentConfig) => a.id === agentId);
 
+		const original = mode === 'edit' ? groupChat?.moderatorAgentId : undefined;
 		const preferred =
+			(original && isSupportedAndDetected(original) ? original : undefined) ??
 			AGENT_AUTOSELECT_ORDER.find(isSupportedAndDetected) ??
 			AGENT_TILES.find((tile) => tile.supported && isSupportedAndDetected(tile.id))?.id;
 
@@ -144,7 +152,14 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		} else {
 			ac.setSelectedAgent(ac.detectedAgents[0].id);
 		}
-	}, [mode, ac.isDetecting, ac.detectedAgents, ac.selectedAgent, ac.setSelectedAgent]);
+	}, [
+		mode,
+		groupChat?.moderatorAgentId,
+		ac.isDetecting,
+		ac.detectedAgents,
+		ac.selectedAgent,
+		ac.setSelectedAgent,
+	]);
 
 	// Reset local state when modal closes
 	useEffect(() => {
@@ -275,8 +290,15 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		configWasModified,
 	]);
 
+	// The moderator must exist on the chosen host, and detection for that host
+	// must have finished, or Save would store a provider the remote cannot run.
+	const moderatorAvailable =
+		!ac.isDetecting && ac.detectedAgents.some((a: AgentConfig) => a.id === ac.selectedAgent);
 	const canSubmit =
-		name.trim().length > 0 && ac.selectedAgent !== null && (mode === 'create' || hasChanges());
+		name.trim().length > 0 &&
+		ac.selectedAgent !== null &&
+		moderatorAvailable &&
+		(mode === 'create' || hasChanges());
 
 	if (!isOpen) return null;
 	if (mode === 'edit' && !groupChat) return null;
@@ -399,6 +421,21 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 					</div>
 				)}
 
+				{/* Where the moderator runs. Detection follows this choice, so a
+				    provider installed only on the remote is offered (#1895). */}
+				{ac.sshRemotes.length > 0 && (
+					<div className="mb-6">
+						<SshRemoteSelector
+							theme={theme}
+							sshRemotes={ac.sshRemotes}
+							sshRemoteConfig={ac.sshRemoteConfig}
+							onSshRemoteConfigChange={(config) =>
+								ac.setSshRemoteConfig(config.enabled ? config : undefined)
+							}
+						/>
+					</div>
+				)}
+
 				{/* Moderator Selection - Dropdown with Customize button */}
 				<div className="mb-6">
 					<label
@@ -420,7 +457,12 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 						</div>
 					) : availableTiles.length === 0 ? (
 						<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
-							No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.
+							{ac.sshRemoteConfig?.enabled
+								? 'No agents found on this SSH remote. Install one there, or pick another remote.'
+								: 'No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.'}
+							{!ac.sshRemoteConfig?.enabled &&
+								ac.sshRemotes.length > 0 &&
+								' To run the moderator on an SSH remote, choose one above.'}
 						</div>
 					) : (
 						<div className="flex items-center gap-2">

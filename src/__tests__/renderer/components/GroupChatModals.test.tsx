@@ -444,6 +444,92 @@ describe('GroupChatModal', () => {
 		});
 	});
 
+	describe('moderator host (#1895)', () => {
+		function detectByHost(byHost: Record<string, AgentConfig[]>) {
+			vi.mocked(window.maestro.agents.detect).mockImplementation(async (remoteId?: string) =>
+				remoteId ? (byHost[remoteId] ?? []) : (byHost.local ?? [])
+			);
+		}
+
+		it('switches an edit-mode moderator the chosen remote cannot run to one it can', async () => {
+			detectByHost({
+				local: [
+					createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
+					createMockAgent({ id: 'codex', name: 'Codex' }),
+				],
+				'remote-1': [createMockAgent({ id: 'claude-code', name: 'Claude Code' })],
+			});
+			const onSave = vi.fn();
+			const groupChat = createMockGroupChat({
+				moderatorAgentId: 'codex',
+				moderatorConfig: { sshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+			});
+
+			render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={vi.fn()}
+					onSave={onSave}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toHaveValue(
+						'claude-code'
+					);
+				},
+				{ timeout: 3000 }
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+			expect(onSave).toHaveBeenCalledWith(
+				'group-chat-1',
+				'Test Group Chat',
+				'claude-code',
+				expect.objectContaining({ sshRemoteConfig: { enabled: true, remoteId: 'remote-1' } }),
+				true
+			);
+		});
+
+		it('blocks Save when the chosen remote has no moderator', async () => {
+			detectByHost({
+				local: [createMockAgent({ id: 'codex', name: 'Codex' })],
+				'remote-1': [],
+			});
+			const onSave = vi.fn();
+			const groupChat = createMockGroupChat({
+				moderatorAgentId: 'codex',
+				moderatorConfig: { sshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+			});
+
+			render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={vi.fn()}
+					onSave={onSave}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByText(/no agents found on this ssh remote/i)).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// Toggling a setting is a change, but there is still no moderator to save.
+			fireEvent.click(screen.getByRole('switch', { name: /only work with agents that are free/i }));
+			expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+		});
+	});
+
 	describe('agent availability', () => {
 		function availabilityToggle() {
 			return screen.getByRole('switch', { name: /only work with agents that are free/i });

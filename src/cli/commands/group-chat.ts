@@ -8,7 +8,7 @@
 
 import * as fs from 'fs';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
-import { resolveAgentId } from '../services/storage';
+import { resolveAgentId, resolveSshRemoteId } from '../services/storage';
 import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
 
 // Starting a chat spawns a moderator and every participant before the app
@@ -22,6 +22,7 @@ interface JsonOption {
 interface StartOptions extends JsonOption {
 	participant?: string[];
 	moderator?: string;
+	moderatorSshRemote?: string;
 	message?: string;
 	messageFile?: string;
 }
@@ -107,8 +108,12 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 	const message = readMessage(options.message, options.messageFile, options.json);
 
 	let participantIds: string[];
+	let moderatorSshRemoteId: string | undefined;
 	try {
 		participantIds = refs.map((ref) => resolveAgentId(ref));
+		if (options.moderatorSshRemote) {
+			moderatorSshRemoteId = resolveSshRemoteId(options.moderatorSshRemote);
+		}
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
@@ -121,6 +126,7 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 					topic: name,
 					participantIds,
 					moderatorAgentId: options.moderator,
+					moderatorSshRemoteId,
 					message,
 				},
 				'start_group_chat_result',

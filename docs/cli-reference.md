@@ -453,13 +453,14 @@ Start, message, and inspect group chats in the desktop app
 
 Create a group chat and send its moderator the opening message
 
-| Option                      | Description                                                                       | Default |
-| --------------------------- | --------------------------------------------------------------------------------- | ------- |
-| `-p, --participant <agent>` | Participant agent ID or name (repeatable; at least one)                           | `[]`    |
-| `--moderator <agent-type>`  | Moderator agent type (e.g. claude-code); defaults to the first participant's type | -       |
-| `-m, --message <text>`      | Opening message for the moderator (defaults to the name)                          | -       |
-| `--message-file <path>`     | Read the opening message from a file                                              | -       |
-| `--json`                    | Output as JSON (for scripting)                                                    | -       |
+| Option                        | Description                                                                        | Default |
+| ----------------------------- | ---------------------------------------------------------------------------------- | ------- |
+| `-p, --participant <agent>`   | Participant agent ID or name (repeatable; at least one)                            | `[]`    |
+| `--moderator <agent-type>`    | Moderator agent type (e.g. claude-code); defaults to the first participant's type  | -       |
+| `--moderator-ssh-remote <id>` | Run the moderator on this SSH remote (ID or unique prefix) instead of this machine | -       |
+| `-m, --message <text>`        | Opening message for the moderator (defaults to the name)                           | -       |
+| `--message-file <path>`       | Read the opening message from a file                                               | -       |
+| `--json`                      | Output as JSON (for scripting)                                                     | -       |
 
 ## `maestro-cli group-chat send <chat> [message]`
 
