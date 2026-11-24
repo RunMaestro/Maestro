@@ -18,6 +18,7 @@ import { Check, X } from 'lucide-react';
 import type { HistoryEntry, Theme } from '../../types';
 import { formatTimestamp } from '../../../shared/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
+import { historySummaryPreview } from '../../../shared/history';
 import type { CueGroupExpansionApi } from '../../hooks/history/useExpandedCueGroups';
 
 /** Tallest the run list grows before it scrolls inside the row. */
@@ -101,7 +102,9 @@ export const CueGroupRuns = memo(function CueGroupRuns({
 								{formatTimestamp(run.timestamp, 'smart')}
 							</span>
 							<span className="text-2xs truncate" style={{ color: theme.colors.textMain }}>
-								{run.summary ? stripMarkdown(run.summary) : 'No summary available'}
+								{run.summary
+									? stripMarkdown(historySummaryPreview(run.summary))
+									: 'No summary available'}
 							</span>
 						</button>
 					))}

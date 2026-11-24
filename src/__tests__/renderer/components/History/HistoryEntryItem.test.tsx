@@ -7,6 +7,7 @@ import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types'
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { MAX_HISTORY_SUMMARY_PREVIEW_CHARS } from '../../../../shared/history';
 // Create mock theme
 
 // Create mock history entry factory
@@ -86,6 +87,24 @@ describe('HistoryEntryItem', () => {
 			/>
 		);
 		expect(screen.getByText('Implemented new feature')).toBeInTheDocument();
+	});
+
+	it('renders only a capped preview of a multi-megabyte summary', () => {
+		// A failed PR push once wrote a 4.4 MB log into `summary`; rendering it
+		// froze the renderer when a search moved the row into view.
+		const huge = 'PR creation failed: Failed to push branch\n' + 'x'.repeat(2_000_000);
+		const { container } = render(
+			<HistoryEntryItem
+				entry={createMockEntry({ summary: huge })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		const summary = screen.getByText(/PR creation failed: Failed to push branch/);
+		expect(summary.textContent!.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_PREVIEW_CHARS + 1);
+		expect(container.textContent!.length).toBeLessThan(10_000);
 	});
 
 	it('renders "No summary available" when summary is empty', () => {
