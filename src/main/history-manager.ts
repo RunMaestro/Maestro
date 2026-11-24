@@ -233,8 +233,22 @@ export class HistoryManager {
 				return 'read-failed';
 			}
 
-			const parsed = parseStoreJson<{ entries?: HistoryEntry[] }>(raw);
-			if (!parsed.ok) {
+			const parsed = parseStoreJson<{ entries?: unknown }>(raw);
+			let corruptError: Error | null = parsed.ok ? null : parsed.error;
+			let entries: HistoryEntry[] = [];
+
+			if (parsed.ok) {
+				const value = parsed.value;
+				if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+					corruptError = new Error('Legacy history file must be a JSON object');
+				} else if (value.entries !== undefined && !Array.isArray(value.entries)) {
+					corruptError = new Error('Legacy history file entries field must be an array');
+				} else {
+					entries = (value.entries as HistoryEntry[] | undefined) ?? [];
+				}
+			}
+
+			if (corruptError) {
 				const sidecarPath = corruptStorePath(this.legacyFilePath);
 				try {
 					await fsp.rename(this.legacyFilePath, sidecarPath);
@@ -250,14 +264,14 @@ export class HistoryManager {
 					`Legacy history file was corrupt and quarantined to ${sidecarPath}; marking migration complete`,
 					LOG_CONTEXT
 				);
-				void captureException(parsed.error, {
+				void captureException(corruptError, {
 					operation: 'history:corruptLegacy',
 					sidecarPath,
 				});
 				return 'nothing';
 			}
 
-			return (parsed.value.entries?.length ?? 0) > 0 ? 'migrate' : 'nothing';
+			return entries.length > 0 ? 'migrate' : 'nothing';
 		}
 
 		return 'nothing';

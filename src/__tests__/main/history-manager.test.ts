@@ -405,6 +405,34 @@ describe('HistoryManager', () => {
 			expectFreshMarkerOnly();
 		});
 
+		it.each([
+			['null literal', 'null'],
+			['top-level array', '[]'],
+			['non-array entries field', JSON.stringify({ entries: 'x' })],
+		])('quarantines a wrong-shape legacy file (%s) and writes the marker', async (_label, body) => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			stageLegacyHistory(body);
+
+			await manager.initialize();
+
+			expect(vi.mocked(fsp.rename)).toHaveBeenCalledWith(
+				path.join('/mock/userData', 'maestro-history.json'),
+				expect.stringMatching(/maestro-history\.corrupt-.*\.json$/)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(expect.any(Error), {
+				operation: 'history:corruptLegacy',
+				sidecarPath: expect.stringMatching(/maestro-history\.corrupt-.*\.json$/),
+			});
+			expectFreshMarkerOnly();
+		});
+
 		it('does not write the marker if quarantining a malformed legacy file fails', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => {
 				const s = p.toString();
