@@ -3212,6 +3212,7 @@ app
 							cwd: session.cwd,
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 							sessionCustomEnvVars: session.customEnvVars,
+							sessionCustomPath: session.customPath,
 							enableMaestroP: session.enableMaestroP,
 							maestroPMode: session.maestroPMode,
 							maestroPPath: session.maestroPPath,

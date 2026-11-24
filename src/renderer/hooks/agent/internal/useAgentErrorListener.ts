@@ -39,6 +39,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
+import { classifyMissingBinary, missingRuntimeLabel } from '../../../../shared/agentInstall';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
@@ -524,6 +525,13 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 					if (ownsSideEffects && deps.addHistoryEntryRef.current && session) {
 						const errorTitle = getErrorTitleForType(agentError.type);
+						const missingBinaryReason =
+							agentError.type === 'agent_not_installed'
+								? classifyMissingBinary({
+										exitCode: agentError.raw?.exitCode,
+										stderr: agentError.raw?.stderr,
+									})
+								: null;
 						const errorExplanation = [
 							`**Auto Run Error: ${errorTitle}**`,
 							'',
@@ -537,7 +545,9 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 								: agentError.type === 'auth_expired'
 									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
 									: agentError.type === 'agent_not_installed'
-										? '- Fix the provider CLI as the error message describes, then resume'
+										? missingBinaryReason?.reason === 'runtime-missing'
+											? `- Restore ${missingRuntimeLabel(missingBinaryReason.runtime ?? 'node')} to PATH (follow the steps in the error), then resume`
+											: '- Install the provider CLI (open the error for the install command), then resume'
 										: agentError.type === 'token_exhaustion'
 											? '- Start a new session to reset the context window'
 											: agentError.type === 'rate_limited'

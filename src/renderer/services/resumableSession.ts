@@ -19,6 +19,7 @@ import {
 	type NativeSessionBinding,
 } from '../../shared/maestro-lib/agents/providerSwap';
 import { normalizeMessagePins, type MessagePin } from '../../shared/messagePins';
+import { getProviderProfileConfig } from '../../shared/providerProfiles';
 import { sessionOriginStoreFor } from '../../shared/sessionOriginStore';
 import type { LogEntry, Session, ToolType, UsageStats } from '../types';
 import { isSessionIdLabel } from '../utils/tabHelpers';
@@ -73,9 +74,8 @@ export class SessionResumeRefusedError extends Error {
 	}
 }
 
-/** An in-memory selection fence, not an account identity. Never log or persist it. */
-export function resumeSelectionKey(session: Session): string {
-	return canonicalJson({
+function resumeSelectionFields(session: Session) {
+	return {
 		id: session.id,
 		provider: session.toolType,
 		cwd: session.cwd,
@@ -86,7 +86,79 @@ export function resumeSelectionKey(session: Session): string {
 		customPath: session.customPath,
 		customArgs: session.customArgs,
 		customEnvVars: session.customEnvVars,
-	});
+	};
+}
+
+/** An in-memory selection fence, not an account identity. Never log or persist it. */
+export function resumeSelectionKey(session: Session): string {
+	return canonicalJson(resumeSelectionFields(session));
+}
+
+/** How a refusal names each selection field. `customEnvVars` is named per variable. */
+const SELECTION_FIELD_LABELS: Partial<
+	Record<keyof ReturnType<typeof resumeSelectionFields>, string>
+> = {
+	id: 'agent',
+	provider: 'provider',
+	cwd: 'working directory',
+	projectRoot: 'working directory',
+	remoteCwd: 'working directory',
+	sshRemoteId: 'SSH host',
+	ssh: 'SSH host',
+	customPath: 'binary path',
+	customArgs: 'launch arguments',
+};
+
+const sameValue = (a: unknown, b: unknown) => canonicalJson({ v: a }) === canonicalJson({ v: b });
+
+/**
+ * What changed between a recorded `resumeSelectionKey` and the agent now, in
+ * words a refusal can show: "account (CLAUDE_CONFIG_DIR), working directory".
+ * Null when nothing changed.
+ *
+ * Names fields and env var NAMES only, never values: the key can hold secrets.
+ * A difference no label covers still reads as "settings", so a field added to
+ * the key later can never make a real change look like none.
+ */
+export function describeSelectionChange(previousKey: string, session: Session): string | null {
+	if (previousKey === resumeSelectionKey(session)) return null;
+	let previous: Record<string, unknown>;
+	try {
+		previous = JSON.parse(previousKey) as Record<string, unknown>;
+	} catch {
+		return 'settings';
+	}
+	const current = resumeSelectionFields(session);
+	const changes = new Set<string>();
+	for (const [field, label] of Object.entries(SELECTION_FIELD_LABELS)) {
+		if (!sameValue(previous[field], current[field as keyof typeof current])) changes.add(label);
+	}
+	const before = (previous.customEnvVars ?? {}) as Record<string, unknown>;
+	const after: Record<string, unknown> = current.customEnvVars ?? {};
+	const changedVars = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+		.filter((name) => !sameValue(before[name], after[name]))
+		.sort();
+	const accountVar = getProviderProfileConfig(session.toolType)?.envVar;
+	if (accountVar && changedVars.includes(accountVar)) changes.add(`account (${accountVar})`);
+	const otherVars = changedVars.filter((name) => name !== accountVar);
+	if (otherVars.length) changes.add(`environment (${otherVars.join(', ')})`);
+	return changes.size ? [...changes].join(', ') : 'settings';
+}
+
+/**
+ * Whether continuing a conversation must prove who owns its native session
+ * (account, host, cwd), not only that its tab is still open. Grok always must;
+ * any provider must once a binding has been observed for the conversation.
+ *
+ * An unscoped conversation follows its tab the way the composer does, even
+ * after the agent's settings change: account rebalancing rewrites
+ * `CLAUDE_CONFIG_DIR` between turns, and the next message still belongs there.
+ */
+export function requiresNativeOwnership(
+	toolType: ToolType,
+	binding: NativeSessionBinding | null | undefined
+): boolean {
+	return toolType === 'grok' || binding !== undefined;
 }
 
 /**

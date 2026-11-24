@@ -10,6 +10,7 @@ import {
 	MEDIA_WINDOW_STRIP_HEIGHT,
 	mediaListOverflowNeed,
 	mediaWindowBaselineAfter,
+	mediaWindowMinWidth,
 	mediaWindowSizeFor,
 	planMediaWindowSize,
 	sameMediaWindowSize,
@@ -52,6 +53,46 @@ describe('mediaWindowSizeFor', () => {
 		expect(mediaWindowSizeFor({ kind: 'video', transportHeight: 60 })).toEqual(
 			mediaWindowSizeFor({ kind: 'video', aspect: 16 / 9, transportHeight: 60 })
 		);
+	});
+
+	it('widens past the default width when the controls need more', () => {
+		expect(
+			mediaWindowSizeFor({ kind: 'audio', transportHeight: 60, transportMinWidth: 500.2 })
+		).toEqual({ width: 501 + BORDERS, height: MEDIA_WINDOW_STRIP_HEIGHT + 60 + BORDERS });
+	});
+
+	it('keeps the default width when the controls fit in it', () => {
+		expect(
+			mediaWindowSizeFor({ kind: 'audio', transportHeight: 60, transportMinWidth: 300 }).width
+		).toBe(420);
+	});
+
+	it('grows a video picture with the wider window, at the same aspect', () => {
+		const width = 600 + BORDERS;
+		const stage = width - BORDERS;
+		expect(
+			mediaWindowSizeFor({
+				kind: 'video',
+				aspect: 16 / 9,
+				transportHeight: 60,
+				transportMinWidth: 600,
+			})
+		).toEqual({
+			width,
+			height: MEDIA_WINDOW_STRIP_HEIGHT + 60 + BORDERS + Math.round(stage / (16 / 9)),
+		});
+	});
+});
+
+describe('mediaWindowMinWidth', () => {
+	it('is the measured row plus the frame border, rounded up', () => {
+		expect(mediaWindowMinWidth(452.3)).toBe(453 + BORDERS);
+	});
+
+	it('is null before the row is measured', () => {
+		for (const width of [null, undefined, 0, -1, Number.NaN]) {
+			expect(mediaWindowMinWidth(width)).toBeNull();
+		}
 	});
 });
 
@@ -112,6 +153,14 @@ describe('planMediaWindowSize', () => {
 		expect(planMediaWindowSize(remeasured, audioSize, audioBaseline).apply).toEqual(
 			mediaWindowSizeFor(remeasured)
 		);
+	});
+
+	it('widens a window it sized when the controls grow (prev/next or fullscreen joined)', () => {
+		const wider = { ...audio, transportMinWidth: 520 };
+		expect(planMediaWindowSize(wider, audioSize, audioBaseline).apply).toEqual({
+			width: 520 + BORDERS,
+			height: audioSize.height,
+		});
 	});
 
 	it('leaves a user-resized window alone within the same kind', () => {

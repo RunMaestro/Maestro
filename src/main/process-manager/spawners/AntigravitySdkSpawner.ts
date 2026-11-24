@@ -1,3 +1,4 @@
+import { antigravitySdkSelection } from '../../../shared/antigravityModels';
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
@@ -197,10 +198,12 @@ class AntigravityTurn {
 			onNotification: (record) => this.onNotification(record),
 			onServerRequest: (record) => this.onServerRequest(record),
 		});
+		const selection = antigravitySdkSelection(this.config.modelId, this.config.effort);
 		await this.connection.request('start', {
 			cwd: this.config.cwd,
 			prompt: this.config.prompt ?? '',
-			model: this.config.modelId,
+			model: selection.model,
+			effort: selection.effort,
 			permission_mode: this.config.permissionMode ?? 'standard',
 		});
 	}

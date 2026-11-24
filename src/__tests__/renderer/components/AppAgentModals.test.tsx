@@ -1,9 +1,10 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AppAgentModals } from '../../../renderer/components/AppModals';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type {
@@ -25,6 +26,35 @@ vi.mock('../../../renderer/components/ReauthModal', () => ({
 		/>
 	),
 }));
+const mockClearAgentError = vi.fn();
+vi.mock('../../../renderer/stores/agentStore', () => ({
+	useAgentStore: {
+		getState: () => ({
+			clearAgentError: mockClearAgentError,
+		}),
+	},
+}));
+
+const mockReplayAfterAuth = vi.fn();
+vi.mock('../../../renderer/stores/retryStore', () => ({
+	replayAfterAuth: (...args: unknown[]) => mockReplayAfterAuth(...args),
+}));
+
+const mockNotifyToast = vi.fn();
+vi.mock('../../../renderer/stores/notificationStore', () => ({
+	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+}));
+
+vi.mock('../../../renderer/components/ProviderInstallModal', () => ({
+	ProviderInstallModal: (props: any) => (
+		<div data-testid="provider-install-modal">
+			<button data-testid="provider-install-retry-trigger" onClick={props.onRetry}>
+				Retry
+			</button>
+		</div>
+	),
+}));
+
 vi.mock('../../../renderer/components/MergeSessionModal', () => ({
 	MergeSessionModal: (props: any) => <div data-testid="merge-session-modal" />,
 }));
@@ -262,5 +292,118 @@ describe('AppAgentModals', () => {
 			<AppAgentModals {...defaultProps} sendToAgentModalOpen={true} activeSession={activeSession} />
 		);
 		expect(screen.getByTestId('send-to-agent-modal')).toBeInTheDocument();
+	});
+
+	describe('ProviderInstallModal retry handling', () => {
+		beforeEach(() => {
+			mockClearAgentError.mockClear();
+			mockReplayAfterAuth.mockClear();
+			mockNotifyToast.mockClear();
+		});
+
+		it('reprobes and replays the original tab with reason install when still open', async () => {
+			const reprobe = vi.fn().mockResolvedValue({ status: 'ok' });
+			(window as any).maestro.agents = { ...(window as any).maestro.agents, reprobe };
+			const session = createMockSession({
+				id: 'install-sess',
+				toolType: 'codex',
+				activeTabId: 'tab-1',
+				aiTabs: [{ id: 'tab-1', logs: [] } as any],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			useModalStore.getState().openModal('providerInstall', {
+				sessionId: 'install-sess',
+				tabId: 'tab-1',
+			});
+
+			render(<AppAgentModals {...defaultProps} sessions={[session]} />);
+			fireEvent.click(screen.getByTestId('provider-install-retry-trigger'));
+
+			await waitFor(() => expect(reprobe).toHaveBeenCalledWith('codex'));
+			await waitFor(() =>
+				expect(mockReplayAfterAuth).toHaveBeenCalledWith('install-sess', ['tab-1'], 'install')
+			);
+			expect(mockClearAgentError).toHaveBeenCalledWith('install-sess', 'tab-1');
+			expect(mockNotifyToast).not.toHaveBeenCalled();
+		});
+
+		it('never sends into another tab and notifies when the original tab was closed', async () => {
+			const reprobe = vi.fn().mockResolvedValue({ status: 'ok' });
+			(window as any).maestro.agents = { ...(window as any).maestro.agents, reprobe };
+			const session = createMockSession({
+				id: 'install-sess',
+				toolType: 'codex',
+				activeTabId: 'tab-other',
+				aiTabs: [{ id: 'tab-other', logs: [] } as any],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			useModalStore.getState().openModal('providerInstall', {
+				sessionId: 'install-sess',
+				tabId: 'tab-closed',
+			});
+
+			render(<AppAgentModals {...defaultProps} sessions={[session]} />);
+			fireEvent.click(screen.getByTestId('provider-install-retry-trigger'));
+
+			await waitFor(() =>
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						color: 'yellow',
+						title: 'Nothing to resend',
+					})
+				)
+			);
+			expect(mockReplayAfterAuth).not.toHaveBeenCalled();
+			expect(mockClearAgentError).not.toHaveBeenCalled();
+		});
+
+		it('catches a tab closed during reprobe and notifies instead of replaying', async () => {
+			let resolveReprobe!: () => void;
+			const reprobe = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						resolveReprobe = resolve;
+					})
+			);
+			(window as any).maestro.agents = { ...(window as any).maestro.agents, reprobe };
+			const session = createMockSession({
+				id: 'install-sess',
+				toolType: 'codex',
+				activeTabId: 'tab-1',
+				aiTabs: [{ id: 'tab-1', logs: [] } as any, { id: 'tab-other', logs: [] } as any],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			useModalStore.getState().openModal('providerInstall', {
+				sessionId: 'install-sess',
+				tabId: 'tab-1',
+			});
+
+			render(<AppAgentModals {...defaultProps} sessions={[session]} />);
+			fireEvent.click(screen.getByTestId('provider-install-retry-trigger'));
+
+			await waitFor(() => expect(reprobe).toHaveBeenCalledWith('codex'));
+			// Close tab-1 while reprobe is in flight.
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						activeTabId: 'tab-other',
+						aiTabs: [{ id: 'tab-other', logs: [] } as any],
+					},
+				],
+			});
+			resolveReprobe();
+
+			await waitFor(() =>
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						color: 'yellow',
+						title: 'Nothing to resend',
+					})
+				)
+			);
+			expect(mockReplayAfterAuth).not.toHaveBeenCalled();
+			expect(mockClearAgentError).not.toHaveBeenCalled();
+		});
 	});
 });

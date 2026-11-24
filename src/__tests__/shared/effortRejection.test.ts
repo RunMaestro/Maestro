@@ -253,3 +253,64 @@ describe('describeEffortRejection', () => {
 		);
 	});
 });
+
+describe('Antigravity CLI effort refusals', () => {
+	// Verbatim from agy 1.5.14.
+	const NOT_OFFERED =
+		'error: invalid model selection (--model "gpt-oss-120b" --effort "high"): gpt-oss-120b has no "high" effort (available: medium)';
+	const NO_EFFORT =
+		'error: invalid model selection (--model "gemini-pro-orchestrator-neon" --effort "low"): --effort is not supported for model "gemini-pro-orchestrator-neon"';
+
+	it('reads a rung the model does not offer, with the ones it does', () => {
+		expect(parseEffortRejection(NOT_OFFERED)).toEqual({
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		expect(
+			parseEffortRejection(
+				'error: invalid model selection (--model "gemini-4-neon" --effort "max"): gemini-4-neon has no "max" effort (available: low, medium, high, xhigh)'
+			)
+		).toEqual({
+			value: 'max',
+			model: 'gemini-4-neon',
+			supported: ['low', 'medium', 'high', 'xhigh'],
+		});
+	});
+
+	it('reads a model that takes no effort at all', () => {
+		expect(parseEffortRejection(NO_EFFORT)).toEqual({
+			value: 'low',
+			model: 'gemini-pro-orchestrator-neon',
+			supported: [],
+		});
+	});
+
+	it('finds the refusal in stderr of an agent error', () => {
+		expect(
+			parseAgentErrorEffortRejection({
+				message: 'Agent exited with code 1',
+				raw: { stderr: NOT_OFFERED },
+			})
+		).toMatchObject({ value: 'high', model: 'gpt-oss-120b' });
+	});
+
+	it('does not read the suffix conflict as a refusal of the effort', () => {
+		expect(
+			parseEffortRejection(
+				'error: invalid model selection (--model "gemini-4-neon-high" --effort "low"): --model gemini-4-neon-high conflicts with --effort=low'
+			)
+		).toBeNull();
+	});
+
+	it('remembers a refusal per model, not for the whole provider', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		expect(getEffortRejection('antigravity', 'high', 'gpt-oss-120b')).toBeDefined();
+		expect(getEffortRejection('antigravity', 'high', 'gemini-4-neon')).toBeUndefined();
+		expect(getEffortRejection('antigravity', 'high')).toBeUndefined();
+	});
+});

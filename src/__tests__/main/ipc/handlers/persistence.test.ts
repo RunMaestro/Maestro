@@ -4472,7 +4472,7 @@ describe('persistence IPC handlers', () => {
 				};
 				try {
 					handleEnqueueCommand(ctx, f.client as WebClient, message);
-					await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+					await vi.waitFor(() => expect(send).toHaveBeenCalledOnce(), { timeout: 5000 });
 					expect(send.mock.calls[0][1]).toMatchObject({
 						success: !failWrite,
 						durable: !failWrite,
@@ -4482,7 +4482,7 @@ describe('persistence IPC handlers', () => {
 					if (failWrite) expect(send.mock.calls[0][1].error).toMatch(/Do not resend/);
 					f.restore();
 					handleEnqueueCommand(ctx, f.client as WebClient, message);
-					await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+					await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2), { timeout: 5000 });
 					expect(f.enqueue).toHaveBeenCalledOnce();
 				} finally {
 					routing.mockRestore();

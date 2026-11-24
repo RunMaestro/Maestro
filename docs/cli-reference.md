@@ -1726,6 +1726,15 @@ Force the desktop to reconnect to a peer and reload its agent list
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli install-command <provider>`
+
+Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
+| `--json`                | Output as JSON (for scripting)                                   | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)
@@ -1758,7 +1767,7 @@ Create a new agent in the Maestro desktop app
 | `--context-window <size>`         | Context window size in tokens                                                                                                      | -               |
 | `--provider-path <path>`          | Custom provider path                                                                                                               | -               |
 | `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                 | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                                           | -               |
+| `--ssh-cwd <path>`                | Working directory on the SSH remote (the agent runs there; defaults to --cwd)                                                      | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                   | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                  | -               |
 | `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                               | -               |
@@ -2322,6 +2331,23 @@ not.
 | --------------------- | --------------------------------------------------------- | ------- |
 | `--check <remote-id>` | Probe this remote now; exits 2 if it is still unreachable | -       |
 | `--json`              | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli logs`
+
+Show the running app's system log (the System Log Viewer), or clear it
+
+Reads the same in-memory buffer the System Log Viewer shows. `--level` is a
+floor (`warn` shows warnings and errors). `--clear` is the viewer's Clear
+button. Needs the desktop running.
+
+| Option                | Description                                          | Default |
+| --------------------- | ---------------------------------------------------- | ------- |
+| `--level <level>`     | Lowest level to show: debug, info, warn, or error    | -       |
+| `--context <context>` | Only entries from this context (e.g. WebServer)      | -       |
+| `--since <time>`      | Only entries since then: 30m, 2h, ISO-8601, or epoch | -       |
+| `--limit <n>`         | Keep the newest N matching entries                   | -       |
+| `--clear`             | Clear the log, as the viewer's Clear button does     | -       |
+| `--json`              | Output as JSON (for scripting)                       | -       |
 
 ## `maestro-cli claude-canary`
 

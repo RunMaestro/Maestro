@@ -92,7 +92,7 @@ export function resolveTurnSettings(
 	}
 
 	if (hint?.effort && hint.effort !== 'default') {
-		const effortValue = resolveEffortLevel(toolType, hint.effort, supportedEfforts);
+		const effortValue = resolveEffortLevel(toolType, hint.effort, supportedEfforts, model);
 		if (effortValue) {
 			effort = effortValue;
 			notes.push(
@@ -102,7 +102,7 @@ export function resolveTurnSettings(
 			// A level the provider refused earlier in this process is a different
 			// story from one Maestro never mapped: say which, so the author knows
 			// the document is fine and the provider's catalogue moved.
-			const rejection = rejectedEffortForLevel(toolType, hint.effort);
+			const rejection = rejectedEffortForLevel(toolType, hint.effort, model);
 			if (rejection) {
 				warnings.push(
 					`${describeEffortRejection(toolType, rejection)} effort="${hint.effort}" was ignored; using the agent's configured effort.`

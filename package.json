@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "1.1.1-RC",
+	"version": "1.1.2-RC",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/bootstrap.js",
 	"author": {
@@ -47,10 +47,10 @@
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:computer-history": "node scripts/build-maestro-computer-history.mjs",
 		"build:renderer": "vite build",
-		"package": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --mac --win --linux",
-		"package:mac": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --mac",
-		"package:win": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --win",
-		"package:linux": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --linux",
+		"package": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --mac --win --linux",
+		"package:mac": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --mac",
+		"package:win": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --win",
+		"package:linux": "node scripts/ensure-native-runtime.mjs electron && node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --linux",
 		"start": "node scripts/ensure-native-runtime.mjs electron && electron .",
 		"start:lite": "node scripts/ensure-native-runtime.mjs electron && electron . --lite",
 		"clean": "rm -rf dist release node_modules/.vite",
@@ -210,7 +210,7 @@
 				}
 			]
 		},
-		"afterPack": "scripts/verify-computer-history-helper.js",
+		"afterPack": "scripts/after-pack.js",
 		"afterSign": "scripts/notarize.js",
 		"win": {
 			"target": [

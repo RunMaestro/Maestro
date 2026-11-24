@@ -39,6 +39,7 @@ import { isAiTabHidden } from '../utils/unifiedTabOrderUtils';
 import {
 	loadResumableSession,
 	matchesNativeSessionBinding,
+	requiresNativeOwnership,
 	resumeSelectionKey,
 	SessionResumeRefusedError,
 } from './resumableSession';
@@ -322,7 +323,7 @@ export async function reopenClosedConversation(
 	const selectionKey = resumeSelectionKey(session);
 	const binding =
 		conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding);
-	const scoped = session.toolType === 'grok' || binding !== undefined;
+	const scoped = requiresNativeOwnership(session.toolType, binding);
 	if (
 		(conversation.ownerAgentId && conversation.ownerAgentId !== sessionId) ||
 		(scoped && conversation.ownerAgentId !== sessionId)

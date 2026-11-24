@@ -88,6 +88,18 @@ describe('parseGoalMarkers', () => {
 			expect(parseGoalMarkers('<!-- maestro:progress 45.6 -->').progress).toBe(46);
 		});
 
+		it('keeps full precision on exactProgress so sub-1% gains are visible', () => {
+			const result = parseGoalMarkers('<!-- maestro:progress 48.35% | 2,577/5,330 slots -->');
+			expect(result.progress).toBe(48);
+			expect(result.exactProgress).toBe(48.35);
+		});
+
+		it('clamps exactProgress into 0-100 without rounding', () => {
+			expect(parseGoalMarkers('<!-- maestro:progress 101.5 -->').exactProgress).toBe(100);
+			expect(parseGoalMarkers('<!-- maestro:progress -0.5 -->').exactProgress).toBe(0);
+			expect(parseGoalMarkers('<!-- maestro:progress 7 -->').exactProgress).toBe(7);
+		});
+
 		it('returns null progress when no progress marker is present', () => {
 			const result = parseGoalMarkers('Just some prose with no markers at all.');
 			expect(result.progress).toBeNull();
@@ -196,6 +208,7 @@ describe('parseGoalMarkers', () => {
 			const result = parseGoalMarkers('I worked on the task and made some changes.');
 			expect(result).toEqual({
 				progress: null,
+				exactProgress: null,
 				rationale: null,
 				complete: false,
 				deadlock: false,
@@ -206,6 +219,7 @@ describe('parseGoalMarkers', () => {
 		it('returns an all-null/false result for empty input', () => {
 			expect(parseGoalMarkers('')).toEqual({
 				progress: null,
+				exactProgress: null,
 				rationale: null,
 				complete: false,
 				deadlock: false,

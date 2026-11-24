@@ -34,6 +34,17 @@ export const ADD_DIR_SELECTOR_YES_REGEX = /❯\s*(?:\d+\.\s*)?Yes,?\s*add\s*it/g
 
 const HEADING_ROW_REGEX = /Adding a new directory:?/i;
 
+// The dialog draws its heading at the start of a row. Text that merely quotes
+// it (a resumed conversation about this very dialog, a code comment, a bullet)
+// has something in front of it.
+const HEADING_AT_ROW_START_REGEX = /^[\s│]*Adding a new directory:?/i;
+// One of the dialog's own options, highlighted or not, alone on its row.
+const OPTION_ROW_REGEX = /^[\s│]*(?:[›❯]\s*)?(?:\d+\.\s*)?(?:No,?\s*exit|Yes,?\s*add\s*it)[\s│]*$/i;
+const YES_OPTION_ROW_REGEX = /^[\s│]*(?:[›❯]\s*)?(?:\d+\.\s*)?Yes,?\s*add\s*it[\s│]*$/i;
+const FOOTER_ROW_REGEX = /Enter\s*to\s*confirm|Esc\s*to\s*(?:cancel|exit)/i;
+// A selector or the input editor's prompt.
+const SELECTOR_ROW_REGEX = /^[\s│]*[›❯]/;
+
 // commander ends a variadic option at any option token, short ones included.
 function endsVariadic(token: string): boolean {
 	return isFlagToken(token) || /^-[A-Za-z]/.test(token);
@@ -103,6 +114,49 @@ export function addDirPromptPaths(screen: string): string[] | null {
 	}
 	if (parts.length === 0 || i >= rows.length) return null;
 	return parts.length === 1 ? parts : [parts.join(''), parts.join(' ')];
+}
+
+/**
+ * What `screen` (a replayed grid) shows of claude's add-dir dialog:
+ * - `none`: no dialog. Either the heading is absent, or it is text further up
+ *   the screen: quoted mid-row, or followed by the input editor or by rows the
+ *   dialog never draws. `--resume` repaints the conversation before the input
+ *   editor, so a conversation that discussed this dialog puts its wording on
+ *   the startup screen.
+ * - `painting`: the heading starts a row and nothing contradicts a dialog yet,
+ *   but its path or its options are not drawn.
+ * - `shown`: the whole dialog is the last thing on screen, as claude leaves it
+ *   while it waits for an answer.
+ */
+export type AddDirDialogRead =
+	| { kind: 'none' }
+	| { kind: 'painting' }
+	| { kind: 'shown'; paths: string[] };
+
+export function readAddDirDialog(screen: string): AddDirDialogRead {
+	const rows = screen.split('\n');
+	let heading = -1;
+	for (let i = rows.length - 1; i >= 0; i -= 1) {
+		if (HEADING_AT_ROW_START_REGEX.test(rows[i])) {
+			heading = i;
+			break;
+		}
+	}
+	if (heading < 0) return { kind: 'none' };
+	const below = rows.slice(heading + 1);
+	const yes = below.findIndex((row) => YES_OPTION_ROW_REGEX.test(row));
+	if (yes < 0) {
+		const foreignSelector = below.some(
+			(row) => SELECTOR_ROW_REGEX.test(row) && !OPTION_ROW_REGEX.test(row)
+		);
+		return foreignSelector ? { kind: 'none' } : { kind: 'painting' };
+	}
+	const foreignTail = below
+		.slice(yes + 1)
+		.some((row) => row.trim() !== '' && !OPTION_ROW_REGEX.test(row) && !FOOTER_ROW_REGEX.test(row));
+	if (foreignTail) return { kind: 'none' };
+	const paths = addDirPromptPaths(rows.slice(heading).join('\n'));
+	return paths ? { kind: 'shown', paths } : { kind: 'painting' };
 }
 
 /** Whether any spelling of the dialog's directory is one the caller granted. */

@@ -54,6 +54,7 @@ import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { version } from './commands/version';
+import { installCommand } from './commands/install-command';
 import {
 	groupChatList,
 	groupChatSend,
@@ -120,6 +121,7 @@ import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { testSshRemote } from './commands/test-ssh-remote';
 import { sshRemoteStatus } from './commands/ssh-remote-status';
+import { logs } from './commands/logs';
 import { claudeCanary } from './commands/claude-canary';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -2210,6 +2212,18 @@ federation
 	.option('--value <text>', 'A merged text to use instead (free-text fields only)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, field: string, options) => federationResolve(agent, field, options));
+// Install-command - print the install line for a provider CLI (the error dialog's Install action)
+program
+	.command('install-command <provider>')
+	.description(
+		'Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing'
+	)
+	.option(
+		'--platform <platform>',
+		'Target platform: darwin, linux, or win32 (default: this machine)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((provider: string, options) => installCommand(provider, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -2247,7 +2261,10 @@ program
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
-	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--ssh-cwd <path>',
+		'Working directory on the SSH remote (the agent runs there; defaults to --cwd)'
+	)
 	.option(
 		'--sync-history-to-remote <bool>',
 		'Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)'
@@ -2877,6 +2894,18 @@ program
 	.option('--check <remote-id>', 'Probe this remote now; exits 2 if it is still unreachable')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sshRemoteStatus);
+
+// Logs - the running app's system log (the System Log Viewer and its Clear button)
+program
+	.command('logs')
+	.description("Show the running app's system log (the System Log Viewer), or clear it")
+	.option('--level <level>', 'Lowest level to show: debug, info, warn, or error')
+	.option('--context <context>', 'Only entries from this context (e.g. WebServer)')
+	.option('--since <time>', 'Only entries since then: 30m, 2h, ISO-8601, or epoch')
+	.option('--limit <n>', 'Keep the newest N matching entries')
+	.option('--clear', "Clear the log, as the viewer's Clear button does")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(logs);
 
 // Claude TUI canary - did the installed Claude Code pass a maestro-p turn?
 program

@@ -24,6 +24,7 @@ import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
 import { parseJsonWithBom, stripJsonBom } from '../shared/jsonUtils';
+import { corruptStorePath, parseStoreJson } from '../shared/maestro-lib/store/corrupt-store';
 import { HistoryEntry } from '../shared/types';
 import {
 	HISTORY_VERSION,
@@ -42,6 +43,7 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 	parseHistoryFileData,
+	mergeEntriesById,
 } from '../shared/history';
 
 /**
@@ -174,32 +176,105 @@ export class HistoryManager {
 		logger.debug('Created history directory', LOG_CONTEXT);
 
 		// Check if migration is needed
-		if (await this.needsMigration()) {
+		const migrationState = await this.checkMigrationState();
+		if (migrationState === 'migrate') {
 			await this.migrateFromLegacy();
+		} else if (migrationState === 'nothing') {
+			// A fresh data directory has nothing to migrate, but the marker is also
+			// how maestro-cli picks a format (`hasMigrated` in cli/services/storage.ts).
+			// Without it the CLI wrote send, run-doc, and playbook History to the
+			// legacy file, which this app never reads, and the next launch's
+			// migration then replaced the agents' per-session files with those
+			// entries. Writing it here puts both on the per-session format.
+			await this.writeMigrationMarker(0, 0);
 		}
 	}
 
+	private async writeMigrationMarker(
+		legacyEntryCount: number,
+		sessionsMigrated: number
+	): Promise<void> {
+		const marker: MigrationMarker = {
+			migratedAt: Date.now(),
+			version: HISTORY_VERSION,
+			legacyEntryCount,
+			sessionsMigrated,
+		};
+		await fsp.writeFile(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
+	}
+
 	/**
-	 * Check if migration from legacy format is needed
+	 * Classify whether legacy history migration is needed, not needed, or blocked
+	 * by a transient read failure. Corrupt JSON is quarantined to a sidecar and
+	 * treated as nothing-to-migrate so future launches and the CLI are not stuck.
 	 */
-	private async needsMigration(): Promise<boolean> {
+	private async checkMigrationState(): Promise<
+		'already-migrated' | 'migrate' | 'nothing' | 'read-failed'
+	> {
 		// If marker exists, migration was already done
 		if (await pathExists(this.migrationMarkerPath)) {
-			return false;
+			return 'already-migrated';
 		}
 
 		// If legacy file exists with entries, need to migrate
 		if (await pathExists(this.legacyFilePath)) {
+			let raw: string;
 			try {
-				const raw = await fsp.readFile(this.legacyFilePath, 'utf-8');
-				const data = parseJsonWithBom<{ entries?: HistoryEntry[] }>(raw);
-				return (data.entries?.length ?? 0) > 0;
-			} catch {
-				return false;
+				raw = await fsp.readFile(this.legacyFilePath, 'utf-8');
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+					return 'nothing';
+				}
+				logger.warn(
+					`Failed to read legacy history file during migration check: ${error}`,
+					LOG_CONTEXT
+				);
+				void captureException(error, { operation: 'history:checkMigration' });
+				return 'read-failed';
 			}
+
+			const parsed = parseStoreJson<{ entries?: unknown }>(raw);
+			let corruptError: Error | null = parsed.ok ? null : parsed.error;
+			let entries: HistoryEntry[] = [];
+
+			if (parsed.ok) {
+				const value = parsed.value;
+				if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+					corruptError = new Error('Legacy history file must be a JSON object');
+				} else if (value.entries !== undefined && !Array.isArray(value.entries)) {
+					corruptError = new Error('Legacy history file entries field must be an array');
+				} else {
+					entries = (value.entries as HistoryEntry[] | undefined) ?? [];
+				}
+			}
+
+			if (corruptError) {
+				const sidecarPath = corruptStorePath(this.legacyFilePath);
+				try {
+					await fsp.rename(this.legacyFilePath, sidecarPath);
+				} catch (renameError) {
+					logger.warn(
+						`Failed to quarantine corrupt legacy history file ${this.legacyFilePath}: ${renameError}`,
+						LOG_CONTEXT
+					);
+					void captureException(renameError, { operation: 'history:checkMigration' });
+					return 'read-failed';
+				}
+				logger.warn(
+					`Legacy history file was corrupt and quarantined to ${sidecarPath}; marking migration complete`,
+					LOG_CONTEXT
+				);
+				void captureException(corruptError, {
+					operation: 'history:corruptLegacy',
+					sidecarPath,
+				});
+				return 'nothing';
+			}
+
+			return entries.length > 0 ? 'migrate' : 'nothing';
 		}
 
-		return false;
+		return 'nothing';
 	}
 
 	/**
@@ -246,9 +321,17 @@ export class HistoryManager {
 			// distinct paths.
 			const writes = Array.from(entriesBySession.entries()).map(
 				async ([sessionId, sessionEntries]) => {
-					// Legacy order is newest-first; JSONL is append order, so the
-					// kept slice is reversed on the way to disk.
-					const kept = sessionEntries.slice(0, migrationLimit).reverse();
+					// A per-session file can already exist: the desktop writes that
+					// format whether or not this marker does, so a data directory
+					// that never had one held the app's own entries there while the
+					// CLI appended to the legacy file. Merge rather than replace, or
+					// the migration deletes the agent's desktop History.
+					const existing = (await this.readEntriesInFileOrder(sessionId)).reverse();
+					// Newest-first in, newest-first out; JSONL is append order, so
+					// the kept slice is reversed on the way to disk.
+					const kept = mergeEntriesById(existing, sessionEntries)
+						.slice(0, migrationLimit)
+						.reverse();
 					const filePath = this.getSessionFilePath(sessionId);
 					await atomicWriteFile(filePath, kept.map(serializeHistoryEntryLine).join(''));
 					logger.debug(
@@ -264,13 +347,7 @@ export class HistoryManager {
 			// have settled - otherwise a crash mid-migration could leave the
 			// marker in place with partial data on disk. Sequential here is
 			// load-bearing.
-			const marker: MigrationMarker = {
-				migratedAt: Date.now(),
-				version: HISTORY_VERSION,
-				legacyEntryCount: entries.length,
-				sessionsMigrated,
-			};
-			await fsp.writeFile(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
+			await this.writeMigrationMarker(entries.length, sessionsMigrated);
 
 			logger.info(
 				`History migration complete: ${entries.length} entries -> ${sessionsMigrated} session files`,

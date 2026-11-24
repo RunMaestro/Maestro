@@ -209,6 +209,10 @@ export function createFloatingWidgetRelay(deps: FloatingWidgetRelayDeps): Floati
 			}
 			return controller.setBounds(bounds as FloatingWidgetBounds);
 		});
+		ipcMain.handle('floatingWidgets:setMinWidth', (_event, id: unknown, width: unknown) =>
+			// Anything that is not a number puts the spec minimum back.
+			controllerFor(id).setMinWidth(typeof width === 'number' ? width : 0)
+		);
 		ipcMain.handle('floatingWidgets:setOverflow', (_event, id: unknown, need: unknown) =>
 			controllerFor(id).setOverflow(sanitizeFloatingWidgetOverflow(need))
 		);

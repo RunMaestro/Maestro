@@ -85,6 +85,15 @@ describe('Floating widgets preload API', () => {
 			});
 			expect(result).toEqual({ x: 0, y: 0, width: 500, height: 96 });
 		});
+
+		it('setMinWidth passes the id and the width, and returns the bounds', async () => {
+			mockInvoke.mockResolvedValue({ x: 0, y: 0, width: 460, height: 96 });
+
+			const result = await api.setMinWidth('media-player', 460);
+
+			expect(mockInvoke).toHaveBeenCalledWith('floatingWidgets:setMinWidth', 'media-player', 460);
+			expect(result).toEqual({ x: 0, y: 0, width: 460, height: 96 });
+		});
 	});
 
 	describe('state', () => {
