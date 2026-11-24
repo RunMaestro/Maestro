@@ -5,7 +5,11 @@
 
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
-import { isACappellaEnabled } from '../../../../shared/acappella/feature-flag';
+import {
+	ACAPPELLA_DISABLED_ERROR,
+	isACappellaEnabled,
+} from '../../../../shared/acappella/feature-flag';
+import { VoiceControlRefusal } from '../../../acappella/voice-control-service';
 import type { GlobalHotkeyStatus } from '../../../../shared/global-hotkeys';
 import { DEFAULT_WAKE_PHRASE } from '../../../../shared/acappella/voice-controls';
 import type { WakeEnrollmentReply } from '../../../../shared/acappella/wake-enrollment';
@@ -267,7 +271,20 @@ export function initWakeEnrollment(deps: ACappellaHandlerDependencies): void {
 			return null;
 		},
 		openMicrophone: async () => {
+			const stillEnabled = captureEnableFence(settingsStore);
+			const assertCanOpen = () => {
+				if (!stillEnabled()) throw new Error(ACAPPELLA_DISABLED_ERROR);
+				if (
+					sharedState.clipCapture?.isActive ||
+					sharedState.wakeTestDetector !== null ||
+					(getVoiceSessionService()?.getState() ?? 'idle') !== 'idle'
+				) {
+					throw new VoiceControlRefusal('The microphone is in use.');
+				}
+			};
+			assertCanOpen();
 			await requestMicPermission();
+			assertCanOpen();
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 			startWakeTestCapture(deps);
 			// The always-on wake word reads `isRecording` and stands down.

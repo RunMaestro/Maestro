@@ -717,6 +717,7 @@ export class VoiceSessionService {
 		 * there is no moment of hot microphone before the first hold.
 		 */
 		paused?: boolean;
+		stillRequested?: () => boolean;
 	}): Promise<VoiceSessionSnapshot> {
 		if (this.disposed) return this.getSnapshot();
 		const promise = this.runStartSession(params).finally(() => {
@@ -732,11 +733,13 @@ export class VoiceSessionService {
 		origin?: VoiceOrigin;
 		windowId?: VoiceWindowId;
 		paused?: boolean;
+		stillRequested?: () => boolean;
 	}): Promise<VoiceSessionSnapshot> {
+		if (params.stillRequested?.() === false) return this.getSnapshot();
 		while (!this.disposed && (this.stopPromise || this.state !== 'idle')) {
 			await this.stopSession('replaced');
 		}
-		if (this.disposed) return this.getSnapshot();
+		if (this.disposed || params.stillRequested?.() === false) return this.getSnapshot();
 
 		const mySessionId = generateUUID();
 		this.sessionId = mySessionId;

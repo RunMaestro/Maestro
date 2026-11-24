@@ -124,4 +124,41 @@ describe('usePressAndHold', () => {
 		expect(onHoldStart).not.toHaveBeenCalled();
 		expect(onTap).not.toHaveBeenCalled();
 	});
+
+	it('treats cancelPress and pointercancel during a short press as a cancel, not a tap', () => {
+		const { result, onTap, onHoldStart, onHoldEnd } = setup();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS - 1);
+		});
+		act(() => result.current.cancelPress());
+
+		expect(onTap).not.toHaveBeenCalled();
+		expect(onHoldStart).not.toHaveBeenCalled();
+		expect(onHoldEnd).not.toHaveBeenCalled();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			window.dispatchEvent(new Event('pointercancel'));
+		});
+
+		expect(onTap).not.toHaveBeenCalled();
+	});
+
+	it('ends an active hold on cancelPress and pointercancel', () => {
+		const { result, onTap, onHoldEnd } = setup();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS);
+		});
+		act(() => {
+			window.dispatchEvent(new Event('pointercancel'));
+		});
+
+		expect(onHoldEnd).toHaveBeenCalledTimes(1);
+		expect(onTap).not.toHaveBeenCalled();
+		expect(result.current.holding).toBe(false);
+	});
 });

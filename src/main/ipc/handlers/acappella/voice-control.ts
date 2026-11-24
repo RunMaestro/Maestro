@@ -59,7 +59,7 @@ import {
 	listVoiceOptions,
 	previewVoiceLine,
 } from './providers';
-import { readSendWait } from './session';
+import { cancelPendingVoiceStart, readSendWait } from './session';
 import {
 	toVoiceSessionView,
 	type ACappellaHandlerDependencies,
@@ -199,7 +199,12 @@ export function registerVoiceControl(
 					paused === true
 				);
 				if (snapshot.state === 'idle' || snapshot.state === 'error') {
-					throw new VoiceControlRefusal(failure ?? 'The voice session could not start.');
+					throw new VoiceControlRefusal(
+						failure ??
+							(snapshot.state === 'idle'
+								? 'The voice start was cancelled.'
+								: 'The voice session could not start.')
+					);
 				}
 				return { session: toVoiceSessionView(snapshot) as VoiceSessionView, substitutions };
 			} finally {
@@ -207,6 +212,7 @@ export function registerVoiceControl(
 			}
 		},
 		stop: async () => {
+			cancelPendingVoiceStart();
 			await getVoiceSessionService()?.stopSession('user');
 			return { session: sessionView() };
 		},

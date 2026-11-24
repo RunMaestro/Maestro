@@ -307,6 +307,63 @@ describe('RealtimeVoiceAdapter', () => {
 		const appended = socket.sentOfType('input_audio_buffer.append')[0];
 		expect(Buffer.from(String(appended.audio), 'base64').byteLength).toBe(960);
 	});
+
+	it('rejects start() when the socket closes before opening', async () => {
+		const pendingSocket = new FakeSocket();
+		const adapter = new RealtimeVoiceAdapter({
+			readCredential: () => 'sk-test-abcdefghijklmnop',
+			socketFactory: () => pendingSocket,
+		});
+
+		const starting = adapter.start(noopCallbacks());
+		pendingSocket.close();
+
+		await expect(starting).rejects.toThrow();
+	});
+
+	it('ignores open, message, and close events from a superseded or stopped socket', async () => {
+		const sockets: FakeSocket[] = [];
+		const finals: string[] = [];
+		const errors: Error[] = [];
+		const adapter = new RealtimeVoiceAdapter({
+			readCredential: () => 'sk-test-abcdefghijklmnop',
+			socketFactory: () => {
+				const s = new FakeSocket();
+				sockets.push(s);
+				return s;
+			},
+		});
+
+		const firstStart = adapter.start({
+			onPartial: () => {},
+			onFinal: (text) => finals.push(text),
+			onError: (err) => errors.push(err),
+		});
+		const staleSocket = sockets[0];
+
+		await adapter.stop();
+		const secondStart = adapter.start({
+			onPartial: () => {},
+			onFinal: (text) => finals.push(text),
+			onError: (err) => errors.push(err),
+		});
+		const currentSocket = sockets[1];
+		currentSocket.emit('open');
+		await secondStart;
+
+		// Stale socket firing open rejects firstStart and does not configure or disturb currentSocket.
+		staleSocket.emit('open');
+		await expect(firstStart).rejects.toThrow();
+		staleSocket.server({
+			type: 'conversation.item.input_audio_transcription.completed',
+			transcript: 'stale transcript',
+		});
+		staleSocket.close();
+
+		expect(finals).toEqual([]);
+		expect(errors).toEqual([]);
+		expect(currentSocket.closed).toBe(false);
+	});
 });
 
 describe('RealtimePipeline', () => {

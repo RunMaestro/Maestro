@@ -310,6 +310,36 @@ describe('WhisperSttProvider', () => {
 		expect(finals).toEqual(['typed instead of spoken']);
 		expect(harness.transcribe).not.toHaveBeenCalled();
 	});
+
+	it('releases a newly opened engine when stop() runs during an in-flight start()', async () => {
+		let resolveOpen!: () => void;
+		const engineOpened = new Promise<void>((resolve) => {
+			resolveOpen = resolve;
+		});
+		const unload = vi.fn(async () => {});
+		const engine = {
+			load: vi.fn(async () => {
+				await engineOpened;
+			}),
+			unload,
+			transcribe: vi.fn(async () => ''),
+		};
+		const provider = new WhisperSttProvider({
+			engine,
+			loadRuntime: async () => ({}) as never,
+		});
+
+		const starting = provider.start(recorder().callbacks);
+		await provider.stop();
+		resolveOpen();
+		await starting;
+
+		expect(unload).toHaveBeenCalledTimes(1);
+		// Feeding after a cancelled start is a no-op because callbacks were not armed.
+		provider.feed(frame());
+		await provider.flush();
+		expect(engine.transcribe).not.toHaveBeenCalled();
+	});
 });
 
 // ---------------------------------------------------------------------------
