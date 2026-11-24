@@ -14,11 +14,11 @@ It works on any page a browser tab can load, including your own dev server (`htt
 
 1. Open the page in a browser tab (`Cmd+B` / `Ctrl+B`, then type the URL).
 2. Turn on Design Mode with the pointer button in the address bar, `Cmd+Shift+C` / `Ctrl+Shift+C`, or **Design Mode: Pick an Element** in the command palette (`Cmd+K` / `Ctrl+K`).
-3. Move the mouse over the page. The element under the pointer gets an outline and a label with its tag, id, classes, and size.
+3. Move the mouse over the page. The element under the pointer gets an outline and a label with the path to it, such as `body > main > section.footer > div`, and its size.
 4. Click the element (or press `Enter`). A card opens with the screenshot, the selector, and a note field.
 5. Type a note if you want one, then press `Enter` or **Add to Message**.
 
-Maestro adds a chip for the element above the agent's message box and switches you to that chat. Type anything else you want to say and send.
+Maestro adds a chip for the element above the agent's message box and switches you to that chat. Type anything else you want to say and send. Design Mode stays on in the browser tab, so when you go back to it you can pick again right away.
 
 To pick several elements for one message, press `Cmd+Enter` / `Ctrl+Enter` (or **Add and Pick Another**) instead. The chip is added and you stay in Design Mode to pick the next one. Each pick is its own chip.
 
@@ -34,13 +34,32 @@ To line up a fix without waiting for the agent, press `Opt+Enter` / `Alt+Enter` 
 
 Each queued pick is a separate message, so edit, hold, reorder or remove it from the queue like any other. If the agent has no AI tab, nothing is queued and Maestro tells you so.
 
+### Pick a parent from the path
+
+The label over the outline is the path to the outlined element, from the top of the page down, for example `body > main > section.footer > div`. Each part is an element's tag with its id and classes. The outlined element is the last part, in the accent color, followed by its size. The label shows up to six parents. A `…` at the start means there are more above them.
+
+Click a part of the path to outline that parent, as `Up arrow` does. The outline stays on the parent while the pointer stays near the label, so a click next to the label, or `Enter`, picks it. The arrow keys walk on from there. Move the pointer away and the outline follows the pointer again. To reach a parent above the `…`, click the first part of the path, and the path then shows the parents above it. `Up arrow` also gets there.
+
+A click on the label itself never picks the element under it.
+
+### Hold Space to use the page
+
 While Design Mode is on, the page does not receive your clicks, so picking a button does not press it. You can still scroll with the mouse wheel or trackpad. The page's own hover effects do not show while you pick.
+
+To use the page without leaving Design Mode, hold `Space`. The outline goes away, the banner reads **Using the page - release Space to pick**, and the page gets the pointer: follow a link, open a menu, press a button, or scroll. Release `Space` and you are picking again, from the element under the pointer.
+
+- **Keys while you hold Space.** `Enter` and the arrow keys wait until you release it. `Esc` still leaves Design Mode.
+- **A new page.** When a click loads another page, picking starts again on the new page. Hold `Space` again to go on using it.
+- **Typing.** When you release `Space`, Design Mode takes the keyboard back from the page. To fill in a form or log in, leave Design Mode with `Esc` and turn it on again when you are done.
+- **Where Space is an ordinary key.** In the pick card's note, in the address bar, and on a focused button, `Space` does what it always does.
+- **If picking does not come back** after you release `Space`, for example because you released it while another app was in front, move the pointer off the page and back.
 
 ### Keys
 
 | Key                                | What it does                                 |
 | ---------------------------------- | -------------------------------------------- |
 | `Cmd+Shift+C` / `Ctrl+Shift+C`     | Turn Design Mode on or off                   |
+| `Space` (hold)                     | Use the page; release it to pick again       |
 | `Up arrow`                         | Select the parent of the outlined element    |
 | `Down arrow`                       | Go back toward the element under the pointer |
 | `Enter`                            | Pick the outlined element                    |
@@ -51,6 +70,16 @@ While Design Mode is on, the page does not receive your clicks, so picking a but
 | `Shift+Enter` in the note          | New line                                     |
 
 You can do it all without a mouse: when Design Mode turns on, the element at the center of the page is outlined, and the arrow keys walk up and down from there. Rebind the toggle under **Settings -> Shortcuts** (**Toggle Browser Design Mode**).
+
+## Design Mode stays on
+
+Design Mode belongs to the browser tab, and each browser tab has its own. It stays on until you turn it off with `Esc` (when no pick card is open), the pointer button in the address bar, `Cmd+Shift+C` / `Ctrl+Shift+C`, or the command palette.
+
+- **A new page.** A link, a reload, or an agent that navigates the tab loads the next page with Design Mode still on, and the element under the pointer on the new page is outlined.
+- **Another tab.** The picker shows only while the browser tab is the one you are using. Switch to another tab and back, and it is ready again, with the element at the center of the page outlined. If you switch away, or open a dialog such as the command palette, while a pick card is open, the card closes and its note is lost.
+- **Add to Message.** Going to the chat after a pick does not turn Design Mode off.
+- **A restart.** A browser tab that is in Design Mode when you quit Maestro is in Design Mode when you open Maestro again.
+- **The blank tab.** A new browser tab with no page shows no picker. Design Mode stays on and starts when a page loads, and you can still turn it off there.
 
 ## Review the chips
 
@@ -143,5 +172,5 @@ Both forms act on the AI tab that a new pick lands in (the active AI tab, or the
 ## Privacy and safety
 
 - Design Mode only reads the element you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself or press **Queue**, which sends that one pick as its own message.
-- The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does.
+- The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does. While you hold `Space`, your clicks go to the page, as in any browser tab, and none of them picks an element.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.

@@ -393,7 +393,21 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     a hover overlay for a person's pointer; there is nothing for a script to
     point with once it is on. The outcome it leads to, an element added to the
     message, is covered by `browser-pick <tab> --selector <css>`, which runs
-    the same describe, crop, and delivery code without the overlay.
+    the same describe, crop, and delivery code without the overlay (`--queue`
+    sends it as its own queued message, as the card's Queue button does).
+    The mode is sticky per browser tab (`BrowserTab.designMode`, saved with
+    the tab): it survives page loads, tab switches, Add to Message and
+    restarts, and only Escape and the toggle turn it off. It is still a mode
+    for a person's pointer, so the gap stays open on the same reasoning, and
+    no read reports the flag either (`session list --type browser` lists a
+    browser tab's id, title, url and visibility, not its mode). Closing it
+    means a `browser-design-mode <tab> [on|off] [--json]` verb that writes
+    the flag through `updateBrowserTab()`, as the toggle does, and reads it
+    back.
+    Holding Space to use the page and clicking a crumb in the hover label
+    need no verb: both are pointer gestures with no effect of their own, an
+    agent drives the page through Coworking (`browser_click`, `browser_type`),
+    and `browser-pick --selector` picks any ancestor directly.
 15. **Verify whether a provider CLI is detected after installing it.**
     `install-command <provider>` prints the install command so an agent can run
     it in its own shell, and the desktop refreshes detection on Retry via

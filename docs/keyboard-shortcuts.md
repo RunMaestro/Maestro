@@ -252,9 +252,23 @@ Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the 
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
-### Browser Design Mode Pick Card
+### Browser Design Mode
 
-These work in the note field of the card that opens when you pick an element in [Browser Design Mode](./browser-design-mode). `Cmd+Shift+C` / `Ctrl+Shift+C` (in the table above) turns the mode itself on and off.
+These work while [Browser Design Mode](./browser-design-mode) is on in a browser tab. `Cmd+Shift+C` / `Ctrl+Shift+C` (in the table above) turns the mode itself on and off, and it stays on for that tab until you turn it off.
+
+| Action                                       | macOS          | Windows/Linux  |
+| -------------------------------------------- | -------------- | -------------- |
+| Use the page; release to pick again          | `Space` (hold) | `Space` (hold) |
+| Select the parent of the outlined element    | `Up arrow`     | `Up arrow`     |
+| Go back toward the element under the pointer | `Down arrow`   | `Down arrow`   |
+| Pick the outlined element                    | `Enter`        | `Enter`        |
+| Close the pick card, or leave Design Mode    | `Esc`          | `Esc`          |
+
+While you hold `Space`, the page gets the pointer, so you can follow a link or open a menu without leaving Design Mode. `Space` in the pick card's note or on a focused button is an ordinary key.
+
+#### Pick Card
+
+These work in the note field of the card that opens when you pick an element.
 
 | Action                                    | macOS         | Windows/Linux |
 | ----------------------------------------- | ------------- | ------------- |
