@@ -1091,6 +1091,17 @@ Take back a note no task has read yet (accepts a unique id prefix)
 | `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--json`           | Output the cancelled note as JSON                        | -       |
 
+## `maestro-cli steer-auto-run dismiss <delivery-id>`
+
+Clear a delivered note and its task reply from the record (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the delivered note                      | -       |
+| `--background`     | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--json`           | Output the dismissed delivery as JSON                    | -       |
+
 ## `maestro-cli diff-review`
 
 Pin review comments to lines of an agent's git diff and send them as one review

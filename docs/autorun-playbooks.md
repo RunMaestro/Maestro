@@ -305,13 +305,13 @@ Use it for the things you notice while watching:
 
 **The bar.** While a run can be steered, the bar under the Thought Stream header holds two buttons, **Search thought stream** and **Steer Auto Run**. Clicking either swaps the whole bar for that input; sending a note, clearing a search, or pressing Escape brings the buttons back. A search that is still filtering the stream keeps the bar on the search box, with a small compass at its right edge so you can steer without dropping the filter. The Steer button counts the notes that are still waiting.
 
-**Where to see it.** Notes are listed in the Thought Stream just under that bar: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back.
+**Where to see it.** Notes are listed in the Thought Stream just under that bar: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back. The `x` on a delivered note dismisses it, with its reply, once you have read it; otherwise delivered notes stay until the next run starts.
 
 **What came back.** Under a delivered note sits the reply of the task that took it: one line while collapsed, the task's whole response when you click it. It reads "still working" until that task finishes, and it is marked in red if the task failed. Notes that one task picked up together share a single reply. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
 
 **What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
 
-**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, and `steer-auto-run cancel <note-id>` takes back a waiting one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
+**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, `steer-auto-run cancel <note-id>` takes back a waiting one, and `steer-auto-run dismiss <delivery-id>` clears a delivered one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
 
 **When the Steer button is not there.** It only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so the bar is the search box alone.
 

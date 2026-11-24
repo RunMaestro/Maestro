@@ -209,7 +209,12 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
-import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	steerAutoRunCancel,
+	steerAutoRunDismiss,
+	steerAutoRunList,
+	steerAutoRunSend,
+} from './commands/steer-auto-run';
 import {
 	diffReviewAdd,
 	diffReviewClear,
@@ -1417,6 +1422,17 @@ steerAutoRun
 	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
+
+steerAutoRun
+	.command('dismiss <delivery-id>')
+	.description(
+		'Clear a delivered note and its task reply from the record (accepts a unique id prefix)'
+	)
+	.requiredOption('-a, --agent <id>', 'Agent that holds the delivered note')
+	.option('--background', 'Accepted and ignored: dismissing a note raises no notice')
+	.option('--focus', 'Accepted and ignored: dismissing a note raises no notice')
+	.option('--json', 'Output the dismissed delivery as JSON')
+	.action(steerAutoRunDismiss);
 
 // Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
 // Comments are pinned to lines of the agent's current diff and sent to it as

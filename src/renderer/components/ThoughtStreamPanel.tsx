@@ -64,6 +64,7 @@ import {
 } from '../stores/autoRunSteeringStore';
 import {
 	cancelSteeringNote,
+	dismissSteeringDelivery,
 	steeringBlocker,
 	submitSteeringNote,
 } from '../services/autoRunSteering';
@@ -249,15 +250,22 @@ function highlightQuery(text: string, query: string, theme: Theme) {
  * only difference is whether it can still be taken back. A delivered note keeps
  * a check glyph instead of a cancel button, so the row never offers to un-send
  * something a task has already read.
+ *
+ * A delivered row can still be DISMISSED: cleared from the strip once read,
+ * which is not the same as taking it back. `onDismiss` is passed only to the
+ * first note of a delivery, because the notes one task took share one reply
+ * and leave together.
  */
 function SteeringNoteRow({
 	note,
 	theme,
 	onCancel,
+	onDismiss,
 }: {
 	note: AutoRunSteeringNote;
 	theme: Theme;
 	onCancel?: () => void;
+	onDismiss?: () => void;
 }) {
 	const pending = !!onCancel;
 	return (
@@ -293,6 +301,17 @@ function SteeringNoteRow({
 					style={{ color: theme.colors.success, opacity: 0.6 }}
 					aria-label="delivered"
 				/>
+			)}
+			{!pending && onDismiss && (
+				<button
+					onClick={onDismiss}
+					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+					title="Dismiss this delivered note and its reply"
+					aria-label="Dismiss delivered steering note"
+					data-testid="steering-note-dismiss"
+				>
+					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+				</button>
 			)}
 		</div>
 	);
@@ -901,8 +920,17 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 				>
 					{deliveries.map((delivery) => (
 						<div key={delivery.deliveryId} className="flex flex-col gap-1.5">
-							{delivery.notes.map((note) => (
-								<SteeringNoteRow key={note.id} note={note} theme={theme} />
+							{delivery.notes.map((note, index) => (
+								<SteeringNoteRow
+									key={note.id}
+									note={note}
+									theme={theme}
+									onDismiss={
+										index === 0
+											? () => dismissSteeringDelivery(panelSessionId, delivery.deliveryId)
+											: undefined
+									}
+								/>
 							))}
 							<SteeringReply
 								delivery={delivery}

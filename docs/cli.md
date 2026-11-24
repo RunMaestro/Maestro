@@ -2244,9 +2244,12 @@ maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full repl
 
 # Take back a note no task has read yet (accepts a unique id prefix)
 maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+
+# Clear a delivered note and its reply once read (delivery id from list; accepts a unique prefix)
+maestro-cli steer-auto-run dismiss <delivery-id> -a <agent-id>
 ```
 
-`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts, or one delivery at a time with `dismiss`. `send --background` queues the note without the on-screen "Steering note queued" flash.
 
 ### Reviewing an Agent's Diff
 

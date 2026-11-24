@@ -96,6 +96,44 @@ describe('autoRunSteeringStore', () => {
 		expect(useAutoRunSteeringStore.getState().delivered[SESSION]).toHaveLength(1);
 	});
 
+	it('dismissDelivery drops every note of one delivery and nothing else', () => {
+		const store = () => useAutoRunSteeringStore.getState();
+		store().addNote(SESSION, 'a');
+		store().addNote(SESSION, 'b');
+		store().takeNotes(SESSION);
+		store().addNote(SESSION, 'c');
+		store().takeNotes(SESSION);
+		const [first] = store().delivered[SESSION];
+
+		store().dismissDelivery(SESSION, first.deliveryId);
+
+		expect(store().delivered[SESSION].map((n) => n.text)).toEqual(['c']);
+	});
+
+	it('dismissDelivery removes the session key once nothing is left', () => {
+		const store = () => useAutoRunSteeringStore.getState();
+		store().addNote(SESSION, 'only');
+		store().takeNotes(SESSION);
+		const before = store().delivered;
+
+		store().dismissDelivery(SESSION, 'unknown');
+		expect(store().delivered).toBe(before);
+
+		store().dismissDelivery(SESSION, store().delivered[SESSION][0].deliveryId);
+		expect(store().delivered[SESSION]).toBeUndefined();
+	});
+
+	it('a reply that lands after its delivery was dismissed does not bring it back', () => {
+		const store = () => useAutoRunSteeringStore.getState();
+		const note = store().addNote(SESSION, 'still running')!;
+		store().takeNotes(SESSION);
+		store().dismissDelivery(SESSION, store().delivered[SESSION][0].deliveryId);
+
+		store().recordResponse(SESSION, [note.id], { summary: 's', text: 't', success: true });
+
+		expect(store().delivered[SESSION]).toBeUndefined();
+	});
+
 	it('clearNotes drops both lists for a session', () => {
 		useAutoRunSteeringStore.getState().addNote(SESSION, 'first');
 		useAutoRunSteeringStore.getState().takeNotes(SESSION);
