@@ -37,6 +37,13 @@ export interface QueuedPromptOptions {
 	text: string;
 	/** Base64 data URLs, forwarded to the spawn. */
 	images?: string[];
+	/**
+	 * Whether to read `text` for `@mentions`. Default true. Pass false when the
+	 * text is not the user's own words (a Design Mode pick holds the page's text
+	 * and HTML): the drain fires a stamped mention as a real consult, so a page
+	 * that said `@Backend` would otherwise pull that agent in.
+	 */
+	planMentions?: boolean;
 }
 
 /**
@@ -51,15 +58,18 @@ export interface QueuedPromptOptions {
  *
  * The `@mention` flags are stamped but NOT fired: a consult must reach the
  * other agent when this item becomes the agent's turn, not when it was queued.
- * `agentStore.processQueuedItem` fires it at drain time.
+ * `agentStore.processQueuedItem` fires it at drain time, and only for an item
+ * that carries the flag, so `planMentions: false` leaves a message unable to
+ * consult anyone.
  */
 export function buildQueuedMessageItem({
 	session,
 	tab,
 	text,
 	images,
+	planMentions = true,
 }: QueuedPromptOptions): QueuedItem {
-	const mentionPlan = planCrossAgentMentions(text, session.id);
+	const mentionPlan = planMentions ? planCrossAgentMentions(text, session.id) : null;
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -87,20 +97,20 @@ export function buildQueuedMessageItem({
  *
  * @returns The queued item, or null when the agent is gone or has no AI tab.
  */
-export function enqueuePromptForTab(options: {
-	sessionId: string;
-	tabId: string;
-	text: string;
-	images?: string[];
-}): QueuedItem | null {
-	const { sessionId, tabId, text, images } = options;
+export function enqueuePromptForTab(
+	options: Pick<QueuedPromptOptions, 'text' | 'images' | 'planMentions'> & {
+		sessionId: string;
+		tabId: string;
+	}
+): QueuedItem | null {
+	const { sessionId, tabId, ...content } = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId) ?? getActiveTab(session);
 	if (!tab) return null;
 
-	const item = buildQueuedMessageItem({ session, tab, text, images });
+	const item = buildQueuedMessageItem({ session, tab, ...content });
 	updateSessionWith(sessionId, (s) => ({
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],

@@ -9,6 +9,9 @@
  * message is sent. The chip owns the screenshot; it never goes into the tab's
  * `stagedImages`.
  *
+ * {@link queueDesignPick} is the other way out: the same pick as its own
+ * message in the agent's execution queue, with no chip and no draft involved.
+ *
  * The click in the overlay and `maestro-cli browser-pick` both end here.
  *
  * Once staged, a chip is edited and removed by id on its tab through
@@ -20,14 +23,21 @@
  * {@link runRemoteDesignPickCommand}.
  */
 
-import { resolveComposerTarget, stageDesignPickOnAgent } from './quoteIntoComposer';
+import {
+	resolveComposerTarget,
+	resolveComposerTargetTab,
+	stageDesignPickOnAgent,
+} from './quoteIntoComposer';
+import { enqueuePromptForTab } from './queuedPrompt';
 import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
+import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
 import { generateId } from '../utils/ids';
 import {
 	buildDesignModePrompt,
 	designPickBlock,
 	designPickLabel,
+	expandDesignPicks,
 	type DesignModeCapture,
 } from '../utils/designModePicker';
 import type { StagedDesignPick } from '../types';
@@ -43,7 +53,10 @@ export interface DesignPickDelivery extends DesignModeCapture {
 	/** The browser tab the element came from (for its Coworking id). */
 	browserTabId: string;
 	note?: string;
-	/** False stages the pick without switching the visible tab. Default true. */
+	/**
+	 * False stages the pick without switching the visible tab. Default true.
+	 * Only {@link deliverDesignPick} reads it: a queued pick moves nothing.
+	 */
 	reveal?: boolean;
 }
 
@@ -54,6 +67,15 @@ export interface DesignPickDelivered {
 	text: string;
 	/** The staged chip's id. */
 	pickId: string;
+}
+
+/** What {@link queueDesignPick} queued where, or null when it could not. */
+export interface DesignPickQueued {
+	aiTabId: string;
+	/** The queued message's id, as it sits in the agent's execution queue. */
+	queueItemId: string;
+	/** The message that was queued: the element block, note included. */
+	text: string;
 }
 
 /**
@@ -104,6 +126,58 @@ export async function deliverDesignPick(
 		missingTabMessage: 'This agent has no AI tab. Open one, then pick the element again.',
 	});
 	return aiTabId ? { aiTabId, text: designPickBlock(chip), pickId: chip.id } : null;
+}
+
+/**
+ * Queue one pick as its own message on `sessionId`'s composer target (the AI
+ * tab {@link resolveComposerTarget} picks), for the user who wants to line up
+ * twenty fixes while the agent works. It is the pick {@link deliverDesignPick}
+ * would stage, expanded the way a send expands it ({@link expandDesignPicks}
+ * with no typed text), so the queued message is the text and screenshot a
+ * chip-only send would have produced.
+ *
+ * It only APPENDS to the agent's execution queue, through
+ * {@link enqueuePromptForTab}; nothing is spawned here. The queue's own drain
+ * does the rest: an idle agent starts the message on its next render, a busy
+ * one when its turn ends, and the drain's rules all still apply (held while an
+ * Agent Resilience retry counts down, waiting while the target tab is mid-turn).
+ * A caller that dispatched it itself would bypass those and could lose the
+ * message to a spawn collision.
+ *
+ * The draft, the staged images, the chips and the visible tab are all left as
+ * they are, so a queued pick never needs `reveal`. The message is not read for
+ * `@mentions` (`planMentions: false`): its text is the page's, and a page must
+ * not be able to consult another agent.
+ *
+ * Returns what was queued, or null (and says so in a toast) when the agent is
+ * gone or has no AI tab.
+ */
+export async function queueDesignPick(
+	delivery: DesignPickDelivery
+): Promise<DesignPickQueued | null> {
+	const chip = await buildDesignPickChip(delivery);
+	const { text, images } = expandDesignPicks([chip], '');
+	// Resolved after the await above, like a staged pick: the agent can lose its
+	// tab while the Coworking id is looked up.
+	const target = resolveComposerTargetTab(delivery.sessionId);
+	const item = target
+		? enqueuePromptForTab({
+				sessionId: delivery.sessionId,
+				tabId: target.tab.id,
+				text,
+				images,
+				planMentions: false,
+			})
+		: null;
+	if (!item) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Nothing to Queue Into',
+			message: 'This agent has no AI tab. Open one, then queue the pick again.',
+		});
+		return null;
+	}
+	return { aiTabId: item.tabId, queueItemId: item.id, text };
 }
 
 /**

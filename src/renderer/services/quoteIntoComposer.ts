@@ -43,28 +43,37 @@ export function resolveComposerTarget(
 }
 
 /** The AI tab a delivery lands in, and whether it is a pane of the tiled group on screen. */
-interface ComposerTargetTab {
+export interface ComposerTargetTab {
 	tab: AITab;
 	inGroup: boolean;
 }
 
 /**
- * Find the AI tab a delivery to `sessionId` lands in ({@link
- * resolveComposerTarget}). Null, after a toast that says so, when the agent is
- * gone or has no AI tab, rather than leave the user wondering where it went.
+ * The AI tab a delivery to `sessionId` lands in ({@link resolveComposerTarget}),
+ * or null when the agent is gone or has no AI tab. It says nothing about a
+ * miss: each caller tells the user in its own words (a quote, a chip, a queued
+ * pick), so the three cannot disagree on which tab a pick goes to.
+ */
+export function resolveComposerTargetTab(sessionId: string): ComposerTargetTab | null {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const target = session ? resolveComposerTarget(session) : null;
+	const tab = target ? session?.aiTabs.find((t) => t.id === target.tabId) : undefined;
+	return target && tab ? { tab, inGroup: target.inGroup } : null;
+}
+
+/**
+ * {@link resolveComposerTargetTab}, with a toast that says so when there is no
+ * tab, rather than leave the user wondering where the delivery went.
  */
 function findComposerTargetTab(
 	sessionId: string,
 	missingTabMessage: string
 ): ComposerTargetTab | null {
-	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	const target = session ? resolveComposerTarget(session) : null;
-	const tab = target ? session?.aiTabs.find((t) => t.id === target.tabId) : undefined;
-	if (!target || !tab) {
+	const target = resolveComposerTargetTab(sessionId);
+	if (!target) {
 		notifyToast({ color: 'yellow', title: 'Nothing to Quote Into', message: missingTabMessage });
-		return null;
 	}
-	return { tab, inGroup: target.inGroup };
+	return target;
 }
 
 function isActiveAgent(sessionId: string): boolean {

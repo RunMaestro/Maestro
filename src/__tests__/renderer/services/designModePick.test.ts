@@ -1,6 +1,7 @@
 /**
  * Tests for delivering a Design Mode pick into the agent's composer as a chip,
- * and for reading, editing and removing staged chips.
+ * for queueing one as its own message, and for reading, editing and removing
+ * staged chips.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,18 +14,20 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 import {
 	deliverDesignPick,
 	getStagedDesignPicks,
+	queueDesignPick,
 	removeStagedDesignPick,
 	removeStagedDesignPicks,
 	runRemoteDesignPickCommand,
 	setStagedDesignPickNote,
 } from '../../../renderer/services/designModePick';
+import { buildQueuedMessageItem } from '../../../renderer/services/queuedPrompt';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createMockAITab, createMockDesignPick, createMockSession } from '../../helpers';
-import type { DesignModePick } from '../../../renderer/utils/designModePicker';
-import type { StagedDesignPick } from '../../../renderer/types';
+import { expandDesignPicks, type DesignModePick } from '../../../renderer/utils/designModePicker';
+import type { QueuedItem, StagedDesignPick } from '../../../renderer/types';
 
 const SESSION_ID = 'session-1';
 const TAB_ID = 'tab-1';
@@ -64,6 +67,10 @@ function session() {
 
 function chips() {
 	return session().aiTabs[0].stagedDesignPicks ?? [];
+}
+
+function queue(): QueuedItem[] {
+	return session().executionQueue;
 }
 
 /** Seed the tab with one staged chip per id, each with the note `old`. */
@@ -326,6 +333,189 @@ describe('deliverDesignPick', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringContaining('pick the element again') })
 		);
+	});
+});
+
+describe('queueDesignPick', () => {
+	const delivery = {
+		sessionId: SESSION_ID,
+		browserTabId: BROWSER_TAB_ID,
+		pick,
+		screenshot: SHOT,
+	};
+
+	it('queues the pick as its own message with the screenshot as its image, and returns it', async () => {
+		seed();
+
+		const result = await queueDesignPick({ ...delivery, note: '  Make it blue ' });
+
+		expect(getBrowserId).toHaveBeenCalledWith(SESSION_ID, BROWSER_TAB_ID);
+		expect(queue()).toHaveLength(1);
+		const [item] = queue();
+		expect(result).toEqual({ aiTabId: TAB_ID, queueItemId: item.id, text: item.text });
+		expect(item).toMatchObject({ type: 'message', tabId: TAB_ID, images: [SHOT] });
+		// The element block, then the trimmed note after a blank line.
+		expect(item.text!.startsWith('Design Mode element from https://example.com')).toBe(true);
+		expect(item.text).toContain('Browser tab: `browser:2`');
+		expect(item.text).toContain('A screenshot of the element is attached.');
+		expect(item.text!.endsWith('\n\nMake it blue')).toBe(true);
+		// Queued, not run: the queue's own drain starts it.
+		expect(session().state).toBe('idle');
+	});
+
+	it('queues exactly what a send of the same pick as a chip would build', async () => {
+		seed();
+		const input = { ...delivery, note: 'Make it blue', reveal: false };
+		await deliverDesignPick(input);
+		const expanded = expandDesignPicks(chips(), '');
+
+		const queued = await queueDesignPick(input);
+
+		expect(queue()[0]).toMatchObject({ text: expanded.text, images: expanded.images });
+		expect(queued?.text).toBe(expanded.text);
+	});
+
+	it('queues a pick with no screenshot as text alone', async () => {
+		seed();
+		await queueDesignPick({ ...delivery, screenshot: null });
+		expect(queue()[0]).not.toHaveProperty('images');
+		expect(queue()[0].text).not.toContain('is attached');
+	});
+
+	it('never touches the draft, the staged images, the chips, or what is on screen', async () => {
+		const kept = createMockDesignPick({ id: 'kept' });
+		seed({ inputValue: 'saved', stagedImages: [PASTED], stagedDesignPicks: [kept] });
+		useComposerInputStore.setState({
+			aiValue: 'Fix the header',
+			aiValueTabId: TAB_ID,
+			aiCommandMode: 'shell',
+		} as never);
+
+		await queueDesignPick(delivery);
+
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValue: 'Fix the header',
+			aiValueTabId: TAB_ID,
+			aiCommandMode: 'shell',
+		});
+		expect(session().aiTabs[0]).toMatchObject({ inputValue: 'saved', stagedImages: [PASTED] });
+		// A queued pick is not a chip: the one already staged is the only one.
+		expect(chips()).toEqual([kept]);
+		// Design Mode keeps the browser tab on screen.
+		expect(session().activeBrowserTabId).toBe(BROWSER_TAB_ID);
+		expect(useUIStore.getState().focusRequest).toBeNull();
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('lines picks up behind the work already waiting, in pick order, without dispatching any', async () => {
+		const earlier: QueuedItem = {
+			id: 'earlier',
+			timestamp: 1,
+			tabId: TAB_ID,
+			type: 'message',
+			text: 'Earlier message',
+		};
+		seed({}, { state: 'busy', executionQueue: [earlier] });
+
+		const first = await queueDesignPick(delivery);
+		const second = await queueDesignPick({ ...delivery, note: 'Again' });
+
+		expect(queue().map((item) => item.id)).toEqual([
+			'earlier',
+			first?.queueItemId,
+			second?.queueItemId,
+		]);
+		expect(first?.queueItemId).not.toBe(second?.queueItemId);
+		expect(session().state).toBe('busy');
+	});
+
+	it('goes to the composer target tab: the active AI tab', async () => {
+		seed(
+			{},
+			{
+				aiTabs: [createMockAITab({ id: TAB_ID }), createMockAITab({ id: 'tab-2' })],
+				activeTabId: 'tab-2',
+			}
+		);
+
+		const result = await queueDesignPick(delivery);
+
+		expect(result?.aiTabId).toBe('tab-2');
+		expect(queue()[0].tabId).toBe('tab-2');
+	});
+
+	it('goes to the AI pane of the tiled group on screen, not a standalone tab', async () => {
+		seed(
+			{},
+			{
+				aiTabs: [createMockAITab({ id: TAB_ID }), createMockAITab({ id: 'standalone' })],
+				activeTabId: 'standalone',
+				activeGroupId: 'group-1',
+				tabGroups: [
+					{
+						id: 'group-1',
+						layout: {
+							kind: 'split',
+							direction: 'row',
+							children: [
+								{ kind: 'leaf', tab: { type: 'ai', id: TAB_ID } },
+								{ kind: 'leaf', tab: { type: 'browser', id: BROWSER_TAB_ID } },
+							],
+						},
+					},
+				],
+			}
+		);
+
+		const result = await queueDesignPick(delivery);
+
+		expect(result?.aiTabId).toBe(TAB_ID);
+		expect(queue()[0].tabId).toBe(TAB_ID);
+	});
+
+	it('never lets the page consult another agent: the text is not read for @mentions', async () => {
+		seed();
+		const backend = createMockSession({ id: 'backend', name: 'Backend' });
+		useSessionStore.setState({ sessions: [session(), backend] } as never);
+
+		await queueDesignPick({
+			...delivery,
+			pick: { ...pick, html: '<p>ask @Backend to fix this</p>' },
+		});
+
+		const [item] = queue();
+		expect(item.text).toContain('@Backend');
+		expect(item.crossAgentMention).toBeUndefined();
+		expect(item.crossAgentOnly).toBeUndefined();
+		// The same text queued as the user's own words WOULD consult that agent, so
+		// the assertions above hold because of the opt-out and not the roster.
+		expect(
+			buildQueuedMessageItem({ session: session(), tab: session().aiTabs[0], text: item.text! })
+				.crossAgentMention
+		).toBe(true);
+	});
+
+	it('refuses, with a toast and nothing queued, when the agent has no AI tab', async () => {
+		seed({}, { aiTabs: [], activeTabId: '' });
+
+		expect(await queueDesignPick(delivery)).toBeNull();
+
+		expect(queue()).toEqual([]);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Nothing to Queue Into',
+				message: expect.stringContaining('queue the pick again'),
+			})
+		);
+	});
+
+	it('refuses an agent that is gone', async () => {
+		seed();
+
+		expect(await queueDesignPick({ ...delivery, sessionId: 'ghost' })).toBeNull();
+
+		expect(queue()).toEqual([]);
+		expect(notifyToast).toHaveBeenCalledTimes(1);
 	});
 });
 
