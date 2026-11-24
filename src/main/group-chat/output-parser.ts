@@ -6,6 +6,7 @@
 import { getOutputParser } from '../parsers';
 import { createOutputParser } from '../parsers/parser-factory';
 import { logger } from '../utils/logger';
+import { streamsTokenDeltaText } from '../../shared/agentConstants';
 
 /**
  * Generic text extraction fallback for unknown agent types.
@@ -121,8 +122,9 @@ export function extractTextFromAgentOutput(rawOutput: string, agentType: string)
 	}
 
 	// Fallback: if no result message, concatenate streaming text parts with newlines
-	// to preserve paragraph structure from partial streaming events
-	return textParts.join('\n');
+	// to preserve paragraph structure from partial streaming events. A provider
+	// whose partials are token-sized deltas joins them as-is, or words split.
+	return textParts.join(streamsTokenDeltaText(agentType) ? '' : '\n');
 }
 
 /** The line types a Grok `streaming-json` stream is made of (see GrokOutputParser). */

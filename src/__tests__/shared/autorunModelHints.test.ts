@@ -366,6 +366,22 @@ describe('resolveTurnSettings', () => {
 		}
 	});
 
+	it('keeps the agent model and names the tier model an account does not offer', () => {
+		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" -->\n- [ ] x`);
+		const resolved = resolveTurnSettings(
+			'antigravity',
+			hint,
+			'gemini-4-hydrogen',
+			undefined,
+			undefined,
+			['gemini-4-hydrogen', 'gemini-3.8-flash']
+		);
+		// agy would refuse gemini-4-carbon by name and fail the task.
+		expect(resolved.model).toBe('gemini-4-hydrogen');
+		expect(resolved.warnings.join(' ')).toContain('gemini-4-carbon');
+		expect(resolved.warnings.join(' ')).toContain('does not offer');
+	});
+
 	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
 		noteEffortRejection('antigravity', {
 			value: 'high',

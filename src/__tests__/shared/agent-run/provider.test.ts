@@ -29,6 +29,7 @@ describe('resolveAgentRunProvider - alias folding', () => {
 		['factory', 'factory-droid'],
 		['qwen', 'qwen-coder'],
 		['qwen-code', 'qwen-coder'],
+		['agy', 'antigravity'],
 	];
 
 	it.each(aliases)('%s -> %s', (alias, canonical) => {

@@ -173,6 +173,26 @@ describe('group-chat/output-parser', () => {
 			expect(extractTextFromAgentOutput(jsonlOutput, 'claude-code')).toBe('Part 1\nPart 2');
 		});
 
+		it('joins Antigravity token deltas without a separator when no result', () => {
+			const mockParser = {
+				parseJsonLine: vi.fn((line: string) => {
+					const parsed = JSON.parse(line);
+					return parsed.type === 'text'
+						? { type: 'text', text: parsed.text, isPartial: true }
+						: null;
+				}),
+			};
+			vi.mocked(getOutputParser).mockReturnValue(mockParser as any);
+
+			// agy streams `step_update.text_delta` fragments; `\n` would split "Hello".
+			const jsonlOutput = [
+				'{"type": "text", "text": "Hel"}',
+				'{"type": "text", "text": "lo, wor"}',
+				'{"type": "text", "text": "ld"}',
+			].join('\n');
+			expect(extractTextFromAgentOutput(jsonlOutput, 'antigravity')).toBe('Hello, world');
+		});
+
 		it('should prefer result over text events', () => {
 			const mockParser = {
 				parseJsonLine: vi.fn((line: string) => {

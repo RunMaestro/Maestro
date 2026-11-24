@@ -143,8 +143,47 @@ const TIER_MODELS: Partial<Record<ToolType, Record<ModelTier, string>>> = {
  * caller is expected to report that it did, so the author learns their hint had
  * no effect rather than silently getting the wrong model.
  */
-export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | undefined {
-	return TIER_MODELS[toolType]?.[tier];
+export function resolveTierModel(
+	toolType: ToolType,
+	tier: ModelTier,
+	offeredModels?: readonly string[]
+): string | undefined {
+	const model = TIER_MODELS[toolType]?.[tier];
+	return model && unofferedTierModel(toolType, tier, offeredModels) ? undefined : model;
+}
+
+/**
+ * Providers whose model discovery is the account's own catalogue, so a tier
+ * model missing from it is a model the CLI will refuse. `agy models` lists only
+ * what the signed-in plan offers (verified agy 1.5.16: an account without Neon
+ * or Carbon refuses both as "not recognized"). Other providers' discovered
+ * lists are not exact (Claude's carries aliases, not the pinned dated ids), so
+ * a miss there proves nothing and is not checked.
+ */
+const CATALOG_CHECKED_TIER_PROVIDERS: ReadonlySet<ToolType> = new Set<ToolType>(['antigravity']);
+
+/** Whether a tier hint on this provider should be checked against the discovered catalogue. */
+export function tierNeedsOfferedModels(toolType: ToolType, tier: string | undefined): boolean {
+	return !!tier && tier !== 'default' && CATALOG_CHECKED_TIER_PROVIDERS.has(toolType);
+}
+
+/**
+ * The tier's mapped model when the account's discovered catalogue shows it is
+ * not offered, else `undefined`. No catalogue (not discovered, CLI signed out,
+ * or a provider whose list is not exact) is no evidence: the mapping stands.
+ */
+export function unofferedTierModel(
+	toolType: ToolType,
+	tier: ModelTier,
+	offeredModels?: readonly string[]
+): string | undefined {
+	const model = TIER_MODELS[toolType]?.[tier];
+	if (!model || !offeredModels?.length || !CATALOG_CHECKED_TIER_PROVIDERS.has(toolType)) {
+		return undefined;
+	}
+	const base = (id: string) =>
+		toolType === 'antigravity' ? splitAntigravityModelEffort(id).base : id;
+	return offeredModels.some((offered) => base(offered) === model) ? undefined : model;
 }
 
 /**

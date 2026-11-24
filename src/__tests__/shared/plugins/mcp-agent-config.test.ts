@@ -138,6 +138,7 @@ describe('MCP_CONFIG_BY_AGENT', () => {
 			'factory-droid',
 			'hermes',
 			'pi',
+			'antigravity',
 		]) {
 			expect(MCP_CONFIG_BY_AGENT[id].verified).toBe(false);
 		}

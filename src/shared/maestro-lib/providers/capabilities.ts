@@ -280,7 +280,9 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 */
 	antigravity: {
 		supportsResume: true, // --conversation <id>
-		supportsReadOnlyMode: false, // No flag makes it read-only; workspace writes stay auto-allowed
+		// agy 1.5.16: a session-only `--settings` deny list (readOnlyArgs) refuses shell,
+		// file writes and MCP in every permission mode, while reads still answer.
+		supportsReadOnlyMode: true,
 		supportsJsonOutput: true, // --output-format stream-json
 		supportsSessionId: true, // conversation_id on init/step_update/result
 		supportsImageInput: true, // Verified (agy 1.2.16): image path in the prompt, opened with view_file
@@ -294,19 +296,31 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsStreaming: true, // stream-json emits step_update deltas
 		supportsResultMessages: true, // Terminal `result` event
 		supportsModelSelection: true, // --model <slug>
-		supportsStreamJsonInput: false, // No stdin stream-json input format
+		// `--input-format stream-json` exists but takes text blocks only, in agy's own
+		// `{event:'user'}` shape, so Maestro's image stream-json route does not apply.
+		// Prompts still go over stdin through `stdinPromptEncoder` (see below).
+		supportsStreamJsonInput: false,
 		supportsThinkingDisplay: true, // Thinking text is read from the conversation store (antigravity-step-store.ts)
 		supportsContextMerge: true, // Context can be delivered through the prompt
-		supportsContextExport: false, // Requires session storage
-		supportsWizard: false, // Structured-output wizard flow unverified against a live CLI
-		supportsGroupChatModeration: false, // Unverified
+		supportsContextExport: true, // AntigravitySessionStorage reads the conversation stores
+		// Verified on agy 1.5.16 with the real wizard-system.md discovery prompt under
+		// readOnlyArgs: it read the project, wrote nothing, and replied with JSON that
+		// parseStructuredOutput accepts. Desktop onData carries that answer text.
+		supportsWizard: true,
+		supportsGroupChatModeration: false, // Advisory only; no live moderated round run yet
 		usesJsonLineOutput: true, // stream-json is newline-delimited JSON
 		usesCombinedContextWindow: false, // Gemini reports input and output separately
 		supportsAppendSystemPrompt: false,
+		// agy reads AGENTS.md / GEMINI.md / .agents/rules as project RULES (verified
+		// 1.5.16), but keeps no learned-memory store the Memory Viewer could show.
 		supportsProjectMemory: false,
-		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
-		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
-		tokenSpeedMeasurement: 'none', // step_update usage: per-step vs running total unverified against a live run
+		// No raw stdin (`-p -` sends a literal "-"); the definition's stdinPromptEncoder
+		// wraps the prompt in agy's NDJSON input message instead (verified 1.5.16).
+		supportsPromptViaStdin: true,
+		supportsAdditionalDirectories: true, // `--add-dir <path>`, repeatable (agy 1.5.16)
+		// step_update usage is per model step (verified 1.5.16), but the parser has no
+		// per-call timing (`extractCallTiming`), which 'stream' requires.
+		tokenSpeedMeasurement: 'none',
 	},
 
 	/**

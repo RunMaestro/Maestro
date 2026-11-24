@@ -25,6 +25,7 @@ const TOOL_TYPE_ALIASES: Record<string, AgentRunProvider> = {
 	factory: 'factory-droid',
 	qwen: 'qwen-coder',
 	'qwen-code': 'qwen-coder',
+	agy: 'antigravity',
 };
 
 /**
