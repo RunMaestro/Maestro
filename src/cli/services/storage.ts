@@ -345,7 +345,7 @@ export function writeSettingValue(key: string, value: unknown): boolean {
 }
 
 /** `writeSettingValue` against a settings directory the caller already resolved. */
-function writeSettingValueIn(dir: string, key: string, value: unknown): void {
+export function writeSettingValueIn(dir: string, key: string, value: unknown): void {
 	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
 	setNestedValue(settings, key, value);
 	writeStoreFile(SETTINGS_FILE, settings, dir);
@@ -784,6 +784,8 @@ export function readSshRemotes(): SshRemoteConfig[] {
 /** An SSH remote list read for an edit, with the settings directory it came from. */
 export interface SshRemotesEdit {
 	remotes: SshRemoteConfig[];
+	/** `defaultSshRemoteId` from the same settings file as `remotes`. */
+	defaultId: string | null;
 	dir: string;
 }
 
@@ -791,13 +793,18 @@ export interface SshRemotesEdit {
  * Read the SSH remote list for an edit. Resolves the settings file the way a
  * write does (creating a missing custom Storage Location), so the edit starts
  * from the list the desktop reads (issue #2082). Pass the returned `dir` to
- * `writeSshRemotes()` so the write lands in the same store even if a later
- * resolution would pick a different directory.
+ * `writeSshRemotes()` (and `writeSettingValueIn()` for the default remote) so
+ * every write lands in the same store even if a later resolution would pick a
+ * different directory.
  */
 export function readSshRemotesForEdit(): SshRemotesEdit {
 	const dir = getStoreFileDir(SETTINGS_FILE, true);
 	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
-	return { remotes: (settings.sshRemotes as SshRemoteConfig[]) || [], dir };
+	return {
+		remotes: (settings.sshRemotes as SshRemoteConfig[]) || [],
+		defaultId: (settings.defaultSshRemoteId as string | null | undefined) ?? null,
+		dir,
+	};
 }
 
 /**

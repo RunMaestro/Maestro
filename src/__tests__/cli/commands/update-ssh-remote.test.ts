@@ -10,7 +10,7 @@ import type { SshRemoteConfig } from '../../../shared/types';
 vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotesForEdit: vi.fn(),
 	writeSshRemotes: vi.fn(),
-	writeSettingValue: vi.fn(),
+	writeSettingValueIn: vi.fn(),
 	resolveSshRemoteId: vi.fn((id: string) => id),
 }));
 
@@ -24,7 +24,7 @@ import { updateSshRemote } from '../../../cli/commands/update-ssh-remote';
 import {
 	readSshRemotesForEdit,
 	writeSshRemotes,
-	writeSettingValue,
+	writeSettingValueIn,
 	resolveSshRemoteId,
 } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
@@ -33,7 +33,7 @@ import { formatError } from '../../../cli/output/formatter';
 const STORE_DIR = '/store';
 
 function mockStoredRemotes(remotes: SshRemoteConfig[]): void {
-	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, dir: STORE_DIR });
+	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, defaultId: null, dir: STORE_DIR });
 }
 
 const mockRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
@@ -308,7 +308,7 @@ describe('update-ssh-remote command', () => {
 		it('sets the remote as default when asked', () => {
 			updateSshRemote('remote-1', { setDefault: true });
 
-			expect(writeSettingValue).toHaveBeenCalledWith('defaultSshRemoteId', 'remote-1');
+			expect(writeSettingValueIn).toHaveBeenCalledWith(STORE_DIR, 'defaultSshRemoteId', 'remote-1');
 		});
 
 		it('emits the resolved option set in JSON mode', () => {

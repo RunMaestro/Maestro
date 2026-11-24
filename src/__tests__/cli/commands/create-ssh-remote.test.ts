@@ -15,7 +15,7 @@ vi.mock('crypto', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotesForEdit: vi.fn(),
 	writeSshRemotes: vi.fn(),
-	writeSettingValue: vi.fn(),
+	writeSettingValueIn: vi.fn(),
 }));
 
 // Mock formatter
@@ -28,7 +28,7 @@ import { createSshRemote } from '../../../cli/commands/create-ssh-remote';
 import {
 	readSshRemotesForEdit,
 	writeSshRemotes,
-	writeSettingValue,
+	writeSettingValueIn,
 } from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
@@ -36,7 +36,7 @@ import { formatError, formatSuccess } from '../../../cli/output/formatter';
 const STORE_DIR = '/store';
 
 function mockStoredRemotes(remotes: SshRemoteConfig[]): void {
-	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, dir: STORE_DIR });
+	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, defaultId: null, dir: STORE_DIR });
 }
 
 describe('create-ssh-remote command', () => {
@@ -168,7 +168,11 @@ describe('create-ssh-remote command', () => {
 		it('should set as default when --set-default is provided', () => {
 			createSshRemote('Default', { host: 'server.com', setDefault: true });
 
-			expect(writeSettingValue).toHaveBeenCalledWith('defaultSshRemoteId', 'mock-uuid-1234');
+			expect(writeSettingValueIn).toHaveBeenCalledWith(
+				STORE_DIR,
+				'defaultSshRemoteId',
+				'mock-uuid-1234'
+			);
 		});
 
 		it('should append to existing remotes', () => {

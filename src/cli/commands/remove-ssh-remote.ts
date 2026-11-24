@@ -4,8 +4,7 @@ import {
 	readSshRemotesForEdit,
 	writeSshRemotes,
 	resolveSshRemoteId,
-	readSettingValue,
-	writeSettingValue,
+	writeSettingValueIn,
 } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 
@@ -28,7 +27,7 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 		return process.exit(1);
 	}
 
-	const { remotes, dir } = readSshRemotesForEdit();
+	const { remotes, defaultId, dir } = readSshRemotesForEdit();
 	const index = remotes.findIndex((r) => r.id === resolvedId);
 
 	if (index === -1) {
@@ -45,10 +44,9 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 	remotes.splice(index, 1);
 	writeSshRemotes(remotes, dir);
 
-	// Clear default if it was the deleted remote
-	const defaultId = readSettingValue('defaultSshRemoteId') as string | null;
+	// Clear default if it was the deleted remote (same store as the list)
 	if (defaultId === resolvedId) {
-		writeSettingValue('defaultSshRemoteId', null);
+		writeSettingValueIn(dir, 'defaultSshRemoteId', null);
 	}
 
 	if (options.json) {

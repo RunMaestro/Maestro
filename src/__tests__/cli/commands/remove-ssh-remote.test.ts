@@ -11,8 +11,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotesForEdit: vi.fn(),
 	writeSshRemotes: vi.fn(),
 	resolveSshRemoteId: vi.fn(),
-	readSettingValue: vi.fn(),
-	writeSettingValue: vi.fn(),
+	writeSettingValueIn: vi.fn(),
 }));
 
 // Mock formatter
@@ -26,16 +25,15 @@ import {
 	readSshRemotesForEdit,
 	writeSshRemotes,
 	resolveSshRemoteId,
-	readSettingValue,
-	writeSettingValue,
+	writeSettingValueIn,
 } from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
 /** The settings directory `readSshRemotesForEdit` reports; writes must land there. */
 const STORE_DIR = '/store';
 
-function mockStoredRemotes(remotes: SshRemoteConfig[]): void {
-	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, dir: STORE_DIR });
+function mockStoredRemotes(remotes: SshRemoteConfig[], defaultId: string | null = null): void {
+	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, defaultId, dir: STORE_DIR });
 }
 
 const mockRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
@@ -64,7 +62,6 @@ describe('remove-ssh-remote command', () => {
 	it('should remove a remote successfully', () => {
 		vi.mocked(resolveSshRemoteId).mockReturnValue('remote-1');
 		mockStoredRemotes([mockRemote()]);
-		vi.mocked(readSettingValue).mockReturnValue(null);
 
 		removeSshRemote('remote-1', {});
 
@@ -74,28 +71,25 @@ describe('remove-ssh-remote command', () => {
 
 	it('should clear default when removing the default remote', () => {
 		vi.mocked(resolveSshRemoteId).mockReturnValue('remote-1');
-		mockStoredRemotes([mockRemote()]);
-		vi.mocked(readSettingValue).mockReturnValue('remote-1');
+		mockStoredRemotes([mockRemote()], 'remote-1');
 
 		removeSshRemote('remote-1', {});
 
-		expect(writeSettingValue).toHaveBeenCalledWith('defaultSshRemoteId', null);
+		expect(writeSettingValueIn).toHaveBeenCalledWith(STORE_DIR, 'defaultSshRemoteId', null);
 	});
 
 	it('should not clear default when removing a non-default remote', () => {
 		vi.mocked(resolveSshRemoteId).mockReturnValue('remote-1');
-		mockStoredRemotes([mockRemote()]);
-		vi.mocked(readSettingValue).mockReturnValue('other-remote');
+		mockStoredRemotes([mockRemote()], 'other-remote');
 
 		removeSshRemote('remote-1', {});
 
-		expect(writeSettingValue).not.toHaveBeenCalled();
+		expect(writeSettingValueIn).not.toHaveBeenCalled();
 	});
 
 	it('should output JSON on success', () => {
 		vi.mocked(resolveSshRemoteId).mockReturnValue('remote-1');
 		mockStoredRemotes([mockRemote()]);
-		vi.mocked(readSettingValue).mockReturnValue(null);
 
 		removeSshRemote('remote-1', { json: true });
 
@@ -122,7 +116,6 @@ describe('remove-ssh-remote command', () => {
 		const remote2 = mockRemote({ id: 'r2', name: 'Server B' });
 		vi.mocked(resolveSshRemoteId).mockReturnValue('r1');
 		mockStoredRemotes([remote1, remote2]);
-		vi.mocked(readSettingValue).mockReturnValue(null);
 
 		removeSshRemote('r1', {});
 

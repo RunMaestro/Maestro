@@ -4,7 +4,7 @@ import {
 	readSshRemotesForEdit,
 	writeSshRemotes,
 	resolveSshRemoteId,
-	writeSettingValue,
+	writeSettingValueIn,
 } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import { parseCliBool } from '../utils/parse';
@@ -191,7 +191,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	writeSshRemotes(remotes, dir);
 
 	if (options.setDefault) {
-		writeSettingValue('defaultSshRemoteId', updated.id);
+		writeSettingValueIn(dir, 'defaultSshRemoteId', updated.id);
 	}
 
 	if (options.json) {
