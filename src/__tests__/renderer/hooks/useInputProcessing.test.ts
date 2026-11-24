@@ -1351,6 +1351,33 @@ describe('useInputProcessing', () => {
 			expect(useSessionStore.getState().sessions[0].aiCommandHistory ?? []).toEqual([]);
 		});
 
+		it("resolves @mentions in a chip's note, which never leads the message", async () => {
+			// The note is the user's words, so its mention is planned, as the drain
+			// and a queue edit plan it. The chip still comes first, so the note's
+			// `@Backend` is not a leading mention that would silence this agent.
+			const onPlanCrossAgentMentions = vi.fn().mockReturnValue(null);
+			const session = sessionWithChips([
+				chip('a', { text: 'BLOCK a with @Frontend', note: '@Backend check spacing' }),
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '',
+				onPlanCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'(Design Mode pick)\n\n@Backend check spacing',
+				session,
+				session.activeTabId
+			);
+		});
+
 		it('resolves @mentions from the typed text and hands the consult the whole message', async () => {
 			// A chip's page content must not reach the mention resolver, and a typed
 			// leading mention stays at the front of the message it addresses.
@@ -1375,7 +1402,7 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
-				'@Backend is this accessible?',
+				'@Backend is this accessible?\n\n(Design Mode pick)',
 				session,
 				session.activeTabId
 			);

@@ -22,7 +22,7 @@ import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/s
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
 import { getStagedDesignPicks, removeStagedDesignPicks } from '../../services/stagedDesignPicks';
-import { expandDesignPicks } from '../../utils/designModePicker';
+import { expandDesignPicks, withoutDesignPickPageText } from '../../utils/designModePicker';
 import {
 	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
@@ -676,15 +676,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const currentMode = activeSession.inputMode;
 
 			// The draft as the user left it, before the chips are expanded into it.
-			// What reads the user's own words reads this: the repeat guard, the
-			// @mention resolution (what the composer's routing bar showed), the tab
-			// namer, and the recall history. None of them sees a chip's page content.
+			// What reads the user's own words reads this: the repeat guard, the tab
+			// namer, and the recall history. The @mention resolution reads it plus
+			// the chips' notes (`mentionPlanText` below). None of them sees a chip's
+			// page content.
 			const typedText = effectiveInputValue;
 			const typedImages = effectiveImages;
 			// The chips' page-derived text the expansion placed in the message.
 			// Every queued copy carries it, so the drain and a queue edit re-plan
 			// `@mentions` from the message without the page's words.
 			let designPickFields: Pick<QueuedItem, 'designPickPageText'> = {};
+			// What `@mentions` are resolved from: the message with the chips' page
+			// text taken out, the same text the drain and a queue edit resolve from.
+			let mentionPlanText = typedText;
 			if (designPicks.length > 0) {
 				// From here on the message is what the agent receives: each chip's
 				// block, then the typed text, with the chips' screenshots after the
@@ -694,6 +698,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (expanded.images.length > 0) effectiveImages = [...typedImages, ...expanded.images];
 				if (expanded.pageText.length > 0)
 					designPickFields = { designPickPageText: expanded.pageText };
+				mentionPlanText = withoutDesignPickPageText(expanded.text, expanded.pageText);
 			}
 			// A send with nothing typed (chips only) is named from its chips' blocks.
 			const namingText = typedText.trim() ? typedText : effectiveInputValue;
@@ -828,13 +833,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// on a real input-box submit - not on queued replays / force-sends, which
 			// pass an override value.
 			//
-			// Resolved from the typed text, not the message with its Design Mode chips
-			// expanded: a chip's page content must not pull in an agent the user never
-			// named. The consult itself still gets the whole message.
+			// Resolved from the message without its Design Mode chips' page text
+			// (typed text and notes): a chip's page content must not pull in an agent
+			// the user never named. The consult itself still gets the whole message.
 			const mentionSourceTabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
 			const crossAgentMentionPlan =
 				currentMode === 'ai' && overrideInputValue === undefined && onPlanCrossAgentMentions
-					? onPlanCrossAgentMentions(typedText, activeSession, mentionSourceTabId)
+					? onPlanCrossAgentMentions(mentionPlanText, activeSession, mentionSourceTabId)
 					: null;
 
 			if (crossAgentMentionPlan) {

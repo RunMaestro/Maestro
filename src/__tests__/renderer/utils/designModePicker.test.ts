@@ -1634,13 +1634,13 @@ describe('expandDesignPicks', () => {
 describe('withoutDesignPickPageText', () => {
 	const PAGE = '```html\n<a>ping @Other</a>\n```';
 
-	it("takes the page's text out, leaving the typed text and the note", () => {
+	it("puts a placeholder where the page's text was, leaving the typed text and the note", () => {
 		const expanded = expandDesignPicks(
 			[{ text: PAGE, note: 'and this', screenshot: null }],
 			'ask @Backend about it'
 		);
 		expect(withoutDesignPickPageText(expanded.text, expanded.pageText)).toBe(
-			'and this\n\nask @Backend about it'
+			'(Design Mode pick)\n\nand this\n\nask @Backend about it'
 		);
 	});
 
@@ -1649,7 +1649,9 @@ describe('withoutDesignPickPageText', () => {
 			[{ text: PAGE, note: '', screenshot: null }],
 			'@Backend look'
 		);
-		expect(withoutDesignPickPageText(expanded.text, expanded.pageText)).toBe('@Backend look');
+		expect(withoutDesignPickPageText(expanded.text, expanded.pageText)).toBe(
+			'@Backend look\n\n(Design Mode pick)'
+		);
 	});
 
 	it('still takes the page text out after the note was edited', () => {
@@ -1658,7 +1660,19 @@ describe('withoutDesignPickPageText', () => {
 			'go'
 		);
 		const edited = expanded.text.replace('make it blue', 'make it red');
-		expect(withoutDesignPickPageText(edited, expanded.pageText)).toBe('make it red\n\ngo');
+		expect(withoutDesignPickPageText(edited, expanded.pageText)).toBe(
+			'(Design Mode pick)\n\nmake it red\n\ngo'
+		);
+	});
+
+	it('never lets a note that starts with @agent lead the message', () => {
+		const expanded = expandDesignPicks(
+			[{ text: PAGE, note: '@Backend check spacing', screenshot: null }],
+			'Fix it'
+		);
+		expect(withoutDesignPickPageText(expanded.text, expanded.pageText)).toMatch(
+			/^\(Design Mode pick\)/
+		);
 	});
 
 	it('is the text unchanged with no page text', () => {

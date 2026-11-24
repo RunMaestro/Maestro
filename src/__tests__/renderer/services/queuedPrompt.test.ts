@@ -313,7 +313,10 @@ describe('resolveQueuedItemEdit', () => {
 
 		resolveQueuedItemEdit(session, 'q1', patch(`${block}\n\nask @Codex now`));
 
-		expect(planCrossAgentMentions).toHaveBeenCalledWith('ask @Codex now', 'session-1');
+		expect(planCrossAgentMentions).toHaveBeenCalledWith(
+			'(Design Mode pick)\n\nask @Codex now',
+			'session-1'
+		);
 	});
 
 	it('never plans mentions for an item queued with planMentions: false', () => {

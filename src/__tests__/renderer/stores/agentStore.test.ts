@@ -1604,7 +1604,7 @@ describe('agentStore', () => {
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
-				'ask @Backend about it'
+				'(Design Mode pick)\n\nask @Backend about it'
 			);
 		});
 

@@ -1201,19 +1201,30 @@ export function expandDesignPicks(
 	};
 }
 
+/** What stands in for a chip's page text in {@link withoutDesignPickPageText}. */
+const DESIGN_PICK_PAGE_PLACEHOLDER = '(Design Mode pick)';
+
 /**
  * `text` with each chip's page-derived text (`pageText`, from an expansion)
- * taken out once: what to resolve `@mentions` from, so a picked page's content
+ * replaced once by a placeholder: what to resolve `@mentions` from, at the
+ * send, the queue drain and a queue edit alike, so a picked page's content
  * never names an agent the user did not. The typed text and the notes stay,
- * because the user wrote them. Page text the user edited no longer matches and
- * stays, because the edited text is now theirs.
+ * because the user wrote them.
+ *
+ * A placeholder rather than nothing, so the order of the message is kept: a
+ * chip still comes first unless the typed text starts with `@` or `/` (see
+ * {@link expandDesignPicks}), and a note that starts with `@agent` therefore
+ * never becomes the message's leading mention. Page text the user edited no
+ * longer matches and stays, because the edited text is now theirs.
  */
 export function withoutDesignPickPageText(text: string, pageText?: readonly string[]): string {
 	if (!pageText || pageText.length === 0) return text;
 	let rest = text;
 	for (const page of pageText) {
 		const at = rest.indexOf(page);
-		if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + page.length);
+		if (at >= 0) {
+			rest = rest.slice(0, at) + DESIGN_PICK_PAGE_PLACEHOLDER + rest.slice(at + page.length);
+		}
 	}
 	return rest.trim();
 }
