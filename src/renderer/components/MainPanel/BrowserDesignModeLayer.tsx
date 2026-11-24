@@ -13,7 +13,9 @@
  * mounts this layer only while the tab is the active surface and unmounts it
  * otherwise, so each return to the tab is a fresh layer (focus, center probe).
  * A finished page load (`pageLoadCount`) is not an exit: the layer probes the
- * new document at the same point.
+ * new document at the same point. So does a change in the layer's own size (the
+ * side bars fold as Design Mode comes on, the window is resized), once it has
+ * settled: the outline was measured for the old size.
  *
  * Keys (the overlay holds focus): Enter picks, ArrowUp / ArrowDown walk to the
  * parent / back toward the child, Escape drops a drag in progress, closes the
@@ -131,6 +133,13 @@ function isSpaceKey(event: { key: string; code: string }): boolean {
  * the page again.
  */
 const SPACE_STILL_HELD_MS = 500;
+
+/**
+ * How long the layer's size must hold still before it probes again. The side
+ * bars animate when Design Mode folds them, so the size changes for a few
+ * hundred milliseconds; one probe after it settles beats one per frame.
+ */
+const RESIZE_SETTLE_MS = 120;
 
 /** A guest CSS box scaled to overlay (webview DIP) pixels. */
 function toLayerRect(rect: DesignModeRect, scale: number): DesignModeRect {
@@ -784,6 +793,36 @@ export function BrowserDesignModeLayer({
 		if (!active || active === document.body) focusLayer();
 		void probe();
 	}, [pageLoadCount, focusLayer, probe, endPassthroughHere, releaseHold, cancelPress]);
+
+	// The page can change size under the layer: the side bars fold as Design Mode
+	// comes on, the window is resized. The outline and crumbs were measured for the
+	// old size and would sit on the wrong element until the pointer moves, so ask
+	// again where the pointer is once the size has settled. probe() stands aside
+	// while the page has the pointer or a drag draws its box; an open card is
+	// frozen on purpose, and its probe only refreshes what shows when it closes.
+	useEffect(() => {
+		const layer = layerRef.current;
+		if (!layer || typeof ResizeObserver === 'undefined') return;
+		let width = layer.clientWidth;
+		let height = layer.clientHeight;
+		let timer: number | null = null;
+		const observer = new ResizeObserver(() => {
+			// Observing reports once, and a change that nets out is no change.
+			if (layer.clientWidth === width && layer.clientHeight === height) return;
+			width = layer.clientWidth;
+			height = layer.clientHeight;
+			if (timer !== null) window.clearTimeout(timer);
+			timer = window.setTimeout(() => {
+				timer = null;
+				void probe();
+			}, RESIZE_SETTLE_MS);
+		});
+		observer.observe(layer);
+		return () => {
+			observer.disconnect();
+			if (timer !== null) window.clearTimeout(timer);
+		};
+	}, [probe]);
 
 	useEffect(() => {
 		if (card) noteRef.current?.focus();

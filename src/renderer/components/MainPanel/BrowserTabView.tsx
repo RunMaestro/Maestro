@@ -24,6 +24,7 @@ import {
 import { Spinner } from '../ui/Spinner';
 import { BrowserDesignModeLayer } from './BrowserDesignModeLayer';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useDesignModePanelCollapse } from '../../hooks/ui/useDesignModePanelCollapse';
 import { shortcutSuffix } from '../ui/ShortcutHint';
 import type { BrowserTab, Theme } from '../../types';
 import {
@@ -84,6 +85,13 @@ interface BrowserTabViewProps {
 	 * which otherwise strands keystrokes in the webview.
 	 */
 	isActive?: boolean;
+	/**
+	 * Whether this is the tab the user is looking at, even while a dialog is open
+	 * over it. `isActive` is this AND no dialog. Design Mode's side-bar collapse
+	 * keys on it, so opening the command palette over the page does not bring the
+	 * bars back and take them away again. Defaults to `isActive`.
+	 */
+	isCurrent?: boolean;
 	/**
 	 * Hands a Design Mode pick to the agent: an element the user clicked or a
 	 * region they dragged out, with its cropped screenshot (null when there is
@@ -274,7 +282,7 @@ function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 
 export const BrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(
-		{ tab, theme, onUpdateTab, isActive = true, onDesignPick, onDesignQueue },
+		{ tab, theme, onUpdateTab, isActive = true, isCurrent = isActive, onDesignPick, onDesignQueue },
 		ref
 	) {
 		const webviewRef = useRef<ElectronWebviewElement | null>(null);
@@ -354,6 +362,10 @@ export const BrowserTabView = React.memo(
 		// and showing the tab again re-arms it: a fresh layer that takes focus and
 		// probes from the center.
 		const designModeArmed = designMode && designModeAvailable && isActive;
+		// The side bars fold while Design Mode is up in a tab the user is looking at.
+		// Keyed on isCurrent, not isActive: a dialog un-arms the overlay, but the
+		// page must not reflow behind it (see useDesignModePanelCollapse).
+		useDesignModePanelCollapse(designMode && designModeAvailable && isCurrent);
 		const exitDesignMode = useCallback(() => setDesignMode(false), [setDesignMode]);
 		const onDesignPickRef = useRef(onDesignPick);
 		onDesignPickRef.current = onDesignPick;

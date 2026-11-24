@@ -14,8 +14,11 @@ import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPe
 import { normalizeBrowserTabUpdates } from '../../../../renderer/hooks/tabs/internal/browserTabHelpers';
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { resetStore } from '../../../helpers';
 
 // Default to desktop (Electron) behavior; individual tests flip this to true to
 // exercise the web-desktop browser bundle branch.
@@ -1473,13 +1476,14 @@ describe('BrowserTabView', () => {
 			onDesignPick?: ReturnType<typeof vi.fn>,
 			props: {
 				isActive?: boolean;
+				isCurrent?: boolean;
 				tab?: BrowserTab;
 				onDesignQueue?: ReturnType<typeof vi.fn>;
 			} = {}
 		) {
 			const ref = React.createRef<BrowserTabViewHandle>();
 			const onUpdateTab = vi.fn();
-			const element = (isActive: boolean | undefined) => (
+			const element = (isActive: boolean | undefined, isCurrent = props.isCurrent) => (
 				<StatefulBrowserTabView
 					ref={ref}
 					initialTab={props.tab ?? mockTab}
@@ -1488,11 +1492,17 @@ describe('BrowserTabView', () => {
 					onDesignPick={onDesignPick}
 					onDesignQueue={props.onDesignQueue}
 					isActive={isActive}
+					isCurrent={isCurrent}
 				/>
 			);
 			const view = render(element(props.isActive));
-			/** Hide or show the tab the way MainPanelContent does: through isActive. */
-			const setActive = (isActive: boolean) => view.rerender(element(isActive));
+			/**
+			 * Hide or show the tab the way MainPanelContent does: through isActive.
+			 * `isCurrent` is whether the tab is still the one on screen (a dialog
+			 * over it makes it inactive but current); it follows isActive when omitted.
+			 */
+			const setActive = (isActive: boolean, isCurrent?: boolean) =>
+				view.rerender(element(isActive, isCurrent));
 			const webview = getWebview() as MockWebview & {
 				getZoomFactor: ReturnType<typeof vi.fn>;
 				capturePage: ReturnType<typeof vi.fn>;
@@ -2162,6 +2172,266 @@ describe('BrowserTabView', () => {
 					ref.current!.toggleDesignMode();
 				});
 				expect(designModeWrites(onUpdateTab)).toEqual([false]);
+			});
+		});
+
+		describe('side bars', () => {
+			function bars() {
+				const { leftSidebarOpen, rightPanelOpen } = useUIStore.getState();
+				return { left: leftSidebarOpen, right: rightPanelOpen };
+			}
+
+			function toggleButton() {
+				return screen.getByTestId('browser-tab-design-mode-toggle') as HTMLButtonElement;
+			}
+
+			beforeEach(() => {
+				resetStore(useUIStore);
+				useSettingsStore.setState({ designModeCollapsePanels: true });
+			});
+
+			it('folds the Left Bar and Right Bar when Design Mode comes on and gives them back when it goes off', async () => {
+				await setupReady(vi.fn());
+				expect(bars()).toEqual({ left: true, right: true });
+
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('brings the bars back when the tab is hidden and folds them again when it is shown', async () => {
+				const { setActive } = await setupReady(vi.fn());
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				await act(async () => setActive(false));
+				expect(bars()).toEqual({ left: true, right: true });
+
+				// Design Mode stayed on for the tab, so showing it folds the bars again.
+				await act(async () => setActive(true));
+				expect(bars()).toEqual({ left: false, right: false });
+			});
+
+			it('keeps the bars folded while a dialog covers the tab', async () => {
+				const { setActive } = await setupReady(vi.fn());
+				await arm();
+
+				// A dialog over the tab makes it inactive (the overlay steps aside) but it
+				// is still the tab on screen: the page must not reflow behind the dialog.
+				await act(async () => setActive(false, true));
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				await act(async () => setActive(true, true));
+				expect(bars()).toEqual({ left: false, right: false });
+
+				// Switched to another tab: now it gives them back.
+				await act(async () => setActive(false, false));
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('folds at mount for a tab saved with Design Mode on, and unfolds when it unmounts', async () => {
+				const { view } = await setupReady(vi.fn(), { tab: { ...mockTab, designMode: true } });
+				expect(bars()).toEqual({ left: false, right: false });
+
+				view.unmount();
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('leaves a bar where the user put it while Design Mode was on', async () => {
+				await setupReady(vi.fn());
+				await arm();
+
+				// Open the Right Bar to read History, then close it again.
+				act(() => useUIStore.getState().setRightPanelOpen(true));
+				act(() => useUIStore.getState().setRightPanelOpen(false));
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+
+				// The Left Bar comes back; the Right Bar stays where the user left it.
+				expect(bars()).toEqual({ left: true, right: false });
+			});
+
+			it('never opens a bar the user had already closed', async () => {
+				act(() => useUIStore.getState().setLeftSidebarOpen(false));
+				await setupReady(vi.fn());
+
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+
+				expect(bars()).toEqual({ left: false, right: true });
+			});
+
+			it('folds nothing when the setting is off', async () => {
+				useSettingsStore.setState({ designModeCollapsePanels: false });
+				await setupReady(vi.fn());
+
+				await arm();
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('follows the setting while Design Mode is on', async () => {
+				await setupReady(vi.fn());
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				act(() => useSettingsStore.setState({ designModeCollapsePanels: false }));
+				expect(bars()).toEqual({ left: true, right: true });
+
+				act(() => useSettingsStore.setState({ designModeCollapsePanels: true }));
+				expect(bars()).toEqual({ left: false, right: false });
+			});
+
+			it('folds nothing on the blank tab, where the picker is not offered', async () => {
+				await setupReady(vi.fn(), {
+					tab: { ...mockTab, url: DEFAULT_BROWSER_TAB_URL, designMode: true },
+				});
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('never folds a tab that is not on screen (a background browser)', async () => {
+				await setupReady(vi.fn(), {
+					isActive: false,
+					tab: { ...mockTab, designMode: true },
+				});
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+		});
+
+		describe('a size change under the layer', () => {
+			/**
+			 * Stands in for ResizeObserver and hands the test the callback of whichever
+			 * observer watches the layer, so it can report a size change by hand. The
+			 * layer's size is whatever `size` says (jsdom has no layout).
+			 */
+			function watchLayerSize(size: { width: number; height: number }) {
+				const reports: Array<() => void> = [];
+				class CapturingResizeObserver {
+					constructor(private readonly callback: ResizeObserverCallback) {}
+					observe(target: Element) {
+						if (target.getAttribute('data-testid') === 'browser-tab-design-mode-layer') {
+							reports.push(() => this.callback([], this as unknown as ResizeObserver));
+						}
+					}
+					disconnect() {}
+				}
+				vi.stubGlobal('ResizeObserver', CapturingResizeObserver);
+				const width = vi
+					.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+					.mockImplementation(() => size.width);
+				const height = vi
+					.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+					.mockImplementation(() => size.height);
+				return {
+					/** The observer callbacks registered for the layer so far. */
+					reports,
+					restore: () => {
+						width.mockRestore();
+						height.mockRestore();
+					},
+				};
+			}
+
+			const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+			it('probes again at the pointer once the size settles, so the outline is not left on the old layout', async () => {
+				const size = { width: 1000, height: 600 };
+				const watch = watchLayerSize(size);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					const layer = await arm();
+					await act(async () => {
+						fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+					});
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual({
+							type: 'probe',
+							x: 30,
+							y: 60,
+							depth: 0,
+							frame: { width: 1000, height: 600 },
+						})
+					);
+					expect(watch.reports).toHaveLength(1);
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					// The side bars fold: the layer grows, in several steps.
+					for (const width of [1100, 1200, 1300]) {
+						size.width = width;
+						act(() => watch.reports[0]());
+					}
+					await act(async () => {
+						await settle();
+					});
+
+					// One probe for the whole change, at the pointer, with the new frame.
+					const probes = guestCalls(webview, 'probe');
+					expect(probes.length).toBe(probesBefore + 1);
+					expect(probes.at(-1)).toMatchObject({
+						x: 30,
+						y: 60,
+						frame: { width: 1300, height: 600 },
+					});
+				} finally {
+					watch.restore();
+				}
+			});
+
+			it('ignores the report an observer makes on starting, and a size that has not changed', async () => {
+				const size = { width: 1000, height: 600 };
+				const watch = watchLayerSize(size);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					await arm();
+					await waitFor(() => expect(guestCalls(webview, 'probe').length).toBeGreaterThan(0));
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					act(() => watch.reports[0]());
+					await act(async () => {
+						await settle();
+					});
+
+					expect(guestCalls(webview, 'probe').length).toBe(probesBefore);
+				} finally {
+					watch.restore();
+				}
+			});
+
+			it('stops watching when the layer goes away', async () => {
+				const size = { width: 1000, height: 600 };
+				const watch = watchLayerSize(size);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					await arm();
+					await waitFor(() => expect(guestCalls(webview, 'probe').length).toBeGreaterThan(0));
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					size.width = 1400;
+					act(() => watch.reports[0]());
+					// Design Mode goes off before the size settles.
+					await act(async () => {
+						fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+					});
+					await act(async () => {
+						await settle();
+					});
+
+					expect(guestCalls(webview, 'probe').length).toBe(probesBefore);
+				} finally {
+					watch.restore();
+				}
 			});
 		});
 

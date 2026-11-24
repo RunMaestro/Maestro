@@ -181,3 +181,7 @@ export type { Breakpoint } from './useViewportBreakpoint';
 // Per-window panel-collapse state (reads/persists left/right panel collapse
 // through window.maestro.windows.*, keyed per-window not as a global setting)
 export { useWindowState } from './useWindowState';
+
+// Folds the Left Bar and Right Bar while Design Mode is up in a browser tab,
+// then brings back only what it closed (rules in utils/sidePanelCollapse.ts)
+export { useDesignModePanelCollapse } from './useDesignModePanelCollapse';

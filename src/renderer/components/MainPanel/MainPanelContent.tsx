@@ -1275,6 +1275,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 				const isBrowserFocusActive = isBrowserTiled
 					? groupFocusedBrowserTabId === tabId && layerCount === 0
 					: isBrowserVisible && layerCount === 0;
+				// The browser tab the user is looking at, whether or not a dialog is open
+				// over it: visible, and when tiled the group's focused browser pane.
+				const isBrowserCurrent =
+					isBrowserVisible && (!isBrowserTiled || groupFocusedBrowserTabId === tabId);
 				return (
 					<div
 						key={tabId}
@@ -1313,6 +1317,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							tab={browserTab}
 							theme={theme}
 							isActive={isBrowserFocusActive}
+							isCurrent={isBrowserCurrent}
 							onUpdateTab={(tid, updates) =>
 								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
 							}

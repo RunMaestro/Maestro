@@ -20,6 +20,7 @@ export interface BrowserTabsState {
 	htmlDoubleClickOpensInBrowser: boolean;
 	browserTabKeepAlive: 'off' | 'recent' | 'all';
 	browserTabKeepAliveLimit: number;
+	designModeCollapsePanels: boolean;
 	automaticTabNamingEnabled: boolean;
 	shortenLongTabNames: boolean;
 	newTabPlacement: 'end' | 'after-current';
@@ -38,6 +39,7 @@ export interface BrowserTabsActions {
 	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
 	setBrowserTabKeepAliveLimit: (value: number) => void;
+	setDesignModeCollapsePanels: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setShortenLongTabNames: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
@@ -64,6 +66,10 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	htmlDoubleClickOpensInBrowser: false,
 	browserTabKeepAlive: 'off',
 	browserTabKeepAliveLimit: 10,
+	// On: Design Mode folds the Left Bar and Right Bar away while it is up, because
+	// with both open the page is laid out at a width that trips its mobile
+	// breakpoint on a laptop screen.
+	designModeCollapsePanels: true,
 	automaticTabNamingEnabled: true,
 	// Off: an auto-generated name is kept whole and the tab strip shows all of it.
 	shortenLongTabNames: false,
@@ -112,6 +118,11 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 		const clamped = Math.max(1, Math.floor(value) || 1);
 		set({ browserTabKeepAliveLimit: clamped });
 		window.maestro.settings.set('browserTabKeepAliveLimit', clamped);
+	},
+
+	setDesignModeCollapsePanels: (value) => {
+		set({ designModeCollapsePanels: value });
+		window.maestro.settings.set('designModeCollapsePanels', value);
 	},
 
 	setAutomaticTabNamingEnabled: (value) => {
@@ -178,6 +189,9 @@ export function hydrateBrowserTabsSettings(
 
 	if (allSettings['browserTabKeepAliveLimit'] !== undefined)
 		patch.browserTabKeepAliveLimit = allSettings['browserTabKeepAliveLimit'] as number;
+
+	if (typeof allSettings['designModeCollapsePanels'] === 'boolean')
+		patch.designModeCollapsePanels = allSettings['designModeCollapsePanels'];
 
 	if (allSettings['automaticTabNamingEnabled'] !== undefined)
 		patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;

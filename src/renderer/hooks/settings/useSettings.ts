@@ -416,6 +416,8 @@ export interface UseSettingsReturn {
 	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
 	browserTabKeepAliveLimit: number;
 	setBrowserTabKeepAliveLimit: (value: number) => void;
+	designModeCollapsePanels: boolean;
+	setDesignModeCollapsePanels: (value: boolean) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
