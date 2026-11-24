@@ -810,6 +810,27 @@ export interface ProviderTabSession {
 	customEffort?: string;
 }
 
+/**
+ * One browser Design Mode pick staged in a tab's composer as a chip.
+ *
+ * A pick no longer pastes its selector, computed styles and HTML into the
+ * draft: it waits above the textarea as a chip (thumbnail, short label, note)
+ * the user can review, annotate or remove. The full `text` block, followed by
+ * the `note`, is expanded into the outgoing message at send time, and the
+ * `screenshot` rides along after the staged images. The chip owns its
+ * screenshot; it is never copied into `stagedImages`.
+ */
+export interface StagedDesignPick {
+	id: string; // generateId()
+	kind: 'element' | 'region';
+	label: string; // short: `button.cta "Sign up"` or `Region 640 x 220`
+	url: string;
+	note: string; // editable from the chip
+	text: string; // full block from buildDesignModePrompt (note excluded; appended at send)
+	screenshot: string | null; // data URL or maestro-image ref; owned by the chip, NOT in stagedImages
+	createdAt: number;
+}
+
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
@@ -834,6 +855,16 @@ export interface AITab {
 	 */
 	commandMode?: ComposerCommandMode | boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
+	/**
+	 * Design Mode picks staged in this tab's composer as chips, in the order they
+	 * were picked (which is the order they expand at send). Absent means none, so
+	 * a fresh tab literal needs no entry. Anything that clears `stagedImages` on
+	 * an EXISTING tab must clear this too, or a sent or discarded draft leaves
+	 * its chips behind. Persisted with the tab like `stagedImages`;
+	 * `relocateSessionImages()` moves each inline `screenshot` out of the
+	 * sessions file.
+	 */
+	stagedDesignPicks?: StagedDesignPick[];
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
