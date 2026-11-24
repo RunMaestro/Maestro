@@ -2740,6 +2740,509 @@ describe('BrowserTabView', () => {
 			});
 		});
 
+		describe('drag to select a region', () => {
+			afterEach(() => {
+				dismissCenterFlash();
+			});
+
+			const element = (selector: string, tagName: string, y: number) => ({
+				selector,
+				tagName,
+				rect: { x: 100, y, width: 600, height: 40 },
+				text: '',
+				html: `<${tagName}></${tagName}>`,
+				htmlTruncated: false,
+			});
+
+			/** What the page reports for the box dragged from (100, 80) to (740, 300). */
+			const REGION = {
+				url: 'https://example.com',
+				rect: { x: 100, y: 80, width: 640, height: 220 },
+				viewport: pickPayload.viewport,
+				elements: [
+					element('header.top', 'header', 80),
+					element('nav.main', 'nav', 120),
+					element('h1.title', 'h1', 160),
+					element('p.lead', 'p', 200),
+					element('button.cta', 'button', 240),
+				],
+				elementsTruncated: false,
+			};
+
+			/** The page answers every `region` request with `reply`. */
+			function regionPage(webview: MockWebview, reply: unknown = REGION) {
+				const base = webview.executeJavaScript.getMockImplementation() as (
+					code: string
+				) => Promise<unknown>;
+				webview.executeJavaScript.mockImplementation((code: string) =>
+					guestRequest(code)?.type === 'region' ? Promise.resolve(reply) : base(code)
+				);
+			}
+
+			// jsdom lays nothing out, so client pixels are overlay pixels here.
+
+			async function press(target: HTMLElement, x: number, y: number) {
+				await act(async () => {
+					fireEvent.mouseDown(target, { clientX: x, clientY: y, button: 0, buttons: 1 });
+				});
+			}
+
+			/** The pointer moves with the button down; `buttons: 0` means it came up elsewhere. */
+			async function moveTo(target: HTMLElement, x: number, y: number, buttons = 1) {
+				await act(async () => {
+					fireEvent.mouseMove(target, { clientX: x, clientY: y, buttons });
+				});
+			}
+
+			/** The button comes up, and the browser makes a click of the press, as it does. */
+			async function release(target: HTMLElement, x: number, y: number) {
+				await act(async () => {
+					fireEvent.mouseUp(target, { clientX: x, clientY: y, button: 0 });
+					fireEvent.click(target, { clientX: x, clientY: y, button: 0 });
+				});
+			}
+
+			async function drag(layer: HTMLElement, from: [number, number], to: [number, number]) {
+				await press(layer, ...from);
+				await moveTo(layer, ...to);
+				await release(layer, ...to);
+			}
+
+			const marquee = () => screen.queryByTestId('browser-tab-design-mode-marquee');
+			const boxOf = (box: HTMLElement) => [
+				box.style.left,
+				box.style.top,
+				box.style.width,
+				box.style.height,
+			];
+			const bannerText = () => screen.getByTestId('browser-tab-design-mode-banner').textContent;
+
+			it('a press that moves 4 px or less is a click: it picks the element under the release', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				await press(layer, 300, 150);
+				await moveTo(layer, 304, 150);
+				expect(marquee()).toBeNull();
+				await release(layer, 304, 150);
+
+				await screen.findByRole('dialog', { name: 'Picked element' });
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 304, y: 150, depth: 0 });
+			});
+
+			it('a drag past 4 px draws a dashed box from the press point, with its size, in place of the outline', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 100, clientY: 80 });
+				});
+				await screen.findByTestId('browser-tab-design-mode-crumbs');
+
+				await press(layer, 100, 80);
+				// 5 px: a drag from here on.
+				await moveTo(layer, 105, 80);
+				expect(marquee()).toBeTruthy();
+				const probes = guestCalls(webview, 'probe').length;
+				await moveTo(layer, 740, 300);
+
+				// Anchored where the button went down, not where the drag began to count.
+				expect(boxOf(marquee()!)).toEqual(['100px', '80px', '640px', '220px']);
+				expect(marquee()!.style.borderStyle).toBe('dashed');
+				expect(screen.getByTestId('browser-tab-design-mode-marquee-size').textContent).toBe(
+					'640 x 220'
+				);
+				// The box takes the outline's place, and the pointer asks the page nothing.
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+				expect(screen.queryByTestId('browser-tab-design-mode-crumbs')).toBeNull();
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				expect(bannerText()).toContain('Release to pick the region. Esc: cancel.');
+				expect(layer.style.cursor).toBe('crosshair');
+
+				// The wheel, Enter, the arrows and Space wait for the release; Space is
+				// still taken, so nothing behind the layer scrolls.
+				let spacePassed = true;
+				await act(async () => {
+					fireEvent.wheel(layer, { clientX: 740, clientY: 300, deltaY: 100 });
+					fireEvent.keyDown(layer, { key: 'Enter' });
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+					spacePassed = fireEvent.keyDown(layer, { key: ' ', code: 'Space' });
+				});
+				expect(spacePassed).toBe(false);
+				expect(guestCalls(webview, 'scroll')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(0);
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				// Nothing is asked of the page about the region until the release.
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+			});
+
+			it('the release asks the page for the region and opens its card', async () => {
+				const { webview } = await setupReady(vi.fn(), { onDesignQueue: vi.fn() });
+				regionPage(webview);
+				const layer = await arm();
+
+				await drag(layer, [100, 80], [740, 300]);
+
+				const card = await screen.findByRole('dialog', { name: 'Picked region' });
+				// The box in overlay px with the overlay's size, as a point is sent.
+				expect(guestCalls(webview, 'region')).toEqual([
+					{
+						type: 'region',
+						x: 100,
+						y: 80,
+						width: 640,
+						height: 220,
+						frame: { width: 0, height: 0 },
+					},
+				]);
+				// The click the release made picks no element.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				// The crop is the region the page reported, in guest DIPs at zoom 1.5.
+				expect(webview.capturePage).toHaveBeenCalledWith({
+					x: 150,
+					y: 120,
+					width: 960,
+					height: 330,
+				});
+
+				expect(within(card).getByTestId('browser-tab-design-mode-region-title').textContent).toBe(
+					'Region 640 x 220, 5 elements'
+				);
+				expect(
+					within(card)
+						.getByRole('img', { name: 'Screenshot of the picked region' })
+						.getAttribute('src')
+				).toBe(SHOT);
+				const listed = within(card).getByRole('list', { name: 'Elements in the region' });
+				expect(
+					within(listed)
+						.getAllByRole('listitem')
+						.map((item) => item.textContent)
+				).toEqual(['header.top', 'nav.main', 'h1.title', 'p.lead', 'button.cta']);
+				// The same note and buttons as an element's card.
+				expect(document.activeElement).toBe(
+					within(card).getByTestId('browser-tab-design-mode-note')
+				);
+				for (const id of [
+					'browser-tab-design-mode-queue',
+					'browser-tab-design-mode-add-another',
+					'browser-tab-design-mode-add',
+				]) {
+					expect(within(card).getByTestId(id)).toBeTruthy();
+				}
+				// The region stays drawn while its card is open.
+				expect(boxOf(marquee()!)).toEqual(['100px', '80px', '640px', '220px']);
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+			});
+
+			it('dragging up and to the left frames the same box', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				await drag(layer, [740, 300], [100, 80]);
+
+				await screen.findByRole('dialog', { name: 'Picked region' });
+				expect(guestCalls(webview, 'region')).toEqual([
+					expect.objectContaining({ x: 100, y: 80, width: 640, height: 220 }),
+				]);
+			});
+
+			it('the card draws what the page reported: the part of the box on screen', async () => {
+				const { webview } = await setupReady(vi.fn());
+				// Dragged past the 800 x 600 viewport; the page clips the box to it.
+				regionPage(webview, { ...REGION, rect: { x: 700, y: 500, width: 100, height: 100 } });
+				const layer = await arm();
+
+				await drag(layer, [700, 500], [900, 700]);
+
+				const card = await screen.findByRole('dialog', { name: 'Picked region' });
+				expect(within(card).getByTestId('browser-tab-design-mode-region-title').textContent).toBe(
+					'Region 100 x 100, 5 elements'
+				);
+				expect(boxOf(marquee()!)).toEqual(['700px', '500px', '100px', '100px']);
+				expect(screen.getByTestId('browser-tab-design-mode-marquee-size').textContent).toBe(
+					'100 x 100'
+				);
+			});
+
+			it('a drag that leaves the page stops at its edge, and its size reads in page pixels', async () => {
+				// The overlay is 1600 x 1000 and the page 800 x 600: 2 overlay px per CSS px.
+				const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1600);
+				const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(1000);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					regionPage(webview);
+					const layer = await arm();
+					// A probe gives the scale the size is read at.
+					await act(async () => {
+						fireEvent.mouseMove(layer, { clientX: 1000, clientY: 400 });
+					});
+					await screen.findByTestId('browser-tab-design-mode-outline');
+
+					await press(layer, 1000, 400);
+					// Past the right edge and above the top one.
+					await moveTo(layer, 2400, -300);
+
+					expect(boxOf(marquee()!)).toEqual(['1000px', '0px', '600px', '400px']);
+					expect(screen.getByTestId('browser-tab-design-mode-marquee-size').textContent).toBe(
+						'300 x 200'
+					);
+					await release(layer, 2400, -300);
+					await screen.findByRole('dialog', { name: 'Picked region' });
+					expect(guestCalls(webview, 'region')).toEqual([
+						{
+							type: 'region',
+							x: 1000,
+							y: 0,
+							width: 600,
+							height: 400,
+							frame: { width: 1600, height: 1000 },
+						},
+					]);
+				} finally {
+					width.mockRestore();
+					height.mockRestore();
+				}
+			});
+
+			it('Enter in the note adds the region to the message, with its note', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				regionPage(webview);
+				const layer = await arm();
+				await drag(layer, [100, 80], [740, 300]);
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				fireEvent.change(note, { target: { value: 'Put these on one row' } });
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter' });
+				});
+
+				expect(onDesignPick).toHaveBeenCalledWith({
+					region: expect.objectContaining({ url: 'https://example.com', rect: REGION.rect }),
+					screenshot: SHOT,
+					note: 'Put these on one row',
+					reveal: true,
+				});
+			});
+
+			it('each drag is a pick of its own: Add and Pick Another after two drags hands over two regions', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				regionPage(webview);
+				const layer = await arm();
+
+				await drag(layer, [100, 80], [740, 300]);
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				fireEvent.change(note, { target: { value: 'Tighten the spacing' } });
+				await act(async () => {
+					fireEvent.click(screen.getByTestId('browser-tab-design-mode-add-another'));
+				});
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				// Back to picking: the next drag starts a box of its own.
+				expect(marquee()).toBeNull();
+
+				const second = {
+					...REGION,
+					rect: { x: 0, y: 320, width: 400, height: 100 },
+					elements: REGION.elements.slice(4),
+				};
+				regionPage(webview, second);
+				await drag(layer, [0, 320], [400, 420]);
+				await screen.findByRole('dialog', { name: 'Picked region' });
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-note'), {
+						key: 'Enter',
+						metaKey: true,
+					});
+				});
+
+				expect(onDesignPick).toHaveBeenCalledTimes(2);
+				const [[first], [next]] = onDesignPick.mock.calls;
+				expect(first).toEqual({
+					region: expect.objectContaining({ rect: REGION.rect }),
+					screenshot: SHOT,
+					note: 'Tighten the spacing',
+					reveal: false,
+				});
+				expect(next).toMatchObject({
+					region: { rect: second.rect, elements: [{ selector: 'button.cta' }] },
+					note: '',
+					reveal: false,
+				});
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+			});
+
+			it('Queue sends the region as its own message', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const onDesignQueue = vi.fn().mockResolvedValue({ tabName: 'Fix header' });
+				const { webview } = await setupReady(onDesignPick, { onDesignQueue });
+				regionPage(webview);
+				const layer = await arm();
+				await drag(layer, [100, 80], [740, 300]);
+				await screen.findByRole('dialog', { name: 'Picked region' });
+
+				await act(async () => {
+					fireEvent.click(screen.getByTestId('browser-tab-design-mode-queue'));
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledWith({
+					region: expect.objectContaining({ rect: REGION.rect }),
+					screenshot: SHOT,
+					note: '',
+				});
+				expect(onDesignPick).not.toHaveBeenCalled();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
+
+			it('the card counts what the page listed: one, none, or a list that was cut', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const layer = await arm();
+
+				async function cardFor(reply: unknown) {
+					regionPage(webview, reply);
+					await drag(layer, [100, 80], [740, 300]);
+					const card = await screen.findByRole('dialog', { name: 'Picked region' });
+					const seen = {
+						title: within(card).getByTestId('browser-tab-design-mode-region-title').textContent,
+						listed: within(card).queryAllByRole('listitem').length,
+					};
+					// Back to picking for the next drag.
+					await act(async () => {
+						fireEvent.keyDown(card, { key: 'Escape' });
+					});
+					return seen;
+				}
+
+				expect(await cardFor({ ...REGION, elements: REGION.elements.slice(0, 1) })).toEqual({
+					title: 'Region 640 x 220, 1 element',
+					listed: 1,
+				});
+				expect(await cardFor({ ...REGION, elementsTruncated: true })).toEqual({
+					title: 'Region 640 x 220, 5+ elements',
+					listed: 5,
+				});
+				expect(await cardFor({ ...REGION, elements: [] })).toEqual({
+					title: 'Region 640 x 220, no elements',
+					listed: 0,
+				});
+			});
+
+			it('Escape during a drag drops it: the release picks nothing, and Design Mode stays on', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+				await press(layer, 100, 80);
+				await moveTo(layer, 400, 200);
+				expect(marquee()).toBeTruthy();
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Escape' });
+				});
+				expect(marquee()).toBeNull();
+				// The button is still down, but the drag is over.
+				await moveTo(layer, 500, 250);
+				expect(marquee()).toBeNull();
+				await release(layer, 500, 250);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				// The click the release made is not an element pick either.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+				// Outlining what is under the pointer again, and the next click picks it.
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+				await act(async () => {
+					fireEvent.click(layer, { clientX: 300, clientY: 150, button: 0 });
+				});
+				await screen.findByRole('dialog', { name: 'Picked element' });
+			});
+
+			it('a drag that comes back to where it started picks nothing', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				await press(layer, 100, 80);
+				await moveTo(layer, 200, 160);
+				await moveTo(layer, 100, 80);
+				await release(layer, 100, 80);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(marquee()).toBeNull();
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			});
+
+			it('a region the page cannot report picks nothing and says so', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview, null);
+				const layer = await arm();
+
+				await drag(layer, [100, 80], [740, 300]);
+
+				await waitFor(() => expect(bannerText()).toContain('Nothing to pick there.'));
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(marquee()).toBeNull();
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+			});
+
+			it('drops the box when its release went elsewhere, the app went to the background, or a page loaded', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				// A move with the button up: the release landed in another app.
+				await press(layer, 100, 80);
+				await moveTo(layer, 300, 200);
+				expect(marquee()).toBeTruthy();
+				await moveTo(layer, 310, 210, 0);
+				expect(marquee()).toBeNull();
+
+				await press(layer, 100, 80);
+				await moveTo(layer, 300, 200);
+				await act(async () => {
+					window.dispatchEvent(new Event('blur'));
+				});
+				expect(marquee()).toBeNull();
+
+				await press(layer, 100, 80);
+				await moveTo(layer, 300, 200);
+				await finishLoad(webview);
+				expect(marquee()).toBeNull();
+				// And the release of a dropped press picks nothing.
+				await release(layer, 300, 200);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			});
+
+			it('a press on the banner never starts a box', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+				const banner = screen.getByTestId('browser-tab-design-mode-banner');
+
+				await press(banner, 300, 10);
+				await moveTo(layer, 600, 300);
+				expect(marquee()).toBeNull();
+				await release(banner, 600, 300);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+			});
+		});
+
 		it('the imperative toggle and inspectElement reach the same path', async () => {
 			const { ref, webview } = await setupReady(vi.fn());
 			await act(async () => {

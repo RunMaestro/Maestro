@@ -42,6 +42,7 @@ import {
 	type DesignModeGuestAccess,
 	type DesignModeMiss,
 	type DesignModeRect,
+	type DesignPickCapture,
 } from '../../utils/designModePicker';
 
 type ElectronWebviewElement = HTMLElement & {
@@ -82,22 +83,23 @@ interface BrowserTabViewProps {
 	 */
 	isActive?: boolean;
 	/**
-	 * Hands an element picked in Design Mode (with its cropped screenshot, null
-	 * when none of it was on screen) to the agent. `reveal` false means the user
-	 * keeps picking. Resolves false when it could not be delivered. The Design
-	 * Mode toggle is only offered when this is provided.
+	 * Hands a Design Mode pick to the agent: an element the user clicked or a
+	 * region they dragged out, with its cropped screenshot (null when there is
+	 * none). `reveal` false means the user keeps picking. Resolves false when it
+	 * could not be delivered. The Design Mode toggle is only offered when this is
+	 * provided.
 	 */
 	onDesignPick?: (
-		capture: DesignModeCapture & { note: string; reveal: boolean }
+		capture: DesignPickCapture & { note: string; reveal: boolean }
 	) => Promise<boolean>;
 	/**
-	 * Queues a picked element as its own message for the agent instead of adding
-	 * it to the draft, and the user keeps picking. Resolves the name of the tab it
-	 * was queued on, or null when it could not be queued. The pick card offers
-	 * Queue only when this is provided.
+	 * Queues a pick (an element or a region) as its own message for the agent
+	 * instead of adding it to the draft, and the user keeps picking. Resolves the
+	 * name of the tab it was queued on, or null when it could not be queued. The
+	 * pick card offers Queue only when this is provided.
 	 */
 	onDesignQueue?: (
-		capture: DesignModeCapture & { note: string }
+		capture: DesignPickCapture & { note: string }
 	) => Promise<{ tabName: string } | null>;
 }
 
@@ -353,7 +355,7 @@ export const BrowserTabView = React.memo(
 		// pick reveals the chat, which takes this tab off screen; the picker
 		// re-arms when the tab is shown again.
 		const handleDesignDeliver = useCallback(
-			async (capture: DesignModeCapture, note: string, keepPicking: boolean) => {
+			async (capture: DesignPickCapture, note: string, keepPicking: boolean) => {
 				const deliver = onDesignPickRef.current;
 				if (!deliver) return false;
 				return deliver({ ...capture, note, reveal: !keepPicking });
@@ -364,7 +366,7 @@ export const BrowserTabView = React.memo(
 		const onDesignQueueRef = useRef(onDesignQueue);
 		onDesignQueueRef.current = onDesignQueue;
 		const handleDesignQueue = useCallback(
-			async (capture: DesignModeCapture, note: string) =>
+			async (capture: DesignPickCapture, note: string) =>
 				(await onDesignQueueRef.current?.({ ...capture, note })) ?? null,
 			[]
 		);

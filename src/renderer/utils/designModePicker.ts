@@ -35,8 +35,9 @@
  *  3. {@link designPickCropRect}, {@link filterDesignStyles},
  *     {@link buildDesignModePrompt}, {@link buildDesignModeRegionPrompt}: the
  *     payload assembler.
- *  4. {@link designPickLabel}, {@link designPickBlock}: the composer chip's
- *     label and the block it adds to the message at send.
+ *  4. {@link designPickLabel} / {@link designRegionLabel}, {@link designPickBlock}:
+ *     the composer chip's label (an element's, a region's) and the block it
+ *     adds to the message at send.
  *  5. {@link expandDesignPicks}: the message and images a send builds from the
  *     staged chips and the typed text.
  *  6. {@link captureDesignPick} / {@link captureDesignRegion}: ask, parse, and
@@ -1120,6 +1121,14 @@ export function designPickLabel(
 }
 
 /**
+ * The short label a composer chip shows for a region pick: its size in guest
+ * CSS pixels, rounded, as in `Region 640 x 220`.
+ */
+export function designRegionLabel(region: Pick<DesignModeRegion, 'rect'>): string {
+	return `Region ${Math.round(region.rect.width)} x ${Math.round(region.rect.height)}`;
+}
+
+/**
  * What one chip adds to the message at send: its block, then the user's note
  * after a blank line when there is one.
  */
@@ -1188,6 +1197,12 @@ export interface DesignModeRegionCapture {
 	region: DesignModeRegion;
 	screenshot: string | null;
 }
+
+/**
+ * What one Design Mode pick captured: an element (a click) or a region (a
+ * drag). Tell them apart with `'region' in capture`.
+ */
+export type DesignPickCapture = DesignModeCapture | DesignModeRegionCapture;
 
 /**
  * Crop the guest frame to a box at the page zoom. Null when none of the box

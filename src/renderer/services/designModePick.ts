@@ -1,13 +1,15 @@
 /**
- * Deliver a Design Mode pick to the agent that owns the browser tab.
+ * Deliver a Design Mode pick to the agent that owns the browser tab. A pick is
+ * an element (a click) or a region (a drag): {@link DesignPickDelivery}
+ * carries either capture, and each becomes a chip of its own kind.
  *
  * A browser tab has no composer under it, so a pick goes where "Quote in
  * Message" from a file tab goes: the agent's active AI tab (the tiled group's
  * AI pane when a group is showing). It lands there as a chip, through
  * {@link stageDesignPickOnAgent}: a short label, the cropped screenshot, and
- * the user's note, with the full element block kept on the chip until the
- * message is sent. The chip owns the screenshot; it never goes into the tab's
- * `stagedImages`.
+ * the user's note, with the full block (the element's, or the region's and
+ * the elements in it) kept on the chip until the message is sent. The chip
+ * owns the screenshot; it never goes into the tab's `stagedImages`.
  *
  * {@link queueDesignPick} is the other way out: the same pick as its own
  * message in the agent's execution queue, with no chip and no draft involved.
@@ -36,10 +38,12 @@ import { generateId } from '../utils/ids';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import {
 	buildDesignModePrompt,
+	buildDesignModeRegionPrompt,
 	designPickBlock,
 	designPickLabel,
+	designRegionLabel,
 	expandDesignPicks,
-	type DesignModeCapture,
+	type DesignPickCapture,
 } from '../utils/designModePicker';
 import type { StagedDesignPick } from '../types';
 import type {
@@ -48,10 +52,14 @@ import type {
 	DesignPickSummary,
 } from '../../shared/designPickCommands';
 
-export interface DesignPickDelivery extends DesignModeCapture {
+/**
+ * One pick on its way to the agent: what was captured (an element or a
+ * region, with its screenshot) and where it goes.
+ */
+export type DesignPickDelivery = DesignPickCapture & {
 	/** The agent that owns the browser tab. */
 	sessionId: string;
-	/** The browser tab the element came from (for its Coworking id). */
+	/** The browser tab the pick came from (for its Coworking id). */
 	browserTabId: string;
 	note?: string;
 	/**
@@ -59,7 +67,7 @@ export interface DesignPickDelivery extends DesignModeCapture {
 	 * Only {@link deliverDesignPick} reads it: a queued pick moves nothing.
 	 */
 	reveal?: boolean;
-}
+};
 
 /** What {@link deliverDesignPick} staged where, or null when it could not. */
 export interface DesignPickDelivered {
@@ -77,7 +85,7 @@ export interface DesignPickQueued {
 	tabName: string;
 	/** The queued message's id, as it sits in the agent's execution queue. */
 	queueItemId: string;
-	/** The message that was queued: the element block, note included. */
+	/** The message that was queued: the pick's block, note included. */
 	text: string;
 }
 
@@ -99,22 +107,32 @@ async function lookUpBrowserId(sessionId: string, browserTabId: string): Promise
 }
 
 /**
- * The chip for one pick. Its `text` is the element block without the note:
- * the note stays editable on the chip and {@link designPickBlock} adds it at
- * send.
+ * The chip for one pick: an element (`kind: 'element'`, labeled by
+ * {@link designPickLabel}) or a region (`kind: 'region'`, labeled
+ * `Region W x H`). Its `text` is the pick's block without the note: the note
+ * stays editable on the chip and {@link designPickBlock} adds it at send.
  */
 async function buildDesignPickChip(delivery: DesignPickDelivery): Promise<StagedDesignPick> {
 	const browserId = await lookUpBrowserId(delivery.sessionId, delivery.browserTabId);
+	const context = { hasScreenshot: !!delivery.screenshot, browserId };
+	const described =
+		'region' in delivery
+			? {
+					kind: 'region' as const,
+					label: designRegionLabel(delivery.region),
+					url: delivery.region.url,
+					text: buildDesignModeRegionPrompt(delivery.region, context),
+				}
+			: {
+					kind: 'element' as const,
+					label: designPickLabel(delivery.pick),
+					url: delivery.pick.url,
+					text: buildDesignModePrompt(delivery.pick, context),
+				};
 	return {
 		id: generateId(),
-		kind: 'element',
-		label: designPickLabel(delivery.pick),
-		url: delivery.pick.url,
+		...described,
 		note: delivery.note?.trim() ?? '',
-		text: buildDesignModePrompt(delivery.pick, {
-			hasScreenshot: !!delivery.screenshot,
-			browserId,
-		}),
 		screenshot: delivery.screenshot,
 		createdAt: Date.now(),
 	};
@@ -126,7 +144,7 @@ export async function deliverDesignPick(
 	const chip = await buildDesignPickChip(delivery);
 	const aiTabId = stageDesignPickOnAgent(delivery.sessionId, chip, {
 		reveal: delivery.reveal,
-		missingTabMessage: 'This agent has no AI tab. Open one, then pick the element again.',
+		missingTabMessage: `This agent has no AI tab. Open one, then pick the ${chip.kind} again.`,
 	});
 	return aiTabId ? { aiTabId, text: designPickBlock(chip), pickId: chip.id } : null;
 }

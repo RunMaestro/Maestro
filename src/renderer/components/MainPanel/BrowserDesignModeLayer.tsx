@@ -16,10 +16,19 @@
  * new document at the same point.
  *
  * Keys (the overlay holds focus): Enter picks, ArrowUp / ArrowDown walk to the
- * parent / back toward the child, Escape closes the card or leaves Design
- * Mode. In the card (from the note): Enter adds to the message, Cmd/Ctrl+Enter
- * adds and keeps picking, Alt/Option+Enter queues the pick as its own message
- * and keeps picking, Shift+Enter is a newline.
+ * parent / back toward the child, Escape drops a drag in progress, closes the
+ * card, or leaves Design Mode. In the card (from the note): Enter adds to the
+ * message, Cmd/Ctrl+Enter adds and keeps picking, Alt/Option+Enter queues the
+ * pick as its own message and keeps picking, Shift+Enter is a newline.
+ *
+ * Drag to pick a region, as in a screenshot tool: press on the page and move
+ * more than DRAG_THRESHOLD_PX, and a dashed box follows the pointer from the
+ * press point, with its size. The release asks the guest for the region (its
+ * screenshot and the outermost elements in it) and opens the card for it. A
+ * shorter move is a click, which picks the element. Each drag is a pick of its
+ * own, so "Add and Pick Another" after each one stages a chip per region. The
+ * drag is followed on the window (see `followDrag`), so it goes on, held at
+ * the page's edge, when the pointer leaves the page.
  *
  * Hold Space to use the page (click a link, scroll, type): the overlay lets
  * the pointer through to the page and hides its outline, and picking resumes
@@ -46,7 +55,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Hand, ImageOff, MousePointerClick } from 'lucide-react';
+import { BoxSelect, Hand, ImageOff, MousePointerClick } from 'lucide-react';
 import type { Theme } from '../../types';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { Spinner } from '../ui/Spinner';
@@ -56,15 +65,19 @@ import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import {
 	captureDesignPick,
+	captureDesignRegion,
 	designOverlayScale,
+	designRegionLabel,
 	parseDesignModePassthrough,
 	parseDesignModeProbe,
 	type DesignModeFrame,
-	type DesignModeCapture,
 	type DesignModeGuestAccess,
+	type DesignModeMiss,
 	type DesignModePassthroughReport,
 	type DesignModeProbe,
 	type DesignModeRect,
+	type DesignModeRegion,
+	type DesignPickCapture,
 } from '../../utils/designModePicker';
 
 export interface BrowserDesignModeLayerProps {
@@ -79,18 +92,19 @@ export interface BrowserDesignModeLayerProps {
 	/** Leave Design Mode. */
 	onExit: () => void;
 	/**
-	 * Hand a pick to the agent. `keepPicking` keeps the user picking here;
-	 * otherwise the caller shows the message, which takes the tab off screen
-	 * (Design Mode stays on and re-arms when the tab is shown again). Resolves
-	 * false when nothing was delivered (the card stays open).
+	 * Hand a pick (an element, or a region the user dragged out) to the agent.
+	 * `keepPicking` keeps the user picking here; otherwise the caller shows the
+	 * message, which takes the tab off screen (Design Mode stays on and re-arms
+	 * when the tab is shown again). Resolves false when nothing was delivered
+	 * (the card stays open).
 	 */
-	onDeliver: (capture: DesignModeCapture, note: string, keepPicking: boolean) => Promise<boolean>;
+	onDeliver: (capture: DesignPickCapture, note: string, keepPicking: boolean) => Promise<boolean>;
 	/**
 	 * Queue a pick as its own message and stay in Design Mode. Resolves the name
 	 * of the tab it was queued on, or null when nothing was queued (the card
 	 * stays open). Leave it out where the host cannot queue.
 	 */
-	onQueue?: (capture: DesignModeCapture, note: string) => Promise<{ tabName: string } | null>;
+	onQueue?: (capture: DesignPickCapture, note: string) => Promise<{ tabName: string } | null>;
 }
 
 interface Point {
@@ -126,6 +140,58 @@ function toLayerRect(rect: DesignModeRect, scale: number): DesignModeRect {
 		width: rect.width * scale,
 		height: rect.height * scale,
 	};
+}
+
+/**
+ * `W x H` in guest CSS pixels, rounded: an overlay box at its overlay scale,
+ * or a guest box at scale 1.
+ */
+function sizeText(box: DesignModeRect, scale: number): string {
+	return `${Math.round(box.width / scale)} x ${Math.round(box.height / scale)}`;
+}
+
+/**
+ * How far the pointer must move with the button down before a press on the
+ * page becomes a drag (a region). A press that moves this little or less is a
+ * click, which picks the element.
+ */
+const DRAG_THRESHOLD_PX = 4;
+
+/** The box between two overlay points, whichever way the drag went. */
+function boxBetween(a: Point, b: Point): DesignModeRect {
+	return {
+		x: Math.min(a.x, b.x),
+		y: Math.min(a.y, b.y),
+		width: Math.abs(a.x - b.x),
+		height: Math.abs(a.y - b.y),
+	};
+}
+
+/**
+ * A point held inside the overlay, so a drag that leaves the page stops at its
+ * edge. A frame of no size (no layout) has no edge to hold it to.
+ */
+function clampToFrame(point: Point, frame: DesignModeFrame): Point {
+	return {
+		x: frame.width > 0 ? Math.min(Math.max(point.x, 0), frame.width) : point.x,
+		y: frame.height > 0 ? Math.min(Math.max(point.y, 0), frame.height) : point.y,
+	};
+}
+
+/** `5 elements`, `1 element`, `12+ elements` (the page's list was cut), or `no elements`. */
+function regionElementCount(region: DesignModeRegion): string {
+	const count = region.elements.length;
+	if (count === 0) return 'no elements';
+	if (region.elementsTruncated) return `${count}+ elements`;
+	return count === 1 ? '1 element' : `${count} elements`;
+}
+
+/**
+ * A capture that failed (a screenshot that did not come, a guest gone
+ * mid-pick) is not an expected outcome, so it is reported, never thrown.
+ */
+function reportCaptureError(error: unknown): void {
+	captureException(error, { tags: { surface: 'browser-design-mode' } });
 }
 
 /** Room the hover label needs above an element; with less it goes below it. */
@@ -271,6 +337,57 @@ const DesignModeCrumbs = React.forwardRef<HTMLDivElement, DesignModeCrumbsProps>
 	}
 );
 
+/**
+ * The region box: a dashed accent edge over a light accent wash, ringed in
+ * the page background so it reads on any page, with its size on a label like
+ * the hover label. Drawn while the user drags it out and while its card is
+ * open.
+ */
+function DesignModeMarquee({
+	theme,
+	box,
+	size,
+}: {
+	theme: Theme;
+	/** The box, overlay pixels. */
+	box: DesignModeRect;
+	/** `W x H` in guest CSS pixels. */
+	size: string;
+}) {
+	return (
+		<>
+			<div
+				className="absolute pointer-events-none"
+				style={{
+					left: box.x,
+					top: box.y,
+					width: box.width,
+					height: box.height,
+					borderWidth: 1,
+					borderStyle: 'dashed',
+					borderColor: theme.colors.accent,
+					boxShadow: `0 0 0 1px ${theme.colors.bgMain}`,
+					backgroundColor: `color-mix(in srgb, ${theme.colors.accent} 12%, transparent)`,
+				}}
+				data-testid="browser-tab-design-mode-marquee"
+			/>
+			<LabelAt spot={labelSpotFor(box)}>
+				<div
+					className="shrink-0 rounded px-1.5 py-0.5 text-xs-plus font-mono whitespace-nowrap border shadow"
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+					}}
+					data-testid="browser-tab-design-mode-marquee-size"
+				>
+					{size}
+				</div>
+			</LabelAt>
+		</>
+	);
+}
+
 export function BrowserDesignModeLayer({
 	theme,
 	access,
@@ -309,12 +426,27 @@ export function BrowserDesignModeLayer({
 	// Where the hover label was drawn last, for a crumb click to keep it there.
 	const labelSpotRef = useRef<LabelSpot | null>(null);
 	const [picking, setPicking] = useState(false);
-	// The pick plus the overlay scale at pick time, so the frozen outline is
-	// scaled right even when no hover outline preceded it.
-	const [card, setCard] = useState<(DesignModeCapture & { scale: number }) | null>(null);
+	// What the card is for (an element or a region) plus the overlay scale at
+	// pick time, so its frozen outline is scaled right even when no hover
+	// outline preceded it.
+	const [card, setCard] = useState<{ capture: DesignPickCapture; scale: number } | null>(null);
 	// A ref, not the `picking` state: a click and an Enter in the same tick must
 	// not both start a pick.
 	const pickingRef = useRef(false);
+	// A press on the page, from mousedown to its release: where it went down
+	// (overlay px), and whether it moved far enough to be a drag (a region)
+	// rather than a click (an element). See followDrag for how it is followed.
+	const pressRef = useRef<{ start: Point; dragging: boolean } | null>(null);
+	// The region box being dragged out (overlay px) and the scale its size is
+	// read at. It stays up, frozen, while the region is captured.
+	const [marquee, setMarquee] = useState<{ box: DesignModeRect; scale: number } | null>(null);
+	// The release of a drag (or of a press Escape dropped) still makes a click
+	// on the layer; that click must not pick the element under it. Cleared by
+	// the click, or by the next press when the click landed elsewhere.
+	const swallowClickRef = useRef(false);
+	// Overlay px per guest CSS px at the last probe: what a drag's size is read
+	// at, since nothing probes while it runs.
+	const scaleRef = useRef(1);
 	const [note, setNote] = useState('');
 	const [delivering, setDelivering] = useState(false);
 	const [missed, setMissed] = useState(false);
@@ -352,9 +484,9 @@ export function BrowserDesignModeLayer({
 	// the newest point and depth instead of queueing one per mousemove.
 	const probe = useCallback(async () => {
 		probeSeqRef.current += 1;
-		// While the page has the pointer there is no outline to draw (the bump
-		// above still drops a reply in flight).
-		if (passthroughRef.current !== 'off') return;
+		// While the page has the pointer, or a drag draws its box, there is no
+		// outline to draw (the bump above still drops a reply in flight).
+		if (passthroughRef.current !== 'off' || pressRef.current?.dragging) return;
 		pendingProbeRef.current = true;
 		if (probeInFlightRef.current) return;
 		probeInFlightRef.current = true;
@@ -384,13 +516,13 @@ export function BrowserDesignModeLayer({
 				// newest request because probe() set the pending flag.
 				if (seq !== probeSeqRef.current) continue;
 				const parsed = parseDesignModeProbe(reply);
-				// Clamp to what the guest could walk (no parent above <body>).
-				if (parsed) depthRef.current = parsed.depth;
-				setHover(
-					parsed
-						? { probe: parsed, scale: designOverlayScale(frame, parsed.viewport), point }
-						: null
-				);
+				const scale = parsed ? designOverlayScale(frame, parsed.viewport) : 1;
+				if (parsed) {
+					// Clamp to what the guest could walk (no parent above <body>).
+					depthRef.current = parsed.depth;
+					scaleRef.current = scale;
+				}
+				setHover(parsed ? { probe: parsed, scale, point } : null);
 			}
 		} finally {
 			probeInFlightRef.current = false;
@@ -406,6 +538,22 @@ export function BrowserDesignModeLayer({
 		holdingRef.current = false;
 		setHeldSpot(null);
 	}, []);
+
+	// Drop a press without picking anything: Escape, a release this window
+	// never heard, the app going to the background, a page load. Its release
+	// still makes a click, which must not pick either. True when there was one.
+	const cancelPress = useCallback((): boolean => {
+		const press = pressRef.current;
+		if (!press) return false;
+		pressRef.current = null;
+		swallowClickRef.current = true;
+		if (press.dragging) {
+			setMarquee(null);
+			// Back to outlining what is under the pointer.
+			void probe();
+		}
+		return true;
+	}, [probe]);
 
 	// A crumb click outlines that ancestor, as pressing ArrowUp that many times
 	// from the element the crumbs were drawn for would, and holds it: the crumbs
@@ -621,6 +769,8 @@ export function BrowserDesignModeLayer({
 		if (seenPageLoadRef.current === pageLoadCount) return;
 		seenPageLoadRef.current = pageLoadCount;
 		setMissed(false);
+		// A box dragged over the old page does not frame the new one.
+		cancelPress();
 		// 4. A load while the user holds Space (they clicked a link): the old
 		// page's Space watch is gone, so the load ends it. That also takes focus
 		// back from the page, where the click left it.
@@ -633,52 +783,159 @@ export function BrowserDesignModeLayer({
 		const active = document.activeElement;
 		if (!active || active === document.body) focusLayer();
 		void probe();
-	}, [pageLoadCount, focusLayer, probe, endPassthroughHere, releaseHold]);
+	}, [pageLoadCount, focusLayer, probe, endPassthroughHere, releaseHold, cancelPress]);
 
 	useEffect(() => {
 		if (card) noteRef.current?.focus();
 	}, [card]);
 
-	const pointFromEvent = (event: React.MouseEvent | React.WheelEvent): Point | null => {
+	// A client point as an overlay point (not held inside the overlay).
+	const layerPointAt = (clientX: number, clientY: number): Point | null => {
 		const layer = layerRef.current;
 		if (!layer) return null;
 		const bounds = layer.getBoundingClientRect();
-		return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+		return { x: clientX - bounds.left, y: clientY - bounds.top };
 	};
 
+	const pointFromEvent = (event: React.MouseEvent | React.WheelEvent): Point | null =>
+		layerPointAt(event.clientX, event.clientY);
+
+	// One capture at a time, from a click, Enter, or a drag's release: it opens
+	// the card for what the guest reported, or says there was nothing to pick.
+	// Resolves whether a card opened.
+	const openCard = useCallback(
+		async (
+			capture: (frame: DesignModeFrame) => Promise<DesignPickCapture | DesignModeMiss | null>
+		): Promise<boolean> => {
+			if (pickingRef.current) return false;
+			// The pick is the held ancestor's hand-off; the card takes over from here.
+			releaseHold();
+			pickingRef.current = true;
+			setPicking(true);
+			setMissed(false);
+			try {
+				const frame = layerFrame();
+				const result = await capture(frame);
+				if (!mountedRef.current) return false;
+				if (!result || typeof result === 'string') {
+					setMissed(true);
+					return false;
+				}
+				const viewport = 'region' in result ? result.region.viewport : result.pick.viewport;
+				setNote('');
+				setCard({ capture: result, scale: designOverlayScale(frame, viewport) });
+				return true;
+			} catch (error) {
+				// The guest went away mid-pick (navigation, crash): nothing to show.
+				reportCaptureError(error);
+				if (mountedRef.current) setMissed(true);
+				return false;
+			} finally {
+				pickingRef.current = false;
+				if (mountedRef.current) setPicking(false);
+			}
+		},
+		[releaseHold, layerFrame]
+	);
+
+	// The element at the point, walked up `depthRef` levels. A failed
+	// screenshot still opens the card: the HTML and styles are the bulk of it.
 	const pick = useCallback(async () => {
 		const point = pointRef.current;
-		if (!point || pickingRef.current) return;
-		// The pick is the held ancestor's hand-off; the card takes over from here.
-		releaseHold();
-		pickingRef.current = true;
-		setPicking(true);
-		setMissed(false);
-		try {
-			const frame = layerFrame();
-			const result = await captureDesignPick(
+		if (!point) return;
+		await openCard((frame) =>
+			captureDesignPick(
 				accessRef.current,
 				{ type: 'describe', x: point.x, y: point.y, depth: depthRef.current, frame },
-				// A failed capture still delivers the HTML and styles, but it is not
-				// an expected outcome, so report it.
-				(error) => captureException(error, { tags: { surface: 'browser-design-mode' } })
-			);
+				reportCaptureError
+			)
+		);
+	}, [openCard]);
+
+	// The region a drag framed (overlay px): the guest scales it by the frame
+	// as it does a point, clips it to its viewport, and lists the elements in
+	// it. The box stays up, frozen, until the card takes over drawing it.
+	const pickRegion = useCallback(
+		async (box: DesignModeRect) => {
+			// A drag that came back to where it started frames nothing.
+			const opened =
+				box.width >= 1 &&
+				box.height >= 1 &&
+				(await openCard((frame) =>
+					captureDesignRegion(
+						accessRef.current,
+						{ type: 'region', ...box, frame },
+						reportCaptureError
+					)
+				));
 			if (!mountedRef.current) return;
-			if (!result || typeof result === 'string') {
-				setMissed(true);
-				return;
-			}
-			setNote('');
-			setCard({ ...result, scale: designOverlayScale(frame, result.pick.viewport) });
-		} catch (error) {
-			// The guest went away mid-pick (navigation, crash): nothing to show.
-			captureException(error, { tags: { surface: 'browser-design-mode' } });
-			if (mountedRef.current) setMissed(true);
-		} finally {
-			pickingRef.current = false;
-			if (mountedRef.current) setPicking(false);
-		}
+			setMarquee(null);
+			// No card: back to outlining what is under the pointer.
+			if (!opened) void probe();
+		},
+		[openCard, probe]
+	);
+
+	// A press moved past DRAG_THRESHOLD_PX: from here it draws a region, and
+	// what the pointer outlined (or a held ancestor) is not the pick.
+	const startDrag = useCallback(() => {
+		probeSeqRef.current += 1; // drop a probe reply in flight
+		releaseHold();
+		setHover(null);
+		setMissed(false);
 	}, [releaseHold]);
+
+	// A press is followed on the window, not on the layer, and in the capture
+	// phase, so it is seen before any handler in the layer: a drag goes on when
+	// the pointer leaves the page (its box held at the page's edge), and its
+	// release is heard wherever it lands. Chromium keeps sending a document the
+	// moves and the release of a press that began in it, even outside the
+	// window. A move with the button up means the release went to another app.
+	const followDrag = (event: Event) => {
+		const press = pressRef.current;
+		if (!press) return;
+		const mouse = event as MouseEvent;
+		if ((mouse.buttons & 1) === 0) {
+			cancelPress();
+			return;
+		}
+		const point = layerPointAt(mouse.clientX, mouse.clientY);
+		if (!point) return;
+		if (!press.dragging) {
+			const moved = Math.hypot(point.x - press.start.x, point.y - press.start.y);
+			if (moved <= DRAG_THRESHOLD_PX) return;
+			press.dragging = true;
+			startDrag();
+		}
+		const end = clampToFrame(point, layerFrame());
+		pointRef.current = end;
+		setMarquee({ box: boxBetween(press.start, end), scale: scaleRef.current });
+	};
+
+	// The release: a drag picks its region; a press that never became one is a
+	// click, which the layer's click handler picks.
+	const endPress = (event: Event) => {
+		const press = pressRef.current;
+		const mouse = event as MouseEvent;
+		if (!press || mouse.button !== 0) return;
+		pressRef.current = null;
+		if (!press.dragging) return;
+		swallowClickRef.current = true;
+		const point = layerPointAt(mouse.clientX, mouse.clientY);
+		const end = point ? clampToFrame(point, layerFrame()) : (pointRef.current ?? press.start);
+		// Enter and the arrows go on from where the drag ended.
+		pointRef.current = end;
+		depthRef.current = 0;
+		void pickRegion(boxBetween(press.start, end));
+	};
+
+	useEventListener('mousemove', followDrag, { capture: true });
+	useEventListener('mouseup', endPress, { capture: true });
+
+	// The app went to the background mid-press: its release lands elsewhere.
+	useEventListener('blur', (event) => {
+		if (event.target === window) cancelPress();
+	});
 
 	const dropCard = useCallback(() => {
 		setCard(null);
@@ -697,12 +954,12 @@ export function BrowserDesignModeLayer({
 	// drives the disabled buttons: state is not re-read until the next render.
 	const handingOffRef = useRef(false);
 	const handOff = useCallback(
-		async (send: (capture: DesignModeCapture) => Promise<void>) => {
+		async (send: (capture: DesignPickCapture) => Promise<void>) => {
 			if (!card || handingOffRef.current) return;
 			handingOffRef.current = true;
 			setDelivering(true);
 			try {
-				await send({ pick: card.pick, screenshot: card.screenshot });
+				await send(card.capture);
 			} finally {
 				handingOffRef.current = false;
 				if (mountedRef.current) setDelivering(false);
@@ -756,6 +1013,17 @@ export function BrowserDesignModeLayer({
 		// has focus; on a focused control (the banner's ESC pill) they keep their
 		// native meaning, so Enter on that pill exits rather than picks.
 		const onLayer = event.target === event.currentTarget;
+		// Mid-press: Escape drops it (and the drag it became) and stays in Design
+		// Mode, so the release picks nothing; every other key waits for the
+		// release. Space is still taken, so nothing behind the layer scrolls.
+		if (pressRef.current) {
+			if (event.key === 'Escape' || (isSpaceKey(event) && plain && onLayer)) {
+				event.preventDefault();
+				event.stopPropagation();
+				if (event.key === 'Escape') cancelPress();
+			}
+			return;
+		}
 		if (isSpaceKey(event) && plain && onLayer) {
 			// Every press and auto-repeat is taken, so nothing behind the layer
 			// scrolls. A repeat starts it too: that is a Space still held after
@@ -814,23 +1082,34 @@ export function BrowserDesignModeLayer({
 		}
 	};
 
-	// While the card is open the outline stays on the picked element. While the
-	// user holds Space there is none: the page is in use.
+	// While the card is open, a picked element keeps its outline and a picked
+	// region its dashed box. Otherwise a drag draws its box, or the outline
+	// follows the pointer, except while the user holds Space: the page is in use.
 	const usingPage = passthrough !== 'off';
+	const pickedElement = card && 'pick' in card.capture ? card.capture.pick : null;
+	const pickedRegion = card && 'region' in card.capture ? card.capture.region : null;
+	let outline: DesignModeRect | null = null;
+	let regionBox: { box: DesignModeRect; scale: number } | null = null;
+	if (card) {
+		if (pickedRegion) {
+			regionBox = { box: toLayerRect(pickedRegion.rect, card.scale), scale: card.scale };
+		} else if (pickedElement) {
+			outline = toLayerRect(pickedElement.rect, card.scale);
+		}
+	} else if (marquee) {
+		regionBox = marquee;
+	} else if (hover && !usingPage) {
+		outline = toLayerRect(hover.probe.rect, hover.scale);
+	}
+	// The box is up and its region not yet asked for: the button is still down.
+	const dragging = !!marquee && !card && !picking;
 	const scaleNow = card ? card.scale : (hover?.scale ?? 1);
-	const outline = card
-		? toLayerRect(card.pick.rect, card.scale)
-		: hover && !usingPage
-			? toLayerRect(hover.probe.rect, hover.scale)
-			: null;
 	// The hover label is the crumb row; the card's frozen outline is labeled by
 	// its tag alone. A held ancestor keeps its crumbs where they were clicked.
 	const crumbs = !card && outline ? hover : null;
 	const labelSpot = outline ? ((crumbs && heldSpot) ?? labelSpotFor(outline)) : null;
 	labelSpotRef.current = labelSpot;
-	const outlineSize = outline
-		? `${Math.round(outline.width / scaleNow)} x ${Math.round(outline.height / scaleNow)}`
-		: '';
+	const outlineSize = outline ? sizeText(outline, scaleNow) : '';
 	const keepPickingKeys = formatShortcutKeys(['Meta', 'Enter']);
 	const queueKeys = formatShortcutKeys(['Alt', 'Enter']);
 
@@ -840,7 +1119,9 @@ export function BrowserDesignModeLayer({
 			tabIndex={0}
 			role="application"
 			aria-label={
-				usingPage ? 'Design Mode: using the page' : 'Design Mode: pick an element in the page'
+				usingPage
+					? 'Design Mode: using the page'
+					: 'Design Mode: pick an element, or drag to pick a region'
 			}
 			className="absolute inset-0 z-10 outline-none select-none"
 			// Using the page: clicks, hovers and the wheel go through to the page.
@@ -853,6 +1134,8 @@ export function BrowserDesignModeLayer({
 			onKeyDown={handleLayerKeyDown}
 			onMouseMove={(event) => {
 				if (card) return;
+				// A drag draws its box (followDrag); nothing is outlined meanwhile.
+				if (pressRef.current?.dragging) return;
 				// The page has the pointer (in the app the layer does not even
 				// hear this move).
 				if (passthroughRef.current === 'page') return;
@@ -881,12 +1164,27 @@ export function BrowserDesignModeLayer({
 				void probe();
 			}}
 			onMouseDown={(event) => {
+				// A new press: a click the last one left unclaimed is moot.
+				swallowClickRef.current = false;
 				// Keep focus on the layer (a click must not land in the webview).
 				if (card || passthroughRef.current !== 'off') return;
 				event.preventDefault();
 				focusLayer();
+				// A press on the page itself may become a drag; one on the banner
+				// or the crumbs is a click on that control. None starts while a
+				// pick is in flight.
+				if (event.button !== 0 || event.target !== event.currentTarget) return;
+				if (pickingRef.current) return;
+				const start = pointFromEvent(event);
+				if (start) pressRef.current = { start, dragging: false };
 			}}
 			onClick={(event) => {
+				// The release that ended a drag (or a press Escape dropped) is not
+				// a pick.
+				if (swallowClickRef.current) {
+					swallowClickRef.current = false;
+					return;
+				}
 				if (card || passthroughRef.current !== 'off' || event.button !== 0) return;
 				// A held ancestor is what the outline shows, so the click picks it,
 				// walked from the point its crumbs were drawn for.
@@ -903,7 +1201,8 @@ export function BrowserDesignModeLayer({
 			}}
 			onContextMenu={(event) => event.preventDefault()}
 			onWheel={(event) => {
-				if (card || passthroughRef.current !== 'off') return;
+				// Mid-drag the page holds still under the box being framed.
+				if (card || passthroughRef.current !== 'off' || pressRef.current?.dragging) return;
 				const point = pointFromEvent(event);
 				if (!point) return;
 				const frame = layerFrame();
@@ -941,7 +1240,7 @@ export function BrowserDesignModeLayer({
 						}}
 						data-testid="browser-tab-design-mode-outline"
 					/>
-					{labelSpot && card ? (
+					{labelSpot && pickedElement ? (
 						<LabelAt spot={labelSpot}>
 							<div
 								className="shrink-0 max-w-full truncate rounded px-1.5 py-0.5 text-xs-plus font-mono border shadow"
@@ -951,7 +1250,7 @@ export function BrowserDesignModeLayer({
 									color: theme.colors.textMain,
 								}}
 							>
-								{card.pick.tagName}
+								{pickedElement.tagName}
 								<span style={{ color: theme.colors.textDim }}>
 									{'  '}
 									{outlineSize}
@@ -972,6 +1271,14 @@ export function BrowserDesignModeLayer({
 				</>
 			) : null}
 
+			{regionBox ? (
+				<DesignModeMarquee
+					theme={theme}
+					box={regionBox.box}
+					size={sizeText(regionBox.box, regionBox.scale)}
+				/>
+			) : null}
+
 			<div
 				className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-md border px-3 py-1 shadow-md text-xs whitespace-nowrap max-w-[calc(100%-1rem)]"
 				style={{
@@ -987,13 +1294,17 @@ export function BrowserDesignModeLayer({
 			>
 				{picking ? (
 					<Spinner size={14} color={theme.colors.accent} />
+				) : dragging ? (
+					<BoxSelect className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 				) : usingPage ? (
 					<Hand className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 				) : (
 					<MousePointerClick className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 				)}
 				<span className="truncate">
-					{usingPage ? (
+					{dragging ? (
+						'Release to pick the region. Esc: cancel.'
+					) : usingPage ? (
 						'Using the page - release Space to pick'
 					) : (
 						<>
@@ -1028,7 +1339,7 @@ export function BrowserDesignModeLayer({
 					onWheel={(event) => event.stopPropagation()}
 					onKeyDown={handleCardKeyDown}
 					role="dialog"
-					aria-label="Picked element"
+					aria-label={pickedRegion ? 'Picked region' : 'Picked element'}
 					data-testid="browser-tab-design-mode-card"
 				>
 					<div className="flex items-start gap-3">
@@ -1036,29 +1347,65 @@ export function BrowserDesignModeLayer({
 							className="shrink-0 w-24 h-16 rounded border flex items-center justify-center overflow-hidden"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 						>
-							{card.screenshot ? (
+							{card.capture.screenshot ? (
 								<img
-									src={card.screenshot}
-									alt="Screenshot of the picked element"
+									src={card.capture.screenshot}
+									alt={`Screenshot of the picked ${pickedRegion ? 'region' : 'element'}`}
 									className="max-w-full max-h-full object-contain"
 								/>
 							) : (
 								<ImageOff
 									className="w-5 h-5"
 									style={{ color: theme.colors.textDim }}
-									aria-label="No screenshot: the element is off screen"
+									aria-label={
+										pickedRegion
+											? 'No screenshot: the capture failed'
+											: 'No screenshot: the element is off screen'
+									}
 								/>
 							)}
 						</div>
-						<div className="min-w-0 flex-1">
-							<div className="text-sm font-medium truncate" title={card.pick.selector}>
-								<code>{card.pick.selector || card.pick.tagName}</code>
+						{pickedRegion ? (
+							<div className="min-w-0 flex-1">
+								<div
+									className="text-sm font-medium truncate"
+									data-testid="browser-tab-design-mode-region-title"
+								>
+									{designRegionLabel(pickedRegion)}, {regionElementCount(pickedRegion)}
+								</div>
+								{/* What the page listed, as plain text: selectors are page data. */}
+								{pickedRegion.elements.length > 0 ? (
+									<ul
+										className="mt-0.5 max-h-20 overflow-y-auto text-xs font-mono leading-relaxed"
+										style={{ color: theme.colors.textDim }}
+										aria-label="Elements in the region"
+										data-testid="browser-tab-design-mode-region-elements"
+									>
+										{pickedRegion.elements.map((element, index) => (
+											<li
+												key={index}
+												className="truncate"
+												title={element.selector || element.tagName}
+											>
+												{element.selector || element.tagName}
+											</li>
+										))}
+									</ul>
+								) : null}
 							</div>
-							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-								{Math.round(card.pick.rect.width)} x {Math.round(card.pick.rect.height)} px
-								{card.screenshot ? ', screenshot attached' : ', no screenshot (off screen)'}
+						) : pickedElement ? (
+							<div className="min-w-0 flex-1">
+								<div className="text-sm font-medium truncate" title={pickedElement.selector}>
+									<code>{pickedElement.selector || pickedElement.tagName}</code>
+								</div>
+								<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+									{sizeText(pickedElement.rect, 1)} px
+									{card.capture.screenshot
+										? ', screenshot attached'
+										: ', no screenshot (off screen)'}
+								</div>
 							</div>
-						</div>
+						) : null}
 						<EscCloseButton
 							theme={theme}
 							onClose={closeCard}

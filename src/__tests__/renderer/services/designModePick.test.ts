@@ -26,7 +26,12 @@ import { useComposerInputStore } from '../../../renderer/stores/composerInputSto
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createMockAITab, createMockDesignPick, createMockSession } from '../../helpers';
-import { expandDesignPicks, type DesignModePick } from '../../../renderer/utils/designModePicker';
+import {
+	buildDesignModeRegionPrompt,
+	expandDesignPicks,
+	type DesignModePick,
+	type DesignModeRegion,
+} from '../../../renderer/utils/designModePicker';
 import type { QueuedItem, StagedDesignPick } from '../../../renderer/types';
 
 const SESSION_ID = 'session-1';
@@ -47,6 +52,32 @@ const pick: DesignModePick = {
 	styles: { display: 'inline-flex' },
 	rect: { x: 0, y: 0, width: 80, height: 30 },
 	viewport: { width: 1280, height: 800 },
+};
+
+/** A dragged-out region holding two pricing cards. */
+const region: DesignModeRegion = {
+	url: 'https://example.com/pricing',
+	rect: { x: 40, y: 60, width: 639.6, height: 220.4 },
+	viewport: { width: 1280, height: 800 },
+	elements: [
+		{
+			selector: 'section.plans > div.starter',
+			tagName: 'div',
+			rect: { x: 40, y: 60, width: 300, height: 220 },
+			text: 'Starter',
+			html: '<div class="starter">Starter</div>',
+			htmlTruncated: false,
+		},
+		{
+			selector: 'section.plans > div.team',
+			tagName: 'div',
+			rect: { x: 360, y: 60, width: 300, height: 220 },
+			text: 'Team',
+			html: '<div class="team">Team</div>',
+			htmlTruncated: false,
+		},
+	],
+	elementsTruncated: false,
 };
 
 function seed(tabOverrides = {}, sessionOverrides = {}) {
@@ -334,6 +365,55 @@ describe('deliverDesignPick', () => {
 			expect.objectContaining({ message: expect.stringContaining('pick the element again') })
 		);
 	});
+
+	it('stages a dragged region as a region chip: its size as the label, the region block, its screenshot', async () => {
+		seed({ stagedImages: [PASTED] });
+
+		const result = await deliverDesignPick({
+			sessionId: SESSION_ID,
+			browserTabId: BROWSER_TAB_ID,
+			region,
+			screenshot: SHOT,
+			note: '  Put these on one row ',
+			reveal: false,
+		});
+
+		expect(chips()).toHaveLength(1);
+		const [chip] = chips();
+		expect(chip).toMatchObject({
+			kind: 'region',
+			label: 'Region 640 x 220',
+			url: 'https://example.com/pricing',
+			note: 'Put these on one row',
+			screenshot: SHOT,
+		});
+		// The region block with the Coworking id; the note is added at send.
+		expect(chip.text).toBe(
+			buildDesignModeRegionPrompt(region, { hasScreenshot: true, browserId: 'browser:2' })
+		);
+		expect(chip.text).toContain('Element 2: `section.plans > div.team`');
+		expect(result).toEqual({
+			aiTabId: TAB_ID,
+			text: `${chip.text}\n\nPut these on one row`,
+			pickId: chip.id,
+		});
+		// The screenshot is the chip's, never a staged image.
+		expect(session().aiTabs[0].stagedImages).toEqual([PASTED]);
+	});
+
+	it('asks for the region again when the agent has no AI tab to stage it on', async () => {
+		seed({}, { aiTabs: [], activeTabId: '' });
+		const result = await deliverDesignPick({
+			sessionId: SESSION_ID,
+			browserTabId: BROWSER_TAB_ID,
+			region,
+			screenshot: null,
+		});
+		expect(result).toBeNull();
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('pick the region again') })
+		);
+	});
 });
 
 describe('queueDesignPick', () => {
@@ -540,6 +620,32 @@ describe('queueDesignPick', () => {
 
 		expect(queue()).toEqual([]);
 		expect(notifyToast).toHaveBeenCalledTimes(1);
+	});
+
+	it('queues a dragged region the same way: its block, then the note, with its screenshot', async () => {
+		seed({ name: 'Fix header' });
+
+		const result = await queueDesignPick({
+			sessionId: SESSION_ID,
+			browserTabId: BROWSER_TAB_ID,
+			region,
+			screenshot: SHOT,
+			note: 'Put these on one row',
+		});
+
+		const [item] = queue();
+		expect(item).toMatchObject({ type: 'message', tabId: TAB_ID, images: [SHOT] });
+		expect(item.text).toBe(
+			`${buildDesignModeRegionPrompt(region, { hasScreenshot: true, browserId: 'browser:2' })}\n\nPut these on one row`
+		);
+		expect(result).toEqual({
+			aiTabId: TAB_ID,
+			tabName: 'Fix header',
+			queueItemId: item.id,
+			text: item.text,
+		});
+		// A queued region stages nothing.
+		expect(chips()).toEqual([]);
 	});
 });
 

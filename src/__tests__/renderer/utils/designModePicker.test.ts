@@ -23,6 +23,7 @@ import {
 	designPickBlock,
 	designPickCropRect,
 	designPickLabel,
+	designRegionLabel,
 	expandDesignPicks,
 	filterDesignStyles,
 	parseDesignModePassthrough,
@@ -1517,6 +1518,17 @@ describe('designPickLabel', () => {
 		expect(label).toBe('p.lede "Pricing that scales with your team and…"');
 		const quoted = label.slice(label.indexOf('"') + 1, -1);
 		expect(quoted.length).toBeLessThanOrEqual(40);
+	});
+});
+
+describe('designRegionLabel', () => {
+	it("is the region's size in page pixels, rounded, whatever is inside it", () => {
+		expect(designRegionLabel(makeRegion())).toBe('Region 640 x 220');
+		expect(
+			designRegionLabel(
+				makeRegion({ rect: { x: 0.3, y: 9.7, width: 99.5, height: 120.49 }, elements: [] })
+			)
+		).toBe('Region 100 x 120');
 	});
 });
 
