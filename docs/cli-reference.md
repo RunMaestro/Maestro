@@ -257,12 +257,14 @@ no unread - and prints the answer on stdout. `dispatch` hands over WORK: the pro
 in a real tab, so it appears mid-conversation in whatever the user has open with that
 agent, and you get a tab id back instead of an answer.
 
-| Option                | Description                                                                                                                                                                            | Default |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult | -       |
-| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                     | -       |
-| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                     | 600     |
-| `--json`              | Output the answer as JSON                                                                                                                                                              | -       |
+| Option                | Description                                                                                                                                                                                                                                | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult                                                     | -       |
+| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                                                                         | -       |
+| `--btw`               | Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card | -       |
+| `--tab <tab-id>`      | With --btw: the AI tab whose conversation to fork (default: its active tab)                                                                                                                                                                | -       |
+| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                                                                         | 600     |
+| `--json`              | Output the answer as JSON                                                                                                                                                                                                                  | -       |
 
 ```bash
 # Ask another agent how it solved something, from inside your own turn

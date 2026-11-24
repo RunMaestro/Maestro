@@ -571,6 +571,14 @@ program
 		'--with-context',
 		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
 	)
+	.option(
+		'--btw',
+		"Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card"
+	)
+	.option(
+		'--tab <tab-id>',
+		'With --btw: the AI tab whose conversation to fork (default: its active tab)'
+	)
 	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
 	.option('--json', 'Output the answer as JSON')
 	.action(ask);

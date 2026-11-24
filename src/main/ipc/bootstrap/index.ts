@@ -46,6 +46,7 @@ import {
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
+	registerSideQuestionHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -542,6 +543,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// AI Command handlers (plain-English request -> one shell command line).
 	// Same dependency shape as tab naming: both spawn a short-lived agent turn.
 	registerAiCommandHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
+	// Side question handlers (`/btw`): a throwaway fork of the tab's session.
+	registerSideQuestionHandlers({
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
