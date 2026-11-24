@@ -24,6 +24,7 @@ import {
 	type HaltMarker,
 } from '../../../../shared/autorunMarkers';
 import { resolveAutoResumePolicy } from '../../../../shared/autorunAutoResume';
+import { historySummaryLine } from '../../../../shared/history';
 import { clearAutoResume } from '../../../stores/autoRunResumeStore';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
@@ -1711,13 +1712,15 @@ export function useBatchRunner({
 					});
 				}
 
-				// Record PR result in history so it's visible in the worktree agent's history panel
+				// Record PR result in history so it's visible in the worktree agent's history panel.
+				// A failed push's error is its whole pre-push log (megabytes), so the
+				// summary takes one line of it and the full text stays in fullResponse.
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
 					summary: prResult.success
 						? `PR created: ${prResult.prUrl}`
-						: `PR creation failed: ${prResult.error || 'Unknown error'}`,
+						: `PR creation failed: ${historySummaryLine(prResult.error || 'Unknown error')}`,
 					fullResponse: prResult.success
 						? `**Pull Request Created**\n\n- **URL:** ${prResult.prUrl}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch || 'unknown'}\`\n- **Tasks Completed:** ${totalCompletedTasks}`
 						: `**Pull Request Creation Failed**\n\n- **Error:** ${prResult.error || 'Unknown error'}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch || 'unknown'}\``,

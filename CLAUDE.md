@@ -71,6 +71,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact), `formatCountNoun()` (exact count and its noun), `formatContextWindow()` (`128K`, `1M`) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()`, `estimateTokensFromBytes()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
+- **A history `summary` from free-form text, and the part of one a row renders:** `historySummaryLine()`, `historySummaryPreview()`, `clampHistoryEntry()` in `src/shared/history.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts`: `humanizeDuration(ms, opts)` plus its presets (never another `Math.floor(ms / 86400000)` ladder)
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts; perf traces only)
