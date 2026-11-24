@@ -19,8 +19,15 @@ vi.mock('../../../../renderer/services/designModePick', () => ({
 		text: 'ELEMENT BLOCK',
 		pickId: 'pick-1',
 	})),
+	// Takes the delivery so a test can read what it was asked to queue.
+	queueDesignPick: vi.fn(async (_delivery: unknown) => ({
+		aiTabId: 'ai-1',
+		tabName: 'Fix the header',
+		queueItemId: 'queue-1',
+		text: 'QUEUED BLOCK',
+	})),
 }));
-import { deliverDesignPick } from '../../../../renderer/services/designModePick';
+import { deliverDesignPick, queueDesignPick } from '../../../../renderer/services/designModePick';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: { getState: vi.fn(() => ({})) },
@@ -369,6 +376,88 @@ describe('resolveAndRun', () => {
 			aiTabId: 'ai-1',
 			pickId: 'pick-1',
 			dataUrl: 'data:image/png;base64,CROP',
+		});
+		// A chip is not a queued message.
+		expect(queueDesignPick).not.toHaveBeenCalled();
+		expect(res).not.toHaveProperty('queueItemId');
+	});
+
+	describe('pick with queue (browser-pick --queue)', () => {
+		const capture = {
+			pick: { selector: 'h1', tagName: 'h1' },
+			screenshot: 'data:image/png;base64,CROP',
+		};
+		const handleWith = (inspected: unknown) =>
+			makeHandle({
+				getTabId: () => 'u-1',
+				inspectElement: vi.fn(
+					async () => inspected
+				) as unknown as BrowserTabViewHandle['inspectElement'],
+			});
+
+		it('queues the element as its own message: no chip, and nothing asks to reveal', async () => {
+			vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+			const handle = handleWith(capture);
+			const requestApproval = vi.fn(async () => true);
+			const res = await resolveAndRun(
+				{ current: new Map([['u-1', handle]]) },
+				'u-1',
+				'sess-A',
+				{ kind: 'pick', selector: 'h1', note: 'bigger', background: true, queue: true },
+				requestApproval
+			);
+			// Like a chip pick, it needs no approval: it only adds to the queue.
+			expect(requestApproval).not.toHaveBeenCalled();
+			expect(queueDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'sess-A',
+					browserTabId: 'u-1',
+					note: 'bigger',
+					screenshot: 'data:image/png;base64,CROP',
+				})
+			);
+			// A queued pick moves nothing, so `reveal` is never part of the request.
+			expect(vi.mocked(queueDesignPick).mock.calls[0][0]).not.toHaveProperty('reveal');
+			expect(deliverDesignPick).not.toHaveBeenCalled();
+			expect(res).toMatchObject({
+				ok: true,
+				content: 'QUEUED BLOCK',
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+				dataUrl: 'data:image/png;base64,CROP',
+				url: 'https://e',
+				title: 'E',
+			});
+			expect(res).not.toHaveProperty('pickId');
+		});
+
+		it('says so when the agent has no AI tab to queue into', async () => {
+			// `null` is what the service returns (after its own toast) with no AI tab.
+			vi.mocked(queueDesignPick).mockResolvedValueOnce(null as never);
+			const res = await applyBrowserOp(
+				handleWith(capture),
+				{ kind: 'pick', selector: 'h1', queue: true },
+				'sess-A'
+			);
+			expect(res).toEqual({
+				ok: false,
+				content: 'This agent has no AI tab to queue the element into.',
+			});
+		});
+
+		it('queues nothing for a selector that misses or is invalid', async () => {
+			for (const [inspected, content] of [
+				['not-found', 'No element matches selector: .x'],
+				['invalid-selector', 'Not a valid CSS selector: .x'],
+			] as const) {
+				const res = await applyBrowserOp(
+					handleWith(inspected),
+					{ kind: 'pick', selector: '.x', queue: true },
+					'sess-A'
+				);
+				expect(res).toMatchObject({ ok: false, content });
+			}
+			expect(queueDesignPick).not.toHaveBeenCalled();
 		});
 	});
 

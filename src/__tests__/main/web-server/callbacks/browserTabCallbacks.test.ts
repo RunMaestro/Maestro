@@ -98,6 +98,70 @@ describe('pickBrowserElement (browser-pick)', () => {
 		expect(result.browserId).toBe('browser:1');
 	});
 
+	describe('queue', () => {
+		it('asks the renderer to queue the pick and names the queued message, not a chip', async () => {
+			run.mockResolvedValueOnce({
+				ok: true,
+				content: 'Element `h1` ...',
+				dataUrl: 'data:image/png;base64,AAAA',
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+			});
+			const result = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'browser:1', selector: 'h1', note: 'bigger', queue: true },
+				{ registry, run }
+			);
+			expect(run).toHaveBeenCalledWith('s1', 'uuid-a', {
+				kind: 'pick',
+				selector: 'h1',
+				note: 'bigger',
+				background: false,
+				queue: true,
+			});
+			expect(result).toEqual({
+				success: true,
+				tabId: 'uuid-a',
+				browserId: 'browser:1',
+				text: 'Element `h1` ...',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+			});
+		});
+
+		it('leaves queue off the op unless the request says exactly true', async () => {
+			await pickBrowserElement(
+				{ sessionId: 's1', tab: 'uuid-a', selector: 'h1', queue: false },
+				{ registry, run }
+			);
+			const unset = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'uuid-a', selector: 'h1' },
+				{ registry, run }
+			);
+			for (const call of run.mock.calls) expect(call[2]).not.toHaveProperty('queue');
+			// And a chip pick names a chip, never a queue item.
+			expect(unset).toMatchObject({ pickId: 'pick-1' });
+			expect(unset).not.toHaveProperty('queueItemId');
+		});
+
+		it('names no queue item when the renderer reports none, or the pick failed', async () => {
+			run.mockResolvedValueOnce({ ok: true, content: 'Element `h1` ...', aiTabId: 'ai-1' });
+			const queued = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'uuid-a', selector: 'h1', queue: true },
+				{ registry, run }
+			);
+			expect(queued).not.toHaveProperty('queueItemId');
+
+			run.mockResolvedValueOnce({ ok: false, content: 'No AI tab', queueItemId: 'stale' });
+			const failed = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'uuid-a', selector: 'h1', queue: true },
+				{ registry, run }
+			);
+			expect(failed).toMatchObject({ success: false, error: 'No AI tab' });
+			expect(failed).not.toHaveProperty('queueItemId');
+		});
+	});
+
 	it('refuses a Coworking id for a hidden tab without reaching the renderer', async () => {
 		const result = await pickBrowserElement(
 			{ sessionId: 's1', tab: 'browser:2', selector: 'h1' },

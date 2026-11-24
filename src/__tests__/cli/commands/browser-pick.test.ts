@@ -102,6 +102,8 @@ describe('browser-pick command', () => {
 		expect(sent[0].message.sessionId).toBe('active-session');
 		expect(sent[0].message.background).toBe(false);
 		expect(sent[0].message).not.toHaveProperty('note');
+		// A chip is the default: nothing on the wire asks for a queued message.
+		expect(sent[0].message).not.toHaveProperty('queue');
 		// No chip id and no block in the reply: no line for either.
 		expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
 			'Added button from tab-uuid to the composer of tab ai-1',
@@ -141,7 +143,121 @@ describe('browser-pick command', () => {
 
 		await browserPick('tab-uuid', { selector: 'button', json: true });
 
-		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({ pickId: null, text: '' });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+			pickId: null,
+			queueItemId: null,
+			text: '',
+		});
+	});
+
+	describe('--queue', () => {
+		it('asks for a queued message and prints the queue item, not a chip', async () => {
+			const sent = stubDesktop({
+				success: true,
+				tabId: 'tab-uuid',
+				browserId: 'browser:2',
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-9',
+				screenshot: true,
+				text: 'Element ...',
+			});
+
+			await browserPick('browser:2', {
+				selector: '.hero h1',
+				note: 'make it bigger',
+				agent: 'agent-7',
+				queue: true,
+			});
+
+			expect(sent).toHaveLength(1);
+			expect(sent[0].responseType).toBe('pick_browser_element_result');
+			expect(sent[0].message).toEqual({
+				type: 'pick_browser_element',
+				sessionId: 'resolved-agent-7',
+				tab: 'browser:2',
+				selector: '.hero h1',
+				note: 'make it bigger',
+				background: false,
+				queue: true,
+			});
+			// The summary, the queue item id, then the same block a chip would carry.
+			expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
+				'Queued .hero h1 from browser:2 for tab ai-1 as its own message',
+				'  Queue item: queue-9',
+				'  Coworking id: browser:2',
+				'  Screenshot: attached',
+				'\nElement ...',
+			]);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('says nothing about background: a queued pick never moves the view', async () => {
+			const sent = stubDesktop({
+				success: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-9',
+				screenshot: false,
+			});
+
+			await browserPick('tab-uuid', { selector: 'button', queue: true, background: true });
+
+			// The flag still travels (the desktop echoes it), but the summary does not
+			// promise a "(background)" the queue path has no use for.
+			expect(sent[0].message).toMatchObject({ background: true, queue: true });
+			expect(logSpy.mock.calls[0][0]).toBe(
+				'Queued button from tab-uuid for tab ai-1 as its own message'
+			);
+		});
+
+		it('prints no queue item line when the desktop sends none', async () => {
+			stubDesktop({ success: true, aiTabId: 'ai-1', screenshot: false });
+
+			await browserPick('tab-uuid', { selector: 'button', queue: true });
+
+			expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
+				'Queued button from tab-uuid for tab ai-1 as its own message',
+				'  Screenshot: none',
+			]);
+		});
+
+		it('returns the queue item id in JSON and no chip id', async () => {
+			stubDesktop({
+				success: true,
+				tabId: 'tab-uuid',
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-9',
+				screenshot: false,
+				text: 'the element block',
+			});
+
+			await browserPick('tab-uuid', { selector: 'button', queue: true, json: true });
+
+			expect(logSpy).toHaveBeenCalledTimes(1);
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+				success: true,
+				sessionId: 'active-session',
+				aiTabId: 'ai-1',
+				pickId: null,
+				queueItemId: 'queue-9',
+				selector: 'button',
+				text: 'the element block',
+			});
+		});
+
+		it('reports the desktop error and exits 1, as a chip pick does', async () => {
+			stubDesktop({
+				success: false,
+				error: 'This agent has no AI tab to queue the element into.',
+			});
+
+			await browserPick('tab-uuid', { selector: 'button', queue: true, json: true });
+
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+				success: false,
+				error: 'This agent has no AI tab to queue the element into.',
+			});
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
 	});
 
 	it('refuses a missing selector without calling the desktop', async () => {

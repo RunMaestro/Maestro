@@ -69,6 +69,10 @@ deliberately absent from the table and must stay that way.
 `--focus` ships on every verb even where it currently just names the default,
 because a future default flip needs the escape hatch to already exist.
 
+`browser-pick --queue` is quiet by itself: it sends the pick as its own queued
+message and never touches the view, so `--background` and `--focus` have nothing
+left to decide there.
+
 ### Two verbs of one command name: `dispatch`
 
 `dispatch --new-tab` is background by default and `dispatch` (writing to an
@@ -307,6 +311,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
 | Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
 | Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: `browser-picks`, its `--json` text and `pickId`    |
+| Browser Design Mode: queue a pick as its own message (pick card's Queue button, Alt+Enter)                                | `browser-pick <tab> -s <css> --queue`; id in `--json`; read: `queue list`; undo: `queue remove`  |
 | Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                    | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                 |
 | Browser Design Mode: remove a chip from the composer (the chip's X)                                                       | `browser-picks --remove <pickId>`; read: `browser-picks`                                         |
 

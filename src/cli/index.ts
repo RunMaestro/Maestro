@@ -911,6 +911,8 @@ program
 // Browser pick command - Design Mode by selector: stage an element of a browser
 // tab (selector, trimmed HTML, computed styles, cropped screenshot) as a chip in
 // the owning agent's composer, through the same code a click in Design Mode runs.
+// With --queue it is queued as its own message instead, as the pick card's Queue
+// button does.
 program
 	.command('browser-pick <tab>')
 	.description(
@@ -921,6 +923,7 @@ program
 	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
 	.option('--background', 'Add it without switching the view to the AI tab')
 	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--queue', 'Queue it as its own message instead of a chip')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPick);
 

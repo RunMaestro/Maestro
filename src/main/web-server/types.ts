@@ -660,6 +660,8 @@ export interface PickBrowserElementRequest {
 	selector: string;
 	note?: string;
 	background?: boolean;
+	/** True queues the pick as its own message instead of staging a chip. */
+	queue?: boolean;
 }
 export interface PickBrowserElementResult {
 	success: boolean;
@@ -668,14 +670,16 @@ export interface PickBrowserElementResult {
 	tabId?: string;
 	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
 	browserId?: string;
-	/** The block the chip adds to the message at send, note included. */
+	/** The block the chip (or the queued message) carries, note included. */
 	text?: string;
-	/** Whether the chip carries a cropped screenshot. */
+	/** Whether the pick carries a cropped screenshot. */
 	screenshot: boolean;
-	/** The AI tab whose composer holds the chip. */
+	/** The AI tab whose composer holds the chip, or whose queue holds the message. */
 	aiTabId?: string;
-	/** The staged chip's id, for `browser-picks --remove`. */
+	/** The staged chip's id, for `browser-picks --remove`. Not set when queued. */
 	pickId?: string;
+	/** The queued message's id, for `queue remove`. Only set when queued. */
+	queueItemId?: string;
 }
 export type PickBrowserElementCallback = (
 	request: PickBrowserElementRequest

@@ -60,7 +60,9 @@ export type BrowserOp =
 /**
  * Design Mode pick by selector: describe the first element matching `selector`
  * (selector path, trimmed outerHTML, computed styles, cropped screenshot) and
- * add it to the owning agent's composer, exactly as a click in Design Mode does.
+ * add it to the owning agent's composer as a chip, exactly as a click in Design
+ * Mode does. With `queue` it goes out as its own queued message instead, exactly
+ * as the pick card's Queue button does.
  *
  * Not an MCP op. Only `maestro-cli browser-pick` sends it, through the same
  * resolver the MCP tools use, so the CLI and the agent tools address a tab the
@@ -76,6 +78,12 @@ export interface BrowserPickOp {
 	note?: string;
 	/** True leaves the visible agent and tab alone (CLI `--background`). */
 	background?: boolean;
+	/**
+	 * True queues the pick as its own message on the agent's execution queue
+	 * (CLI `--queue`) instead of staging a chip. The composer and the view are
+	 * never touched, so `background` has nothing left to decide.
+	 */
+	queue?: boolean;
 }
 
 /** Interaction (state-changing) op kinds, gated behind the interaction
@@ -94,10 +102,12 @@ export interface BrowserOpResult {
 	title?: string;
 	/** True when the op completed against a live webview. */
 	ok: boolean;
-	/** `pick`: the AI tab whose composer holds the chip. */
+	/** `pick`: the AI tab whose composer holds the chip, or whose queue holds the message. */
 	aiTabId?: string;
-	/** `pick`: the staged chip's id (`maestro-cli browser-picks --remove`). */
+	/** `pick`: the staged chip's id (`maestro-cli browser-picks --remove`). Not set when queued. */
 	pickId?: string;
+	/** `pick` with `queue`: the queued message's id (`maestro-cli queue remove`). */
+	queueItemId?: string;
 }
 
 /** Per-agent policy for whether a state-changing browser op needs an explicit

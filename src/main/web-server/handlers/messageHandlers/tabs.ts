@@ -593,8 +593,10 @@ export function handleCloseBrowserTab(
  * Handle pick_browser_element message - Design Mode by selector
  * (`maestro-cli browser-pick`). Describes the first element matching
  * `selector` in a browser tab and stages it as a chip in the owning agent's
- * composer, the same way a click in Design Mode does. `tab` is the tab id
- * `open-browser` returned or the tab's Coworking id (`browser:N`).
+ * composer, the same way a click in Design Mode does; with `queue: true` it
+ * is queued as its own message instead, as the pick card's Queue button does.
+ * `tab` is the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`).
  */
 export function handlePickBrowserElement(
 	ctx: MessageHandlerContext,
@@ -606,9 +608,12 @@ export function handlePickBrowserElement(
 	const selector = typeof message.selector === 'string' ? message.selector.trim() : '';
 	const note = typeof message.note === 'string' && message.note.trim() ? message.note : undefined;
 	const background = readBackgroundField(message);
+	// Like `background`, only a literal `true` opts in: a pick that is not
+	// clearly a queue request stages a chip, the form that never sends anything.
+	const queue = message.queue === true;
 	// Selectors and notes can carry page or user text - log lengths only.
 	logger.info(
-		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selector.length}`,
+		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selector.length}, queue=${queue}`,
 		LOG_CONTEXT
 	);
 
@@ -621,6 +626,7 @@ export function handlePickBrowserElement(
 		screenshot?: boolean;
 		aiTabId?: string;
 		pickId?: string;
+		queueItemId?: string;
 	}) => {
 		ctx.send(client, {
 			type: 'pick_browser_element_result',
@@ -646,7 +652,7 @@ export function handlePickBrowserElement(
 	}
 
 	ctx.callbacks
-		.pickBrowserElement({ sessionId, tab, selector, note, background })
+		.pickBrowserElement({ sessionId, tab, selector, note, background, ...(queue ? { queue } : {}) })
 		.then((result) => reply(result))
 		.catch((error) => {
 			reply({

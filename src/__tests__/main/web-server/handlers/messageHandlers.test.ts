@@ -1796,6 +1796,69 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('should forward a queue request and answer with the queued message id', async () => {
+			(callbacks.pickBrowserElement as any).mockResolvedValueOnce({
+				success: true,
+				tabId: 'browser-tab-1',
+				text: 'Element `h1` ...',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+			});
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				selector: 'h1',
+				queue: true,
+				requestId: 'r2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					selector: 'h1',
+					note: undefined,
+					background: false,
+					queue: true,
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+				requestId: 'r2',
+			});
+			// A queued pick stages no chip.
+			expect(response).not.toHaveProperty('pickId');
+		});
+
+		it('should treat only a literal true as a queue request', async () => {
+			// Same rule as `background`: a value that is not clearly an opt-in must
+			// leave the safe form, a staged chip that sends nothing, in force.
+			for (const queue of ['true', 'yes', 1, false, null]) {
+				(callbacks.pickBrowserElement as any).mockClear();
+				handler.handleMessage(client, {
+					type: 'pick_browser_element',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					selector: 'button',
+					queue,
+				});
+				await vi.waitFor(() => {
+					expect(callbacks.pickBrowserElement).toHaveBeenCalledTimes(1);
+				});
+				const request = (callbacks.pickBrowserElement as any).mock.calls[0][0];
+				expect(request, `queue: ${String(queue)}`).not.toHaveProperty('queue');
+			}
+		});
+
 		it('should reject a missing selector without calling the desktop', () => {
 			handler.handleMessage(client, {
 				type: 'pick_browser_element',

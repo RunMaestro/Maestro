@@ -36,7 +36,7 @@ import { useCoworkingBrowserKeepAliveStore } from '../../stores/coworkingBrowser
 import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
 import { closeBrowserTab } from '../../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
-import { deliverDesignPick } from '../../services/designModePick';
+import { deliverDesignPick, queueDesignPick } from '../../services/designModePick';
 import {
 	DEFAULT_BROWSER_TAB_URL,
 	resolveBrowserTabNavigationTarget,
@@ -235,7 +235,9 @@ function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult
  * The host-only `pick` op (`maestro-cli browser-pick`): the same describe,
  * crop, and composer delivery as a click in Design Mode, by selector. The
  * element lands as a chip; the result carries the block it adds at send and
- * the chip's id.
+ * the chip's id. With `op.queue` it is queued as its own message instead, as
+ * the pick card's Queue button does (no chip, no view change, so `background`
+ * is not read): the result carries the same block and the queue item's id.
  */
 async function pickElement(
 	handle: BrowserTabViewHandle,
@@ -249,22 +251,31 @@ async function pickElement(
 	if (capture === 'not-found' || capture === null) {
 		return { ok: false, content: `No element matches selector: ${op.selector}` };
 	}
-	const delivered = await deliverDesignPick({
+	const delivery = {
 		...capture,
 		sessionId,
 		browserTabId: handle.getTabId(),
 		note: op.note,
-		reveal: op.background !== true,
-	});
-	if (!delivered) {
-		return { ok: false, content: 'This agent has no AI tab to add the element to.' };
+	};
+	// A chip (`pickId`) or a queued message (`queueItemId`); either way the block
+	// it carries and the AI tab it went to come back the same.
+	const landed = op.queue
+		? await queueDesignPick(delivery)
+		: await deliverDesignPick({ ...delivery, reveal: op.background !== true });
+	if (!landed) {
+		return {
+			ok: false,
+			content: op.queue
+				? 'This agent has no AI tab to queue the element into.'
+				: 'This agent has no AI tab to add the element to.',
+		};
 	}
 	const meta = handle.getMeta();
 	return {
 		ok: true,
-		content: delivered.text,
-		aiTabId: delivered.aiTabId,
-		pickId: delivered.pickId,
+		content: landed.text,
+		aiTabId: landed.aiTabId,
+		...('queueItemId' in landed ? { queueItemId: landed.queueItemId } : { pickId: landed.pickId }),
 		...(capture.screenshot ? { dataUrl: capture.screenshot } : {}),
 		url: meta.url,
 		title: meta.title,

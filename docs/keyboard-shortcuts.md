@@ -252,6 +252,19 @@ Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the 
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
+### Browser Design Mode Pick Card
+
+These work in the note field of the card that opens when you pick an element in [Browser Design Mode](./browser-design-mode). `Cmd+Shift+C` / `Ctrl+Shift+C` (in the table above) turns the mode itself on and off.
+
+| Action                                    | macOS         | Windows/Linux |
+| ----------------------------------------- | ------------- | ------------- |
+| Add to the message and go to the chat     | `Enter`       | `Enter`       |
+| Add to the message and keep picking       | `Cmd+Enter`   | `Ctrl+Enter`  |
+| Queue as its own message and keep picking | `Opt+Enter`   | `Alt+Enter`   |
+| New line in the note                      | `Shift+Enter` | `Shift+Enter` |
+
+A queued pick goes to the agent's [execution queue](./general-usage#message-queue) as a separate message and leaves your message box alone. The **Queue** button on the card does the same.
+
 ### Tab Switcher
 
 The Tab Switcher provides fuzzy search across all open tabs with quick navigation:

@@ -163,6 +163,7 @@ interface BrowserPickOptions {
 	agent?: string;
 	background?: boolean;
 	focus?: boolean;
+	queue?: boolean;
 	json?: boolean;
 }
 
@@ -176,6 +177,7 @@ interface BrowserPickResult {
 	screenshot?: boolean;
 	aiTabId?: string;
 	pickId?: string;
+	queueItemId?: string;
 	background?: boolean;
 }
 
@@ -193,6 +195,12 @@ const BROWSER_PICK_CLI_TIMEOUT_MS = BROWSER_PICK_TIMEOUT_MS + 5_000;
  *
  * The chip is for the person at the composer; the caller gets the full block
  * the chip adds to the message at send, and the chip's id for `browser-picks`.
+ *
+ * `--queue` is the pick card's Queue button: the element goes out as its own
+ * message on the agent's execution queue (an idle agent starts it, a busy one
+ * runs it after its turn) and no chip is staged. The composer and the view stay
+ * as they are, so the caller gets the queue item's id for `queue remove`
+ * instead of a chip id, and the same block.
  */
 export async function browserPick(tab: string, options: BrowserPickOptions): Promise<void> {
 	const fail = (error: string): never => {
@@ -228,6 +236,7 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 					selector,
 					...(options.note ? { note: options.note } : {}),
 					background,
+					...(options.queue ? { queue: true } : {}),
 				},
 				'pick_browser_element_result',
 				BROWSER_PICK_CLI_TIMEOUT_MS
@@ -248,6 +257,7 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 				browserId: result.browserId ?? null,
 				aiTabId: result.aiTabId ?? null,
 				pickId: result.pickId ?? null,
+				queueItemId: result.queueItemId ?? null,
 				selector,
 				screenshot: result.screenshot === true,
 				background,
@@ -256,14 +266,23 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 		);
 		return;
 	}
-	console.log(
-		`Added ${selector} from ${tabRef} to the composer of tab ${result.aiTabId ?? 'unknown'}${
-			background ? ' (background)' : ''
-		}`
-	);
-	// The chip id is the handle for `browser-picks --remove`; a plain-mode
-	// caller should not need --json to get it.
-	if (result.pickId) console.log(`  Chip: ${result.pickId}`);
+	if (options.queue) {
+		// Nothing moved, so there is no "(background)" to report.
+		console.log(
+			`Queued ${selector} from ${tabRef} for tab ${result.aiTabId ?? 'unknown'} as its own message`
+		);
+		// The handle for `queue remove`, like the chip id below.
+		if (result.queueItemId) console.log(`  Queue item: ${result.queueItemId}`);
+	} else {
+		console.log(
+			`Added ${selector} from ${tabRef} to the composer of tab ${result.aiTabId ?? 'unknown'}${
+				background ? ' (background)' : ''
+			}`
+		);
+		// The chip id is the handle for `browser-picks --remove`; a plain-mode
+		// caller should not need --json to get it.
+		if (result.pickId) console.log(`  Chip: ${result.pickId}`);
+	}
 	if (result.browserId) console.log(`  Coworking id: ${result.browserId}`);
 	console.log(`  Screenshot: ${result.screenshot ? 'attached' : 'none'}`);
 	// The chip in the composer is short; the caller gets what it adds at send.

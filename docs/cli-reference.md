@@ -604,6 +604,7 @@ Add an element of a browser tab to the agent's message, as Design Mode does (tab
 | `-a, --agent <id>`     | Agent that owns the tab (defaults to active)            | -       |
 | `--background`         | Add it without switching the view to the AI tab         | -       |
 | `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
+| `--queue`              | Queue it as its own message instead of a chip           | -       |
 | `--json`               | Output as JSON (for scripting)                          | -       |
 
 ## `maestro-cli browser-picks`

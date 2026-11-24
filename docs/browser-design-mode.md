@@ -22,6 +22,18 @@ Maestro adds a chip for the element above the agent's message box and switches y
 
 To pick several elements for one message, press `Cmd+Enter` / `Ctrl+Enter` (or **Add and Pick Another**) instead. The chip is added and you stay in Design Mode to pick the next one. Each pick is its own chip.
 
+### Queue a pick
+
+To line up a fix without waiting for the agent, press `Opt+Enter` / `Alt+Enter` in the note (or click **Queue**, left of **Add and Pick Another**). The pick does not become a chip. It is sent as its own message to the agent's [execution queue](./general-usage#message-queue): the same element block, your note, and the cropped screenshot. A flash in the middle of the window says `Queued for <tab name>`, and you stay in Design Mode, so you can pick the next element and queue that too.
+
+- **An idle agent** starts on the message right away.
+- **A busy agent** runs it when its current turn ends, after anything already queued ahead of it.
+- **Your message box is left alone.** The text you are typing, the images and the chips you have staged there do not change, and Maestro does not switch you to the chat.
+- **Where it goes.** The same tab a chip would land in: the agent's active AI tab, or the AI pane of the tiled group on screen.
+- **Page text cannot call in another agent.** A queued pick is not read for `@mentions`, so text on the page that looks like one does nothing.
+
+Each queued pick is a separate message, so edit, hold, reorder or remove it from the queue like any other. If the agent has no AI tab, nothing is queued and Maestro tells you so.
+
 While Design Mode is on, the page does not receive your clicks, so picking a button does not press it. You can still scroll with the mouse wheel or trackpad. The page's own hover effects do not show while you pick.
 
 ### Keys
@@ -35,6 +47,7 @@ While Design Mode is on, the page does not receive your clicks, so picking a but
 | `Esc`                              | Close the pick card, or leave Design Mode    |
 | `Enter` in the note                | Add to the message and go to the chat        |
 | `Cmd+Enter` / `Ctrl+Enter` in note | Add to the message and keep picking          |
+| `Opt+Enter` / `Alt+Enter` in note  | Queue as its own message and keep picking    |
 | `Shift+Enter` in the note          | New line                                     |
 
 You can do it all without a mouse: when Design Mode turns on, the element at the center of the page is outlined, and the arrow keys walk up and down from there. Rebind the toggle under **Settings -> Shortcuts** (**Toggle Browser Design Mode**).
@@ -108,6 +121,13 @@ maestro-cli browser-pick <tab> --selector "section.hero button.cta" \
 
 The chip is for the person at the message box. The caller gets what the chip adds to the message at send, note included. Plain output prints a summary (the AI tab, the chip id, the Coworking id, and whether a screenshot was attached), then the full block. `--json` returns the block as `text`, the chip id as `pickId`, the AI tab it went to, the tab's Coworking id, and whether a screenshot was attached. `--background` stages the chip without switching the visible tab. A tab hidden from agents (the eye button in the address bar) cannot be picked this way.
 
+Add `--queue` to send the pick as its own queued message instead, as the **Queue** button does. No chip is staged, the message box is not touched, and the view does not move (so `--background` changes nothing). The caller still gets the block. `--json` returns the queued message's id as `queueItemId` (with `pickId` set to `null`), and plain output prints it as `Queue item:`. Read it back with `maestro-cli queue list --agent <id>`, and take it out of the queue with `maestro-cli queue remove <id> --agent <id>`:
+
+```bash
+maestro-cli browser-pick <tab> --selector "section.hero button.cta" \
+  --note "Make this match the brand purple" --queue --json
+```
+
 `maestro-cli browser-picks` lists the chips waiting in an agent's message box, in the order they will be sent. `--remove` takes one off, as the chip's X does:
 
 ```bash
@@ -122,6 +142,6 @@ Both forms act on the AI tab that a new pick lands in (the active AI tab, or the
 
 ## Privacy and safety
 
-- Design Mode only reads the element you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself.
+- Design Mode only reads the element you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself or press **Queue**, which sends that one pick as its own message.
 - The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.

@@ -64,6 +64,7 @@ export async function pickBrowserElement(
 		selector,
 		...(request.note ? { note: request.note } : {}),
 		background: request.background === true,
+		...(request.queue === true ? { queue: true } : {}),
 	};
 	// The resolver rejects with the renderer's message when the op fails
 	// (tab not live, no element matches the selector, no AI tab to take it).
@@ -88,6 +89,7 @@ export async function pickBrowserElement(
 		screenshot: !!result.dataUrl,
 		...(result.aiTabId ? { aiTabId: result.aiTabId } : {}),
 		...(result.ok && result.pickId ? { pickId: result.pickId } : {}),
+		...(result.ok && result.queueItemId ? { queueItemId: result.queueItemId } : {}),
 	};
 }
 
