@@ -19,6 +19,7 @@ import {
 	designPickLabel,
 	expandDesignPicks,
 	filterDesignStyles,
+	parseDesignModePassthrough,
 	parseDesignModePick,
 	parseDesignModeProbe,
 	type DesignModeGuestAccess,
@@ -396,6 +397,188 @@ describe('guest helper', () => {
 	});
 });
 
+describe('guest helper: the Space watch (hold Space to use the page)', () => {
+	type Report = {
+		point: { x: number; y: number } | null;
+		viewport: { width: number; height: number };
+	};
+	// What the page's own listeners saw, the way a site registers them.
+	let seen: string[];
+	const record = (event: Event) => {
+		const key = event as KeyboardEvent;
+		seen.push(`${key.type}:${key.code}${key.repeat ? ':repeat' : ''}`);
+	};
+
+	beforeEach(() => {
+		seen = [];
+		document.addEventListener('keydown', record);
+		document.addEventListener('keyup', record);
+	});
+
+	afterEach(() => {
+		document.removeEventListener('keydown', record);
+		document.removeEventListener('keyup', record);
+		// Close a watch a test left open, so it cannot swallow the next test's keys.
+		runGuest({ type: 'endPassthrough' });
+	});
+
+	/** A real key event in the page; Space unless `init` says otherwise. */
+	function key(type: 'keydown' | 'keyup', init: KeyboardEventInit = {}): KeyboardEvent {
+		const event = new KeyboardEvent(type, {
+			key: ' ',
+			code: 'Space',
+			bubbles: true,
+			cancelable: true,
+			...init,
+		});
+		document.body.dispatchEvent(event);
+		return event;
+	}
+
+	function movePointer(x: number, y: number) {
+		document.body.dispatchEvent(
+			new MouseEvent('mousemove', { clientX: x, clientY: y, bubbles: true })
+		);
+	}
+
+	/** Start a watch; `settled()` is its report once the watch has ended. */
+	function watch() {
+		let settled: Report | undefined;
+		const reply = (runGuest({ type: 'passthrough' }) as Promise<Report>).then((report) => {
+			settled = report;
+			return report;
+		});
+		return { reply, settled: () => settled };
+	}
+
+	const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+
+	it('swallows the held Space until its release, then reports where the pointer last was', async () => {
+		const { reply } = watch();
+		// Its auto-repeat would scroll the page; its keyup would click a focused button.
+		expect(key('keydown', { repeat: true }).defaultPrevented).toBe(true);
+		movePointer(12, 34);
+		expect(key('keyup').defaultPrevented).toBe(true);
+		expect(seen).toEqual([]);
+		await expect(reply).resolves.toEqual({ point: { x: 12, y: 34 }, viewport: viewport() });
+
+		// One keyup at most: the next Space is the page's own again.
+		expect(key('keyup').defaultPrevented).toBe(false);
+		expect(seen).toEqual(['keyup:Space']);
+	});
+
+	it('lets a fresh press and every other key through', () => {
+		const { settled } = watch();
+		const passed = [
+			key('keydown'),
+			key('keydown', { key: 'a', code: 'KeyA', repeat: true }),
+			key('keyup', { key: 'a', code: 'KeyA' }),
+		];
+		expect(passed.map((event) => event.defaultPrevented)).toEqual([false, false, false]);
+		expect(seen).toEqual(['keydown:Space', 'keydown:KeyA:repeat', 'keyup:KeyA']);
+		expect(settled()).toBeUndefined();
+	});
+
+	it('endPassthrough ends the watch from the host and returns the same report', async () => {
+		expect(runGuest({ type: 'endPassthrough' })).toBeNull();
+
+		const { reply } = watch();
+		movePointer(5, 6);
+		const ended = runGuest({ type: 'endPassthrough' });
+		expect(ended).toEqual({ point: { x: 5, y: 6 }, viewport: viewport() });
+		await expect(reply).resolves.toEqual(ended);
+
+		// Nothing is swallowed any more.
+		key('keydown', { repeat: true });
+		key('keyup');
+		expect(seen).toEqual(['keydown:Space:repeat', 'keyup:Space']);
+		expect(runGuest({ type: 'endPassthrough' })).toBeNull();
+	});
+
+	it('a new watch replaces an open one', async () => {
+		const first = watch();
+		const second = watch();
+		await expect(first.reply).resolves.toEqual({ point: null, viewport: viewport() });
+		expect(second.settled()).toBeUndefined();
+
+		key('keyup');
+		await expect(second.reply).resolves.toEqual({ point: null, viewport: viewport() });
+		// One set of listeners: the release was swallowed once, and the page saw nothing.
+		expect(seen).toEqual([]);
+	});
+
+	it('ends when the page loses focus, not when focus moves within it', async () => {
+		const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+		const field = document.createElement('input');
+		try {
+			const { reply, settled } = watch();
+			// Focus moving between the page's own fields, or into one of its
+			// frames, which also blurs the window: the page still has focus.
+			document.body.appendChild(field);
+			field.focus();
+			field.blur();
+			window.dispatchEvent(new FocusEvent('blur'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(settled()).toBeUndefined();
+
+			// The app lost focus (Cmd+Tab): the release will land elsewhere.
+			hasFocus.mockReturnValue(false);
+			window.dispatchEvent(new FocusEvent('blur'));
+			await expect(reply).resolves.toEqual({ point: null, viewport: viewport() });
+		} finally {
+			field.remove();
+			hasFocus.mockRestore();
+		}
+	});
+});
+
+describe('parseDesignModePassthrough', () => {
+	const viewport = { width: 800, height: 600 };
+
+	it('reads the point and the viewport', () => {
+		expect(parseDesignModePassthrough({ point: { x: 12, y: 34 }, viewport })).toEqual({
+			point: { x: 12, y: 34 },
+			viewport,
+		});
+		expect(parseDesignModePassthrough({ point: null, viewport })).toEqual({
+			point: null,
+			viewport,
+		});
+	});
+
+	it('is null when no watch was open or the reply is not an object', () => {
+		for (const value of [null, undefined, true, 7, 'released']) {
+			expect(parseDesignModePassthrough(value)).toBeNull();
+		}
+	});
+
+	it('drops a point that is not two finite numbers, or has no viewport to place it with', () => {
+		for (const point of [
+			'12,34',
+			{ x: '12', y: 34 },
+			{ x: 12 },
+			{ x: Number.NaN, y: 34 },
+			{ x: 12, y: Number.POSITIVE_INFINITY },
+		]) {
+			expect(parseDesignModePassthrough({ point, viewport })).toEqual({ point: null, viewport });
+		}
+		expect(parseDesignModePassthrough({ point: { x: 12, y: 34 } })).toEqual({
+			point: null,
+			viewport: null,
+		});
+		expect(
+			parseDesignModePassthrough({ point: { x: 12, y: 34 }, viewport: { width: 0, height: 600 } })
+		).toEqual({ point: null, viewport: null });
+	});
+
+	it('clamps the point into the viewport', () => {
+		expect(parseDesignModePassthrough({ point: { x: -40, y: 9e9 }, viewport })).toEqual({
+			point: { x: 0, y: 600 },
+			viewport,
+		});
+	});
+});
+
 describe('parseDesignModePick', () => {
 	it('keeps only the curated style properties', () => {
 		const pick = parseDesignModePick({
@@ -701,6 +884,8 @@ describe('captureDesignPick', () => {
 			run: vi.fn(async () => makePick()),
 			zoom: () => 2,
 			capture: vi.fn(async () => `data:image/png;base64,${'A'.repeat(100)}`),
+			focused: () => false,
+			blur: vi.fn(),
 			...overrides,
 		};
 	}

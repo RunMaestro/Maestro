@@ -21,6 +21,11 @@
  * adds and keeps picking, Alt/Option+Enter queues the pick as its own message
  * and keeps picking, Shift+Enter is a newline.
  *
+ * Hold Space to use the page (click a link, scroll, type): the overlay lets
+ * the pointer through to the page and hides its outline, and picking resumes
+ * when Space is released. Space in the note or on a focused control is an
+ * ordinary key. How the release is heard is explained above `startPassthrough`.
+ *
  * Queue (`onQueue`) is for the user who lines up many fixes while the agent
  * works: the pick goes to the agent's execution queue as a message of its own,
  * and the draft is not touched. Like "Add and Pick Another" it stays in Design
@@ -35,20 +40,23 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ImageOff, MousePointerClick } from 'lucide-react';
+import { Hand, ImageOff, MousePointerClick } from 'lucide-react';
 import type { Theme } from '../../types';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { Spinner } from '../ui/Spinner';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import {
 	captureDesignPick,
 	designOverlayScale,
+	parseDesignModePassthrough,
 	parseDesignModeProbe,
 	type DesignModeFrame,
 	type DesignModeCapture,
 	type DesignModeGuestAccess,
+	type DesignModePassthroughReport,
 	type DesignModeProbe,
 	type DesignModeRect,
 } from '../../utils/designModePicker';
@@ -83,6 +91,26 @@ interface Point {
 	x: number;
 	y: number;
 }
+
+/**
+ * Hold Space to use the page. 'page': Space is down and the page gets the
+ * pointer. 'away': Space is still down, but the pointer was seen outside the
+ * page, so the layer takes the pointer back to notice its return.
+ */
+type Passthrough = 'off' | 'page' | 'away';
+
+/** The space bar, on any layout and with any modifiers. */
+function isSpaceKey(event: { key: string; code: string }): boolean {
+	return event.key === ' ' || event.code === 'Space';
+}
+
+/**
+ * An auto-repeat of Space heard this recently means the key is still down.
+ * Repeats come every 30-90 ms at the usual settings; a slower setting only
+ * makes the fallback resume picking early, and the next repeat starts using
+ * the page again.
+ */
+const SPACE_STILL_HELD_MS = 500;
 
 /** A guest CSS box scaled to overlay (webview DIP) pixels. */
 function toLayerRect(rect: DesignModeRect, scale: number): DesignModeRect {
@@ -128,6 +156,19 @@ export function BrowserDesignModeLayer({
 	const [note, setNote] = useState('');
 	const [delivering, setDelivering] = useState(false);
 	const [missed, setMissed] = useState(false);
+	// Hold Space to use the page. The state drives the render; handlers read
+	// the ref, which moves at once.
+	const [passthrough, setPassthroughState] = useState<Passthrough>('off');
+	const passthroughRef = useRef<Passthrough>('off');
+	// Bumped on every start and end, so a guest reply can only end the
+	// passthrough that asked for it.
+	const passthroughSeqRef = useRef(0);
+	// When the layer last heard Space auto-repeat (see SPACE_STILL_HELD_MS).
+	const spaceRepeatAtRef = useRef(0);
+	const setPassthrough = useCallback((next: Passthrough) => {
+		passthroughRef.current = next;
+		setPassthroughState(next);
+	}, []);
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -149,6 +190,9 @@ export function BrowserDesignModeLayer({
 	// the newest point and depth instead of queueing one per mousemove.
 	const probe = useCallback(async () => {
 		probeSeqRef.current += 1;
+		// While the page has the pointer there is no outline to draw (the bump
+		// above still drops a reply in flight).
+		if (passthroughRef.current !== 'off') return;
 		pendingProbeRef.current = true;
 		if (probeInFlightRef.current) return;
 		probeInFlightRef.current = true;
@@ -193,6 +237,163 @@ export function BrowserDesignModeLayer({
 		layerRef.current?.focus({ preventScroll: true });
 	}, []);
 
+	// Keyboard focus back on the layer after using the page: from the page (the
+	// user clicked into it) or from nowhere, never from a host control the user
+	// is in (the address bar).
+	const reclaimFocus = useCallback(() => {
+		const access = accessRef.current;
+		const fromPage = access.focused();
+		if (fromPage) access.blur();
+		const active = document.activeElement;
+		if (fromPage || !active || active === document.body) focusLayer();
+	}, [focusLayer]);
+
+	// Where the page last saw the pointer, as an overlay point. The layer hears
+	// no moves while the page has the pointer, so only the page knows.
+	const layerPointFrom = useCallback(
+		(report: DesignModePassthroughReport | null): Point | null => {
+			if (!report?.point) return null;
+			const scale = designOverlayScale(layerFrame(), report.viewport);
+			return { x: report.point.x * scale, y: report.point.y * scale };
+		},
+		[layerFrame]
+	);
+
+	// Back to picking, from the element under the pointer.
+	const resumePicking = useCallback(
+		(report: DesignModePassthroughReport | null) => {
+			const point = layerPointFrom(report);
+			if (point) pointRef.current = point;
+			depthRef.current = 0;
+			void probe();
+		},
+		[layerPointFrom, probe]
+	);
+
+	// The page stops watching (and swallowing) Space. Null when it could not be
+	// asked or had no watch open.
+	const endGuestWatch = useCallback(
+		(): Promise<DesignModePassthroughReport | null> =>
+			accessRef.current
+				.run({ type: 'endPassthrough' })
+				.then(parseDesignModePassthrough, () => null),
+		[]
+	);
+
+	const stopPassthrough = useCallback(() => {
+		passthroughSeqRef.current += 1;
+		setPassthrough('off');
+		reclaimFocus();
+	}, [setPassthrough, reclaimFocus]);
+
+	// Hold Space to use the page. While Space is down the layer stops taking
+	// the pointer (`pointer-events: none`), so the page gets clicks, hovers and
+	// the wheel, and the outline is hidden. Hearing the release is the hard
+	// part: once the user clicks into the page, keyboard focus is in the guest,
+	// whose keys never reach this document. The smallest mix that covers it:
+	//  1. A host keyup (window, capture): focus stayed in this document (the
+	//     user hovered or scrolled the page without clicking into it).
+	//  2. The page's Space watch (`passthrough` in designModeGuestCall): the
+	//     page reports the release, and swallows the held key meanwhile. A page
+	//     can answer early or never; a reply only ENDS passthrough, never picks.
+	//  3. A host window blur while the page does not hold focus: the app lost
+	//     focus, so the release lands in another app. (The watch ends on the
+	//     page's own blur.)
+	//  4. A finished page load: the document that watched for the release is
+	//     gone with the old page.
+	//  5. The fallback: once the host sees the pointer outside the page, the
+	//     layer takes the pointer back, and the next move over it resumes
+	//     picking, with Space up. Space is known to be down only while the
+	//     layer hears it auto-repeat, and then its release reaches 1, so the
+	//     page just gets the pointer back.
+	// Every end takes keyboard focus back from the page (or from nowhere), so a
+	// Space still held starts it again on its next auto-repeat, and that release
+	// comes through 1. Not used: the browser-tab shortcut forwarding
+	// (onBrowserTabShortcutKey) carries modifier chords on keydown with no tab
+	// identity, so a bare Space keyup there would mean an IPC message for every
+	// space typed in any browser tab.
+	const startPassthrough = useCallback(() => {
+		const session = ++passthroughSeqRef.current;
+		// Drop a probe reply in flight: it would outline an element over the page.
+		probeSeqRef.current += 1;
+		setPassthrough('page');
+		setHover(null);
+		setMissed(false);
+		void accessRef.current.run({ type: 'passthrough' }).then(
+			(reply) => {
+				if (!mountedRef.current || passthroughSeqRef.current !== session) return;
+				stopPassthrough();
+				resumePicking(parseDesignModePassthrough(reply));
+			},
+			// The page could not be asked (mid-navigation): 1, 3, 4 and 5 still
+			// end it.
+			() => undefined
+		);
+	}, [setPassthrough, stopPassthrough, resumePicking]);
+
+	// The host heard the release (1, 3, 4). Resume at once at the last point,
+	// then move to where the page saw the pointer, unless the user moved it over
+	// the layer meanwhile.
+	const endPassthroughHere = useCallback(() => {
+		if (passthroughRef.current === 'off') return;
+		stopPassthrough();
+		resumePicking(null);
+		const seq = probeSeqRef.current;
+		void endGuestWatch().then((report) => {
+			if (mountedRef.current && probeSeqRef.current === seq && layerPointFrom(report)) {
+				resumePicking(report);
+			}
+		});
+	}, [stopPassthrough, resumePicking, endGuestWatch, layerPointFrom]);
+
+	// 1. Always attached, so a quick tap (its keyup before the next render) is
+	// heard too.
+	useEventListener(
+		'keyup',
+		(event) => {
+			if (passthroughRef.current === 'off' || !isSpaceKey(event as KeyboardEvent)) return;
+			endPassthroughHere();
+		},
+		{ capture: true }
+	);
+
+	// 3. Clicking into the page may blur this window too, so decide once focus
+	// has settled: only a window whose page does not hold focus ends it.
+	useEventListener('blur', (event) => {
+		if (event.target !== window || passthroughRef.current === 'off') return;
+		const session = passthroughSeqRef.current;
+		window.setTimeout(() => {
+			if (!mountedRef.current || passthroughSeqRef.current !== session) return;
+			if (!accessRef.current.focused()) endPassthroughHere();
+		}, 0);
+	});
+
+	// 5. The host sees the pointer only where the page is not, so a move outside
+	// the layer means the pointer left the page.
+	useEventListener(
+		'mousemove',
+		(event) => {
+			const layer = layerRef.current;
+			if (!layer || passthroughRef.current !== 'page') return;
+			const { target, clientX, clientY } = event as MouseEvent;
+			if (target instanceof Node && layer.contains(target)) return;
+			const box = layer.getBoundingClientRect();
+			const over =
+				clientX >= box.left && clientX < box.right && clientY >= box.top && clientY < box.bottom;
+			if (!over) setPassthrough('away');
+		},
+		{ capture: true, enabled: passthrough === 'page' }
+	);
+
+	// Gone while Space is down (Escape, a tab switch): the page must not keep
+	// swallowing Space.
+	useEffect(
+		() => () => {
+			if (passthroughRef.current !== 'off') void endGuestWatch();
+		},
+		[endGuestWatch]
+	);
+
 	// Start at the center so a keyboard-only user has an element to walk from.
 	useEffect(() => {
 		const layer = layerRef.current;
@@ -212,12 +413,19 @@ export function BrowserDesignModeLayer({
 	useEffect(() => {
 		if (seenPageLoadRef.current === pageLoadCount) return;
 		seenPageLoadRef.current = pageLoadCount;
-		depthRef.current = 0;
 		setMissed(false);
+		// 4. A load while the user holds Space (they clicked a link): the old
+		// page's Space watch is gone, so the load ends it. That also takes focus
+		// back from the page, where the click left it.
+		if (passthroughRef.current !== 'off') {
+			endPassthroughHere();
+			return;
+		}
+		depthRef.current = 0;
 		const active = document.activeElement;
 		if (!active || active === document.body) focusLayer();
 		void probe();
-	}, [pageLoadCount, focusLayer, probe]);
+	}, [pageLoadCount, focusLayer, probe, endPassthroughHere]);
 
 	useEffect(() => {
 		if (card) noteRef.current?.focus();
@@ -334,14 +542,29 @@ export function BrowserDesignModeLayer({
 			return; // Otherwise the card's own handlers own the keyboard.
 		}
 		const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
-		// Enter and the arrows act on the page only when the layer itself has
-		// focus; on a focused control (the banner's ESC pill) they keep their
+		// Enter, Space and the arrows act on the page only when the layer itself
+		// has focus; on a focused control (the banner's ESC pill) they keep their
 		// native meaning, so Enter on that pill exits rather than picks.
 		const onLayer = event.target === event.currentTarget;
+		if (isSpaceKey(event) && plain && onLayer) {
+			// Every press and auto-repeat is taken, so nothing behind the layer
+			// scrolls. A repeat starts it too: that is a Space still held after
+			// an end (see startPassthrough). Never during a pick in flight, whose
+			// card would open under a layer that lets clicks through.
+			event.preventDefault();
+			event.stopPropagation();
+			if (event.repeat) spaceRepeatAtRef.current = Date.now();
+			if (passthroughRef.current === 'off' && !pickingRef.current) startPassthrough();
+			return;
+		}
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			event.stopPropagation();
 			onExit();
+		} else if (passthroughRef.current !== 'off') {
+			// Using the page: Enter and the arrows wait for the release, as there
+			// is no outline to act on.
+			return;
 		} else if (event.key === 'Enter' && plain && onLayer) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -381,11 +604,13 @@ export function BrowserDesignModeLayer({
 		}
 	};
 
-	// While the card is open the outline stays on the picked element.
+	// While the card is open the outline stays on the picked element. While the
+	// user holds Space there is none: the page is in use.
+	const usingPage = passthrough !== 'off';
 	const scaleNow = card ? card.scale : (hover?.scale ?? 1);
 	const outline = card
 		? toLayerRect(card.pick.rect, card.scale)
-		: hover
+		: hover && !usingPage
 			? toLayerRect(hover.probe.rect, hover.scale)
 			: null;
 	const outlineLabel = card ? card.pick.tagName : hover?.probe.label;
@@ -397,14 +622,35 @@ export function BrowserDesignModeLayer({
 			ref={layerRef}
 			tabIndex={0}
 			role="application"
-			aria-label="Design Mode: pick an element in the page"
+			aria-label={
+				usingPage ? 'Design Mode: using the page' : 'Design Mode: pick an element in the page'
+			}
 			className="absolute inset-0 z-10 outline-none select-none"
-			style={{ cursor: card ? 'default' : 'crosshair' }}
+			// Using the page: clicks, hovers and the wheel go through to the page.
+			style={{
+				cursor: card ? 'default' : 'crosshair',
+				pointerEvents: passthrough === 'page' ? 'none' : undefined,
+			}}
 			data-browser-design-mode=""
 			data-testid="browser-tab-design-mode-layer"
 			onKeyDown={handleLayerKeyDown}
 			onMouseMove={(event) => {
 				if (card) return;
+				// The page has the pointer (in the app the layer does not even
+				// hear this move).
+				if (passthroughRef.current === 'page') return;
+				if (passthroughRef.current === 'away') {
+					// 5. The pointer is back from outside. Still repeating here:
+					// Space is down, so the page gets the pointer again.
+					if (Date.now() - spaceRepeatAtRef.current < SPACE_STILL_HELD_MS) {
+						setPassthrough('page');
+						return;
+					}
+					// Otherwise resume picking here. A Space still held (its repeats
+					// went to the page) starts it again on its next auto-repeat.
+					stopPassthrough();
+					void endGuestWatch();
+				}
 				const point = pointFromEvent(event);
 				if (!point) return;
 				pointRef.current = point;
@@ -414,12 +660,12 @@ export function BrowserDesignModeLayer({
 			}}
 			onMouseDown={(event) => {
 				// Keep focus on the layer (a click must not land in the webview).
-				if (card) return;
+				if (card || passthroughRef.current !== 'off') return;
 				event.preventDefault();
 				focusLayer();
 			}}
 			onClick={(event) => {
-				if (card || event.button !== 0) return;
+				if (card || passthroughRef.current !== 'off' || event.button !== 0) return;
 				const point = pointFromEvent(event);
 				if (!point) return;
 				// Resolve the element at the click itself: the pointer may have
@@ -429,7 +675,7 @@ export function BrowserDesignModeLayer({
 			}}
 			onContextMenu={(event) => event.preventDefault()}
 			onWheel={(event) => {
-				if (card) return;
+				if (card || passthroughRef.current !== 'off') return;
 				const point = pointFromEvent(event);
 				if (!point) return;
 				const frame = layerFrame();
@@ -501,12 +747,23 @@ export function BrowserDesignModeLayer({
 			>
 				{picking ? (
 					<Spinner size={14} color={theme.colors.accent} />
+				) : usingPage ? (
+					<Hand className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 				) : (
 					<MousePointerClick className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 				)}
 				<span className="truncate">
-					{missed ? 'Nothing to pick there.' : 'Design Mode: click an element.'}
-					<span style={{ color: theme.colors.textDim }}> Arrows: parent / child. Enter: pick.</span>
+					{usingPage ? (
+						'Using the page - release Space to pick'
+					) : (
+						<>
+							{missed ? 'Nothing to pick there.' : 'Design Mode: click an element.'}
+							<span style={{ color: theme.colors.textDim }}>
+								{' '}
+								Arrows: parent / child. Enter: pick.
+							</span>
+						</>
+					)}
 				</span>
 				<EscCloseButton
 					theme={theme}

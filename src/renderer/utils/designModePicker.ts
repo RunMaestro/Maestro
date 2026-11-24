@@ -14,9 +14,15 @@
  * still type-checked and length-capped here, and the prompt labels the HTML as
  * page content.
  *
+ * One reply is timed by the page: `passthrough` (hold Space to use the page)
+ * resolves when the page reports Space released. A page can answer early or
+ * never. Either way the reply can only END passthrough, never pick, and the
+ * host has its own signals for the release (see BrowserDesignModeLayer).
+ *
  * Pure so it can be tested without a webview:
  *  1. {@link designModeGuestCall}: the guest helper, invoked per request.
- *  2. {@link parseDesignModeProbe} / {@link parseDesignModePick}: reply parsers.
+ *  2. {@link parseDesignModeProbe} / {@link parseDesignModePick} /
+ *     {@link parseDesignModePassthrough}: reply parsers.
  *  3. {@link designPickCropRect}, {@link filterDesignStyles},
  *     {@link buildDesignModePrompt}: the payload assembler.
  *  4. {@link designPickLabel}, {@link designPickBlock}: the composer chip's
@@ -182,17 +188,28 @@ export interface DesignModeFrame {
 	height: number;
 }
 
-/** A request the host sends to the guest helper. Points are overlay pixels. */
+/**
+ * A request the host sends to the guest helper. Points are overlay pixels.
+ *
+ * `passthrough` starts the page's watch for the release of a held Space and
+ * resolves with a {@link DesignModePassthroughReport} when the watch ends;
+ * `endPassthrough` ends it from the host and returns the same report (null
+ * when no watch was open).
+ */
 export type DesignModeGuestRequest =
 	| { type: 'probe'; x: number; y: number; depth: number; frame: DesignModeFrame }
 	| { type: 'describe'; x: number; y: number; depth: number; frame: DesignModeFrame }
 	| { type: 'describeSelector'; selector: string }
-	| { type: 'scroll'; x: number; y: number; dx: number; dy: number; frame: DesignModeFrame };
+	| { type: 'scroll'; x: number; y: number; dx: number; dy: number; frame: DesignModeFrame }
+	| { type: 'passthrough' }
+	| { type: 'endPassthrough' };
 
 /**
  * The guest helper, as a function expression. It keeps no state between calls
  * (each request re-resolves the element from its point), so an SPA re-render
- * between hover and click cannot leave it holding a detached node.
+ * between hover and click cannot leave it holding a detached node. The one
+ * exception is the Space watch (`passthrough`), which lives on the page's
+ * window until it ends.
  */
 const GUEST_HELPER = `function(req){
 	var MAX_HTML=${DESIGN_MODE_MAX_HTML_CHARS};
@@ -347,6 +364,52 @@ const GUEST_HELPER = `function(req){
 		}
 		return document.scrollingElement||document.documentElement;
 	}
+	// Hold Space to use the page. Once the user clicks into the page its keys
+	// never reach the host, so this watch reports the release (the call
+	// resolves) and swallows the held key meanwhile: its auto-repeat would
+	// scroll the page, and a Space keyup on a focused button or checkbox clicks
+	// it. A fresh press and every other key pass. It ends at the release, when
+	// the page loses focus, or on endPassthrough, so it swallows one keyup at
+	// most. isTrusted is not checked: the page shares this world and could end
+	// the watch anyway, and an end can only resume picking.
+	var WATCH='__maestroDesignPassthrough';
+	if(req.type==='endPassthrough'){
+		var open=window[WATCH];
+		return open&&typeof open.end==='function'?open.end():null;
+	}
+	if(req.type==='passthrough'){
+		var prior=window[WATCH];
+		if(prior&&typeof prior.end==='function')prior.end();
+		return new Promise(function(resolve){
+			var point=null,report=null,watch={end:end};
+			function isSpace(e){return e.code==='Space'||e.key===' ';}
+			function down(e){if(isSpace(e)&&e.repeat){e.preventDefault();e.stopImmediatePropagation();}}
+			function up(e){if(!isSpace(e))return;e.preventDefault();e.stopImmediatePropagation();end();}
+			function move(e){point={x:e.clientX,y:e.clientY};}
+			// The window also blurs when focus moves into one of the page's own
+			// frames; only a page that lost focus altogether ends the watch.
+			function blur(e){
+				if(e.target!==window)return;
+				setTimeout(function(){if(!document.hasFocus())end();},0);
+			}
+			function end(){
+				if(report)return report;
+				window.removeEventListener('keydown',down,true);
+				window.removeEventListener('keyup',up,true);
+				window.removeEventListener('mousemove',move,true);
+				window.removeEventListener('blur',blur);
+				if(window[WATCH]===watch)window[WATCH]=null;
+				report={point:point,viewport:{width:window.innerWidth,height:window.innerHeight}};
+				resolve(report);
+				return report;
+			}
+			window[WATCH]=watch;
+			window.addEventListener('keydown',down,true);
+			window.addEventListener('keyup',up,true);
+			window.addEventListener('mousemove',move,true);
+			window.addEventListener('blur',blur);
+		});
+	}
 	if(req.type==='describeSelector'){
 		var found;
 		try{found=query(req.selector);}catch(e){return {error:'invalid-selector'};}
@@ -468,6 +531,38 @@ export function parseDesignModeProbe(value: unknown): DesignModeProbe | null {
 	if (!rect || typeof p.label !== 'string') return null;
 	const depth = isFiniteNumber(p.depth) && p.depth >= 0 ? Math.floor(p.depth) : 0;
 	return { rect, label: oneLine(p.label, 200), depth, viewport: readViewport(p.viewport) };
+}
+
+/** What the page reports when its Space watch (`passthrough`) ends. */
+export interface DesignModePassthroughReport {
+	/**
+	 * Where the pointer last moved over the page, guest CSS pixels inside the
+	 * viewport. Null when it did not move there (or the reply had no viewport
+	 * to place it with).
+	 */
+	point: { x: number; y: number } | null;
+	/** The guest viewport, CSS pixels, for scaling `point` onto the overlay. */
+	viewport: { width: number; height: number } | null;
+}
+
+/**
+ * Parse the report a `passthrough` watch ends with (also what `endPassthrough`
+ * returns). Null when there was no watch or the reply is malformed. It is page
+ * data: a point must be two finite numbers and is clamped into the viewport.
+ */
+export function parseDesignModePassthrough(value: unknown): DesignModePassthroughReport | null {
+	if (!value || typeof value !== 'object') return null;
+	const r = value as Record<string, unknown>;
+	const viewport = readViewport(r.viewport);
+	const p = r.point && typeof r.point === 'object' ? (r.point as Record<string, unknown>) : null;
+	const point =
+		viewport && p && isFiniteNumber(p.x) && isFiniteNumber(p.y)
+			? {
+					x: Math.min(Math.max(p.x, 0), viewport.width),
+					y: Math.min(Math.max(p.y, 0), viewport.height),
+				}
+			: null;
+	return { point, viewport };
 }
 
 /**
@@ -705,12 +800,20 @@ export function expandDesignPicks(
 	};
 }
 
-/** What the host needs from a webview to resolve and photograph a pick. */
+/**
+ * What Design Mode needs from a webview: ask the guest, read its zoom, crop a
+ * screenshot, and move keyboard focus off the page (holding Space lets the
+ * user click into the page; picking needs the keys back).
+ */
 export interface DesignModeGuestAccess {
 	run: (request: DesignModeGuestRequest) => Promise<unknown>;
 	zoom: () => number;
 	/** Capture a rect of the guest frame (see {@link designPickCropRect}). */
 	capture: (rect: DesignModeRect) => Promise<string>;
+	/** Whether the page holds keyboard focus (the user clicked into it). */
+	focused: () => boolean;
+	/** Take keyboard focus away from the page. */
+	blur: () => void;
 }
 
 /** A pick plus its cropped screenshot (null when none of it was on screen). */
@@ -727,7 +830,7 @@ export interface DesignModeCapture {
  * to report it.
  */
 export async function captureDesignPick(
-	access: DesignModeGuestAccess,
+	access: Pick<DesignModeGuestAccess, 'run' | 'zoom' | 'capture'>,
 	request: Extract<DesignModeGuestRequest, { type: 'describe' | 'describeSelector' }>,
 	onCaptureError?: (error: unknown) => void
 ): Promise<DesignModeCapture | DesignModeMiss | null> {

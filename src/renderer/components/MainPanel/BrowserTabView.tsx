@@ -463,6 +463,10 @@ export const BrowserTabView = React.memo(
 				}
 			},
 			capture: (rect) => captureGuestRef.current(rect),
+			// Holding Space lets the user click into the page; picking takes the
+			// keys back. A focused guest shows up as the <webview> itself.
+			focused: () => !!webviewRef.current && document.activeElement === webviewRef.current,
+			blur: () => webviewRef.current?.blur(),
 		});
 
 		useImperativeHandle(

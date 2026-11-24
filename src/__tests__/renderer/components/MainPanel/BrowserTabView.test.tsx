@@ -2165,6 +2165,354 @@ describe('BrowserTabView', () => {
 			});
 		});
 
+		describe('hold Space to use the page', () => {
+			/**
+			 * Answers the page's Space watch: every `passthrough` call stays
+			 * pending until the test resolves it (the page heard the release), and
+			 * `endPassthrough` closes the open watch and returns its report, as
+			 * the guest helper does. Its reply to the first call is left to the
+			 * test, so a late one can be sent on purpose.
+			 */
+			function watchPage(webview: MockWebview) {
+				const base = webview.executeJavaScript.getMockImplementation() as (
+					code: string
+				) => Promise<unknown>;
+				const page = {
+					/** Where the page last saw the pointer, guest CSS px. */
+					pointer: null as { x: number; y: number } | null,
+					/** One resolver per watch the host started, oldest first. */
+					watches: [] as Array<(report: unknown) => void>,
+					open: false,
+					report: () => ({ point: page.pointer, viewport: pickPayload.viewport }),
+					/** The page heard Space come up: the newest watch ends. */
+					release() {
+						page.open = false;
+						page.watches.at(-1)?.(page.report());
+					},
+				};
+				webview.executeJavaScript.mockImplementation((code: string) => {
+					const req = guestRequest(code);
+					if (req?.type === 'passthrough') {
+						page.open = true;
+						return new Promise((resolve) => page.watches.push(resolve));
+					}
+					if (req?.type === 'endPassthrough') {
+						const report = page.open ? page.report() : null;
+						page.open = false;
+						return Promise.resolve(report);
+					}
+					return base(code);
+				});
+				return page;
+			}
+
+			/** Space goes down; false when the layer took it (default prevented). */
+			async function holdSpace(target: HTMLElement, init: KeyboardEventInit = {}) {
+				let passed = true;
+				await act(async () => {
+					passed = fireEvent.keyDown(target, { key: ' ', code: 'Space', ...init });
+				});
+				return passed;
+			}
+
+			async function releaseSpace(target: HTMLElement) {
+				await act(async () => {
+					fireEvent.keyUp(target, { key: ' ', code: 'Space' });
+				});
+			}
+
+			/** Keyboard focus moves into the page, the way a click into it moves it. */
+			function focusPage(webview: MockWebview) {
+				// jsdom focuses only an element with a tabindex; the pointerdown is
+				// what lets the host's focus guard leave a clicked page focused.
+				webview.tabIndex = -1;
+				fireEvent.pointerDown(webview);
+				act(() => webview.focus());
+				expect(document.activeElement).toBe(webview);
+			}
+
+			const bannerText = () => screen.getByTestId('browser-tab-design-mode-banner').textContent;
+
+			it('lets the page have the pointer while Space is down, then picks again from the same point', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+
+				// Taken by the layer, so nothing behind it scrolls.
+				expect(await holdSpace(layer)).toBe(false);
+				expect(layer.style.pointerEvents).toBe('none');
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+				expect(bannerText()).toContain('Using the page - release Space to pick');
+				// The picking hints do not apply while the page is in use.
+				expect(bannerText()).not.toContain('Arrows');
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(1);
+
+				// The held key's auto-repeat changes nothing and asks the page once.
+				expect(await holdSpace(layer, { repeat: true })).toBe(false);
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(1);
+
+				await releaseSpace(layer);
+				expect(layer.style.pointerEvents).toBe('');
+				expect(bannerText()).toContain('Design Mode: click an element.');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 0 });
+				expect(document.activeElement).toBe(layer);
+			});
+
+			it('Space is an ordinary key on a focused control and in the note', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				// The banner's ESC pill keeps Space's own meaning.
+				expect(await holdSpace(screen.getByTestId('browser-tab-design-mode-cancel'))).toBe(true);
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+				});
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				expect(await holdSpace(note)).toBe(true);
+				await releaseSpace(note);
+
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(0);
+				expect(layer.style.pointerEvents).toBe('');
+				expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+			});
+
+			it('a release the page reports resumes picking where the page saw the pointer, and never picks', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				const page = watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				// The user clicked into the page (it holds the keys now) and moved over it.
+				focusPage(webview);
+				page.pointer = { x: 120, y: 80 };
+
+				await act(async () => page.release());
+
+				expect(layer.style.pointerEvents).toBe('');
+				// jsdom lays nothing out, so the overlay and the page share one scale.
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 120, y: 80, depth: 0 })
+				);
+				// The keys come back to the layer, from the page that held them.
+				expect(document.activeElement).toBe(layer);
+				// A release can only end it: no pick, no card, nothing delivered.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(onDesignPick).not.toHaveBeenCalled();
+			});
+
+			it('a release heard on the host moves to where the page saw the pointer', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const page = watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				page.pointer = { x: 200, y: 150 };
+
+				await releaseSpace(layer);
+
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 200, y: 150, depth: 0 })
+				);
+			});
+
+			it('Enter, the arrows, a click and the wheel wait while the page is in use', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				const probes = guestCalls(webview, 'probe').length;
+
+				// In the app the click and the wheel go to the page; the layer
+				// ignores them even when it hears them.
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+					fireEvent.click(layer, { clientX: 5, clientY: 5, button: 0 });
+					fireEvent.wheel(layer, { clientX: 5, clientY: 5, deltaY: 100 });
+				});
+
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(guestCalls(webview, 'scroll')).toHaveLength(0);
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			});
+
+			it('a release in a host control ends it without taking that control', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				const address = screen.getByLabelText('Browser URL');
+				act(() => address.focus());
+
+				await releaseSpace(address);
+
+				expect(layer.style.pointerEvents).toBe('');
+				expect(document.activeElement).toBe(address);
+			});
+
+			it('leaving the app while Space is down ends it; a click into the page does not', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				const windowBlur = async () => {
+					await act(async () => {
+						fireEvent.blur(window);
+						await new Promise((resolve) => setTimeout(resolve, 0));
+					});
+				};
+
+				// A click into the page may blur the host window: the page holds
+				// focus, so the release will reach its watch.
+				focusPage(webview);
+				await windowBlur();
+				expect(layer.style.pointerEvents).toBe('none');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(0);
+
+				// Focus back on the layer, then the app loses focus (Cmd+Tab): the
+				// release will land in another app.
+				act(() => layer.focus());
+				await windowBlur();
+				expect(layer.style.pointerEvents).toBe('');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+			});
+
+			it('a page load ends it and takes the keys back, so a Space still held starts it again', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				// The user clicked a link: focus is in the page, and the new page loads.
+				focusPage(webview);
+
+				await finishLoad(webview);
+
+				expect(layer.style.pointerEvents).toBe('');
+				expect(document.activeElement).toBe(layer);
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				// The key is still down: its next auto-repeat reaches the layer.
+				await holdSpace(layer, { repeat: true });
+				expect(layer.style.pointerEvents).toBe('none');
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(2);
+			});
+
+			it('falls back: once the pointer is seen outside the page, its return resumes picking', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+
+				// Over the page the layer does nothing (in the app it hears nothing).
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 40, clientY: 40 });
+				});
+				expect(layer.style.pointerEvents).toBe('none');
+
+				// Seen over the toolbar: the layer takes the pointer back, still in use.
+				await act(async () => {
+					fireEvent.mouseMove(screen.getByLabelText('Browser URL'), { clientX: 900, clientY: 5 });
+				});
+				expect(layer.style.pointerEvents).toBe('');
+				expect(bannerText()).toContain('Using the page - release Space to pick');
+
+				// Its return resumes picking at that point.
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 90, clientY: 45 });
+				});
+				expect(bannerText()).toContain('Design Mode: click an element.');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 90, y: 45, depth: 0 })
+				);
+			});
+
+			it('falls back only with Space up: a key the layer still hears repeating keeps the page in use', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+				try {
+					const leaveAndReturn = async () => {
+						await act(async () => {
+							fireEvent.mouseMove(screen.getByLabelText('Browser URL'), {
+								clientX: 900,
+								clientY: 5,
+							});
+						});
+						expect(layer.style.pointerEvents).toBe('');
+						await act(async () => {
+							fireEvent.mouseMove(layer, { clientX: 90, clientY: 45 });
+						});
+					};
+					await holdSpace(layer);
+					await holdSpace(layer, { repeat: true });
+
+					// Back within a repeat of the key: it is down, so the page gets the pointer.
+					now.mockReturnValue(10_100);
+					await leaveAndReturn();
+					expect(layer.style.pointerEvents).toBe('none');
+					expect(bannerText()).toContain('Using the page - release Space to pick');
+					expect(guestCalls(webview, 'endPassthrough')).toHaveLength(0);
+
+					// No repeat for longer than that: Space is up, so picking resumes.
+					now.mockReturnValue(10_700);
+					await leaveAndReturn();
+					expect(bannerText()).toContain('Design Mode: click an element.');
+					expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				} finally {
+					now.mockRestore();
+				}
+			});
+
+			it('a late reply from an earlier watch cannot end a newer one', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const page = watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				await releaseSpace(layer);
+				await holdSpace(layer);
+				expect(page.watches).toHaveLength(2);
+
+				// The first watch's reply arrives only now.
+				await act(async () => page.watches[0](page.report()));
+				expect(layer.style.pointerEvents).toBe('none');
+
+				await act(async () => page.watches[1](page.report()));
+				expect(layer.style.pointerEvents).toBe('');
+			});
+
+			it('leaving the tab or Design Mode while Space is down tells the page to stop watching', async () => {
+				const { webview, setActive } = await setupReady(vi.fn());
+				watchPage(webview);
+				await holdSpace(await arm());
+
+				await act(async () => setActive(false));
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+
+				// A fresh layer starts out picking.
+				await act(async () => setActive(true));
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				expect(layer.style.pointerEvents).toBe('');
+
+				// Escape still leaves Design Mode while the page is in use.
+				await holdSpace(layer);
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Escape' });
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(2);
+			});
+		});
+
 		it('the imperative toggle and inspectElement reach the same path', async () => {
 			const { ref, webview } = await setupReady(vi.fn());
 			await act(async () => {
