@@ -1832,6 +1832,65 @@ describe('web-server/web-server-factory', () => {
 			expect(filtered[0].sessionId).toBe('agent-2');
 		});
 
+		// Issue #2046: every heartbeat showed "never triggered" because the
+		// callback hard-coded triggerCount 0 and never set lastTriggered.
+		it('fills lastTriggered and triggerCount from the event journal per session and name', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Ops',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'hourly-heartbeat',
+							event: 'time.heartbeat',
+							enabled: true,
+							prompt: '',
+							interval_minutes: 60,
+						},
+						{ name: 'idle', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Other',
+					toolType: 'claude-code',
+					subscriptions: [
+						{ name: 'hourly-heartbeat', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+			]);
+			const getCueSubscriptionTriggerStats = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					subscriptionName: 'hourly-heartbeat',
+					triggerCount: 312,
+					lastTriggered: 1_700_000_000_000,
+				},
+			]);
+
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueGraphData,
+				getCueSubscriptionTriggerStats,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(all[0]).toMatchObject({
+				sessionId: 'agent-1',
+				name: 'hourly-heartbeat',
+				triggerCount: 312,
+				lastTriggered: 1_700_000_000_000,
+			});
+			// Same name on another agent must not borrow agent-1's runs.
+			expect(all[1]).toMatchObject({ name: 'idle', triggerCount: 0 });
+			expect(all[1].lastTriggered).toBeUndefined();
+			expect(all[2]).toMatchObject({ sessionId: 'agent-2', triggerCount: 0 });
+			expect(all[2].lastTriggered).toBeUndefined();
+		});
+
 		it('returns [] and warns when the engine dependency is missing', async () => {
 			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData: undefined });
 			const server = createWebServer() as any;

@@ -156,6 +156,7 @@ import {
 	recordCueEvent,
 	updateCueEventStatus,
 	getRecentCueEvents,
+	getCueSubscriptionTriggerStats,
 	updateHeartbeat,
 	getLastHeartbeat,
 	pruneCueEvents,
@@ -610,6 +611,43 @@ describe('cue-db event journal', () => {
 			outputExcerpt: 'Reformatted test.ts.',
 			fullOutput: 'Reformatted test.ts.\nNothing else to do.',
 		});
+	});
+
+	// Issue #2046: `cue list` said "never triggered" for heartbeats that fire
+	// hourly. The rollup must count quiet completed runs (no output excerpt),
+	// so it must not reuse the History "worth showing" filter.
+	it('rolls up trigger counts per subscription without the History filter', () => {
+		mockAllReturn = [
+			{
+				session_id: 'session-1',
+				subscription_name: 'hourly-heartbeat',
+				trigger_count: 312,
+				last_triggered: 1_700_000_000_000,
+			},
+		];
+
+		const stats = getCueSubscriptionTriggerStats();
+
+		const sql = prepareCalls.find((s) => s.includes('trigger_count')) ?? '';
+		expect(sql).toContain('GROUP BY session_id, subscription_name');
+		expect(sql).not.toContain('output_excerpt');
+		// Work a queue cleanup discarded is not a trigger (#2046 review).
+		expect(sql).toContain(
+			"NOT (payload IS NOT NULL AND json_valid(payload) AND json_extract(payload, '$.droppedFromQueue') IS 1)"
+		);
+		expect(stats).toEqual([
+			{
+				sessionId: 'session-1',
+				subscriptionName: 'hourly-heartbeat',
+				triggerCount: 312,
+				lastTriggered: 1_700_000_000_000,
+			},
+		]);
+	});
+
+	it('returns [] for trigger stats when the DB is not initialized', () => {
+		closeCueDb();
+		expect(getCueSubscriptionTriggerStats()).toEqual([]);
 	});
 });
 
