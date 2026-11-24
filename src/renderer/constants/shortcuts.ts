@@ -469,6 +469,7 @@ export const DEFAULT_SHORTCUTS = {
 		keys: [],
 	},
 	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
+	dictate: { id: 'dictate', label: 'Dictate into Text Box', keys: [] },
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)

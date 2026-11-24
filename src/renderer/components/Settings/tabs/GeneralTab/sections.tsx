@@ -1,3 +1,4 @@
+import { DictationSettings } from '../../ACappella/DictationSettings';
 /**
  * General tab sections, in display order. Each one reads its own settings so
  * the tab and the Settings search can mount it independently (see
@@ -339,6 +340,7 @@ function StorageLocation({ theme, isOpen }: SettingsSectionProps) {
 }
 
 export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
+	{ key: 'dictation', settingIds: ['general-dictation'], Component: DictationSettings },
 	{ key: 'globalHotkey', settingIds: ['general-global-show-hotkey'], Component: GlobalHotkey },
 	{
 		key: 'conductorProfile',

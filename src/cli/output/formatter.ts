@@ -1084,3 +1084,107 @@ export function formatInfo(message: string): string {
 export function formatWarning(message: string): string {
 	return `${c('yellow', '⚠')} ${message}`;
 }
+
+export type LocalModelDisplayStatus = 'installed' | 'not-installed' | 'corrupt' | 'pending';
+
+export interface LocalModelDisplay {
+	id: string;
+	displayName: string;
+	status: LocalModelDisplayStatus;
+	/** Catalog download size, already formatted. */
+	size: string;
+	/** Tasks (and voice capabilities) that run this model. */
+	usedBy: string[];
+	/** Why the model is corrupt or pending. */
+	detail?: string;
+	/** What the model is good at, in one sentence. */
+	goodAt?: string;
+	/** Role badges, and "Not verified by Maestro" for a model the user added. */
+	badges?: string[];
+	/** Whether it runs on this computer (`models list --fit`). */
+	fit?: { level: 'fits' | 'tight' | 'too-large'; label: string; reason: string };
+}
+
+export interface LocalModelGroupDisplay {
+	/** The Library group's heading. */
+	label: string;
+	models: LocalModelDisplay[];
+}
+
+/** What `models list` prints around the groups. */
+export interface LocalModelsListNotes {
+	/** What the fit labels were judged against (`--fit`). */
+	hardware?: string;
+	/** Why the fit labels are harsher than the hardware deserves (`--fit`). */
+	fitCaveat?: string;
+	/** The models that are not offered for download at all. */
+	cloudOnly?: string;
+}
+
+const LOCAL_MODEL_STATUS: Record<
+	LocalModelDisplayStatus,
+	{ label: string; color: keyof typeof colors }
+> = {
+	installed: { label: 'installed', color: 'green' },
+	'not-installed': { label: 'not installed', color: 'gray' },
+	corrupt: { label: 'corrupt', color: 'red' },
+	pending: { label: 'pending', color: 'yellow' },
+};
+
+const LOCAL_MODEL_FIT_COLOR: Record<
+	NonNullable<LocalModelDisplay['fit']>['level'],
+	keyof typeof colors
+> = {
+	fits: 'green',
+	tight: 'yellow',
+	'too-large': 'red',
+};
+
+/**
+ * `maestro-cli models list`: every model in the Library's groups, with the disk
+ * footprint, what each is good at, and (with `--fit`) whether it runs here.
+ */
+export function formatLocalModels(
+	groups: LocalModelGroupDisplay[],
+	footprint: string,
+	notes: LocalModelsListNotes = {}
+): string {
+	const models = groups.flatMap((group) => group.models);
+	if (models.length === 0) return dim('No local models match.');
+
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'LOCAL MODELS')) + dim(` (${models.length}, ${footprint} on disk)`));
+	if (notes.hardware) lines.push(dim(`This computer: ${notes.hardware}`));
+	if (notes.fitCaveat) lines.push(c('yellow', notes.fitCaveat));
+	const idWidth = Math.max(...models.map((model) => model.id.length));
+	const statusWidth = Math.max(
+		...Object.values(LOCAL_MODEL_STATUS).map((status) => status.label.length)
+	);
+	for (const group of groups) {
+		if (group.models.length === 0) continue;
+		lines.push('');
+		lines.push(`  ${bold(group.label)}`);
+		for (const model of group.models) {
+			const status = LOCAL_MODEL_STATUS[model.status];
+			const badges = (model.badges ?? []).map((badge) => `[${badge}]`).join(' ');
+			lines.push(
+				`    ${c('white', model.id.padEnd(idWidth))}  ${c(status.color, status.label.padEnd(statusWidth))}  ${model.size.padStart(9)}  ${model.displayName}${badges ? `  ${dim(badges)}` : ''}`
+			);
+			const indent = ' '.repeat(idWidth + statusWidth + 17);
+			if (model.goodAt) lines.push(`    ${indent}${dim(`good at: ${model.goodAt}`)}`);
+			if (model.fit) {
+				const label = c(LOCAL_MODEL_FIT_COLOR[model.fit.level], model.fit.label);
+				lines.push(`    ${indent}${label}${dim(`: ${model.fit.reason}`)}`);
+			}
+			if (model.detail) lines.push(`    ${indent}${dim(model.detail)}`);
+			if (model.usedBy.length > 0) {
+				lines.push(`    ${indent}${dim(`in use by: ${model.usedBy.join(', ')}`)}`);
+			}
+		}
+	}
+	if (notes.cloudOnly) {
+		lines.push('');
+		lines.push(dim(`Cloud only: ${notes.cloudOnly}`));
+	}
+	return lines.join('\n');
+}

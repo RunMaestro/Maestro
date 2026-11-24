@@ -1,3 +1,4 @@
+import { requestDictationShortcutPress } from '../../services/dictation';
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab } from '../../types';
 import {
@@ -792,6 +793,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				openMediaPlayerFromShortcut();
 				trackShortcut('openMediaPlayer');
+			} else if (ctx.isShortcut(e, 'dictate')) {
+				// The press is classified elsewhere (DictationHost): a tap toggles
+				// and a hold records while held, so only the FIRST keydown of a held
+				// chord counts. The repeats are swallowed so they do not type.
+				e.preventDefault();
+				if (!e.repeat) {
+					requestDictationShortcutPress();
+					trackShortcut('dictate');
+				}
 			} else if (ctx.isShortcut(e, 'mediaPlayPause')) {
 				e.preventDefault();
 				useMediaPlaybackStore.getState().requestToggle();

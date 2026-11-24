@@ -1,3 +1,5 @@
+import { runVoiceSelfTest, type VoiceSelfTestReport } from '../../acappella/voice-self-test';
+import { selfTestVerdict } from '../../../shared/local-models/native-runtimes';
 /**
  * Debug Package IPC Handlers
  *
@@ -499,4 +501,22 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 	);
 
 	logger.debug(`${LOG_CONTEXT} Debug IPC handlers registered`);
+	// A Cappella voice self-test. Lives on the debug surface rather than the voice
+	// one because it is a diagnostic, and because it must stay runnable when the
+	// voice feature is exactly what is not working. It loads each native runtime
+	// and no model, so running it is cheap and safe at any time.
+	ipcMain.handle(
+		'debug:voiceSelfTest',
+		createIpcHandler(
+			handlerOpts('voiceSelfTest'),
+			async (): Promise<{ report: VoiceSelfTestReport }> => {
+				const report = await runVoiceSelfTest();
+				logger.info(`Voice self-test: ${selfTestVerdict(report).toLowerCase()}`, LOG_CONTEXT);
+				// Nested rather than spread: `createIpcHandler` merges the result into
+				// its `{ success }` envelope, and a report field named `passed` sitting
+				// beside `success` is two words for two different things.
+				return { report };
+			}
+		)
+	);
 }

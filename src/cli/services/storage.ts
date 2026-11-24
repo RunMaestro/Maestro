@@ -1,3 +1,11 @@
+import {
+	parseLocalModelEndpoints,
+	type LocalModelEndpoint,
+} from '../../shared/local-models/endpoints';
+import {
+	parseLocalModelAssignments,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
 // Storage service for CLI
 // Reads Electron Store JSON files directly from disk
 
@@ -892,4 +900,31 @@ export function resolveSshRemoteId(partialId: string): string {
 	}
 
 	return resolution.id;
+}
+
+/**
+ * The configured model-server endpoints, read through the same validator the
+ * desktop reads them with, so the CLI never lists a record the app would drop.
+ */
+export function readLocalModelEndpoints(): LocalModelEndpoint[] {
+	return parseLocalModelEndpoints(readSettings().localModelEndpoints);
+}
+
+/** Write the endpoint list back; the settings watcher reloads every window. */
+export function writeLocalModelEndpoints(endpoints: LocalModelEndpoint[]): void {
+	writeSettingValue('localModelEndpoints', endpoints);
+}
+
+/**
+ * The stored task assignments, read through the same parser the desktop reads
+ * them with (unknown tasks and unusable entries dropped, defaults elided), so
+ * the CLI never reports or rewrites an entry the app would ignore.
+ */
+export function readLocalModelAssignments(): LocalModelAssignments {
+	return parseLocalModelAssignments(readSettings().localModelAssignments);
+}
+
+/** Write the assignments back; the settings watcher reloads every window. */
+export function writeLocalModelAssignments(assignments: LocalModelAssignments): void {
+	writeSettingValue('localModelAssignments', assignments);
 }

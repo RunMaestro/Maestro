@@ -825,6 +825,12 @@ export interface OnboardingStats {
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
+	documentOrigin?: {
+		/** Absolute path of the document, as the owning agent sees it. */
+		path: string;
+		/** Retained in document history; excluded from active text and voice routing. */
+		archived?: boolean;
+	};
 	relayConversation?: import('../../shared/relayConversation').RelayConversationState;
 	/** Durable conversation provenance, independent of whether a turn is running. */
 	origin?: 'user' | 'auto' | 'relay';
@@ -1897,6 +1903,7 @@ export interface LeaderboardSubmitResponse {
 // src/shared/encoreFeatureDefaults.ts); the rest start off.
 // Each key is a feature ID, value indicates whether it's enabled
 export interface EncoreFeatureFlags {
+	aCappella?: boolean;
 	directorNotes: boolean;
 	usageStats: boolean;
 	symphony: boolean;

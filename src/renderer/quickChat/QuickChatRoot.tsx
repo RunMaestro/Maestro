@@ -12,6 +12,10 @@
  * first shape the window is exactly the composer, so it grows with the draft.
  */
 
+import { VOICE_HUD_STATE_DESCRIPTIONS } from '../../shared/acappella/hud-state';
+import { useQuickChatVoice } from '../hooks/voice/useQuickChatVoice';
+import { VoiceHeldNotice } from '../components/ACappella/VoiceHeldNotice';
+import { QuickChatVoiceButton } from './QuickChatVoiceButton';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowUp,
@@ -428,7 +432,8 @@ function QuickChatWindow() {
 	// The picker needs room the composer-only window does not have, so the
 	// window grows while it is open and shrinks back when it closes.
 	const hasConversation = snapshot.messages.length > 0 || snapshot.busy;
-	const expanded = hasConversation || pickerOpen;
+	const voice = useQuickChatVoice();
+	const expanded = hasConversation || pickerOpen || voice.active;
 	useEffect(() => {
 		window.maestro.quickChat.setLayout(expanded ? 'expanded' : 'compact');
 	}, [expanded]);
@@ -453,7 +458,7 @@ function QuickChatWindow() {
 	);
 	const threadStatus = snapshot.messages.map((m) => m.route?.status ?? '').join('');
 	const stickRef = useStickToBottom<HTMLDivElement>(
-		`${snapshot.messages.length}:${threadSize}:${threadStatus}:${fontScaleValue}`
+		`${snapshot.messages.length}:${threadSize}:${threadStatus}:${fontScaleValue}:${voice.partialTranscript.length}`
 	);
 	useAutosizeTextarea({
 		textareaRef,
@@ -721,7 +726,7 @@ function QuickChatWindow() {
 		[theme]
 	);
 	const agentName = snapshot.agentName ?? 'your agent';
-	const shownError = error ?? snapshot.error;
+	const shownError = error ?? voice.error ?? snapshot.error;
 	const c = theme.colors;
 
 	// The switcher sits at the TOP in both shapes. The window grows downward
@@ -984,6 +989,9 @@ function QuickChatWindow() {
 				</IconButton>
 				{/* Stop sits BESIDE Send while something is in motion, not in its
 				    place: the next message can go out before the last is answered. */}
+				{voice.enabled && (
+					<QuickChatVoiceButton theme={theme} voice={voice} agentName={agentName} />
+				)}
 				{snapshot.busy && (
 					<QuickChatTooltip
 						label="Stop"
@@ -1128,6 +1136,34 @@ function QuickChatWindow() {
 							</Fragment>
 						);
 					})}
+					{voice.active &&
+						(voice.partialTranscript ? (
+							// What is being heard, drawn where the sent message will land.
+							// Dashed and dim: it is a hypothesis, not yet a message.
+							<div className="flex justify-end" data-testid="quick-chat-voice-partial">
+								<div
+									className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words italic"
+									style={{ border: `1px dashed ${c.border}`, color: c.textDim }}
+								>
+									{voice.partialTranscript}
+								</div>
+							</div>
+						) : (
+							!snapshot.busy && (
+								<div
+									className="text-sm"
+									style={{ color: c.textDim }}
+									data-testid="quick-chat-voice-status"
+								>
+									{VOICE_HUD_STATE_DESCRIPTIONS[voice.visualState]}
+								</div>
+							)
+						))}
+				</div>
+			)}
+			{voice.active && !pickerOpen && (
+				<div className="px-2 shrink-0" style={NO_DRAG_REGION}>
+					<VoiceHeldNotice theme={theme} />
 				</div>
 			)}
 			{shownError && (

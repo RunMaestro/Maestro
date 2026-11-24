@@ -1,3 +1,4 @@
+import type { AudioHostWindowDeps } from '../../acappella/audio-host-window';
 import type { ConfirmQueueItem, ReleaseQueueItem } from '../../stores/queue-item-receipt';
 import type { App, BrowserWindow } from 'electron';
 import type { ProcessManager } from '../../process-manager';
@@ -69,6 +70,7 @@ export interface IpcBootstrapDependencies {
 	bootstrapStore: ReturnType<typeof initializeStores>['bootstrapStore'];
 	safeSend: SafeSendFn;
 	windowRegistry: WindowRegistry;
+	acappellaAudioHostDeps: AudioHostWindowDeps;
 	windowManager: ReturnType<typeof createWindowManager>;
 	createWebServer: ReturnType<typeof createWebServerFactory>;
 	wakatimeManager: WakaTimeManager;

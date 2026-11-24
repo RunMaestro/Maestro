@@ -43,13 +43,43 @@ export function errorFrameMessage(reply: unknown): string | null {
 }
 
 /** Print an error (JSON-aware) and exit non-zero. Never returns. */
-export function failCommand(message: string, json?: boolean): never {
+export function failCommand(
+	message: string,
+	json?: boolean,
+	code: ExitCode = ExitCode.GeneralError
+): never {
 	if (json) {
 		console.log(JSON.stringify({ success: false, error: message }));
 	} else {
 		console.error(formatError(message));
 	}
-	return process.exit(1);
+	return exitWith(code);
+}
+
+/**
+ * One bridge round trip for a verb that needs the reply's fields.
+ *
+ * A transport failure exits with the code for it (an older app build, a hung
+ * renderer), and a reply the app marked `success: false` exits with its error,
+ * so the caller reads a reply that succeeded and nothing else.
+ */
+export async function sendBridgeCommand<T extends { success: boolean; error?: string }>(
+	payload: Record<string, unknown>,
+	responseType: string,
+	json: boolean | undefined,
+	timeoutMs?: number
+): Promise<T> {
+	let reply: T;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<T>(payload, responseType, timeoutMs)
+		);
+	} catch (error) {
+		failFromError(error, json);
+	}
+	if (!reply.success)
+		failCommand(reply.error || errorFrameMessage(reply) || 'Request failed', json);
+	return reply;
 }
 
 export interface NotRunningReportOptions {

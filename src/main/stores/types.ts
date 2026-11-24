@@ -1,3 +1,5 @@
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type { LocalModelAssignments } from '../../shared/local-models/tasks';
 /**
  * Store type definitions
  *
@@ -52,6 +54,10 @@ export interface BootstrapSettings {
 // ============================================================================
 
 export interface MaestroSettings {
+	localModelEndpoints: LocalModelEndpoint[];
+	localModelAssignments: LocalModelAssignments;
+	localModelsDownloadBase: string;
+
 	relayArchiveHours: number;
 	activeThemeId: string;
 	shortcuts: Record<string, any>;

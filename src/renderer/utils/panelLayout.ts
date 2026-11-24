@@ -416,6 +416,16 @@ export function resolveModelEffortTabId(
 	return ref?.type === 'ai' ? ref.id : null;
 }
 
+export function resolveFocusedAiTabId(session: Session | null | undefined): string | null {
+	if (!session) return null;
+	const ref = resolveActiveTabRef(session);
+	if (ref?.type === 'ai') return ref.id;
+	const tiled =
+		session.activeGroupId != null &&
+		!!session.tabGroups?.some((group) => group.id === session.activeGroupId);
+	return tiled ? null : (getActiveTab(session)?.id ?? null);
+}
+
 export function resolveActiveTabRef(session: Session): UnifiedTabRef | null {
 	const group =
 		session.activeGroupId != null

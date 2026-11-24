@@ -22,6 +22,7 @@ import type {
 	SessionLifecycleEvent,
 	ResilienceEvent,
 	WizardRun,
+	LocalModelRun,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -62,6 +63,24 @@ import {
 } from './session-lifecycle';
 import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
 import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
+import {
+	recordLocalModelRun,
+	getLocalModelRuns,
+	clearLocalModelRunsCache,
+} from './local-model-runs';
+import {
+	insertSystemOneDecision,
+	getSystemOneDecisions,
+	getSystemOneAgentSpend,
+	pruneSystemOneDecisions,
+	clearSystemOneDecisionsCache,
+	type SystemOneAgentSpendRow,
+	type SystemOneDecisionsRead,
+} from './s1-decisions';
+import type {
+	SystemOneDecision,
+	SystemOneLedgerEntry,
+} from '../../shared/local-models/system-one-ledger';
 import { getAggregatedStats, clearAggregationCache } from './aggregations';
 import {
 	getQuerySourceTotals,
@@ -263,6 +282,8 @@ export class StatsDB {
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearTokenSpeedCache();
+			clearLocalModelRunsCache();
+			clearSystemOneDecisionsCache();
 			clearMultiWindowUsageCache();
 			clearAggregationCache();
 
@@ -859,6 +880,33 @@ export class StatsDB {
 
 	insertQueryEvent(event: Omit<QueryEvent, 'id'>): string {
 		return insertQueryEvent(this.database, event);
+	}
+
+	recordLocalModelRun(run: Omit<LocalModelRun, 'id'>): string {
+		return recordLocalModelRun(this.database, run);
+	}
+
+	getLocalModelRuns(range: StatsTimeRange): LocalModelRun[] {
+		return getLocalModelRuns(this.database, range);
+	}
+
+	recordSystemOneDecision(decision: SystemOneDecision): string {
+		return insertSystemOneDecision(this.database, decision);
+	}
+
+	getSystemOneDecisions(read: SystemOneDecisionsRead): {
+		entries: SystemOneLedgerEntry[];
+		total: number;
+	} {
+		return getSystemOneDecisions(this.database, read);
+	}
+
+	getSystemOneAgentSpend(since: number): SystemOneAgentSpendRow[] {
+		return getSystemOneAgentSpend(this.database, since);
+	}
+
+	pruneSystemOneDecisions(cutoffMs: number): number {
+		return pruneSystemOneDecisions(this.database, cutoffMs);
 	}
 
 	getQueryEvents(range: StatsTimeRange, filters?: StatsFilters): QueryEvent[] {

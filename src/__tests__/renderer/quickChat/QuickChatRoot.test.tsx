@@ -19,6 +19,9 @@ import { tabChoiceFromPickerId } from '../../../renderer/quickChat/QuickChatTabP
 import { recentChatItem } from '../../../renderer/quickChat/QuickChatHistoryPicker';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { FONT_SCALE_RANGE, stepScale } from '../../../shared/scaleRange';
+import { QUICK_CHAT_VOICE_SCOPE } from '../../../shared/acappella/quick-chat-scope';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
 
 function snapshot(patch: Partial<QuickChatSnapshot> = {}): QuickChatSnapshot {
 	return { ...EMPTY_QUICK_CHAT_SNAPSHOT, agentId: 'a', agentName: 'Pedsidian', ...patch };
@@ -33,6 +36,36 @@ async function renderWith(initial: QuickChatSnapshot) {
 beforeEach(() => {
 	vi.mocked(window.maestro.quickChat.command).mockReset();
 	installLocalStorageMock();
+});
+
+describe('A Cappella', () => {
+	it('shows the microphone and live transcript for a voice session bound to Quick Chat', async () => {
+		const { encoreFeatures } = useSettingsStore.getState();
+		useSettingsStore.setState({ encoreFeatures: { ...encoreFeatures, aCappella: true } });
+		try {
+			await renderWith(snapshot());
+			expect(screen.getByTestId('quick-chat-voice-button')).toBeVisible();
+
+			act(() => {
+				useVoiceSessionStore.setState({
+					scope: QUICK_CHAT_VOICE_SCOPE,
+					state: 'listening',
+					partialTranscript: 'A live voice turn',
+				});
+			});
+			expect(screen.getByTestId('quick-chat-voice-partial')).toHaveTextContent('A live voice turn');
+
+			act(() => {
+				useVoiceSessionStore.setState({ scope: { kind: 'conductor' } });
+			});
+			expect(screen.queryByTestId('quick-chat-voice-partial')).toBeNull();
+		} finally {
+			act(() => {
+				useSettingsStore.setState({ encoreFeatures });
+				useVoiceSessionStore.getState().reset();
+			});
+		}
+	});
 });
 
 describe('Keep button', () => {

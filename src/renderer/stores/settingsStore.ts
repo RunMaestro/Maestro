@@ -1,3 +1,15 @@
+import {
+	parseLocalModelEndpoints,
+	type LocalModelEndpoint,
+} from '../../shared/local-models/endpoints';
+import {
+	parseLocalModelAssignments,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
+import {
+	DEFAULT_DOWNLOAD_BASE,
+	resolveDownloadBase,
+} from '../../shared/local-models/download-base';
 /**
  * settingsStore - Zustand store for all persistent application settings
  *
@@ -355,6 +367,9 @@ export interface SettingsStoreState
 	defaultShell: string;
 	customShellPath: string;
 	shellArgs: string;
+	localModelEndpoints: LocalModelEndpoint[];
+	localModelAssignments: LocalModelAssignments;
+	localModelsDownloadBase: string;
 	shellEnvVars: Record<string, string>;
 	/**
 	 * Variables the user switched OFF in the environment editor. Same shape as
@@ -521,6 +536,9 @@ export interface SettingsStoreActions
 	setDefaultShell: (value: string) => void;
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
+	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
+	setLocalModelAssignments: (value: LocalModelAssignments) => void;
+	setLocalModelsDownloadBase: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
@@ -781,6 +799,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		defaultShell: isWindowsPlatform() ? 'powershell' : 'zsh',
 		customShellPath: '',
 		shellArgs: '',
+		localModelEndpoints: [],
+		localModelAssignments: {},
+		localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
@@ -937,6 +958,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('shellArgs', value);
 		},
 
+		setLocalModelEndpoints: (value) => {
+			set({ localModelEndpoints: value });
+			window.maestro.settings.set('localModelEndpoints', value);
+		},
+
+		setLocalModelAssignments: (value) => {
+			set({ localModelAssignments: value });
+			window.maestro.settings.set('localModelAssignments', value);
+		},
+
+		setLocalModelsDownloadBase: (value) => {
+			const base = resolveDownloadBase(value);
+			set({ localModelsDownloadBase: base });
+			void window.maestro.settings.set('localModelsDownloadBase', base);
+		},
 		setShellEnvVars: (value) => {
 			set({ shellEnvVars: value });
 			window.maestro.settings.set('shellEnvVars', value);
@@ -2100,6 +2136,14 @@ export async function loadAllSettings(): Promise<void> {
 
 		// Build a single patch to apply to the store
 		const patch: Partial<SettingsStoreState> = {};
+		if (allSettings['localModelEndpoints'] !== undefined)
+			patch.localModelEndpoints = parseLocalModelEndpoints(allSettings['localModelEndpoints']);
+		if (allSettings['localModelAssignments'] !== undefined)
+			patch.localModelAssignments = parseLocalModelAssignments(
+				allSettings['localModelAssignments']
+			);
+		if (allSettings['localModelsDownloadBase'] !== undefined)
+			patch.localModelsDownloadBase = resolveDownloadBase(allSettings['localModelsDownloadBase']);
 
 		// --- Simple scalar settings ---
 
@@ -3137,3 +3181,6 @@ export function getSettingsActions() {
 		setAnnotatorTaperEnd: state.setAnnotatorTaperEnd,
 	};
 }
+
+export const selectACappellaEnabled = (state: SettingsStore) =>
+	!isWebDesktop() && state.encoreFeatures.aCappella === true;

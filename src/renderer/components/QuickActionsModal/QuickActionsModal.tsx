@@ -1,3 +1,6 @@
+import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
+import { buildVoiceCommands } from './commands/voiceCommands';
 import React, { memo, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
 import { useShallow } from 'zustand/react/shallow';
@@ -472,6 +475,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorShown = usePeerMirrorStore((s) => s.activeMirror !== null);
 	const activeSessionId = mirrorShown ? '' : localActiveSessionId;
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	const voiceActions = useVoiceAgentActions(activeSession);
+	const voiceTranscriptVisible = useVoiceUiStore((state) => state.transcriptVisible);
+	const toggleVoiceTranscript = useVoiceUiStore((state) => state.toggleTranscript);
 	// The group a "Move Group to ..." command carries: a worktree child is filed
 	// under its parent's group, the same unit the window move relocates.
 	const activeWindowGroupId = activeSession?.parentSessionId
@@ -1016,6 +1022,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openUrl,
 			logger,
 		}),
+		...(isWebDesktop()
+			? []
+			: buildVoiceCommands({
+					activeSession,
+					voiceActions,
+					globalShortcuts: shortcuts,
+					openVoiceSetup: () => useModalStore.getState().openModal('voiceSetup'),
+					transcriptVisible: voiceTranscriptVisible,
+					toggleTranscript: toggleVoiceTranscript,
+					setQuickActionOpen,
+				})),
 		...buildRightPanelCommands({
 			autoRunDisabled: useSettingsStore.getState().autoRunDisabled,
 			autoRunSelectedDocument,

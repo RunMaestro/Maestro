@@ -1,3 +1,7 @@
+import { ACAPPELLA_SIGNAL_MESSAGE, handleACappellaSignal } from './acappellaSignal';
+import { VOICE_WAKE_ENROLLMENT_MESSAGE, handleVoiceWakeEnrollment } from './voiceWake';
+import { VOICE_CONTROL_MESSAGE, handleVoiceControl } from './voiceControl';
+import { handleSpeechModels } from './speechModels';
 import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
 /**
  * WebSocket Message Handlers for Web Server
@@ -880,6 +884,21 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case ACAPPELLA_SIGNAL_MESSAGE:
+				handleACappellaSignal(this.ctx, client, message);
+				break;
+			case VOICE_WAKE_ENROLLMENT_MESSAGE:
+				void handleVoiceWakeEnrollment(this.ctx, client, message);
+				break;
+			case VOICE_CONTROL_MESSAGE:
+				void handleVoiceControl(this.ctx, client, message);
+				break;
+			case 'local_models_list':
+			case 'local_models_download':
+			case 'local_models_transcribe':
+				void handleSpeechModels(this.ctx, client, message);
 				break;
 
 			case 'quick_chat':

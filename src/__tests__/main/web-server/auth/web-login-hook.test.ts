@@ -52,6 +52,8 @@ describe('isUnauthenticatedWebPath', () => {
 			'/tok-123/',
 			'/tok-123/desktop',
 			'/tok-123/desktop/',
+			'/tok-123/acappella',
+			'/tok-123/acappella/',
 			'/tok-123/session/abc',
 		]) {
 			expect(isUnauthenticatedWebPath(TOKEN, url)).toBe(true);
@@ -81,6 +83,7 @@ describe('isUnauthenticatedWebPath', () => {
 			'/tok-123/api/images/deadbeef.png',
 			'/tok-123/media/stream/mt/6162',
 			'/tok-123/something-added-later',
+			'/tok-123/acappella/socket',
 		]) {
 			expect(isUnauthenticatedWebPath(TOKEN, url)).toBe(false);
 		}

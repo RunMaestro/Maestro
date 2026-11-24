@@ -4762,6 +4762,23 @@ describe('persistence IPC handlers', () => {
 		beforeEach(() => vi.useFakeTimers());
 		afterEach(() => vi.useRealTimers());
 
+		it('reports window-local focus without persisting or accepting browser focus', async () => {
+			const onActiveSessionChanged = vi.fn();
+			registerPersistenceHandlers({ ...deps, onActiveSessionChanged });
+			const setHandler = handlers.get('sessions:setActiveSessionId')!;
+			const sender = {};
+			await setHandler({ sender }, 'focused-agent', true);
+			await setHandler({ type: 'bridge' }, 'browser-agent', true);
+			await setHandler({ sender }, '', true);
+
+			expect(onActiveSessionChanged.mock.calls).toEqual([
+				[sender, 'focused-agent'],
+				[sender, ''],
+			]);
+			vi.advanceTimersByTime(400);
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+		});
+
 		it('debounces the disk write, then flushes after the interval', async () => {
 			const setHandler = handlers.get('sessions:setActiveSessionId');
 			await setHandler!({} as any, 'test-session-123');
