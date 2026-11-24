@@ -233,7 +233,9 @@ function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult
 
 /**
  * The host-only `pick` op (`maestro-cli browser-pick`): the same describe,
- * crop, and composer delivery as a click in Design Mode, by selector.
+ * crop, and composer delivery as a click in Design Mode, by selector. The
+ * element lands as a chip; the result carries the block it adds at send and
+ * the chip's id.
  */
 async function pickElement(
 	handle: BrowserTabViewHandle,
@@ -262,6 +264,7 @@ async function pickElement(
 		ok: true,
 		content: delivered.text,
 		aiTabId: delivered.aiTabId,
+		pickId: delivered.pickId,
 		...(capture.screenshot ? { dataUrl: capture.screenshot } : {}),
 		url: meta.url,
 		title: meta.title,

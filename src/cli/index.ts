@@ -29,7 +29,7 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
+import { openBrowser, closeBrowser, browserPick, browserPicks } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -908,9 +908,9 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
 
-// Browser pick command - Design Mode by selector: add an element of a browser
-// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
-// owning agent's composer, through the same code a click in Design Mode runs.
+// Browser pick command - Design Mode by selector: stage an element of a browser
+// tab (selector, trimmed HTML, computed styles, cropped screenshot) as a chip in
+// the owning agent's composer, through the same code a click in Design Mode runs.
 program
 	.command('browser-pick <tab>')
 	.description(
@@ -923,6 +923,17 @@ program
 	.option('--focus', 'Switch to the AI tab the element lands in (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPick);
+
+// Browser picks command - the Design Mode chips waiting in an agent's composer:
+// list them, each with the block it adds to the message at send, or take one
+// off by id, as the chip's X does.
+program
+	.command('browser-picks')
+	.description("List the Design Mode chips waiting in an agent's composer, or remove one")
+	.option('-a, --agent <id>', 'Agent whose composer holds the chips (defaults to active)')
+	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPicks);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program

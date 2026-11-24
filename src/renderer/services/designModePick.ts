@@ -16,10 +16,12 @@
  * chip strip in the composer uses them, so any other caller reaches the same
  * code. A send reads the chips with {@link getStagedDesignPicks}, expands them
  * into the message, and takes them off with {@link removeStagedDesignPicks}.
+ * `maestro-cli browser-picks` reads and removes them through
+ * {@link runRemoteDesignPickCommand}.
  */
 
-import { stageDesignPickOnAgent } from './quoteIntoComposer';
-import { updateAiTab, useSessionStore } from '../stores/sessionStore';
+import { resolveComposerTarget, stageDesignPickOnAgent } from './quoteIntoComposer';
+import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
 import { captureException } from '../utils/sentry';
 import { generateId } from '../utils/ids';
 import {
@@ -29,6 +31,11 @@ import {
 	type DesignModeCapture,
 } from '../utils/designModePicker';
 import type { StagedDesignPick } from '../types';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+	DesignPickSummary,
+} from '../../shared/designPickCommands';
 
 export interface DesignPickDelivery extends DesignModeCapture {
 	/** The agent that owns the browser tab. */
@@ -169,4 +176,49 @@ export function removeStagedDesignPicks(
  */
 export function removeStagedDesignPick(sessionId: string, tabId: string, pickId: string): boolean {
 	return removeStagedDesignPicks(sessionId, tabId, [pickId]) > 0;
+}
+
+/** A staged chip as `browser-picks` reports it: every field but the image itself. */
+function summarizeDesignPick(pick: StagedDesignPick): DesignPickSummary {
+	return {
+		id: pick.id,
+		kind: pick.kind,
+		label: pick.label,
+		url: pick.url,
+		note: pick.note,
+		text: pick.text,
+		screenshot: !!pick.screenshot,
+	};
+}
+
+/**
+ * Answer one `maestro-cli browser-picks` verb. Both act on the chips of the
+ * agent's composer target tab ({@link resolveComposerTarget}): the tab a pick
+ * lands in, whose strip the user sees. `list` reads them in chip order from
+ * the live store; `remove` takes one off through {@link removeStagedDesignPick},
+ * as the chip's X does.
+ */
+export function runRemoteDesignPickCommand(
+	request: DesignPickCommandRequest
+): DesignPickCommandResult {
+	const session = selectSessionById(request.sessionId)(useSessionStore.getState());
+	if (!session) return { success: false, error: `Agent not found: ${request.sessionId}` };
+	const target = resolveComposerTarget(session);
+	if (!target) return { success: false, error: `${session.name} has no AI tab` };
+	const aiTabId = target.tabId;
+	const picks = getStagedDesignPicks(session.id, aiTabId);
+
+	if (request.action === 'list') {
+		return { success: true, aiTabId, picks: picks.map(summarizeDesignPick) };
+	}
+	const pick = picks.find((p) => p.id === request.pickId);
+	if (!pick) {
+		return {
+			success: false,
+			aiTabId,
+			error: `No Design Mode chip ${request.pickId} in the composer of tab ${aiTabId}`,
+		};
+	}
+	removeStagedDesignPick(session.id, aiTabId, pick.id);
+	return { success: true, aiTabId, removed: summarizeDesignPick(pick) };
 }

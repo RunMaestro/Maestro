@@ -42,6 +42,7 @@ describe('pickBrowserElement (browser-pick)', () => {
 			content: 'Element `h1` ...',
 			dataUrl: 'data:image/png;base64,AAAA',
 			aiTabId: 'ai-1',
+			pickId: 'pick-1',
 		}));
 	});
 
@@ -63,7 +64,25 @@ describe('pickBrowserElement (browser-pick)', () => {
 			text: 'Element `h1` ...',
 			screenshot: true,
 			aiTabId: 'ai-1',
+			pickId: 'pick-1',
 		});
+	});
+
+	it('names no chip when the renderer reports none, or the pick failed', async () => {
+		run.mockResolvedValueOnce({ ok: true, content: 'Element `h1` ...', aiTabId: 'ai-1' });
+		const staged = await pickBrowserElement(
+			{ sessionId: 's1', tab: 'uuid-a', selector: 'h1' },
+			{ registry, run }
+		);
+		expect(staged).not.toHaveProperty('pickId');
+
+		run.mockResolvedValueOnce({ ok: false, content: 'No element matches', pickId: 'stale' });
+		const failed = await pickBrowserElement(
+			{ sessionId: 's1', tab: 'uuid-a', selector: 'h1' },
+			{ registry, run }
+		);
+		expect(failed).toMatchObject({ success: false, error: 'No element matches' });
+		expect(failed).not.toHaveProperty('pickId');
 	});
 
 	it('passes a renderer tab id straight through and omits an empty note', async () => {

@@ -3,8 +3,8 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: select_tab, new_tab,
  * close_tab, rename_tab, star_tab, reopen_closed_tab, reorder_tab, toggle_bookmark,
- * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt,
- * open_document_graph.
+ * open_file_tab, open_browser_tab, pick_browser_element, design_pick_command,
+ * open_terminal_tab, new_ai_tab_with_prompt, open_document_graph.
  */
 
 import path from 'path';
@@ -22,6 +22,7 @@ import {
 	resolveUiSurfaceTab,
 	surfaceTabIds,
 } from '../../../../shared/uiSurfaces';
+import { parseDesignPickCommandRequest } from '../../../../shared/designPickCommands';
 import { normalizeRenameTabResult } from '../../types';
 
 /**
@@ -591,9 +592,9 @@ export function handleCloseBrowserTab(
 /**
  * Handle pick_browser_element message - Design Mode by selector
  * (`maestro-cli browser-pick`). Describes the first element matching
- * `selector` in a browser tab and adds it to the owning agent's composer, the
- * same way a click in Design Mode does. `tab` is the tab id `open-browser`
- * returned or the tab's Coworking id (`browser:N`).
+ * `selector` in a browser tab and stages it as a chip in the owning agent's
+ * composer, the same way a click in Design Mode does. `tab` is the tab id
+ * `open-browser` returned or the tab's Coworking id (`browser:N`).
  */
 export function handlePickBrowserElement(
 	ctx: MessageHandlerContext,
@@ -619,6 +620,7 @@ export function handlePickBrowserElement(
 		text?: string;
 		screenshot?: boolean;
 		aiTabId?: string;
+		pickId?: string;
 	}) => {
 		ctx.send(client, {
 			type: 'pick_browser_element_result',
@@ -651,6 +653,55 @@ export function handlePickBrowserElement(
 				success: false,
 				error: `Failed to pick element: ${error instanceof Error ? error.message : String(error)}`,
 			});
+		});
+}
+
+/**
+ * Handle design_pick_command message - the Design Mode chips staged in an
+ * agent's composer (`maestro-cli browser-picks`): list them, or remove one by
+ * id. Nothing is decided here: the chips live in the renderer's session store,
+ * so this validates the request and forwards it. Every outcome is answered with
+ * the request id, because the CLI blocks on it.
+ */
+export function handleDesignPickCommand(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sendResult = (payload: Record<string, unknown>) => {
+		ctx.send(client, {
+			type: 'design_pick_command_result',
+			...payload,
+			requestId: message.requestId,
+		});
+	};
+
+	const parsed = parseDesignPickCommandRequest(message as Record<string, unknown>);
+	if (!parsed.ok) {
+		sendResult({ success: false, error: parsed.error });
+		return;
+	}
+	const request = parsed.request;
+	logger.info(
+		`[Web] Received design_pick_command: action=${request.action}, session=${request.sessionId}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.getSessionDetail?.(request.sessionId)) {
+		sendResult({ success: false, error: `Session not found: ${request.sessionId}` });
+		return;
+	}
+	if (!ctx.callbacks.designPickCommand) {
+		sendResult({ success: false, error: 'Browser Design Mode not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.designPickCommand(request)
+		.then((result) => sendResult({ ...result }))
+		.catch((error) => {
+			const detail = error instanceof Error ? error.message : String(error);
+			sendResult({ success: false, error: `Design Mode chip ${request.action} failed: ${detail}` });
 		});
 }
 

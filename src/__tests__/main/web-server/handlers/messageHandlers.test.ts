@@ -160,7 +160,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			text: 'Element `h1` ...',
 			screenshot: true,
 			aiTabId: 'ai-1',
+			pickId: 'pick-1',
 		}),
+		designPickCommand: vi.fn().mockResolvedValue({ success: true, aiTabId: 'ai-1', picks: [] }),
 		openTerminalTab: vi.fn().mockResolvedValue({ success: true, tabId: 'terminal-tab-1' }),
 		writeTerminalTab: vi
 			.fn()
@@ -1769,6 +1771,7 @@ describe('WebSocketMessageHandler', () => {
 				browserId: 'browser:1',
 				screenshot: true,
 				aiTabId: 'ai-1',
+				pickId: 'pick-1',
 				sessionId: 'session-1',
 				background: true,
 				requestId: 'r1',
@@ -1833,6 +1836,112 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.type).toBe('pick_browser_element_result');
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Design Mode chips (Web → Desktop)', () => {
+		// The chips are renderer state: this hop validates, refuses an unknown
+		// agent, and always answers with the request id, because the CLI blocks on it.
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('forwards a list and answers with what the renderer found', async () => {
+			const chip = { id: 'pick-1', kind: 'element', label: 'h1', url: '', note: '', text: 'B' };
+			(callbacks.designPickCommand as any).mockResolvedValueOnce({
+				success: true,
+				aiTabId: 'ai-1',
+				picks: [chip],
+			});
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'session-1',
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(lastResponse()).toEqual({
+					type: 'design_pick_command_result',
+					success: true,
+					aiTabId: 'ai-1',
+					picks: [chip],
+					requestId: 'r1',
+					timestamp: expect.any(Number),
+				});
+			});
+			expect(callbacks.designPickCommand).toHaveBeenCalledWith({
+				action: 'list',
+				sessionId: 'session-1',
+			});
+		});
+
+		it('forwards a remove with its trimmed chip id', async () => {
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'remove',
+				sessionId: 'session-1',
+				pickId: ' pick-1 ',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.designPickCommand).toHaveBeenCalledWith({
+					action: 'remove',
+					sessionId: 'session-1',
+					pickId: 'pick-1',
+				});
+			});
+		});
+
+		it('refuses a malformed request before it reaches the renderer', () => {
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'remove',
+				sessionId: 'session-1',
+				requestId: 'r2',
+			});
+			expect(lastResponse()).toEqual({
+				type: 'design_pick_command_result',
+				success: false,
+				error: 'browser-picks remove requires a chip id',
+				requestId: 'r2',
+				timestamp: expect.any(Number),
+			});
+			expect(callbacks.designPickCommand).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown agent', () => {
+			(callbacks.getSessionDetail as any).mockReturnValueOnce(null);
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'ghost',
+				requestId: 'r3',
+			});
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Session not found: ghost',
+				requestId: 'r3',
+			});
+			expect(callbacks.designPickCommand).not.toHaveBeenCalled();
+		});
+
+		it('answers a renderer failure instead of hanging', async () => {
+			(callbacks.designPickCommand as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'session-1',
+				requestId: 'r4',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'design_pick_command_result',
+					success: false,
+					error: 'Design Mode chip list failed: boom',
+					requestId: 'r4',
+				});
 			});
 		});
 	});

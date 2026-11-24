@@ -94,8 +94,10 @@ export interface BrowserOpResult {
 	title?: string;
 	/** True when the op completed against a live webview. */
 	ok: boolean;
-	/** `pick`: the AI tab the element was added to. */
+	/** `pick`: the AI tab whose composer holds the chip. */
 	aiTabId?: string;
+	/** `pick`: the staged chip's id (`maestro-cli browser-picks --remove`). */
+	pickId?: string;
 }
 
 /** Per-agent policy for whether a state-changing browser op needs an explicit

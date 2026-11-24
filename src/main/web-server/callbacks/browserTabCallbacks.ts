@@ -13,7 +13,13 @@ import type {
 import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/coworking-registry';
 import { runHostBrowserOp } from '../../coworking/coworking-tools';
 import { requestNewAITabWithPrompt } from '../../utils/new-ai-tab-request';
+import { requestFromRenderer } from './remoteRequest';
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
+import {
+	normalizeDesignPickCommandResult,
+	type DesignPickCommandRequest,
+	type DesignPickCommandResult,
+} from '../../../shared/designPickCommands';
 
 /** A Coworking public id (`browser:3`), as opposed to a renderer tab id. */
 const COWORKING_BROWSER_ID = /^browser:\d+$/;
@@ -81,14 +87,15 @@ export async function pickBrowserElement(
 		...(result.ok && result.content ? { text: result.content } : {}),
 		screenshot: !!result.dataUrl,
 		...(result.aiTabId ? { aiTabId: result.aiTabId } : {}),
+		...(result.ok && result.pickId ? { pickId: result.pickId } : {}),
 	};
 }
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow'>
+	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
 ): void {
-	const { getMainWindow } = deps;
+	const { getMainWindow, getWindowForSession } = deps;
 
 	server.setOpenBrowserTabCallback(
 		async (sessionId: string, url: string, options?: { background?: boolean }) => {
@@ -181,6 +188,23 @@ export function registerBrowserTabCallbacks(
 	});
 
 	server.setPickBrowserElementCallback((request) => pickBrowserElement(request));
+
+	// Design Mode chip verbs are a ROUND TRIP: the caller is told which chips
+	// wait in the composer, or which one it took off. The chips are renderer
+	// state, so the request goes to the window that owns the agent, the one
+	// whose composer draws them.
+	server.setDesignPickCommandCallback(async (request: DesignPickCommandRequest) => {
+		const targetWindow = getWindowForSession?.(request.sessionId) ?? getMainWindow();
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No window is available for designPickCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<DesignPickCommandResult>(targetWindow, 'remote:designPickCommand', {
+			fallback: { success: false, error: 'Maestro did not answer the Design Mode chip request' },
+			parse: normalizeDesignPickCommandResult,
+			args: [request],
+		});
+	});
 
 	server.setOpenTerminalTabCallback(
 		async (

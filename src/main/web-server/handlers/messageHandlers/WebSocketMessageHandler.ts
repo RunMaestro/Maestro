@@ -137,6 +137,7 @@ import {
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
 	handlePickBrowserElement,
+	handleDesignPickCommand,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -398,6 +399,10 @@ export class WebSocketMessageHandler {
 
 			case 'pick_browser_element':
 				handlePickBrowserElement(this.ctx, client, message);
+				break;
+
+			case 'design_pick_command':
+				handleDesignPickCommand(this.ctx, client, message);
 				break;
 
 			case 'open_terminal_tab':

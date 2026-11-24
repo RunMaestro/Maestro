@@ -6,9 +6,15 @@
 // research should always pass it, then `close-browser <tab-id>` when done.
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
-import { readActiveAgentId, resolveAgentId } from '../services/storage';
+import { resolveAgentId } from '../services/storage';
+import { failCommand, resolveAgentOrActive } from '../services/session-command';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { BROWSER_PICK_TIMEOUT_MS } from '../../shared/coworkingBrowser';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+	DesignPickSummary,
+} from '../../shared/designPickCommands';
 
 interface OpenBrowserOptions {
 	agent?: string;
@@ -169,6 +175,7 @@ interface BrowserPickResult {
 	text?: string;
 	screenshot?: boolean;
 	aiTabId?: string;
+	pickId?: string;
 	background?: boolean;
 }
 
@@ -180,9 +187,12 @@ const BROWSER_PICK_CLI_TIMEOUT_MS = BROWSER_PICK_TIMEOUT_MS + 5_000;
 /**
  * Design Mode by selector: describe the first element matching `--selector`
  * in a browser tab (selector path, trimmed HTML, computed styles, cropped
- * screenshot) and add it to the owning agent's composer, as a click in Design
- * Mode does. `<tab>` is the tab id `open-browser` printed, or the tab's
- * Coworking id (`browser:N`, which needs Coworking on).
+ * screenshot) and stage it as a chip in the owning agent's composer, as a
+ * click in Design Mode does. `<tab>` is the tab id `open-browser` printed, or
+ * the tab's Coworking id (`browser:N`, which needs Coworking on).
+ *
+ * The chip is for the person at the composer; the caller gets the full block
+ * the chip adds to the message at send, and the chip's id for `browser-picks`.
  */
 export async function browserPick(tab: string, options: BrowserPickOptions): Promise<void> {
 	const fail = (error: string): never => {
@@ -200,11 +210,7 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 	try {
 		// The agent the user has selected, not the first stored one: a pick lands
 		// in a composer and can switch the view, so the wrong agent is visible harm.
-		const active = options.agent ? resolveAgentId(options.agent) : readActiveAgentId();
-		if (!active) {
-			return fail('No active agent recorded. Pass --agent <id> to say whose tab you mean.');
-		}
-		sessionId = active;
+		sessionId = resolveAgentOrActive(options.agent, 'whose tab you mean');
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	}
@@ -241,6 +247,7 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 				tabId: result.tabId ?? null,
 				browserId: result.browserId ?? null,
 				aiTabId: result.aiTabId ?? null,
+				pickId: result.pickId ?? null,
 				selector,
 				screenshot: result.screenshot === true,
 				background,
@@ -254,6 +261,93 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 			background ? ' (background)' : ''
 		}`
 	);
+	// The chip id is the handle for `browser-picks --remove`; a plain-mode
+	// caller should not need --json to get it.
+	if (result.pickId) console.log(`  Chip: ${result.pickId}`);
 	if (result.browserId) console.log(`  Coworking id: ${result.browserId}`);
 	console.log(`  Screenshot: ${result.screenshot ? 'attached' : 'none'}`);
+	// The chip in the composer is short; the caller gets what it adds at send.
+	if (result.text) console.log(`\n${result.text}`);
+}
+
+interface BrowserPicksOptions {
+	agent?: string;
+	remove?: string;
+	json?: boolean;
+}
+
+/** One chip in plain output: id, kind and label, then what else it carries. */
+function describeDesignPick(pick: DesignPickSummary): string {
+	return [
+		`${pick.id}  ${pick.kind}  ${pick.label}`,
+		`  URL: ${pick.url || '(none)'}`,
+		`  Note: ${pick.note || '(none)'}`,
+		`  Screenshot: ${pick.screenshot ? 'attached' : 'none'}`,
+	].join('\n');
+}
+
+/**
+ * The Design Mode chips waiting in an agent's composer: the strip a person
+ * sees above the message box. Lists the chips on the agent's composer target
+ * tab (the tab a pick lands in) in the order they are sent, each with the
+ * block it adds to the message; `--remove <pickId>` takes one off, as the
+ * chip's X does.
+ */
+export async function browserPicks(options: BrowserPicksOptions): Promise<void> {
+	const { json } = options;
+	const pickId = options.remove?.trim();
+	if (options.remove !== undefined && !pickId) {
+		return failCommand('--remove needs a chip id (from browser-picks or browser-pick)', json);
+	}
+
+	let sessionId: string;
+	try {
+		// The agent on screen, like `browser-pick`: the chips belong to a composer.
+		sessionId = resolveAgentOrActive(options.agent, 'whose composer you mean');
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+
+	const request: DesignPickCommandRequest = pickId
+		? { action: 'remove', sessionId, pickId }
+		: { action: 'list', sessionId };
+	let result: DesignPickCommandResult;
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand<DesignPickCommandResult>(
+				{ type: 'design_pick_command', ...request },
+				'design_pick_command_result'
+			)
+		);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+	if (!result.success) return failCommand(result.error || 'Design Mode chip command failed', json);
+
+	const aiTabId = result.aiTabId ?? null;
+	const where = `the composer of tab ${aiTabId ?? 'unknown'}`;
+
+	if (pickId) {
+		const removed = result.removed ?? null;
+		if (json) {
+			console.log(JSON.stringify({ success: true, sessionId, aiTabId, removed }));
+			return;
+		}
+		console.log(
+			`Removed Design Mode chip ${pickId}${removed ? ` (${removed.label})` : ''} from ${where}`
+		);
+		return;
+	}
+
+	const picks = result.picks ?? [];
+	if (json) {
+		console.log(JSON.stringify({ success: true, sessionId, aiTabId, picks }));
+		return;
+	}
+	if (picks.length === 0) {
+		console.log(`No Design Mode chips in ${where}`);
+		return;
+	}
+	console.log(`Design Mode chips in ${where} (${picks.length}):`);
+	for (const pick of picks) console.log(`\n${describeDesignPick(pick)}\n\n${pick.text}`);
 }

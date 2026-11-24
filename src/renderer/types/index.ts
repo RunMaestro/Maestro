@@ -63,6 +63,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { DesignPickKind } from '../../shared/designPickCommands';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -822,7 +823,7 @@ export interface ProviderTabSession {
  */
 export interface StagedDesignPick {
 	id: string; // generateId()
-	kind: 'element' | 'region';
+	kind: DesignPickKind; // 'element' | 'region'
 	label: string; // short: `button.cta "Sign up"` or `Region 640 x 220`
 	url: string;
 	note: string; // editable from the chip

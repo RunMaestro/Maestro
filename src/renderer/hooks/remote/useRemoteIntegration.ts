@@ -27,6 +27,7 @@ import { reopenClosedTabInAgent } from '../../services/reopenClosedTab';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import { runRemoteDiffReviewCommand } from '../../services/diffReview';
 import { runRemoteFileReviewCommand } from '../../services/fileReview';
+import { runRemoteDesignPickCommand } from '../../services/designModePick';
 import type { DiffReviewCommandResult } from '../../../shared/diffReviewCommands';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
@@ -1830,6 +1831,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	// Handle a remote Design Mode chip verb (`maestro-cli browser-picks`): list
+	// the chips waiting in an agent's composer, or take one off. The chips are
+	// this renderer's state (the composer draws them), so the service answers
+	// from the live store, through the same remover the chip's X calls. The
+	// preload sends the answer back, a throw included.
+	useEffect(
+		() => window.maestro.process.onRemoteDesignPickCommand?.(runRemoteDesignPickCommand),
+		[]
+	);
 
 	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
 	// notes are this renderer's state and its run loop is what reads them, so

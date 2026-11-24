@@ -15,6 +15,7 @@ import {
 	getStagedDesignPicks,
 	removeStagedDesignPick,
 	removeStagedDesignPicks,
+	runRemoteDesignPickCommand,
 	setStagedDesignPickNote,
 } from '../../../renderer/services/designModePick';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -429,5 +430,110 @@ describe('removeStagedDesignPicks', () => {
 		expect(removeStagedDesignPicks(SESSION_ID, TAB_ID, [])).toBe(0);
 		expect(removeStagedDesignPicks(SESSION_ID, 'other-tab', ['b'])).toBe(0);
 		expect(session()).toBe(before);
+	});
+});
+
+describe('runRemoteDesignPickCommand (browser-picks)', () => {
+	it('lists the composer chips in order, every field but the image itself', () => {
+		const shot = createMockDesignPick({
+			id: 'a',
+			note: 'bigger',
+			text: 'block a',
+			screenshot: SHOT,
+		});
+		const bare = createMockDesignPick({ id: 'b', kind: 'region', label: 'Region 640 x 220' });
+		seed({ stagedDesignPicks: [shot, bare] });
+
+		expect(runRemoteDesignPickCommand({ action: 'list', sessionId: SESSION_ID })).toEqual({
+			success: true,
+			aiTabId: TAB_ID,
+			picks: [
+				{
+					id: 'a',
+					kind: 'element',
+					label: 'button.cta "Sign up"',
+					url: 'https://example.com',
+					note: 'bigger',
+					text: 'block a',
+					screenshot: true,
+				},
+				{
+					id: 'b',
+					kind: 'region',
+					label: 'Region 640 x 220',
+					url: 'https://example.com',
+					note: '',
+					text: 'BLOCK',
+					screenshot: false,
+				},
+			],
+		});
+	});
+
+	it('lists nothing for a composer with no chips', () => {
+		seed();
+		expect(runRemoteDesignPickCommand({ action: 'list', sessionId: SESSION_ID })).toEqual({
+			success: true,
+			aiTabId: TAB_ID,
+			picks: [],
+		});
+	});
+
+	it('removes one chip, as its X does, and reports it', () => {
+		stageChips(['a', 'b', 'c'], { inputValue: 'Fix it', stagedImages: [PASTED] });
+
+		const result = runRemoteDesignPickCommand({
+			action: 'remove',
+			sessionId: SESSION_ID,
+			pickId: 'b',
+		});
+
+		expect(result).toMatchObject({ success: true, aiTabId: TAB_ID, removed: { id: 'b' } });
+		expect(chips().map((c) => c.id)).toEqual(['a', 'c']);
+		expect(session().aiTabs[0]).toMatchObject({ inputValue: 'Fix it', stagedImages: [PASTED] });
+	});
+
+	it('reports a chip that is not in the composer, and writes nothing', () => {
+		stageChips(['a']);
+		const before = session();
+
+		expect(
+			runRemoteDesignPickCommand({ action: 'remove', sessionId: SESSION_ID, pickId: 'gone' })
+		).toEqual({
+			success: false,
+			aiTabId: TAB_ID,
+			error: `No Design Mode chip gone in the composer of tab ${TAB_ID}`,
+		});
+		expect(session()).toBe(before);
+	});
+
+	it("acts on the composer target tab only, not another tab's chips", () => {
+		const other = createMockAITab({
+			id: 'tab-2',
+			stagedDesignPicks: [createMockDesignPick({ id: 'elsewhere' })],
+		});
+		seed({}, { aiTabs: [createMockAITab({ id: TAB_ID }), other] });
+
+		expect(runRemoteDesignPickCommand({ action: 'list', sessionId: SESSION_ID })).toMatchObject({
+			aiTabId: TAB_ID,
+			picks: [],
+		});
+		expect(
+			runRemoteDesignPickCommand({ action: 'remove', sessionId: SESSION_ID, pickId: 'elsewhere' })
+		).toMatchObject({ success: false });
+		expect(session().aiTabs[1].stagedDesignPicks?.map((c) => c.id)).toEqual(['elsewhere']);
+	});
+
+	it('refuses an agent that is gone or has no AI tab', () => {
+		seed({}, { activeTabId: '' });
+
+		expect(runRemoteDesignPickCommand({ action: 'list', sessionId: 'ghost' })).toEqual({
+			success: false,
+			error: 'Agent not found: ghost',
+		});
+		expect(runRemoteDesignPickCommand({ action: 'list', sessionId: SESSION_ID })).toMatchObject({
+			success: false,
+			error: expect.stringContaining('has no AI tab'),
+		});
 	});
 });

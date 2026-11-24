@@ -16,6 +16,10 @@ import type {
 	DiffReviewCommandResult,
 } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../shared/designPickCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -664,16 +668,27 @@ export interface PickBrowserElementResult {
 	tabId?: string;
 	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
 	browserId?: string;
-	/** The text added to the composer draft. */
+	/** The block the chip adds to the message at send, note included. */
 	text?: string;
-	/** Whether a cropped screenshot was staged with it. */
+	/** Whether the chip carries a cropped screenshot. */
 	screenshot: boolean;
-	/** The AI tab the element was added to. */
+	/** The AI tab whose composer holds the chip. */
 	aiTabId?: string;
+	/** The staged chip's id, for `browser-picks --remove`. */
+	pickId?: string;
 }
 export type PickBrowserElementCallback = (
 	request: PickBrowserElementRequest
 ) => Promise<PickBrowserElementResult>;
+/**
+ * One Design Mode chip verb (`maestro-cli browser-picks`), forwarded to the
+ * renderer that holds the chips staged in the agent's composer and answered
+ * with what it found or removed. Resolves rather than rejects on a miss, for
+ * the same reason `SnoozeCommandCallback` does.
+ */
+export type DesignPickCommandCallback = (
+	request: DesignPickCommandRequest
+) => Promise<DesignPickCommandResult>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;

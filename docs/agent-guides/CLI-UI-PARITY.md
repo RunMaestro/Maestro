@@ -306,7 +306,9 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage Dashboard: Export button (JSON, or a zip of CSVs)                                                                   | `stats-export -o <path> [-f csv\|json] [-r <range>] [--json]`                                    |
 | Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
 | Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
-| Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                    |
+| Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: `browser-picks`, its `--json` text and `pickId`    |
+| Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                    | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                 |
+| Browser Design Mode: remove a chip from the composer (the chip's X)                                                       | `browser-picks --remove <pickId>`; read: `browser-picks`                                         |
 
 ## Open gaps
 

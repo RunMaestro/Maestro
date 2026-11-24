@@ -367,6 +367,7 @@ describe('resolveAndRun', () => {
 			ok: true,
 			content: 'ELEMENT BLOCK',
 			aiTabId: 'ai-1',
+			pickId: 'pick-1',
 			dataUrl: 'data:image/png;base64,CROP',
 		});
 	});

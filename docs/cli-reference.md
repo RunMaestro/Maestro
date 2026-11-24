@@ -606,6 +606,16 @@ Add an element of a browser tab to the agent's message, as Design Mode does (tab
 | `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
 | `--json`               | Output as JSON (for scripting)                          | -       |
 
+## `maestro-cli browser-picks`
+
+List the Design Mode chips waiting in an agent's composer, or remove one
+
+| Option              | Description                                               | Default |
+| ------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Agent whose composer holds the chips (defaults to active) | -       |
+| `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
+| `--json`            | Output as JSON (for scripting)                            | -       |
+
 ## `maestro-cli open-terminal`
 
 Open a new terminal tab in the Maestro desktop app

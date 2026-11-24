@@ -60,6 +60,7 @@ describe('browser-pick command', () => {
 			tabId: 'tab-uuid',
 			browserId: 'browser:2',
 			aiTabId: 'ai-1',
+			pickId: 'pick-9',
 			screenshot: true,
 			text: 'Element ...',
 		});
@@ -82,11 +83,14 @@ describe('browser-pick command', () => {
 			note: 'make it bigger',
 			background: true,
 		});
-		expect(logSpy).toHaveBeenCalledWith(
-			'Added .hero h1 from browser:2 to the composer of tab ai-1 (background)'
-		);
-		expect(logSpy).toHaveBeenCalledWith('  Coworking id: browser:2');
-		expect(logSpy).toHaveBeenCalledWith('  Screenshot: attached');
+		// The summary, the chip id, then the block the chip adds at send, in that order.
+		expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
+			'Added .hero h1 from browser:2 to the composer of tab ai-1 (background)',
+			'  Chip: pick-9',
+			'  Coworking id: browser:2',
+			'  Screenshot: attached',
+			'\nElement ...',
+		]);
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
@@ -98,20 +102,26 @@ describe('browser-pick command', () => {
 		expect(sent[0].message.sessionId).toBe('active-session');
 		expect(sent[0].message.background).toBe(false);
 		expect(sent[0].message).not.toHaveProperty('note');
-		expect(logSpy).toHaveBeenCalledWith('  Screenshot: none');
+		// No chip id and no block in the reply: no line for either.
+		expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
+			'Added button from tab-uuid to the composer of tab ai-1',
+			'  Screenshot: none',
+		]);
 	});
 
-	it('prints the result fields as JSON', async () => {
+	it('prints the result fields as JSON, the chip id included', async () => {
 		stubDesktop({
 			success: true,
 			tabId: 'tab-uuid',
 			aiTabId: 'ai-1',
+			pickId: 'pick-9',
 			screenshot: false,
-			text: 'the draft text',
+			text: 'the element block',
 		});
 
 		await browserPick('tab-uuid', { selector: 'button', json: true });
 
+		expect(logSpy).toHaveBeenCalledTimes(1);
 		const out = JSON.parse(String(logSpy.mock.calls[0][0]));
 		expect(out).toMatchObject({
 			success: true,
@@ -119,10 +129,19 @@ describe('browser-pick command', () => {
 			tabId: 'tab-uuid',
 			browserId: null,
 			aiTabId: 'ai-1',
+			pickId: 'pick-9',
 			selector: 'button',
 			screenshot: false,
-			text: 'the draft text',
+			text: 'the element block',
 		});
+	});
+
+	it('reports a null chip id in JSON when the desktop sends none', async () => {
+		stubDesktop({ success: true, tabId: 'tab-uuid', aiTabId: 'ai-1', screenshot: false });
+
+		await browserPick('tab-uuid', { selector: 'button', json: true });
+
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({ pickId: null, text: '' });
 	});
 
 	it('refuses a missing selector without calling the desktop', async () => {
