@@ -55,6 +55,7 @@ import {
 import {
 	asTierLevel,
 	resolveEffortLevel,
+	resolveTierLaunch,
 	tierLaunchKey,
 	type ModelTier,
 	type TierRouting,
@@ -297,7 +298,9 @@ function settingsKey(
 	const tier = hint?.tier && hint.tier !== INHERIT_KEYWORD ? hint.tier : undefined;
 	let effort = baselineEffort;
 	if (hint?.effort && hint.effort !== INHERIT_KEYWORD) {
-		effort = resolveEffortLevel(toolType, hint.effort, supportedEfforts) ?? baselineEffort;
+		const resolved = resolveTierLaunch(toolType, tier, baselineModel, routing);
+		const model = resolved.kind === 'resolved' ? resolved.model : baselineModel;
+		effort = resolveEffortLevel(toolType, hint.effort, supportedEfforts, model) ?? baselineEffort;
 	}
 	return `${tierLaunchKey(toolType, tier, baselineModel, routing)}\u0000${effort ?? ''}`;
 }

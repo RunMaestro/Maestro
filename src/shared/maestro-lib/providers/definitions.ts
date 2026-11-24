@@ -499,7 +499,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				type: 'text',
 				label: 'Model',
 				description:
-					'Model slug override (e.g., gemini-3.6-flash-high). Leave empty to use the CLI default. Run `agy --help` for the slugs your account can reach.',
+					'Model override (e.g., gemini-4-neon). The picker lists what `agy models` offers your account. An id with an effort suffix (gemini-4-neon-high) still works; a Reasoning Effort set below replaces its suffix. Leave empty to use the CLI default.',
 				default: '',
 				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
 			},
@@ -507,8 +507,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				key: 'effort',
 				type: 'select',
 				label: 'Reasoning Effort',
-				description: 'How much the model should reason before responding.',
-				options: ['', 'low', 'medium', 'high'],
+				description:
+					'How much the model should reason before responding. Each model accepts its own subset (gemini-4-neon and gemini-4-hydrogen go to xhigh; most stop at high); the orchestrators take none.',
+				dynamic: true, // Read from the `agy models` effort suffixes at runtime
+				// Static fallback when discovery has nothing (CLI missing or signed out).
+				options: ['', 'low', 'medium', 'high', 'xhigh'],
 				default: '',
 				argBuilder: (value: string) => (value && value.trim() ? ['--effort', value.trim()] : []),
 			},

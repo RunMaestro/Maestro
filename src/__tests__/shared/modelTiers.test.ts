@@ -304,6 +304,40 @@ describe('cheap synopsis turn resumed on its session', () => {
 		expect(cheapResumeTurnSettings('codex')).toEqual({ model: undefined, effort: 'low' });
 	});
 
+	it('keeps the session model on Antigravity, whose --conversation resume shares the tab thread', () => {
+		// Antigravity has a cheap tier (Hydrogen), but a synopsis must not switch
+		// the user's own conversation onto it; only effort drops.
+		expect(
+			cheapResumeTurnSettings('antigravity', { model: 'gemini-4-carbon', effort: 'high' })
+		).toEqual({ model: 'gemini-4-carbon', effort: 'low' });
+		expect(cheapResumeTurnSettings('antigravity')).toEqual({ model: undefined, effort: 'low' });
+	});
+
+	it('checks the resumed model, not the cheap tier, for an Antigravity refusal', () => {
+		try {
+			// Hydrogen refusing low must not stop a Carbon synopsis from dropping to low.
+			noteEffortRejection('antigravity', {
+				value: 'low',
+				model: 'gemini-4-hydrogen',
+				supported: ['high'],
+			});
+			expect(
+				cheapResumeTurnSettings('antigravity', { model: 'gemini-4-carbon', effort: 'high' })
+			).toEqual({ model: 'gemini-4-carbon', effort: 'low' });
+			// The session's own model refusing low keeps its configured effort.
+			noteEffortRejection('antigravity', {
+				value: 'low',
+				model: 'gemini-4-carbon',
+				supported: ['high'],
+			});
+			expect(
+				cheapResumeTurnSettings('antigravity', { model: 'gemini-4-carbon', effort: 'high' })
+			).toEqual({ model: 'gemini-4-carbon', effort: 'high' });
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
@@ -859,5 +893,57 @@ describe('isLadderEffortValue', () => {
 	it('is false for a provider with no ladder, or one it has never heard of', () => {
 		expect(isLadderEffortValue('opencode', 'low')).toBe(false);
 		expect(isLadderEffortValue('not-a-provider', 'low')).toBe(false);
+	});
+});
+
+describe('Antigravity tiers and effort', () => {
+	it('maps tiers to the Gemini 4 model Google positions for that use, by base name', () => {
+		// Hydrogen: fast everyday execution. Neon: depth and efficiency. Carbon:
+		// the hardest long-horizon work. Base names, so effort stays its own axis.
+		expect(resolveTierModel('antigravity', 'low')).toBe('gemini-4-hydrogen');
+		expect(resolveTierModel('antigravity', 'medium')).toBe('gemini-4-neon');
+		expect(resolveTierModel('antigravity', 'high')).toBe('gemini-4-carbon');
+		expect(supportsTierSelection('antigravity')).toBe(true);
+	});
+
+	it('maps effort levels to rungs every tier model accepts', () => {
+		// Carbon stops at high, so the ladder does too; xhigh is Neon/Hydrogen only.
+		expect(resolveEffortLevel('antigravity', 'low')).toBe('low');
+		expect(resolveEffortLevel('antigravity', 'medium')).toBe('medium');
+		expect(resolveEffortLevel('antigravity', 'high')).toBe('high');
+		expect(supportsEffortSelection('antigravity')).toBe(true);
+	});
+
+	it('runs cheap turns on Hydrogen at low effort', () => {
+		expect(cheapTurnSettings('antigravity')).toEqual({ model: 'gemini-4-hydrogen', effort: 'low' });
+	});
+
+	it('keeps a ladder value available after another model refused it', () => {
+		// gpt-oss-120b accepts only medium. Its refusal of high must not withdraw
+		// high from the Gemini models that accept it.
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		expect(resolveEffortLevel('antigravity', 'high', undefined, 'gemini-4-neon')).toBe('high');
+		resetEffortRejections();
+	});
+
+	it('withdraws a level only for the model that refused it, suffixed or not', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		expect(resolveEffortLevel('antigravity', 'high', undefined, 'gpt-oss-120b')).toBeUndefined();
+		expect(
+			resolveEffortLevel('antigravity', 'high', undefined, 'gpt-oss-120b-medium')
+		).toBeUndefined();
+		expect(rejectedEffortForLevel('antigravity', 'high', 'gpt-oss-120b')?.supported).toEqual([
+			'medium',
+		]);
+		expect(rejectedEffortForLevel('antigravity', 'high', 'gemini-4-neon')).toBeUndefined();
+		resetEffortRejections();
 	});
 });

@@ -25,6 +25,7 @@ import {
 	MODEL_SERVER_NAME,
 } from '../../shared/local-models/model-server';
 import type { RunOnPickerSource } from '../../shared/local-models/run-on-picker';
+import { parseAntigravityModelList } from '../../shared/antigravityModels';
 import {
 	codexCatalogModels,
 	formatTierTargetSpec,
@@ -403,6 +404,40 @@ describe('a tier whose model the harness no longer lists', () => {
 
 	it('knows nothing is stale when the catalogue lists nothing', () => {
 		expect(staleTierModels('codex', [])).toEqual([]);
+	});
+
+	it('suggests and checks Antigravity tiers against the suffix-split base catalogue', () => {
+		const agyStdout = [
+			'Fetching available models...',
+			'gemini-4-hydrogen-low\tGemini 4 Hydrogen (Low)',
+			'gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)',
+			'gemini-4-neon-medium\tGemini 4 Neon (Medium)',
+			'gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)',
+			'gemini-4-carbon-high\tGemini 4 Carbon (High)',
+		].join('\n');
+		const catalog: HarnessCatalogModel[] = parseAntigravityModelList(agyStdout).models.map(
+			(id) => ({ id })
+		);
+		expect(suggestHarnessTierDefaults('antigravity', catalog)).toEqual({
+			low: {
+				target: { type: 'provider-model', model: 'gemini-4-hydrogen' },
+				reason: 'the built-in mapping, which this catalogue lists',
+			},
+			medium: {
+				target: { type: 'provider-model', model: 'gemini-4-neon' },
+				reason: 'the built-in mapping, which this catalogue lists',
+			},
+			high: {
+				target: { type: 'provider-model', model: 'gemini-4-carbon' },
+				reason: 'the built-in mapping, which this catalogue lists',
+			},
+		});
+		expect(staleTierModels('antigravity', catalog)).toEqual([]);
+
+		const noCarbon = catalog.filter((m) => m.id !== 'gemini-4-carbon');
+		expect(staleTierModels('antigravity', noCarbon)).toEqual([
+			{ tier: 'high', model: 'gemini-4-carbon', source: 'built-in', replacement: 'gemini-4-neon' },
+		]);
 	});
 });
 

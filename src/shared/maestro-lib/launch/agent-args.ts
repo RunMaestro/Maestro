@@ -6,6 +6,11 @@ import type {
 } from '../../types';
 import { isAutoModel } from '../../autoModel';
 import { describeEffortRejection, getEffortRejection } from '../../effortRejection';
+import {
+	readAntigravityModelEffortArgs,
+	resolveAntigravityModelEffortArgs,
+	resolveAntigravitySelection,
+} from '../../antigravityModels';
 import { logger } from '../host';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -649,6 +654,20 @@ export function applyAgentConfigOverrides(
 	}
 	if (agent?.id === 'grok') {
 		finalArgs = resolveGrokModelEffortArgs(finalArgs, overrides.grokEffortMenu);
+	}
+	if (agent?.id === 'antigravity') {
+		// An effort-suffixed model id plus a different --effort is a hard error in
+		// agy; resolve the pair here so every surface (tab, Auto Run hint, Cue,
+		// custom args) sends one the CLI accepts. The SDK path reads modelId and
+		// effort, so they get the same resolution.
+		finalArgs = resolveAntigravityModelEffortArgs(finalArgs);
+		// The SDK path sends modelId and effort, so they come from the same
+		// last-wins flags the CLI reads; a configured value stands when no flag
+		// names that axis.
+		const flags = readAntigravityModelEffortArgs(finalArgs);
+		const selected = resolveAntigravitySelection(flags.model ?? modelId, flags.effort ?? effort);
+		modelId = selected.model;
+		effort = selected.effort;
 	}
 
 	// Env vars: agent defaults (lowest), then ONE user-configured set on top. The

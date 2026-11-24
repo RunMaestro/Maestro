@@ -350,6 +350,41 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.warnings).toHaveLength(1);
 	});
 
+	it('maps Antigravity tiers to Hydrogen, Neon and Carbon at the matching effort', () => {
+		const cases = [
+			['low', 'gemini-4-hydrogen', 'low'],
+			['medium', 'gemini-4-neon', 'medium'],
+			['high', 'gemini-4-carbon', 'high'],
+		] as const;
+		for (const [level, model, effort] of cases) {
+			const hint = findActiveModelHint(
+				`<!-- MAESTRO:MODEL tier="${level}" effort="${level}" -->\n- [ ] x`
+			);
+			const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-neon-high', undefined);
+			expect(resolved).toMatchObject({ model, effort });
+			expect(resolved.warnings).toEqual([]);
+		}
+	});
+
+	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		try {
+			const hint = findActiveModelHint(`<!-- MAESTRO:MODEL effort="high" -->\n- [ ] x`);
+			const refused = resolveTurnSettings('antigravity', hint, 'gpt-oss-120b', 'medium');
+			expect(refused.effort).toBe('medium');
+			expect(refused.warnings.join(' ')).toContain('gpt-oss-120b');
+			const other = resolveTurnSettings('antigravity', hint, 'gemini-4-neon', 'medium');
+			expect(other.effort).toBe('high');
+			expect(other.warnings).toEqual([]);
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	describe('after the provider refused the value a level maps to', () => {
 		afterEach(() => {
 			resetEffortRejections();
@@ -1063,4 +1098,50 @@ describe('Grok hints with selected-model effort evidence', () => {
 			}
 		}
 	);
+
+	it('agrees between countTasksUnderActiveHint and resolveTurnSettings when a per-model Antigravity effort refusal is recorded for the tier model', () => {
+		// Task 1 asks for tier="high" effort="high" (gemini-4-carbon, whose "high"
+		// effort was refused, so effort falls back to baseline "low").
+		// Task 2 asks for tier="high" with no effort (inherits baseline "low").
+		// Because both tasks resolve to the same {model: gemini-4-carbon, effort: low},
+		// countTasksUnderActiveHint must group both tasks into one dispatch.
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gemini-4-carbon',
+			supported: ['low', 'medium'],
+		});
+		try {
+			const doc = [
+				'- [ ] task 1 <!-- MAESTRO:MODEL tier="high" effort="high" -->',
+				'- [ ] task 2 <!-- MAESTRO:MODEL tier="high" -->',
+				'- [ ] task 3 <!-- MAESTRO:MODEL tier="medium" effort="high" -->',
+			].join('\n');
+			const first = resolveTurnSettings(
+				'antigravity',
+				findActiveModelHint(doc),
+				'gemini-4-neon',
+				'low'
+			);
+			expect(first).toMatchObject({ model: 'gemini-4-carbon', effort: 'low' });
+			expect(first.warnings[0]).toContain('gemini-4-carbon');
+
+			// Task 3 runs on gemini-4-neon (not refused for high), so it still gets effort="high".
+			const thirdDoc = '- [ ] task 3 <!-- MAESTRO:MODEL tier="medium" effort="high" -->';
+			const third = resolveTurnSettings(
+				'antigravity',
+				findActiveModelHint(thirdDoc),
+				'gemini-4-neon',
+				'low'
+			);
+			expect(third).toMatchObject({ model: 'gemini-4-neon', effort: 'high' });
+			expect(third.warnings).toEqual([]);
+
+			expect(countTasksUnderActiveHint(doc, 'antigravity', 'gemini-4-neon', 'low')).toEqual({
+				count: 2,
+				total: 3,
+			});
+		} finally {
+			resetEffortRejections();
+		}
+	});
 });
