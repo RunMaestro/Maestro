@@ -22,6 +22,11 @@ function sanitizeBrowserPartitionKey(sessionId: string): string {
 	return normalized || 'default';
 }
 
+// The partition behind every ordinary browser tab, so logins survive a restart:
+// `persist:` makes Electron keep the session on disk, and the value is a pure
+// function of the agent id (no random part, unlike an incognito tab's), so every
+// save, restore and new tab of that agent reopens the SAME session. Keep it that
+// way; browserTabLoginPersistence.test.ts pins the rule.
 export function getBrowserTabPartition(sessionId: string): string {
 	return `${BROWSER_TAB_PARTITION_PREFIX}${sanitizeBrowserPartitionKey(sessionId)}`;
 }
