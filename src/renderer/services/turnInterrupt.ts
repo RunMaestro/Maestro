@@ -18,6 +18,7 @@
  * (`send-terminal --control C`), and a `!` command has its own card Stop.
  */
 
+import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
@@ -125,6 +126,28 @@ export async function interruptTurn(
 		}
 	}
 	const scopeTabId = tabId ?? undefined;
+
+	// A hosted agent's turns run on its Federation host: Stop goes there. A terminal command is
+	// this machine's own (it runs over SSH from here), so it keeps the local path below.
+	const terminalCommand =
+		tabId === null && session.state === 'busy' && session.busySource === 'terminal';
+	if (hostedTargetOf(session) && !terminalCommand) {
+		const hostBusy = scopedTab
+			? scopedTab.state === 'busy'
+				? [scopedTab.id]
+				: []
+			: getBusyTabs(session).map((t) => t.id);
+		if (hostBusy.length > 0) await interruptHostedTurn(session, scopeTabId);
+		return {
+			success: true,
+			sessionId,
+			tabId,
+			wasBusy: hostBusy.length > 0,
+			interrupted: hostBusy.length > 0,
+			stoppedTabIds: hostBusy,
+			exited: false,
+		};
+	}
 
 	// Ended first and synchronously, before any await, so no retry timer can
 	// resend the stopped prompt while the stop is still running. A compaction is

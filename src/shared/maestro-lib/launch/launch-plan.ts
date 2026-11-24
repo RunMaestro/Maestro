@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { resolveAntigravityModelEffortArgs } from '../../antigravityModels';
 import {
 	bindTranslationKnowledge,
 	TRANSLATION_KNOWLEDGE_ENV_VAR,
@@ -59,6 +60,7 @@ import {
 	type PromptDelivery,
 	type PromptDeliveryAgent,
 	type PromptFileDestination,
+	encodeStdinPrompt,
 } from './prompt-delivery';
 import type { AcpPromptBlock, EmbeddedImageSupport } from './image-refs';
 import {
@@ -256,6 +258,10 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 	const agent = input.agent;
 	const requestedMode = defaultLaunchPermissionMode(input);
 	let selectionArgs = [...input.args];
+	if (agent?.id === 'antigravity') {
+		// Same resolution applyAgentConfigOverrides makes, for direct callers.
+		selectionArgs = resolveAntigravityModelEffortArgs(selectionArgs);
+	}
 	if (agent?.id === 'grok') {
 		// --add-dir belongs to other providers. Refuse both spellings even when
 		// no typed grant was supplied, rather than forward a fabricated Grok flag.
@@ -428,7 +434,10 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			args,
 			cwd: input.cwd,
 			prompt,
-			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? effectivePrompt : undefined,
+			stdin:
+				prompt.via === 'stdin' && prompt.format === 'raw' && effectivePrompt !== undefined
+					? encodeStdinPrompt(agent, effectivePrompt)
+					: undefined,
 			envVars,
 			...(resolved
 				? {

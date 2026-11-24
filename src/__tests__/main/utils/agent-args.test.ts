@@ -18,11 +18,16 @@ import {
 } from '../../../main/utils/agent-args';
 import { grokLaunchArgsProblem as processGrokLaunchArgsProblem } from '../../../main/process-manager/types';
 import { grokLaunchArgsProblem as sharedGrokLaunchArgsProblem } from '../../../shared/maestro-lib/launch/agent-args';
-import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
+import {
+	AGENT_DEFINITIONS,
+	ANTIGRAVITY_READ_ONLY_SETTINGS,
+	getAgentDefinition,
+} from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
 import { logger as mockLogger } from '../../../main/utils/logger';
 import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
 import { noteEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
+import { readAntigravityModelEffortArgs } from '../../../shared/antigravityModels';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -2224,21 +2229,69 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 		expect(result).toContain('055a398f-db14-4c5f-abbb-1bf03f8120a7');
 	});
 
-	it('drops the permission-skip flag in read-only mode and sandboxes the terminal instead', () => {
+	it('enforces read-only with a session deny list, not --sandbox', () => {
 		const result = buildAgentArgs(antigravity(), {
 			baseArgs: [],
 			prompt: 'read only please',
 			readOnlyMode: true,
 		});
 
-		expect(result).not.toContain('--dangerously-skip-permissions');
-		expect(result).toContain('--sandbox');
+		// agy applies a --settings deny list in every permission mode; --sandbox
+		// is not a write fence, so it is not used.
+		const settings = result.indexOf('--settings');
+		expect(settings).toBeGreaterThanOrEqual(0);
+		expect(result[settings + 1]).toBe(ANTIGRAVITY_READ_ONLY_SETTINGS);
+		expect(result).not.toContain('--sandbox');
 	});
 
 	it('raises the headless timeout past the 5m CLI default without any user config', () => {
 		const { args } = applyAgentConfigOverrides(antigravity(), [], {});
 
 		expect(args).toEqual(['--print-timeout', '30m']);
+	});
+
+	it('returns the model and effort the final arguments select, for the SDK path', () => {
+		const result = applyAgentConfigOverrides(antigravity(), [], {
+			agentConfigValues: { model: 'gemini-4-neon', effort: 'low' },
+			sessionCustomArgs: '--effort=high --model gemini-4-hydrogen-xhigh',
+		});
+
+		// The suffixed custom model conflicts with the custom effort, so the effort
+		// wins and the suffix goes; modelId/effort match what agy would run.
+		expect(result.modelId).toBe('gemini-4-hydrogen');
+		expect(result.effort).toBe('high');
+		expect(readAntigravityModelEffortArgs(result.args)).toEqual({
+			model: 'gemini-4-hydrogen',
+			effort: 'high',
+		});
+	});
+
+	it('keeps the configured model and effort when custom args name neither', () => {
+		const result = applyAgentConfigOverrides(antigravity(), [], {
+			agentConfigValues: { model: 'gemini-4-neon', effort: 'low' },
+			sessionCustomArgs: '--print-timeout 10m',
+		});
+
+		expect(result.modelId).toBe('gemini-4-neon');
+		expect(result.effort).toBe('low');
+	});
+
+	it('keeps an effort the user chose after agy refused it, so the turn fails with its own message', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gemini-4-neon',
+			supported: ['low', 'medium'],
+		});
+		try {
+			const result = applyAgentConfigOverrides(antigravity(), [], {
+				agentConfigValues: { model: 'gemini-4-neon', effort: 'low' },
+				sessionCustomArgs: '--effort=high',
+			});
+			expect(readAntigravityModelEffortArgs(result.args).effort).toBe('high');
+			expect(result.effort).toBe('high');
+		} finally {
+			resetEffortRejections();
+		}
 	});
 
 	it('adds model and effort flags only once the user sets them', () => {

@@ -7,27 +7,13 @@
 import { useMemo } from 'react';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { buildHostedAgentListings } from '../../services/hostedAgents';
 import {
 	agentFederationStatus,
-	liftedMirrorTarget,
 	type AgentFederationStatus,
 	type LiftableAgent,
-	type LiftedMirrorTarget,
 } from '../../utils/peerMirrorView';
-
-/**
- * Where a lifted agent's pointer leads, or undefined (never moved, or the feature is off). Takes
- * the stored `liftedTo` value, so a memo'd Left Bar row recomputes only when the pointer changes.
- */
-export function useLiftedMirrorTarget(liftedTo: unknown): LiftedMirrorTarget | undefined {
-	const enabled = usePeerMirrorStore((s) => s.enabled);
-	const peers = usePeerMirrorStore((s) => s.peers);
-	return useMemo(
-		() => (enabled && liftedTo ? liftedMirrorTarget({ liftedTo }, peers) : undefined),
-		[enabled, liftedTo, peers]
-	);
-}
 
 /** How `agent` stands with Federation (`agentFederationStatus()`), kept in step with the mirror. */
 export function useAgentFederationStatus(
@@ -35,7 +21,9 @@ export function useAgentFederationStatus(
 ): AgentFederationStatus {
 	const order = usePeerMirrorStore((s) => s.order);
 	const peers = usePeerMirrorStore((s) => s.peers);
-	const liftedTo = agent?.liftedTo;
+	// Hosted agents switched off: a hosted agent stands as the SSH agent it was.
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+	const liftedTo = hostingOn ? agent?.liftedTo : undefined;
 	const ssh = agent?.sessionSshRemoteConfig;
 	const sshEnabled = ssh?.enabled === true;
 	const remoteId = ssh?.remoteId ?? null;

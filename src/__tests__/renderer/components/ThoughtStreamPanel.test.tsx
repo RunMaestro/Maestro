@@ -631,6 +631,37 @@ describe('ThoughtStreamPanel steering', () => {
 		expect(screen.getAllByTestId('steering-reply')).toHaveLength(1);
 	});
 
+	// The delivered record outlives the run, so it needs a way out other than
+	// waiting for the next run to start.
+	it('dismisses a delivered group from its first note, even after the run ended', () => {
+		deliver('first', 'second');
+		deliver('third');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		// One X per delivery: the notes one task took share a reply and leave together.
+		const dismissButtons = screen.getAllByTestId('steering-note-dismiss');
+		expect(dismissButtons).toHaveLength(2);
+
+		fireEvent.click(dismissButtons[0]);
+
+		const remaining = screen.getAllByTestId('steering-note-delivered');
+		expect(remaining).toHaveLength(1);
+		expect(remaining[0]).toHaveTextContent('third');
+		expect(useAutoRunSteeringStore.getState().delivered[SID].map((note) => note.text)).toEqual([
+			'third',
+		]);
+	});
+
+	it('offers no dismiss on a pending note, which is cancelled instead', () => {
+		runFor(SID);
+		useAutoRunSteeringStore.getState().addNote(SID, 'waiting');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.queryByTestId('steering-note-dismiss')).not.toBeInTheDocument();
+	});
+
 	it('marks the reply of a task that failed, and offers nothing to open when there is no more', () => {
 		runFor(SID);
 		const ids = deliver('use the v3 endpoint');

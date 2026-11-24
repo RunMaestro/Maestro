@@ -17,7 +17,6 @@ vi.mock('../../../renderer/services/sessionPersistenceFlush', () => ({
 
 import {
 	moveAgentToHost,
-	openLiftedAgent,
 	planMoveToHost,
 	requestMoveToHost,
 	setupRemoteHostFromWindow,
@@ -99,41 +98,6 @@ describe('requestMoveToHost', () => {
 		requestMoveToHost('s1');
 		const modal = useModalStore.getState().modals.get('moveToHost');
 		expect(modal).toMatchObject({ open: true, data: { sessionId: 's1' } });
-	});
-});
-
-describe('openLiftedAgent', () => {
-	const pointer = { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } };
-
-	beforeEach(() => {
-		const { peer } = replacePeerAgents(
-			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'box' }),
-			[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [] }],
-			[],
-			1
-		);
-		usePeerMirrorStore.getState().hydrate([peer]);
-	});
-
-	it('shows the mirrored agent the pointer names', () => {
-		expect(openLiftedAgent(pointer)).toBe(true);
-		expect(usePeerMirrorStore.getState().activeMirror).toMatchObject({
-			peerId: 'box',
-			agentId: 'h1',
-		});
-	});
-
-	it('toasts when the mirror does not hold the agent', () => {
-		expect(openLiftedAgent({ liftedTo: { peer: 'box', agentId: 'gone', at: 1 } })).toBe(false);
-		expect(openLiftedAgent({ liftedTo: { peer: 'other', agentId: 'h1', at: 1 } })).toBe(false);
-		expect(notifyToast).toHaveBeenCalledTimes(2);
-		expect(vi.mocked(notifyToast).mock.calls[1][0].message).toContain('is not mirrored');
-		expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
-	});
-
-	it('does nothing for an agent that never moved', () => {
-		expect(openLiftedAgent({})).toBe(false);
-		expect(notifyToast).not.toHaveBeenCalled();
 	});
 });
 

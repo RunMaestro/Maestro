@@ -7,16 +7,17 @@
  * then loads the snapshot; pushes that arrive while the snapshot is in flight are replayed on top of
  * it, so nothing the service sent in between is lost. `federation:reset` empties the store.
  *
- * It also keeps the mirror selection exclusive with a group chat: opening a group chat leaves
- * the mirror, the way it leaves a local agent.
+ * It also starts the hosted-agent sync
+ * (`startHostedAgentSync()`), which folds each hosted agent's host state into its Left Bar record,
+ * so a hosted agent draws through the same Main Window and Right Bar as any agent.
  */
 
 import { useEffect } from 'react';
 import type { MirrorPush } from '../../../shared/maestro-lib/client/peer-mirror';
-import { useGroupChatStore } from '../../stores/groupChatStore';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useFederationAutoStore } from '../../stores/federationAutoStore';
 import { logger } from '../../utils/logger';
+import { startHostedAgentSync } from '../../services/hostedAgentSync';
 
 export function usePeerMirrorBridge(): void {
 	useEffect(() => {
@@ -49,11 +50,8 @@ export function usePeerMirrorBridge(): void {
 			.catch(() => {
 				// The pushes alone keep the store current.
 			});
-		const offGroupChat = useGroupChatStore.subscribe((state, previous) => {
-			if (state.activeGroupChatId && state.activeGroupChatId !== previous.activeGroupChatId) {
-				usePeerMirrorStore.getState().clearMirrorSelection();
-			}
-		});
+
+		const stopHostedSync = startHostedAgentSync();
 
 		const replay = () => {
 			const queued = pending ?? [];
@@ -82,7 +80,7 @@ export function usePeerMirrorBridge(): void {
 			offEvent();
 			offReset();
 			offAuto?.();
-			offGroupChat();
+			stopHostedSync();
 			useFederationAutoStore.getState().reset();
 			usePeerMirrorStore.getState().reset();
 		};

@@ -115,6 +115,20 @@ export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 ]);
 
 /**
+ * Providers whose partial `text` events are token-sized fragments of one reply
+ * (Grok `text` records, Antigravity `step_update.text_delta`), not whole
+ * messages. When a turn has no final result text, readers that rebuild the
+ * answer from partials must concatenate these with no separator: joining them
+ * with `\n` splits words mid-token.
+ */
+const TOKEN_DELTA_TEXT_AGENTS: ReadonlySet<string> = new Set<AgentId>(['grok', 'antigravity']);
+
+/** Whether `toolType`'s partial text events concatenate without a separator. */
+export function streamsTokenDeltaText(toolType: string): boolean {
+	return TOKEN_DELTA_TEXT_AGENTS.has(toolType);
+}
+
+/**
  * Resolve the context window size for an agent, preferring a runtime
  * capability snapshot when available and falling back to the static
  * `DEFAULT_CONTEXT_WINDOWS` table (and finally `FALLBACK_CONTEXT_WINDOW`).

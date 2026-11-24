@@ -4,22 +4,22 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name            | Status     | Notes                                                                                                                                                                                   |
-| --------------- | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                                                          |
-| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                                                               |
-| `opencode`      | OpenCode        | **Beta**   | Multi-provider support (75+ LLMs), SQLite `opencode.db` session storage with JSON fallback                                                                                              |
-| `kilo`          | Kilo            | **Beta**   | Fork of OpenCode: same `run --format json` CLI, JSONL events, and storage layout under `~/.local/share/kilo` / `kilo.db`                                                                |
-| `factory-droid` | Factory Droid   | **Beta**   | Factory's AI coding assistant, `-o stream-json`                                                                                                                                         |
-| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                                                     |
-| `grok`          | Grok CLI        | **Beta**   | Official `@xai-official/grok`; headless `--prompt-file` + `streaming-json` for full-access/read-only, `grok agent stdio` (ACP) for standard permission; no version qualified yet        |
-| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`, thinking, exit codes, and History from its SQLite stores, images by path |
-| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                                                             |
-| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                                                            |
-| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                                                            |
-| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                                                                  |
-| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                                                                 |
-| `gemini-cli`    | Gemini CLI      | Hidden     | Back-compat only: `hidden: true` in definitions, picker entry `null`, placeholder capabilities. Superseded by `antigravity`; not pickable                                               |
+| ID              | Name            | Status     | Notes                                                                                                                                                                                                                                     |
+| --------------- | --------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                                                                                                            |
+| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                                                                                                                 |
+| `opencode`      | OpenCode        | **Beta**   | Multi-provider support (75+ LLMs), SQLite `opencode.db` session storage with JSON fallback                                                                                                                                                |
+| `kilo`          | Kilo            | **Beta**   | Fork of OpenCode: same `run --format json` CLI, JSONL events, and storage layout under `~/.local/share/kilo` / `kilo.db`                                                                                                                  |
+| `factory-droid` | Factory Droid   | **Beta**   | Factory's AI coding assistant, `-o stream-json`                                                                                                                                                                                           |
+| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                                                                                                       |
+| `grok`          | Grok CLI        | **Beta**   | Official `@xai-official/grok`; headless `--prompt-file` + `streaming-json` for full-access/read-only, `grok agent stdio` (ACP) for standard permission; no version qualified yet                                                          |
+| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`, `--settings` read-only, `--add-dir`, stdin input, thinking, exit codes, and History from its SQLite stores, images by path |
+| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                                                                                                               |
+| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                                                                                                              |
+| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                                                                                                              |
+| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                                                                                                                    |
+| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                                                                                                                   |
+| `gemini-cli`    | Gemini CLI      | Hidden     | Back-compat only: `hidden: true` in definitions, picker entry `null`, placeholder capabilities. Superseded by `antigravity`; not pickable                                                                                                 |
 
 ## Native control transports
 
@@ -191,9 +191,15 @@ Beta, tier-1 qualification pending: no Grok binary is qualified (`GROK_CAPABILIT
 - **JSON Output:** `--output-format stream-json`
 - **Batch Mode:** `-p` (headless only; `requiresPromptToStart`)
 - **Resume:** `--conversation <id>` (emitted as `conversation_id` on every event)
-- **Read-only:** Not supported (`supportsReadOnlyMode: false`). `--sandbox` is best-effort: it restricts terminal commands, but workspace reads and writes stay auto-allowed
+- **Read-only:** CLI-enforced through a session-only `--settings` permission deny list (`ANTIGRAVITY_READ_ONLY_SETTINGS`): shell, file writes and MCP are refused in every permission mode, reads still answer. `noToolsArgs` adds `read_file`/`read_url` for tab naming. `--sandbox` restricts terminal commands only and is not a write fence (verified agy 1.5.16)
+- **Stdin prompt:** `--input-format stream-json` with one `{"event":"user",...}` line (`stdinPromptEncoder`); there is no raw-stdin form
+- **Extra directories:** `--add-dir <path>`, repeatable
 - **YOLO Mode:** `--dangerously-skip-permissions`
-- **Known Limitations:** no session storage (on-disk format undocumented), no thinking display (only `thinking_tokens` counts), and no tool-disabling flag, so a tab-naming run (`readOnlyMode: true`, empty `noToolsArgs`) can still touch workspace files
+- **History:** `AntigravitySessionStorage` reads `~/.gemini/antigravity-cli/conversation_summaries.db` and `conversations/<id>.db` (SQLite, protobuf steps; local only). The same stores feed lifetime stats (`getGlobalStats`) and Pianola memory history (`historical-inventory.ts`)
+- **Thinking:** the stream reports only `thinking_tokens`; the summary text is read from the conversation store by `antigravity-step-store.ts`
+- **Accounts:** one per machine. State lives in a fixed `~/.gemini/antigravity-cli` and credentials in the OS keyring, so there is no `PROVIDER_PROFILE_CONFIGS` entry
+- **Usage:** `result.usage` is the conversation's running total on a resumed turn, so the parser sums the turn's step usage instead
+- **Known Limitations:** no MCP overlay file, so MCP injection stays unverified; `agy acp` steering is not wired; Auto Run tier models are checked against the account's `agy models` list (an account without Neon or Carbon refuses them)
 
 ### Qwen3 Coder
 

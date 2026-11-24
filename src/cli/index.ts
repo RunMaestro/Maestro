@@ -94,6 +94,7 @@ import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './com
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
+import { unlift } from './commands/unlift';
 import {
 	federationAdd,
 	federationAgents,
@@ -208,7 +209,12 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
-import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	steerAutoRunCancel,
+	steerAutoRunDismiss,
+	steerAutoRunList,
+	steerAutoRunSend,
+} from './commands/steer-auto-run';
 import {
 	diffReviewAdd,
 	diffReviewClear,
@@ -1417,6 +1423,17 @@ steerAutoRun
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
 
+steerAutoRun
+	.command('dismiss <delivery-id>')
+	.description(
+		'Clear a delivered note and its task reply from the record (accepts a unique id prefix)'
+	)
+	.requiredOption('-a, --agent <id>', 'Agent that holds the delivered note')
+	.option('--background', 'Accepted and ignored: dismissing a note raises no notice')
+	.option('--focus', 'Accepted and ignored: dismissing a note raises no notice')
+	.option('--json', 'Output the dismissed delivery as JSON')
+	.action(steerAutoRunDismiss);
+
 // Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
 // Comments are pinned to lines of the agent's current diff and sent to it as
 // one prompt, each with its path:lines and hunk.
@@ -2125,6 +2142,17 @@ program
 	.option('--with-env', 'Send secret env vars too (non-secret ones always move)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, options) => lift(agent, options));
+
+// Unlift - move a hosted agent back from its host: an SSH agent again (Move Back from Host)
+program
+	.command('unlift <agent>')
+	.description(
+		"Move a hosted agent back from its host: an SSH agent again, with the host's tabs and transcripts; automatic moves then leave it alone"
+	)
+	.option('--offline', "Do not reach the host: restore from this machine's copy only")
+	.option('--keep-host-copy', 'Leave the agent on the host too (it then has two owners)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => unlift(agent, options));
 
 // Federation peer mirror - the peers the desktop mirrors in its Left Bar (FED-SSH-05)
 const federation = program

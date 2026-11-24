@@ -29,8 +29,9 @@
  * was steering would land in front of an unrelated task days later. DELIVERED
  * notes survive until the NEXT run starts, because the reply to the last note of
  * a run arrives as the run ends - and a note that asks the run to stop ends it.
- * Clearing them at run end erased that reply the instant it landed. Nothing here
- * is persisted.
+ * Clearing them at run end erased that reply the instant it landed. Between
+ * runs the operator clears one by hand (`dismissDelivery`), a whole delivery at
+ * a time because its notes share one reply. Nothing here is persisted.
  */
 
 import { create } from 'zustand';
@@ -114,6 +115,12 @@ export interface AutoRunSteeringActions {
 		noteIds: readonly string[],
 		response: Pick<SteeringNoteResponse, 'summary' | 'text' | 'success'>
 	) => void;
+	/**
+	 * Drop one delivery - every note one task took, and its reply - once the
+	 * operator has read it. A reply that arrives afterwards is skipped by
+	 * `recordResponse`, the same as for a note the cap trimmed.
+	 */
+	dismissDelivery: (sessionId: string, deliveryId: string) => void;
 	/** Drop what no task has taken yet, keeping the delivered record (run end). */
 	clearPendingNotes: (sessionId: string) => void;
 	/** Drop everything for a session, pending and delivered (run start). */
@@ -199,6 +206,18 @@ export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get)
 					),
 				},
 			};
+		}),
+
+	dismissDelivery: (sessionId, deliveryId) =>
+		set((s) => {
+			const existing = s.delivered[sessionId];
+			if (!existing) return {};
+			const remaining = existing.filter((note) => note.deliveryId !== deliveryId);
+			if (remaining.length === existing.length) return {};
+			const next = { ...s.delivered };
+			if (remaining.length === 0) delete next[sessionId];
+			else next[sessionId] = remaining;
+			return { delivered: next };
 		}),
 
 	clearPendingNotes: (sessionId) =>

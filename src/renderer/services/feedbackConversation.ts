@@ -796,6 +796,17 @@ export class FeedbackConversationManager {
 				if (jsonArgs.length && !args.includes(jsonArgs[0])) args.push(...jsonArgs);
 				return args;
 			}
+			case 'antigravity': {
+				// batchModeArgs is omitted (it is --dangerously-skip-permissions, pure
+				// bypass). Main appends the CLI-enforced read-only `--settings` deny
+				// list; the stream-json output is added here, once.
+				const args = [...baseArgs];
+				const jsonArgs: string[] = agent.jsonOutputArgs?.length
+					? agent.jsonOutputArgs
+					: (getAgentDefinition('antigravity')?.jsonOutputArgs ?? []);
+				if (jsonArgs.length && !args.includes(jsonArgs[0])) args.push(...jsonArgs);
+				return args;
+			}
 			default:
 				return baseArgs;
 		}

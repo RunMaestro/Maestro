@@ -179,6 +179,28 @@ export const AGENT_ARTIFACTS: Partial<Record<ToolType, string[]>> = {
 		'--permission-mode plan',
 		'streaming-json',
 	],
+	antigravity: [
+		// Brand references (agentMetadata, provider definition)
+		'Antigravity',
+		'Antigravity CLI',
+		'agy',
+		'Gemini',
+		// Model families `agy models` lists (antigravityModels.ts splits the effort
+		// suffix off). Static renderer data; refresh it with the CLI catalogue.
+		'gemini-4-carbon',
+		'gemini-4-neon',
+		'gemini-4-hydrogen',
+		'gemini-4-argon',
+		'gpt-oss-120b',
+		// Session and headless-turn terms (definition, AntigravitySessionStorage).
+		// No slash commands: supportsSlashCommands is false in headless runs.
+		'~/.gemini/antigravity-cli',
+		'--conversation',
+		'--dangerously-skip-permissions',
+		'--effort',
+		'stream-json',
+		'GEMINI.md',
+	],
 	terminal: [
 		// Terminal has no agent-specific artifacts
 	],
@@ -223,6 +245,14 @@ export const AGENT_TARGET_NOTES: Partial<Record<ToolType, string>> = {
     It can read and edit files, run terminal commands, and search code.
     It accepts images referenced by file path and supports model selection.
     It has no slash commands, project memory file, or appended system rules here,
+    so put every instruction and piece of context directly in the transferred message.
+  `,
+	antigravity: `
+    Antigravity CLI is Google's coding agent CLI (agy), running Gemini models.
+    Maestro drives it headless: one prompt per turn, chained by resuming the same conversation.
+    It can read and edit files, run terminal commands, and search code.
+    It accepts images referenced by file path and supports model and reasoning-effort selection.
+    It has no slash commands or appended system rules here,
     so put every instruction and piece of context directly in the transferred message.
   `,
 	terminal: `

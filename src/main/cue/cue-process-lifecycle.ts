@@ -29,7 +29,7 @@ import {
 	parsedUsageToStats,
 	replaceUsageStats,
 } from '../../shared/maestro-lib/streaming/usage-totals';
-import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
+import { FALLBACK_CONTEXT_WINDOW, streamsTokenDeltaText } from '../../shared/agentConstants';
 import {
 	stopProcess as runStopLadder,
 	BACKGROUND_STOP_GRACE_MS,
@@ -239,7 +239,7 @@ class CueRunStreamCapture {
 			this.usageAccumulator = new UsageAccumulator({ attachesAbsoluteUsage: true });
 		}
 		this.usageLastWriteWins = toolType === 'claude-code';
-		this.concatenatesDeltas = toolType === 'grok';
+		this.concatenatesDeltas = streamsTokenDeltaText(toolType);
 	}
 
 	/** A raw stdout chunk, kept for agents whose output is not parsed. */

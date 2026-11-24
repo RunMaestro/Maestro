@@ -17,8 +17,10 @@ import {
 import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
-import { requestMoveToHost, startPeerHost } from '../../../../renderer/services/agentLift';
-import { copyPeerAgentRef, reconnectPeer } from '../../../../renderer/services/peerMirror';
+import {
+	requestMoveBackFromHost,
+	requestMoveToHost,
+} from '../../../../renderer/services/agentLift';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import {
 	createMirroredPeer,
@@ -71,12 +73,7 @@ vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
 
 vi.mock('../../../../renderer/services/agentLift', () => ({
 	requestMoveToHost: vi.fn(),
-	startPeerHost: vi.fn(),
-}));
-
-vi.mock('../../../../renderer/services/peerMirror', () => ({
-	copyPeerAgentRef: vi.fn(),
-	reconnectPeer: vi.fn(),
+	requestMoveBackFromHost: vi.fn(),
 }));
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -539,27 +536,46 @@ describe('SessionContextMenu', () => {
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
 		});
 
-		it("offers the host's connection instead once the agent is hosted", () => {
-			mirror();
-			const session = sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
-			renderMenu({ session });
-			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			expect(screen.queryByTestId('session-menu-start-host')).not.toBeInTheDocument();
-			fireEvent.click(screen.getByTestId('session-menu-copy-hosted-ref'));
-			expect(copyPeerAgentRef).toHaveBeenCalledWith('box', 'h1');
-			cleanup();
-			renderMenu({ session });
-			const reconnect = screen.getByTestId('session-menu-reconnect-host');
-			expect(reconnect).toHaveTextContent('Reconnect Build Box');
-			fireEvent.click(reconnect);
-			expect(reconnectPeer).toHaveBeenCalledWith('box');
+		it('offers Move Back from Host for a hosted agent, connected or not', () => {
+			for (const connection of [undefined, 'lost'] as const) {
+				mirror(connection);
+				const props = renderMenu({
+					session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }),
+				});
+				const item = screen.getByTestId('session-menu-move-back-from-host');
+				expect(item).toHaveTextContent('Move Back from Host (Build Box)...');
+				fireEvent.click(item);
+				expect(requestMoveBackFromHost).toHaveBeenLastCalledWith(
+					'session-1',
+					'Test Agent',
+					'Build Box'
+				);
+				expect(props.onDismiss).toHaveBeenCalled();
+				cleanup();
+			}
 		});
 
-		it('offers Start Host while a hosted agent cannot reach its host', () => {
-			mirror('lost');
-			renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
-			fireEvent.click(screen.getByTestId('session-menu-start-host'));
-			expect(startPeerHost).toHaveBeenCalledWith('r1', 'Build Box');
+		it('offers no Move Back for an SSH or a local agent', () => {
+			mirror();
+			renderMenu({ session: sshSession() });
+			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
+			cleanup();
+			renderMenu({ session: makeSession() });
+			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
+		});
+
+		it("gives a hosted agent a local agent's menu: no address, Reconnect, or Start Host rows", () => {
+			for (const connection of [undefined, 'lost'] as const) {
+				mirror(connection);
+				renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+				expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+				expect(screen.queryByText(/^Copy box:/)).not.toBeInTheDocument();
+				expect(screen.queryByText(/Reconnect/)).not.toBeInTheDocument();
+				expect(screen.queryByText(/Start Host/)).not.toBeInTheDocument();
+				expect(screen.getByText('Rename')).toBeInTheDocument();
+				expect(screen.getByText('Edit Agent...')).toBeInTheDocument();
+				cleanup();
+			}
 		});
 	});
 });

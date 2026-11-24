@@ -125,6 +125,31 @@ describe('classifyCredentialKind', () => {
 		expect(classifyCredentialKind('copilot-cli', { GITHUB_TOKEN: 'a' }).kind).toBe('api-key');
 	});
 
+	// An agy login cannot fix a gateway, ADC, Vertex or API-key credential, so each
+	// must be named rather than defaulting to oauth.
+	it('classifies Antigravity credentials in gateway, ADC, Vertex, key order', () => {
+		expect(classifyCredentialKind('antigravity', {}).kind).toBe('oauth');
+		expect(
+			classifyCredentialKind('antigravity', {
+				GOOGLE_GEMINI_BASE_URL: 'https://gw.example.com/v1',
+				AGY_ADC_AUTH: 'true',
+			})
+		).toMatchObject({ kind: 'gateway', label: 'gw.example.com' });
+		expect(
+			classifyCredentialKind('antigravity', { AGY_ADC_AUTH: 'true', GEMINI_API_KEY: 'k' })
+		).toMatchObject({ kind: 'cloud-provider', envVarName: 'AGY_ADC_AUTH' });
+		expect(classifyCredentialKind('antigravity', { GOOGLE_GENAI_USE_VERTEXAI: '1' })).toMatchObject(
+			{ kind: 'cloud-provider', label: 'Vertex AI' }
+		);
+		expect(classifyCredentialKind('antigravity', { GEMINI_API_KEY: 'k' })).toMatchObject({
+			kind: 'api-key',
+			envVarName: 'GEMINI_API_KEY',
+			fallback: true,
+		});
+		// agy ignores GOOGLE_API_KEY, so it is not a credential.
+		expect(classifyCredentialKind('antigravity', { GOOGLE_API_KEY: 'k' }).kind).toBe('oauth');
+	});
+
 	// OpenCode keeps every provider in one auth.json, so a key set for ANY of
 	// them changes what the agent presents. Matched by shape, not by a list that
 	// goes stale on each release.

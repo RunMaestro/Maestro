@@ -52,7 +52,7 @@ What each provider supports in maestro-lib `0.6.0`:
 | `pi`            | Pi              | yes         | yes    | yes       |
 | `omp`           | Oh My Pi        | yes         | yes    | yes       |
 | `grok`          | Grok CLI        | yes         | yes    | yes       |
-| `antigravity`   | Antigravity CLI | yes         | yes    | no        |
+| `antigravity`   | Antigravity CLI | yes         | yes    | yes       |
 | `hermes`        | Hermes          | no          | no     | no        |
 
 Hermes is refused with `no-parser`. To list providers at run time, use `getVisibleAgentDefinitions()` and `getAgentCapabilities(id)`.

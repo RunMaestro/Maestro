@@ -40,6 +40,7 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 import { resolveAgentBinary } from '../../shared/maestro-lib/launch/agent-binary';
 import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
+import { tierNeedsOfferedModels } from '../../shared/modelTiers';
 import { describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { projectCueEventPaths } from './cue-template-context-builder';
 
@@ -91,6 +92,12 @@ export interface CueRunActionDeps {
 	 * name is left to `spawn()`'s own PATH search. SSH bypasses this callback.
 	 */
 	resolveAgentPath?: (toolType: string) => Promise<string | undefined> | string | undefined;
+	/**
+	 * The account's discovered models for a provider (`discoverAgentModels`), so a
+	 * tier model the account does not offer falls back with a warning instead of
+	 * failing the run by name. Absent or failing: no evidence, the tier stands.
+	 */
+	getOfferedModels?: (toolType: string, sshRemoteId?: string) => Promise<string[] | undefined>;
 	/** Local binary resolution; SSH selects explicit paths through the canonical resolver. */
 	resolveAgentBinary?: (options: {
 		session: CueRunSessionRecord;
@@ -399,11 +406,26 @@ export async function executeCueRunAction(
 	// config for this run only. A tier or effort the provider cannot
 	// honor falls back to the agent's value and is logged as a warning,
 	// so a run never silently lands on a different model than asked.
+	const offeredModels =
+		deps.getOfferedModels &&
+		!turnSettings?.model?.trim() &&
+		tierNeedsOfferedModels(storedSession.toolType, turnSettings?.tier)
+			? await deps
+					.getOfferedModels(
+						storedSession.toolType,
+						storedSession.sessionSshRemoteConfig?.enabled
+							? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+							: undefined
+					)
+					.catch(() => undefined)
+			: undefined;
+	if (isLaunchCancelled(signal)) return stoppedResult();
 	const turn = resolveCueTurnSettings(
 		storedSession.toolType,
 		turnSettings,
 		storedSession.customModel,
-		storedSession.customEffort
+		storedSession.customEffort,
+		offeredModels
 	);
 	const turnNote = describeTurnSettings(turn);
 	if (turnNote) {

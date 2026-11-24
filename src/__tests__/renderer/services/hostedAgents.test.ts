@@ -157,8 +157,6 @@ describe('hostedAgents', () => {
 			});
 			expect(setMany()).toHaveBeenCalledWith([record], []);
 			expect(useSessionStore.getState().activeSessionId).toBe(record.id);
-			// Selecting the row shows the agent its host runs.
-			expect(usePeerMirrorStore.getState().activeMirror?.key).toBe('tome:k1');
 		});
 
 		it('starts in step with the host settings, and leaves the selection alone in the background', async () => {

@@ -289,7 +289,7 @@ function settingsKey(
 		model = resolveTierModel(toolType, hint.tier) ?? baselineModel;
 	}
 	if (hint?.effort && hint.effort !== INHERIT_KEYWORD) {
-		effort = resolveEffortLevel(toolType, hint.effort, supportedEfforts) ?? baselineEffort;
+		effort = resolveEffortLevel(toolType, hint.effort, supportedEfforts, model) ?? baselineEffort;
 	}
 	return `${model ?? ''}\u0000${effort ?? ''}`;
 }

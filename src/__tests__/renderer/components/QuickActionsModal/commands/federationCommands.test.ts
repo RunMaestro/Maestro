@@ -16,11 +16,8 @@ const peer: MirroredPeer = replacePeerAgents(
 function build(overrides: Partial<Parameters<typeof buildFederationCommands>[0]> = {}) {
 	const deps = {
 		peers: [peer],
-		activeMirror: null,
 		reconnectPeer: vi.fn(),
-		copyPeerAgentRef: vi.fn(),
 		requestMoveToHost: vi.fn(),
-		openLiftedAgent: vi.fn(),
 		setQuickActionOpen: vi.fn(),
 		...overrides,
 	};
@@ -58,17 +55,6 @@ describe('buildFederationCommands', () => {
 		expect(deps.reconnectPeer).toHaveBeenCalledWith('buildbox');
 	});
 
-	it('offers to copy the peer:agent address only while a mirror is shown', () => {
-		expect(build().commands.some((c) => c.id === 'federation-copy-peer-agent-ref')).toBe(false);
-		const { deps, commands } = build({
-			activeMirror: { key: 'buildbox:a1', peerId: 'buildbox', agentId: 'a1' },
-		});
-		const copy = commands.find((c) => c.id === 'federation-copy-peer-agent-ref');
-		expect(copy?.label).toContain('buildbox:a1');
-		copy?.action();
-		expect(deps.copyPeerAgentRef).toHaveBeenCalledWith('buildbox', 'a1');
-	});
-
 	it('offers Move to Host for the active agent only when it can move', () => {
 		expect(build().commands.some((c) => c.id === 'federation-move-to-host')).toBe(false);
 		const { deps, commands } = build({
@@ -82,13 +68,37 @@ describe('buildFederationCommands', () => {
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 
-	it('offers to open a lifted agent on its host', () => {
-		expect(build().commands.some((c) => c.id === 'federation-open-lifted-agent')).toBe(false);
-		const { deps, commands } = build({ liftedTarget: { ref: 'buildbox:h1' } });
-		const open = commands.find((c) => c.id === 'federation-open-lifted-agent');
-		expect(open?.label).toBe('Open on Host (buildbox:h1)');
-		open?.action();
-		expect(deps.openLiftedAgent).toHaveBeenCalled();
+	it('offers the hosted-agents switch only while a hosted agent exists, labeled by its state', () => {
+		expect(build().commands.some((c) => c.id === 'federation-toggle-hosted-agents')).toBe(false);
+		const setEnabled = vi.fn();
+		const { commands } = build({ hostedAgents: { enabled: true, setEnabled } });
+		const toggle = commands.find((c) => c.id === 'federation-toggle-hosted-agents');
+		expect(toggle?.label).toBe('Turn Hosted Agents Off');
+		toggle?.action();
+		expect(setEnabled).toHaveBeenCalledWith(false);
+		expect(
+			build({ hostedAgents: { enabled: false, setEnabled } }).commands.find(
+				(c) => c.id === 'federation-toggle-hosted-agents'
+			)?.label
+		).toBe('Turn Hosted Agents On');
+	});
+
+	it('offers Move Back from Host only for a hosted active agent', () => {
+		const requestMoveBackFromHost = vi.fn();
+		expect(
+			build({ requestMoveBackFromHost }).commands.some(
+				(c) => c.id === 'federation-move-back-from-host'
+			)
+		).toBe(false);
+		const { deps, commands } = build({
+			moveBackFromHost: { sessionId: 's1', agentName: 'Docs', peerName: 'Build Box' },
+			requestMoveBackFromHost,
+		});
+		const back = commands.find((c) => c.id === 'federation-move-back-from-host');
+		expect(back?.label).toBe('Move Back from Host: Docs (Build Box)');
+		back?.action();
+		expect(requestMoveBackFromHost).toHaveBeenCalledWith('s1', 'Docs', 'Build Box');
+		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 
 	it('offers the same Move to Host when the remote runs no host yet, saying it sets one up', () => {
@@ -102,22 +112,6 @@ describe('buildFederationCommands', () => {
 		expect(entries[0].subtext).toMatch(/^Set up a Maestro host/);
 		entries[0].action();
 		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
-		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
-	});
-
-	it('offers Edit Agent on Host only while a mirror is shown', () => {
-		const editHostedAgent = vi.fn();
-		expect(
-			build({ editHostedAgent }).commands.some((c) => c.id === 'federation-edit-hosted-agent')
-		).toBe(false);
-		const { deps, commands } = build({
-			editHostedAgent,
-			activeMirror: { key: 'buildbox:a1', peerId: 'buildbox', agentId: 'a1' },
-		});
-		const edit = commands.find((c) => c.id === 'federation-edit-hosted-agent');
-		expect(edit?.label).toBe('Edit Agent on Host (buildbox:a1)');
-		edit?.action();
-		expect(editHostedAgent).toHaveBeenCalledWith('buildbox', 'a1');
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 

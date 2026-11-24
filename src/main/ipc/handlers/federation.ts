@@ -49,7 +49,9 @@ import type {
 import {
 	buildDesktopLiftDeps,
 	liftAgentFromDesktop,
+	returnAgentFromDesktop,
 	type DesktopLiftAnswer,
+	type DesktopReturnAnswer,
 	type DesktopLiftOptions,
 	type DesktopLiftRuntime,
 } from '../../federation/lift';
@@ -277,6 +279,24 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			opts('lift'),
 			async (agentId: unknown, options?: unknown): Promise<DesktopLiftAnswer> =>
 				liftAgentFromDesktop(requireId(agentId, 'agent id'), readLiftOptions(options), liftDeps)
+		)
+	);
+	// Move Back from Host: the reverse of `federation:lift` (`maestro-cli unlift`).
+	ipcMain.handle(
+		'federation:unlift',
+		withIpcErrorLogging(
+			opts('unlift'),
+			async (agentId: unknown, options?: unknown): Promise<DesktopReturnAnswer> => {
+				const raw = (options && typeof options === 'object' ? options : {}) as Record<
+					string,
+					unknown
+				>;
+				return returnAgentFromDesktop(
+					requireId(agentId, 'agent id'),
+					{ offline: raw.offline === true, keepHostCopy: raw.keepHostCopy === true },
+					liftDeps
+				);
+			}
 		)
 	);
 	// Move to Host's setup step / Start Host: the same `setupRemoteHost()` as `maestro-cli remote-host install --start`.

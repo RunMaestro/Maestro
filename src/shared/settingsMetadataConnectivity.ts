@@ -37,7 +37,7 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	notificationCenterEnabled: {
 		description:
-			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell.',
+			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell. Every toast also goes to the System Log Viewer either way, filterable to Toast only.',
 		type: 'boolean',
 		default: false,
 		category: 'notifications',
@@ -206,6 +206,13 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Honor .gitignore files when indexing files on SSH remotes.',
 		type: 'boolean',
 		default: false,
+		category: 'ssh',
+	},
+	federationHostedAgents: {
+		description:
+			'Federation: run hosted agents on their Maestro host. Off: every hosted agent works as the SSH agent it was, from this machine (its turns run over SSH; nothing is sent to its host, and nothing on the host or in the agent changes), and nothing moves onto a host automatically. On again restores hosting.',
+		type: 'boolean',
+		default: true,
 		category: 'ssh',
 	},
 	federationAutoMove: {

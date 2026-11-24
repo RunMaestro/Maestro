@@ -36,7 +36,7 @@ import { interrupt } from '../../../cli/commands/interrupt';
 import { ask } from '../../../cli/commands/ask';
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { send } from '../../../cli/commands/send';
-import { tabNew, tabRename, tabStar } from '../../../cli/commands/tab';
+import { tabClose, tabNew, tabRename, tabStar } from '../../../cli/commands/tab';
 import { updateAgent } from '../../../cli/commands/update-agent';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
@@ -94,6 +94,7 @@ function fakePeer(agent: AgentRecord, bridgeReply: Record<string, unknown> = {})
 			create: vi.fn(async () => ok({ tabId: 'tab-new' })),
 			rename: vi.fn(async () => ok(undefined)),
 			star: vi.fn(async () => ok(undefined)),
+			close: vi.fn(async () => ok(undefined)),
 		},
 		turns: {
 			send: vi.fn(async () => ok({ status: 'started' as const })),
@@ -623,6 +624,17 @@ describe('peer:agent targets', () => {
 			expect(peer.client.tabs.star).toHaveBeenCalledWith(AGENT_ID, 'tab-aaaa1111', true);
 			await tabStar('tab-bbbb', false, { agent: `${PEER}:docs`, json: true });
 			expect(peer.client.tabs.star).toHaveBeenLastCalledWith(AGENT_ID, 'tab-bbbb2222', false);
+		});
+
+		it('tab close resolves the tab on the host by prefix and closes it there', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await tabClose('tab-bbbb', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.close).toHaveBeenCalledWith(AGENT_ID, 'tab-bbbb2222');
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: true,
+				tabId: 'tab-bbbb2222',
+				peer: PEER,
+			});
 		});
 
 		it('names the peer agent when the tab is not on the host, and sends nothing', async () => {

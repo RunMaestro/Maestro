@@ -59,7 +59,10 @@ export interface ProviderProfileConfig {
  *     surface is `FACTORY_API_KEY`, `FACTORY_API_KEY_HELPER_TTL_MS`,
  *     `FACTORY_DISABLE_KEYRING`, `FACTORY_DROID_AUTO_UPDATE_ENABLED`,
  *     `FACTORY_LOG_FILE`, and `FACTORY_PROJECT_DIR`.
- * If either ships one, the single-line entry here is the whole change.
+ *   - `antigravity` (agy 1.5.16, 2026-11-24) keeps its state in a fixed
+ *     `~/.gemini/antigravity-cli` and its credentials in the OS keyring; no
+ *     documented var relocates either, so two agents cannot hold two accounts.
+ * If any of them ships one, the single-line entry here is the whole change.
  */
 export const PROVIDER_PROFILE_CONFIGS: Readonly<Record<string, ProviderProfileConfig>> = {
 	'claude-code': {
@@ -231,6 +234,20 @@ export function providerProfileShortLabel(toolType: string, accountKey: string |
 	if (!helpers || !accountKey) return provider;
 	if (helpers.deriveShortName(accountKey) === 'default') return `${provider} default`;
 	return helpers.deriveDisplayName(accountKey);
+}
+
+/**
+ * Whether a profile is the provider's implicit `~/<subdir>` account on this
+ * machine: no billed credential, no remote host, no named config dir. A user
+ * with one account is always on this profile, so naming it tells them nothing;
+ * surfaces that show the account only to tell several apart skip it.
+ */
+export function isImplicitDefaultProfile(
+	toolType: string,
+	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential' | 'sshRemoteId'>
+): boolean {
+	if (profile.credential || profile.sshRemoteId || !profile.accountKey) return false;
+	return getAccountKeyHelpers(toolType)?.deriveShortName(profile.accountKey) === 'default';
 }
 
 /**

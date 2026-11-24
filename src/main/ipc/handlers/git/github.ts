@@ -16,6 +16,16 @@ import { buildSshCommand } from '../../../utils/ssh-command-builder';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
 /**
+ * A push runs the repo's pre-push hook, so its stderr can be megabytes of test
+ * logs. The failure that matters is at the end; keep that and say what was cut.
+ */
+const MAX_PUSH_ERROR_CHARS = 4000;
+function tailOfOutput(text: string): string {
+	if (text.length <= MAX_PUSH_ERROR_CHARS) return text;
+	return `[... ${text.length - MAX_PUSH_ERROR_CHARS} earlier characters omitted]\n${text.slice(-MAX_PUSH_ERROR_CHARS)}`;
+}
+
+/**
  * Register GitHub CLI integration Git IPC handlers: createPR, checkGhCli, createGist.
  */
 export function registerGithubHandlers(): void {
@@ -45,7 +55,10 @@ export function registerGithubHandlers(): void {
 						remoteCwd: worktreePath,
 					});
 					if (pushResult.exitCode !== 0) {
-						return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
+						return {
+							success: false,
+							error: `Failed to push branch: ${tailOfOutput(pushResult.stderr)}`,
+						};
 					}
 
 					// ghPath points at the local binary, so the remote resolves gh from its own PATH.
@@ -98,7 +111,10 @@ export function registerGithubHandlers(): void {
 					shellEnv
 				);
 				if (pushResult.exitCode !== 0) {
-					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
+					return {
+						success: false,
+						error: `Failed to push branch: ${tailOfOutput(pushResult.stderr)}`,
+					};
 				}
 
 				// Create the PR using gh CLI

@@ -522,7 +522,7 @@ describe('AntigravityOutputParser with the conversation store', () => {
 		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
 	});
 
-	it('falls back to the last model call when the result carries no usage', () => {
+	it('reports the turn usage from the steps when the result carries none', () => {
 		const { parser } = parserWith({});
 		parser.parseJsonObject(
 			step({
@@ -546,10 +546,87 @@ describe('AntigravityOutputParser with the conversation store', () => {
 			outputTokens: 40,
 			cacheReadTokens: 300,
 			reasoningTokens: 12,
+			absoluteUsage: {
+				inputTokens: 900,
+				outputTokens: 40,
+				cacheReadInputTokens: 300,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 12,
+			},
 		};
 		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
 		// Read, never consumed: a second parse of the same line agrees.
 		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+	});
+
+	// Captured agy 1.5.16 numbers. On a resumed turn (`--conversation`) the
+	// result reports the whole conversation's running total (`num_turns: 3`,
+	// 18586 = 14058 + 2276 + 2252), while the step reports this turn alone.
+	// Counting the result re-added every earlier turn to the session totals.
+	it('counts only the resumed turn, not the cumulative result total', () => {
+		const { parser } = parserWith({});
+		parser.parseJsonObject(
+			step({
+				step_index: 7,
+				state: 'DONE',
+				step_type: 'agent_response',
+				usage: { input_tokens: 2252, output_tokens: 1, cache_read_tokens: 12242 },
+			})
+		);
+		const usage = parser.parseJsonObject({
+			event: 'result',
+			result: {
+				conversation_id: CONV,
+				status: 'SUCCESS',
+				response: 'again',
+				num_turns: 3,
+				usage: { input_tokens: 18586, output_tokens: 7, cache_read_tokens: 24251 },
+			},
+		})?.usage;
+		expect(usage).toMatchObject({ inputTokens: 2252, outputTokens: 1, cacheReadTokens: 12242 });
+	});
+
+	it('reports no usage for a resumed turn whose steps reported none', () => {
+		const { parser } = parserWith({});
+		const usage = parser.parseJsonObject({
+			event: 'result',
+			result: {
+				conversation_id: CONV,
+				status: 'ERROR',
+				error: 'quota exhausted',
+				num_turns: 4,
+				usage: { input_tokens: 18586, output_tokens: 7 },
+			},
+		})?.usage;
+		// The cumulative total is not this turn's usage; nothing is better than a re-count.
+		expect(usage).toBeUndefined();
+	});
+
+	it('starts a fresh tally for the next turn in the same conversation', () => {
+		const { parser } = parserWith({});
+		const turn = (index: number, input: number, numTurns: number) => {
+			parser.parseJsonObject(
+				step({
+					step_index: index,
+					state: 'DONE',
+					step_type: 'agent_response',
+					usage: { input_tokens: input, output_tokens: 1 },
+				})
+			);
+			return parser.parseJsonObject({
+				event: 'result',
+				result: {
+					conversation_id: CONV,
+					status: 'SUCCESS',
+					response: 'ok',
+					num_turns: numTurns,
+					usage: { input_tokens: 999999, output_tokens: 9 },
+				},
+			})?.usage;
+		};
+		expect(turn(1, 14058, 2)?.inputTokens).toBe(14058);
+		// The first turn's step must not be summed into the second.
+		expect(turn(4, 2276, 3)?.inputTokens).toBe(2276);
 	});
 
 	it('reads an answer step once, on its first delta, so thinking precedes the text', () => {

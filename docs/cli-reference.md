@@ -1091,6 +1091,17 @@ Take back a note no task has read yet (accepts a unique id prefix)
 | `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--json`           | Output the cancelled note as JSON                        | -       |
 
+## `maestro-cli steer-auto-run dismiss <delivery-id>`
+
+Clear a delivered note and its task reply from the record (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the delivered note                      | -       |
+| `--background`     | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--json`           | Output the dismissed delivery as JSON                    | -       |
+
 ## `maestro-cli diff-review`
 
 Pin review comments to lines of an agent's git diff and send them as one review
@@ -1669,6 +1680,16 @@ Move an SSH remote agent, with its tabs, transcripts, provider sessions and queu
 | `--dry-run`  | Print what would move and what stays, then stop        | -       |
 | `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
 | `--json`     | Output as JSON (for scripting)                         | -       |
+
+## `maestro-cli unlift <agent>`
+
+Move a hosted agent back from its host: an SSH agent again, with the host's tabs and transcripts; automatic moves then leave it alone
+
+| Option             | Description                                                  | Default |
+| ------------------ | ------------------------------------------------------------ | ------- |
+| `--offline`        | Do not reach the host: restore from this machine's copy only | -       |
+| `--keep-host-copy` | Leave the agent on the host too (it then has two owners)     | -       |
+| `--json`           | Output as JSON (for scripting)                               | -       |
 
 ## `maestro-cli federation`
 

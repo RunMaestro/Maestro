@@ -305,13 +305,13 @@ Use it for the things you notice while watching:
 
 **The bar.** While a run can be steered, the bar under the Thought Stream header holds two buttons, **Search thought stream** and **Steer Auto Run**. Clicking either swaps the whole bar for that input; sending a note, clearing a search, or pressing Escape brings the buttons back. A search that is still filtering the stream keeps the bar on the search box, with a small compass at its right edge so you can steer without dropping the filter. The Steer button counts the notes that are still waiting.
 
-**Where to see it.** Notes are listed in the Thought Stream just under that bar: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back.
+**Where to see it.** Notes are listed in the Thought Stream just under that bar: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back. The `x` on a delivered note dismisses it, with its reply, once you have read it; otherwise delivered notes stay until the next run starts.
 
 **What came back.** Under a delivered note sits the reply of the task that took it: one line while collapsed, the task's whole response when you click it. It reads "still working" until that task finishes, and it is marked in red if the task failed. Notes that one task picked up together share a single reply. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
 
 **What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
 
-**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, and `steer-auto-run cancel <note-id>` takes back a waiting one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
+**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, `steer-auto-run cancel <note-id>` takes back a waiting one, and `steer-auto-run dismiss <delivery-id>` clears a delivered one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
 
 **When the Steer button is not there.** It only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so the bar is the search box alone.
 
@@ -518,11 +518,11 @@ The boundary is measured on the resolved model and effort, not on the words. On 
 
 The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:
 
-| You write         | Claude Code sends | Codex sends |
-| ----------------- | ----------------- | ----------- |
-| `effort="low"`    | `low`             | `low`       |
-| `effort="medium"` | `high`            | `medium`    |
-| `effort="high"`   | `max`             | `xhigh`     |
+| You write         | Claude Code sends | Codex sends | Antigravity sends |
+| ----------------- | ----------------- | ----------- | ----------------- |
+| `effort="low"`    | `low`             | `low`       | `low`             |
+| `effort="medium"` | `high`            | `medium`    | `medium`          |
+| `effort="high"`   | `max`             | `xhigh`     | `high`            |
 
 Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
 
@@ -530,13 +530,16 @@ Providers also retire rungs. If a provider rejects the value a level maps to, Ma
 
 ### Provider support
 
-| Provider      | Model tier              | Effort |
-| ------------- | ----------------------- | ------ |
-| Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
-| Factory Droid | Yes                     | Yes    |
-| Codex         | Agent default           | Yes    |
-| Copilot-CLI   | Agent default           | Yes    |
-| OpenCode      | Agent default           | None   |
+| Provider      | Model tier                 | Effort |
+| ------------- | -------------------------- | ------ |
+| Claude Code   | Yes (haiku/sonnet/opus)    | Yes    |
+| Antigravity   | Yes (hydrogen/neon/carbon) | Yes    |
+| Factory Droid | Yes                        | Yes    |
+| Codex         | Agent default              | Yes    |
+| Copilot-CLI   | Agent default              | Yes    |
+| OpenCode      | Agent default              | None   |
+
+On Antigravity the tiers follow Google's own positioning of the Gemini 4 family: `low` runs `gemini-4-hydrogen` (fast, everyday work), `medium` runs `gemini-4-neon` (the balance of speed and depth), and `high` runs `gemini-4-carbon` (the hardest, long-horizon work). Not every plan offers Neon or Carbon. In the desktop app and in Cue, Maestro checks the tier model against the models your account lists (`agy models`); if it is not offered, the task runs on the agent's own model and the run log says which tier model was missing. The `maestro-cli` playbook runner cannot read that list, so there a missing tier model fails the task by name. Use `tier="low"` or leave `tier` off on such a plan. Antigravity's `high` effort is `high` rather than `xhigh` because Carbon, the `high` tier model, stops at `high`. Antigravity checks efforts per model (GPT-OSS takes only `medium`, the Orchestrators take none); Maestro drops an effort an Orchestrator would refuse, and when a model refuses an effort it remembers that refusal for that model only.
 
 Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 

@@ -28,6 +28,7 @@ import {
 	resolveTierModel,
 	supportsEffortSelection,
 	supportsTierSelection,
+	unofferedTierModel,
 } from './modelTiers';
 
 export interface ResolvedTurnSettings {
@@ -61,7 +62,9 @@ export function resolveTurnSettings(
 	hint: ModelHint | null,
 	agentModel?: string,
 	agentEffort?: string,
-	supportedEfforts?: readonly string[]
+	supportedEfforts?: readonly string[],
+	/** The account's discovered models, when known; see `unofferedTierModel`. */
+	offeredModels?: readonly string[]
 ): ResolvedTurnSettings {
 	const notes: string[] = [];
 	const warnings: string[] = [];
@@ -78,10 +81,16 @@ export function resolveTurnSettings(
 	// what `model` already holds - so it is skipped exactly like an absent axis.
 	// The two only differ when scopes merge, upstream of this.
 	if (hint?.tier && hint.tier !== 'default') {
-		const tierModel = resolveTierModel(toolType, hint.tier);
+		const tierModel = resolveTierModel(toolType, hint.tier, offeredModels);
+		const unoffered = unofferedTierModel(toolType, hint.tier, offeredModels);
 		if (tierModel) {
 			model = tierModel;
 			notes.push(`tier="${hint.tier}" (${hint.scopes?.tier ?? 'document'}) -> model ${tierModel}`);
+		} else if (unoffered) {
+			// The CLI would refuse the model by name and fail the task.
+			warnings.push(
+				`tier="${hint.tier}" maps to ${unoffered}, which this account does not offer; using the agent's configured model.`
+			);
 		} else {
 			warnings.push(
 				supportsTierSelection(toolType)
@@ -92,7 +101,7 @@ export function resolveTurnSettings(
 	}
 
 	if (hint?.effort && hint.effort !== 'default') {
-		const effortValue = resolveEffortLevel(toolType, hint.effort, supportedEfforts);
+		const effortValue = resolveEffortLevel(toolType, hint.effort, supportedEfforts, model);
 		if (effortValue) {
 			effort = effortValue;
 			notes.push(
@@ -102,7 +111,7 @@ export function resolveTurnSettings(
 			// A level the provider refused earlier in this process is a different
 			// story from one Maestro never mapped: say which, so the author knows
 			// the document is fine and the provider's catalogue moved.
-			const rejection = rejectedEffortForLevel(toolType, hint.effort);
+			const rejection = rejectedEffortForLevel(toolType, hint.effort, model);
 			if (rejection) {
 				warnings.push(
 					`${describeEffortRejection(toolType, rejection)} effort="${hint.effort}" was ignored; using the agent's configured effort.`

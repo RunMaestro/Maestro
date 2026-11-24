@@ -39,6 +39,10 @@ export type SynopsisProviderChoice = ToolType | typeof AUTO_SYNOPSIS_PROVIDER;
  * Appending it means an install whose auto pick is already one of the other
  * providers keeps that pick; Grok is chosen only when nothing above it is
  * installed. It has no all-tools-off switch, which a synopsis does not need.
+ *
+ * `antigravity` follows for the same reason: its read-only turn is a
+ * session-only `--settings` deny list agy applies in every permission mode
+ * (shell, writes and MCP refused, reads allowed; verified agy 1.5.16).
  */
 export const SYNOPSIS_PROVIDER_PREFERENCE: readonly ToolType[] = [
 	'claude-code',
@@ -47,6 +51,7 @@ export const SYNOPSIS_PROVIDER_PREFERENCE: readonly ToolType[] = [
 	'factory-droid',
 	'copilot-cli',
 	'grok',
+	'antigravity',
 ];
 
 /** True when a stored or wire value means "auto-select". */

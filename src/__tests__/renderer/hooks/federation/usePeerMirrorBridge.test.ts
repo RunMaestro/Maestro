@@ -147,16 +147,6 @@ describe('usePeerMirrorBridge', () => {
 		expect(usePeerMirrorStore.getState().enabled).toBe(false);
 	});
 
-	it('leaves the mirror when a group chat opens', async () => {
-		renderHook(() => usePeerMirrorBridge());
-		fake.resolveSnapshot([peerWith('build', [agent('a1')])]);
-		await flush();
-		act(() => usePeerMirrorStore.getState().selectMirroredAgent('build', 'a1'));
-		expect(usePeerMirrorStore.getState().activeMirror?.key).toBe('build:a1');
-		act(() => useGroupChatStore.setState({ activeGroupChatId: 'gc-1' }));
-		expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
-	});
-
 	it('never writes a mirrored agent into sessionStore', async () => {
 		const local = createMockSession({ id: 'local-1' });
 		useSessionStore.setState({ sessions: [local], activeSessionId: 'local-1' });
@@ -175,7 +165,6 @@ describe('usePeerMirrorBridge', () => {
 					event: { kind: 'text', at: 1, text: 'x' },
 				},
 			});
-			usePeerMirrorStore.getState().selectMirroredAgent('build', 'a2');
 			fake.emitReset();
 		});
 		const after = useSessionStore.getState();
