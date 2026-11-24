@@ -33,7 +33,11 @@ import {
 	getAgentDisplayName,
 	getAgentLoginCommand,
 } from '../../../shared/agentMetadata';
-import { getAgentInstallCommand } from '../../../shared/agentInstall';
+import {
+	classifyAgentErrorMissingBinary,
+	getAgentInstallCommand,
+	missingRuntimeLabel,
+} from '../../../shared/agentInstall';
 import { getPlatform } from '../../utils/platformUtils';
 import type { AgentError, ToolType } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
@@ -116,10 +120,15 @@ function getRecoveryActionsForError(
 			// processes, and a local install dialog must never be offered for a remote host.
 			if (options.isRemote) break;
 
+			const missingBinary = classifyAgentErrorMissingBinary(error);
+			const isRuntimeMissing = missingBinary?.reason === 'runtime-missing';
+
 			// The CLI never started, so restarting the agent would fail the same
-			// way. Offer the install for this platform; once it has run, a plain
-			// retry resends the turn that failed.
-			const install = getAgentInstallCommand(agentId, getPlatform());
+			// way. When the binary itself is missing, offer the install for this
+			// platform; when its runtime (e.g. Node.js) is missing, running an
+			// npm-based install would hit the same missing runtime, so withhold
+			// Install and point the user to restoring that runtime instead.
+			const install = isRuntimeMissing ? null : getAgentInstallCommand(agentId, getPlatform());
 			if (options.onInstall && install) {
 				actions.push({
 					id: 'install',
@@ -131,10 +140,15 @@ function getRecoveryActionsForError(
 				});
 			}
 			if (options.onRetry) {
+				const runtimeLabel = isRuntimeMissing
+					? missingRuntimeLabel(missingBinary.runtime ?? 'node')
+					: null;
 				actions.push({
 					id: 'retry',
 					label: 'Try Again',
-					description: 'Installed it another way? Clear the error and send again',
+					description: runtimeLabel
+						? `Restore ${runtimeLabel} to PATH, then send again`
+						: 'Installed it another way? Clear the error and send again',
 					primary: !(options.onInstall && install),
 					icon: <RefreshCw className="w-4 h-4" />,
 					onClick: options.onRetry,
