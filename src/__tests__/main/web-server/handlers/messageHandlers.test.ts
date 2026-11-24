@@ -2002,6 +2002,7 @@ describe('WebSocketMessageHandler', () => {
 				previous: 'fit',
 				sessionId: 'session-1',
 				requestId: 'r1',
+				timestamp: expect.any(Number),
 			});
 		});
 
