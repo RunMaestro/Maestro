@@ -6,10 +6,11 @@
  * one field per line, values wrapped and rendered with their newlines intact.
  *
  * Shared by every tabular preview (CSV/TSV via CsvRowDetailModal, parquet via
- * the ParquetViewer) so they cannot drift on keyboard model, copy affordance,
- * or filtering. Callers hand it a flat field list, which is the only shape all
- * of them agree on: a CSV row is positional strings, a parquet row is typed
- * values that have already been formatted for display.
+ * the ParquetViewer, SQLite via SqliteTableView) so they cannot drift on
+ * keyboard model, copy affordance, or filtering. Callers hand it a flat field
+ * list, which is the only shape all of them agree on: a CSV row is positional
+ * strings, a parquet or SQLite row is typed values that have already been
+ * formatted for display.
  *
  * Includes a field/value filter and prev/next navigation through the rows the
  * table is currently displaying (i.e. after its own sort and filter).
@@ -21,7 +22,7 @@
  * caret movement, so parking focus there would swallow the whole scheme.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { Modal } from './Modal';
@@ -44,6 +45,29 @@ export interface RecordDetailField {
 	key: string;
 	/** Display text. Multi-line values keep their newlines. */
 	value: string;
+	/**
+	 * `value` stands in for a missing value (a database NULL) instead of being
+	 * data. It is drawn dimmed and italic and is never offered for copy, so a
+	 * real NULL cannot read like the text "NULL" or like an empty string (which
+	 * shows `empty`). It still matches the filter, so typing "null" finds it.
+	 */
+	placeholder?: boolean;
+	/**
+	 * One extra thing to do with this value, drawn beside it as an icon button
+	 * that is always visible (unlike copy, which shows on hover). The SQLite
+	 * viewer uses it to save a BLOB, whose value here is only a hex preview.
+	 */
+	action?: RecordDetailFieldAction;
+}
+
+/** A per-field button: what it does is up to the caller. */
+export interface RecordDetailFieldAction {
+	icon: ReactNode;
+	/** Tooltip, and the accessible name with the field name appended. */
+	label: string;
+	onClick: () => void;
+	/** Shown dimmed and not clickable, e.g. while a save is in flight. */
+	disabled?: boolean;
 }
 
 interface RecordDetailModalProps {
@@ -67,6 +91,16 @@ interface RecordDetailModalProps {
 	 * surface it opened rather than "whichever record modal is up".
 	 */
 	testIdPrefix: string;
+	/**
+	 * Controls drawn in the header before the row navigation, for what the
+	 * caller can do with the row shown (the SQLite viewer's Delete row).
+	 */
+	headerActions?: ReactNode;
+	/**
+	 * A line drawn under the filter, for the outcome of one of those actions
+	 * (a refusal, a failure), so it shows where the action was taken.
+	 */
+	notice?: ReactNode;
 }
 
 export function RecordDetailModal({
@@ -79,6 +113,8 @@ export function RecordDetailModal({
 	priority,
 	resizeKey,
 	testIdPrefix,
+	headerActions,
+	notice,
 }: RecordDetailModalProps) {
 	const [filter, setFilter] = useState('');
 	const searchRef = useRef<HTMLInputElement>(null);
@@ -110,6 +146,7 @@ export function RecordDetailModal({
 				<span style={{ color: theme.colors.textDim }}> of {total.toLocaleString()}</span>
 			</h2>
 			<div className="flex items-center gap-1 shrink-0">
+				{headerActions}
 				<GhostIconButton
 					onClick={() => canPrev && onNavigate(index - 1)}
 					disabled={!canPrev}
@@ -260,6 +297,16 @@ export function RecordDetailModal({
 					)}
 				</div>
 
+				{notice && (
+					<div
+						className="px-4 py-2 border-b shrink-0 text-xs select-text"
+						style={{ borderColor: theme.colors.border }}
+						data-testid={`${testIdPrefix}-notice`}
+					>
+						{notice}
+					</div>
+				)}
+
 				{/* Field / value pairs. tabIndex makes this the keyboard target so
 				    Up/Down scroll it and Left/Right reach the handler above. */}
 				<div
@@ -303,7 +350,10 @@ export function RecordDetailModal({
 												padding: '8px 12px',
 												verticalAlign: 'top',
 												borderBottom: `1px solid ${theme.colors.border}40`,
-												color: field.value ? theme.colors.textMain : theme.colors.textDim,
+												color:
+													field.value && !field.placeholder
+														? theme.colors.textMain
+														: theme.colors.textDim,
 												fontFamily:
 													'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
 												whiteSpace: 'pre-wrap',
@@ -312,13 +362,35 @@ export function RecordDetailModal({
 										>
 											<div className="flex items-start gap-2">
 												<div className="flex-1 min-w-0">
-													{field.value ? (
+													{field.placeholder ? (
+														<span
+															style={{ fontStyle: 'italic', opacity: 0.7 }}
+															data-testid={`${testIdPrefix}-placeholder`}
+														>
+															{highlightMatches(field.value, query, theme.colors.accent)}
+														</span>
+													) : field.value ? (
 														highlightMatches(field.value, query, theme.colors.accent)
 													) : (
-														<span style={{ opacity: 0.5 }}>empty</span>
+														<span style={{ opacity: 0.5 }} data-testid={`${testIdPrefix}-empty`}>
+															empty
+														</span>
 													)}
 												</div>
-												{field.value && (
+												{field.action && (
+													<GhostIconButton
+														onClick={field.action.onClick}
+														disabled={field.action.disabled}
+														title={field.action.label}
+														ariaLabel={`${field.action.label}: ${field.key}`}
+														color={theme.colors.textDim}
+														className="shrink-0"
+														testId={`${testIdPrefix}-action`}
+													>
+														{field.action.icon}
+													</GhostIconButton>
+												)}
+												{field.value && !field.placeholder && (
 													<GhostIconButton
 														onClick={() => copyValue(field.value)}
 														title="Copy value"

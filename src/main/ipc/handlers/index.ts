@@ -50,6 +50,7 @@ import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from 
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerParquetHandlers } from './parquet';
+import { registerSqliteHandlers } from './sqlite';
 import { registerCodexVisualizationHandlers } from './codexVisualization';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
@@ -138,6 +139,7 @@ export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerParquetHandlers };
+export { registerSqliteHandlers };
 export { registerCodexVisualizationHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
@@ -360,6 +362,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register filesystem handlers (no dependencies needed - uses stores directly)
 	registerFilesystemHandlers();
 	registerParquetHandlers();
+	registerSqliteHandlers();
 	// Register attachments handlers
 	registerAttachmentsHandlers({
 		app: deps.app,

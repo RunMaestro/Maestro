@@ -162,6 +162,22 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
+import {
+	sqliteBlob,
+	sqliteCount,
+	sqliteDelete,
+	sqliteHistory,
+	sqliteLog,
+	sqliteInfo,
+	sqliteInsert,
+	sqliteQuery,
+	sqliteRows,
+	sqliteSchema,
+	sqliteSet,
+	sqliteTables,
+	sqliteTransaction,
+	sqliteUndo,
+} from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3893,6 +3909,281 @@ dataviewCmd
 	.description('List the vault roots whose DataviewJS blocks run without asking')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => dataviewTrusted(options));
+
+// SQLite commands - read a database the way the file preview's SQLite viewer
+// shows it. The app opens the file read-only and answers with the viewer's own
+// functions, so the app must be running.
+const sqliteCmd = program
+	.command('sqlite')
+	.description('SQLite: inspect a database the way the file preview shows it (read-only)');
+
+sqliteCmd
+	.command('info <path>')
+	.description(
+		"Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity"
+	)
+	.option(
+		'--check <mode>',
+		'Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteInfo(file, options));
+
+sqliteCmd
+	.command('tables <path>')
+	.description(
+		'List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes'
+	)
+	.option(
+		'--internal',
+		'Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteTables(file, options));
+
+sqliteCmd
+	.command('schema <path> <object>')
+	.description(
+		"Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL"
+	)
+	.option(
+		'--kind <kind>',
+		'Pick table, view, index, or trigger when a trigger shares a name with another object'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteSchema(file, object, options));
+
+sqliteCmd
+	.command('rows <path> <object>')
+	.description(
+		"Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite"
+	)
+	.option('--offset <n>', 'Rows to skip', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
+	.option(
+		'--sort <column>',
+		'Sort by this column (server side, ties broken by rowid or primary key)'
+	)
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option(
+		'--filter <expr>',
+		'Filter rows in SQLite, in the viewer\'s filter language (e.g. "status = active and price > 100", or a bare word to search every column)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteRows(file, object, options));
+
+sqliteCmd
+	.command('count <path> <object>')
+	.description(
+		"Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them"
+	)
+	.option(
+		'--filter <expr>',
+		"Count only the rows this filter matches, in the viewer's filter language"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteCount(file, object, options));
+
+sqliteCmd
+	.command('blob <path> <object> <column>')
+	.description(
+		"Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--offset <n>',
+		'The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter'
+	)
+	.option('--sort <column>', 'Order used to place --offset (as for `sqlite rows`)')
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option('--filter <expr>', 'Filter used to place --offset (as for `sqlite rows`)')
+	.requiredOption('--output <file>', 'File to write; replaced if it exists')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, column, options) => sqliteBlob(file, object, column, options));
+
+sqliteCmd
+	.command('query <path> <sql>')
+	.description(
+		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about"
+	)
+	.option(
+		'--param <name=value>',
+		'Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-number <name=value>',
+		'Bind a parameter as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-null <name>',
+		'Bind a parameter as NULL (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--plan',
+		"Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables"
+	)
+	.option('--offset <n>', 'Result rows to skip (not with --plan or --output)', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000; not with --plan or --output)', '50')
+	.option(
+		'--output <file>',
+		"Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it"
+	)
+	.option('--format <format>', 'Export format: csv or jsonl (default: from the --output name)')
+	.option(
+		'--enable-editing',
+		"Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused"
+	)
+	.option(
+		'--dry-run',
+		"With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, sql, options) => sqliteQuery(file, sql, options));
+
+sqliteCmd
+	.command('history <path>')
+	.description(
+		"List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)"
+	)
+	.option('--forget <id>', 'Forget one entry, by its id or the start of it the listing shows')
+	.option('--clear', "Forget the database's whole query history")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteHistory(file, options));
+
+sqliteCmd
+	.command('log <path>')
+	.description(
+		'List every write made to a database through Maestro, newest first, as the viewer\'s Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"'
+	)
+	.option('--limit <n>', 'Writes to show, newest first', '20')
+	.option('--clear', "Forget the database's whole statement log")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteLog(file, options));
+
+sqliteCmd
+	.command('set <path> <table> <column>')
+	.description(
+		"Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option('--value <text>', 'The new value, bound as TEXT (the column affinity converts it)')
+	.option('--value-number <n>', 'The new value, bound as a number')
+	.option('--null', 'Set the cell to NULL')
+	.option(
+		'--if-version <version>',
+		"Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten"
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, column, options) => sqliteSet(file, table, column, options));
+
+sqliteCmd
+	.command('insert <path> <table>')
+	.description(
+		"Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option(
+		'--value <column=value>',
+		'A column value, bound as TEXT (repeatable; the column affinity must keep it as text)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--value-number <column=value>',
+		'A column value, bound as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--null <column>',
+		'Set a column to NULL (repeatable); a NULL rowid column takes the next rowid',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteInsert(file, table, options));
+
+sqliteCmd
+	.command('delete <path> <table>')
+	.description(
+		"Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--if-version <version>',
+		"Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed"
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteDelete(file, table, options));
+
+sqliteCmd
+	.command('undo <path>')
+	.description(
+		"Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing"
+	)
+	.option('--step <json>', 'The undo step as JSON, or @file holding it')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteUndo(file, options));
+
+sqliteCmd
+	.command('transaction <path> <sql...>')
+	.description(
+		"Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing"
+	)
+	.option('--commit', 'Commit at the end, when every statement ran')
+	.option('--rollback', 'Roll back at the end: see what the statements do, keep nothing')
+	.option('--limit <n>', 'Rows to show per statement that returns rows (at most 1000)', '50')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); the session\'s first change backs the file up beside itself first'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, statements, options) => sqliteTransaction(file, statements, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

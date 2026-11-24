@@ -1,6 +1,7 @@
 import { formatSize } from '../../../shared/formatters';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { isSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FileTreeIndices } from '../../utils/fileLinks';
 
@@ -164,8 +165,8 @@ export interface FontScaleTargetView {
 	isMermaid: boolean;
 	/** CSV / TSV table view. */
 	isCsv: boolean;
-	/** Parquet grid, which owns its own row height and column widths. */
-	isParquet: boolean;
+	/** Parquet or SQLite viewer, which owns its own row height and column widths. */
+	isDataViewer: boolean;
 	/** JSONL viewer, including JSON under a jq filter. */
 	isJsonlView: boolean;
 	/** HTML being rendered in the sandboxed iframe (not shown as source). */
@@ -177,7 +178,7 @@ export interface FontScaleTargetView {
  *
  * Only where zoom actually moves type. The views that own their own layout -
  * images, the binary card, rendered HTML inside a sandboxed iframe we cannot
- * style, Mermaid diagrams, and the CSV / JSONL / parquet table viewers - are
+ * style, Mermaid diagrams, and the CSV / JSONL / parquet / SQLite table viewers - are
  * excluded: a
  * control that changes nothing reads as broken, which is exactly why Rich Mode
  * lost its copy of these buttons in Director's Notes.
@@ -188,7 +189,7 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 		!view.isImage &&
 		!view.isBinary &&
 		!view.isCsv &&
-		!view.isParquet &&
+		!view.isDataViewer &&
 		!view.isJsonlView &&
 		!view.isMermaid &&
 		!view.isRenderedHtml
@@ -388,8 +389,8 @@ export const isBinaryExtension = (filename: string): boolean => {
 
 /**
  * Whether a previewed file can go up as a GitHub Gist. A gist body is plain
- * text, so images, playable media, binaries, and the parquet marker (which
- * holds a path rather than the file) are all out, and so is an empty file -
+ * text, so images, playable media, binaries, and the parquet and SQLite
+ * markers (which hold a path rather than the file) are all out, and so is an empty file -
  * publishing one produces a gist with nothing in it.
  *
  * Shared so the FilePreview toolbar button and the file tab's overlay menu
@@ -403,6 +404,9 @@ export function isGistPublishableFile(filename: string, content: string): boolea
 	// Parquet is binary on disk but never arrives as content, so it is checked
 	// off the marker before the binary tests below (which the marker passes).
 	if (isParquetPreviewMarker(content)) return false;
+	// Same for a SQLite database: the marker is ASCII, so the content test
+	// below would pass it, and `.db3` / `.s3db` / `.sl3` are not binary extensions.
+	if (isSqlitePreviewMarker(content)) return false;
 	return !isBinaryExtension(filename) && !isBinaryContent(content);
 }
 
