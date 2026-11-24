@@ -41,6 +41,48 @@ sys.modules["google.antigravity.hooks"] = hooks
 sys.modules["google.antigravity.hooks.policy"] = policy
 `;
 
+// Adds the SDK's types module and an Agent that reports the model it was given.
+const EFFORT_STUB = String.raw`
+import enum
+agtypes = types.ModuleType("google.antigravity.types")
+class ThinkingLevel(enum.Enum):
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    EXTRA_HIGH = "extra_high"
+class ModelType(enum.Enum):
+    TEXT = "text"
+class Options:
+    def __init__(self, thinking_level): self.thinking_level = thinking_level
+class Endpoint:
+    def __init__(self, options): self.options = options
+class GeminiAPIEndpoint(Endpoint): pass
+class VertexEndpoint(Endpoint): pass
+class ModelTarget:
+    def __init__(self, name, types, endpoint):
+        self.name, self.types, self.endpoint = name, types, endpoint
+agtypes.ThinkingLevel = ThinkingLevel
+agtypes.ModelType = ModelType
+agtypes.GeminiModelOptions = Options
+agtypes.GeminiAPIEndpoint = GeminiAPIEndpoint
+agtypes.VertexEndpoint = VertexEndpoint
+agtypes.ModelTarget = ModelTarget
+antigravity.types = agtypes
+sys.modules["google.antigravity.types"] = agtypes
+class ModelConfig:
+    def __init__(self, **kwargs): self.model = kwargs.get("model")
+class ModelAgent(Agent):
+    async def chat(self, _prompt):
+        m = self.config.model
+        if isinstance(m, str):
+            return Response(m)
+        level = m.endpoint.options.thinking_level.name
+        return Response(f"{m.name} {type(m.endpoint).__name__} {level} {m.types[0].name}")
+antigravity.Agent = ModelAgent
+antigravity.LocalAgentConfig = ModelConfig
+`;
+
 describe.skipIf(!PYTHON_AVAILABLE)('Antigravity SDK sidecar', () => {
 	let child: ChildProcessWithoutNullStreams | undefined;
 	afterEach(() => {
@@ -48,9 +90,22 @@ describe.skipIf(!PYTHON_AVAILABLE)('Antigravity SDK sidecar', () => {
 		child = undefined;
 	});
 
-	it('emits a policy approval request and uses its single response', async () => {
-		const wrapper = `${STUB}\nexec(compile(${JSON.stringify(ANTIGRAVITY_SDK_SIDECAR)}, "sidecar.py", "exec"))\n`;
-		child = spawn(PYTHON, ['-u', '-c', wrapper], { stdio: ['pipe', 'pipe', 'pipe'] });
+	// The sidecar picks a Vertex endpoint from these; never inherit the developer's.
+	const GEMINI_API_ENV = {
+		GOOGLE_GENAI_USE_VERTEXAI: 'false',
+		GOOGLE_GENAI_USE_ENTERPRISE: 'false',
+	};
+
+	function runSidecar(
+		stub: string,
+		params: Record<string, unknown>,
+		env: Record<string, string> = GEMINI_API_ENV
+	) {
+		const wrapper = `${stub}\nexec(compile(${JSON.stringify(ANTIGRAVITY_SDK_SIDECAR)}, "sidecar.py", "exec"))\n`;
+		child = spawn(PYTHON, ['-u', '-c', wrapper], {
+			stdio: ['pipe', 'pipe', 'pipe'],
+			env: { ...process.env, ...env },
+		});
 		let buffer = '';
 		const texts: string[] = [];
 		const completed = Promise.withResolvers<number>();
@@ -78,11 +133,45 @@ describe.skipIf(!PYTHON_AVAILABLE)('Antigravity SDK sidecar', () => {
 				jsonrpc: '2.0',
 				id: 'start-1',
 				method: 'start',
-				params: { cwd: process.cwd(), prompt: 'run', permission_mode: 'standard' },
+				params: { cwd: process.cwd(), prompt: 'run', ...params },
 			}) + '\n'
 		);
-		await expect(completed.promise).resolves.toBe(0);
-		expect(texts).toEqual(['APPROVED']);
-		child.stdin.end();
+		return { code: completed.promise, texts };
+	}
+
+	it('emits a policy approval request and uses its single response', async () => {
+		const run = runSidecar(STUB, { permission_mode: 'standard' });
+		await expect(run.code).resolves.toBe(0);
+		expect(run.texts).toEqual(['APPROVED']);
+		child!.stdin.end();
+	}, 15_000);
+
+	it('carries the effort as the thinking level of a Gemini API model target', async () => {
+		const run = runSidecar(STUB + EFFORT_STUB, {
+			permission_mode: 'full',
+			model: 'gemini-4-neon',
+			effort: 'xhigh',
+		});
+		await expect(run.code).resolves.toBe(0);
+		expect(run.texts).toEqual(['gemini-4-neon GeminiAPIEndpoint EXTRA_HIGH TEXT']);
+		child!.stdin.end();
+	}, 15_000);
+
+	it('carries the effort on a Vertex model target when Vertex is selected', async () => {
+		const run = runSidecar(
+			STUB + EFFORT_STUB,
+			{ permission_mode: 'full', model: 'gemini-4-hydrogen', effort: 'low' },
+			{ GOOGLE_GENAI_USE_VERTEXAI: 'true', GOOGLE_GENAI_USE_ENTERPRISE: 'false' }
+		);
+		await expect(run.code).resolves.toBe(0);
+		expect(run.texts).toEqual(['gemini-4-hydrogen VertexEndpoint LOW TEXT']);
+		child!.stdin.end();
+	}, 15_000);
+
+	it('passes a model with no effort through by name', async () => {
+		const run = runSidecar(STUB + EFFORT_STUB, { permission_mode: 'full', model: 'gemini-4-neon' });
+		await expect(run.code).resolves.toBe(0);
+		expect(run.texts).toEqual(['gemini-4-neon']);
+		child!.stdin.end();
 	}, 15_000);
 });

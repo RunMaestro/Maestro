@@ -8,7 +8,12 @@
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { addDirPromptPaths, grantedAddDirs, isGrantedAddDir } from '../../maestro-p/add-dir-prompt';
+import {
+	addDirPromptPaths,
+	grantedAddDirs,
+	isGrantedAddDir,
+	readAddDirDialog,
+} from '../../maestro-p/add-dir-prompt';
 
 const CWD = path.resolve('/work/project');
 const abs = (p: string) => path.resolve(CWD, p);
@@ -82,6 +87,71 @@ describe('addDirPromptPaths()', () => {
 
 	it('returns null with no dialog on screen', () => {
 		expect(addDirPromptPaths(' ❯ Try "edit <filepath>"')).toBeNull();
+	});
+});
+
+describe('readAddDirDialog()', () => {
+	// The dialog as claude 2.1.326 leaves it on screen while it waits.
+	const DIALOG = [
+		'────────────',
+		' Adding a new directory:',
+		'',
+		' /Users/me/Projects/sec590',
+		'',
+		" This session hasn't worked here before. Is this a directory you created or one you trust?",
+		'',
+		' Security guide',
+		'',
+		'   No, exit',
+		' ❯ Yes, add it',
+		'',
+		' Enter to confirm · Esc to cancel',
+	];
+	// A resumed conversation is repainted above the input editor.
+	const EDITOR = ['', '────────────', '❯ ', '────────────', '  ? for shortcuts'];
+
+	it('reads a dialog that is the last thing on screen', () => {
+		expect(readAddDirDialog(DIALOG.join('\n'))).toEqual({
+			kind: 'shown',
+			paths: ['/Users/me/Projects/sec590'],
+		});
+	});
+
+	it('waits while the options are not drawn yet', () => {
+		expect(readAddDirDialog(DIALOG.slice(0, 6).join('\n'))).toEqual({ kind: 'painting' });
+	});
+
+	it('ignores the wording quoted mid-row by a resumed conversation', () => {
+		const screen = [
+			'⏺ Today\'s error would have read "Adding a new directory: /Users/me/Projects/sec590 … No, exit".',
+			...EDITOR,
+		].join('\n');
+		expect(readAddDirDialog(screen)).toEqual({ kind: 'none' });
+	});
+
+	it('ignores the wording quoted in code', () => {
+		expect(
+			readAddDirDialog('  //   Adding a new directory:\n  //\n  //   /Users/me/other')
+		).toEqual({
+			kind: 'none',
+		});
+	});
+
+	it('ignores a whole dialog quoted in a resumed conversation above the input editor', () => {
+		expect(readAddDirDialog([...DIALOG, ...EDITOR].join('\n'))).toEqual({ kind: 'none' });
+	});
+
+	it('ignores a quoted heading that starts a row once the input editor is drawn below it', () => {
+		const screen = [
+			'  Adding a new directory: /Users/me/other',
+			'  and then claude quit.',
+			...EDITOR,
+		];
+		expect(readAddDirDialog(screen.join('\n'))).toEqual({ kind: 'none' });
+	});
+
+	it('returns none with no heading on screen', () => {
+		expect(readAddDirDialog(EDITOR.join('\n'))).toEqual({ kind: 'none' });
 	});
 });
 

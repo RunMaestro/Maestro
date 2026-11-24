@@ -1,4 +1,5 @@
 import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import { antigravitySdkSelection } from '../../shared/antigravityModels';
 import {
 	CopilotClient,
 	RuntimeConnection,
@@ -1134,10 +1135,12 @@ async function spawnAntigravityNative(
 	try {
 		options.signal?.addEventListener('abort', abort, { once: true });
 		if (options.signal?.aborted) abort();
+		const selection = antigravitySdkSelection(options.customModel, options.customEffort);
 		await connection.request('start', {
 			cwd,
 			prompt,
-			model: options.customModel,
+			model: selection.model,
+			effort: selection.effort,
 			permission_mode:
 				options.readOnlyMode || options.permissionMode === 'readonly'
 					? 'readonly'

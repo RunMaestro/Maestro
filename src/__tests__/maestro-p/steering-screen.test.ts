@@ -203,8 +203,23 @@ describe('describeBlockingDialog', () => {
 
 	it('names the add-directory prompt (Claude Code 2.1.326)', () => {
 		expect(
-			describeBlockingDialog('Adding a new directory\n ❯ 1. Yes, add it\n   2. No, exit')
+			describeBlockingDialog(
+				'Adding a new directory:\n\n/work/sec590\n\n ❯ 1. Yes, add it\n   2. No, exit'
+			)
 		).toBe('an add-directory prompt');
+	});
+
+	it('does not name an add-directory prompt the conversation only quotes', () => {
+		// The quote sits above a real permission prompt: the label must be the
+		// permission prompt, not the dialog the conversation talked about.
+		const screen = [
+			'⏺ The turn failed on "Adding a new directory: /work/sec590 … Yes, add it".',
+			'',
+			' Do you want to make this edit to notes.md?',
+			' ❯ 1. Yes',
+			'   2. No',
+		].join('\n');
+		expect(describeBlockingDialog(screen)).toBe('a permission prompt');
 	});
 
 	it('returns null on an ordinary screen', () => {

@@ -25,6 +25,7 @@ import {
 import { stripAnsi } from '../utils/stripAnsi';
 import type { SshRemoteConfig } from '../../shared/types';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { parseAntigravityModelList } from '../../shared/antigravityModels';
 import {
 	MODELS_REFRESHED_CHANNEL,
 	type ModelsRefreshedPayload,
@@ -279,6 +280,15 @@ export async function discoverModelsRemote(
 				logger.warn('Failed to parse remote omp models --json output', LOG_CONTEXT, {
 					error: parseError,
 				});
+			}
+		} else if (agentId === 'antigravity') {
+			// `agy models` prints `<id>\t<label>` under a heading; take the base ids,
+			// the same list the local picker shows (effort is its own axis).
+			for (const modelId of parseAntigravityModelList(sanitizedStdout).models) {
+				if (!seen.has(modelId)) {
+					seen.add(modelId);
+					models.push(modelId);
+				}
 			}
 		} else {
 			// Source 1: CLI-discovered models (one per line)

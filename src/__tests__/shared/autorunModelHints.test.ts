@@ -350,6 +350,41 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.warnings).toHaveLength(1);
 	});
 
+	it('maps Antigravity tiers to Hydrogen, Neon and Carbon at the matching effort', () => {
+		const cases = [
+			['low', 'gemini-4-hydrogen', 'low'],
+			['medium', 'gemini-4-neon', 'medium'],
+			['high', 'gemini-4-carbon', 'high'],
+		] as const;
+		for (const [level, model, effort] of cases) {
+			const hint = findActiveModelHint(
+				`<!-- MAESTRO:MODEL tier="${level}" effort="${level}" -->\n- [ ] x`
+			);
+			const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-neon-high', undefined);
+			expect(resolved).toMatchObject({ model, effort });
+			expect(resolved.warnings).toEqual([]);
+		}
+	});
+
+	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		try {
+			const hint = findActiveModelHint(`<!-- MAESTRO:MODEL effort="high" -->\n- [ ] x`);
+			const refused = resolveTurnSettings('antigravity', hint, 'gpt-oss-120b', 'medium');
+			expect(refused.effort).toBe('medium');
+			expect(refused.warnings.join(' ')).toContain('gpt-oss-120b');
+			const other = resolveTurnSettings('antigravity', hint, 'gemini-4-neon', 'medium');
+			expect(other.effort).toBe('high');
+			expect(other.warnings).toEqual([]);
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	describe('after the provider refused the value a level maps to', () => {
 		afterEach(() => {
 			resetEffortRejections();
