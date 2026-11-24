@@ -5,6 +5,7 @@ import { buildEditorTheme } from '../giantPreview/themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions, mainSelectionDetails } from './extensions';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
+import { commentSlotsExtension, setCommentSlots } from './commentSlots';
 import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
 
 /**
@@ -84,6 +85,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			vimMode = false,
 			onShortcutUsed,
 			onSelectionContextMenu,
+			onLineContextMenu,
+			commentSlots,
+			onCommentSlotElement,
 			className,
 		},
 		ref
@@ -101,9 +105,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		const onSelectionContextMenuRef = useRef(onSelectionContextMenu);
 		onShortcutUsedRef.current = onShortcutUsed;
 		onSelectionContextMenuRef.current = onSelectionContextMenu;
-		// Only whether a selection menu exists changes the extension set; the
-		// handler itself is read through the ref.
+		const onLineContextMenuRef = useRef(onLineContextMenu);
+		onLineContextMenuRef.current = onLineContextMenu;
+		const onCommentSlotElementRef = useRef(onCommentSlotElement);
+		onCommentSlotElementRef.current = onCommentSlotElement;
+		// Only whether a menu exists changes the extension set; the handlers
+		// themselves are read through the refs.
 		const hasSelectionContextMenu = Boolean(onSelectionContextMenu);
+		const hasLineContextMenu = Boolean(onLineContextMenu);
 		useEffect(() => {
 			onChangeRef.current = onChange;
 		}, [onChange]);
@@ -154,6 +163,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				onSelectionContextMenu: hasSelectionContextMenu
 					? (selection, event) => onSelectionContextMenuRef.current?.(selection, event)
 					: undefined,
+				onLineContextMenu: hasLineContextMenu
+					? (lineNumber, event) => onLineContextMenuRef.current?.(lineNumber, event)
+					: undefined,
 			});
 
 		// Mount once. All subsequent prop changes flow through dispatch or
@@ -180,6 +192,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
+					commentSlotsExtension((id, el, previous) =>
+						onCommentSlotElementRef.current?.(id, el, previous)
+					),
 					updateListener,
 				],
 			});
@@ -273,8 +288,20 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			codeEditing,
 			completion,
 			hasSelectionContextMenu,
+			hasLineContextMenu,
 			compartments.base,
 		]);
+
+		// Review comment slots, rebuilt whenever the host's list changes. Declared
+		// after the `value` effect, so a commit that changes both places the
+		// slots against the new text.
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			view.dispatch({
+				effects: setCommentSlots.of(commentSlots ?? { slots: [], lineColor: 'transparent' }),
+			});
+		}, [commentSlots]);
 
 		// Vim keybindings, loaded on first use so the package never enters the
 		// bundle path of anyone who leaves the setting off.

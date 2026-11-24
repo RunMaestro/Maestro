@@ -203,12 +203,15 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsSessionStorage: false, // On-disk conversation format is undocumented
 		supportsCostTracking: false, // usage reports tokens only, no cost
 		supportsUsageStats: true, // usage: input/output/thinking/cache_read/total tokens
-		supportsBatchMode: true, // -p / --print / --prompt
-		requiresPromptToStart: true, // Headless runs require -p; there is no idle non-interactive mode
+		supportsBatchMode: true, // -p / --print / --prompt, or one stream-json line on stdin
+		requiresPromptToStart: true, // Headless runs require a prompt; there is no idle non-interactive mode
 		supportsStreaming: true, // stream-json emits step_update deltas
 		supportsResultMessages: true, // Terminal `result` event
 		supportsModelSelection: true, // --model <slug>
-		supportsStreamJsonInput: false, // No stdin stream-json input format
+		// Its `--input-format stream-json` line is not Claude's message shape and
+		// carries no images, so it stays false here. Prompt-only stdin delivery is
+		// wired through stdinPromptArgs / stdinPromptMessage in definitions.ts.
+		supportsStreamJsonInput: false,
 		supportsThinkingDisplay: false, // thinking_tokens are counted, but no reasoning text step type is documented
 		supportsContextMerge: true, // Context can be delivered through the prompt
 		supportsContextExport: false, // Requires session storage
@@ -218,7 +221,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // Gemini reports input and output separately
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
-		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
+		supportsPromptViaStdin: true, // `--input-format stream-json` reads the prompt from stdin (MAESTRO-NM)
 		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
 		tokenSpeedMeasurement: 'none', // step_update usage: per-step vs running total unverified against a live run
 	},

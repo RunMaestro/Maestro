@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { PlaybookStatus } from '../../shared/types';
+import type { AutoRunRestartEntry } from '../../shared/autorunRestartResume';
 
 /**
  * Playbook document configuration
@@ -147,6 +148,14 @@ export function createAutorunApi() {
 
 		unwatchStatus: (projectPath: string, subscriberId: string): Promise<Record<string, never>> =>
 			ipcRenderer.invoke('autorun:unwatchStatus', projectPath, subscriberId),
+
+		// Auto Runs saved across an update restart (src/main/autorun-restart-resume.ts).
+		// Save merges by agent; take reads and deletes in one step.
+		saveRestartResume: (entries: AutoRunRestartEntry[]): Promise<number> =>
+			ipcRenderer.invoke('autorun:saveRestartResume', entries),
+
+		takeRestartResume: (): Promise<AutoRunRestartEntry[]> =>
+			ipcRenderer.invoke('autorun:takeRestartResume'),
 
 		onStatusChanged: (
 			handler: (data: { projectPath: string; status: PlaybookStatus | null }) => void

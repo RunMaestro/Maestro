@@ -17,7 +17,10 @@ import type {
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../../../shared/goalDriven/types';
 import { isLimitError } from '../../../../shared/types';
 import { parseGoalMarkers, stripMaestroMarkers } from '../../../../shared/goalDriven/goalMarkers';
-import { evaluateGoalExit } from '../../../../shared/goalDriven/goalExitEvaluator';
+import {
+	evaluateGoalExit,
+	resolveGoalIterationProgress,
+} from '../../../../shared/goalDriven/goalExitEvaluator';
 import { formatGoalRunDocumentPath } from '../../../../shared/goalDriven/goalRunLabel';
 import {
 	GOAL_SYNOPSIS_REQUEST_PROMPT,
@@ -36,6 +39,7 @@ import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useBatchStore } from '../../../stores/batchStore';
+import { trackAutoRunLaunch, untrackAutoRunLaunch } from '../../../services/autoRunRestartResume';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import type { BatchAction } from '../batchReducer';
 import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchControlActions';
@@ -343,6 +347,9 @@ export function useGoalRunner({
 
 			let startPublished = false;
 			try {
+				// Report the launch so an update restart can save this run's place.
+				trackAutoRunLaunch(sessionId, config, folderPath);
+
 				// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
 				// Empty documents/lockedDocuments arrays mark this as a document-less run.
 				dispatch({
@@ -398,6 +405,7 @@ export function useGoalRunner({
 						);
 					}
 					timeTracking.stopTracking(sessionId);
+					untrackAutoRunLaunch(sessionId);
 				}
 			}
 
@@ -632,20 +640,15 @@ export function useGoalRunner({
 					totalCost += result.usageStats.totalCostUsd || 0;
 				}
 
-				// Parse the agent's self-reported markers. A missing progress report
-				// carries the previous iteration's RAW value forward (0 on the first).
+				// Parse the agent's self-reported markers. The displayed percent is a
+				// whole-number, monotonic high-water mark (a noisy self-assessment that
+				// dips never slides the bar backward). Exit/stall detection below uses
+				// the RAW value at full precision instead, so a single overconfident
+				// spike can't trigger a false stall, and neither can sub-1% gains on a
+				// long goal (48.27 -> 48.33) that a rounded series would read as flat.
 				const markers = parseGoalMarkers(result.response ?? '');
-				const reportedProgress =
-					markers.progress ?? (history.length > 0 ? history[history.length - 1].progress : 0);
-
-				// Monotonic high-water mark for everything the USER sees. The agent's
-				// self-assessment is noisy and routinely regresses between iterations
-				// (e.g. 55% then 35%); a progress bar that slides backward is confusing
-				// and wrong, so the displayed percent only ever climbs. Exit/stall
-				// detection below deliberately uses the RAW value instead, so a single
-				// overconfident spike can't freeze the bar or trigger a false stall while
-				// the agent is genuinely still moving underneath its earlier peak.
-				const displayProgress = Math.max(finalProgress, reportedProgress);
+				const { reported: reportedProgress, display: displayProgress } =
+					resolveGoalIterationProgress(markers, history, finalProgress);
 				finalProgress = displayProgress;
 
 				history.push({
@@ -933,6 +936,7 @@ export function useGoalRunner({
 			timeTracking.stopTracking(sessionId);
 			delete stopRequestedRefs.current[sessionId];
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
+			untrackAutoRunLaunch(sessionId);
 		},
 		[
 			audioFeedbackCommandRef,

@@ -90,7 +90,11 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 - Credentials or accounts only a person can obtain: "sign up for an API key", "create a Stripe account", "request production access"
 - Physical or out-of-band work: "plug in the device", "call the vendor", "deploy from the admin console"
 
-**Two correct encodings** - pick by whether the run must stop:
+**First, design the human out.** Most human dependencies have an agent-doable core. Before you write a gate, ask whether a task can do it instead: code against an environment variable and add the name to `.env.example`; mock or fake the external service in tests; use a sandbox or test-mode key the agent can create; replace "visually verify" with a Playwright test or a screenshot checked against stated requirements; put a risky change behind a flag. Only the residue a person truly must do (paste a real secret, sign off, touch hardware) belongs to a human.
+
+**Then, push it late.** Order the playbook so every task that does not depend on the person runs first, and put the human step at the end: the last document of a multi-document playbook, or the last section of a single one. A gate at 20% stalls the run for hours while the person is away; the same gate at 80% costs nothing, because the work in front of it is already done. Collect every human step into ONE gate where you can: one pause, not several.
+
+**Two correct encodings** for that residue - pick by whether the run must stop:
 
 1. **The run must pause here** - emit a HITL gate marker on its own line, immediately above the tasks that depend on the human:
 
@@ -125,17 +129,18 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 
 ```markdown
 - [ ] Add Playwright coverage for the login flow in `e2e/login.spec.ts` (happy path, wrong password, locked account) and run `npm run e2e` until green.
+- [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY`, add the name to `.env.example`, fail with a clear message when it is unset, and add a unit test that mocks the client.
 
-<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
+<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env so the live send can run" -->
 
-- [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY` and add a unit test that mocks the client.
+- [ ] Send one real test email through the transport and confirm the API accepts it.
 
 ## Manual Follow-Up (not executed by Auto Run)
 
 - Get design sign-off on the new login screen.
 ```
 
-A stale HITL marker left above an unchecked task will pause every re-run until a person passes it, so use gates only where a person genuinely must act.
+The key is needed only for the live send, so the mailer is built and tested first and the run pauses once, at the end, instead of before the mailer work. A stale HITL marker left above an unchecked task will pause every re-run until a person passes it, so use gates only where a person genuinely must act.
 
 ### Token Efficiency
 

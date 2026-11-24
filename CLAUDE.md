@@ -59,6 +59,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()`, `formatCount()` in `src/shared/formatters.ts`
+- **A history summary from free-form text / what a row renders of one:** `historySummaryLine()`, `historySummaryPreview()`, `clampHistoryEntry()` in `src/shared/history.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts` (re-exported from `formatters.ts`).
@@ -186,6 +187,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `EMBEDDED_SYSTEM_PROMPT_SEPARATOR`, `embedSystemPromptInPrompt(systemPrompt, userPrompt)`, `stripEmbeddedSystemPrompt(text)`, `hasEmbeddedSystemPrompt(text)` in `src/shared/embeddedSystemPrompt.ts`.
 - **Consulting another agent from a message (`@mention`):** `planCrossAgentMentions()` / `dispatchCrossAgentMentions()` / `dispatchCrossAgentMentionsForMessage()` in `src/renderer/services/crossAgentMentions.ts`, over `sendCrossAgentRequest()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`.
 - **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer(sessionId, text)`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()` / `appendBlockToDraft()` / `formatFileSelection()` in `src/renderer/utils/quoteSelection.ts`.
+- **Line review comments (pin comments to lines, send them as one review):** `createReviewCommentStore()` in `src/renderer/stores/reviewCommentStore.ts`, `formatReviewPrompt()` in `src/renderer/utils/reviewPrompt.ts`, `sendReviewPrompt()` / `editReviewPromptInComposer()` / `deliverPendingReview()` in `src/renderer/services/reviewDelivery.ts`, drawn by `ReviewCommentEditor` / `ReviewCommentCard` / `ReviewTray` in `src/renderer/components/ReviewComments.tsx` (Git Diff review and File Preview review both).
 - **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
 - **Holding a mentioning turn open until its consult replies:** `holdTurnForConsults()`, `settleConsultHold()`, `withConsultPendingNote()` in `src/renderer/services/crossAgentConsultHold.ts`.
 - **When a mention runs (parallel / consult first / hand-off):** `inferMentionTiming()` in `src/shared/crossAgentContext.ts`, carried as `CrossAgentMentionPlan.routing`.
@@ -212,7 +214,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **The red Stop pill:** `<StopTurnButton>` in `src/renderer/components/ui/StopTurnButton.tsx`.
 - **"Show only providers this machine can run":** `filterToAvailableProviders()` / `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>` in `src/renderer/components/ui/ProviderAvailabilityBar.tsx`.
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()` and `credentialKindBlocksLogin()` in `src/shared/providerAuthIdentity.ts`, which also owns `providerAuthKey()` (the credential's shared scope: agent binary + host).
-- **Telling "provider CLI not installed" from a crash, and printing its install command:** `classifyMissingBinary()`, `agentNotInstalledMessage()`, `getAgentInstallInfo()` / `getAgentInstallCommand()`, `agentCliLabel()` in `src/shared/agentInstall.ts`.
+- **Telling "provider CLI not installed" from a crash, and installing it:** `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `getAgentInstallInfo()` / `getAgentInstallCommand()`, `agentCliLabel()` in `src/shared/agentInstall.ts`, driven by `ProviderInstallModal` (`src/renderer/components/ProviderInstallModal.tsx`) and `maestro-cli install-command`.
 - **Typing a login command into a shell:** `formatAgentLoginCommand(login, syntax?)` and `loginShellSyntaxFor(shellId, isWindows)` in `src/shared/agentMetadata.ts`.
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()` / `shouldRenderBuckets()` / `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`, bound to live store state by `useNarrativeGroupLookup()` in `src/renderer/components/DirectorNotes/`.
 - **Which provider generates a synopsis:** `AUTO_SYNOPSIS_PROVIDER`, `synopsisProviderChoice()`, `pickFirstAvailableProvider()` in `src/shared/directorNotesProvider.ts`.
@@ -301,6 +303,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()`, `getEffortRejection()`, `describeEffortRejection()` in `src/shared/effortRejection.ts`.
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`.
+- **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `remarkMaestroMarkers` (`src/renderer/components/Markdown/remarkMaestroMarkers.ts`) + `<MarkerPill>`.
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`.
 - **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`.

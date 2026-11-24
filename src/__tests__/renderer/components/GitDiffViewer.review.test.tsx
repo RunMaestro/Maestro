@@ -97,7 +97,7 @@ function pickLines(from: string, to: string = from) {
 
 function writeComment(body: string) {
 	fireEvent.change(screen.getByRole('textbox'), { target: { value: body } });
-	fireEvent.click(screen.getByTestId('diff-comment-save'));
+	fireEvent.click(screen.getByTestId('review-comment-save'));
 }
 
 function key(k: string, init: KeyboardEventInit = {}) {
@@ -110,7 +110,7 @@ describe('GitDiffViewer review comments', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		escapeHandler = null;
-		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {}, discardsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByKey: {}, draftsByKey: {}, discardsByKey: {} });
 		useSessionStore.setState({
 			sessions: [createMockSession({ id: 'agent-1', name: 'Builder' })],
 			activeSessionId: 'agent-1',
@@ -120,15 +120,15 @@ describe('GitDiffViewer review comments', () => {
 	it('comments on a dragged range of lines and pins it to path:start-end', () => {
 		renderViewer();
 		pickLines('const fresh = 3;', 'const extra = 4;');
-		expect(screen.getByTestId('diff-comment-editor')).toHaveTextContent(
+		expect(screen.getByTestId('review-comment-editor')).toHaveTextContent(
 			'Comment on src/app.ts:2-3'
 		);
 		writeComment('Merge these two.');
 
-		const card = screen.getByTestId('diff-comment-card');
+		const card = screen.getByTestId('review-comment-card');
 		expect(card).toHaveTextContent('src/app.ts:2-3');
 		expect(card).toHaveTextContent('Merge these two.');
-		const tray = screen.getByTestId('diff-review-tray');
+		const tray = screen.getByTestId('review-tray');
 		expect(tray).toHaveTextContent('Review: 1 comment');
 		expect(tray).toHaveTextContent('Send Review to Builder');
 	});
@@ -137,7 +137,7 @@ describe('GitDiffViewer review comments', () => {
 		renderViewer();
 		pickLines('const old = 2;');
 		writeComment('Why remove this?');
-		expect(screen.getByTestId('diff-comment-card')).toHaveTextContent(
+		expect(screen.getByTestId('review-comment-card')).toHaveTextContent(
 			'src/app.ts:2 (previous version)'
 		);
 	});
@@ -152,10 +152,10 @@ describe('GitDiffViewer review comments', () => {
 		writeComment('Keep it 2.');
 
 		fireEvent.click(screen.getByRole('button', { name: /^app\.ts/ }));
-		expect(screen.getByTestId('diff-comment-card')).toHaveTextContent('Rename.');
-		expect(screen.getByTestId('diff-review-tray')).toHaveTextContent('Review: 2 comments');
+		expect(screen.getByTestId('review-comment-card')).toHaveTextContent('Rename.');
+		expect(screen.getByTestId('review-tray')).toHaveTextContent('Review: 2 comments');
 
-		fireEvent.click(screen.getByTestId('diff-review-send'));
+		fireEvent.click(screen.getByTestId('review-send'));
 		expect(mockSendDiffReview).toHaveBeenCalledTimes(1);
 		const [sessionId, prompt] = mockSendDiffReview.mock.calls[0];
 		expect(sessionId).toBe('agent-1');
@@ -165,7 +165,7 @@ describe('GitDiffViewer review comments', () => {
 		expect(prompt).toContain('`src/util.ts:2`');
 		expect(prompt.indexOf('Rename.')).toBeLessThan(prompt.indexOf('Keep it 2.'));
 		expect(onClose).toHaveBeenCalled();
-		expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+		expect(useDiffReviewStore.getState().commentsByKey).toEqual({});
 	});
 
 	it('keeps an unsaved draft when the user switches file tabs and back', () => {
@@ -173,7 +173,7 @@ describe('GitDiffViewer review comments', () => {
 		pickLines('const fresh = 3;');
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Half a thought' } });
 		fireEvent.click(screen.getByRole('button', { name: /^util\.ts/ }));
-		expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: /^app\.ts/ }));
 		expect(screen.getByRole('textbox')).toHaveValue('Half a thought');
 	});
@@ -184,7 +184,7 @@ describe('GitDiffViewer review comments', () => {
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Started typing' } });
 		fireEvent.mouseDown(gutterFor('const tail = 5;'), { button: 0, shiftKey: true });
 		fireEvent.mouseUp(window);
-		expect(screen.getByTestId('diff-comment-editor')).toHaveTextContent(
+		expect(screen.getByTestId('review-comment-editor')).toHaveTextContent(
 			'Comment on src/app.ts:2-4'
 		);
 		expect(screen.getByRole('textbox')).toHaveValue('Started typing');
@@ -198,7 +198,7 @@ describe('GitDiffViewer review comments', () => {
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Rename to fresher.' } });
 		pickLines('const tail = 5;');
 		// Still editing the saved comment; no new box opened over it.
-		expect(screen.getByTestId('diff-comment-editor')).toHaveTextContent(
+		expect(screen.getByTestId('review-comment-editor')).toHaveTextContent(
 			'Edit comment on src/app.ts:2'
 		);
 		expect(screen.getByRole('textbox')).toHaveValue('Rename to fresher.');
@@ -225,16 +225,16 @@ describe('GitDiffViewer review comments', () => {
 		const { onClose } = renderViewer();
 		pickLines('const fresh = 3;');
 		writeComment('Rename.');
-		fireEvent.click(screen.getByTestId('diff-review-send'));
+		fireEvent.click(screen.getByTestId('review-send'));
 		expect(onClose).not.toHaveBeenCalled();
-		expect(screen.getByTestId('diff-review-tray')).toHaveTextContent('Review: 1 comment');
+		expect(screen.getByTestId('review-tray')).toHaveTextContent('Review: 1 comment');
 	});
 
 	it('hands the review to the composer for editing', () => {
 		renderViewer();
 		pickLines('const fresh = 3;');
 		writeComment('Rename.');
-		fireEvent.click(screen.getByTestId('diff-review-edit-in-composer'));
+		fireEvent.click(screen.getByTestId('review-edit-in-composer'));
 		expect(mockEditInComposer).toHaveBeenCalledWith('agent-1', expect.stringContaining('Rename.'));
 		expect(mockSendDiffReview).not.toHaveBeenCalled();
 	});
@@ -246,7 +246,7 @@ describe('GitDiffViewer review comments', () => {
 		first.unmount();
 
 		renderViewer();
-		expect(screen.getByTestId('diff-comment-card')).toHaveTextContent('Rename.');
+		expect(screen.getByTestId('review-comment-card')).toHaveTextContent('Rename.');
 	});
 
 	it('is reachable from the keyboard: arrows, Shift+arrows, C, Cmd+Enter, Shift+Cmd+Enter', () => {
@@ -255,13 +255,13 @@ describe('GitDiffViewer review comments', () => {
 		key('ArrowDown', { shiftKey: true });
 		key('ArrowDown', { shiftKey: true });
 		key('c');
-		const editor = screen.getByTestId('diff-comment-editor');
+		const editor = screen.getByTestId('review-comment-editor');
 		expect(editor).toHaveTextContent('Comment on src/app.ts:2-3');
 
 		const box = within(editor).getByRole('textbox');
 		fireEvent.change(box, { target: { value: 'Simplify.' } });
 		fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
-		expect(screen.getByTestId('diff-comment-card')).toHaveTextContent('Simplify.');
+		expect(screen.getByTestId('review-comment-card')).toHaveTextContent('Simplify.');
 
 		key('Enter', { metaKey: true, shiftKey: true });
 		expect(mockSendDiffReview).toHaveBeenCalledWith(
@@ -274,7 +274,7 @@ describe('GitDiffViewer review comments', () => {
 		const { onClose } = renderViewer();
 		pickLines('const fresh = 3;');
 		act(() => escapeHandler?.());
-		expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
 		expect(onClose).not.toHaveBeenCalled();
 
 		key('ArrowDown');
@@ -289,10 +289,10 @@ describe('GitDiffViewer review comments', () => {
 		renderViewer();
 		pickLines('const fresh = 3;');
 		writeComment('Rename.');
-		fireEvent.click(screen.getByTestId('diff-review-discard'));
-		expect(screen.getByTestId('diff-review-discard')).toHaveTextContent('Discard 1 comment?');
-		fireEvent.click(screen.getByTestId('diff-review-discard'));
-		expect(screen.queryByTestId('diff-review-tray')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByTestId('review-discard'));
+		expect(screen.getByTestId('review-discard')).toHaveTextContent('Discard 1 comment?');
+		fireEvent.click(screen.getByTestId('review-discard'));
+		expect(screen.queryByTestId('review-tray')).not.toBeInTheDocument();
 	});
 
 	it('offers nothing when review is off', () => {
@@ -301,7 +301,7 @@ describe('GitDiffViewer review comments', () => {
 		fireEvent.mouseUp(window);
 		key('ArrowDown');
 		key('c');
-		expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
 	});
 
 	describe('after review feedback (Greptile, CodeRabbit)', () => {
@@ -338,18 +338,18 @@ describe('GitDiffViewer review comments', () => {
 				/>
 			);
 
-			const tray = screen.getByTestId('diff-review-tray');
+			const tray = screen.getByTestId('review-tray');
 			expect(tray).toHaveTextContent('Review: 2 comments · 1 outdated, not sent');
-			expect(screen.getByTestId('diff-review-outdated')).toHaveTextContent('src/app.ts:2');
+			expect(screen.getByTestId('review-outdated')).toHaveTextContent('src/app.ts:2');
 			// Only the still-current comment is drawn on a line.
-			expect(screen.getAllByTestId('diff-comment-card')).toHaveLength(1);
+			expect(screen.getAllByTestId('review-comment-card')).toHaveLength(1);
 
-			fireEvent.click(screen.getByTestId('diff-review-send'));
+			fireEvent.click(screen.getByTestId('review-send'));
 			const prompt = mockSendDiffReview.mock.calls[0][1];
 			expect(prompt).toContain('Still here.');
 			expect(prompt).not.toContain('Rename.');
 			// The outdated comment is left for the user to remove or redo.
-			expect(Object.values(useDiffReviewStore.getState().commentsByRepo).flat()).toEqual([
+			expect(Object.values(useDiffReviewStore.getState().commentsByKey).flat()).toEqual([
 				expect.objectContaining({ body: 'Rename.' }),
 			]);
 		});
@@ -368,8 +368,8 @@ describe('GitDiffViewer review comments', () => {
 					enableReview
 				/>
 			);
-			expect(screen.getByTestId('diff-review-send')).toBeDisabled();
-			expect(screen.getByTestId('diff-review-edit-in-composer')).toBeDisabled();
+			expect(screen.getByTestId('review-send')).toBeDisabled();
+			expect(screen.getByTestId('review-edit-in-composer')).toBeDisabled();
 			key('Enter', { metaKey: true, shiftKey: true });
 			expect(mockSendDiffReview).not.toHaveBeenCalled();
 		});
@@ -378,10 +378,10 @@ describe('GitDiffViewer review comments', () => {
 			renderViewer({ diffText: RENAME_DIFF });
 			pickLines('const gone = 8;');
 			writeComment('Why drop this?');
-			expect(screen.getByTestId('diff-comment-card')).toHaveTextContent(
+			expect(screen.getByTestId('review-comment-card')).toHaveTextContent(
 				'src/old-name.ts:8 (previous version)'
 			);
-			fireEvent.click(screen.getByTestId('diff-review-send'));
+			fireEvent.click(screen.getByTestId('review-send'));
 			expect(mockSendDiffReview.mock.calls[0][1]).toContain('`src/old-name.ts:8`');
 		});
 
@@ -399,7 +399,7 @@ describe('GitDiffViewer review comments', () => {
 			first.unmount();
 
 			renderViewer({ sessionId: 'agent-2' });
-			expect(screen.queryByTestId('diff-review-tray')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('review-tray')).not.toBeInTheDocument();
 		});
 
 		it('keeps an edit whose comment was removed underneath it (CLI remove)', () => {
@@ -408,12 +408,12 @@ describe('GitDiffViewer review comments', () => {
 			writeComment('Rename.');
 			fireEvent.click(screen.getByRole('button', { name: 'Edit comment on src/app.ts:2' }));
 			act(() => {
-				const { commentsByRepo, removeComment } = useDiffReviewStore.getState();
-				removeComment(CWD, commentsByRepo[CWD][0].id);
+				const { commentsByKey, removeComment } = useDiffReviewStore.getState();
+				removeComment(CWD, commentsByKey[CWD][0].id);
 			});
 			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Rename to fresher.' } });
-			fireEvent.click(screen.getByTestId('diff-comment-save'));
-			expect(useDiffReviewStore.getState().commentsByRepo[CWD]).toEqual([
+			fireEvent.click(screen.getByTestId('review-comment-save'));
+			expect(useDiffReviewStore.getState().commentsByKey[CWD]).toEqual([
 				expect.objectContaining({ body: 'Rename to fresher.', path: 'src/app.ts' }),
 			]);
 		});
@@ -425,7 +425,7 @@ describe('GitDiffViewer review comments', () => {
 			first.unmount();
 
 			renderViewer();
-			const editor = screen.getByTestId('diff-comment-editor');
+			const editor = screen.getByTestId('review-comment-editor');
 			expect(editor).toHaveTextContent('Comment on src/app.ts:2-3');
 			expect(within(editor).getByRole('textbox')).toHaveValue('Half a thought');
 		});
@@ -438,12 +438,12 @@ describe('GitDiffViewer review comments', () => {
 			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Unsaved' } });
 
 			act(() => useDiffReviewStore.getState().clearComments(CWD));
-			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
 
 			first.unmount();
 			renderViewer();
-			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
-			expect(useDiffReviewStore.getState().draftsByRepo).toEqual({});
+			expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
+			expect(useDiffReviewStore.getState().draftsByKey).toEqual({});
 		});
 
 		it('reopens on the file tab the unfinished comment box is on', () => {
@@ -454,7 +454,7 @@ describe('GitDiffViewer review comments', () => {
 			first.unmount();
 
 			renderViewer();
-			const editor = screen.getByTestId('diff-comment-editor');
+			const editor = screen.getByTestId('review-comment-editor');
 			expect(editor).toHaveTextContent('Comment on src/util.ts:2');
 			expect(within(editor).getByRole('textbox')).toHaveValue('On the second file');
 		});
@@ -466,8 +466,8 @@ describe('GitDiffViewer review comments', () => {
 			first.unmount();
 
 			renderViewer({ diffText: MOVED_DIFF });
-			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
-			expect(screen.getByTestId('diff-review-outdated')).toHaveTextContent('Half a thought');
+			expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
+			expect(screen.getByTestId('review-outdated')).toHaveTextContent('Half a thought');
 		});
 
 		it('does not park a box that Send already saved and delivered', () => {
@@ -477,8 +477,8 @@ describe('GitDiffViewer review comments', () => {
 			key('Enter', { metaKey: true, shiftKey: true });
 			first.unmount();
 			renderViewer();
-			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
-			expect(useDiffReviewStore.getState().draftsByRepo).toEqual({});
+			expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
+			expect(useDiffReviewStore.getState().draftsByKey).toEqual({});
 		});
 
 		it('drops an open comment box when the viewer is pointed at another repo', () => {
@@ -495,10 +495,10 @@ describe('GitDiffViewer review comments', () => {
 					enableReview
 				/>
 			);
-			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
-			expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+			expect(screen.queryByTestId('review-comment-editor')).not.toBeInTheDocument();
+			expect(useDiffReviewStore.getState().commentsByKey).toEqual({});
 			// Parked under the repo it was written in, not lost and not carried over.
-			expect(useDiffReviewStore.getState().draftsByRepo[CWD]?.body).toBe('Half done');
+			expect(useDiffReviewStore.getState().draftsByKey[CWD]?.body).toBe('Half done');
 		});
 	});
 });

@@ -171,6 +171,7 @@ describe('QuickActions command builders', () => {
 			'newGroupChat',
 			'closeGroupChat',
 			'toggleGroupChatModeratorOnly',
+			'toggleGroupChatUnread',
 			'deleteGroupChat',
 		]);
 	});

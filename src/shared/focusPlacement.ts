@@ -159,6 +159,8 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * moving the view; `--focus` asks for the button's behaviour.
 	 */
 	'diff-review-send': true,
+	/** maestro-cli file-review send - same verb, same reasoning, for a file's review. */
+	'file-review-send': true,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */
@@ -245,12 +247,18 @@ export const ALREADY_QUIET_VERBS = [
 	'steer-auto-run-list',
 	'steer-auto-run-cancel',
 	// Pending review comments live in renderer memory; an open Git Diff viewer
-	// redraws its tray, but nothing is selected or announced.
+	// or file tab redraws its tray, but nothing is selected or announced.
 	'diff-review-list',
 	'diff-review-add',
 	'diff-review-edit',
 	'diff-review-remove',
 	'diff-review-clear',
+	// The same, for the File Preview's line comments.
+	'file-review-list',
+	'file-review-add',
+	'file-review-edit',
+	'file-review-remove',
+	'file-review-clear',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */

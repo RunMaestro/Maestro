@@ -51,6 +51,12 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 import { UpdateCheckModal } from '../../../renderer/components/UpdateCheckModal';
 
 import { createMockTheme } from '../../helpers/mockTheme';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import {
+	resetAutoRunRestartTrackingForTests,
+	trackAutoRunLaunch,
+} from '../../../renderer/services/autoRunRestartResume';
 
 // Helper to create mock theme
 
@@ -1208,6 +1214,104 @@ describe('UpdateCheckModal', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Or download manually from GitHub')).toBeInTheDocument();
 			});
+		});
+	});
+
+	// =============================================================================
+	// AUTO RUN RESUME ACROSS THE UPDATE RESTART
+	// =============================================================================
+
+	describe('Auto Run resume across the update restart', () => {
+		const startResumableRun = () => {
+			trackAutoRunLaunch(
+				'agent-a',
+				{ documents: [], prompt: '', loopEnabled: false },
+				'/project/playbooks'
+			);
+			useBatchStore.setState({
+				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+		};
+
+		const renderDownloaded = async () => {
+			let statusCallback: ((status: any) => void) | null = null;
+			(window.maestro.updates.onStatus as any).mockImplementation((cb: any) => {
+				statusCallback = cb;
+				return vi.fn();
+			});
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+			statusCallback!({ status: 'downloaded', info: { version: '1.1.0' } });
+			await waitFor(() => {
+				expect(screen.getByText('Restart to Update')).toBeInTheDocument();
+			});
+		};
+
+		beforeEach(() => {
+			(window.maestro.updates.install as any).mockReset();
+			vi.mocked(window.maestro.autorun.saveRestartResume).mockReset().mockResolvedValue(1);
+		});
+
+		afterEach(() => {
+			resetAutoRunRestartTrackingForTests();
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		it('tells the user a running Auto Run picks up after the update', async () => {
+			startResumableRun();
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('update-autorun-resume-note')).toHaveTextContent(
+					'your Auto Run will pick up where it left off after the update'
+				);
+			});
+		});
+
+		it('shows no resume note when nothing is running', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Update Available!')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('update-autorun-resume-note')).not.toBeInTheDocument();
+		});
+
+		it('saves the run, then restarts, when the user restarts and resumes', async () => {
+			startResumableRun();
+			await renderDownloaded();
+
+			fireEvent.click(screen.getByText('Restart to Update'));
+			expect(screen.getByText('Auto Run will resume')).toBeInTheDocument();
+			expect(window.maestro.updates.install).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Restart and Resume Auto Run'));
+
+			await waitFor(() => {
+				expect(window.maestro.updates.install).toHaveBeenCalled();
+			});
+			const [entries] = vi.mocked(window.maestro.autorun.saveRestartResume).mock.calls[0];
+			expect(entries.map((e) => e.sessionId)).toEqual(['agent-a']);
+		});
+
+		it('does not restart when the run could not be saved', async () => {
+			vi.mocked(window.maestro.autorun.saveRestartResume).mockRejectedValue(new Error('disk full'));
+			startResumableRun();
+			await renderDownloaded();
+
+			fireEvent.click(screen.getByText('Restart to Update'));
+			fireEvent.click(screen.getByText('Restart and Resume Auto Run'));
+
+			await waitFor(() => {
+				expect(window.maestro.autorun.saveRestartResume).toHaveBeenCalled();
+			});
+			await waitFor(() => {
+				expect(
+					screen.getByText('Restart and Resume Auto Run').closest('button')
+				).not.toBeDisabled();
+			});
+			expect(window.maestro.updates.install).not.toHaveBeenCalled();
 		});
 	});
 });

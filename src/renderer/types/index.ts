@@ -611,6 +611,11 @@ export interface BatchRunConfig {
 	// over the document/task-driven spec mode. When set, the run pursues a free-text
 	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
 	goalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
+	// Set only when this launch CONTINUES a run the app quit in the middle of
+	// (an update restart). The document loop starts its first pass at this
+	// document and loop pass instead of the top. Never set by a launch modal.
+	// See src/shared/autorunRestartResume.ts.
+	resumeFrom?: import('../../shared/autorunRestartResume').AutoRunResumePoint;
 }
 
 // Import BatchProcessingState for state machine integration

@@ -20,7 +20,7 @@ import { Keycap } from './ui/Keycap';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { ModalSubtitle } from './ui/Modal';
 import { useSessionStore } from '../stores/sessionStore';
-import { DiffCommentCard, DiffCommentEditor, DiffReviewTray } from './DiffReviewComments';
+import { ReviewCommentCard, ReviewCommentEditor, ReviewTray } from './ReviewComments';
 import {
 	anchorForSelection,
 	buildReviewRows,
@@ -28,16 +28,19 @@ import {
 	diffFileHunks,
 	diffFileKey,
 	findOutdatedComments,
+	formatCommentLocation,
 	type DiffComment,
 	type DiffCommentAnchor,
 	type DiffSide,
 } from '../utils/diffReviewComments';
-import { diffReviewKey, useDiffReviewStore, selectRepoComments } from '../stores/diffReviewStore';
+import { diffReviewKey, useDiffReviewStore } from '../stores/diffReviewStore';
+import { selectReviewComments } from '../stores/reviewCommentStore';
 import { deliverDiffReview, type DiffReviewDeliveryMode } from '../services/diffReview';
 import { resolveGitSshRemoteId } from '../hooks/git/useGitAgentActions';
 import { generateId } from '../utils/ids';
 import { isEditingTextTarget } from '../utils/editableTarget';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
+import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import 'react-diff-view/style/index.css';
 
@@ -201,7 +204,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		return session ? resolveGitSshRemoteId(session) : undefined;
 	});
 	const reviewKey = diffReviewKey(cwd, sshRemoteId);
-	const comments = useDiffReviewStore(selectRepoComments(reviewKey));
+	const comments = useDiffReviewStore(selectReviewComments(reviewKey));
 	// Comments whose lines changed since they were written: kept in the tray,
 	// never drawn on a line or sent.
 	const outdatedIds = useMemo(
@@ -282,7 +285,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			} else {
 				dropEditor();
 				const body = draft.body.trim();
-				const exists = (store.commentsByRepo[reviewKey] ?? []).some((c) => c.id === draft.id);
+				const exists = (store.commentsByKey[reviewKey] ?? []).some((c) => c.id === draft.id);
 				if (body && draft.id && exists) store.updateComment(reviewKey, draft.id, body);
 				else if (body) store.addComment(reviewKey, { ...draft.anchor, id: generateId(), body });
 				if (body) {
@@ -314,7 +317,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// `maestro-cli diff-review clear`) closes the open box too, so closing the
 	// viewer cannot park the discarded text again. Keyed on the repo as well,
 	// so switching repos (handled above) is not mistaken for a discard.
-	const discardCount = useDiffReviewStore((s) => s.discardsByRepo[reviewKey] ?? 0);
+	const discardCount = useDiffReviewStore((s) => s.discardsByKey[reviewKey] ?? 0);
 	const seenDiscardRef = useRef({ key: reviewKey, count: discardCount });
 	useEffect(() => {
 		const seen = seenDiscardRef.current;
@@ -387,7 +390,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			// An edited comment can vanish under the open box (`maestro-cli
 			// diff-review remove`); saving it then puts it back rather than
 			// dropping what the user typed.
-			const stillThere = (store.commentsByRepo[reviewKey] ?? []).some((c) => c.id === current.id);
+			const stillThere = (store.commentsByKey[reviewKey] ?? []).some((c) => c.id === current.id);
 			if (current.id && stillThere) {
 				store.updateComment(reviewKey, current.id, trimmed);
 			} else {
@@ -571,10 +574,10 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				<div className="flex flex-col">
 					{list.map((comment) =>
 						editing?.id === comment.id ? (
-							<DiffCommentEditor
+							<ReviewCommentEditor
 								key={comment.id}
 								theme={theme}
-								anchor={comment}
+								location={formatCommentLocation(comment)}
 								initialBody={draftBodyRef.current}
 								isNew={false}
 								onDraftChange={onDraftChange}
@@ -582,20 +585,21 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 								onCancel={closeEditor}
 							/>
 						) : (
-							<DiffCommentCard
+							<ReviewCommentCard
 								key={comment.id}
 								theme={theme}
-								comment={comment}
+								location={formatCommentLocation(comment)}
+								body={comment.body}
 								onEdit={() => editComment(comment)}
 								onRemove={() => removeComment(comment.id)}
 							/>
 						)
 					)}
 					{key === newDraftKey && editing && (
-						<DiffCommentEditor
+						<ReviewCommentEditor
 							key={`new-${editing.anchor.changeKeys.join(',')}`}
 							theme={theme}
-							anchor={editing.anchor}
+							location={formatCommentLocation(editing.anchor)}
 							initialBody={draftBodyRef.current}
 							isNew={!editing.id}
 							onDraftChange={onDraftChange}
@@ -1026,9 +1030,11 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				</div>
 
 				{canReview && comments.length > 0 && (
-					<DiffReviewTray
+					<ReviewTray
 						theme={theme}
 						comments={comments}
+						formatLocation={formatCommentLocation}
+						sendKeys={FIXED_SHORTCUTS.gitDiffSendReview.keys}
 						outdatedIds={outdatedIds}
 						targetName={agentName}
 						onEdit={editComment}

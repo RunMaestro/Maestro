@@ -265,6 +265,17 @@ describe('groupChatStore', () => {
 			expect(useGroupChatStore.getState().unreadGroupChatIds).toBe(cleared);
 		});
 
+		it('toggles one room by hand without touching the others', () => {
+			const { markGroupChatUnread, toggleGroupChatUnread } = useGroupChatStore.getState();
+			markGroupChatUnread('gc-2');
+
+			toggleGroupChatUnread('gc-1');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-1', 'gc-2']));
+
+			toggleGroupChatUnread('gc-1');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-2']));
+		});
+
 		it('survives resetGroupChatState - closing a chat is not reading the others', () => {
 			useGroupChatStore.getState().markGroupChatUnread('gc-2');
 			useGroupChatStore.getState().resetGroupChatState();

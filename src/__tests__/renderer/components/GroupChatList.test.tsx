@@ -9,6 +9,7 @@
 import { render, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GroupChatList } from '../../../renderer/components/GroupChatList';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 import type { GroupChat } from '../../../shared/group-chat-types';
@@ -107,6 +108,32 @@ describe('GroupChatList', () => {
 		unmount();
 		expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 		spies.restore();
+	});
+
+	it('marks a chat unread from the context menu, and offers Mark as Read once it is', () => {
+		useGroupChatStore.setState({ unreadGroupChatIds: new Set() });
+		const { container, getByText, rerender } = renderList();
+		openContextMenu(container);
+		fireEvent.click(getByText('Mark as Unread'));
+		const unread = useGroupChatStore.getState().unreadGroupChatIds;
+		expect(unread.has('gc-1')).toBe(true);
+
+		rerender(
+			<GroupChatList
+				theme={mockTheme}
+				groupChats={[baseChat]}
+				activeGroupChatId={null}
+				onOpenGroupChat={vi.fn()}
+				onNewGroupChat={vi.fn()}
+				onEditGroupChat={vi.fn()}
+				onRenameGroupChat={vi.fn()}
+				onDeleteGroupChat={vi.fn()}
+				unreadGroupChatIds={unread}
+			/>
+		);
+		openContextMenu(container);
+		fireEvent.click(getByText('Mark as Read'));
+		expect(useGroupChatStore.getState().unreadGroupChatIds.has('gc-1')).toBe(false);
 	});
 
 	it('stays collapsed when a new chat is added', () => {

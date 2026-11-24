@@ -33,9 +33,9 @@ import { showsApiUsageBilling } from './billing-mode';
 import {
 	ADD_DIR_PROMPT_REGEX,
 	ADD_DIR_SELECTOR_YES_REGEX,
-	addDirPromptPaths,
 	grantedAddDirs,
 	isGrantedAddDir,
+	readAddDirDialog,
 } from './add-dir-prompt';
 import { replayTerminalScreen } from './screen-replay';
 
@@ -276,6 +276,11 @@ const TRUST_SELECTOR_YES_REGEX = /❯\s*(?:\d+\.\s*)?Yes,?\s*I\s*trust/gi;
 export const TRUST_CONFIRM_QUIET_MS = 250;
 // A Down that draws no repaint within this window is assumed lost and retried.
 export const TRUST_REPAINT_WAIT_MS = 400;
+// An add-dir dialog is answered only once the screen has held still this long.
+// `--resume` repaints the conversation in chunks before the input editor, and
+// one that quotes the dialog shows the editor below the quote only in a later
+// chunk.
+export const ADD_DIR_SETTLE_MS = 250;
 // Past this many Downs the driver stops and never confirms: a dialog it cannot
 // read fails the run through 'ready-timeout' instead of guessing at Enter.
 export const TRUST_MAX_DOWNS = 4;
@@ -439,6 +444,7 @@ export class TuiDriver extends EventEmitter {
 	 * input prompt, and a blind Enter would confirm its "No, exit" default.
 	 */
 	private addDirPromptOpen = false;
+	private addDirSettleTimer: ReturnType<typeof setTimeout> | null = null;
 	private bypassHandled = false;
 	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
 	private trustSelection: TrustSelection | null = null;
@@ -640,17 +646,53 @@ export class TuiDriver extends EventEmitter {
 	// taps and `ready` meanwhile. One dialog per directory, so this runs again
 	// for each: confirming clears the rolling buffer, and the next dialog paints
 	// its heading afresh.
+	//
+	// Only a dialog that is the last thing on a screen held still for
+	// ADD_DIR_SETTLE_MS is answered (see readAddDirDialog). Its wording elsewhere,
+	// such as a resumed conversation about this dialog, releases the hold.
 	private answerAddDirPrompt(): void {
-		this.addDirPromptOpen = true;
-		const shown = addDirPromptPaths(replayTerminalScreen(this.startupCapture));
-		if (shown === null) return;
-		if (!isGrantedAddDir(shown, this.grantedAddDirs, this.options.cwd)) {
-			this.trustRefused = true;
-			this.clearReadyTimers();
-			this.emit('add-dir-untrusted', shown[0]);
+		const read = readAddDirDialog(replayTerminalScreen(this.startupCapture));
+		if (read.kind === 'none') {
+			this.releaseAddDirHold();
 			return;
 		}
-		this.beginTrustSelection('add-dir');
+		this.addDirPromptOpen = true;
+		this.clearAddDirSettleTimer();
+		if (read.kind === 'painting') return;
+		this.addDirSettleTimer = setTimeout(() => {
+			this.addDirSettleTimer = null;
+			if (this.exited || this.readyEmitted || this.trustRefused || this.isSelectingTrust()) return;
+			const settled = readAddDirDialog(replayTerminalScreen(this.startupCapture));
+			if (settled.kind === 'none') {
+				this.releaseAddDirHold();
+				return;
+			}
+			if (settled.kind === 'painting') return;
+			if (!isGrantedAddDir(settled.paths, this.grantedAddDirs, this.options.cwd)) {
+				this.trustRefused = true;
+				this.clearReadyTimers();
+				this.emit('add-dir-untrusted', settled.paths[0]);
+				return;
+			}
+			this.beginTrustSelection('add-dir');
+		}, ADD_DIR_SETTLE_MS);
+	}
+
+	// The add-dir wording on screen is not a dialog after all. The hold may have
+	// kept back a `ready` whose prompt is already drawn, and no further output
+	// may come to re-check it.
+	private releaseAddDirHold(): void {
+		this.clearAddDirSettleTimer();
+		if (!this.addDirPromptOpen) return;
+		this.addDirPromptOpen = false;
+		this.maybeEmitReady();
+	}
+
+	private clearAddDirSettleTimer(): void {
+		if (this.addDirSettleTimer) {
+			clearTimeout(this.addDirSettleTimer);
+			this.addDirSettleTimer = null;
+		}
 	}
 
 	// Feed trust-dialog output to the selection (acceptWorkspaceTrust only). A
@@ -734,6 +776,7 @@ export class TuiDriver extends EventEmitter {
 			clearTimeout(this.readyTimeoutTimer);
 			this.readyTimeoutTimer = null;
 		}
+		this.clearAddDirSettleTimer();
 	}
 
 	// Wake everything waiting on evidence that claude read what we typed.
@@ -1024,27 +1067,14 @@ export class TuiDriver extends EventEmitter {
 		} else if (
 			!this.readyEmitted &&
 			!this.trustRefused &&
-			ADD_DIR_PROMPT_REGEX.test(this.rollingBuffer)
+			(this.addDirPromptOpen || ADD_DIR_PROMPT_REGEX.test(this.rollingBuffer))
 		) {
 			// Startup only: after `ready` the screen carries the conversation, which
-			// can quote the dialog's wording.
+			// can quote the dialog's wording. A resumed conversation is on the startup
+			// screen too, which answerAddDirPrompt tells apart from the dialog.
 			this.answerAddDirPrompt();
 		}
-		// While a trust dialog is still being answered, its `❯` selector is not
-		// the input prompt. Nor is it once the dialog is parked on "No, exit".
-		if (
-			!this.readyEmitted &&
-			!this.trustRefused &&
-			!this.addDirPromptOpen &&
-			!this.isSelectingTrust() &&
-			READY_REGEX.test(this.rollingBuffer) &&
-			!this.blockRefusingDialog(true)
-		) {
-			this.readyEmitted = true;
-			this.startupCapture = '';
-			this.clearReadyTimers();
-			this.emit('ready');
-		}
+		this.maybeEmitReady();
 
 		this.lineBuffer += stripped;
 		let nlIndex = this.lineBuffer.indexOf('\n');
@@ -1058,6 +1088,25 @@ export class TuiDriver extends EventEmitter {
 			}
 			nlIndex = this.lineBuffer.indexOf('\n');
 		}
+	}
+
+	// While a trust dialog is still being answered, its `❯` selector is not the
+	// input prompt. Nor is it once the dialog is parked on "No, exit".
+	private maybeEmitReady(): void {
+		if (
+			this.readyEmitted ||
+			this.trustRefused ||
+			this.addDirPromptOpen ||
+			this.isSelectingTrust() ||
+			!READY_REGEX.test(this.rollingBuffer) ||
+			this.blockRefusingDialog(true)
+		) {
+			return;
+		}
+		this.readyEmitted = true;
+		this.startupCapture = '';
+		this.clearReadyTimers();
+		this.emit('ready');
 	}
 
 	private handleExit(exitCode: number): void {

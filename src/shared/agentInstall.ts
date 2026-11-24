@@ -14,6 +14,7 @@
 
 import type { AgentId } from './agentIds';
 import { getAgentDisplayName } from './agentMetadata';
+import type { AgentError } from './types';
 
 /** Platforms an install command is written for. Matches `process.platform`. */
 export type InstallPlatform = 'darwin' | 'linux' | 'win32';
@@ -45,10 +46,10 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 	terminal: null,
 	'claude-code': {
 		commands: {
-			darwin: 'curl -fsSL https://claude.ai/install.sh | bash',
-			linux: 'curl -fsSL https://claude.ai/install.sh | bash',
+			darwin: "bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'",
+			linux: "bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'",
 			win32:
-				'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"',
+				'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm -ErrorAction Stop https://claude.ai/install.ps1 | iex"',
 		},
 		docsUrl: 'https://docs.anthropic.com/en/docs/claude-code/setup',
 	},
@@ -79,10 +80,12 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 	},
 	'factory-droid': {
 		commands: {
-			darwin: 'curl -fsSL https://app.factory.ai/cli | sh',
-			linux: 'curl -fsSL https://app.factory.ai/cli | sh',
+			darwin:
+				'sh -c \'f=$(mktemp) && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; rc=$?; rm -f "$f"; exit $rc\'',
+			linux:
+				'sh -c \'f=$(mktemp) && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; rc=$?; rm -f "$f"; exit $rc\'',
 			win32:
-				'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://app.factory.ai/cli/windows | iex"',
+				'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm -ErrorAction Stop https://app.factory.ai/cli/windows | iex"',
 		},
 		docsUrl: 'https://docs.factory.ai/cli/getting-started/quickstart',
 	},
@@ -251,6 +254,26 @@ export function classifyMissingBinary(
 	return normalizeExecutableName(missing) === normalizeExecutableName(evidence.command)
 		? { reason: 'not-found' }
 		: null;
+}
+
+/**
+ * Re-derive the missing-binary classification from an `AgentError`'s raw
+ * exit code and stderr.
+ *
+ * Used by renderer recovery and Auto Run history so both read the same rule
+ * without storing a second classification on `AgentError`. Only
+ * `runtime-missing` (exit 127 + an `env: <runtime>: No such file or
+ * directory` stderr line) is recoverable from `raw` alone; `ENOENT` and
+ * command-not-found cases return `null` and are treated as `not-found`.
+ */
+export function classifyAgentErrorMissingBinary(
+	error: Pick<AgentError, 'type' | 'raw'>
+): MissingBinaryClassification | null {
+	if (error.type !== 'agent_not_installed') return null;
+	return classifyMissingBinary({
+		exitCode: error.raw?.exitCode,
+		stderr: error.raw?.stderr,
+	});
 }
 
 /**

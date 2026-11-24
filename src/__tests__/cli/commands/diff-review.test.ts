@@ -36,6 +36,10 @@ import {
 	diffReviewList,
 	diffReviewRemove,
 	diffReviewSend,
+	fileReviewAdd,
+	fileReviewList,
+	fileReviewRemove,
+	fileReviewSend,
 } from '../../../cli/commands/diff-review';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import type { DiffReviewCommentSummary } from '../../../shared/diffReviewCommands';
@@ -199,5 +203,49 @@ describe('maestro-cli diff-review', () => {
 	it('send fails loudly when nothing current is left to send', async () => {
 		stubDesktop(() => ({ success: false, error: 'Every pending comment is outdated' }));
 		await expectExit(diffReviewSend({ agent: 'alpha' }));
+	});
+
+	describe('file-review', () => {
+		it('names the file, made absolute, on every message', async () => {
+			stubDesktop(() => ({ success: true, file: '/abs/docs/plan.md', comment: COMMENTS[0] }));
+			await fileReviewAdd('/abs/docs/plan.md', '3-1', ' Say which. ', { agent: 'alpha' });
+			expect(sent).toEqual([
+				{
+					type: 'diff_review_command',
+					action: 'add',
+					sessionId: 'agent-1',
+					file: '/abs/docs/plan.md',
+					startLine: 1,
+					endLine: 3,
+					body: 'Say which.',
+				},
+			]);
+		});
+
+		it('resolves a relative file against the shell directory', async () => {
+			await fileReviewList('docs/plan.md', { agent: 'alpha', json: true });
+			expect(String(sent[0].file)).toMatch(/docs[\\/]plan\.md$/);
+			expect(String(sent[0].file)).not.toBe('docs/plan.md');
+		});
+
+		it('refuses a missing file, bad span, or empty comment without a round trip', async () => {
+			await expectExit(fileReviewAdd('  ', '1', 'x', { agent: 'alpha' }));
+			await expectExit(fileReviewAdd('/a.md', '0', 'x', { agent: 'alpha' }));
+			await expectExit(fileReviewAdd('/a.md', '1', ' ', { agent: 'alpha' }));
+			expect(sent).toEqual([]);
+		});
+
+		it('resolves an id prefix against the file review, not the diff', async () => {
+			stubDesktop(() => ({ success: true, comment: COMMENTS[0] }));
+			await fileReviewRemove('/a.md', 'c-aaa', { agent: 'alpha' });
+			expect(sent[0]).toMatchObject({ action: 'list', file: '/a.md' });
+			expect(sent[1]).toMatchObject({ action: 'remove', file: '/a.md', commentId: 'c-aaa111' });
+		});
+
+		it('send is background by default, like diff-review send', async () => {
+			stubDesktop(() => ({ success: true, delivered: [COMMENTS[0]], outdated: [] }));
+			await fileReviewSend('/a.md', { agent: 'alpha' });
+			expect(sent[0]).toMatchObject({ action: 'send', file: '/a.md', background: true });
+		});
 	});
 });

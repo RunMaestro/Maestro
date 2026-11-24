@@ -373,7 +373,8 @@ jobs:
         run: npm run smoke:packaged -- --app release/mac-arm64/Maestro.app/Contents/MacOS/Maestro
 
       # The x64 package runs under Rosetta 2 on this arm64 runner. Install Rosetta
-      # only when the image lacks it.
+      # only when the image lacks it. Rosetta's first launch takes about 115 s to
+      # open the window, so the default 120 s ready timeout is too short here.
       - name: Smoke test packaged app (macOS x64)
         if: matrix.platform == 'mac'
         timeout-minutes: 10
@@ -381,7 +382,7 @@ jobs:
           if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
             sudo softwareupdate --install-rosetta --agree-to-license
           fi
-          npm run smoke:packaged -- --app release/mac/Maestro.app/Contents/MacOS/Maestro
+          npm run smoke:packaged -- --app release/mac/Maestro.app/Contents/MacOS/Maestro --ready-timeout 300
 
       - name: Package for Windows
         if: matrix.platform == 'win'

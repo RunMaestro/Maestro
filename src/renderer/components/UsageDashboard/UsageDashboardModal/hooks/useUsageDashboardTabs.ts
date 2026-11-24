@@ -55,6 +55,15 @@ export function useUsageDashboardTabs({
 		[contentRef, onViewModeChanged, setUsageDashboardViewMode]
 	);
 
+	// The store is also the deep link: `maestro-cli open usage-dashboard --tab`,
+	// the command palette and other surfaces set it to pick a tab. The local
+	// state was seeded from it only on mount, so a deep link into an
+	// already-open dashboard changed the store and left the visible tab alone.
+	const requestedViewMode = useUIStore((s) => s.usageDashboardViewMode);
+	useEffect(() => {
+		if (requestedViewMode !== viewModeRef.current) switchViewMode(requestedViewMode);
+	}, [requestedViewMode, switchViewMode]);
+
 	useEffect(() => {
 		if (!viewModeTabs.some((tab) => tab.value === viewMode)) {
 			switchViewMode('overview');

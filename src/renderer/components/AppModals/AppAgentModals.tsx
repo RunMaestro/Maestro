@@ -1,6 +1,8 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { selectModalData, useModalStore } from '../../stores/modalStore';
 import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
+import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { notifyToast } from '../../stores/notificationStore';
 import type {
 	Theme,
 	Session,
@@ -16,6 +18,9 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
 import { ReauthModal } from '../ReauthModal';
+import { ProviderInstallModal } from '../ProviderInstallModal';
+import { useAgentStore } from '../../stores/agentStore';
+import { replayAfterAuth } from '../../stores/retryStore';
 import { SshUnreachableModal } from '../SshUnreachableModal';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
@@ -168,6 +173,54 @@ export const AppAgentModals = memo(function AppAgentModals({
 		? (reauthData?.host ?? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
 		: undefined;
 
+	// Self-sourced for the same reason: opened from the agent error dialog's
+	// Install action, which lives in useModalHandlers rather than App.tsx.
+	const providerInstallData = useModalStore(selectModalData('providerInstall'));
+	const providerInstallSession = providerInstallData
+		? sessions.find((s) => s.id === providerInstallData.sessionId)
+		: undefined;
+	const handleProviderInstallRetry = useCallback(async () => {
+		if (!providerInstallData) return;
+		const { sessionId, tabId } = providerInstallData;
+		closeReauthModal('providerInstall');
+		const initialSession = selectSessionById(sessionId)(useSessionStore.getState());
+		if (!initialSession) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message:
+					'The agent where the message failed was closed. Send it again in an open tab to continue.',
+			});
+			return;
+		}
+		// Refresh agent detection so a cached "not found" result does not survive
+		// into the retried spawn.
+		await window.maestro?.agents?.reprobe?.(initialSession.toolType)?.catch(() => undefined);
+		// Re-read live session/tab state after the await: the user may have closed
+		// the agent or tab while reprobe was running.
+		const liveSession = selectSessionById(sessionId)(useSessionStore.getState());
+		if (!liveSession) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message:
+					'The agent where the message failed was closed. Send it again in an open tab to continue.',
+			});
+			return;
+		}
+		if (!tabId || !liveSession.aiTabs?.some((t) => t.id === tabId)) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message:
+					'The tab where the message failed was closed. Send it again in an open tab to continue.',
+			});
+			return;
+		}
+		useAgentStore.getState().clearAgentError(sessionId, tabId);
+		replayAfterAuth(sessionId, [tabId], 'install');
+	}, [providerInstallData, closeReauthModal]);
+
 	return (
 		<>
 			{/* --- LEADERBOARD REGISTRATION MODAL --- */}
@@ -211,6 +264,17 @@ export const AppAgentModals = memo(function AppAgentModals({
 					outage={reauthOutage}
 					session={reauthSession}
 					onClose={() => closeReauthModal('reauth')}
+				/>
+			)}
+
+			{/* --- PROVIDER CLI INSTALL MODAL --- */}
+			{providerInstallData && providerInstallSession && (
+				<ProviderInstallModal
+					theme={theme}
+					session={providerInstallSession}
+					reason={providerInstallData.reason}
+					onClose={() => closeReauthModal('providerInstall')}
+					onRetry={handleProviderInstallRetry}
 				/>
 			)}
 

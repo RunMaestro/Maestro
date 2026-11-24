@@ -1005,9 +1005,9 @@ describe('SessionList', () => {
 			);
 
 		it('publishes exactly the rows drawn under the unread filter', () => {
-			// The reported layout: the unread filter hides Bookmarks, forces a
-			// collapsed group and closed worktrees open, and drops idle children.
-			const g = createMockGroup({ id: 'g', name: 'Maestro', collapsed: true });
+			// The reported layout: the unread filter hides Bookmarks, forces closed
+			// worktrees open, and drops idle children.
+			const g = createMockGroup({ id: 'g', name: 'Maestro', collapsed: false });
 			const maestro = createMockSession({
 				id: 'maestro',
 				name: 'Maestro',
@@ -1044,6 +1044,28 @@ describe('SessionList', () => {
 			render(<SessionList {...createDefaultProps({ sortedSessions: all })} />);
 
 			expect(rowIds()).toEqual(['cue', 'f1475', 'f1476', 'maestro', 'acappella', 'busy']);
+		});
+
+		it('keeps a collapsed group out of the rows when the unread filter is on', () => {
+			const g = createMockGroup({ id: 'g', name: 'Group', collapsed: true });
+			const inGroup = createMockSession({
+				id: 'in-group',
+				name: 'In Group',
+				groupId: 'g',
+				state: 'busy',
+			});
+			const busy = createMockSession({ id: 'busy', name: 'Busy', state: 'busy' });
+			const all = [inGroup, busy];
+			useSessionStore.setState({ sessions: all, groups: [g], activeSessionId: 'busy' });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: all })} />);
+
+			expect(rowIds()).toEqual(['busy']);
+			expect(screen.getByText('Group').closest('[aria-expanded]')).toHaveAttribute(
+				'aria-expanded',
+				'false'
+			);
 		});
 
 		it('leaves out collapsed groups, closed worktrees, and a collapsed Bookmarks section', () => {
@@ -1227,7 +1249,7 @@ describe('SessionList', () => {
 			expect(screen.queryByText('Project Agent')).toBeNull();
 		});
 
-		it('shows a child group with unread agents even when its parent is collapsed', () => {
+		it('keeps a collapsed parent closed over a child group with unread agents', () => {
 			enableGroupsPlus();
 			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
 			const child = createMockGroup({
@@ -1248,8 +1270,10 @@ describe('SessionList', () => {
 
 			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
 
-			expect(screen.getByText('Project')).toBeInTheDocument();
-			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+			// The parent stays drawn so the user can see something inside it needs attention.
+			expect(screen.getByText('Company')).toBeInTheDocument();
+			expect(screen.queryByText('Project')).toBeNull();
+			expect(screen.queryByText('Project Agent')).toBeNull();
 		});
 
 		it('toggles group collapse on click', () => {

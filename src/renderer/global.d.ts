@@ -752,6 +752,10 @@ interface MaestroAPI {
 			callback: (chatId: string, archived: boolean, responseChannel: string) => void
 		) => () => void;
 		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSetGroupChatUnread: (
+			callback: (chatId: string, unread: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetGroupChatUnreadResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;
@@ -778,6 +782,9 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
+					sideQuestion?: boolean;
+					targetTabId?: string;
 				},
 				responseChannel: string
 			) => void
@@ -2855,6 +2862,13 @@ interface MaestroAPI {
 			message?: string;
 		}>;
 		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
+		// Auto Runs saved across an update restart. `take` reads and deletes.
+		saveRestartResume: (
+			entries: import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		) => Promise<number>;
+		takeRestartResume: () => Promise<
+			import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		>;
 		onStatusChanged: (
 			handler: (data: {
 				projectPath: string;
@@ -4442,6 +4456,26 @@ interface MaestroAPI {
 				status?: 'running' | 'finished' | 'cancelled';
 			}[];
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
+	// Side question API (`/btw`: ask about a tab through a throwaway session fork)
+	sideQuestion: {
+		ask: (config: {
+			question: string;
+			agentType: string;
+			cwd: string;
+			agentSessionId?: string;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; answer?: string; error?: string }>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

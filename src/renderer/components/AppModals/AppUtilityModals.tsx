@@ -35,7 +35,7 @@ import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { PromptLinksModal } from '../PromptLinks/PromptLinksModal';
 import { promptLinksAvailable } from '../../services/promptLinks';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
-import { canReceiveDiffReview } from '../../services/diffReview';
+import { canReceiveReview } from '../../services/reviewDelivery';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
@@ -731,7 +731,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						// above: the header names whichever agent's repo is on screen.
 						sessionId={gitDiffSessionId ?? activeSession?.id}
 						// Line comments go back to that same agent as one review.
-						enableReview={canReceiveDiffReview(
+						enableReview={canReceiveReview(
 							gitDiffSessionId ? sessions.find((s) => s.id === gitDiffSessionId) : activeSession
 						)}
 						theme={theme}

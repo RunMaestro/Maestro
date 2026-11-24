@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { requestFromRenderer } from './remoteRequest';
 
 export function registerGroupChatCallbacks(
 	server: WebServer,
@@ -208,6 +209,22 @@ export function registerGroupChatCallbacks(
 				logger.warn(`archiveGroupChat callback timed out for chat ${chatId}`, 'WebServer');
 				resolve(false);
 			}, 10000);
+		});
+	});
+
+	// Set or clear a chat's unread dot. The flag lives only in the renderer's
+	// group chat store (per-boot, like tab unread), so main just relays.
+	server.setSetGroupChatUnreadCallback(async (chatId: string, unread: boolean) => {
+		const mainWindow = getMainWindow();
+		if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
+			logger.warn('mainWindow is not available for setGroupChatUnread', 'WebServer');
+			return false;
+		}
+		return requestFromRenderer<boolean>(mainWindow, 'remote:setGroupChatUnread', {
+			fallback: false,
+			parse: (raw) => raw === true,
+			timeoutMs: 10000,
+			args: [chatId, unread],
 		});
 	});
 

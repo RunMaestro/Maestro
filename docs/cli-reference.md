@@ -257,12 +257,14 @@ no unread - and prints the answer on stdout. `dispatch` hands over WORK: the pro
 in a real tab, so it appears mid-conversation in whatever the user has open with that
 agent, and you get a tab id back instead of an answer.
 
-| Option                | Description                                                                                                                                                                            | Default |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult | -       |
-| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                     | -       |
-| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                     | 600     |
-| `--json`              | Output the answer as JSON                                                                                                                                                              | -       |
+| Option                | Description                                                                                                                                                                                                                                | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult                                                     | -       |
+| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                                                                         | -       |
+| `--btw`               | Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card | -       |
+| `--tab <tab-id>`      | With --btw: the AI tab whose conversation to fork (default: its active tab)                                                                                                                                                                | -       |
+| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                                                                         | 600     |
+| `--json`              | Output the answer as JSON                                                                                                                                                                                                                  | -       |
 
 ```bash
 # Ask another agent how it solved something, from inside your own turn
@@ -512,6 +514,22 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 | ----------- | ------------------------------ | ------- |
 | `--restore` | Unarchive the chat instead     | -       |
 | `--json`    | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli open-file <file-path>`
 
@@ -859,6 +877,77 @@ Send every current comment to the agent as one queued prompt
 | `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
 | `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
 
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
 ## `maestro-cli prompt-link`
 
 Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)
@@ -1140,6 +1229,15 @@ Diagnose CLI connectivity, version skew, and configuration
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli install-command <provider>`
+
+Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
+| `--json`                | Output as JSON (for scripting)                                   | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)
@@ -1171,7 +1269,7 @@ Create a new agent in the Maestro desktop app
 | `--context-window <size>`         | Context window size in tokens                                                                               | -               |
 | `--provider-path <path>`          | Custom provider path                                                                                        | -               |
 | `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
+| `--ssh-cwd <path>`                | Working directory on the SSH remote (the agent runs there; defaults to --cwd)                               | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)           | -               |
 | `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |

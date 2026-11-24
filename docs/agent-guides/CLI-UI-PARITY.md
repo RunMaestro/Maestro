@@ -262,6 +262,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Move Tab to First / Last                                                                                                  | `tab move <tab-id> first\|last\|<index>`                                                         |
 | Send a message, or run a shell command (incl. a code fence's Run button)                                                  | `send`, `dispatch`, `send-terminal`                                                              |
 | Consult another agent (`@mention`)                                                                                        | `ask <agent> "<question>" --from <caller>`                                                       |
+| Side question about a tab (`/btw <question>`)                                                                             | `ask <agent> "<question>" --btw [--tab <tab-id>]`                                                |
 | Open a file / URL / terminal tab                                                                                          | `open-file`, `open-browser`, `open-terminal`                                                     |
 | Click a folder link (reveal it in the Files panel)                                                                        | `open-file <folder>` (both ride `revealPathInFileTree`)                                          |
 | Open a modal or dashboard                                                                                                 | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
@@ -277,6 +278,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: screenshots, support package box                                                                                | `feedback submit --attach <png...> --support-package`                                            |
 | Feedback: Running as (account picker)                                                                                     | `feedback accounts [--use <key> \| --clear]`                                                     |
 | Feedback: Log in to GitHub / Check Again                                                                                  | `feedback login`, `feedback auth --fresh`                                                        |
+| Agent error: Install <provider> (CLI missing)                                                                             | `install-command <provider> [--platform] [--json]` (prints the line)                             |
 | Feedback: live self-diagnosis                                                                                             | `feedback diagnose`                                                                              |
 | Feedback: Submit now (early exit)                                                                                         | `feedback submit` (the caller supplies whatever fields it has)                                   |
 | Create Debug Package (support package)                                                                                    | `support-package -o <dir> [--no-logs ...]`                                                       |
@@ -289,6 +291,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Auto Run panel: Change folder                                                                                             | `auto-run-folder <path> -a <agent>`                                                              |
 | Thought Stream: Steer Auto Run (send a note, cancel one, read replies)                                                    | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
 | Git Diff review comments (add, edit, remove, discard, send, compose)                                                      | `diff-review add <path> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose`     |
+| File Preview review comments: Comment on Line(s), edit, remove, discard, send, compose                                    | `file-review add <file> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose`     |
 | Playbook Exchange: browse, README, install                                                                                | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
 | Prompt Links window and tile: create, list, revoke a `maestro://run` link (open the window: `open prompt-links`)          | `prompt-link create <agent> [prompt]`, `prompt-link list [--all]`, `prompt-link revoke <id>`     |
 | Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)                                                   | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
@@ -303,6 +306,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage Dashboard: Auto Run (tab's run/task rules), agent turns by hour, wizard, resilience, daily and per-shortcut presses | `stats-activity [-r <range>] [--json]`                                                           |
 | Usage Dashboard: Export button (JSON, or a zip of CSVs)                                                                   | `stats-export -o <path> [-f csv\|json] [-r <range>] [--json]`                                    |
 | Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
+| Left Bar / Cmd+Shift+U: Mark a group chat unread / read                                                                   | `group-chat unread <chat>` / `group-chat read <chat>` (read back with `group-chat list`)         |
 | Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
 | Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                    |
 
@@ -385,6 +389,13 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     point with once it is on. The outcome it leads to, an element added to the
     message, is covered by `browser-pick <tab> --selector <css>`, which runs
     the same describe, crop, and delivery code without the overlay.
+15. **Verify whether a provider CLI is detected after installing it.**
+    `install-command <provider>` prints the install command so an agent can run
+    it in its own shell, and the desktop refreshes detection on Retry via
+    `agents:reprobe`, but there is no `maestro-cli` read verb yet that queries
+    `agents:detect` or `agents:reprobe` to report detected provider binaries.
+    Agents can check `command -v <binary>` (or `where <binary>` on Windows) in
+    their own shell.
 
 ### Audit backlog (2026-09-27)
 
@@ -413,7 +424,11 @@ still missing. Grouped, highest value first:
 - **SSH remotes:** test, edit, enable/disable, set default.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing, persistent token (`live on/off/status` and the tunnel are covered).
-- **Updates:** check/download/install.
+- **Updates:** check/download/install. A CLI install verb must call
+  `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
+  same as the modal's Restart and Resume, or running Auto Runs will not resume.
+- **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`
+  before `confirmQuit()`, as `handleConfirmQuit` does.
 - **Exports:** tab as HTML.
 - **Usage Dashboard:** plan usage Refresh (re-sample every account), and the Shortcuts tab's
   keyboard mastery figure (the math lives in `src/renderer/constants/keyboardMastery.ts`, which

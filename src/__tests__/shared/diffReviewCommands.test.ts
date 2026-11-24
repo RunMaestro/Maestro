@@ -110,3 +110,61 @@ describe('normalizeDiffReviewCommandResult', () => {
 		).toEqual({ success: true, cwd: '/r', cleared: 2 });
 	});
 });
+
+describe('parseDiffReviewCommandRequest with a file (maestro-cli file-review)', () => {
+	it('carries the file on every verb and drops the diff-only fields from add', () => {
+		expect(
+			parseDiffReviewCommandRequest({ action: 'list', sessionId: 'a', file: ' /p/x.md ' })
+		).toEqual({
+			ok: true,
+			request: { action: 'list', sessionId: 'a', file: '/p/x.md' },
+		});
+		expect(
+			parseDiffReviewCommandRequest({
+				action: 'add',
+				sessionId: 'a',
+				file: '/p/x.md',
+				path: 'ignored.ts',
+				side: 'old',
+				startLine: 4,
+				endLine: 2,
+				body: ' Fix. ',
+			})
+		).toEqual({
+			ok: true,
+			request: {
+				action: 'add',
+				sessionId: 'a',
+				file: '/p/x.md',
+				startLine: 2,
+				endLine: 4,
+				body: 'Fix.',
+			},
+		});
+		expect(
+			parseDiffReviewCommandRequest({
+				action: 'send',
+				sessionId: 'a',
+				file: '/p/x.md',
+				background: true,
+			})
+		).toEqual({
+			ok: true,
+			request: { action: 'send', sessionId: 'a', file: '/p/x.md', background: true },
+		});
+	});
+
+	it('needs no path for a file add, but still a line and some text', () => {
+		const base = { action: 'add', sessionId: 'a', file: '/p/x.md', startLine: 1, body: 'x' };
+		expect(parseDiffReviewCommandRequest(base).ok).toBe(true);
+		const noLine = parseDiffReviewCommandRequest({ ...base, startLine: 0 });
+		expect(noLine).toEqual({ ok: false, error: 'file-review add requires a line number' });
+		expect(parseDiffReviewCommandRequest({ ...base, body: ' ' }).ok).toBe(false);
+	});
+
+	it('passes the file back through a normalized result', () => {
+		expect(
+			normalizeDiffReviewCommandResult({ success: true, file: '/p/x.md', cleared: 1 })
+		).toEqual({ success: true, file: '/p/x.md', cleared: 1 });
+	});
+});

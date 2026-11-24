@@ -146,6 +146,7 @@ import { useSshReachability } from './hooks/remote/useSshReachability';
 import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
+import { useAutoRunRestartResume } from './hooks/batch/useAutoRunRestartResume';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
@@ -424,6 +425,7 @@ function MaestroConsoleInner() {
 		state: wizardState,
 		openWizard: _baseOpenWizardModal,
 		restoreState: restoreWizardState,
+		resetWizard: resetWizardState,
 		loadResumeState: _loadResumeState,
 		clearResumeState,
 		completeWizard,
@@ -1789,6 +1791,11 @@ function MaestroConsoleInner() {
 	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
 	useAutoResumeCoordinator({ resumeAutoRunAfterError });
 
+	// --- AUTO RUN RESUME AFTER UPDATE RESTART ---
+	// Starts the Auto Runs the update modal saved before the app restarted, at
+	// the document and loop pass each one stopped on. Primary window only.
+	useAutoRunRestartResume({ enabled: isLifecycleOwner, sessionsLoaded, startBatchRun });
+
 	// --- AGENT CAPABILITY CACHE PRIMING ---
 	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
 	// run outside the active session's tree (CLI/web dispatch) see real values
@@ -1914,6 +1921,7 @@ function MaestroConsoleInner() {
 			// after the resume prompt, and openWizardModal would find the saved
 			// state still on disk and raise the same prompt again (#1835).
 			openWizard: _baseOpenWizardModal,
+			resetWizard: resetWizardState,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,

@@ -14,53 +14,53 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
-## v1.0.x - Right on Cue
+## v1.0.x - Red Pen
 
-**Latest: v1.0.3** | Released November 12, 2026
+**Latest: v1.0.4** | Released November 21, 2026
 
-# 1.0.3 Highlights
+# 1.0.4 Highlights
 
-⏰ **A scheduled prompt can come back to the conversation that asked for it.** `maestro-cli cue schedule --here` (or `--tab`) delivers the prompt into that tab when it fires. It waits behind a busy turn, marks the tab unread, and never moves your view, and if you closed the tab, it opens a new one with a toast. Agents use this now: ask one to "check back in 20 minutes" and the follow-up arrives in the same tab instead of in History. If you customized the CLI or Cue prompts in Settings > Maestro Prompts, your version stays; compare it with the new default there to pick this up.
+💻 **The file editor is a real code editor now.** Edit a code file and you get autocomplete, auto-closing brackets, quotes and tags, multiple cursors (Option-click, Cmd+D for the next match, Shift+Option-drag for a column), Cmd+/ to toggle a comment, and move or duplicate a line. The find bar replaces too: Enter replaces the current match, Cmd+Enter replaces all in one undo, and regex mode fills in `$1`. Right-click a selection to quote it into the agent's message or send it to another agent with its file and line numbers. Vim keybindings are one switch away in Settings > Display.
 
-⚙️ **Settings search changes the setting for you.** An on/off result shows its switch right on the row and flips in place, and a bigger setting opens its full section under the row. Down arrow walks the results, Space flips or expands, Right and Left expand and collapse, and Enter still jumps to the tab.
+🔍 **Review an agent's changes like a pull request.** In the Git Diff viewer, click or drag across line numbers (or walk the lines with the arrow keys and press `C`) to pin a comment, collect comments across files in a Review tray, and send them to the agent as one review. Each comment names its file and lines and quotes the hunk it was left on, a busy agent gets the review after its current turn, and pending comments survive closing the viewer until you send or discard them. A comment whose code changed before you sent it is marked Outdated instead of pointing at the wrong lines. Agents can now leave the same kind of review on another agent's changes, and if you customized the CLI prompt in Settings > Maestro Prompts, you keep your version.
 
-🌗 **Themes can track your device's light and dark mode.** Turn on Follow System Appearance in Settings > Themes and pick one light theme and one dark theme. Each screen follows its own device, so a phone on the web interface switches with the phone while the desktop follows the computer.
+🎯 **Design Mode: click an element in a browser tab and hand it to the agent.** Turn it on with the pointer button in the address bar or `Cmd+Shift+C`, point at the part of the page you mean, and click. The agent's message gets a selector that finds it, its HTML, the styles that shape it, a screenshot cropped to it, and your note. `Cmd+Enter` adds it and keeps picking, so one message can carry several elements, and the page's buttons do not fire while you pick.
 
-📋 **Environment variables take plain `.env` text.** Every env var editor has a Basic / Advanced toggle. Advanced is one box of `KEY=value` lines: paste a `.env` file or a block from a provider's docs, or copy an agent's variables back out. A line that does not parse is listed with its line number, and `# KEY=value` parks a variable without deleting it.
+## Also in 1.0.4
 
-🧠 **Huge transcripts no longer take Maestro down.** Resuming a long conversation read the whole transcript at once, so a few hundred megabytes could crash the app and anything past about 512 MB would not open. Maestro now reads only the messages it shows, loads several times faster, and the usage data scan reads transcripts line by line for the same reason.
-
-## Also in 1.0.3
-
-- 🧭 **Agents follow the code when a repo's docs are out of date, and list each mismatch** in their final reply. Your own instructions and files like CLAUDE.md still win. A customized system prompt in Settings > Maestro Prompts keeps your version; compare it with the new default there.
-- ⭐ **Starred sessions are in Cmd+K.** Type part of the name to bring an open tab forward or resume a closed one.
-- ♻️ **Reopen Closed Tab is in the command palette**, and `maestro-cli tab reopen` does it from a script.
-- 🧩 **The Memory Viewer works for Codex agents**, and every agent now shows the memory of the account it really runs as.
-- 🔄 **Model pickers refresh on demand.** A model you just pulled shows up after one click on Refresh, in every picker at once.
-- 💬 **Group Chat follows an agent through a rename**, reports an @mention that matched nobody, and `maestro-cli group-chat add` adds a participant.
-- 🔀 **Agents on an SSH remote can open pull requests**, from Create PR and from Auto Run.
-- 📡 **`maestro-cli live` switches the web interface and its tunnel on and off.** Only the CLI can do it; a browser on your network or the tunnel link cannot.
-- 🔐 **Claude in TUI or Dynamic mode no longer stalls on a hidden folder-trust prompt** for the agent's own working directory.
-- ❓ **A multiple-choice question from Claude in TUI mode ends the turn** with the options in the reply, instead of timing out.
-- ⏱️ **Auto Run no longer stops a Claude task that is busy running tools or thinking.**
-- 💭 **OpenCode agents show their reasoning in Thinking**, and an OpenCode usage limit reads as a limit.
-- 📈 **Claude plan usage refreshes again** after Claude Code dropped the 5-hour window from its usage screen.
-- 🏆 **Lifetime Conductor time only goes up.** A second window or web tab can no longer reset it.
-- 🖼️ **Obsidian images render in markdown previews**, including vault-root links and `|220` sizing.
-- 🔗 **A file path in an agent's reply links only the path**, not the sentence around it.
-- 📏 **Very long prompts and large screenshots send** instead of failing with E2BIG or a stack overflow.
-- 🎯 **Cmd+O on a running agent opens the tab doing the work.**
-- 📅 **Today on the Usage Dashboard starts at local midnight**, not 24 hours ago.
-- 📱 **A web interface waking from sleep no longer closes the tabs you opened on the desktop.**
-- 🩹 **Damaged saved data no longer blocks a launch.** Bad tab data, a broken group chat, and a corrupt Cue database are repaired or set aside.
-- 📂 **Cue file triggers keep firing when Linux runs out of file watches**, by polling instead.
-- 🛒 **Marketplace playbooks import again** and find the scripts and templates they ship with.
-- 💾 **Maestro refuses a Storage Location inside its own install folder**, which the next update would wipe.
-- 🐧 **Linux:** `maestro-cli` finds your agents, survives an AppImage restart, and the app icon shows in GNOME.
-- 🪟 **Windows:** Cue runs work with npm-installed agents, terminal tabs stop respawning into a crash, and shell paths and `--cwd` stay as typed.
+- 🧰 **A provider that is not installed says so.** When an agent's CLI is missing, Maestro reports it as not installed and gives you the install command for your platform to copy, instead of "Agent exited with code 1" and a restart that fails the same way. Install runs that command for you in a built-in terminal, and Retry resends the message that failed once it succeeds. It also names a missing runtime such as Node.js, and the setup wizard does the same.
+- 🩹 **Auto Run pauses for you only as a last resort.** When a task seems to need a person (a key, a visual check, a sign-off), the agent now builds and tests everything it can, notes the rest under Manual Follow-Up, and moves the human step to the end of the document, so one late pause replaces a stall in the middle of the run. Ordinary failures get a real fix-and-retry first, playbooks from the wizards put human steps in the last phase, and Goal-Driven runs keep working around a blocker before they call it a deadlock. Your own instructions and CLAUDE.md / AGENTS.md still win, and if you customized these prompts in Settings > Maestro Prompts you keep your version and can compare it with the new default there.
+- 🙋 **Agents finish the work before they ask.** In chat, an agent now does every part of a task that does not depend on your answer, takes a sensible default when a choice is cheap to undo (and says which), and saves its questions for the end. Explicit instructions and CLAUDE.md / AGENTS.md still win, and a customized system prompt in Settings > Maestro Prompts is kept as yours.
+- 🖼️ **Ask for a mockup and the agent draws it.** Static screens and layout options come back as inline pictures in the reply, two or three directions side by side with real copy, instead of a written description. Anything you should click or play still opens in Concerto.
+- 🔗 **Prompt Links: a link that runs a prompt.** Make a `maestro://run` link that opens a new tab in the agent you pick and sends a prompt you wrote, then put it in a calendar event, a note, a bookmark or a script. A link is one-shot by default, can allow more uses or an expiry, can be revoked at any time, and carries only a random token, so a leaked link can run only the prompt it was made with. Turn it on in Encore Features, then open it with `Opt+Cmd+Shift+L`, the command palette, or Create Prompt Link in any AI tab's menu.
+- 📊 **The Usage Dashboard's numbers are right.** The Activity Heatmap shows the hours you actually worked instead of an estimate, Codex cached tokens are no longer counted twice, agent cards show their own query count instead of their whole provider's, and Auto Run and Cue totals leave out runs that never finished. Every range is whole calendar days (Last 7 Days is seven full days), and a panel reloads only when its own data changes.
+- 📈 **Agents Over Time in the Usage Dashboard.** The Agent Overview tab now charts how many agents you had at the end of each day in the selected range, with the current count and how many were created and deleted in that range. Worktree agents and agents made by a merge or a send-to-agent count too.
+- ⚡ **Token speed for more providers.** The Usage Dashboard's tokens-per-second figures now cover OpenCode, Pi, Oh My Pi, Qwen3 Coder, Copilot-CLI (output speed only) and Claude Code agents on an SSH host, timed from their live output as each call happens, not only Claude Code and Codex. When a range has no timed calls, the dashboard names the providers it can measure.
+- 🎙️ **Pasted text arrives exactly as you pasted it.** The composer, group chat input and Prompt Composer no longer trim a text paste, so the trailing space a dictation tool adds on purpose is kept and the next word does not run into the last one.
+- 🖱️ **The tab bar's search and + menus open on hover.** Rest the pointer on them to peek without losing your place in the composer; a click still pins the menu.
+- 📡 **A dead SSH remote gets one clear dialog.** It names the remote, the reason, and the agents on it, with Check Now and Dismiss, re-checks on its own, and tells you when the remote is back. It only appears for the agent you are looking at or a turn that just failed, a run that never reached its host reports the outage instead of a crash, and a save that cannot reach the host says "Unable to connect over SSH".
+- 🐢 **Long Goal-Driven runs no longer stop as stalled** when each iteration gains less than one percent. Agents now report progress with decimals on large, measurable goals, and a move like 48.27% to 48.33% counts, so a slow, steady run keeps going instead of restarting its elapsed time and iteration count. A customized Goal-Driven prompt in Settings > Maestro Prompts keeps your version.
+- 📁 **Claude in TUI mode works again for agents with Additional Directories.** Claude Code 2.1.326 asks to confirm each extra folder and defaults to "No, exit", so every turn failed after about two seconds. Maestro now says yes for the folders you gave the agent, and refuses any other folder or unknown startup dialog with a clear error instead of a silent exit.
+- 🧭 **`Cmd+[` and `Cmd+]` step through exactly the agents the Left Bar shows**, under the unread filter, a search, nested groups, and the Starred section, instead of landing on hidden rows or skipping visible ones.
+- ⌨️ **Editing a queued message into a slash command runs that command**, so a queued `/commit` expands your custom command instead of going out as text. Claude in TUI mode also ends the turn at once on an unknown slash command, instead of an error five minutes later.
+- ✍️ **Replaying a message leaves your draft alone.** Replay, re-send after a recovery, and prompt macros no longer clear the text you were typing or take its staged images, and a replay while the composer is in `!` mode goes to the agent instead of running as a shell command.
+- 💬 **Send Feedback recovers from a sign-in failure.** It interviews you with the provider you actually use, says plainly when that provider is not signed in, and offers to switch to another one without losing the conversation. A screenshot that fails to upload no longer loses the report, and a double submit no longer files two issues.
+- 🛡️ **Privacy is one click away.** A Privacy button in the About window, in Settings > About, and a Privacy Policy command in the command palette open the current privacy page, which says what Maestro sends off your machine and how to turn it off.
+- 📝 **Previews in Settings > Maestro Prompts and the Memory viewer are formatted.** Headings, lists and paragraph spacing render as styled markdown instead of plain unstyled text.
+- 🧷 **An agent pinned to its own binary runs that binary everywhere.** Group chat participants and `maestro-cli` send, playbook and goal turns used the provider's default program instead, so a custom build or wrapper you set on the agent was skipped.
+- 🧩 **`maestro-cli` does what you asked:** `encore enable` and `disable` change only the features you name, `create-agent` with an SSH remote runs its turns in the remote directory instead of failing every one, and `open usage-dashboard --tab` switches a dashboard that is already open.
+- 🐟 **Login and install commands report failure honestly.** In fish, in PowerShell, and when the install download fails, a failed sign-in or install no longer looks like a success.
+- 🎵 **The floating media player never cuts off its controls.** It stays wide enough for every button, whichever ones the file and the queue add.
+- 📋 **Task badges in the Auto Run document list line up** in one column, whatever their digit count.
+- 📱 **A phone on the web interface no longer pauses Cue on the desktop** when it locks or goes to the background.
+- 📂 **Dismissing the truncated file tree banner sticks** across agent switches and restarts. The warning icon beside the path still brings it back.
+- 🧾 **History keeps the whole question you asked another agent** in its summary line, instead of cutting it at 60 characters.
+- 🐧 **The Linux arm64 build runs on older distributions**, such as Ubuntu 22.04, instead of needing a system library newer than they ship.
+- 🪵 **System Log entries show the real error** instead of `{}`.
 
 ### Previous Releases in this Series
 
+- **v1.0.3** (November 12, 2026) - Right on Cue
 - **v1.0.2** (October 21, 2026) - Press Run
 - **v1.0.1** (October 20, 2026) - Full Orchestra
 - **v1.0.0** (October 9, 2026) - Full Orchestra
@@ -540,10 +540,6 @@ Plus the pre-release ALPHA...
 • Improved Git Log search UX with better focus handling 🎨
 • Fixed input placeholder spacing for better readability 📝
 • Updated documentation with new features and template references 📖
-
-### Previous Releases in this Series
-
-- **v0.1.5** (November 27, 2025)
 
 ---
 

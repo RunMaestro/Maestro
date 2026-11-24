@@ -220,6 +220,37 @@ describe('WebServer network exposure', () => {
 	});
 });
 
+describe('WebServer listening socket errors', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	// A failed accept() (MAESTRO-19C: `accept UNKNOWN` on Windows) is emitted as
+	// 'error' on the http server. Fastify removes its own listener once listen()
+	// resolves, so without one of ours the emit throws into uncaughtException.
+	it('handles an error on the listening socket instead of throwing it', async () => {
+		const server = new WebServer(0);
+		const internals = server as any;
+		internals.setupMiddleware = vi.fn();
+		internals.setupRoutes = vi.fn();
+		internals.setupMessageHandlerCallbacks = vi.fn();
+		internals.watchWebUserStore = vi.fn();
+		await server.start();
+		const httpServer = server.getServer().server;
+
+		try {
+			const acceptError = Object.assign(new Error('accept UNKNOWN'), {
+				code: 'UNKNOWN',
+				syscall: 'accept',
+			});
+			expect(() => httpServer.emit('error', acceptError)).not.toThrow();
+			expect(httpServer.listening).toBe(true);
+		} finally {
+			await server.getServer().close();
+		}
+	});
+});
+
 describe('WebServer origin policy', () => {
 	let server: WebServer;
 

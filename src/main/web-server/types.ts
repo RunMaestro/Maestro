@@ -508,6 +508,13 @@ export type ConsultAgentParams = {
 	fromTabId?: string;
 	/** Forward the caller's transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a `/btw` side question instead of consulting: the answer comes from a
+	 * throwaway fork of one of the target's tabs, which is never written to.
+	 */
+	sideQuestion?: boolean;
+	/** The target's tab a side question forks. Defaults to its active tab. */
+	targetTabId?: string;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
 	timeoutMs: number;
 };
@@ -1423,6 +1430,7 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export type SetGroupChatUnreadCallback = (chatId: string, unread: boolean) => Promise<boolean>;
 export interface AddGroupChatParticipantResult {
 	success: boolean;
 	/** The participant's name in the chat. */
