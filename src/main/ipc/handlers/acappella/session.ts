@@ -234,7 +234,8 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		windowId: VoiceWindowId,
 		paused: boolean,
 		source: WakeSource = 'client-button',
-		origin?: VoiceOrigin
+		origin?: VoiceOrigin,
+		onSessionError?: (message: string) => void
 	): Promise<VoiceStartSessionResult> => {
 		requireACappellaEnabled(deps.settingsStore);
 		const stillEnabled = captureEnableFence(deps.settingsStore);
@@ -275,14 +276,24 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 			// First start is what pays for the audio host: enabling the Encore
 			// Feature opens no device and builds no second renderer.
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-			const snapshot = await service.startSession({
-				scope,
-				source,
-				origin,
-				windowId: owner,
-				paused,
-				stillRequested,
-			});
+			const releaseErrorListener = onSessionError
+				? service.subscribe((event) => {
+						if (event.type === 'session-error') onSessionError(event.message);
+					})
+				: undefined;
+			let snapshot: VoiceSessionSnapshot;
+			try {
+				snapshot = await service.startSession({
+					scope,
+					source,
+					origin,
+					windowId: owner,
+					paused,
+					stillRequested,
+				});
+			} finally {
+				releaseErrorListener?.();
+			}
 			assertStillEnabled();
 			if (pendingVoiceStart !== attempt) return cancelledResult();
 			return { snapshot, substitutions };

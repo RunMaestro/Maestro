@@ -325,7 +325,6 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	ipcMain.on(ACAPPELLA_WEBRTC_EVENT_CHANNEL, audio.handleWebRtcEvent);
 
 	registerVoiceControl(deps, {
-		ensureService: session.ensureService,
 		startSession: session.startSession,
 		setScope: session.setScope,
 		sendNow: session.sendNow,

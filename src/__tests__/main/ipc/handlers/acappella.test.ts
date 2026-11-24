@@ -1012,6 +1012,54 @@ describe('A Cappella IPC handlers - session lifecycle', () => {
 		expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
 	});
 
+	it('voice-control stop while ensureService is pending cancels the start and opens no microphone', async () => {
+		vi.mocked(ipcMain.handle).mockClear();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		register({ withAudio: true });
+
+		// Build an initial pipeline, then swap providers so the next ensureService awaits dispose().
+		await handlerFor('acappella:start-session')({});
+		await handlerFor('acappella:stop-session')({});
+		vi.mocked(ensureAcappellaAudioHostWindow).mockClear();
+
+		const disposeEntered = Promise.withResolvers<void>();
+		const disposeGate = Promise.withResolvers<void>();
+		const prevRecord = teardownProbe.record;
+		teardownProbe.record = (step: string) => {
+			prevRecord?.(step);
+			if (step === 'activePipeline.dispose') {
+				disposeEntered.resolve();
+			}
+		};
+		// Hook the live pipeline's dispose so ensureService pauses mid-rebuild.
+		const { sharedState } = await import('../../../../main/ipc/handlers/acappella/state');
+		const origDispose = sharedState.activePipeline!.pipeline.dispose.bind(
+			sharedState.activePipeline!.pipeline
+		);
+		sharedState.activePipeline!.pipeline.dispose = async () => {
+			disposeEntered.resolve();
+			await disposeGate.promise;
+			return origDispose();
+		};
+		settings.acappella = {
+			providers: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+		};
+
+		const starting = runVoiceControlRequest({ action: 'start', scope: { kind: 'conductor' } });
+		await disposeEntered.promise;
+
+		await expect(runVoiceControlRequest({ action: 'stop' })).resolves.toMatchObject({ ok: true });
+		disposeGate.resolve();
+
+		await expect(starting).resolves.toEqual({
+			ok: false,
+			reason: 'The voice start was cancelled.',
+		});
+		expect(ensureAcappellaAudioHostWindow).not.toHaveBeenCalled();
+		expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
+	});
+
 	it('stopVoiceSessionForWindow cancels a pending start for that window only', async () => {
 		vi.mocked(ipcMain.handle).mockClear();
 		await disposeVoiceSessionService();

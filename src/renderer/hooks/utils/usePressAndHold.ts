@@ -118,19 +118,17 @@ export function usePressAndHold({
 	const endPress = useCallback(() => finishPress(true), [finishPress]);
 	const cancelPress = useCallback(() => finishPress(false), [finishPress]);
 
-	// Window-scoped release, so a press that ends with the pointer somewhere else
-	// still counts. Armed while a press is in flight, which is either the timer
-	// still running or the hold already started.
+	// Window-scoped release, so a press that ends or cancels with the pointer
+	// somewhere else (including before the hold threshold fires) still counts.
+	// Attached once and guarded by `pressedRef` inside `finishPress`.
 	useEffect(() => {
-		if (!holding && holdTimer.current === null) return;
-		const onUp = () => endPress();
-		window.addEventListener('pointerup', onUp);
+		window.addEventListener('pointerup', endPress);
 		window.addEventListener('pointercancel', cancelPress);
 		return () => {
-			window.removeEventListener('pointerup', onUp);
+			window.removeEventListener('pointerup', endPress);
 			window.removeEventListener('pointercancel', cancelPress);
 		};
-	}, [cancelPress, endPress, holding]);
+	}, [cancelPress, endPress]);
 
 	return { holding, beginPress, endPress, cancelPress };
 }
