@@ -21,7 +21,7 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
-import { getStagedDesignPicks, removeStagedDesignPicks } from '../../services/designModePick';
+import { getStagedDesignPicks, removeStagedDesignPicks } from '../../services/stagedDesignPicks';
 import { expandDesignPicks } from '../../utils/designModePicker';
 import {
 	requestTabAutoNameForMessage,

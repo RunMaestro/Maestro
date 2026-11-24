@@ -51,7 +51,7 @@ import {
 	moveStagedImage,
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
-import { removeStagedDesignPick, setStagedDesignPickNote } from '../../services/designModePick';
+import { removeStagedDesignPick, setStagedDesignPickNote } from '../../services/stagedDesignPicks';
 import type { StagedDesignPick } from '../../types';
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */

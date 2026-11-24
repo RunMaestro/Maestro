@@ -13,13 +13,15 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	deliverDesignPick,
-	getStagedDesignPicks,
 	queueDesignPick,
+	runRemoteDesignPickCommand,
+} from '../../../renderer/services/designModePick';
+import {
+	getStagedDesignPicks,
 	removeStagedDesignPick,
 	removeStagedDesignPicks,
-	runRemoteDesignPickCommand,
 	setStagedDesignPickNote,
-} from '../../../renderer/services/designModePick';
+} from '../../../renderer/services/stagedDesignPicks';
 import { buildQueuedMessageItem } from '../../../renderer/services/queuedPrompt';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';

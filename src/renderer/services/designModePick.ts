@@ -16,11 +16,12 @@
  *
  * The click in the overlay and `maestro-cli browser-pick` both end here.
  *
- * Once staged, a chip is edited and removed by id on its tab through
- * {@link setStagedDesignPickNote} and {@link removeStagedDesignPick}: the
- * chip strip in the composer uses them, so any other caller reaches the same
- * code. A send reads the chips with {@link getStagedDesignPicks}, expands them
- * into the message, and takes them off with {@link removeStagedDesignPicks}.
+ * Once staged, a chip is edited and removed by id on its tab through the
+ * helpers in `stagedDesignPicks.ts` (`setStagedDesignPickNote`,
+ * `removeStagedDesignPick`): the chip strip in the composer uses them, so any
+ * other caller reaches the same code. A send reads the chips with
+ * `getStagedDesignPicks`, expands them into the message, and takes them off
+ * with `removeStagedDesignPicks`.
  * `maestro-cli browser-picks` reads and removes them through
  * {@link runRemoteDesignPickCommand}.
  */
@@ -31,7 +32,8 @@ import {
 	stageDesignPickOnAgent,
 } from './quoteIntoComposer';
 import { enqueuePromptForTab } from './queuedPrompt';
-import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
+import { selectSessionById, useSessionStore } from '../stores/sessionStore';
+import { getStagedDesignPicks, removeStagedDesignPick } from './stagedDesignPicks';
 import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
 import { generateId } from '../utils/ids';
@@ -206,78 +208,6 @@ export async function queueDesignPick(
 		queueItemId: item.id,
 		text,
 	};
-}
-
-/**
- * The chips staged on `sessionId`'s AI tab `tabId`, in order, from the live
- * store rather than a render-time snapshot. Empty when there are none or the
- * tab is gone.
- */
-export function getStagedDesignPicks(sessionId: string, tabId: string): StagedDesignPick[] {
-	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	return session?.aiTabs.find((t) => t.id === tabId)?.stagedDesignPicks ?? [];
-}
-
-/** The chip `pickId` on `sessionId`'s AI tab `tabId`, from the live store. */
-function findStagedDesignPick(
-	sessionId: string,
-	tabId: string,
-	pickId: string
-): StagedDesignPick | undefined {
-	return getStagedDesignPicks(sessionId, tabId).find((p) => p.id === pickId);
-}
-
-/**
- * Replace the note on one staged chip, trimmed the way a delivered note is.
- * Writes nothing when the note is unchanged. Returns false when the chip is
- * not on that tab (it was sent or removed meanwhile).
- */
-export function setStagedDesignPickNote(
-	sessionId: string,
-	tabId: string,
-	pickId: string,
-	note: string
-): boolean {
-	const pick = findStagedDesignPick(sessionId, tabId, pickId);
-	if (!pick) return false;
-	const trimmed = note.trim();
-	if (trimmed === pick.note) return true;
-	updateAiTab(sessionId, tabId, (tab) => ({
-		...tab,
-		stagedDesignPicks: (tab.stagedDesignPicks ?? []).map((p) =>
-			p.id === pickId ? { ...p, note: trimmed } : p
-		),
-	}));
-	return true;
-}
-
-/**
- * Take staged chips off their tab by id, screenshots and all: the chips a
- * sent message expanded, or one the user removed. Chips with other ids stay,
- * so one staged after a send read its chips is left for the next message.
- * Returns how many were taken; 0 writes nothing.
- */
-export function removeStagedDesignPicks(
-	sessionId: string,
-	tabId: string,
-	pickIds: readonly string[]
-): number {
-	const ids = new Set(pickIds);
-	const taken = getStagedDesignPicks(sessionId, tabId).filter((p) => ids.has(p.id)).length;
-	if (taken === 0) return 0;
-	updateAiTab(sessionId, tabId, (tab) => ({
-		...tab,
-		stagedDesignPicks: (tab.stagedDesignPicks ?? []).filter((p) => !ids.has(p.id)),
-	}));
-	return taken;
-}
-
-/**
- * Take one staged chip off its tab, screenshot and all. Returns false when the
- * chip is not on that tab.
- */
-export function removeStagedDesignPick(sessionId: string, tabId: string, pickId: string): boolean {
-	return removeStagedDesignPicks(sessionId, tabId, [pickId]) > 0;
 }
 
 /** A staged chip as `browser-picks` reports it: every field but the image itself. */
