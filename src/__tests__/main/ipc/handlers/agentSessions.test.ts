@@ -36,7 +36,7 @@ import { nativeAccountRef } from '../../../../shared/agentAccountDir';
 import { grokInstallationId } from '../../../../shared/maestro-lib/grok/host-seams';
 import type { SshRemoteEndpointIdentity } from '../../../../shared/maestro-lib/launch/ssh-remote-resolver';
 import type { NativeSessionBinding } from '../../../../shared/maestro-lib/agents/providerSwap';
-import { canLoadNodeSqlite, nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
+import { canLoadNodeSqlite } from '../../../helpers/nodeSqlite';
 import {
 	agyModelStep,
 	agyUserStep,
@@ -45,7 +45,11 @@ import {
 } from '../../../helpers/antigravityStoreFixture';
 
 // agy's stores are SQLite; read them through node:sqlite, not the Electron binary.
-vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
+// Imported inside the factory: an earlier import (main/agents) loads the step
+// store, and so better-sqlite3, before this file's own imports have run.
+vi.mock('better-sqlite3', async () =>
+	(await import('../../../helpers/nodeSqlite')).nodeSqliteBetterSqlite3Mock()
+);
 // agy's home follows the `os.homedir()` spies below through the default `os`
 // export they patch, so no test reads the real ~/.gemini (the step store
 // itself imports the `os` namespace).
