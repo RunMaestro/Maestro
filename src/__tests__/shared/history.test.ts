@@ -543,10 +543,18 @@ describe('history entry type helpers', () => {
 				fullResponse: 'y'.repeat(MAX_HISTORY_FULL_RESPONSE_STORED_CHARS + 500),
 			};
 			const out = clampHistoryEntry(big);
-			expect(out.summary.length).toBeLessThan(MAX_HISTORY_SUMMARY_STORED_CHARS + 60);
-			expect(out.summary).toContain('[truncated 500 characters]');
-			expect(out.fullResponse).toContain('[truncated 500 characters]');
+			expect(out.summary.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_STORED_CHARS);
+			expect(out.summary).toMatch(/\[truncated \d+ characters\]$/);
+			expect(out.fullResponse.length).toBeLessThanOrEqual(MAX_HISTORY_FULL_RESPONSE_STORED_CHARS);
 			expect(big.summary.length).toBe(MAX_HISTORY_SUMMARY_STORED_CHARS + 500);
+		});
+
+		it('is idempotent: clamping a clamped entry leaves it unchanged', () => {
+			const once = clampHistoryEntry({
+				...entry,
+				summary: 'x'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS + 500),
+			});
+			expect(clampHistoryEntry(once)).toBe(once);
 		});
 
 		it('does not split a surrogate pair at the cut', () => {
