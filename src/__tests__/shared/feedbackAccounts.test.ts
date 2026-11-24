@@ -53,6 +53,7 @@ describe('buildFeedbackAccountCandidates', () => {
 			'codex::/home/me/.codex',
 			'opencode',
 			'grok::/home/me/.grok',
+			'antigravity',
 		]);
 		expect(candidates[0].agentNames).toEqual(['Work A', 'Work B']);
 		expect(candidates[0].env).toEqual({ CLAUDE_CONFIG_DIR: '/home/me/.claude-work' });

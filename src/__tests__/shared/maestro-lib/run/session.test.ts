@@ -195,14 +195,29 @@ describe('planSessionTurn', () => {
 	});
 
 	it('refuses a read-only turn for a provider that cannot enforce one', async () => {
-		// Antigravity's CLI has no flag that stops it writing in the workspace.
-		const planned = await planSessionTurn(request({ agentId: 'antigravity', readOnly: true }));
-
-		expect(planned).toMatchObject({ ok: false, reason: 'no-read-only' });
+		// Every provider with a parser now enforces read-only from its command
+		// line, so the refusal is exercised on a definition that does not.
+		const original = definitions.getAgentDefinition;
+		const spy = vi
+			.spyOn(definitions, 'getAgentDefinition')
+			.mockImplementation((id) =>
+				id === 'antigravity' ? { ...original(id)!, readOnlyCliEnforced: false } : original(id)
+			);
+		try {
+			const planned = await planSessionTurn(request({ agentId: 'antigravity', readOnly: true }));
+			expect(planned).toMatchObject({ ok: false, reason: 'no-read-only' });
+			expect((await planSessionTurn(request({ agentId: 'antigravity' }))).ok).toBe(true);
+		} finally {
+			spy.mockRestore();
+		}
 	});
 
-	it('still plans a full-access turn for a provider that cannot enforce read-only', async () => {
-		expect((await planSessionTurn(request({ agentId: 'antigravity' }))).ok).toBe(true);
+	it('plans a read-only Antigravity turn with its session deny list', async () => {
+		const { spec } = await plan({ agentId: 'antigravity', readOnly: true });
+
+		expect(containsRun(spec.args, ['--settings', definitions.ANTIGRAVITY_READ_ONLY_SETTINGS])).toBe(
+			true
+		);
 	});
 
 	it('reports a binary that is not where the request said', async () => {
@@ -396,8 +411,8 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 	});
 
 	it('escapes an argument the shim gets on its command line', async () => {
-		// Antigravity reads no prompt from stdin, so its prompt stays in argv.
-		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt: 'fix the bug' });
+		// Oh My Pi reads no prompt from stdin, so its prompt stays in argv.
+		const { spec } = await plan({ agentId: 'omp', command: shim, prompt: 'fix the bug' });
 
 		expect(spec.shell).toBe(true);
 		expect(spec.stdin).toBeUndefined();
@@ -412,9 +427,7 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 	])(
 		'refuses a command-line prompt with %s rather than pass it altered',
 		async (_label, prompt, named) => {
-			const planned = await planSessionTurn(
-				request({ agentId: 'antigravity', command: shim, prompt })
-			);
+			const planned = await planSessionTurn(request({ agentId: 'omp', command: shim, prompt }));
 
 			expect(planned.ok).toBe(false);
 			if (planned.ok) return;
@@ -426,7 +439,7 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 
 	it('passes a command-line prompt with a lone %, which cmd.exe leaves alone', async () => {
 		const prompt = 'cut 50% off';
-		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt });
+		const { spec } = await plan({ agentId: 'omp', command: shim, prompt });
 
 		expect(spec.args).toContain(escapeCmdArg(prompt));
 	});
