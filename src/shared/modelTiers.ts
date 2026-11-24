@@ -567,7 +567,8 @@ export function tierLaunchKey(
 	if (resolved.kind === 'refused' && resolved.blocksLaunch) {
 		return `refused:${tier}:${resolved.code}`;
 	}
-	const launch = resolved.kind === 'resolved' ? resolved : { model: agentModel };
+	const launch: { model: string | undefined; runOn?: RunOnTarget } =
+		resolved.kind === 'resolved' ? resolved : { model: agentModel };
 	// The place a launch runs is the tier's, else the agent's own, so a tier
 	// that names the place the agent is already on does not read as a change.
 	const own = parseRunOnTarget(routing?.runOn);
@@ -1150,7 +1151,8 @@ export function modelIdInTierFamily(harness: string, tier: ModelTier, modelId: s
 	const id = modelId.trim().toLowerCase();
 	if (id === '') return false;
 	const toolType = harness as ToolType;
-	if (id === resolveTierModel(toolType, tier)?.toLowerCase()) return true;
+	const builtInId = toolType === 'antigravity' ? splitAntigravityModelEffort(id).base : id;
+	if (builtInId === resolveTierModel(toolType, tier)?.toLowerCase()) return true;
 	const family = TIER_FAMILIES[toolType]?.[tier];
 	return family !== undefined && id.split(/[^a-z0-9]+/).includes(family);
 }

@@ -9,8 +9,11 @@ import { describe, it, expect } from 'vitest';
 import {
 	agentTierRows,
 	harnessTierRows,
+	isModelOutsideTierFamilies,
+	modelIdInTierFamily,
 	parseTierAssignment,
 	parseTierTargetsEdit,
+	resolveTierTarget,
 	tierRowRecord,
 	type TierTarget,
 } from '../../shared/modelTiers';
@@ -214,5 +217,51 @@ describe('parseTierAssignment', () => {
 		const result = parseTierAssignment('low=opus');
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error).toMatch(/^low: A tier target is/);
+	});
+});
+
+describe('Antigravity tier targets and family matching', () => {
+	it('resolves built-in, harness-default, and agent tier targets for Antigravity', () => {
+		const agent = {
+			toolType: 'antigravity' as const,
+			customModel: 'gemini-4-neon-high',
+			tierTargets: { low: { type: 'provider-model', model: 'gemini-4-hydrogen' } as TierTarget },
+		};
+		const harnessDefaults = {
+			antigravity: {
+				medium: { type: 'provider-model', model: 'gemini-4-neon' } as TierTarget,
+			},
+		};
+		expect(resolveTierTarget(agent, 'low', harnessDefaults)).toEqual({
+			kind: 'resolved',
+			target: { type: 'provider-model', model: 'gemini-4-hydrogen' },
+			source: 'agent',
+		});
+		expect(resolveTierTarget(agent, 'medium', harnessDefaults)).toEqual({
+			kind: 'resolved',
+			target: { type: 'provider-model', model: 'gemini-4-neon' },
+			source: 'harness-default',
+		});
+		expect(resolveTierTarget(agent, 'high', harnessDefaults)).toEqual({
+			kind: 'resolved',
+			target: { type: 'provider-model', model: 'gemini-4-carbon' },
+			source: 'built-in',
+		});
+	});
+
+	it('strips Antigravity effort suffixes only when matching the built-in tier ids', () => {
+		expect(modelIdInTierFamily('antigravity', 'medium', 'gemini-4-neon-high')).toBe(true);
+		expect(modelIdInTierFamily('antigravity', 'medium', 'gemini-4-neon')).toBe(true);
+		expect(modelIdInTierFamily('antigravity', 'high', 'gemini-4-carbon-low')).toBe(true);
+		expect(isModelOutsideTierFamilies('antigravity', 'gemini-4-neon-high')).toBe(false);
+
+		expect(isModelOutsideTierFamilies('antigravity', 'gemini-pro-orchestrator-neon')).toBe(true);
+		expect(isModelOutsideTierFamilies('antigravity', 'gemini-3-argon')).toBe(true);
+		expect(
+			resolveTierTarget(
+				{ toolType: 'antigravity', customModel: 'gemini-pro-orchestrator-neon' },
+				'high'
+			)
+		).toMatchObject({ kind: 'refused', code: 'tier-agent-model-pinned', blocksLaunch: false });
 	});
 });
