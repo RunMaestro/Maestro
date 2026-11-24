@@ -27,6 +27,7 @@ import type { QueuedSlashCommand } from '../utils/executionQueue';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
+import { withoutDesignPickBlocks } from '../utils/designModePicker';
 import { generateId } from '../utils/ids';
 
 /** What to queue, and where. */
@@ -84,6 +85,8 @@ export function buildQueuedMessageItem({
 			crossAgentMention: true,
 			crossAgentOnly: mentionPlan.suppressLocal,
 		}),
+		// Kept on the item so an edit cannot re-plan what this opted out of.
+		...(!planMentions && { mentionsDisabled: true }),
 	};
 }
 
@@ -155,9 +158,15 @@ export function matchQueuedSlashCommand(session: Session, text: string): QueuedS
  * can add, remove, or move a mention, and where it sits decides whether this
  * agent answers at all. A message edited into one of the user's slash commands
  * becomes that command, with no mention to consult.
+ *
+ * The mentions are resolved without the Design Mode chip blocks the item's
+ * send expanded in (`QueuedItem.designPickBlocks`), as the drain resolves
+ * them, and an item queued with `planMentions: false` (`mentionsDisabled`)
+ * gets none at all, so an edit cannot turn page content into a consult.
  */
 export function resolveQueuedItemEdit(
 	session: Session,
+	itemId: string,
 	patch: QueuedItemEditPatch
 ): {
 	crossAgent: { crossAgentMention: boolean; crossAgentOnly: boolean };
@@ -167,7 +176,14 @@ export function resolveQueuedItemEdit(
 	if (slashCommand) {
 		return { crossAgent: { crossAgentMention: false, crossAgentOnly: false }, slashCommand };
 	}
-	const mentionPlan = planCrossAgentMentions(patch.text, session.id);
+	const item = session.executionQueue.find((queued) => queued.id === itemId);
+	if (item?.mentionsDisabled) {
+		return { crossAgent: { crossAgentMention: false, crossAgentOnly: false } };
+	}
+	const mentionPlan = planCrossAgentMentions(
+		withoutDesignPickBlocks(patch.text, item?.designPickBlocks),
+		session.id
+	);
 	return {
 		crossAgent: {
 			crossAgentMention: !!mentionPlan,

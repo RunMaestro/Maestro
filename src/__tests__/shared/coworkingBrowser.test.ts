@@ -111,6 +111,12 @@ describe('formatBrowserPickRect', () => {
 		expect(formatBrowserPickRect(rect)).toBe('-4,20.5,640,220');
 		expect(parseBrowserPickRect(formatBrowserPickRect(rect))).toEqual(rect);
 	});
+
+	it('never writes exponent notation, which --rect rejects', () => {
+		const rect = { x: 0.0000001, y: 0, width: 10, height: 10 };
+		expect(formatBrowserPickRect(rect)).toBe('0.0000001,0,10,10');
+		expect(parseBrowserPickRect(formatBrowserPickRect(rect))).toEqual(rect);
+	});
 });
 
 describe('readBrowserPickTarget', () => {

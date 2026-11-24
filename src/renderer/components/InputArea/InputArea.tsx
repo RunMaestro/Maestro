@@ -501,6 +501,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				setLightboxImage={setLightboxImage}
 				showThinking={wizardShowThinking}
 				onToggleShowThinking={onToggleWizardShowThinking}
+				designPicks={stagedDesignPicks}
+				onDesignPickNoteChange={handleDesignPickNoteChange}
+				onRemoveDesignPick={handleRemoveDesignPick}
 			/>
 		);
 	}

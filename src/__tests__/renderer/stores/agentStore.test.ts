@@ -1559,10 +1559,53 @@ describe('agentStore', () => {
 				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
-				undefined
+				undefined,
+				'now ask @Backend to review'
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		// A Design Mode chip's page content rides in the message, but only what the
+		// user typed may name an agent to consult.
+		it('plans the mentions without the Design Mode chip blocks', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const block = '```html\n<a>ping @Other</a>\n```';
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: `${block}\n\nask @Backend about it`,
+				crossAgentMention: true,
+				designPickBlocks: [block],
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				`${block}\n\nask @Backend about it`,
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				'ask @Backend about it'
+			);
 		});
 
 		// A mention-only item (the message was addressed at the other agent) fires

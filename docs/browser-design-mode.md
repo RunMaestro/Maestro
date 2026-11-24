@@ -246,7 +246,7 @@ maestro-cli browser-pick <tab> --selector "section.hero button.cta" \
   --note "Make this match the brand purple" --queue --json
 ```
 
-To pick a region, pass `--rect x,y,width,height` instead of `--selector`. Pass exactly one of the two. The numbers are CSS pixels in the page, from the top-left corner of the tab's viewport: the same coordinates that `getBoundingClientRect()` gives in the page. The region is therefore what is on screen now, so scroll the page first to pick a part below the fold. The page clips the box to its viewport, as a drag stops at the edge of the page, and the block reports the clipped region. The width and the height must be at least 1. The pick stages a region chip, or with `--queue` it is queued as its own message. The caller gets the region block, and `--json` gives the box as `rect`, with `selector` set to `null` (a pick by selector gives `rect: null`). When no part of the box is in the viewport, nothing is picked and the command fails:
+To pick a region, pass `--rect x,y,width,height` instead of `--selector`. Pass exactly one of the two. The numbers are CSS pixels in the page, from the top-left corner of the tab's viewport: the same coordinates that `getBoundingClientRect()` gives in the page. The region is therefore what is on screen now, so scroll the page first to pick a part below the fold. The page clips the box to its viewport, as a drag stops at the edge of the page, and the block reports the clipped region. The width and the height of the clipped box must each be at least 1, so a box that overlaps the viewport by less than 1 pixel picks nothing. The pick stages a region chip, or with `--queue` it is queued as its own message. The caller gets the region block, and `--json` gives the box as `rect`, with `selector` set to `null` (a pick by selector gives `rect: null`). When no part of the box is in the viewport, nothing is picked and the command fails:
 
 ```bash
 # A 1280 x 400 band of the page, 120 px below the top of the viewport
@@ -254,17 +254,20 @@ maestro-cli browser-pick <tab> --rect 0,120,1280,400 \
   --note "Tighten the space in this band" --background --json
 ```
 
-`maestro-cli browser-picks` lists the chips waiting in an agent's message box, in the order they will be sent. `--remove` takes one off, as the chip's X does:
+`maestro-cli browser-picks` lists the chips waiting in an agent's message box, in the order they will be sent. `--edit` with `--note` replaces a chip's note, as the chip's note box does. `--remove` takes one off, as the chip's X does:
 
 ```bash
 # Each chip's id, kind, label, url, note, block, and whether it has a screenshot
 maestro-cli browser-picks --json
 
+# Replace a chip's note (an empty string clears it); prints the chip as it reads now
+maestro-cli browser-picks --edit <pickId> --note "Make it match the brand purple"
+
 # The chip id from the list, or the pickId browser-pick returned
 maestro-cli browser-picks --remove <pickId>
 ```
 
-Both forms act on the AI tab that a new pick lands in (the active AI tab, or the AI pane of the tiled group on screen). Chips on the agent's other AI tabs are not listed and cannot be removed. In the list, `text` is the block without the note, because the note is its own field, and `screenshot` is `true` or `false`; the image itself is not returned. Without `--agent`, `browser-pick` and `browser-picks` use the agent that is selected in Maestro. See the [CLI reference](./cli-reference) for every flag.
+Every form acts on the AI tab that a new pick lands in (the active AI tab, or the AI pane of the tiled group on screen). Chips on the agent's other AI tabs are not listed and cannot be edited or removed. In the list, `text` is the block without the note, because the note is its own field, and `screenshot` is `true` or `false`; the image itself is not returned. Without `--agent`, `browser-pick` and `browser-picks` use the agent that is selected in Maestro. See the [CLI reference](./cli-reference) for every flag.
 
 `maestro-cli browser-viewport` sets or reads the [viewport preset](#viewport-presets) of a browser tab. Give it the tab (the id `open-browser` printed, or a Coworking id such as `browser:2`) and, to set it, one of `fit`, `desktop`, `laptop`, `tablet`, or `phone`. Without a preset it only reports the current one:
 
@@ -279,5 +282,5 @@ A set prints the new preset and the one it replaced (`Was:`), so a script can pu
 ## Privacy and safety
 
 - Design Mode only reads the element or the region you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself or press **Queue**, which sends that one pick as its own message.
-- The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does. While you hold `Space`, your clicks go to the page, as in any browser tab, and none of them picks an element.
+- The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, or from `maestro-cli browser-pick` run on your machine, never from anything the page does. While you hold `Space`, your clicks go to the page, as in any browser tab, and none of them picks an element.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.

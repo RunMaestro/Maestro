@@ -20,6 +20,7 @@ import {
 } from '../../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../../helpers/mockSession';
+import { createMockDesignPick } from '../../../helpers/mockTab';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock useLayerStack for the WizardExitConfirmDialog
@@ -277,6 +278,32 @@ describe('WizardInputPanel', () => {
 			fireEvent.click(xButton!);
 
 			expect(setStagedImages).toHaveBeenCalled();
+		});
+	});
+
+	// A wizard message sends the tab's Design Mode chips, so they must be visible
+	// (and removable) here, not only in the normal composer.
+	describe('Design Mode chips', () => {
+		it('shows the staged chips and removes one by id', () => {
+			const onRemoveDesignPick = vi.fn();
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					designPicks={[createMockDesignPick({ id: 'pick-1', label: 'button.cta' })]}
+					onDesignPickNoteChange={vi.fn()}
+					onRemoveDesignPick={onRemoveDesignPick}
+				/>
+			);
+
+			expect(screen.getByTestId('design-pick-chips')).toBeTruthy();
+			expect(screen.getAllByTestId('design-pick-chip')).toHaveLength(1);
+			fireEvent.click(screen.getByRole('button', { name: 'Remove pick button.cta' }));
+			expect(onRemoveDesignPick).toHaveBeenCalledWith('pick-1');
+		});
+
+		it('shows no strip without chips', () => {
+			render(<WizardInputPanel {...defaultProps} />);
+			expect(screen.queryByTestId('design-pick-chips')).toBeNull();
 		});
 	});
 

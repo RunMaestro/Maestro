@@ -95,6 +95,13 @@ const REGION_MIN_INSIDE = 0.5;
 const REGION_MAX_VISITED = 20_000;
 
 /**
+ * Deepest a region walk descends (it recurses once per level), so a page
+ * nested thousands deep cannot overflow the guest's call stack. Deeper
+ * subtrees are skipped and the reply says the list may be incomplete.
+ */
+const REGION_MAX_DEPTH = 256;
+
+/**
  * Joins the selector segments of an element inside open shadow roots: each
  * segment is unique within its own root, and the next one is queried in the
  * previous match's `shadowRoot`. It is Puppeteer's deep combinator; Playwright
@@ -327,6 +334,7 @@ const GUEST_HELPER = `function(req){
 	var MAX_REGION_TEXT=${DESIGN_MODE_MAX_REGION_TEXT_CHARS};
 	var MIN_INSIDE=${REGION_MIN_INSIDE};
 	var MAX_VISITED=${REGION_MAX_VISITED};
+	var MAX_DEPTH=${REGION_MAX_DEPTH};
 	var PROPS=${JSON.stringify(DESIGN_MODE_STYLE_PROPERTIES)};
 	function up(el){
 		if(el.parentElement)return el.parentElement;
@@ -443,8 +451,14 @@ const GUEST_HELPER = `function(req){
 		}
 		return found;
 	}
+	// A form's control named getBoundingClientRect shadows the method with an
+	// element, which would fail the pick: fall back to the prototype's then.
+	function rectOf(el){
+		var f=el.getBoundingClientRect;
+		return (typeof f==='function'?f:Element.prototype.getBoundingClientRect).call(el);
+	}
 	function box(el){
-		var r=el.getBoundingClientRect();
+		var r=rectOf(el);
 		return {x:r.left,y:r.top,width:r.width,height:r.height};
 	}
 	// The chip label's parts. A form's named controls shadow element
@@ -489,7 +503,7 @@ const GUEST_HELPER = `function(req){
 		var vw=window.innerWidth,vh=window.innerHeight;
 		var L=Math.max(0,x),T=Math.max(0,y),R=Math.min(vw,x+w),B=Math.min(vh,y+h);
 		if(!(R-L>=1&&B-T>=1))return null;
-		var found=[],more=false,visited=0;
+		var found=[],more=false,deep=false,visited=0;
 		function inTree(node,top){for(var n=node;n;n=up(n)){if(n===top)return true;}return false;}
 		function inside(r){
 			var iw=Math.min(R,r.right)-Math.max(L,r.left),ih=Math.min(B,r.bottom)-Math.max(T,r.top);
@@ -520,20 +534,21 @@ const GUEST_HELPER = `function(req){
 			if(typeof el.assignedElements==='function')return el.assignedElements({flatten:true});
 			return el.children;
 		}
-		function visit(el){
+		function visit(el,depth){
 			var list=kids(el);
 			for(var i=0;i<list.length&&!more;i++){
 				if(++visited>MAX_VISITED){more=true;return;}
-				var c=list[i],r=c.getBoundingClientRect();
+				var c=list[i],r=rectOf(c);
 				if(c!==document.body&&r.width*r.height>1&&inside(r)&&!hidden(c)&&shown(c,r)){
 					if(found.length===MAX_REGION){more=true;return;}
 					found.push(c);
-				}else visit(c);
+				}else if(depth>=MAX_DEPTH)deep=true;
+				else visit(c,depth+1);
 			}
 		}
-		visit(document.documentElement);
+		visit(document.documentElement,0);
 		return {url:location.href,rect:{x:L,y:T,width:R-L,height:B-T},
-			viewport:{width:vw,height:vh},elementsTruncated:more,
+			viewport:{width:vw,height:vh},elementsTruncated:more||deep,
 			elements:found.map(function(el){
 				var h=htmlOf(el,MAX_REGION_HTML);
 				return {selector:selectorFor(el),tagName:el.tagName.toLowerCase(),rect:box(el),
@@ -616,7 +631,7 @@ const GUEST_HELPER = `function(req){
 		var found;
 		try{found=query(req.selector);}catch(e){return {error:'invalid-selector'};}
 		if(!found)return {error:'not-found'};
-		var r=found.getBoundingClientRect();
+		var r=rectOf(found);
 		if(r.bottom<0||r.right<0||r.top>window.innerHeight||r.left>window.innerWidth||
 			r.top<0||r.bottom>window.innerHeight){
 			found.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
@@ -1150,6 +1165,11 @@ export interface DesignPickExpansion {
 	text: string;
 	/** The chips' screenshots in chip order, for the caller to add after the staged images. */
 	images: string[];
+	/**
+	 * The chip blocks placed in `text`, in order. A queued copy keeps them so a
+	 * later `@mention` re-plan can leave them out ({@link withoutDesignPickBlocks}).
+	 */
+	blocks: string[];
 }
 
 /**
@@ -1168,14 +1188,31 @@ export function expandDesignPicks(
 	picks: ReadonlyArray<Pick<StagedDesignPick, 'text' | 'note' | 'screenshot'>>,
 	typedText: string
 ): DesignPickExpansion {
-	if (picks.length === 0) return { text: typedText, images: [] };
+	if (picks.length === 0) return { text: typedText, images: [], blocks: [] };
 	const blocks = picks.map(designPickBlock).filter((block) => block.trim() !== '');
 	const typed = typedText.trim();
 	const parts = !typed ? blocks : /^[@/]/.test(typed) ? [typed, ...blocks] : [...blocks, typed];
 	return {
 		text: parts.join('\n\n'),
 		images: picks.flatMap((pick) => (pick.screenshot ? [pick.screenshot] : [])),
+		blocks,
 	};
+}
+
+/**
+ * `text` with each of the Design Mode chip `blocks` an expansion placed in it
+ * taken out once: what to resolve `@mentions` from, so a picked page's content
+ * never names an agent the user did not. A block the user edited no longer
+ * matches and stays, because the edited text is now theirs.
+ */
+export function withoutDesignPickBlocks(text: string, blocks?: readonly string[]): string {
+	if (!blocks || blocks.length === 0) return text;
+	let rest = text;
+	for (const block of blocks) {
+		const at = rest.indexOf(block);
+		if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + block.length);
+	}
+	return rest.trim();
 }
 
 /**

@@ -149,9 +149,17 @@ export function parseBrowserPickRect(text: string): BrowserPickRect | null {
 	return readBrowserPickRect({ x, y, width, height });
 }
 
+// Plain decimals only: `String(1e-7)` is `1e-7`, which `--rect` rejects.
+const PLAIN_DECIMAL_FORMAT = new Intl.NumberFormat('en-US', {
+	useGrouping: false,
+	maximumFractionDigits: 20,
+});
+
 /** A region as `--rect` spells it, `x,y,width,height`: the inverse of {@link parseBrowserPickRect}. */
 export function formatBrowserPickRect(rect: BrowserPickRect): string {
-	return `${rect.x},${rect.y},${rect.width},${rect.height}`;
+	return [rect.x, rect.y, rect.width, rect.height]
+		.map((n) => PLAIN_DECIMAL_FORMAT.format(n))
+		.join(',');
 }
 
 /**

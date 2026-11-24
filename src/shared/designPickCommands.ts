@@ -4,10 +4,10 @@
  *
  * A Design Mode pick waits in the composer as a chip until the message is
  * sent. In the strip a person reads each chip (its popover shows the whole
- * block) and takes one off with its X. This module makes the same two
- * reachable from the CLI: `list` reads the chips staged on the agent's
- * composer target tab (the tab a pick lands in), and `remove` takes one off by
- * id. It lives in `shared/` because all three processes need it: the CLI
+ * block), edits its note, and takes one off with its X. This module makes
+ * the same three reachable from the CLI: `list` reads the chips staged on the
+ * agent's composer target tab (the tab a pick lands in), `note` replaces one
+ * chip's note by id, and `remove` takes one off by id. It lives in `shared/` because all three processes need it: the CLI
  * builds the request, the main process validates it on the way through, and
  * the renderer, which holds the chips, answers it.
  *
@@ -15,7 +15,7 @@
  */
 
 /** The verbs a Design Mode chip command can carry. */
-export const DESIGN_PICK_COMMAND_ACTIONS = ['list', 'remove'] as const;
+export const DESIGN_PICK_COMMAND_ACTIONS = ['list', 'note', 'remove'] as const;
 
 export type DesignPickCommandAction = (typeof DESIGN_PICK_COMMAND_ACTIONS)[number];
 
@@ -27,8 +27,10 @@ export interface DesignPickCommandRequest {
 	action: DesignPickCommandAction;
 	/** Agent whose composer holds the chips. Every verb names one. */
 	sessionId: string;
-	/** `remove`: the chip, by the id `list` or `browser-pick --json` reported. */
+	/** `note` / `remove`: the chip, by the id `list` or `browser-pick --json` reported. */
 	pickId?: string;
+	/** `note`: the chip's new note. Empty clears it. */
+	note?: string;
 }
 
 /** One staged chip, as it crosses the wire. */
@@ -55,6 +57,8 @@ export interface DesignPickCommandResult {
 	aiTabId?: string;
 	/** `list`: every chip staged on that tab, in chip order (the order they are sent in). */
 	picks?: DesignPickSummary[];
+	/** `note`: the chip as it reads after the edit. */
+	edited?: DesignPickSummary;
 	/** `remove`: the chip taken off. */
 	removed?: DesignPickSummary;
 }
@@ -85,10 +89,14 @@ export function parseDesignPickCommandRequest(
 	const sessionId = typeof message.sessionId === 'string' ? message.sessionId.trim() : '';
 	if (!sessionId) return { ok: false, error: `browser-picks ${action} requires an agent` };
 
-	if (action === 'remove') {
+	if (action === 'remove' || action === 'note') {
 		const pickId = typeof message.pickId === 'string' ? message.pickId.trim() : '';
-		if (!pickId) return { ok: false, error: 'browser-picks remove requires a chip id' };
-		return { ok: true, request: { action, sessionId, pickId } };
+		if (!pickId) return { ok: false, error: `browser-picks ${action} requires a chip id` };
+		if (action === 'remove') return { ok: true, request: { action, sessionId, pickId } };
+		if (typeof message.note !== 'string') {
+			return { ok: false, error: 'browser-picks note requires the note text (empty clears it)' };
+		}
+		return { ok: true, request: { action, sessionId, pickId, note: message.note } };
 	}
 	return { ok: true, request: { action, sessionId } };
 }
@@ -112,10 +120,20 @@ export function normalizeDesignPickCommandResult(raw: unknown): DesignPickComman
 			...tab,
 		};
 	}
+	// A list with a hole in it is a malformed answer, not a list to print.
+	if (
+		Array.isArray(candidate.picks) &&
+		candidate.picks.some((pick) => !pick || typeof pick !== 'object')
+	) {
+		return { success: false, error: 'Invalid Design Mode chip in the response', ...tab };
+	}
 	return {
 		success: true,
 		...tab,
 		...(Array.isArray(candidate.picks) ? { picks: candidate.picks } : {}),
+		...(candidate.edited && typeof candidate.edited === 'object'
+			? { edited: candidate.edited }
+			: {}),
 		...(candidate.removed && typeof candidate.removed === 'object'
 			? { removed: candidate.removed }
 			: {}),

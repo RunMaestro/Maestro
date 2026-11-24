@@ -338,6 +338,8 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 interface BrowserPicksOptions {
 	agent?: string;
 	remove?: string;
+	edit?: string;
+	note?: string;
 	json?: boolean;
 }
 
@@ -355,14 +357,28 @@ function describeDesignPick(pick: DesignPickSummary): string {
  * The Design Mode chips waiting in an agent's composer: the strip a person
  * sees above the message box. Lists the chips on the agent's composer target
  * tab (the tab a pick lands in) in the order they are sent, each with the
- * block it adds to the message; `--remove <pickId>` takes one off, as the
- * chip's X does.
+ * block it adds to the message; `--edit <pickId> --note <text>` replaces a
+ * chip's note, as the chip's note box does (an empty note clears it);
+ * `--remove <pickId>` takes one off, as the chip's X does.
  */
 export async function browserPicks(options: BrowserPicksOptions): Promise<void> {
 	const { json } = options;
-	const pickId = options.remove?.trim();
-	if (options.remove !== undefined && !pickId) {
+	if (options.remove !== undefined && options.edit !== undefined) {
+		return failCommand('Pass --remove or --edit, not both', json);
+	}
+	const removeId = options.remove?.trim();
+	if (options.remove !== undefined && !removeId) {
 		return failCommand('--remove needs a chip id (from browser-picks or browser-pick)', json);
+	}
+	const editId = options.edit?.trim();
+	if (options.edit !== undefined && !editId) {
+		return failCommand('--edit needs a chip id (from browser-picks or browser-pick)', json);
+	}
+	if (editId && options.note === undefined) {
+		return failCommand('--edit needs --note <text> (an empty note clears it)', json);
+	}
+	if (!editId && options.note !== undefined) {
+		return failCommand('--note needs --edit <pickId> to say which chip', json);
 	}
 
 	let sessionId: string;
@@ -373,9 +389,11 @@ export async function browserPicks(options: BrowserPicksOptions): Promise<void> 
 		return failCommand(error instanceof Error ? error.message : String(error), json);
 	}
 
-	const request: DesignPickCommandRequest = pickId
-		? { action: 'remove', sessionId, pickId }
-		: { action: 'list', sessionId };
+	const request: DesignPickCommandRequest = removeId
+		? { action: 'remove', sessionId, pickId: removeId }
+		: editId
+			? { action: 'note', sessionId, pickId: editId, note: options.note ?? '' }
+			: { action: 'list', sessionId };
 	let result: DesignPickCommandResult;
 	try {
 		result = await withMaestroClient((client) =>
@@ -392,15 +410,27 @@ export async function browserPicks(options: BrowserPicksOptions): Promise<void> 
 	const aiTabId = result.aiTabId ?? null;
 	const where = `the composer of tab ${aiTabId ?? 'unknown'}`;
 
-	if (pickId) {
+	if (removeId) {
 		const removed = result.removed ?? null;
 		if (json) {
 			console.log(JSON.stringify({ success: true, sessionId, aiTabId, removed }));
 			return;
 		}
 		console.log(
-			`Removed Design Mode chip ${pickId}${removed ? ` (${removed.label})` : ''} from ${where}`
+			`Removed Design Mode chip ${removeId}${removed ? ` (${removed.label})` : ''} from ${where}`
 		);
+		return;
+	}
+
+	if (editId) {
+		// The chip as it reads now, so the write is its own read.
+		const edited = result.edited ?? null;
+		if (json) {
+			console.log(JSON.stringify({ success: true, sessionId, aiTabId, edited }));
+			return;
+		}
+		console.log(`Updated the note on Design Mode chip ${editId} in ${where}`);
+		if (edited) console.log(describeDesignPick(edited));
 		return;
 	}
 

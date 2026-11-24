@@ -210,6 +210,59 @@ describe('browser-picks command', () => {
 		});
 	});
 
+	describe('edit a note', () => {
+		const edited = { ...signUp, note: 'Make it blue' };
+
+		it('sends the chip id and the note, and reports the chip as it reads now', async () => {
+			const sent = stubDesktop({ success: true, aiTabId: 'ai-1', edited });
+
+			await browserPicks({ edit: ' pick-1 ', note: 'Make it blue' });
+
+			expect(sent[0].message).toEqual({
+				type: 'design_pick_command',
+				action: 'note',
+				sessionId: 'active-session',
+				pickId: 'pick-1',
+				note: 'Make it blue',
+			});
+			const out = printed(logSpy);
+			expect(out[0]).toBe(
+				'Updated the note on Design Mode chip pick-1 in the composer of tab ai-1'
+			);
+			expect(out[1]).toContain('Note: Make it blue');
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('clears the note with an empty string, and prints JSON', async () => {
+			const sent = stubDesktop({ success: true, aiTabId: 'ai-1', edited: signUp });
+
+			await browserPicks({ edit: 'pick-1', note: '', json: true });
+
+			expect(sent[0].message).toMatchObject({ action: 'note', note: '' });
+			expect(JSON.parse(printed(logSpy)[0])).toEqual({
+				success: true,
+				sessionId: 'active-session',
+				aiTabId: 'ai-1',
+				edited: signUp,
+			});
+		});
+
+		it.each([
+			[{ edit: 'pick-1' }, '--edit needs --note <text> (an empty note clears it)'],
+			[{ note: 'x' }, '--note needs --edit <pickId> to say which chip'],
+			[{ edit: '  ', note: 'x' }, '--edit needs a chip id (from browser-picks or browser-pick)'],
+			[{ edit: 'a', remove: 'b', note: 'x' }, 'Pass --remove or --edit, not both'],
+		])('refuses %o without calling the desktop', async (options, error) => {
+			stubDesktop({ success: true });
+
+			await browserPicks({ ...options, json: true });
+
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(JSON.parse(printed(logSpy)[0])).toEqual({ success: false, error });
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	it('refuses when no agent is named and none is recorded, without calling the desktop', async () => {
 		stubDesktop({ success: true, picks: [] });
 		vi.mocked(readActiveAgentId).mockReturnValueOnce(null);

@@ -240,8 +240,10 @@ function DesignPickPopover({
 
 	// The note is saved as the popover goes away, however it goes: Enter, Done,
 	// Escape, a click outside, or the chip leaving the composer under it (sent,
-	// removed elsewhere, the tab switched). Refs, so the save on unmount sees
-	// the last keystroke, and saves it once.
+	// removed elsewhere, the tab switched). It is also saved when the note loses
+	// focus, because a send from the composer reads the stored note while the
+	// popover is still open. Refs, so the save on unmount sees the last
+	// keystroke, and saves it once.
 	const draftRef = useRef(pick.note);
 	draftRef.current = note;
 	const savedRef = useRef(pick.note);
@@ -341,6 +343,7 @@ function DesignPickPopover({
 				value={note}
 				onChange={(event) => setNote(event.target.value)}
 				onFocus={handleNoteFocus}
+				onBlur={saveNote}
 				onKeyDown={handleNoteKeyDown}
 				rows={2}
 				placeholder="Note (optional): what should change?"

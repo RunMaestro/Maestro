@@ -199,6 +199,23 @@ describe('DesignPickChips', () => {
 		}
 	);
 
+	// A send from the composer reads the stored note while the popover is still
+	// open, so leaving the note field must already have saved it.
+	it('saves the note when the field loses focus, then not again on close', () => {
+		const onNoteChange = vi.fn();
+		renderChips({ onNoteChange });
+		fireEvent.click(chipButton());
+		fireEvent.change(noteField(), { target: { value: 'Pad it' } });
+
+		fireEvent.blur(noteField());
+		expect(popover()).toBeInTheDocument();
+		expect(onNoteChange).toHaveBeenCalledTimes(1);
+		expect(onNoteChange).toHaveBeenCalledWith('pick-1', 'Pad it');
+
+		fireEvent.click(screen.getByTestId('design-pick-popover-done'));
+		expect(onNoteChange).toHaveBeenCalledTimes(1);
+	});
+
 	it('does not save a note that is unchanged once trimmed', () => {
 		const onNoteChange = vi.fn();
 		renderChips({ onNoteChange });

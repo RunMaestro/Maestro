@@ -1820,7 +1820,7 @@ function MaestroConsoleInner() {
 	// Edit a queued message's prompt text and attached images in place.
 	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => {
-			const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, patch);
+			const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
 			return {
 				...s,
 				executionQueue: applyQueuedItemEdit(

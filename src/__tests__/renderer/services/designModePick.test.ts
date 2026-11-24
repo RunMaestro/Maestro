@@ -815,6 +815,43 @@ describe('runRemoteDesignPickCommand (browser-picks)', () => {
 		expect(session().aiTabs[0]).toMatchObject({ inputValue: 'Fix it', stagedImages: [PASTED] });
 	});
 
+	it("edits one chip's note, as its note box does, and reports the chip", () => {
+		stageChips(['a', 'b'], { inputValue: 'Fix it' });
+
+		const result = runRemoteDesignPickCommand({
+			action: 'note',
+			sessionId: SESSION_ID,
+			pickId: 'b',
+			note: '  Make it blue \n',
+		});
+
+		expect(result).toMatchObject({
+			success: true,
+			aiTabId: TAB_ID,
+			edited: { id: 'b', note: 'Make it blue' },
+		});
+		expect(chips().map((c) => [c.id, c.note])).toEqual([
+			['a', 'old'],
+			['b', 'Make it blue'],
+		]);
+		expect(session().aiTabs[0].inputValue).toBe('Fix it');
+	});
+
+	it('reports a note edit on a chip that is not there, and writes nothing', () => {
+		stageChips(['a']);
+		const before = session();
+
+		expect(
+			runRemoteDesignPickCommand({
+				action: 'note',
+				sessionId: SESSION_ID,
+				pickId: 'gone',
+				note: 'x',
+			})
+		).toMatchObject({ success: false, aiTabId: TAB_ID });
+		expect(session()).toBe(before);
+	});
+
 	it('reports a chip that is not in the composer, and writes nothing', () => {
 		stageChips(['a']);
 		const before = session();

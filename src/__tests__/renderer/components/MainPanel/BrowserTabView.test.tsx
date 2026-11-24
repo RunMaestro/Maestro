@@ -16,6 +16,7 @@ import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 import { resetStore } from '../../../helpers';
@@ -1929,6 +1930,47 @@ describe('BrowserTabView', () => {
 				expect(useCenterFlashStore.getState().active).toBeNull();
 				// Free again, so the user can retry.
 				expect(queueButton().disabled).toBe(false);
+			});
+
+			it('keeps the card and says so when the host rejects, with no unhandled rejection', async () => {
+				const onDesignQueue = vi.fn().mockRejectedValue(new Error('queue store gone'));
+				const { note } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Keep this note' } });
+
+				await act(async () => {
+					fireEvent.click(queueButton());
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				expect(
+					(screen.getByTestId('browser-tab-design-mode-note') as HTMLTextAreaElement).value
+				).toBe('Keep this note');
+				expect(useNotificationStore.getState().toasts.at(-1)).toMatchObject({
+					title: 'Pick Not Sent',
+				});
+				expect(queueButton().disabled).toBe(false);
+			});
+
+			it('opens no new card while a queue hand-off is in flight, so its close cannot take one', async () => {
+				const { onDesignQueue, finish } = pendingQueue();
+				const { note } = await openCard({ onDesignQueue });
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				// Close the card, then try to pick again before the queue answers.
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-card'), { key: 'Escape' });
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), {
+						key: 'Enter',
+					});
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+
+				await act(async () => {
+					finish(QUEUED_TO);
+				});
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
 			});
 
 			it('hands off once: a press in the same tick, or while one is in flight, does nothing', async () => {

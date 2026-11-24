@@ -25,6 +25,7 @@ import {
 	designPickLabel,
 	designRegionLabel,
 	expandDesignPicks,
+	withoutDesignPickBlocks,
 	filterDesignStyles,
 	parseDesignModePassthrough,
 	parseDesignModePick,
@@ -717,6 +718,33 @@ describe('guest helper: region (drag to select)', () => {
 		expect(region(box(10, 20, 30, 40))?.rect).toEqual(box(10, 20, 30, 40));
 		const right = window.innerWidth;
 		expect(region(box(right - 10, 0, 100, 100))?.rect).toEqual(box(right - 10, 0, 10, 100));
+	});
+
+	it('survives a form control that shadows getBoundingClientRect', () => {
+		document.body.innerHTML = `<form><input name="getBoundingClientRect"></form><p class="ok">Hi</p>`;
+		const form = document.querySelector('form')!;
+		// As the browser's named-control lookup does: the property is the input.
+		Object.defineProperty(form, 'getBoundingClientRect', {
+			value: form.querySelector('input'),
+			configurable: true,
+		});
+		place('p.ok', box(10, 10, 100, 40));
+
+		const found = region(box(0, 0, 300, 200));
+
+		expect(found?.elements.map((el) => el.tagName)).toEqual(['p']);
+		delete (form as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+	});
+
+	it('stops at a fixed depth on a deeply nested page and says the list may be incomplete', () => {
+		let html = '';
+		for (let i = 0; i < 400; i++) html += '<div>';
+		for (let i = 0; i < 400; i++) html += '</div>';
+		document.body.innerHTML = html;
+
+		const found = region(box(0, 0, 300, 200));
+
+		expect(found?.elementsTruncated).toBe(true);
 	});
 
 	it('is null when none of the box is on screen', () => {
@@ -1555,6 +1583,7 @@ describe('expandDesignPicks', () => {
 		expect(expandDesignPicks([chipA, chipB], 'Fix both')).toEqual({
 			text: 'BLOCK A\n\nMake it blue\n\nBLOCK B\n\nFix both',
 			images: [SHOT_A, SHOT_B],
+			blocks: ['BLOCK A\n\nMake it blue', 'BLOCK B'],
 		});
 	});
 
@@ -1594,7 +1623,41 @@ describe('expandDesignPicks', () => {
 	});
 
 	it('hands the typed text back untouched when there are no chips', () => {
-		expect(expandDesignPicks([], '  as typed \n')).toEqual({ text: '  as typed \n', images: [] });
+		expect(expandDesignPicks([], '  as typed \n')).toEqual({
+			text: '  as typed \n',
+			images: [],
+			blocks: [],
+		});
+	});
+});
+
+describe('withoutDesignPickBlocks', () => {
+	const PAGE = '```html\n<a>ping @Other</a>\n```';
+
+	it('takes the chip blocks out, leaving the typed text', () => {
+		const expanded = expandDesignPicks(
+			[{ text: PAGE, note: 'and this', screenshot: null }],
+			'ask @Backend about it'
+		);
+		expect(withoutDesignPickBlocks(expanded.text, expanded.blocks)).toBe('ask @Backend about it');
+	});
+
+	it('keeps a leading @agent at the front', () => {
+		const expanded = expandDesignPicks(
+			[{ text: PAGE, note: '', screenshot: null }],
+			'@Backend look'
+		);
+		expect(withoutDesignPickBlocks(expanded.text, expanded.blocks)).toBe('@Backend look');
+	});
+
+	it('is the text unchanged with no blocks', () => {
+		expect(withoutDesignPickBlocks(' as is ', undefined)).toBe(' as is ');
+		expect(withoutDesignPickBlocks(' as is ', [])).toBe(' as is ');
+	});
+
+	it('leaves a block the user edited, since that text is now theirs', () => {
+		expect(withoutDesignPickBlocks('BLOCK edited\n\ngo', ['BLOCK'])).toBe('edited\n\ngo');
+		expect(withoutDesignPickBlocks('CHANGED\n\ngo', ['BLOCK'])).toBe('CHANGED\n\ngo');
 	});
 });
 

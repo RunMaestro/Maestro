@@ -19,7 +19,7 @@ describe('parseDesignPickCommandRequest', () => {
 	it('requires a known action and an agent', () => {
 		expect(parseDesignPickCommandRequest({ action: 'nope', sessionId: 'a' })).toEqual({
 			ok: false,
-			error: 'Invalid or missing Design Mode chip action. Must be one of: list, remove',
+			error: 'Invalid or missing Design Mode chip action. Must be one of: list, note, remove',
 		});
 		expect(parseDesignPickCommandRequest({ sessionId: 'a' }).ok).toBe(false);
 		expect(parseDesignPickCommandRequest({ action: 'list' })).toEqual({
@@ -45,6 +45,35 @@ describe('parseDesignPickCommandRequest', () => {
 			).toEqual({ ok: false, error: 'browser-picks remove requires a chip id' });
 		}
 	});
+
+	it('reads a note, which needs a chip id and the note text', () => {
+		expect(
+			parseDesignPickCommandRequest({
+				action: 'note',
+				sessionId: 'agent-1',
+				pickId: ' pick-1 ',
+				note: 'Make it blue',
+			})
+		).toEqual({
+			ok: true,
+			request: { action: 'note', sessionId: 'agent-1', pickId: 'pick-1', note: 'Make it blue' },
+		});
+		// An empty note is a real value: it clears the note.
+		expect(
+			parseDesignPickCommandRequest({ action: 'note', sessionId: 'agent-1', pickId: 'p', note: '' })
+		).toMatchObject({ ok: true, request: { note: '' } });
+		expect(
+			parseDesignPickCommandRequest({ action: 'note', sessionId: 'agent-1', note: 'x' })
+		).toEqual({ ok: false, error: 'browser-picks note requires a chip id' });
+		for (const note of [undefined, 42, null]) {
+			expect(
+				parseDesignPickCommandRequest({ action: 'note', sessionId: 'agent-1', pickId: 'p', note })
+			).toEqual({
+				ok: false,
+				error: 'browser-picks note requires the note text (empty clears it)',
+			});
+		}
+	});
 });
 
 describe('normalizeDesignPickCommandResult', () => {
@@ -55,6 +84,22 @@ describe('normalizeDesignPickCommandResult', () => {
 		expect(
 			normalizeDesignPickCommandResult({ success: true, aiTabId: 'ai-1', removed: chip })
 		).toEqual({ success: true, aiTabId: 'ai-1', removed: chip });
+		expect(
+			normalizeDesignPickCommandResult({ success: true, aiTabId: 'ai-1', edited: chip })
+		).toEqual({ success: true, aiTabId: 'ai-1', edited: chip });
+	});
+
+	it('fails a list with an entry that is not a chip', () => {
+		expect(
+			normalizeDesignPickCommandResult({ success: true, aiTabId: 'ai-1', picks: [chip, null] })
+		).toEqual({
+			success: false,
+			error: 'Invalid Design Mode chip in the response',
+			aiTabId: 'ai-1',
+		});
+		expect(normalizeDesignPickCommandResult({ success: true, picks: ['x'] })).toMatchObject({
+			success: false,
+		});
 	});
 
 	it('drops fields of the wrong shape', () => {
@@ -64,6 +109,7 @@ describe('normalizeDesignPickCommandResult', () => {
 				aiTabId: 7,
 				picks: 'not a list',
 				removed: 'not a chip',
+				edited: 'not a chip',
 				extra: 'ignored',
 			})
 		).toEqual({ success: true });

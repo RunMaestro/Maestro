@@ -119,6 +119,8 @@ describe('buildQueuedMessageItem', () => {
 		expect(planCrossAgentMentions).not.toHaveBeenCalled();
 		expect(item.crossAgentMention).toBeUndefined();
 		expect(item.crossAgentOnly).toBeUndefined();
+		// Recorded, so an edit of the queued item keeps it off too.
+		expect(item.mentionsDisabled).toBe(true);
 	});
 
 	it('forwards the images on an item that has them, and none on one that has not', () => {
@@ -278,7 +280,7 @@ describe('resolveQueuedItemEdit', () => {
 
 	it('resolves a slash command and drops the mention flags', () => {
 		const session = seed();
-		const result = resolveQueuedItemEdit(session, patch('/commit'));
+		const result = resolveQueuedItemEdit(session, 'q1', patch('/commit'));
 
 		expect(result.slashCommand?.command).toBe('/commit');
 		expect(result.crossAgent).toEqual({ crossAgentMention: false, crossAgentOnly: false });
@@ -287,10 +289,50 @@ describe('resolveQueuedItemEdit', () => {
 
 	it('re-derives both mention flags for ordinary text', () => {
 		const session = seed();
-		const result = resolveQueuedItemEdit(session, patch('@Codex do X'));
+		const result = resolveQueuedItemEdit(session, 'q1', patch('@Codex do X'));
 
 		expect(result.slashCommand).toBeUndefined();
 		expect(result.crossAgent).toEqual({ crossAgentMention: true, crossAgentOnly: true });
 		expect(planCrossAgentMentions).toHaveBeenCalledWith('@Codex do X', 'session-1');
+	});
+
+	it("plans the mentions without the item's Design Mode chip blocks", () => {
+		const block = '```html\n<a>ping @Other</a>\n```';
+		const session = seed({
+			executionQueue: [
+				{
+					id: 'q1',
+					timestamp: 1,
+					tabId: 'a',
+					type: 'message',
+					text: `${block}\n\nask @Codex`,
+					designPickBlocks: [block],
+				},
+			],
+		});
+
+		resolveQueuedItemEdit(session, 'q1', patch(`${block}\n\nask @Codex now`));
+
+		expect(planCrossAgentMentions).toHaveBeenCalledWith('ask @Codex now', 'session-1');
+	});
+
+	it('never plans mentions for an item queued with planMentions: false', () => {
+		const session = seed({
+			executionQueue: [
+				{
+					id: 'q1',
+					timestamp: 1,
+					tabId: 'a',
+					type: 'message',
+					text: 'page text',
+					mentionsDisabled: true,
+				},
+			],
+		});
+
+		const result = resolveQueuedItemEdit(session, 'q1', patch('page text @Codex'));
+
+		expect(result.crossAgent).toEqual({ crossAgentMention: false, crossAgentOnly: false });
+		expect(planCrossAgentMentions).not.toHaveBeenCalled();
 	});
 });

@@ -937,12 +937,16 @@ program
 	.action(browserPick);
 
 // Browser picks command - the Design Mode chips waiting in an agent's composer:
-// list them, each with the block it adds to the message at send, or take one
-// off by id, as the chip's X does.
+// list them, each with the block it adds to the message at send, edit one's
+// note as the chip's note box does, or take one off by id, as the chip's X does.
 program
 	.command('browser-picks')
-	.description("List the Design Mode chips waiting in an agent's composer, or remove one")
+	.description(
+		"List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one"
+	)
 	.option('-a, --agent <id>', 'Agent whose composer holds the chips (defaults to active)')
+	.option('--edit <pickId>', "Replace this chip's note (with --note)")
+	.option('--note <text>', 'The new note for --edit (an empty string clears it)')
 	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPicks);

@@ -33,7 +33,11 @@ import {
 } from './quoteIntoComposer';
 import { enqueuePromptForTab } from './queuedPrompt';
 import { selectSessionById, useSessionStore } from '../stores/sessionStore';
-import { getStagedDesignPicks, removeStagedDesignPick } from './stagedDesignPicks';
+import {
+	getStagedDesignPicks,
+	removeStagedDesignPick,
+	setStagedDesignPickNote,
+} from './stagedDesignPicks';
 import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
 import { generateId } from '../utils/ids';
@@ -224,11 +228,12 @@ function summarizeDesignPick(pick: StagedDesignPick): DesignPickSummary {
 }
 
 /**
- * Answer one `maestro-cli browser-picks` verb. Both act on the chips of the
+ * Answer one `maestro-cli browser-picks` verb. Each acts on the chips of the
  * agent's composer target tab ({@link resolveComposerTarget}): the tab a pick
  * lands in, whose strip the user sees. `list` reads them in chip order from
- * the live store; `remove` takes one off through {@link removeStagedDesignPick},
- * as the chip's X does.
+ * the live store; `note` replaces one chip's note through
+ * {@link setStagedDesignPickNote}, as the chip's note box does; `remove` takes
+ * one off through {@link removeStagedDesignPick}, as the chip's X does.
  */
 export function runRemoteDesignPickCommand(
 	request: DesignPickCommandRequest
@@ -250,6 +255,12 @@ export function runRemoteDesignPickCommand(
 			aiTabId,
 			error: `No Design Mode chip ${request.pickId} in the composer of tab ${aiTabId}`,
 		};
+	}
+	if (request.action === 'note') {
+		// The same setter the chip's note box saves through.
+		setStagedDesignPickNote(session.id, aiTabId, pick.id, request.note ?? '');
+		const edited = getStagedDesignPicks(session.id, aiTabId).find((p) => p.id === pick.id) ?? pick;
+		return { success: true, aiTabId, edited: summarizeDesignPick(edited) };
 	}
 	removeStagedDesignPick(session.id, aiTabId, pick.id);
 	return { success: true, aiTabId, removed: summarizeDesignPick(pick) };

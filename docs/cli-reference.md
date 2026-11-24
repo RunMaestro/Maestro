@@ -610,11 +610,13 @@ Add an element or a region of a browser tab to the agent's message, as Design Mo
 
 ## `maestro-cli browser-picks`
 
-List the Design Mode chips waiting in an agent's composer, or remove one
+List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one
 
 | Option              | Description                                               | Default |
 | ------------------- | --------------------------------------------------------- | ------- |
 | `-a, --agent <id>`  | Agent whose composer holds the chips (defaults to active) | -       |
+| `--edit <pickId>`   | Replace this chip's note (with --note)                    | -       |
+| `--note <text>`     | The new note for --edit (an empty string clears it)       | -       |
 | `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
 | `--json`            | Output as JSON (for scripting)                            | -       |
 

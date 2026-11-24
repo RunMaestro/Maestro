@@ -70,6 +70,7 @@ import { EscCloseButton } from '../ui/EscCloseButton';
 import { Spinner } from '../ui/Spinner';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import {
@@ -874,6 +875,19 @@ export function BrowserDesignModeLayer({
 	const pointFromEvent = (event: React.MouseEvent | React.WheelEvent): Point | null =>
 		layerPointAt(event.clientX, event.clientY);
 
+	// One hand-off at a time: Add, Add and Pick Another and Queue share this
+	// guard, so a double press (or a click and Alt+Enter in the same tick) sends
+	// the pick once, not twice. A ref, not the `delivering` state, which only
+	// drives the disabled buttons: state is not re-read until the next render.
+	// No new card opens while it is set, so the hand-off's close can only close
+	// the card it handed off.
+	const handingOffRef = useRef(false);
+
+	// The page load count as of this render, read after a capture's await: a
+	// capture that finishes after another page loaded describes the old one.
+	const pageLoadRef = useRef(pageLoadCount);
+	pageLoadRef.current = pageLoadCount;
+
 	// One capture at a time, from a click, Enter, or a drag's release: it opens
 	// the card for what the guest reported, or says there was nothing to pick.
 	// Resolves whether a card opened.
@@ -881,16 +895,19 @@ export function BrowserDesignModeLayer({
 		async (
 			capture: (frame: DesignModeFrame) => Promise<DesignPickCapture | DesignModeMiss | null>
 		): Promise<boolean> => {
-			if (pickingRef.current) return false;
+			if (pickingRef.current || handingOffRef.current) return false;
 			// The pick is the held ancestor's hand-off; the card takes over from here.
 			releaseHold();
 			pickingRef.current = true;
 			setPicking(true);
 			setMissed(false);
+			const pageAtStart = pageLoadRef.current;
 			try {
 				const frame = layerFrame();
 				const result = await capture(frame);
 				if (!mountedRef.current) return false;
+				// Another page loaded meanwhile: neither a card nor a miss applies to it.
+				if (pageLoadRef.current !== pageAtStart) return false;
 				if (!result || typeof result === 'string') {
 					setMissed(true);
 					return false;
@@ -902,7 +919,7 @@ export function BrowserDesignModeLayer({
 			} catch (error) {
 				// The guest went away mid-pick (navigation, crash): nothing to show.
 				reportCaptureError(error);
-				if (mountedRef.current) setMissed(true);
+				if (mountedRef.current && pageLoadRef.current === pageAtStart) setMissed(true);
 				return false;
 			} finally {
 				pickingRef.current = false;
@@ -1022,11 +1039,9 @@ export function BrowserDesignModeLayer({
 		void probe();
 	}, [dropCard, focusLayer, probe]);
 
-	// One hand-off at a time: Add, Add and Pick Another and Queue share this
-	// guard, so a double press (or a click and Alt+Enter in the same tick) sends
-	// the pick once, not twice. A ref, not the `delivering` state, which only
-	// drives the disabled buttons: state is not re-read until the next render.
-	const handingOffRef = useRef(false);
+	// Shares `handingOffRef` (declared above `openCard`) as its guard. A host
+	// that rejects leaves the card open and the user told, never an unhandled
+	// rejection behind a `void` call.
 	const handOff = useCallback(
 		async (send: (capture: DesignPickCapture) => Promise<void>) => {
 			if (!card || handingOffRef.current) return;
@@ -1034,6 +1049,13 @@ export function BrowserDesignModeLayer({
 			setDelivering(true);
 			try {
 				await send(card.capture);
+			} catch (error) {
+				reportCaptureError(error);
+				notifyToast({
+					color: 'red',
+					title: 'Pick Not Sent',
+					message: 'Maestro could not add this pick. The card is still open; try again.',
+				});
 			} finally {
 				handingOffRef.current = false;
 				if (mountedRef.current) setDelivering(false);

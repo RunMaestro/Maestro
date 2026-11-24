@@ -681,6 +681,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// namer, and the recall history. None of them sees a chip's page content.
 			const typedText = effectiveInputValue;
 			const typedImages = effectiveImages;
+			// The chip blocks the expansion placed in the message. Every queued copy
+			// carries them, so the drain and a queue edit re-plan `@mentions` from
+			// the message without them, as this submit plans from `typedText`.
+			let designPickFields: Pick<QueuedItem, 'designPickBlocks'> = {};
 			if (designPicks.length > 0) {
 				// From here on the message is what the agent receives: each chip's
 				// block, then the typed text, with the chips' screenshots after the
@@ -688,6 +692,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const expanded = expandDesignPicks(designPicks, typedText);
 				effectiveInputValue = expanded.text;
 				if (expanded.images.length > 0) effectiveImages = [...typedImages, ...expanded.images];
+				if (expanded.blocks.length > 0) designPickFields = { designPickBlocks: expanded.blocks };
 			}
 			// A send with nothing typed (chips only) is named from its chips' blocks.
 			const namingText = typedText.trim() ? typedText : effectiveInputValue;
@@ -872,6 +877,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							type: 'message',
 							text: effectiveInputValue,
 							images: [...effectiveImages],
+							...designPickFields,
 							tabName:
 								activeTab?.name ||
 								(activeTab?.agentSessionId
@@ -1123,6 +1129,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...effectiveImages],
+						...designPickFields,
 						// See the slash-command path above: a fallback label, not the
 						// name the queue actually renders.
 						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
@@ -1509,6 +1516,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				type: 'message',
 				text: effectiveInputValue,
 				images: [...effectiveImages],
+				...designPickFields,
 				tabName: tab ? getTabDisplayName(tab) : undefined,
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),

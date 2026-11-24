@@ -740,10 +740,10 @@ export function handleBrowserViewport(
 
 /**
  * Handle design_pick_command message - the Design Mode chips staged in an
- * agent's composer (`maestro-cli browser-picks`): list them, or remove one by
- * id. Nothing is decided here: the chips live in the renderer's session store,
- * so this validates the request and forwards it. Every outcome is answered with
- * the request id, because the CLI blocks on it.
+ * agent's composer (`maestro-cli browser-picks`): list them, edit one's note, or
+ * remove one by id. Nothing is decided here: the chips live in the renderer's
+ * session store, so this validates the request and forwards it. Every outcome
+ * is answered with the request id, because the CLI blocks on it.
  */
 export function handleDesignPickCommand(
 	ctx: MessageHandlerContext,
