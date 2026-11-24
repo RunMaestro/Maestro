@@ -17,7 +17,7 @@
  * ```
  */
 
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
 export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = true): number {
 	const [width, setWidth] = useState(0);
@@ -66,6 +66,9 @@ const UNMEASURED: ElementSize = { width: 0, height: 0 };
  */
 export function useElementSize(ref: RefObject<HTMLElement | null>, enabled = true): ElementSize {
 	const [size, setSize] = useState<ElementSize>(UNMEASURED);
+	// Compared here, not in a setState updater: an updater that returns the old
+	// state still costs React one render of the caller before it bails out.
+	const lastRef = useRef<ElementSize>(UNMEASURED);
 
 	useLayoutEffect(() => {
 		const element = ref.current;
@@ -75,9 +78,11 @@ export function useElementSize(ref: RefObject<HTMLElement | null>, enabled = tru
 
 		const measure = () => {
 			const { clientWidth: width, clientHeight: height } = element;
-			setSize((last) =>
-				last.width === width && last.height === height ? last : { width, height }
-			);
+			const last = lastRef.current;
+			if (last.width === width && last.height === height) return;
+			const next = { width, height };
+			lastRef.current = next;
+			setSize(next);
 		};
 		measure();
 
