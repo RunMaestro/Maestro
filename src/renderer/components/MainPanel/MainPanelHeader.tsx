@@ -49,6 +49,7 @@ import {
 	formatConversationDuration,
 } from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
+import { isImplicitDefaultProfile } from '../../../shared/providerProfiles';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -176,6 +177,14 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 		activeProfile && (activeProfile.accountKey || activeProfile.credential)
 			? activeProfile.shortLabel
 			: null;
+	// The header fallback (shown while the gauge has no window) names only an
+	// account that tells several apart; the implicit default ("Codex default")
+	// is the one every single-account user is on.
+	const showProfileFallback =
+		!!activeProfile &&
+		!!activeSession &&
+		activeProfileLabel !== null &&
+		!isImplicitDefaultProfile(activeSession.toolType, activeProfile);
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Anchors the git menu, and is the hover target that opens it. Wrapping both
@@ -582,7 +591,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				{activeSession.inputMode === 'ai' &&
 					!activeFileTabId &&
 					activeProfile &&
-					activeProfileLabel &&
+					showProfileFallback &&
 					!(activeTabContextWindow > 0) && (
 						<span
 							className="text-xs font-mono truncate min-w-0"

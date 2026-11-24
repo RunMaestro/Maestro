@@ -237,6 +237,20 @@ export function providerProfileShortLabel(toolType: string, accountKey: string |
 }
 
 /**
+ * Whether a profile is the provider's implicit `~/<subdir>` account on this
+ * machine: no billed credential, no remote host, no named config dir. A user
+ * with one account is always on this profile, so naming it tells them nothing;
+ * surfaces that show the account only to tell several apart skip it.
+ */
+export function isImplicitDefaultProfile(
+	toolType: string,
+	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential' | 'sshRemoteId'>
+): boolean {
+	if (profile.credential || profile.sshRemoteId || !profile.accountKey) return false;
+	return getAccountKeyHelpers(toolType)?.deriveShortName(profile.accountKey) === 'default';
+}
+
+/**
  * Full label for a profile: `Claude Code - smash`, or just `OpenCode` for a
  * provider with no account split. Used in the filter dropdown, where the
  * provider name has to carry itself.
