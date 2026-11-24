@@ -179,6 +179,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Never leaving an agent with an empty tab strip:** `ensureAgentHasVisibleTab()`, `agentHasVisibleTab()`, `createBlankAiTab()` in `src/renderer/utils/unifiedTabOrderUtils.ts`.
 - **Audio/video playback:** media NEVER becomes a file preview tab; `handleOpenFileTab()` in `src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts` diverts it to `useMediaPlaybackStore.openMedia()` / `enqueueMedia()`, and the one player is `FloatingMediaPlayer` under `MediaPlaybackHost`.
 - **Opening a clicked link:** `openUrl(url, { ctrlKey })` in `src/renderer/utils/openUrl.ts`, over `parseUrlRoutingHint()` / `isWebUrl()` / `stripUrlRoutingHint()` in `src/shared/urlRoutingHint.ts`
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Run a shell command from the chat:** `dispatchShellCommand()` (records it in recall history, then runs it) / `runShellCommand()` / `cancelShellCommand()` / `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`.
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` / `TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT` in `src/renderer/services/transcriptScroll.ts`.
 - **Delete the file the user is previewing:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` in `src/renderer/services/fileDeletion.ts`.
