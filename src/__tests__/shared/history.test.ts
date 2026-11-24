@@ -25,6 +25,9 @@ import {
 	MAX_HISTORY_SUMMARY_LINE_CHARS,
 	historySummaryPreview,
 	historySummaryLine,
+	clampHistoryEntry,
+	MAX_HISTORY_SUMMARY_STORED_CHARS,
+	MAX_HISTORY_FULL_RESPONSE_STORED_CHARS,
 	type HistoryFileData,
 	type MigrationMarker,
 	type PaginationOptions,
@@ -504,6 +507,58 @@ describe('history entry type helpers', () => {
 
 		it('handles an empty list', () => {
 			expect(normalizeHistoryEntries([])).toEqual([]);
+		});
+	});
+
+	describe('clampHistoryEntry', () => {
+		const entry = {
+			id: 'e1',
+			type: 'AUTO' as const,
+			timestamp: 1,
+			summary: 'short',
+			fullResponse: 'body',
+			projectPath: '/p',
+		};
+
+		it('returns the same object when nothing is over a cap', () => {
+			expect(clampHistoryEntry(entry)).toBe(entry);
+		});
+
+		it('caps an oversized summary and fullResponse and says what was cut', () => {
+			const big = {
+				...entry,
+				summary: 'x'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS + 500),
+				fullResponse: 'y'.repeat(MAX_HISTORY_FULL_RESPONSE_STORED_CHARS + 500),
+			};
+			const out = clampHistoryEntry(big);
+			expect(out.summary.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_STORED_CHARS);
+			expect(out.summary).toMatch(/\[truncated \d+ characters\]$/);
+			expect(out.fullResponse.length).toBeLessThanOrEqual(MAX_HISTORY_FULL_RESPONSE_STORED_CHARS);
+			expect(big.summary.length).toBe(MAX_HISTORY_SUMMARY_STORED_CHARS + 500);
+		});
+
+		it('is idempotent: clamping a clamped entry leaves it unchanged', () => {
+			const once = clampHistoryEntry({
+				...entry,
+				summary: 'x'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS + 500),
+			});
+			expect(clampHistoryEntry(once)).toBe(once);
+		});
+
+		it('does not split a surrogate pair at the cut', () => {
+			const s = 'a'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS - 1) + '\u{1F600}' + 'b'.repeat(50);
+			const out = clampHistoryEntry({ ...entry, summary: s });
+			expect(out.summary).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+		});
+
+		it('is applied by serializeHistoryEntryLine and stays one line', () => {
+			const line = serializeHistoryEntryLine({
+				...entry,
+				summary: 'z\n'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS),
+			});
+			expect(line.length).toBeLessThan(MAX_HISTORY_SUMMARY_STORED_CHARS * 3);
+			expect(line.endsWith('\n')).toBe(true);
+			expect(line.slice(0, -1)).not.toContain('\n');
 		});
 	});
 });

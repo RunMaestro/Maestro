@@ -136,6 +136,62 @@ export function historySummaryLine(
 }
 
 /**
+ * Most characters a stored `summary` may hold. Real summaries run to a few
+ * thousand; anything past this is a producer dumping a log into a one-line field.
+ */
+export const MAX_HISTORY_SUMMARY_STORED_CHARS = 10_000;
+
+/** Most characters a stored `fullResponse` may hold (real ones top out near 25 KB). */
+export const MAX_HISTORY_FULL_RESPONSE_STORED_CHARS = 250_000;
+
+/** Room kept under the cap for the truncation notice, so a clamped value is itself within the cap. */
+const TRUNCATION_NOTICE_RESERVE = 48;
+
+function clampStoredText(text: string, max: number): string {
+	// Within the cap (a value clamped before included): leave it alone, so a
+	// second clamp never rewrites the first one's removed-character count.
+	if (text.length <= max) return text;
+	let end = max - TRUNCATION_NOTICE_RESERVE;
+	// Do not cut a surrogate pair in half.
+	const code = text.charCodeAt(end - 1);
+	if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+	return `${text.slice(0, end)}\n[truncated ${text.length - end} characters]`;
+}
+
+/**
+ * The entry as it may be stored. Returns the SAME object when nothing is over
+ * a cap, so the common case allocates nothing.
+ *
+ * Every write funnels through {@link serializeHistoryEntryLine}, so this is the
+ * one guard that covers the app, the CLI, and a rotation rewriting old lines
+ * (which also heals an oversized entry already on disk the next time its file
+ * is rotated). A failed PR push once put its 4.7 MB pre-push log in both fields
+ * and froze the History list for minutes.
+ */
+export function clampHistoryEntry(entry: HistoryEntry): HistoryEntry {
+	const summaryOver =
+		typeof entry.summary === 'string' && entry.summary.length > MAX_HISTORY_SUMMARY_STORED_CHARS;
+	const responseOver =
+		typeof entry.fullResponse === 'string' &&
+		entry.fullResponse.length > MAX_HISTORY_FULL_RESPONSE_STORED_CHARS;
+	if (!summaryOver && !responseOver) return entry;
+	return {
+		...entry,
+		...(summaryOver
+			? { summary: clampStoredText(entry.summary, MAX_HISTORY_SUMMARY_STORED_CHARS) }
+			: {}),
+		...(responseOver
+			? {
+					fullResponse: clampStoredText(
+						entry.fullResponse as string,
+						MAX_HISTORY_FULL_RESPONSE_STORED_CHARS
+					),
+				}
+			: {}),
+	};
+}
+
+/**
  * Session ID used for history entries that don't have an associated session.
  * These entries are stored in a special "_orphaned.json" file.
  */
@@ -288,7 +344,7 @@ export const HISTORY_LEGACY_JSON_EXT = '.json';
  * recover from a torn write by dropping a single line.
  */
 export function serializeHistoryEntryLine(entry: HistoryEntry): string {
-	return `${JSON.stringify(entry)}\n`;
+	return `${JSON.stringify(clampHistoryEntry(entry))}\n`;
 }
 
 /** Result of parsing a JSONL history file. */
