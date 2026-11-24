@@ -21,6 +21,10 @@ import {
 	isHistoryEntryType,
 	visibleHistoryEntryTypes,
 	ALL_HISTORY_ENTRY_TYPES,
+	MAX_HISTORY_SUMMARY_PREVIEW_CHARS,
+	MAX_HISTORY_SUMMARY_LINE_CHARS,
+	historySummaryPreview,
+	historySummaryLine,
 	type HistoryFileData,
 	type MigrationMarker,
 	type PaginationOptions,
@@ -383,6 +387,34 @@ describe('shared/history', () => {
 			// slice(-1, 99) would return the last element
 			expect(result.entries.length).toBeLessThanOrEqual(1);
 		});
+	});
+});
+
+describe('history summary helpers', () => {
+	it('historySummaryPreview returns a short summary by reference', () => {
+		const summary = 'Implemented the feature';
+		expect(historySummaryPreview(summary)).toBe(summary);
+	});
+
+	it('historySummaryPreview caps a multi-megabyte summary', () => {
+		const huge = 'log line\n'.repeat(500_000);
+		const preview = historySummaryPreview(huge);
+		expect(preview.length).toBe(MAX_HISTORY_SUMMARY_PREVIEW_CHARS + 1);
+		expect(preview.endsWith('…')).toBe(true);
+		expect(huge.startsWith(preview.slice(0, -1))).toBe(true);
+	});
+
+	it('historySummaryLine keeps only the first non-blank line', () => {
+		expect(historySummaryLine('\n  Failed to push branch: $ prettier\n$ tsc\nerror')).toBe(
+			'Failed to push branch: $ prettier'
+		);
+	});
+
+	it('historySummaryLine truncates a long line at a word boundary', () => {
+		const line = 'word '.repeat(100);
+		const result = historySummaryLine(line);
+		expect(result.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_LINE_CHARS);
+		expect(result.endsWith('word…')).toBe(true);
 	});
 });
 

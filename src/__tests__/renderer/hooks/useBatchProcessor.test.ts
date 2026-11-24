@@ -6572,9 +6572,11 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			// A failed push reports its whole pre-push log as the error. Only the
+			// first line belongs in the summary; the rest stays in fullResponse.
 			mockCreatePR.mockResolvedValue({
 				success: false,
-				error: 'gh: not authenticated',
+				error: 'gh: not authenticated\n$ prettier --check .\nChecking formatting...',
 			});
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
@@ -6633,6 +6635,10 @@ describe('useBatchProcessor hook', () => {
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Creation Failed');
 			expect(prEntry.fullResponse).toContain('gh: not authenticated');
+			expect(prEntry.fullResponse).toContain('Checking formatting...');
+			expect((prHistoryCall![0] as { summary: string }).summary).toBe(
+				'PR creation failed: gh: not authenticated'
+			);
 		});
 	});
 

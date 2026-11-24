@@ -18,6 +18,7 @@
  */
 
 import type { HistoryEntry, HistoryEntryType } from './types';
+import { truncateAtWordBoundary } from './formatters';
 
 /**
  * Every history entry type, in the order filter UIs display them.
@@ -98,6 +99,41 @@ export const HISTORY_VERSION = 1;
  * Settings is the value every writer falls back to.
  */
 export const MAX_ENTRIES_PER_SESSION = 10000;
+
+/**
+ * Most characters of a history summary a list row will lay out. The row clamps
+ * to three lines, so this is far more than it can show.
+ *
+ * The cap exists because a summary is not always short: a failed PR push once
+ * wrote its whole 4.4 MB pre-push log into `summary`, and a list row that
+ * reached it (a Director's Notes search moved it into view) froze the renderer
+ * laying out 72,000 lines behind a three-line clamp.
+ */
+export const MAX_HISTORY_SUMMARY_PREVIEW_CHARS = 1000;
+
+/**
+ * The part of a summary a list row renders. Returns the input unchanged when it
+ * fits, so the common case allocates nothing.
+ */
+export function historySummaryPreview(summary: string): string {
+	if (summary.length <= MAX_HISTORY_SUMMARY_PREVIEW_CHARS) return summary;
+	return `${summary.slice(0, MAX_HISTORY_SUMMARY_PREVIEW_CHARS)}…`;
+}
+
+/** Longest one-line summary a producer should write from free-form text. */
+export const MAX_HISTORY_SUMMARY_LINE_CHARS = 200;
+
+/**
+ * Reduce free-form text (an error, a command's output) to the one line a
+ * history `summary` should carry. Keep the full text in `fullResponse`.
+ */
+export function historySummaryLine(
+	text: string,
+	maxLength: number = MAX_HISTORY_SUMMARY_LINE_CHARS
+): string {
+	const firstLine = text.trimStart().split('\n', 1)[0].trimEnd();
+	return truncateAtWordBoundary(firstLine, maxLength);
+}
 
 /**
  * Session ID used for history entries that don't have an associated session.
