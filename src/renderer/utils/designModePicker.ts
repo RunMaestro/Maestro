@@ -451,6 +451,7 @@ const GUEST_HELPER = `function(req){
 	// properties (<input name="id">, <select name="classList">), so each part
 	// is checked to be a string: an element in the reply would fail the pick.
 	function isStr(v){return typeof v==='string';}
+	function isNum(v){return typeof v==='number'&&isFinite(v);}
 	// innerText where the element has it (it skips hidden nodes and script),
 	// textContent where it does not (SVG).
 	function textOf(el,max){
@@ -587,8 +588,10 @@ const GUEST_HELPER = `function(req){
 			function move(e){point={x:e.clientX,y:e.clientY};}
 			// The window also blurs when focus moves into one of the page's own
 			// frames; only a page that lost focus altogether ends the watch.
+			// eventPhase 2 (AT_TARGET) is the window's own blur; a target
+			// identity check is not portable (jsdom hands back the inner Window).
 			function blur(e){
-				if(e.target!==window)return;
+				if(e.eventPhase!==2)return;
 				setTimeout(function(){if(!document.hasFocus())end();},0);
 			}
 			function end(){
@@ -622,7 +625,12 @@ const GUEST_HELPER = `function(req){
 	}
 	var f=req.frame||{};
 	var sx=f.width>0?window.innerWidth/f.width:1,sy=f.height>0?window.innerHeight/f.height:1;
-	if(req.type==='region')return region(req.x*sx,req.y*sy,req.width*sx,req.height*sy);
+	if(req.type==='region'){
+		// JSON carries NaN and Infinity as null, which would scale to 0: refuse
+		// a box that is not four real numbers rather than read it as the corner.
+		if(!(isNum(req.x)&&isNum(req.y)&&isNum(req.width)&&isNum(req.height)))return null;
+		return region(req.x*sx,req.y*sy,req.width*sx,req.height*sy);
+	}
 	var hit=at(req.x*sx,req.y*sy);
 	if(req.type==='scroll'){
 		var dx=req.dx*sx,dy=req.dy*sy;

@@ -141,6 +141,16 @@ function isSpaceKey(event: { key: string; code: string }): boolean {
 }
 
 /**
+ * Whether a `blur` heard on `window` is the window's own (the app lost focus)
+ * rather than an element's. Read from the event phase, not `target === window`:
+ * jsdom hands back its inner Window as the target, so an identity check drops
+ * every window blur there.
+ */
+function isOwnWindowBlur(event: Event): boolean {
+	return event.eventPhase === Event.AT_TARGET;
+}
+
+/**
  * An auto-repeat of Space heard this recently means the key is still down.
  * Repeats come every 30-90 ms at the usual settings; a slower setting only
  * makes the fallback resume picking early, and the next repeat starts using
@@ -739,7 +749,7 @@ export function BrowserDesignModeLayer({
 	// 3. Clicking into the page may blur this window too, so decide once focus
 	// has settled: only a window whose page does not hold focus ends it.
 	useEventListener('blur', (event) => {
-		if (event.target !== window || passthroughRef.current === 'off') return;
+		if (!isOwnWindowBlur(event) || passthroughRef.current === 'off') return;
 		const session = passthroughSeqRef.current;
 		window.setTimeout(() => {
 			if (!mountedRef.current || passthroughSeqRef.current !== session) return;
@@ -998,7 +1008,7 @@ export function BrowserDesignModeLayer({
 
 	// The app went to the background mid-press: its release lands elsewhere.
 	useEventListener('blur', (event) => {
-		if (event.target === window) cancelPress();
+		if (isOwnWindowBlur(event)) cancelPress();
 	});
 
 	const dropCard = useCallback(() => {
