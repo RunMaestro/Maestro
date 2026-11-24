@@ -98,7 +98,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 
-	const remotes = readSshRemotes();
+	const remotes = readSshRemotes({ forWrite: true });
 	const index = remotes.findIndex((r) => r.id === resolvedId);
 	if (index === -1) {
 		fail(`SSH remote not found: ${resolvedId}`, options.json);

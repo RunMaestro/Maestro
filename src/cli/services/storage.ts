@@ -770,10 +770,18 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 // ============================================================================
 
 /**
- * Read all SSH remote configurations from settings
+ * Read all SSH remote configurations from settings.
+ *
+ * Pass `{ forWrite: true }` when the list is about to be changed and written
+ * back with `writeSshRemotes()`. That read resolves the settings file the way
+ * the write will (creating a missing custom Storage Location), so the edit
+ * starts from the list the desktop reads and never copies a stale config-dir
+ * list into the synced store (issue #2082).
  */
-export function readSshRemotes(): SshRemoteConfig[] {
-	const settings = readSettings();
+export function readSshRemotes(options: { forWrite?: boolean } = {}): SshRemoteConfig[] {
+	const settings = options.forWrite
+		? readStoreFile<SettingsStore>(SETTINGS_FILE, getStoreFileDir(SETTINGS_FILE, true)) || {}
+		: readSettings();
 	return (settings.sshRemotes as SshRemoteConfig[]) || [];
 }
 

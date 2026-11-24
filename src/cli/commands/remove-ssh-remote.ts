@@ -28,7 +28,7 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 		return process.exit(1);
 	}
 
-	const remotes = readSshRemotes();
+	const remotes = readSshRemotes({ forWrite: true });
 	const index = remotes.findIndex((r) => r.id === resolvedId);
 
 	if (index === -1) {

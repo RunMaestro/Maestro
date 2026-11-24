@@ -113,7 +113,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 	}
 
 	// Read, append, write
-	const remotes = readSshRemotes();
+	const remotes = readSshRemotes({ forWrite: true });
 	remotes.push(config);
 	writeSshRemotes(remotes);
 

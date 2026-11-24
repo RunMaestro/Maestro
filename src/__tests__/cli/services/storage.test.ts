@@ -299,6 +299,22 @@ describe('storage service', () => {
 			// The merge starts from the (empty) store the desktop will read, not the stale local copy.
 			expect(JSON.parse(content as string)).toEqual({ activeThemeId: 'new-theme' });
 		});
+
+		it('reads SSH remotes for an edit from the directory the write will use (#2082)', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					sshRemotes: [{ id: 'stale', name: 'Stale' }],
+				},
+			});
+
+			// A plain read still sees the config-dir copy and creates nothing.
+			expect(readSshRemotes().map((r) => r.id)).toEqual(['stale']);
+			// A read for an edit starts from the store the desktop will read.
+			expect(readSshRemotes({ forWrite: true })).toEqual([]);
+			expect(fs.mkdirSync).toHaveBeenCalledWith(syncDir, { recursive: true });
+		});
 	});
 
 	describe('readSessions', () => {

@@ -158,6 +158,8 @@ describe('create-ssh-remote command', () => {
 
 			createSshRemote('New', { host: 'new.com' });
 
+			// The list being extended is read from the directory the write lands in.
+			expect(readSshRemotes).toHaveBeenCalledWith({ forWrite: true });
 			expect(writeSshRemotes).toHaveBeenCalledWith([
 				existing,
 				expect.objectContaining({ name: 'New', host: 'new.com' }),
