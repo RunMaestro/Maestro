@@ -618,6 +618,15 @@ List the Design Mode chips waiting in an agent's composer, or remove one
 | `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
 | `--json`            | Output as JSON (for scripting)                            | -       |
 
+## `maestro-cli browser-viewport <tab> [preset]`
+
+Set or read the width a browser tab shows its page at (preset: fit, desktop, laptop, tablet, phone; omit to read). tab: id from open-browser, or browser:N
+
+| Option             | Description                                  | Default |
+| ------------------ | -------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (defaults to active) | -       |
+| `--json`           | Output as JSON (for scripting)               | -       |
+
 ## `maestro-cli open-terminal`
 
 Open a new terminal tab in the Maestro desktop app

@@ -4,6 +4,7 @@
 
 import { Command } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { BROWSER_VIEWPORT_PRESETS } from '../shared/browserViewport';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
@@ -29,7 +30,13 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser, browserPick, browserPicks } from './commands/open-browser';
+import {
+	openBrowser,
+	closeBrowser,
+	browserPick,
+	browserPicks,
+	browserViewport,
+} from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -939,6 +946,19 @@ program
 	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPicks);
+
+// Browser viewport command - the width a browser tab shows its page at (Fit,
+// Desktop 1440, Laptop 1280, Tablet 768, Phone 390), as the toolbar's viewport
+// control sets it. Gives the preset to set it; always reports the one the tab
+// shows afterwards and the one it showed before. Never moves the view.
+program
+	.command('browser-viewport <tab> [preset]')
+	.description(
+		`Set or read the width a browser tab shows its page at (preset: ${BROWSER_VIEWPORT_PRESETS.join(', ')}; omit to read). tab: id from open-browser, or browser:N`
+	)
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserViewport);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program

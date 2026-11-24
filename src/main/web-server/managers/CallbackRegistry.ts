@@ -46,6 +46,9 @@ import type {
 	PickBrowserElementCallback,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
+	BrowserViewportCallback,
+	BrowserViewportRequest,
+	BrowserViewportResult,
 	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
@@ -221,6 +224,7 @@ export interface WebServerCallbacks {
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
 	pickBrowserElement: PickBrowserElementCallback | null;
+	browserViewport: BrowserViewportCallback | null;
 	designPickCommand: DesignPickCommandCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
@@ -333,6 +337,7 @@ export class CallbackRegistry {
 		openBrowserTab: null,
 		closeBrowserTab: null,
 		pickBrowserElement: null,
+		browserViewport: null,
 		designPickCommand: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
@@ -610,6 +615,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
 		}
 		return this.callbacks.pickBrowserElement(request);
+	}
+
+	async browserViewport(request: BrowserViewportRequest): Promise<BrowserViewportResult> {
+		if (!this.callbacks.browserViewport) {
+			return { success: false, error: 'Browser viewport not configured' };
+		}
+		return this.callbacks.browserViewport(request);
 	}
 
 	async designPickCommand(request: DesignPickCommandRequest): Promise<DesignPickCommandResult> {
@@ -1296,6 +1308,10 @@ export class CallbackRegistry {
 
 	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
 		this.callbacks.pickBrowserElement = callback;
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbacks.browserViewport = callback;
 	}
 
 	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {

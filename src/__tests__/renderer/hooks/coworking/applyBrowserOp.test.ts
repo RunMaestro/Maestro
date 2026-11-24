@@ -5,9 +5,15 @@ import {
 	type BrowserApprovalRequester,
 } from '../../../../renderer/hooks/coworking/useCoworkingBrowserResponder';
 import type { BrowserTabViewHandle } from '../../../../renderer/components/MainPanel/BrowserTabView';
-import { selectActiveSession, useSessionStore } from '../../../../renderer/stores/sessionStore';
+import {
+	selectActiveSession,
+	selectSessionById,
+	updateBrowserTab,
+	useSessionStore,
+} from '../../../../renderer/stores/sessionStore';
 import type { SessionStore } from '../../../../renderer/stores/sessionStore';
 import type { BrowserTab, Session } from '../../../../renderer/types';
+import type { BrowserViewportPreset } from '../../../../shared/browserViewport';
 import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,
@@ -32,6 +38,7 @@ import { deliverDesignPick, queueDesignPick } from '../../../../renderer/service
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: { getState: vi.fn(() => ({})) },
 	selectActiveSession: vi.fn(),
+	updateBrowserTab: vi.fn(),
 	selectSessionById: vi.fn(() => () => ({
 		id: 'sess-A',
 		toolType: 'claude-code',
@@ -954,6 +961,182 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		expect(String(res.content)).toMatch(/not found in your session/i);
 		expect(sessions[0].browserTabs).toHaveLength(1);
 		expect(setSessions).not.toHaveBeenCalled();
+	});
+});
+
+describe('resolveAndRun viewport (browser-viewport)', () => {
+	/** A requester that would grant anything, so a test can see it was never asked. */
+	const ask = vi.fn(async () => true) as unknown as BrowserApprovalRequester &
+		ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	/**
+	 * One agent with these browser tabs, behind a store whose single-tab updater
+	 * applies the caller's mapper to them, as `updateBrowserTab()` does. Returns the
+	 * live session so a test can read what the op left on its tabs.
+	 */
+	function wireTabs(tabs: Array<Partial<BrowserTab>>, { focused = true } = {}) {
+		const session = {
+			id: 'sess-A',
+			toolType: 'claude-code',
+			activeBrowserTabId: null,
+			browserTabs: tabs,
+		};
+		vi.mocked(selectSessionById).mockReturnValue(() => session as unknown as Session);
+		vi.mocked(selectActiveSession).mockReturnValue(
+			focused ? (session as unknown as Session) : fakeActive('other', null)
+		);
+		vi.mocked(updateBrowserTab).mockImplementation((_sessionId, tabId, updater) => {
+			session.browserTabs = session.browserTabs.map((t) =>
+				t.id === tabId ? updater(t as BrowserTab) : t
+			);
+		});
+		return session;
+	}
+
+	const tab = (extra: Partial<BrowserTab> = {}): Partial<BrowserTab> => ({
+		id: 'u-1',
+		url: 'https://example.com/',
+		title: 'Example',
+		...extra,
+	});
+
+	const run = (op: { kind: 'viewport'; preset?: BrowserViewportPreset }) =>
+		resolveAndRun({ current: new Map() }, 'u-1', 'sess-A', op, ask);
+
+	it('sets the preset through the single-tab updater and reports it with the one before', async () => {
+		const session = wireTabs([tab()]);
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res).toMatchObject({
+			ok: true,
+			viewportPreset: 'phone',
+			previousViewportPreset: 'fit',
+			content: 'Phone (390 px wide)',
+		});
+		expect(updateBrowserTab).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(updateBrowserTab).mock.calls[0].slice(0, 2)).toEqual(['sess-A', 'u-1']);
+		// The write is the toolbar's: the tab keeps everything else it had.
+		expect(session.browserTabs[0]).toMatchObject({
+			id: 'u-1',
+			url: 'https://example.com/',
+			title: 'Example',
+			viewportPreset: 'phone',
+		});
+	});
+
+	it('reports the preset the tab had before, so the caller can put it back', async () => {
+		const session = wireTabs([tab({ viewportPreset: 'tablet' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'laptop' });
+
+		expect(res).toMatchObject({ viewportPreset: 'laptop', previousViewportPreset: 'tablet' });
+		expect(session.browserTabs[0].viewportPreset).toBe('laptop');
+	});
+
+	it('can put a tab back to Fit, which the toolbar writes as a preset too', async () => {
+		const session = wireTabs([tab({ viewportPreset: 'phone' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'fit' });
+
+		expect(res).toMatchObject({ viewportPreset: 'fit', previousViewportPreset: 'phone' });
+		expect(session.browserTabs[0].viewportPreset).toBe('fit');
+	});
+
+	it('reads without writing: Fit for a tab with no saved preset, the saved one otherwise', async () => {
+		wireTabs([tab()]);
+		expect(await run({ kind: 'viewport' })).toMatchObject({
+			ok: true,
+			viewportPreset: 'fit',
+			previousViewportPreset: 'fit',
+			content: "Fit (the tab's width)",
+		});
+
+		wireTabs([tab({ viewportPreset: 'desktop' })]);
+		expect(await run({ kind: 'viewport' })).toMatchObject({
+			ok: true,
+			viewportPreset: 'desktop',
+			previousViewportPreset: 'desktop',
+		});
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing when the tab already shows the preset', async () => {
+		wireTabs([tab({ viewportPreset: 'phone' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res).toMatchObject({
+			ok: true,
+			viewportPreset: 'phone',
+			previousViewportPreset: 'phone',
+		});
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('is a store update: it needs no webview, never asks for approval, and works for an agent that is not on screen', async () => {
+		const session = wireTabs([tab()], { focused: false });
+		const resolveBackgroundHandle = vi.fn(async () => null);
+
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			'u-1',
+			'sess-A',
+			{ kind: 'viewport', preset: 'tablet' },
+			ask,
+			resolveBackgroundHandle,
+			// Main says the policy would confirm an interaction; a viewport is not one.
+			true
+		);
+
+		expect(res).toMatchObject({ ok: true, viewportPreset: 'tablet' });
+		expect(session.browserTabs[0].viewportPreset).toBe('tablet');
+		expect(ask).not.toHaveBeenCalled();
+		expect(resolveBackgroundHandle).not.toHaveBeenCalled();
+		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).toEqual([]);
+	});
+
+	it('fails closed for a tab that is not in the agent, and writes nothing', async () => {
+		wireTabs([tab({ id: 'u-2' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res.ok).toBe(false);
+		expect(String(res.content)).toMatch(/not found in your session/i);
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('treats a tab hidden from agents as closed, for a read as well as a write', async () => {
+		wireTabs([tab({ hiddenFromAgent: true, viewportPreset: 'phone' })]);
+
+		for (const op of [
+			{ kind: 'viewport' as const },
+			{ kind: 'viewport' as const, preset: 'fit' as const },
+		]) {
+			const res = await run(op);
+			expect(res.ok).toBe(false);
+			expect(String(res.content)).toMatch(/not found in your session/i);
+			expect(res).not.toHaveProperty('viewportPreset');
+		}
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('says so when the store did not take the write, rather than reporting the preset asked for', async () => {
+		wireTabs([tab()]);
+		// The tab vanished between the check and the write: the updater matches nothing.
+		vi.mocked(updateBrowserTab).mockImplementation(() => {});
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res).toEqual({
+			ok: false,
+			content: 'The browser tab changed while its viewport was being set.',
+		});
 	});
 });
 

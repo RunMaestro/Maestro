@@ -12,7 +12,10 @@ vi.mock('../../../../main/utils/safe-send', () => ({
 	isWebContentsAvailable: vi.fn(() => true),
 }));
 
-import { pickBrowserElement } from '../../../../main/web-server/callbacks/browserTabCallbacks';
+import {
+	browserViewport,
+	pickBrowserElement,
+} from '../../../../main/web-server/callbacks/browserTabCallbacks';
 import { CoworkingRegistry } from '../../../../main/coworking/coworking-registry';
 import type { BrowserOp, BrowserOpResult } from '../../../../shared/coworkingBrowser';
 
@@ -278,6 +281,134 @@ describe('pickBrowserElement (browser-pick)', () => {
 				tabId: 'uuid-a',
 				screenshot: false,
 			});
+		});
+	});
+});
+
+describe('browserViewport (browser-viewport)', () => {
+	let registry: CoworkingRegistry;
+	let run: ReturnType<
+		typeof vi.fn<(s: string, t: string, op: BrowserOp) => Promise<BrowserOpResult>>
+	>;
+
+	beforeEach(() => {
+		registry = new CoworkingRegistry();
+		registry.syncSessionBrowsers('s1', [tabInput('uuid-a'), tabInput('uuid-b', true)], false);
+		run = vi.fn(async () => ({
+			ok: true,
+			content: 'Phone (390 px wide)',
+			viewportPreset: 'phone',
+			previousViewportPreset: 'fit',
+		}));
+	});
+
+	it('resolves a Coworking id and runs the host-only viewport op with the preset', async () => {
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: 'browser:1', preset: 'phone' },
+			{ registry, run }
+		);
+		expect(run).toHaveBeenCalledTimes(1);
+		expect(run).toHaveBeenCalledWith('s1', 'uuid-a', { kind: 'viewport', preset: 'phone' });
+		expect(result).toEqual({
+			success: true,
+			tabId: 'uuid-a',
+			browserId: 'browser:1',
+			preset: 'phone',
+			previous: 'fit',
+		});
+	});
+
+	it('sends no preset key for a read, so the renderer only reads', async () => {
+		run.mockResolvedValueOnce({
+			ok: true,
+			viewportPreset: 'tablet',
+			previousViewportPreset: 'tablet',
+		});
+		const result = await browserViewport({ sessionId: 's1', tab: 'uuid-a' }, { registry, run });
+		expect(run.mock.calls[0][2]).toStrictEqual({ kind: 'viewport' });
+		expect(result).toMatchObject({ success: true, preset: 'tablet', previous: 'tablet' });
+	});
+
+	it('passes a renderer tab id straight through', async () => {
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: ' uuid-a ', preset: 'laptop' },
+			{ registry, run }
+		);
+		expect(run).toHaveBeenCalledWith('s1', 'uuid-a', { kind: 'viewport', preset: 'laptop' });
+		expect(result.browserId).toBe('browser:1');
+	});
+
+	it('refuses a Coworking id for a hidden tab without reaching the renderer', async () => {
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: 'browser:2', preset: 'phone' },
+			{ registry, run }
+		);
+		expect(run).not.toHaveBeenCalled();
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No browser tab browser:2 in this agent');
+		expect(result).not.toHaveProperty('tabId');
+	});
+
+	it('does not name a Coworking id for a hidden tab addressed by its tab id', async () => {
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: 'uuid-b', preset: 'phone' },
+			{ registry, run }
+		);
+		expect(result.success).toBe(true);
+		expect(result).not.toHaveProperty('browserId');
+	});
+
+	it('reports the renderer error, with the tab, when the op fails', async () => {
+		run.mockRejectedValueOnce(
+			new Error('Browser tab not found in your session (it may have been closed).')
+		);
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: 'uuid-gone', preset: 'phone' },
+			{ registry, run }
+		);
+		expect(result).toEqual({
+			success: false,
+			error: 'Browser tab not found in your session (it may have been closed).',
+			tabId: 'uuid-gone',
+		});
+	});
+
+	it('reports a failed op result that was not thrown, and never a preset with it', async () => {
+		run.mockResolvedValueOnce({
+			ok: false,
+			content: 'The browser tab changed while its viewport was being set.',
+			viewportPreset: 'phone',
+			previousViewportPreset: 'fit',
+		});
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: 'uuid-a', preset: 'phone' },
+			{ registry, run }
+		);
+		expect(result).toEqual({
+			success: false,
+			error: 'The browser tab changed while its viewport was being set.',
+			tabId: 'uuid-a',
+		});
+	});
+
+	it.each([
+		['neither preset', {}],
+		['no previous preset', { viewportPreset: 'phone' }],
+		['no current preset', { previousViewportPreset: 'fit' }],
+		[
+			'a preset that is not one of the five',
+			{ viewportPreset: 'wide', previousViewportPreset: 'fit' },
+		],
+	])('refuses a reply with %s, since the caller reads it back', async (_name, fields) => {
+		run.mockResolvedValueOnce({ ok: true, ...fields } as BrowserOpResult);
+		const result = await browserViewport(
+			{ sessionId: 's1', tab: 'uuid-a', preset: 'phone' },
+			{ registry, run }
+		);
+		expect(result).toEqual({
+			success: false,
+			error: "Maestro did not report the tab's viewport",
+			tabId: 'uuid-a',
 		});
 	});
 });

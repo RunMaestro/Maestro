@@ -59,6 +59,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenBrowserTabCallback = vi.fn();
 			setCloseBrowserTabCallback = vi.fn();
 			setPickBrowserElementCallback = vi.fn();
+			setBrowserViewportCallback = vi.fn();
 			setDesignPickCommandCallback = vi.fn();
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
@@ -2500,6 +2501,22 @@ describe('web-server/web-server-factory', () => {
 				success: false,
 				error: 'Maestro window is not available',
 			});
+		});
+	});
+
+	describe('browserViewport callback', () => {
+		it('is registered, and resolves a Coworking id before it reaches the renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			expect(server.setBrowserViewportCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setBrowserViewportCallback.mock.calls[0][0];
+
+			// No tab of this agent carries that Coworking id, so the op never goes out.
+			const result = await callback({ sessionId: 'session-1', tab: 'browser:42', preset: 'phone' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('No browser tab browser:42 in this agent');
+			expect(mockWebContents.send).not.toHaveBeenCalled();
 		});
 	});
 

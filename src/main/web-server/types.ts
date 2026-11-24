@@ -21,6 +21,7 @@ import type {
 	DesignPickCommandResult,
 } from '../../shared/designPickCommands';
 import type { BrowserPickTarget } from '../../shared/coworkingBrowser';
+import type { BrowserViewportPreset } from '../../shared/browserViewport';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -686,6 +687,34 @@ export interface PickBrowserElementResult {
 export type PickBrowserElementCallback = (
 	request: PickBrowserElementRequest
 ) => Promise<PickBrowserElementResult>;
+/**
+ * Set or read a browser tab's viewport preset (`maestro-cli browser-viewport`).
+ * `tab` is either the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`), resolved against `sessionId`, as `PickBrowserElementRequest`'s
+ * is. With `preset` the tab is set to it; without, it is only read. Runs through
+ * the Coworking browser resolver as the host-only `viewport` op, so it reaches
+ * the same store write the toolbar's viewport control ends in.
+ */
+export interface BrowserViewportRequest {
+	sessionId: string;
+	tab: string;
+	preset?: BrowserViewportPreset;
+}
+export interface BrowserViewportResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The preset the tab shows after the call. */
+	preset?: BrowserViewportPreset;
+	/** The preset it showed before the call (the same, when nothing changed). */
+	previous?: BrowserViewportPreset;
+}
+export type BrowserViewportCallback = (
+	request: BrowserViewportRequest
+) => Promise<BrowserViewportResult>;
 /**
  * One Design Mode chip verb (`maestro-cli browser-picks`), forwarded to the
  * renderer that holds the chips staged in the agent's composer and answered

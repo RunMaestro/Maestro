@@ -3,8 +3,9 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: select_tab, new_tab,
  * close_tab, rename_tab, star_tab, reopen_closed_tab, reorder_tab, toggle_bookmark,
- * open_file_tab, open_browser_tab, pick_browser_element, design_pick_command,
- * open_terminal_tab, new_ai_tab_with_prompt, open_document_graph.
+ * open_file_tab, open_browser_tab, pick_browser_element, browser_viewport,
+ * design_pick_command, open_terminal_tab, new_ai_tab_with_prompt,
+ * open_document_graph.
  */
 
 import path from 'path';
@@ -24,7 +25,11 @@ import {
 } from '../../../../shared/uiSurfaces';
 import { parseDesignPickCommandRequest } from '../../../../shared/designPickCommands';
 import { readBrowserPickTarget } from '../../../../shared/coworkingBrowser';
-import { normalizeRenameTabResult } from '../../types';
+import {
+	BROWSER_VIEWPORT_PRESETS,
+	parseBrowserViewportPreset,
+} from '../../../../shared/browserViewport';
+import { normalizeRenameTabResult, type BrowserViewportResult } from '../../types';
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -668,6 +673,67 @@ export function handlePickBrowserElement(
 			reply({
 				success: false,
 				error: `Failed to pick element: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		});
+}
+
+/**
+ * Handle browser_viewport message - set or read a browser tab's viewport preset
+ * (`maestro-cli browser-viewport`). `tab` is the tab id `open-browser` returned
+ * or the tab's Coworking id (`browser:N`). A `preset` (one of
+ * BROWSER_VIEWPORT_PRESETS) sets it; leaving it out only reads. Either way the
+ * reply names the preset the tab shows now and the one it showed before.
+ */
+export function handleBrowserViewport(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const tab = typeof message.tab === 'string' ? message.tab.trim() : '';
+	// A preset that is present but not one of the five is refused, never read as
+	// "no preset": a script that typos `phone` must not get a quiet read back.
+	const presetSent = message.preset !== undefined && message.preset !== null;
+	const preset = presetSent ? parseBrowserViewportPreset(message.preset) : null;
+	logger.info(
+		`[Web] Received browser_viewport message: session=${sessionId}, tab=${tab}, set=${presetSent}`,
+		LOG_CONTEXT
+	);
+
+	const reply = (result: BrowserViewportResult) => {
+		ctx.send(client, {
+			type: 'browser_viewport_result',
+			...result,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId || !tab) {
+		reply({ success: false, error: 'Missing sessionId or tab' });
+		return;
+	}
+	if (presetSent && !preset) {
+		reply({
+			success: false,
+			error: `Unknown viewport preset. Use one of: ${BROWSER_VIEWPORT_PRESETS.join(', ')}`,
+		});
+		return;
+	}
+	if (!ctx.callbacks.browserViewport) {
+		reply({ success: false, error: 'Browser viewport not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.browserViewport({ sessionId, tab, ...(preset ? { preset } : {}) })
+		.then((result) => reply(result))
+		.catch((error) => {
+			reply({
+				success: false,
+				error: `Failed to ${preset ? 'set' : 'read'} the viewport: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
 			});
 		});
 }

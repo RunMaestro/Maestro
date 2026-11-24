@@ -22,11 +22,22 @@ import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowse
 import {
 	browserOpNeedsConfirm,
 	formatBrowserPickRect,
+	isUngatedBrowserOp,
 	DEFAULT_BROWSER_CONFIRM_POLICY,
 	BROWSER_APPROVAL_TIMEOUT_MS,
 } from '../../../shared/coworkingBrowser';
+import {
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	describeBrowserViewport,
+	type BrowserViewportPreset,
+} from '../../../shared/browserViewport';
 import type { DesignPickCapture } from '../../utils/designModePicker';
-import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateBrowserTab,
+} from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { requestCoworkingApproval } from '../../stores/coworkingApprovalStore';
@@ -35,7 +46,7 @@ import {
 	backgroundBrowserKey,
 } from '../../stores/coworkingBackgroundBrowserStore';
 import { useCoworkingBrowserKeepAliveStore } from '../../stores/coworkingBrowserKeepAliveStore';
-import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
+import { createBrowserTab, normalizeBrowserTabUpdates } from '../tabs/internal/browserTabHelpers';
 import { closeBrowserTab } from '../../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import { deliverDesignPick, queueDesignPick } from '../../services/designModePick';
@@ -126,7 +137,7 @@ async function defaultRequestApproval(
 	op: BrowserOp,
 	ctx: { agentId: string; sessionId: string; forceConfirm?: boolean }
 ): Promise<boolean> {
-	if (op.kind === 'read' || op.kind === 'pick') return true;
+	if (isUngatedBrowserOp(op.kind)) return true;
 	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
 	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
 	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind)) return true;
@@ -233,6 +244,52 @@ function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult
 	return closed
 		? { ok: true, content: 'Closed the browser tab.' }
 		: { ok: false, content: 'Browser tab could not be closed (it may already be closed).' };
+}
+
+/**
+ * Set or read a browser tab's viewport preset (the host-only `viewport` op,
+ * `maestro-cli browser-viewport`). A pure store update, like `closeTab`: the
+ * preset is a saved field of the tab, so it needs no live webview, works for any
+ * agent's tab (focused or not) and never moves the view. A write ends in
+ * updateBrowserTab() + normalizeBrowserTabUpdates(), the route the toolbar
+ * control's `onUpdateTab` takes, so a mounted BrowserTabView lays itself out
+ * from the store exactly as it does after a click. The result is read back from
+ * the store, so it reports what the tab shows, not what was asked for.
+ */
+function viewportForSession(
+	sessionId: string,
+	tabUuid: string,
+	op: Extract<BrowserOp, { kind: 'viewport' }>
+): BrowserOpResult {
+	const read = (): BrowserViewportPreset | null => {
+		const tab = selectSessionById(sessionId)(useSessionStore.getState())?.browserTabs?.find(
+			(t) => t.id === tabUuid
+		);
+		return tab ? (tab.viewportPreset ?? DEFAULT_BROWSER_VIEWPORT_PRESET) : null;
+	};
+	const previous = read();
+	if (!previous) {
+		return {
+			ok: false,
+			content: 'Browser tab not found in your session (it may have been closed).',
+		};
+	}
+	const wanted = op.preset ?? previous;
+	if (wanted !== previous) {
+		updateBrowserTab(sessionId, tabUuid, (tab) =>
+			normalizeBrowserTabUpdates(tab, { viewportPreset: wanted })
+		);
+	}
+	const current = read();
+	if (current !== wanted) {
+		return { ok: false, content: 'The browser tab changed while its viewport was being set.' };
+	}
+	return {
+		ok: true,
+		content: describeBrowserViewport(current),
+		viewportPreset: current,
+		previousViewportPreset: previous,
+	};
 }
 
 /**
@@ -474,7 +531,7 @@ export async function resolveAndRun(
 	// or side effect. read ops are never gated. Uses the REQUESTING agent's
 	// policy, ORed with main's own computation from its mirrored policy - either
 	// side requiring approval forces the dialog.
-	if (op.kind !== 'read' && op.kind !== 'pick') {
+	if (!isUngatedBrowserOp(op.kind)) {
 		const approved = await requestApproval(op, {
 			agentId: requesting.toolType,
 			sessionId,
@@ -492,6 +549,9 @@ export async function resolveAndRun(
 	}
 	if (op.kind === 'closeTab') {
 		return closeTabForSession(sessionId, tabUuid);
+	}
+	if (op.kind === 'viewport') {
+		return viewportForSession(sessionId, tabUuid, op);
 	}
 
 	// Focused agent: operate on the live (visible or kept-alive hidden) webview

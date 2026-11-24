@@ -7,6 +7,8 @@
  * across the IPC boundary.
  */
 
+import type { BrowserViewportPreset } from './browserViewport';
+
 /** Raw browser-tab data the renderer pushes per session. The registry assigns
  *  the stable public `browser:N` id, so we only carry raw tab metadata here. */
 export interface CoworkingBrowserInput {
@@ -39,7 +41,8 @@ export interface CoworkingBrowserEntry {
  * A browser operation that needs the LIVE webview (page-text/HTML extraction or
  * any interaction). Routed bridge -> ipc -> renderer responder, which resolves
  * the target tab's BrowserTabView handle. `read` is read-only; every other kind
- * is state-changing and gated behind the browser-interaction permission.
+ * is state-changing and gated behind the browser-interaction permission, except
+ * the host-only kinds (see {@link UNGATED_BROWSER_OP_KINDS}).
  */
 export type BrowserOp =
 	| { kind: 'read'; format: 'text' | 'innerText' | 'html'; selector?: string }
@@ -55,7 +58,8 @@ export type BrowserOp =
 	| { kind: 'waitFor'; selector: string; timeoutMs?: number }
 	| { kind: 'newTab'; url?: string; ephemeral?: boolean }
 	| { kind: 'closeTab' }
-	| BrowserPickOp;
+	| BrowserPickOp
+	| BrowserViewportOp;
 
 /**
  * A box in a browser tab's viewport, in the page's CSS pixels from the
@@ -175,9 +179,45 @@ export function readBrowserPickTarget(fields: {
 	return { ok: true, target: { selector } };
 }
 
+/**
+ * Set or read a browser tab's viewport preset (`maestro-cli browser-viewport`):
+ * the width the tab shows its page at, as the toolbar's viewport control and the
+ * palette's `Browser: Viewport ...` entries choose it. With `preset` it sets it;
+ * without, it only reads. Either way the result names the preset the tab shows
+ * after the op and the one it showed before.
+ *
+ * Host-only, like `pick`: not an MCP op (`validateInteractionOp` has no case for
+ * it), and never gated, since it never touches the page. The preset is a saved
+ * field of the tab, so the renderer reads and writes it in the store and needs
+ * no live webview, for any agent's tab and without moving the view.
+ */
+export interface BrowserViewportOp {
+	kind: 'viewport';
+	preset?: BrowserViewportPreset;
+}
+
+/**
+ * Op kinds that are never an interaction: `read` changes nothing, and the
+ * host-only `pick` and `viewport` only reach the renderer from the desktop or
+ * `maestro-cli`, never from an agent's MCP tool. None of them is gated behind
+ * the interaction permission or a per-call approval.
+ */
+export const UNGATED_BROWSER_OP_KINDS = [
+	'read',
+	'pick',
+	'viewport',
+] as const satisfies readonly BrowserOp['kind'][];
+
+export type UngatedBrowserOpKind = (typeof UNGATED_BROWSER_OP_KINDS)[number];
+
 /** Interaction (state-changing) op kinds, gated behind the interaction
- *  permission. `read` and the host-only `pick` are excluded. */
-export type BrowserInteractionKind = Exclude<BrowserOp['kind'], 'read' | 'pick'>;
+ *  permission: every kind except {@link UNGATED_BROWSER_OP_KINDS}. */
+export type BrowserInteractionKind = Exclude<BrowserOp['kind'], UngatedBrowserOpKind>;
+
+/** Whether an op kind skips the interaction gate and per-call approval. */
+export function isUngatedBrowserOp(kind: BrowserOp['kind']): kind is UngatedBrowserOpKind {
+	return (UNGATED_BROWSER_OP_KINDS as readonly string[]).includes(kind);
+}
 
 /** Result of a BrowserOp resolved by the renderer. Fields are populated per op
  *  kind; unused fields are omitted. */
@@ -197,6 +237,10 @@ export interface BrowserOpResult {
 	pickId?: string;
 	/** `pick` with `queue`: the queued message's id (`maestro-cli queue remove`). */
 	queueItemId?: string;
+	/** `viewport`: the preset the tab shows after the op. */
+	viewportPreset?: BrowserViewportPreset;
+	/** `viewport`: the preset the tab showed before the op. */
+	previousViewportPreset?: BrowserViewportPreset;
 }
 
 /** Per-agent policy for whether a state-changing browser op needs an explicit
@@ -233,9 +277,9 @@ export function browserOpNeedsConfirm(
 	policy: BrowserConfirmPolicy,
 	kind: BrowserOp['kind']
 ): boolean {
-	// `pick` never changes the page and only reaches here from the host (CLI),
-	// so it is never gated, like `read`.
-	if (kind === 'read' || kind === 'pick') return false;
+	// `pick` and `viewport` never change the page and only reach here from the
+	// host (CLI), so they are never gated, like `read`.
+	if (isUngatedBrowserOp(kind)) return false;
 	// eval is force-confirmed even when the policy is 'off'.
 	if (FORCE_CONFIRM_KINDS.includes(kind as BrowserInteractionKind)) return true;
 	if (policy === 'off') return false;

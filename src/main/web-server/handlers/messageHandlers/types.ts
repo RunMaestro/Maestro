@@ -29,6 +29,7 @@ import type {
 	AchievementData,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
+	BrowserViewportCallback,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
@@ -186,6 +187,8 @@ export interface MessageHandlerCallbacks {
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	/** Design Mode by selector or region (`browser-pick`). See `PickBrowserElementCallback`. */
 	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
+	/** `maestro-cli browser-viewport` - set or read a browser tab's viewport preset. */
+	browserViewport?: BrowserViewportCallback;
 	/** `maestro-cli browser-picks` - list the Design Mode chips in a composer, or remove one. */
 	designPickCommand?: DesignPickCommandCallback;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */

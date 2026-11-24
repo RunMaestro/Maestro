@@ -21,6 +21,13 @@ import type {
 	DesignPickCommandResult,
 	DesignPickSummary,
 } from '../../shared/designPickCommands';
+import {
+	BROWSER_VIEWPORT_PRESETS,
+	browserViewportWidth,
+	describeBrowserViewport,
+	parseBrowserViewportPreset,
+	type BrowserViewportPreset,
+} from '../../shared/browserViewport';
 
 interface OpenBrowserOptions {
 	agent?: string;
@@ -408,4 +415,115 @@ export async function browserPicks(options: BrowserPicksOptions): Promise<void> 
 	}
 	console.log(`Design Mode chips in ${where} (${picks.length}):`);
 	for (const pick of picks) console.log(`\n${describeDesignPick(pick)}\n\n${pick.text}`);
+}
+
+interface BrowserViewportOptions {
+	agent?: string;
+	json?: boolean;
+}
+
+interface BrowserViewportReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	tabId?: string;
+	browserId?: string;
+	preset?: string;
+	previous?: string;
+}
+
+/**
+ * Set or read a browser tab's viewport preset: the width the tab shows its page
+ * at (`fit`, `desktop` 1440, `laptop` 1280, `tablet` 768, `phone` 390), as the
+ * toolbar's viewport control and the palette's `Browser: Viewport ...` entries
+ * choose it. With a preset it sets it; without, it only reads. Either way it
+ * reports the preset the tab shows afterwards and the one it showed before, so
+ * a write is its own read and `Was:` is the way back.
+ *
+ * `<tab>` is the tab id `open-browser` printed, or the tab's Coworking id
+ * (`browser:N`, which needs Coworking on). The preset is a saved field of the
+ * tab, so the tab need not be on screen, and nothing moves the view.
+ */
+export async function browserViewport(
+	tab: string,
+	preset: string | undefined,
+	options: BrowserViewportOptions
+): Promise<void> {
+	const { json } = options;
+	const tabRef = tab.trim();
+	if (!tabRef) return failCommand('Tab cannot be empty', json);
+
+	// A preset that is given but is not one of the five is refused, never read as
+	// "no preset": a script that typos `phone` must not get a quiet read back.
+	let wanted: BrowserViewportPreset | undefined;
+	if (preset !== undefined) {
+		const parsed = parseBrowserViewportPreset(preset);
+		if (!parsed) {
+			return failCommand(
+				`Unknown viewport preset "${preset}". Use one of: ${BROWSER_VIEWPORT_PRESETS.join(', ')}`,
+				json
+			);
+		}
+		wanted = parsed;
+	}
+
+	let sessionId: string;
+	try {
+		// The agent on screen, like `browser-pick`: the tab is looked up in its list.
+		sessionId = resolveAgentOrActive(options.agent, 'whose tab you mean');
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+
+	let result: BrowserViewportReply;
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand<BrowserViewportReply>(
+				{
+					type: 'browser_viewport',
+					sessionId,
+					tab: tabRef,
+					...(wanted ? { preset: wanted } : {}),
+				},
+				'browser_viewport_result'
+			)
+		);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+	if (!result.success) {
+		return failCommand(result.error || 'Failed to set or read the viewport', json);
+	}
+
+	// What the tab shows now, as the desktop read it back from the tab itself.
+	const current = parseBrowserViewportPreset(result.preset);
+	const previous = parseBrowserViewportPreset(result.previous);
+	if (!current || !previous) {
+		return failCommand("Maestro did not report the tab's viewport", json);
+	}
+	const changed = current !== previous;
+
+	if (json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				sessionId,
+				tabId: result.tabId ?? null,
+				browserId: result.browserId ?? null,
+				preset: current,
+				width: browserViewportWidth(current),
+				previous,
+				changed,
+			})
+		);
+		return;
+	}
+	if (!wanted) {
+		console.log(`The viewport of ${tabRef} is ${describeBrowserViewport(current)}`);
+	} else if (changed) {
+		console.log(`Set the viewport of ${tabRef} to ${describeBrowserViewport(current)}`);
+		console.log(`  Was: ${describeBrowserViewport(previous)}`);
+	} else {
+		console.log(`The viewport of ${tabRef} is already ${describeBrowserViewport(current)}`);
+	}
 }

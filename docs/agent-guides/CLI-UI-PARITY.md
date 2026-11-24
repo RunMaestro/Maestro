@@ -315,6 +315,8 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Browser Design Mode region pick: drag a box over the page, add the region to the message (region card)                    | `browser-pick <tab> --rect <x,y,w,h> [--note] [--queue]`; read: `browser-picks` or `queue list`  |
 | Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                    | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                 |
 | Browser Design Mode: remove a chip from the composer (the chip's X)                                                       | `browser-picks --remove <pickId>`; read: `browser-picks`                                         |
+| Browser tab: viewport preset (toolbar Viewport control, palette "Browser: Viewport ...")                                  | `browser-viewport <tab> [preset] [-a <agent>] [--json]` (omit the preset to read it)             |
+| Browser Design Mode: fold the side bars while it is on (a setting; `settings` covers it, no new verb)                     | `settings set designModeCollapsePanels true\|false`; read: `settings get <key>`                  |
 
 ## Open gaps
 

@@ -9,6 +9,8 @@ import type {
 	ReadTerminalTabResult,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
+	BrowserViewportRequest,
+	BrowserViewportResult,
 } from '../types';
 import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/coworking-registry';
 import { runHostBrowserOp } from '../../coworking/coworking-tools';
@@ -19,6 +21,7 @@ import {
 	type BrowserOp,
 	type BrowserOpResult,
 } from '../../../shared/coworkingBrowser';
+import { parseBrowserViewportPreset } from '../../../shared/browserViewport';
 import {
 	normalizeDesignPickCommandResult,
 	type DesignPickCommandRequest,
@@ -29,15 +32,34 @@ import {
 const COWORKING_BROWSER_ID = /^browser:\d+$/;
 
 /**
+ * The renderer tab id a host verb's `tab` argument names: either the tab id
+ * `open-browser` returned, which the renderer checks against `sessionId`, or a
+ * Coworking id, which only resolves while Coworking is on and the tab is visible
+ * to agents (the same rule the agent tools obey).
+ */
+function resolveBrowserTabRef(
+	registry: CoworkingRegistry,
+	sessionId: string,
+	tab: string
+): { ok: true; tabId: string } | { ok: false; error: string } {
+	const tabId = tab.trim();
+	if (!COWORKING_BROWSER_ID.test(tabId)) return { ok: true, tabId };
+	const uuid = registry.resolveBrowserTabUuidForSession(sessionId, tabId);
+	if (uuid) return { ok: true, tabId: uuid };
+	return {
+		ok: false,
+		error: `No browser tab ${tabId} in this agent. Coworking ids need Coworking on and the tab visible to agents; pass the tab id from open-browser instead.`,
+	};
+}
+
+/**
  * Design Mode by selector or by region (`maestro-cli browser-pick`). Resolves
  * the tab the caller named, then runs the host-only `pick` op through the
  * Coworking browser resolver, so the CLI reaches the same renderer code (handle
  * resolution, mounting a kept-alive tab, the composer delivery) as a click or a
  * drag.
  *
- * `tab` is either the tab id `open-browser` returned, which the renderer checks
- * against `sessionId`, or a Coworking id, which only resolves while Coworking
- * is on and the tab is visible to agents (the same rule the agent tools obey).
+ * `tab` is named as `resolveBrowserTabRef()` reads it.
  */
 export async function pickBrowserElement(
 	request: PickBrowserElementRequest,
@@ -51,18 +73,9 @@ export async function pickBrowserElement(
 	const target = readBrowserPickTarget(request);
 	if (!target.ok) return { success: false, error: target.error, screenshot: false };
 
-	let tabId = request.tab.trim();
-	if (COWORKING_BROWSER_ID.test(tabId)) {
-		const uuid = registry.resolveBrowserTabUuidForSession(request.sessionId, tabId);
-		if (!uuid) {
-			return {
-				success: false,
-				error: `No browser tab ${tabId} in this agent. Coworking ids need Coworking on and the tab visible to agents; pass the tab id from open-browser instead.`,
-				screenshot: false,
-			};
-		}
-		tabId = uuid;
-	}
+	const resolved = resolveBrowserTabRef(registry, request.sessionId, request.tab);
+	if (!resolved.ok) return { success: false, error: resolved.error, screenshot: false };
+	const tabId = resolved.tabId;
 
 	const op: BrowserOp = {
 		kind: 'pick',
@@ -97,6 +110,54 @@ export async function pickBrowserElement(
 		...(result.ok && result.pickId ? { pickId: result.pickId } : {}),
 		...(result.ok && result.queueItemId ? { queueItemId: result.queueItemId } : {}),
 	};
+}
+
+/**
+ * Set or read a browser tab's viewport preset (`maestro-cli browser-viewport`).
+ * Resolves the tab the caller named, then runs the host-only `viewport` op
+ * through the Coworking browser resolver, so the CLI reaches the same store
+ * write the toolbar's viewport control ends in. The renderer needs no live
+ * webview for it, so it works for a tab that is not on screen.
+ *
+ * The result always names the preset the tab shows after the call and the one it
+ * showed before, so a write is its own read, and the previous value is the undo.
+ */
+export async function browserViewport(
+	request: BrowserViewportRequest,
+	deps: {
+		registry?: CoworkingRegistry;
+		run?: (sessionId: string, tabUuid: string, op: BrowserOp) => Promise<BrowserOpResult>;
+	} = {}
+): Promise<BrowserViewportResult> {
+	const registry = deps.registry ?? coworkingRegistry;
+	const run = deps.run ?? runHostBrowserOp;
+
+	const resolved = resolveBrowserTabRef(registry, request.sessionId, request.tab);
+	if (!resolved.ok) return { success: false, error: resolved.error };
+	const tabId = resolved.tabId;
+
+	const op: BrowserOp = { kind: 'viewport', ...(request.preset ? { preset: request.preset } : {}) };
+	// The resolver rejects with the renderer's message when the op fails (the tab
+	// is not in this agent, or was closed or hidden from agents meanwhile).
+	let result: BrowserOpResult;
+	try {
+		result = await run(request.sessionId, tabId, op);
+	} catch (error) {
+		return { success: false, error: error instanceof Error ? error.message : String(error), tabId };
+	}
+	const preset = parseBrowserViewportPreset(result.viewportPreset);
+	const previous = parseBrowserViewportPreset(result.previousViewportPreset);
+	if (!result.ok || !preset || !previous) {
+		return {
+			success: false,
+			error: result.ok
+				? "Maestro did not report the tab's viewport"
+				: result.content || 'Browser viewport failed',
+			tabId,
+		};
+	}
+	const browserId = registry.getBrowserIdForTab(request.sessionId, tabId) ?? undefined;
+	return { success: true, tabId, ...(browserId ? { browserId } : {}), preset, previous };
 }
 
 export function registerBrowserTabCallbacks(
@@ -196,6 +257,8 @@ export function registerBrowserTabCallbacks(
 	});
 
 	server.setPickBrowserElementCallback((request) => pickBrowserElement(request));
+
+	server.setBrowserViewportCallback((request) => browserViewport(request));
 
 	// Design Mode chip verbs are a ROUND TRIP: the caller is told which chips
 	// wait in the composer, or which one it took off. The chips are renderer

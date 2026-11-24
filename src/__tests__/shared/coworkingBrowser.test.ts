@@ -8,10 +8,13 @@
 import { describe, it, expect } from 'vitest';
 import {
 	BROWSER_PICK_RECT_MIN_SIDE,
+	UNGATED_BROWSER_OP_KINDS,
 	formatBrowserPickRect,
+	isUngatedBrowserOp,
 	parseBrowserPickRect,
 	readBrowserPickRect,
 	readBrowserPickTarget,
+	type BrowserOp,
 } from '../../shared/coworkingBrowser';
 
 describe('parseBrowserPickRect', () => {
@@ -147,5 +150,32 @@ describe('readBrowserPickTarget', () => {
 			ok: false,
 			error: 'Missing selector or rect',
 		});
+	});
+});
+
+describe('isUngatedBrowserOp', () => {
+	it('is the read, and the host-only pick and viewport ops, and nothing else', () => {
+		expect([...UNGATED_BROWSER_OP_KINDS].sort()).toEqual(['pick', 'read', 'viewport']);
+		expect(isUngatedBrowserOp('read')).toBe(true);
+		expect(isUngatedBrowserOp('pick')).toBe(true);
+		expect(isUngatedBrowserOp('viewport')).toBe(true);
+	});
+
+	it('leaves every interaction op gated', () => {
+		const interactions: BrowserOp['kind'][] = [
+			'navigate',
+			'back',
+			'forward',
+			'reload',
+			'stop',
+			'click',
+			'type',
+			'eval',
+			'screenshot',
+			'waitFor',
+			'newTab',
+			'closeTab',
+		];
+		for (const kind of interactions) expect(isUngatedBrowserOp(kind)).toBe(false);
 	});
 });
