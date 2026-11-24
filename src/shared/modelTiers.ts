@@ -304,7 +304,10 @@ export function cheapResumeTurnSettings(
 } {
 	const cheap = cheapTurnSettings(toolType, supportedEfforts);
 	if (RESUME_SHARES_THREAD.has(toolType)) {
-		return { model: current.model, effort: cheap.effort ?? current.effort };
+		// The turn runs on the session's model, so the low rung is checked against
+		// that model's refusals (Antigravity keys them per model), not the cheap tier's.
+		const effort = resolveEffortLevel(toolType, 'low', supportedEfforts, current.model);
+		return { model: current.model, effort: effort ?? current.effort };
 	}
 	const shrinksWindow =
 		(getModelContextWindowOverride(current.model) ?? FALLBACK_CONTEXT_WINDOW) >

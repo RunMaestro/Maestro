@@ -248,6 +248,31 @@ describe('cheap synopsis turn resumed on its session', () => {
 		expect(cheapResumeTurnSettings('antigravity')).toEqual({ model: undefined, effort: 'low' });
 	});
 
+	it('checks the resumed model, not the cheap tier, for an Antigravity refusal', () => {
+		try {
+			// Hydrogen refusing low must not stop a Carbon synopsis from dropping to low.
+			noteEffortRejection('antigravity', {
+				value: 'low',
+				model: 'gemini-4-hydrogen',
+				supported: ['high'],
+			});
+			expect(
+				cheapResumeTurnSettings('antigravity', { model: 'gemini-4-carbon', effort: 'high' })
+			).toEqual({ model: 'gemini-4-carbon', effort: 'low' });
+			// The session's own model refusing low keeps its configured effort.
+			noteEffortRejection('antigravity', {
+				value: 'low',
+				model: 'gemini-4-carbon',
+				supported: ['high'],
+			});
+			expect(
+				cheapResumeTurnSettings('antigravity', { model: 'gemini-4-carbon', effort: 'high' })
+			).toEqual({ model: 'gemini-4-carbon', effort: 'high' });
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
