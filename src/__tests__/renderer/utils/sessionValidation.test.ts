@@ -18,6 +18,11 @@ describe('sessionValidation', () => {
 			expect(findAgentWithName('  Intranet ', sessions)?.id).toBe('a');
 		});
 
+		it('matches a stored name that kept surrounding spaces', () => {
+			const padded = [createMockSession({ id: 'p', name: ' intranet ' })];
+			expect(findAgentWithName('Intranet', padded)?.id).toBe('p');
+		});
+
 		it('returns undefined for a free name', () => {
 			expect(findAgentWithName('intranet 2', sessions)).toBeUndefined();
 		});

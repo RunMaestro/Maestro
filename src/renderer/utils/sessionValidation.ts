@@ -13,7 +13,8 @@ export interface SessionValidationResult {
 }
 
 /**
- * The agent already using `name`, compared trimmed and case-insensitively, the
+ * The agent already using `name`, compared trimmed (both sides: a stored name
+ * can keep surrounding spaces) and case-insensitively, the
  * same way both validators below reject a duplicate. A blank name matches
  * nothing. `excludeSessionId` skips the agent being renamed.
  *
@@ -30,7 +31,8 @@ export function findAgentWithName(
 	const trimmedName = name.trim().toLowerCase();
 	if (!trimmedName) return undefined;
 	return existingSessions.find(
-		(session) => session.id !== excludeSessionId && session.name.toLowerCase() === trimmedName
+		(session) =>
+			session.id !== excludeSessionId && session.name.trim().toLowerCase() === trimmedName
 	);
 }
 
