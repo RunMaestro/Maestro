@@ -51,7 +51,7 @@ describe('parsers/index', () => {
 		expect(importStorageProbes).toEqual([]);
 		const direct = new CodexOutputParser();
 		initializeOutputParsers();
-		expect(getAllOutputParsers()).toHaveLength(10);
+		expect(getAllOutputParsers()).toHaveLength(11);
 		expect(parserStorage.probes).toEqual([]);
 
 		// Fixtures appear after construction and registration; first parsing resolves them.

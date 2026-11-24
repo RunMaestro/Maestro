@@ -77,6 +77,14 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 		},
 		docsUrl: 'https://opencode.ai/docs/',
 	},
+	kilo: {
+		commands: {
+			darwin: 'npm install -g @kilocode/cli',
+			linux: 'npm install -g @kilocode/cli',
+			win32: 'npm install -g @kilocode/cli',
+		},
+		docsUrl: 'https://github.com/Kilo-Org/kilocode',
+	},
 	'factory-droid': {
 		commands: {
 			darwin:

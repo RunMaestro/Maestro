@@ -106,7 +106,7 @@ function getDataDir(brand: OpenCodeStorageBrand): string {
  * Get the JSON storage directory (pre-v1.2) for a brand.
  * Resolve only during local storage operations, never at import or construction.
  */
-function getStorageDir(brand: OpenCodeStorageBrand): string {
+function resolveStorageDir(brand: OpenCodeStorageBrand): string {
 	return path.join(getDataDir(brand), 'storage');
 }
 
@@ -118,7 +118,7 @@ function getStorageDir(brand: OpenCodeStorageBrand): string {
  * hit. Falls back to the preferred candidate's path when none exist, so callers
  * still get a deterministic value (existence is re-checked at use).
  */
-function getDbPath(brand: OpenCodeStorageBrand): string {
+function resolveDbPath(brand: OpenCodeStorageBrand): string {
 	const candidates = getDataDirCandidates(brand);
 	for (const candidate of candidates) {
 		const dbPath = path.join(candidate, brand.dbFileName);
@@ -444,46 +444,48 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Local JSON storage directory (pre-v1.2): the history root when one was
 	 * given, otherwise the brand's data directory.
 	 */
-	private getLocalStorageDir(): string {
-		return this.historyRoot ? path.join(this.historyRoot, 'storage') : getStorageDir(this.brand);
+	protected getStorageDir(): string {
+		return this.historyRoot
+			? path.join(this.historyRoot, 'storage')
+			: resolveStorageDir(this.brand);
 	}
 
 	/**
 	 * Local SQLite database path (v1.2+): the history root when one was given,
 	 * otherwise the brand's data directory.
 	 */
-	private getLocalDbPath(): string {
+	protected getDbPath(): string {
 		return this.historyRoot
 			? path.join(this.historyRoot, this.brand.dbFileName)
-			: getDbPath(this.brand);
+			: resolveDbPath(this.brand);
 	}
 
 	/**
 	 * Get the session directory for a project (local)
 	 */
 	private getSessionDir(projectId: string): string {
-		return path.join(this.getLocalStorageDir(), 'session', projectId);
+		return path.join(this.getStorageDir(), 'session', projectId);
 	}
 
 	/**
 	 * Get the message directory for a session (local)
 	 */
 	private getMessageDir(sessionId: string): string {
-		return path.join(this.getLocalStorageDir(), 'message', sessionId);
+		return path.join(this.getStorageDir(), 'message', sessionId);
 	}
 
 	/**
 	 * Get the part directory for a message (local)
 	 */
 	private getPartDir(messageId: string): string {
-		return path.join(this.getLocalStorageDir(), 'part', messageId);
+		return path.join(this.getStorageDir(), 'part', messageId);
 	}
 
 	/**
 	 * Get the storage base directory (remote)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteStorageDir(): string {
+	protected getRemoteStorageDir(): string {
 		return `~/.local/share/${this.brand.dirName}/storage`;
 	}
 
@@ -512,7 +514,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Find the project ID for a given path by checking existing projects
 	 */
 	private async findProjectId(projectPath: string): Promise<string | null> {
-		const projectDir = path.join(this.getLocalStorageDir(), 'project');
+		const projectDir = path.join(this.getStorageDir(), 'project');
 
 		try {
 			await fs.access(projectDir);
@@ -913,7 +915,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Returns null if the database doesn't exist or lacks the expected schema.
 	 */
 	private listSessionsSqlite(projectPath: string): AgentSessionInfo[] | null {
-		const db = openOpenCodeDb(this.getLocalDbPath());
+		const db = openOpenCodeDb(this.getDbPath());
 		if (!db) return null;
 
 		try {
@@ -1225,7 +1227,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCost: number;
 	} | null {
 		const ownsDb = !existingDb;
-		const db = existingDb ?? openOpenCodeDb(this.getLocalDbPath());
+		const db = existingDb ?? openOpenCodeDb(this.getDbPath());
 		if (!db) return null;
 
 		try {
@@ -1755,7 +1757,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		if (sshConfig) {
 			return this.getRemoteMessageDir(sessionId);
 		}
-		const dbPath = this.getLocalDbPath();
+		const dbPath = this.getDbPath();
 		if (sessionExistsInSqlite(sessionId, dbPath)) {
 			return dbPath;
 		}
@@ -1777,7 +1779,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 		try {
 			// Deletion not supported for SQLite sessions (DB opened read-only)
-			if (sessionExistsInSqlite(sessionId, this.getLocalDbPath())) {
+			if (sessionExistsInSqlite(sessionId, this.getDbPath())) {
 				logger.warn(
 					'Delete message pair not supported for SQLite-backed OpenCode sessions',
 					LOG_CONTEXT
