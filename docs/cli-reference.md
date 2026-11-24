@@ -513,6 +513,22 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 | `--restore` | Unarchive the chat instead     | -       |
 | `--json`    | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)

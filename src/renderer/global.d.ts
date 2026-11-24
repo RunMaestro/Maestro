@@ -752,6 +752,10 @@ interface MaestroAPI {
 			callback: (chatId: string, archived: boolean, responseChannel: string) => void
 		) => () => void;
 		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSetGroupChatUnread: (
+			callback: (chatId: string, unread: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetGroupChatUnreadResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;

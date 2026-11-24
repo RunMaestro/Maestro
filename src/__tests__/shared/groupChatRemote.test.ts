@@ -37,6 +37,11 @@ describe('toRemoteGroupChatState', () => {
 		});
 	});
 
+	it('carries the unread dot, defaulting to false', () => {
+		expect(toRemoteGroupChatState(baseChat, 'idle').unread).toBe(false);
+		expect(toRemoteGroupChatState(baseChat, 'idle', [], true).unread).toBe(true);
+	});
+
 	it('marks user lines as user and everything else as assistant, with epoch timestamps', () => {
 		const state = toRemoteGroupChatState(baseChat, 'idle', [
 			{ timestamp: '2026-09-26T10:00:00.000Z', from: 'user', content: 'go' },

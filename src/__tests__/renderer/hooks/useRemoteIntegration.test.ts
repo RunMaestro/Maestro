@@ -408,6 +408,8 @@ describe('useRemoteIntegration', () => {
 		sendRemoteStopGroupChatResponse: vi.fn(),
 		onRemoteArchiveGroupChat: vi.fn().mockReturnValue(() => {}),
 		sendRemoteArchiveGroupChatResponse: vi.fn(),
+		onRemoteSetGroupChatUnread: vi.fn().mockReturnValue(() => {}),
+		sendRemoteSetGroupChatUnreadResponse: vi.fn(),
 		onRemoteSendGroupChatMessage: vi.fn().mockReturnValue(() => {}),
 		sendRemoteSendGroupChatMessageResponse: vi.fn(),
 		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
@@ -3356,7 +3358,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('group chat bridge', () => {
-		it('subscribes to all six group chat requests and unsubscribes on unmount', () => {
+		it('subscribes to all seven group chat requests and unsubscribes on unmount', () => {
 			const unsubscribe = vi.fn();
 			const listeners = [
 				mockProcess.onRemoteGetGroupChats,
@@ -3365,6 +3367,7 @@ describe('useRemoteIntegration', () => {
 				mockProcess.onRemoteStopGroupChat,
 				mockProcess.onRemoteSendGroupChatMessage,
 				mockProcess.onRemoteArchiveGroupChat,
+				mockProcess.onRemoteSetGroupChatUnread,
 			];
 			for (const listener of listeners) listener.mockReturnValue(unsubscribe);
 
@@ -3372,7 +3375,7 @@ describe('useRemoteIntegration', () => {
 			for (const listener of listeners) expect(listener).toHaveBeenCalledTimes(1);
 
 			unmount();
-			expect(unsubscribe).toHaveBeenCalledTimes(6);
+			expect(unsubscribe).toHaveBeenCalledTimes(7);
 		});
 	});
 

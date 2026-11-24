@@ -45,6 +45,7 @@ import {
 	groupChatStop,
 	groupChatArchive,
 	groupChatAdd,
+	groupChatUnread,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -800,6 +801,18 @@ groupChat
 	.option('--restore', 'Unarchive the chat instead')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatArchive);
+
+groupChat
+	.command('unread <chat>')
+	.description('Mark a group chat unread (the red dot on its Left Bar row)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, true, options));
+
+groupChat
+	.command('read <chat>')
+	.description("Clear a group chat's unread dot")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, false, options));
 
 // Open file command - open a file in the Maestro desktop app.
 //

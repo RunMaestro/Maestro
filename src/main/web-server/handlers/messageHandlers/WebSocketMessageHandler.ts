@@ -163,6 +163,7 @@ import {
 	handleSendGroupChatMessage,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleSetGroupChatUnread,
 	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
@@ -594,6 +595,10 @@ export class WebSocketMessageHandler {
 
 			case 'archive_group_chat':
 				handleArchiveGroupChat(this.ctx, client, message);
+				break;
+
+			case 'set_group_chat_unread':
+				handleSetGroupChatUnread(this.ctx, client, message);
 				break;
 
 			case 'add_group_chat_participant':

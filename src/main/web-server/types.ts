@@ -1423,6 +1423,7 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export type SetGroupChatUnreadCallback = (chatId: string, unread: boolean) => Promise<boolean>;
 export interface AddGroupChatParticipantResult {
 	success: boolean;
 	/** The participant's name in the chat. */

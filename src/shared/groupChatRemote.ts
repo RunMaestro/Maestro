@@ -36,13 +36,16 @@ export interface RemoteGroupChatState {
 	state?: GroupChatState;
 	moderatorAgentId?: string;
 	archived?: boolean;
+	/** True while the room carries the Left Bar's unread dot; absent from older builds. */
+	unread?: boolean;
 	currentTurn?: string;
 }
 
 export function toRemoteGroupChatState(
 	chat: GroupChat,
 	state: GroupChatState,
-	messages: GroupChatMessage[] = []
+	messages: GroupChatMessage[] = [],
+	unread = false
 ): RemoteGroupChatState {
 	return {
 		id: chat.id,
@@ -64,6 +67,7 @@ export function toRemoteGroupChatState(
 		state,
 		moderatorAgentId: chat.moderatorAgentId,
 		archived: chat.archived,
+		unread,
 	};
 }
 
