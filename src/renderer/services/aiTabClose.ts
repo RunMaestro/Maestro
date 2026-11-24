@@ -13,7 +13,9 @@
  * - a wizard tab is closed WITHOUT history and its wizard is ended, since a
  *   half-finished wizard cannot be restored;
  * - in the browser build the desktop owns the tab inventory, so the close is a
- *   request to it rather than a local store write.
+ *   request to it rather than a local store write;
+ * - a hosted agent's tab closes on its host too, or the host sync brings it
+ *   back.
  *
  * It asks no confirmation. A caller that should confirm (an unsent draft, a
  * wizard in progress) does so first.
@@ -27,6 +29,7 @@ import { snapshotClosedTabTranscript } from '../utils/starredSessions';
 import { persistTabPins } from './messagePins';
 import { addAiTabToUnifiedHistory, closeTab, hasActiveWizard } from '../utils/tabHelpers';
 import { requestDesktopTabClose } from './desktopTabClose';
+import { closeHostedTab } from './hostedTurns';
 
 /**
  * @param endWizard Ends an inline wizard running in the tab. Hook-bound, so a
@@ -52,6 +55,7 @@ export function closeAiTabInSession(
 	if (tabBeforeClose.pinnedMessages?.length) persistTabPins(sessionBeforeClose, tabBeforeClose);
 
 	clearLiveDraft(tabId);
+	closeHostedTab(sessionBeforeClose, tabId);
 	updateSessionWith(sessionId, (s) => {
 		const tab = s.aiTabs.find((t) => t.id === tabId);
 		const isWizardTab = tab && hasActiveWizard(tab);

@@ -24,6 +24,18 @@ export interface LiftedToPointer {
 	at: number;
 }
 
+/**
+ * The setting that switches hosted agents off on this machine (on by default). Off, a lifted
+ * record works as the SSH agent it was: its turns run over SSH from here, nothing is sent to its
+ * host, and nothing on the host or in the record changes, so switching it back on restores hosting.
+ */
+export const HOSTED_AGENTS_SETTING = 'federationHostedAgents';
+
+/** Whether hosted agents are on, from the stored settings (absent means on). */
+export function hostedAgentsEnabled(settings: Record<string, unknown> | undefined | null): boolean {
+	return settings?.[HOSTED_AGENTS_SETTING] !== false;
+}
+
 /** The error code a refused send reports (`--json` output and bridge replies). */
 export const AGENT_LIFTED_CODE = 'AGENT_LIFTED';
 
@@ -83,12 +95,17 @@ export function liftedAgentRef(agent: { liftedTo?: unknown }): string | undefine
  * The message a send to a lifted agent is refused with, or undefined when the agent was not
  * lifted and the send may go ahead.
  */
-export function liftedSendRefusal(agent: {
-	name?: string;
-	liftedTo?: unknown;
-}): string | undefined {
+export function liftedSendRefusal(
+	agent: {
+		name?: string;
+		liftedTo?: unknown;
+	},
+	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
+	hostedEnabled: boolean | (() => boolean) = true
+): string | undefined {
 	const pointer = readLiftedTo(agent.liftedTo);
 	if (!pointer) return undefined;
+	if (!(typeof hostedEnabled === 'function' ? hostedEnabled() : hostedEnabled)) return undefined;
 	const ref = peerAgentRef(pointer.peer, pointer.agentId);
 	const who = agent.name ? `"${agent.name}"` : 'This agent';
 	return `${who} was moved to peer "${pointer.peer}" and runs there now. Send to ${ref} instead.`;

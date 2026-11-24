@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { SessionFederationBadge } from '../SessionList/SessionFederationBadge';
 // Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
 // Actions button, neither of which exists on main's header.
 import {
@@ -49,6 +50,7 @@ import {
 } from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
 import { projectTabProvider } from '../../utils/providerTabSessions';
+import { isImplicitDefaultProfile } from '../../../shared/providerProfiles';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -135,6 +137,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
 	const showAgentName = useSettingsStore((s) => s.showAgentName);
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
@@ -179,6 +182,14 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 		activeProfile && (activeProfile.accountKey || activeProfile.credential)
 			? activeProfile.shortLabel
 			: null;
+	// The header fallback (shown while the gauge has no window) names only an
+	// account that tells several apart; the implicit default ("Codex default")
+	// is the one every single-account user is on.
+	const showProfileFallback =
+		!!activeProfile &&
+		!!activeSession &&
+		activeProfileLabel !== null &&
+		!isImplicitDefaultProfile(activeSession.toolType, activeProfile);
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Anchors the git menu, and is the hover target that opens it. Wrapping both
@@ -400,6 +411,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							data-testid="bookmark-icon"
 						/>
 					)}
+					{/* The one mark of a hosted agent: its turns run on the Federation host, everything
+					    else is the same agent. Hover it for what that means and how the host stands. */}
+					{activeSession.liftedTo && hostingOn && (
+						<SessionFederationBadge theme={theme} session={activeSession} />
+					)}
 					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the
 					    header runs out of room. A hard cap truncates a name that had space to
 					    spare; letting flex do the clamping means the text is only ever cut when
@@ -587,7 +603,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				{activeSession.inputMode === 'ai' &&
 					!activeFileTabId &&
 					activeProfile &&
-					activeProfileLabel &&
+					showProfileFallback &&
 					!(activeTabContextWindow > 0) && (
 						<span
 							className="text-xs font-mono truncate min-w-0"

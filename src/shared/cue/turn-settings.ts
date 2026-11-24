@@ -54,7 +54,8 @@ export function cueTurnSettingsOf(sub: CueTurnSettings): CueTurnSettings | undef
 /**
  * Resolve a subscription's settings against the agent that runs it.
  * `agentModel` / `agentEffort` are the agent's own configured values, and
- * `routing` its tier targets and the harness defaults, so a subscription's
+ * `routing` its tier targets, the harness defaults and, for a provider whose
+ * catalogue is checked, the account's discovered models, so a subscription's
  * tier launches where the same tier launches in a playbook. A pinned model
  * names the model only: the run stays on the agent's own model source.
  */

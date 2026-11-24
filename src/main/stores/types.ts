@@ -120,6 +120,8 @@ export interface MaestroSettings {
 	sshRemoteHonorGitignore: boolean;
 	// Federation: move SSH agents onto their remote's host automatically
 	federationAutoMove: boolean;
+	/** Off: every hosted agent works as its SSH agent from this machine (`HOSTED_AGENTS_SETTING`). */
+	federationHostedAgents: boolean;
 	// Unique installation identifier (generated once on first run)
 	installationId: string | null;
 	// WakaTime integration

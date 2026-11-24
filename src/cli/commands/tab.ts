@@ -28,7 +28,7 @@
 // sent as its own continuity_preview message (never a flag on summarize_context,
 // which an older desktop would answer by compacting).
 //
-// Federation: "tab new", "tab rename", "tab star" and "tab unstar" take
+// Federation: "tab new", "tab close", "tab rename", "tab star" and "tab unstar" take
 // `--agent peer:agent` to act on an agent a peer's host owns. They reach the
 // host over the peer's forward and run the shared `runPeerAgentAction()`, the
 // same function the desktop's mirrored tab strip calls, so nothing here writes
@@ -254,6 +254,18 @@ async function tabAction(
 }
 
 export async function tabClose(tabId: string, options: TabMutateOptions): Promise<void> {
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => ({
+				kind: 'close-tab',
+				tabId: pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId).id,
+			}),
+			(result) => `Closed tab ${'tabId' in result ? result.tabId : tabId}`
+		);
+	}
 	await tabAction(tabId, options, (owner) => ({
 		type: 'close_tab',
 		responseType: 'close_tab_result',

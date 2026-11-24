@@ -366,6 +366,30 @@ describe('resolveTurnSettings', () => {
 		}
 	});
 
+	it('keeps the agent model and names the tier model an account does not offer', () => {
+		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" -->\n- [ ] x`);
+		const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-hydrogen', undefined, {
+			offeredModels: ['gemini-4-hydrogen', 'gemini-3.8-flash'],
+		});
+		// agy would refuse gemini-4-carbon by name and fail the task.
+		expect(resolved.model).toBe('gemini-4-hydrogen');
+		expect(resolved.refusal).toBeUndefined();
+		expect(resolved.warnings.join(' ')).toContain('gemini-4-carbon');
+		expect(resolved.warnings.join(' ')).toContain('does not offer');
+	});
+
+	it("checks the catalogue against the built-in table only, never the agent's own tier target", () => {
+		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" -->\n- [ ] x`);
+		const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-hydrogen', undefined, {
+			tierTargets: { high: { type: 'provider-model', model: 'gemini-4-neon' } },
+			offeredModels: ['gemini-4-hydrogen'],
+		});
+		// The user picked this target; the launch reports a refusal if the provider does.
+		expect(resolved.model).toBe('gemini-4-neon');
+		expect(resolved.tierSource).toBe('agent');
+		expect(resolved.warnings).toEqual([]);
+	});
+
 	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
 		noteEffortRejection('antigravity', {
 			value: 'high',

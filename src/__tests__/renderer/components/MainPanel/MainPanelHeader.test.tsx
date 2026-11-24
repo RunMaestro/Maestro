@@ -611,6 +611,21 @@ describe('MainPanelHeader', () => {
 			expect(first.customEnvVars).toEqual({ GROK_HOME: '/profiles/.grok-work' });
 		});
 
+		it('omits the implicit default account while the context window is unknown', async () => {
+			render(
+				<MainPanelHeader
+					{...defaultProps}
+					activeSession={makeSession({
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: '/profiles/.grok' },
+					})}
+					activeTabContextWindow={0}
+				/>
+			);
+			await act(async () => {});
+			expect(screen.queryByLabelText(/^Provider profile:/)).not.toBeInTheDocument();
+		});
+
 		it.each([
 			['GROK_AUTH_PATH', '/credentials/independent.json'],
 			['GROK_AUTH', 'synthetic-inline-credential'],

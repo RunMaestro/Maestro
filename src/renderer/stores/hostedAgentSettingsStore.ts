@@ -9,13 +9,10 @@
  *   host's value when the edit was made, so a host change since then reads as a conflict.
  * - `conflicts` and `resolutions`: fields both sides changed, waiting for the person, by
  *   `mirrorKey()` of the host agent, and the picks made for them until the host takes them.
- * - `tabChoices`: this conductor's own model, effort, read-only, and save to History for a
- *   mirrored tab, by `mirrorDraftKey()`. They ride on each message this conductor sends
- *   (`TurnOverrides`) and are never written to the host tab, so other conductors keep theirs.
- * - `editing`: the mirrored agent whose settings the editor shows.
  *
- * `pending` and `tabChoices` survive a restart (guarded local storage of the window that keeps
- * them); conflicts are worked out again from the records on every pass.
+ * `pending` survives a restart (guarded local storage of the window that keeps it); conflicts are
+ * worked out again from the records on every pass. A hosted agent's own settings are edited in its
+ * normal Edit Agent, on its Left Bar record, and the sync sends them.
  */
 
 import { create } from 'zustand';
@@ -25,11 +22,9 @@ import type {
 	StoredSyncValue,
 } from '../../shared/maestro-lib/agents/lift-settings-sync';
 import { readStoredSyncValues } from '../../shared/maestro-lib/agents/lift-settings-sync';
-import { normalizeTurnOverrides, type TurnOverrides } from '../../shared/maestro-lib/client/types';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
 const PENDING_KEY = 'maestro:federation:pending-settings:v1';
-const TAB_CHOICES_KEY = 'maestro:federation:tab-choices:v1';
 
 /** Edits on one mirrored agent that its host has not taken yet. */
 export interface PendingHostedEdit {
@@ -47,18 +42,10 @@ export interface HostedConflictSet {
 	conflicts: LiftSyncConflict[];
 }
 
-/** The mirrored agent the settings editor is open on. */
-export interface HostedSettingsTarget {
-	peerId: string;
-	agentId: string;
-}
-
 interface HostedAgentSettingsState {
 	pending: Record<string, PendingHostedEdit>;
 	conflicts: Record<string, HostedConflictSet>;
 	resolutions: Record<string, Record<string, LiftSyncResolution>>;
-	tabChoices: Record<string, TurnOverrides>;
-	editing: HostedSettingsTarget | null;
 	conflictsOpen: boolean;
 }
 
@@ -68,9 +55,6 @@ interface HostedAgentSettingsActions {
 	resolve(key: string, id: string, resolution: LiftSyncResolution): void;
 	/** Drop the picks the host has taken. */
 	clearResolutions(key: string, ids: readonly string[]): void;
-	setTabChoice(key: string, choice: TurnOverrides): void;
-	openEditor(target: HostedSettingsTarget): void;
-	closeEditor(): void;
 	setConflictsOpen(open: boolean): void;
 }
 
@@ -104,23 +88,12 @@ function loadPending(): Record<string, PendingHostedEdit> {
 	return out;
 }
 
-function loadTabChoices(): Record<string, TurnOverrides> {
-	const out: Record<string, TurnOverrides> = {};
-	for (const [key, value] of Object.entries(readJson(TAB_CHOICES_KEY))) {
-		const choice = normalizeTurnOverrides(value);
-		if (choice) out[key] = choice;
-	}
-	return out;
-}
-
 export const useHostedAgentSettingsStore = create<
 	HostedAgentSettingsState & HostedAgentSettingsActions
 >()((set, get) => ({
 	pending: loadPending(),
 	conflicts: {},
 	resolutions: {},
-	tabChoices: loadTabChoices(),
-	editing: null,
 	conflictsOpen: false,
 
 	setPending: (key, edit) => {
@@ -161,17 +134,6 @@ export const useHostedAgentSettingsStore = create<
 		set({ resolutions });
 	},
 
-	setTabChoice: (key, choice) => {
-		const tabChoices = { ...get().tabChoices };
-		const clean = normalizeTurnOverrides(choice);
-		if (clean) tabChoices[key] = clean;
-		else delete tabChoices[key];
-		set({ tabChoices });
-		safeStorageSet(TAB_CHOICES_KEY, JSON.stringify(tabChoices));
-	},
-
-	openEditor: (target) => set({ editing: target }),
-	closeEditor: () => set({ editing: null }),
 	setConflictsOpen: (open) => set({ conflictsOpen: open }),
 }));
 

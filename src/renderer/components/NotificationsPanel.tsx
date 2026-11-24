@@ -609,7 +609,7 @@ export function NotificationsPanel({
 			<div data-setting-id="notifications-center">
 				<SettingsSectionHeading
 					icon={Bell}
-					description="Keep every toast in an inbox after it leaves the screen. Off by default."
+					description="Keep every toast in an inbox after it leaves the screen. Off by default. This is a preference: every toast also goes to the System Log Viewer either way, and its Toast filter shows only them."
 				>
 					Notification center
 				</SettingsSectionHeading>

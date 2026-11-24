@@ -1553,9 +1553,20 @@ Take back a note no task has read yet (accepts a unique id prefix)
 | `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--json`           | Output the cancelled note as JSON                        | -       |
 
+## `maestro-cli steer-auto-run dismiss <delivery-id>`
+
 ```bash
 maestro-cli steer-auto-run cancel <note-id> --agent <agent-id>
 ```
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the delivered note                      | -       |
+| `--background`     | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--json`           | Output the dismissed delivery as JSON                    | -       |
+
+Clear a delivered note and its task reply from the record (accepts a unique id prefix)
 
 ## `maestro-cli diff-review`
 
@@ -2346,9 +2357,19 @@ Move an SSH remote agent, with its tabs, transcripts, provider sessions and queu
 | `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
 | `--json`     | Output as JSON (for scripting)                         | -       |
 
+## `maestro-cli unlift <agent>`
+
 ```bash
 maestro-cli lift <agent-id> --dry-run
 ```
+
+| Option             | Description                                                  | Default |
+| ------------------ | ------------------------------------------------------------ | ------- |
+| `--offline`        | Do not reach the host: restore from this machine's copy only | -       |
+| `--keep-host-copy` | Leave the agent on the host too (it then has two owners)     | -       |
+| `--json`           | Output as JSON (for scripting)                               | -       |
+
+Move a hosted agent back from its host: an SSH agent again, with the host's tabs and transcripts; automatic moves then leave it alone
 
 ## `maestro-cli federation`
 

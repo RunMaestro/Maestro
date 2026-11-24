@@ -53,6 +53,7 @@ describe('buildFeedbackAccountCandidates', () => {
 			'codex::/home/me/.codex',
 			'opencode',
 			'grok::/home/me/.grok',
+			'antigravity',
 		]);
 		expect(candidates[0].agentNames).toEqual(['Work A', 'Work B']);
 		expect(candidates[0].env).toEqual({ CLAUDE_CONFIG_DIR: '/home/me/.claude-work' });
@@ -151,8 +152,20 @@ describe('Grok feedback accounts', () => {
 		definition.readOnlyCliEnforced = enforced;
 	});
 
-	it('lists Grok last, so its provider default never displaces an earlier automatic pick', () => {
-		expect(FEEDBACK_PROVIDERS[FEEDBACK_PROVIDERS.length - 1]).toBe('grok');
+	it('lists Grok and Antigravity last, so neither displaces an earlier automatic pick', () => {
+		expect(FEEDBACK_PROVIDERS.slice(-2)).toEqual(['grok', 'antigravity']);
+	});
+
+	it('qualifies Antigravity through its CLI-enforced read-only deny list', () => {
+		expect(feedbackInterviewRouteProblem('antigravity')).toBeNull();
+		const agy = getAgentDefinition('antigravity')!;
+		const saved = agy.readOnlyCliEnforced;
+		agy.readOnlyCliEnforced = false;
+		try {
+			expect(feedbackInterviewRouteProblem('antigravity')).toContain('read-only');
+		} finally {
+			agy.readOnlyCliEnforced = saved;
+		}
 	});
 
 	it('keeps two selected Grok roots apart, dedupes agents on one root, and adds the provider default', () => {

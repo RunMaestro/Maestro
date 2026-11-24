@@ -19,9 +19,10 @@
 // name a LOCAL agent and its transcript, which the host cannot see, so they are
 // refused there rather than dropped.
 
-import { getSessionById, resolveAgentId } from '../services/storage';
+import { getSessionById, readSettings, resolveAgentId } from '../services/storage';
 import {
 	AGENT_LIFTED_CODE,
+	hostedAgentsEnabled,
 	hostedTurnTargetRefusal,
 	liftedSendRefusal,
 	TARGET_OFF_HOST_CODE,
@@ -155,7 +156,9 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		return;
 	}
 	// A lifted agent answers on its host now, so the question goes there.
-	const liftedRefusal = liftedSendRefusal(getSessionById(targetSessionId) ?? {});
+	const liftedRefusal = liftedSendRefusal(getSessionById(targetSessionId) ?? {}, () =>
+		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
+	);
 	if (liftedRefusal) {
 		fail(liftedRefusal, { code: AGENT_LIFTED_CODE });
 		return;

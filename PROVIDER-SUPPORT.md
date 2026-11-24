@@ -61,6 +61,45 @@ The `agent-completeness.test.ts` test validates:
 - Every pickable agent has a real, non-hidden definition and a usable re-auth command
 - Every pickable agent draws a real logo rather than the blank fallback ring (`AgentSelectionScreen/components.test.tsx`)
 
+#### Feature Coverage Audit (what CI does not check)
+
+Passing the completeness test means the agent launches. It does not mean the agent takes part in every feature. Many features keep their own per-provider table, switch, or allowlist, and a provider missing from one is silently skipped: no error, just a feature that never fires for it. The 2026-11 Antigravity audit found eleven of these on an integration that passed CI.
+
+Make a decision at every row below: add an entry, gate it on a capability, or write down why the provider is absent on purpose (in the code comment next to the table, the way `PROVIDER_PROFILE_CONFIGS` does). "Not checked" is not one of the options.
+
+| Area                    | Where                                                                                                                                               | What to decide                                                                                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Models and effort       | `discoverModels` / `runConfigOptionDiscovery` in `src/main/agents/detector.ts`; `dynamic: true` config options in the definition                    | Does the CLI list its models and efforts? Read them instead of hard-coding, and keep a static fallback for a signed-out CLI                                          |
+| Auto Run tiers          | `TIER_MODELS`, `EFFORT_LADDERS`, `RESUME_SHARES_THREAD` in `src/shared/modelTiers.ts`                                                               | Tier models and effort ladder, and whether a resumed synopsis writes into the tab's own thread (then it must keep the session's model)                               |
+| Tier models vs. account | `CATALOG_CHECKED_TIER_PROVIDERS` / `unofferedTierModel` in `src/shared/modelTiers.ts`                                                               | If discovery lists exactly what the account offers, check tier models against it so an unoffered model warns and inherits instead of failing the task                |
+| Effort refusals         | `parseEffortRejection` in `src/shared/effortRejection.ts`                                                                                           | The CLI's exact refusal text, and whether refusals are per model                                                                                                     |
+| Credentials             | `classifyCredentialKind` in `src/shared/providerAuthIdentity.ts`; `getKnownAuthDirs` in `src/main/ipc/handlers/agents.ts`                           | Every non-login credential (API key, gateway URL, cloud ADC). Unclassified ones default to `oauth`, and Maestro then offers a login that cannot fix them             |
+| Accounts                | `PROVIDER_PROFILE_CONFIGS` in `src/shared/providerProfiles.ts`                                                                                      | The env var that relocates the account home, or a dated "absent on purpose" note                                                                                     |
+| Env var suggestions     | `PROVIDER_ENV_VAR_SUGGESTIONS` in `src/shared/envVarCatalog.ts`                                                                                     | The vars users reach for: credentials, gateway, account dir, and any var Maestro itself reads for the provider                                                       |
+| Install and PATH        | `path-prober.ts` (both tables); the Windows extra-PATH list in `src/shared/pathUtils.ts`; `TOOL_TYPE_ALIASES` in `src/shared/agent-run/provider.ts` | Installer locations on every OS, and the binary name as an alias when it differs from the agent id                                                                   |
+| MCP                     | `MCP_CONFIG_BY_AGENT` in `src/shared/plugins/mcp-agent-config.ts`; coworking installers                                                             | The config file shape and whether a flag or env var can overlay it. Ship `verified: false` until a live run proves injection                                         |
+| Lifetime stats          | `getGlobalStats` in `src/main/ipc/handlers/agentSessions.ts`                                                                                        | With `supportsUsageStats` and session storage, the provider belongs in the About and Usage Dashboard totals                                                          |
+| Pianola memory          | `HISTORY_PROVIDERS` in `src/main/storage/historical-inventory.ts` and `PianolaModal/MemorySetup.tsx`; `memory-providers.ts`                         | If it can run memory extraction, its own history should be a source too                                                                                              |
+| Answer assembly         | `streamsTokenDeltaText` in `src/shared/agentConstants.ts`; usage modes in `cue-process-lifecycle.ts` and `turn-capture.ts`                          | Are partial `text` events token deltas (join with nothing) or whole messages (join with `\n`)? Is usage per step, cumulative, or terminal?                           |
+| Prompt delivery         | `stdinPromptArgs`, `stdinPromptEncoder`, `supportsPromptViaStdin`; `encodeStdinPrompt` in `src/shared/maestro-lib/launch/prompt-delivery.ts`        | Windows caps the command line near 32K and providers without `--append-system-prompt` embed the system prompt. Find the CLI's stdin route, raw or a message envelope |
+| Read-only features      | `SYNOPSIS_PROVIDER_PREFERENCE` (`directorNotesProvider.ts`), `FEEDBACK_PROVIDERS` (`feedbackAccounts.ts`), wizard discovery                         | These need a CLI-enforced read-only turn. Re-check `supportsReadOnlyMode` against the CLI's plan or approval modes, not just `--sandbox`                             |
+| Wizards                 | `supportsWizard`; `src/renderer/utils/grokWizard.ts` as the pattern for a provider-specific wizard helper                                           | A live discovery turn that returns the structured reply; desktop `onData` already carries answer text                                                                |
+| Context transfer        | `AGENT_ARTIFACTS`, `AGENT_TARGET_NOTES` in `src/renderer/services/contextGroomer.ts`                                                                | Brand, model, path and flag terms to scrub, and what the target cannot do                                                                                            |
+| Provider translation    | `src/shared/maestro-lib/translation/support.ts` and the [Provider Translation Contract](#provider-translation-contract)                             | Declared directions, or explicit limitations per resource class                                                                                                      |
+| Plugin attachments      | `ORIGINAL_ATTACHMENT_PROVIDERS` in `src/main/plugins/plugin-headless-agent-runner.ts`                                                               | Whether a local turn reads a staged file named by path in the prompt                                                                                                 |
+| Steering and control    | `SDK_PROVIDERS`, `NATIVE_STEERING_PROVIDERS` in `src/shared/maestro-lib/providers/native-control.ts`; `sendMenu.ts`, `executionQueue.ts`            | Does the CLI steer a running turn (ACP, app server, SDK)? See [Native Harness Control](docs/agent-guides/NATIVE-HARNESS-CONTROL.md)                                  |
+| Slash commands          | Discovery chains in `src/main/ipc/handlers/agents.ts` and `useWizardHandlers.ts`                                                                    | Only when `supportsSlashCommands` is true in the mode Maestro runs                                                                                                   |
+
+**Find the tables you missed.** List every source file that names three or more other provider ids but never yours, then read each one:
+
+```bash
+P=antigravity  # your agent id
+grep -rlE "['\"](claude-code|codex|opencode|grok|copilot-cli|factory-droid|qwen3-coder)['\"]" src \
+  --include='*.ts' --include='*.tsx' | grep -v __tests__ | xargs grep -L "$P"
+```
+
+**Re-audit `false` against upstream, live.** A capability set to `false` because something was "not documented" goes stale when the CLI ships it. On every CLI version bump, check each `false` flag against the vendor's current docs, changelog and `--help`, then confirm with a real run before flipping it, and record the version you checked in the flag's comment (`// agy 1.5.16: ...`). The Antigravity audit found `supportsReadOnlyMode`, `supportsPromptViaStdin` and `supportsAdditionalDirectories` all `false` with "undocumented" comments after agy had shipped `--settings` deny rules, `--input-format stream-json` and `--add-dir`. It also found a parser trusting `result.usage` as the turn total, which only holds on a conversation's first turn. Read every usage field on a resumed turn, not just a fresh one.
+
 See detailed instructions below.
 
 ## Table of Contents
@@ -1408,7 +1447,7 @@ grok agent stdio
 
 ---
 
-### Antigravity CLI ✅ Implemented (unverified against a live binary)
+### Antigravity CLI ✅ Implemented (verified against agy 1.5.16)
 
 **Status:** Beta (marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)
 
@@ -1418,18 +1457,23 @@ Google's terminal coding agent, and the successor to the Gemini CLI effort above
 - **Binary:** `agy` (installs to `~/.local/bin/agy` on macOS/Linux, `%LOCALAPPDATA%\agy\bin` on Windows)
 - **Auth:** Google account. Headless runs reuse cached credentials, so the user must sign in once from an interactive `agy` session on that machine first.
 
-| Aspect             | Value                                                        |
-| ------------------ | ------------------------------------------------------------ |
-| Batch/headless     | `-p` (aliases `--print`, `--prompt`)                         |
-| JSON Output        | `--output-format stream-json` (also supports `json`, `text`) |
-| Resume             | `--conversation <id>` (`--continue` resumes the most recent) |
-| Session ID Field   | `conversation_id`                                            |
-| Model Selection    | `--model <slug>`                                             |
-| Reasoning Effort   | `--effort low\|medium\|high`                                 |
-| Auto-approve tools | `--dangerously-skip-permissions`                             |
-| Terminal sandbox   | `--sandbox`                                                  |
-| Headless timeout   | `--print-timeout` (CLI default 5m; Maestro defaults to 30m)  |
-| Session Storage    | ✅ `conversation_summaries.db` + `conversations/<id>.db`     |
+| Aspect             | Value                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| Batch/headless     | `-p` (aliases `--print`, `--prompt`)                                                  |
+| JSON Output        | `--output-format stream-json` (also supports `json`, `text`)                          |
+| Resume             | `--conversation <id>` (`--continue` resumes the most recent)                          |
+| Session ID Field   | `conversation_id`                                                                     |
+| Model Selection    | `--model <slug>`                                                                      |
+| Reasoning Effort   | `--effort low\|medium\|high\|xhigh\|max` (per model; read from `agy models` suffixes) |
+| Auto-approve tools | `--dangerously-skip-permissions`                                                      |
+| Read-only          | `--settings` deny list: `command`, `write_file`, `execute_url`, `mcp` (CLI-enforced)  |
+| No tools           | `--settings` deny list that also denies `read_file`, `read_url` (tab naming)          |
+| Extra directories  | `--add-dir <path>` (repeatable)                                                       |
+| Stdin prompt       | `--input-format stream-json` + one `{"event":"user","message":{"content":...}}` line  |
+| Structured output  | `--json-schema <schema>` (`result.structured_output`)                                 |
+| Terminal sandbox   | `--sandbox` (terminal commands only; not a write fence)                               |
+| Headless timeout   | `--print-timeout` (CLI default none; Maestro defaults to 30m)                         |
+| Session Storage    | ✅ `conversation_summaries.db` + `conversations/<id>.db`                              |
 
 **Implementation Status:**
 
@@ -1437,7 +1481,7 @@ Google's terminal coding agent, and the successor to the Gemini CLI effort above
 - ✅ Step store reader: `src/main/parsers/antigravity-step-store.ts` (thinking and tool results, see below)
 - ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (`ANTIGRAVITY_ERROR_PATTERNS`)
 - ✅ Session Storage: `src/main/storage/antigravity-session-storage.ts` (local only; SSH remotes show no history)
-- ⏳ Capabilities: mostly from the published headless contract; tool events, thinking, and images were checked against live agy 1.2.16 runs
+- ✅ Capabilities: tool events, thinking and images checked on agy 1.2.16; read-only, no-tools, `--add-dir`, stdin input, `--json-schema`, the wizard discovery reply and per-turn usage checked on agy 1.5.16 (2026-11-24)
 
 **Stream-JSON Event Types:**
 
@@ -1470,9 +1514,45 @@ things the stream leaves out are read from agy's own conversation store,
 The store is optional: an SSH-remote agy keeps it on the remote host, and a missing or
 unreadable store just means no thinking text and no exit codes.
 
-**Usage:** agy reports usage per model step AND as the turn total on `result` (the sum of the
-steps). Maestro adds every usage event to the session totals, so only the result reports
-usage, with the last model step attached as `absoluteUsage` (the context gauge's occupancy).
+**Usage:** each model step reports its own usage once, on `DONE`. `result.usage` equals their
+sum only on a conversation's first turn: once a turn is resumed (`--conversation`, argv or
+stdin), it is the whole conversation's running total (agy 1.5.16: turn 3 reported 18586 =
+14058 + 2276 + 2252 input tokens, `num_turns: 3`). Maestro adds every usage event to the
+session totals, so the parser reports usage once, on the result, as the SUM OF THIS TURN'S
+STEPS, with the last model step attached as `absoluteUsage` (the context gauge's occupancy).
+A resumed turn whose steps reported nothing reports no usage rather than re-counting.
+
+**Read-only and no-tools turns** use a session-only permission deny list (`--settings
+'{"permissions":{"deny":[...]}}'`, never saved). agy applies deny rules in every permission
+mode, including the `--dangerously-skip-permissions` batch runs use, so the fence is
+CLI-enforced: reads answer, while shell commands, file writes inside and outside the
+workspace and MCP calls are refused ("Matches user-configured deny rule"). The no-tools list
+also denies `read_file` and `read_url`, which gives tab naming a pure text reply. agy reads
+the last `--settings` it is given. Neither `--sandbox` (terminal commands only; a file-tool
+write outside the workspace went through) nor `--mode plan` (it still ran shell commands
+under skip-permissions) is a fence on its own. Rule grammar: `action(target)` from
+[the settings schema](https://antigravity.google/schemas/v1/settings.json).
+
+**Prompts over stdin:** there is no raw-stdin prompt (`-p -` sends a literal `-`). With
+`--input-format stream-json --output-format stream-json` and no `-p`, agy reads one
+`{"event":"user","message":{"content":"..."}}` line per turn; resume, permissions and model
+selection behave as with `-p`. The definition declares it as `stdinPromptArgs` plus
+`stdinPromptEncoder`, so Windows hosts (and over-long prompts anywhere) keep the embedded
+Maestro system prompt off the command line. Only text blocks are accepted, which is why
+`supportsStreamJsonInput` stays false and images stay paths in the prompt.
+
+**Models and Auto Run tiers:** `agy models` lists only what the signed-in plan offers, each
+model once per effort (`gemini-4-hydrogen-high`). An account without Neon or Carbon refuses
+both by name ("not recognized as a known model"), so a `tier="medium"` or `tier="high"` task
+would fail there. The desktop Auto Run and Cue check a tier model against the discovered
+catalogue first (`unofferedTierModel` in `src/shared/modelTiers.ts`) and, when it is not
+offered, keep the agent's model with a warning naming it. The CLI playbook runner has no
+catalogue and keeps the mapping.
+
+**Provider translation:** none in either direction. Extraction would be feasible from
+`AntigravitySessionStorage`, but agy has no import, and writing its protobuf stores is not
+safe, so no destination exists. Project rules (`AGENTS.md`, `GEMINI.md`, `.agents/rules`) are
+read by agy natively; it keeps no learned-memory store, so `supportsProjectMemory` is false.
 
 **History** (`AntigravitySessionStorage`) lists from `conversation_summaries.db`, agy's
 own index, which also covers headless runs. Many rows carry no `workspace_uris` (519 of 650
@@ -1488,23 +1568,26 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 
 **Known Limitations:**
 
-- **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
-  active workspace; `--sandbox` only restricts terminal commands. `supportsReadOnlyMode` is
-  therefore false and `readOnlyCliEnforced` is false. Knock-on effect: tab naming spawns
-  read-only and leans on `noToolsArgs` to stop a task-like first message from becoming a real
-  agentic run, but the CLI has no tool-disabling flag to put there, so a naming run can still
-  touch workspace files. (`noToolsArgs` is Claude-only today, so this is shared with every
-  other non-Claude agent - Antigravity is just the one that also lacks CLI read-only.)
+- **One account per machine.** State lives in a fixed `~/.gemini/antigravity-cli` and
+  credentials in the OS keyring; no documented variable relocates either.
+- **No MCP injection.** agy reads `~/.gemini/config/mcp_config.json` and
+  `<workspace>/.agents/mcp_config.json`, with no flag or variable for an overlay file, so the
+  `MCP_CONFIG_BY_AGENT` entry stays `verified: false`.
+- **No mid-turn steering on the CLI route.** `agy acp` (an ACP server) supports steering since
+  1.5.0, but Maestro does not drive that route yet.
 - **Images ride in the prompt.** There is no attachment flag, and `--input-format stream-json`
   rejects any block that is not text. `imagePromptBuilder` names each temp image path in the
   prompt and agy opens it with `view_file` (verified on 1.2.16, fresh and with
   `--conversation`). Each image costs one tool call.
 - **No slash commands in headless mode.** They are a TUI-only affordance.
 - **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies
-  shell commands and a run stalls on its first terminal tool call.
+  shell commands and file edits (reported as `denied_actions`), and the turn ends without the
+  work. Read-only spawns drop it and rely on the deny list instead.
 
 **Documentation Sources:**
 
 - [Antigravity CLI overview](https://antigravity.google/docs/cli/overview)
 - [Headless mode](https://antigravity.google/docs/cli/headless)
 - [Installation & auth](https://antigravity.google/docs/cli/install)
+- [Settings schema](https://antigravity.google/schemas/v1/settings.json) (`permissions`, `toolPermission`, `agentMode`)
+- [MCP](https://antigravity.google/docs/mcp)

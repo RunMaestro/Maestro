@@ -2,8 +2,8 @@
  * FederationFieldBadge - on a hosted agent's settings, where each field's value lives.
  *
  * A hosted agent's settings belong to its host (`lift-settings-sync.ts`). When Edit Agent shows
- * one (a lifted pointer, or a mirrored agent through `HostedAgentSettingsModal`), every field
- * carries a badge read from the Federation tables, never from a list in a component:
+ * one (its lifted pointer), every field carries a badge read from the Federation tables, never
+ * from a list in a component:
  *
  * - `shared`: "From host". The value is the host's; a change goes to every conductor.
  * - `personal`: "Yours only". Never sent to the host.

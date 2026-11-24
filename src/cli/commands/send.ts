@@ -10,6 +10,7 @@ import {
 	addHistoryEntry,
 	readHarnessTierDefaults,
 	readStoredAiTabs,
+	readSettings,
 } from '../services/storage';
 import { listDesktopTabs } from '../services/session-command';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
@@ -37,7 +38,11 @@ import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
-import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
+import {
+	AGENT_LIFTED_CODE,
+	hostedAgentsEnabled,
+	liftedSendRefusal,
+} from '../../shared/maestro-lib/agents/lift-pointer';
 import type {
 	AgentError,
 	HistoryEntry,
@@ -393,7 +398,9 @@ export async function send(
 	}
 
 	// A lifted agent runs on its host now: a local turn would resume the session the host owns.
-	const liftedRefusal = liftedSendRefusal(agent);
+	const liftedRefusal = liftedSendRefusal(agent, () =>
+		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
+	);
 	if (liftedRefusal) {
 		emitErrorJson(liftedRefusal, AGENT_LIFTED_CODE);
 		exitWith(ExitCode.GeneralError);

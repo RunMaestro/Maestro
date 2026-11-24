@@ -9,9 +9,9 @@
  * - The pointer a lift left (`sessionStore`). Edit Agent, the bookmark, and `maestro-cli
  *   update-agent` (through the remote config handler) still edit it. A change made there is sent;
  *   a change made on the host is written onto it.
- * - Pending edits on a mirrored agent (`hostedAgentSettingsStore.pending`), saved from the
- *   mirror's settings editor (`saveHostedAgentSettings()`). They go out at once when the peer is
- *   connected, and wait for it otherwise.
+ * - Pending edits on a mirrored agent (`hostedAgentSettingsStore.pending`), saved by the mirror's
+ *   former settings editor (removed with the separate hosted-agent view). Edits already stored
+ *   still go out at once when the peer is connected, and wait for it otherwise.
  *
  * A field both sides changed, or one that differs on the first sync of an agent, is a conflict:
  * nothing moves until the person picks the host's value, theirs, or a merge
@@ -23,6 +23,7 @@
  * agreed state (the baseline) is kept per agent in this window's local storage.
  */
 
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	applyLiftSyncPull,
 	buildLiftPeerIdMap,
@@ -34,7 +35,6 @@ import {
 	planLiftedSettingsSync,
 	readLiftSyncBaseline,
 	settleLiftSyncBaseline,
-	toStored,
 	type LiftPeerIdMap,
 	type LiftSyncBaseline,
 	type LiftSyncEcho,
@@ -191,74 +191,6 @@ export function requestHostedSettingsSync(): void {
 	scheduleSync?.();
 }
 
-/**
- * Save what the person set in the settings editor of a mirrored agent. The edit lands where this
- * machine keeps its copy of that agent: the lifted pointer when there is one, else the pending
- * edits. The sync then sends it (or holds it while the peer is down).
- */
-export function saveHostedAgentSettings(
-	peerId: string,
-	host: AgentRecord,
-	edited: AgentRecord
-): void {
-	const before = liftSyncAgentValues(host);
-	const after = liftSyncAgentValues(edited);
-	const ids = new Set([...Object.keys(before), ...Object.keys(after)]);
-	const changed = [...ids].filter((id) => before[id] !== after[id]);
-
-	const pointer = liftedPointerFor(peerId, host.id);
-	if (pointer) {
-		if (changed.length > 0) {
-			const agent: Record<string, string | number | boolean | undefined> = {};
-			const env: Record<string, string | undefined> = {};
-			for (const id of changed) {
-				if (id.startsWith('env:')) {
-					const value = after[id];
-					env[id.slice(4)] = typeof value === 'string' ? value : undefined;
-				} else {
-					agent[id] = after[id];
-				}
-			}
-			// The editor names peers by the host's ids; the pointer keeps this machine's.
-			const peerIds = liftPeerIdMapFor(peerId);
-			updateSessionWith(
-				pointer.id,
-				(session) =>
-					applyLiftSyncPull(
-						session as unknown as AgentRecord,
-						{ agent, env, tabs: {} },
-						peerIds
-					) as unknown as Session
-			);
-		}
-		requestHostedSettingsSync();
-		return;
-	}
-
-	const key = mirrorKey(peerId, host.id);
-	const store = useHostedAgentSettingsStore.getState();
-	const existing = store.pending[key];
-	const values = { ...(existing?.values ?? {}) };
-	const base = { ...(existing?.base ?? {}) };
-	for (const id of ids) {
-		if (before[id] === after[id]) continue;
-		values[id] = toStored(after[id]);
-		if (!(id in base)) base[id] = toStored(before[id]);
-	}
-	// A field set back to the host's value is no edit any more.
-	for (const id of Object.keys(values)) {
-		if (fromStored(values[id]) === before[id] && after[id] === before[id]) {
-			delete values[id];
-			delete base[id];
-		}
-	}
-	const envKeys = Object.keys(values)
-		.filter((id) => id.startsWith('env:'))
-		.map((id) => id.slice(4));
-	store.setPending(key, { values, base, envKeys });
-	requestHostedSettingsSync();
-}
-
 /** The conflicts waiting for a person, as the CLI and the modal list them. */
 export function listHostedSettingsConflicts(): HostedSettingsConflictSummary[] {
 	const { conflicts, resolutions } = useHostedAgentSettingsStore.getState();
@@ -356,6 +288,8 @@ export function startLiftedAgentSettingsSync(): () => void {
 		const { sessions, sessionsReadOk } = useSessionStore.getState();
 		// Before the registry is read, an empty list is not "no lifted agents".
 		if (disposed || !sessionsReadOk) return;
+		// Hosted agents switched off: each works as its SSH agent, so nothing is sent to a host.
+		if (useSettingsStore.getState().federationHostedAgents === false) return;
 		const peers = usePeerMirrorStore.getState().peers;
 		const hosted = useHostedAgentSettingsStore.getState();
 		const targets = new Set<string>();

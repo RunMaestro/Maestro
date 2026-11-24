@@ -124,7 +124,11 @@ export interface QueuedSlashCommand {
  */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
 	return (
-		!item.paused && !item.waitingForConnection && !item.awaitingConsult && !item.pendingAdmissionId
+		!item.hostQueued &&
+		!item.paused &&
+		!item.waitingForConnection &&
+		!item.awaitingConsult &&
+		!item.pendingAdmissionId
 	);
 }
 
@@ -156,7 +160,7 @@ export function dropConsultHold(queue: QueuedItem[], tabId: string | undefined):
  *
  * - a connection hold is a barrier for the whole queue (delivery state unknown);
  * - consult and admission holds are barriers for their tab only;
- * - a paused item is simply skipped.
+ * - a paused item, and a hosted agent's host queue item (`hostQueued`), is simply skipped.
  */
 function firstRunnableQueueIndex(queue: QueuedItem[], includeAdmission = false): number {
 	const consultBlockedTabs = new Set<string>();
@@ -171,7 +175,8 @@ function firstRunnableQueueIndex(queue: QueuedItem[], includeAdmission = false):
 			continue;
 		}
 		if (consultBlockedTabs.has(item.tabId)) continue;
-		if (item.paused) continue;
+		// A hosted agent's host runs its own queue: the card is only a view of it.
+		if (item.paused || item.hostQueued) continue;
 		return index;
 	}
 	return -1;

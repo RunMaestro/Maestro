@@ -76,7 +76,8 @@ export interface ResolvedTurnSettings {
  *
  * `agentModel` / `agentEffort` are the agent's own configured values, used
  * whenever the document is silent or the provider cannot act on the hint.
- * `routing` carries the agent's tier targets and the harness defaults.
+ * `routing` carries the agent's tier targets, the harness defaults, and the
+ * account's discovered models when a provider's catalogue is checked.
  * `supportedEfforts` carries advertised wire values for the selected Grok
  * model/account/host/version, as required by resolveEffortLevel. Omit it when
  * that evidence is unavailable; configured fallbacks and menu IDs are not proof.
@@ -112,6 +113,7 @@ export function resolveTurnSettings(
 				toolType,
 				tierTargets: routing?.tierTargets,
 				runOn: routing?.runOn,
+				offeredModels: routing?.offeredModels,
 				customModel: agentModel,
 			},
 			hint.tier,

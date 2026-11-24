@@ -225,8 +225,47 @@ export function codexCatalogModels(raw: readonly CodexCatalogModel[]): HarnessCa
  * harness defaults first. Call this only where the provider's own model for a
  * tier is the question (the cheap synopsis turn, a label, the Suggest rules).
  */
-export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | undefined {
-	return TIER_MODELS[toolType]?.[tier];
+export function resolveTierModel(
+	toolType: ToolType,
+	tier: ModelTier,
+	offeredModels?: readonly string[]
+): string | undefined {
+	const model = TIER_MODELS[toolType]?.[tier];
+	return model && unofferedTierModel(toolType, tier, offeredModels) ? undefined : model;
+}
+
+/**
+ * Providers whose model discovery is the account's own catalogue, so a tier
+ * model missing from it is a model the CLI will refuse. `agy models` lists only
+ * what the signed-in plan offers (verified agy 1.5.16: an account without Neon
+ * or Carbon refuses both as "not recognized"). Other providers' discovered
+ * lists are not exact (Claude's carries aliases, not the pinned dated ids), so
+ * a miss there proves nothing and is not checked.
+ */
+const CATALOG_CHECKED_TIER_PROVIDERS: ReadonlySet<ToolType> = new Set<ToolType>(['antigravity']);
+
+/** Whether a tier hint on this provider should be checked against the discovered catalogue. */
+export function tierNeedsOfferedModels(toolType: ToolType, tier: string | undefined): boolean {
+	return !!tier && tier !== 'default' && CATALOG_CHECKED_TIER_PROVIDERS.has(toolType);
+}
+
+/**
+ * The tier's mapped model when the account's discovered catalogue shows it is
+ * not offered, else `undefined`. No catalogue (not discovered, CLI signed out,
+ * or a provider whose list is not exact) is no evidence: the mapping stands.
+ */
+export function unofferedTierModel(
+	toolType: ToolType,
+	tier: ModelTier,
+	offeredModels?: readonly string[]
+): string | undefined {
+	const model = TIER_MODELS[toolType]?.[tier];
+	if (!model || !offeredModels?.length || !CATALOG_CHECKED_TIER_PROVIDERS.has(toolType)) {
+		return undefined;
+	}
+	const base = (id: string) =>
+		toolType === 'antigravity' ? splitAntigravityModelEffort(id).base : id;
+	return offeredModels.some((offered) => base(offered) === model) ? undefined : model;
 }
 
 /**
@@ -340,10 +379,19 @@ export interface TierRouting {
 	runOn?: unknown;
 	/** The `harnessTierDefaults` setting. */
 	harnessDefaults?: HarnessTierDefaults | null;
+	/**
+	 * The account's discovered models, when the provider's catalogue is checked
+	 * ({@link tierNeedsOfferedModels}). Read only against the built-in table: see
+	 * {@link unofferedTierModel}. Absent is no evidence, and the table stands.
+	 */
+	offeredModels?: readonly string[] | null;
 }
 
 /** The parts of an agent a tier is resolved against. Read as data, not trusted. */
-export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runOn'> {
+export interface TierTargetAgent extends Pick<
+	TierRouting,
+	'tierTargets' | 'runOn' | 'offeredModels'
+> {
 	/** The agent's harness, e.g. `claude-code`. */
 	toolType: ToolType;
 	/**
@@ -367,6 +415,9 @@ export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runO
  *     harness (a fine-tune, a private deployment, an access-program model such
  *     as `gpt-daybreak-blue-latest`). The table would swap it for a stock model
  *     the user did not pick, so the tier does not apply.
+ *   - `tier-model-not-offered`: only the built-in table names one, and the
+ *     account's discovered catalogue shows the provider does not offer that
+ *     model, so the CLI would refuse it by name (see {@link unofferedTierModel}).
  *   - `tier-invalid-target`: the layer's stored target is malformed.
  *   - `tier-unsupported-source`: the target is a source, and this harness has
  *     no model source recipe.
@@ -375,6 +426,7 @@ export type TierTargetRefusalCode =
 	| 'tier-unmapped'
 	| 'tier-agent-runs-on-source'
 	| 'tier-agent-model-pinned'
+	| 'tier-model-not-offered'
 	| 'tier-invalid-target'
 	| 'tier-unsupported-source';
 
@@ -410,7 +462,8 @@ export type TierTargetResolution = ResolvedTierTarget | TierTargetRefusal;
  * through: the next layer's target is a different model than the one the user
  * picked. The built-in table is the one layer the user did not write, so it is
  * the one layer that does not apply to an agent whose model source is a
- * source, or whose model is outside every tier family the table follows.
+ * source, whose model is outside every tier family the table follows, or
+ * whose account's discovered catalogue does not offer the table's model.
  *
  * Only the target's shape and the harness's model source recipe are checked here.
  * Whether the source exists, is enabled and serves the model needs the saved
@@ -472,6 +525,14 @@ export function resolveTierTarget(
 			message: supportsTierSelection(toolType)
 				? `No "${tier}" tier model is mapped for ${toolType}; using the agent's configured model.`
 				: `${toolType} has no model tier mapping, so tier="${tier}" was ignored; using the agent's configured model.`,
+			blocksLaunch: false,
+		};
+	}
+	if (unofferedTierModel(toolType, tier, agent.offeredModels ?? undefined)) {
+		return {
+			kind: 'refused',
+			code: 'tier-model-not-offered',
+			message: `tier="${tier}" maps to ${builtIn}, which this account does not offer; using the agent's configured model.`,
 			blocksLaunch: false,
 		};
 	}
@@ -539,6 +600,7 @@ export function resolveTierLaunch(
 			toolType,
 			tierTargets: routing?.tierTargets,
 			runOn: routing?.runOn,
+			offeredModels: routing?.offeredModels,
 			customModel: agentModel,
 		},
 		tier,
@@ -602,6 +664,7 @@ export function tierPillLabel(
 			toolType,
 			tierTargets: routing?.tierTargets,
 			runOn: routing?.runOn,
+			offeredModels: routing?.offeredModels,
 			customModel: agentModel,
 		},
 		tier,

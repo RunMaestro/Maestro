@@ -213,6 +213,19 @@ describe('cueTurnLaunch', () => {
 		expect(cueTurnLaunch(turn, OWN)).toMatchObject({ customModel: 'qwen3.5-4b', runOn: LOCAL });
 	});
 
+	it("keeps the agent's model when the account does not offer the tier's built-in model", () => {
+		const turn = resolveCueTurnSettings(
+			'antigravity',
+			{ tier: 'high' },
+			'gemini-4-hydrogen',
+			undefined,
+			{ offeredModels: ['gemini-4-hydrogen'] }
+		);
+		expect(turn.model).toBe('gemini-4-hydrogen');
+		expect(turn.warnings.join(' ')).toContain('does not offer');
+		expect('launchRefusal' in cueTurnLaunch(turn, undefined)).toBe(false);
+	});
+
 	it('carries a refusal as the message the run fails with', () => {
 		const turn = resolveCueTurnSettings('factory-droid', { tier: 'low' }, undefined, undefined, {
 			tierTargets: { low: LOCAL },

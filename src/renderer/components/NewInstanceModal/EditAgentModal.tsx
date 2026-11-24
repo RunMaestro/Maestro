@@ -758,9 +758,9 @@ export function EditAgentModal({
 	const peerGroupId = (liveSession ?? session)?.groupId;
 	const localPeerFleet = usePeerFleet(peerGroupId);
 
-	// Federation: a hosted agent's fields carry where their value lives. The mirror's editor
-	// (`HostedAgentSettingsModal`) provides its own target; a lifted pointer is found here. An
-	// ordinary local agent has neither, and every badge below renders nothing.
+	// Federation: a hosted agent's fields carry where their value lives. Its lifted pointer is
+	// found here, unless an outer provider already set a target. An ordinary local agent has
+	// neither, and every badge below renders nothing.
 	const outerFederation = useFederationFields();
 	const ownFederation = useFederationFieldsValue(
 		outerFederation ? null : federationTargetOfSession(liveSession ?? session),

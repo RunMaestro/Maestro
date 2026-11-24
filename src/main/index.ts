@@ -280,7 +280,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 // Phase 2 refactoring - dependency injection
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
-import { setModelsRefreshedBroadcaster } from './agents/model-discovery';
+import { discoverAgentModels, setModelsRefreshedBroadcaster } from './agents/model-discovery';
 import { createWebServerFactory } from './web-server/web-server-factory';
 import { registerBrowserRelayHandlers } from './browser/browser-relay';
 import { isHostBrowserPageWindow } from './browser/browser-pages';
@@ -1764,6 +1764,11 @@ app
 				});
 			},
 			sshStore: createSshRemoteStoreAdapter(store),
+			getOfferedModels: (toolType, sshRemoteId) =>
+				discoverAgentModels(
+					{ getAgentDetector: () => agentDetector, getSshRemote: getSshRemoteById },
+					{ agentId: toolType, sshRemoteId }
+				),
 			getAgentConfigValues: (toolType) => getAgentConfigForAgent(toolType),
 			onLog: cueRunLog,
 			getHarnessTierDefaults: () => parseHarnessTierDefaults(store.get('harnessTierDefaults')),

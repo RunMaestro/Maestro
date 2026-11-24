@@ -12,9 +12,11 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
+	readSettings,
 } from '../services/storage';
 import {
 	AGENT_LIFTED_CODE,
+	hostedAgentsEnabled,
 	hostedTurnTargetRefusal,
 	liftedSendRefusal,
 	TARGET_OFF_HOST_CODE,
@@ -528,7 +530,9 @@ export async function runDispatch(
 	}
 
 	// A lifted agent runs on its host now: queueing here would start a second owner of its session.
-	const liftedRefusal = liftedSendRefusal(getSessionById(agentId) ?? {});
+	const liftedRefusal = liftedSendRefusal(getSessionById(agentId) ?? {}, () =>
+		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
+	);
 	if (liftedRefusal) return { success: false, error: liftedRefusal, code: AGENT_LIFTED_CODE };
 
 	// A routing only steers the consults a message's `@mentions` start, so a

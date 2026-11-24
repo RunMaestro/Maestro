@@ -257,6 +257,11 @@ export interface FileArtifact {
 export interface LogEntry {
 	id: string;
 	timestamp: number;
+	/**
+	 * A hosted agent's live entry: part of a turn still streaming on its Federation host. Display
+	 * only: every host sync drops these and rebuilds them (`projectHostedSession()`).
+	 */
+	hostLive?: boolean;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;
@@ -605,6 +610,11 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	/**
+	 * Waits in a hosted agent's HOST queue (`projectHostedSession()`): drawn as a queued card here,
+	 * never run here. Remove and Hold / Resume act on the host.
+	 */
+	hostQueued?: boolean;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a
@@ -1077,8 +1087,8 @@ export interface AITab {
 // A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
 /**
- * The agent fields the Thinking pill reads. A local agent passes its `Session`; a Federation peer's
- * mirrored agent passes a view built by `buildMirrorThinkingItems()`, which is never a `Session`.
+ * The agent fields the Thinking pill reads. An agent passes its `Session`, hosted agents included
+ * (their Left Bar record, kept in step with the host).
  */
 export type ThinkingItemAgent = Pick<
 	Session,
@@ -1097,11 +1107,6 @@ export type ThinkingItemAgent = Pick<
 export interface ThinkingItem<S extends ThinkingItemAgent = ThinkingItemAgent> {
 	session: S;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
-	/**
-	 * Set for a peer's mirrored agent: `session.id` is then its mirror key (`peerId:agentId`), a
-	 * click opens the mirror, and Stop reaches the host.
-	 */
-	mirror?: { peerId: string; agentId: string };
 }
 
 // An Auto Run in progress on an agent other than the one being viewed. Auto Run
@@ -1761,6 +1766,9 @@ export interface Session {
 	// Federation: set once this SSH agent was lifted onto its remote's host. Every tab and
 	// transcript stays; sends are refused with a pointer at `peer:agentId` (liftedSendRefusal()).
 	liftedTo?: LiftedToPointer;
+	// Federation: moved back from its host by the person (Move Back from Host, `maestro-cli
+	// unlift`). Automatic Federation leaves it an SSH agent; Move to Host clears it.
+	hostedOptOut?: boolean;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents

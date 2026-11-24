@@ -93,6 +93,12 @@ const CLOUD_PROVIDER_FLAGS = [
 	{ envVarName: 'CLAUDE_CODE_USE_VERTEX', label: 'Google Vertex AI' },
 ] as const;
 
+/** Flags the Antigravity Native SDK sidecar reads to pick the Vertex AI endpoint. */
+const ANTIGRAVITY_VERTEX_FLAGS = [
+	'GOOGLE_GENAI_USE_VERTEXAI',
+	'GOOGLE_GENAI_USE_ENTERPRISE',
+] as const;
+
 /** Copilot token vars in the CLI's own precedence order (`copilot login --help`). */
 const COPILOT_TOKEN_ENV_KEYS = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as const;
 
@@ -247,6 +253,34 @@ export function classifyCredentialKind(
 			.sort()[0];
 		if (secretKey) return { kind: 'api-key', envVarName: secretKey };
 		return { kind: 'oauth', envVarName: 'OPENCODE_CONFIG_DIR' };
+	}
+
+	if (toolType === 'antigravity') {
+		// Names from antigravity.google/docs/install. agy ignores GOOGLE_API_KEY.
+		const baseUrl = envValue(env, 'GOOGLE_GEMINI_BASE_URL');
+		if (baseUrl !== '') {
+			return {
+				kind: 'gateway',
+				envVarName: 'GOOGLE_GEMINI_BASE_URL',
+				label: baseUrlHost(baseUrl, 'a configured gateway'),
+			};
+		}
+		// Application Default Credentials come from gcloud, not from an agy login.
+		if (isFlagEnabled(envValue(env, 'AGY_ADC_AUTH'))) {
+			return { kind: 'cloud-provider', envVarName: 'AGY_ADC_AUTH', label: 'Google Cloud ADC' };
+		}
+		// Native SDK mode only: these route the sidecar to Vertex AI.
+		for (const flag of ANTIGRAVITY_VERTEX_FLAGS) {
+			if (isFlagEnabled(envValue(env, flag))) {
+				return { kind: 'cloud-provider', envVarName: flag, label: 'Vertex AI' };
+			}
+		}
+		// agy uses the key only when its model provider setting is "gemini", which
+		// lives in settings.json, so the environment alone cannot certify it.
+		if (envValue(env, 'GEMINI_API_KEY') !== '') {
+			return { kind: 'api-key', envVarName: 'GEMINI_API_KEY', fallback: true };
+		}
+		return { kind: 'oauth' };
 	}
 
 	return { kind: 'oauth' };

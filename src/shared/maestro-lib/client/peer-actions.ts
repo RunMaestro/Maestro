@@ -35,13 +35,23 @@ export type PeerAgentAction =
 	 * Send a message to a tab. The host adds its own system prompt and template variables.
 	 * `overrides` are the sender's own tab chips for this one turn; the host tab is not changed.
 	 */
-	| { kind: 'send'; tabId: string; text: string; dispatchId?: string; overrides?: TurnOverrides }
+	| {
+			kind: 'send';
+			tabId: string;
+			text: string;
+			/** Images as data URLs, sent with the text (or alone). */
+			images?: string[];
+			dispatchId?: string;
+			overrides?: TurnOverrides;
+	  }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
 	| { kind: 'new-tab' }
 	/** An empty name clears it, so the tab shows its session id label again. */
 	| { kind: 'rename-tab'; tabId: string; name: string }
 	| { kind: 'star-tab'; tabId: string; starred: boolean }
+	/** The tab moves to the host's closed-tab history. */
+	| { kind: 'close-tab'; tabId: string }
 	/** Take a message that still waits out of the host's execution queue. */
 	| { kind: 'remove-queued'; itemId: string }
 	/** Hold a waiting message (it keeps its place) or release it. */
@@ -66,6 +76,7 @@ export type PeerAgentActionResult =
 	| { kind: 'new-tab'; tabId: string }
 	| { kind: 'rename-tab'; tabId: string }
 	| { kind: 'star-tab'; tabId: string; starred: boolean }
+	| { kind: 'close-tab'; tabId: string }
 	/** `removed: false`: the message no longer waits (it started, or another client removed it). */
 	| { kind: 'remove-queued'; itemId: string; removed: boolean }
 	/** `found: false`: the message no longer waits. */
@@ -82,6 +93,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'new-tab',
 	'rename-tab',
 	'star-tab',
+	'close-tab',
 	'remove-queued',
 	'pause-queued',
 	'update-agent',
@@ -108,6 +120,7 @@ export async function runPeerAgentAction(
 		case 'send': {
 			const sent = await client.turns.send(agent.id, action.tabId, {
 				text: action.text,
+				...(action.images?.length ? { images: action.images } : {}),
 				...(action.dispatchId ? { dispatchId: action.dispatchId } : {}),
 				...(context.originHost ? { originHost: context.originHost } : {}),
 				...(action.overrides ? { overrides: action.overrides } : {}),
@@ -147,6 +160,10 @@ export async function runPeerAgentAction(
 					}
 				: starred;
 		}
+		case 'close-tab': {
+			const closed = await client.tabs.close(agent.id, action.tabId);
+			return closed.ok ? { ok: true, value: { kind: 'close-tab', tabId: action.tabId } } : closed;
+		}
 		case 'remove-queued': {
 			const removed = await client.turns.queue.remove(agent.id, action.itemId);
 			return removed.ok
@@ -184,6 +201,18 @@ export async function runPeerAgentAction(
 	}
 }
 
+/** A send's images: data URLs only. Anything else in the list is refused, not dropped. */
+function parseImages(value: unknown): string[] | undefined {
+	if (value == null) return undefined;
+	if (!Array.isArray(value)) throw new Error('images must be a list of data URLs');
+	for (const image of value) {
+		if (typeof image !== 'string' || !image.startsWith('data:image/')) {
+			throw new Error('images must be a list of data URLs');
+		}
+	}
+	return value.length > 0 ? (value as string[]) : undefined;
+}
+
 function nonEmptyString(value: unknown): value is string {
 	return typeof value === 'string' && value.trim().length > 0;
 }
@@ -203,7 +232,8 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 	};
 	switch (kind) {
 		case 'send': {
-			if (typeof value.text !== 'string' || !value.text.trim()) {
+			const images = parseImages(value.images);
+			if (typeof value.text !== 'string' || (!value.text.trim() && !images)) {
 				throw new Error('There is nothing to send.');
 			}
 			const overrides = value.overrides == null ? undefined : parseTurnOverrides(value.overrides);
@@ -211,6 +241,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				kind,
 				tabId: tabId(),
 				text: value.text,
+				...(images ? { images } : {}),
 				...(nonEmptyString(value.dispatchId) ? { dispatchId: value.dispatchId } : {}),
 				...(overrides ? { overrides } : {}),
 			};
@@ -225,6 +256,8 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		case 'star-tab':
 			if (typeof value.starred !== 'boolean') throw new Error('starred must be true or false');
 			return { kind, tabId: tabId(), starred: value.starred };
+		case 'close-tab':
+			return { kind, tabId: tabId() };
 		case 'remove-queued':
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			return { kind, itemId: value.itemId };

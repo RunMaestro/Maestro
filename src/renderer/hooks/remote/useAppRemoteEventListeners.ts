@@ -115,6 +115,11 @@ import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/nati
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import {
+	readReturnedFromHost,
+	returnRestoreRefusal,
+	withReturnedFromHost,
+} from '../../../shared/maestro-lib/agents/lift-return';
+import {
 	TAB_CONTEXT_OP_EVENT,
 	runRemoteTabContextOp,
 	type TabContextOpEventDetail,
@@ -2019,6 +2024,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			const applyLift = (s: Session): Session => ({
 				...s,
 				liftedTo: pointer,
+				// A manual Move to Host undoes an earlier Move Back's opt-out.
+				hostedOptOut: undefined,
 				executionQueue: (s.executionQueue ?? []).filter((item) => !moved.has(item.id)),
 			});
 			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyLift(s) : s)));
@@ -2026,6 +2033,43 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				await window.maestro.sessions.setMany([applyLift(session) as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist lift pointer:', undefined, persistErr);
+			}
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
+		// Federation Move Back (`maestro-cli unlift`, Move Back from Host): the pointer goes,
+		// the host's tabs merge in by id, and automatic moves leave the agent here. Flushed
+		// before the ack, so the host's copy is removed only once this is on disk.
+		if ('returnedFromHost' in patchObj) {
+			const returned = readReturnedFromHost(patchObj.returnedFromHost);
+			const refusal = !returned
+				? "Invalid value for field 'returnedFromHost'"
+				: returnRestoreRefusal(session);
+			if (refusal || !returned) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: refusal ?? "Invalid value for field 'returnedFromHost'",
+				});
+				return;
+			}
+			const applyReturn = (s: Session): Session =>
+				withReturnedFromHost(
+					s as unknown as Record<string, unknown>,
+					returned
+				) as unknown as Session;
+			const restored = applyReturn(session);
+			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
+			try {
+				await window.maestro.sessions.setMany([restored as any], []);
+			} catch (persistErr) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Could not save the agent: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+				});
+				return;
 			}
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 				success: true,

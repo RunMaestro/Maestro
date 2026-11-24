@@ -13,7 +13,11 @@ import { ipcRenderer } from 'electron';
 import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
 import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
-import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
+import type {
+	DesktopLiftAnswer,
+	DesktopLiftOptions,
+	DesktopReturnAnswer,
+} from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
 import {
 	FEDERATION_WINDOW_REQUEST_CHANNEL,
@@ -98,6 +102,15 @@ export function createFederationApi() {
 		 */
 		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
+		/**
+		 * Move Back from Host: make a hosted agent an SSH agent again, with the host's tabs merged in
+		 * (`maestro-cli unlift`). `offline` restores from this machine's copy without the host.
+		 */
+		unlift: (
+			agentId: string,
+			options?: { offline?: boolean; keepHostCopy?: boolean }
+		): Promise<DesktopReturnAnswer> =>
+			ipcRenderer.invoke('federation:unlift', agentId, options ?? {}),
 		/**
 		 * Answer main's Federation questions for the CLI: the hosted agents' settings conflicts
 		 * (`maestro-cli federation conflicts|resolve`) and the host agents the Left Bar shows or adds

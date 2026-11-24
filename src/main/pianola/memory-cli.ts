@@ -1,5 +1,6 @@
 import type { MemoryCliProvider, MemoryConfig } from '../../shared/pianola/memory';
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
+import { ANTIGRAVITY_NO_TOOLS_SETTINGS } from '../../shared/maestro-lib/providers/definitions';
 import { extractConcatenatedJsonObjects } from '../process-manager/handlers/StdoutHandler';
 
 export interface MemoryCliInput {
@@ -108,7 +109,11 @@ const BUILDERS: Record<MemoryCliProvider, Builder> = {
 				[
 					'--output-format',
 					'stream-json',
+					// `--sandbox` alone does not stop file-tool writes (verified agy 1.5.16);
+					// extraction needs no tools, so every one is denied for this session.
 					'--sandbox',
+					'--settings',
+					ANTIGRAVITY_NO_TOOLS_SETTINGS,
 					...modelArgs(config, '--model'),
 					'-p',
 					prompt,

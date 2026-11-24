@@ -20,6 +20,7 @@ import { projectTabProvider, resolveTabNativeProvider } from '../../utils/provid
  * Reads from: sessionStore, modalStore
  */
 
+import { renameHostedTab } from '../../services/hostedTurns';
 import { useCallback, useEffect } from 'react';
 import type { AdditionalDirectory, Session } from '../../types';
 import type { ToolType } from '../../../shared/types';
@@ -431,6 +432,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				});
 				return;
 			}
+
+			// A hosted agent's tab is renamed on its host too; the host's name comes back with it.
+			renameHostedTab(activeSession, renameTabId, newName);
 
 			updateSessionWith(activeSession.id, (s) => {
 				// Find the tab to get its agentSessionId for persistence

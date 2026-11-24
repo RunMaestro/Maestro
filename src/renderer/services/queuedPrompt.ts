@@ -23,7 +23,9 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
  */
 
 import type { AITab, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings, Session } from '../types';
-import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
+import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
+import { hostedTargetOf } from './hostedTurns';
+import { removeMirrorQueuedItem, setMirrorQueuedItemPaused } from './peerMirror';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import type { QueuedSlashCommand } from '../utils/executionQueue';
@@ -371,7 +373,25 @@ export function enqueuePromptForTab(options: {
  * trust `true`: the queue did not also start it. On `false` the item already
  * ran (or someone else removed it), and sending it again would send it twice.
  */
+/** The host a queued item waits on, when it is a hosted agent's host queue item (`hostQueued`). */
+function hostQueuedItemTarget(
+	sessionId: string,
+	itemId: string
+): { peerId: string; agentId: string; item: QueuedItem } | undefined {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const item = session?.executionQueue?.find((candidate) => candidate.id === itemId);
+	if (!item?.hostQueued) return undefined;
+	const target = hostedTargetOf(session);
+	return target ? { peerId: target.peerId, agentId: target.agentId, item } : undefined;
+}
+
 export function removeQueuedItem(sessionId: string, itemId: string): boolean {
+	// A hosted agent's host queue: the host removes it, and its update takes the card away.
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		void removeMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId);
+		return true;
+	}
 	let removed = false;
 	let managed = false;
 	updateSessionWith(sessionId, (s) => {
@@ -413,6 +433,16 @@ function writeQueuedItemPaused(
 	itemId: string,
 	next: (current: boolean) => boolean
 ): boolean {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		void setMirrorQueuedItemPaused(
+			hosted.peerId,
+			hosted.agentId,
+			itemId,
+			next(hosted.item.paused === true)
+		);
+		return true;
+	}
 	let found = false;
 	let managed = false;
 	updateSessionWith(sessionId, (s) => {

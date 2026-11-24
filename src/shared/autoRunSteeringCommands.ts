@@ -2,17 +2,18 @@
  * Wire shape for the `auto_run_steering_command` message - the CLI half of the
  * Thought Stream's Steer Auto Run bar (`maestro-cli steer-auto-run`).
  *
- * Steering is three gestures in the panel: send a note for the next task, take
- * back one no task has read yet, and read what was said and what came back.
- * This module is what makes the same three reachable from the CLI, and it lives
+ * Steering is four gestures in the panel: send a note for the next task, take
+ * back one no task has read yet, read what was said and what came back, and
+ * dismiss a delivered note (with its reply) once it has been read. This module
+ * is what makes the same four reachable from the CLI, and it lives
  * in `shared/` because all three processes need it: the CLI builds the request,
  * the main process validates it on the way through, and the renderer - which
  * owns the notes - answers it.
  *
  * One message with an `action` rather than three, for the reason
  * `snoozeCommands.ts` gives: the verbs differ only in which fields they carry,
- * and three parallel callbacks, IPC channels and renderer handlers would be
- * three chances for one of them to drift from the click path it mirrors.
+ * and parallel callbacks, IPC channels and renderer handlers per verb would be
+ * that many chances for one of them to drift from the click path it mirrors.
  *
  * The note itself, its length cap, and the block an agent reads are defined in
  * `autorunSteering.ts`. Nothing about them is restated here.
@@ -21,7 +22,7 @@
 import { MAX_STEERING_NOTE_LENGTH } from './autorunSteering';
 
 /** The verbs a steering command can carry. */
-export const STEERING_COMMAND_ACTIONS = ['send', 'list', 'cancel'] as const;
+export const STEERING_COMMAND_ACTIONS = ['send', 'list', 'cancel', 'dismiss'] as const;
 
 export type SteeringCommandAction = (typeof STEERING_COMMAND_ACTIONS)[number];
 
@@ -41,6 +42,8 @@ export interface SteeringCommandRequest {
 	text?: string;
 	/** `cancel` only: the pending note to take back, from `list`. */
 	noteId?: string;
+	/** `dismiss` only: the delivered group to clear, from `list`. */
+	deliveryId?: string;
 	/**
 	 * `send` only: suppress the "Steering note queued" flash (`--background`).
 	 *
@@ -91,6 +94,8 @@ export interface SteeringCommandResult {
 	error?: string;
 	/** `send`: the note that was parked. `cancel`: the note that was taken back. */
 	note?: SteeringNoteSummary;
+	/** `dismiss`: the delivered group that was cleared, reply included. */
+	delivery?: SteeringDeliverySummary;
 	/**
 	 * `list` only: whether a `send` would be accepted right now - a run this
 	 * client owns is in flight. False is an answer, not a failure: the delivered
@@ -125,6 +130,7 @@ export function normalizeSteeringCommandResult(raw: unknown): SteeringCommandRes
 	return {
 		success: true,
 		...(candidate.note ? { note: candidate.note } : {}),
+		...(candidate.delivery ? { delivery: candidate.delivery } : {}),
 		...(typeof candidate.steerable === 'boolean' ? { steerable: candidate.steerable } : {}),
 		...(Array.isArray(candidate.pending) ? { pending: candidate.pending } : {}),
 		...(Array.isArray(candidate.deliveries) ? { deliveries: candidate.deliveries } : {}),
@@ -183,6 +189,12 @@ export function parseSteeringCommandRequest(
 		const noteId = typeof message.noteId === 'string' ? message.noteId.trim() : '';
 		if (!noteId) return { ok: false, error: 'steering cancel requires a note id' };
 		return { ok: true, request: { action, sessionId, noteId } };
+	}
+
+	if (action === 'dismiss') {
+		const deliveryId = typeof message.deliveryId === 'string' ? message.deliveryId.trim() : '';
+		if (!deliveryId) return { ok: false, error: 'steering dismiss requires a delivery id' };
+		return { ok: true, request: { action, sessionId, deliveryId } };
 	}
 
 	return { ok: true, request: { action, sessionId } };

@@ -25,6 +25,12 @@ vi.mock('../../../renderer/services/shellCommand', () => ({
 }));
 
 // AI command mode asks the model instead of running anything; assert the ask.
+// A hosted agent's send goes to its host through this service; its own suite covers the wire.
+vi.mock('../../../renderer/services/hostedTurns', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/services/hostedTurns')>();
+	return { ...actual, sendHostedTurn: vi.fn(async () => true) };
+});
+
 vi.mock('../../../renderer/services/aiCommand', () => ({
 	requestAiCommand: vi.fn().mockResolvedValue(undefined),
 	acceptAiCommand: vi.fn(),
@@ -33,6 +39,7 @@ vi.mock('../../../renderer/services/aiCommand', () => ({
 
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
+import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
@@ -1798,7 +1805,9 @@ describe('useInputProcessing', () => {
 			useNotificationStore.setState({ toasts: [] });
 		});
 
-		it('refuses an AI message with a pointer at peer:agentId, spawns nothing, and keeps the draft', async () => {
+		it('sends an AI message to the host, spawns nothing here, and clears the draft once taken', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue(true);
 			const session = createMockSession({ liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1807,20 +1816,35 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
+			expect(sendHostedTurn).toHaveBeenCalledWith(
+				session,
+				session.activeTabId,
+				'hello',
+				expect.any(Array)
+			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			expect(mockSetSessions).not.toHaveBeenCalled();
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('keeps the draft when the host refuses the message', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue(false);
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(sendHostedTurn).toHaveBeenCalledTimes(1);
 			expect(mockSetInputValue).not.toHaveBeenCalled();
-			expect(useNotificationStore.getState().toasts).toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({
-						title: 'Message not sent',
-						message: expect.stringContaining('Send to build-box:host-1 instead.'),
-					}),
-				])
-			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 
 		it('still runs a terminal command: the local shell is not the lifted conversation', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
 			const session = createMockSession({ inputMode: 'terminal', liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'ls', isAiMode: false });
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1830,9 +1854,7 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockSetSessions).toHaveBeenCalled();
-			expect(useNotificationStore.getState().toasts).not.toEqual(
-				expect.arrayContaining([expect.objectContaining({ title: 'Message not sent' })])
-			);
+			expect(sendHostedTurn).not.toHaveBeenCalled();
 		});
 
 		it('sends normally once the pointer is malformed: a broken record never blocks the user', async () => {

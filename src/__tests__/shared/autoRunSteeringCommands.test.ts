@@ -16,7 +16,7 @@ import {
 import { MAX_STEERING_NOTE_LENGTH } from '../../shared/autorunSteering';
 
 describe('isSteeringCommandAction', () => {
-	it('accepts exactly the three verbs', () => {
+	it('accepts exactly the four verbs', () => {
 		for (const action of STEERING_COMMAND_ACTIONS) {
 			expect(isSteeringCommandAction(action), action).toBe(true);
 		}
@@ -29,7 +29,7 @@ describe('parseSteeringCommandRequest', () => {
 	it('rejects an unknown action and names the valid ones', () => {
 		const parsed = parseSteeringCommandRequest({ action: 'nudge', sessionId: 'a' });
 		expect(parsed).toMatchObject({ ok: false });
-		expect(parsed.ok === false && parsed.error).toContain('send, list, cancel');
+		expect(parsed.ok === false && parsed.error).toContain('send, list, cancel, dismiss');
 	});
 
 	it('requires an agent for every verb, including the read', () => {
@@ -102,6 +102,13 @@ describe('parseSteeringCommandRequest', () => {
 		).toEqual({ ok: true, request: { action: 'cancel', sessionId: 'a', noteId: 'n1' } });
 	});
 
+	it('requires a delivery id to dismiss', () => {
+		expect(parseSteeringCommandRequest({ action: 'dismiss', sessionId: 'a' }).ok).toBe(false);
+		expect(
+			parseSteeringCommandRequest({ action: 'dismiss', sessionId: 'a', deliveryId: ' d1 ' })
+		).toEqual({ ok: true, request: { action: 'dismiss', sessionId: 'a', deliveryId: 'd1' } });
+	});
+
 	it('drops fields a verb does not carry', () => {
 		expect(
 			parseSteeringCommandRequest({ action: 'list', sessionId: 'a', text: 'x', noteId: 'n' })
@@ -140,6 +147,14 @@ describe('normalizeSteeringCommandResult', () => {
 			steerable: false,
 			pending: [note],
 			deliveries: [{ deliveryId: 'd1', notes: [note] }],
+		});
+	});
+
+	it('passes a dismissed delivery through', () => {
+		const delivery = { deliveryId: 'd1', notes: [{ id: 'n1', text: 'x', timestamp: 1 }] };
+		expect(normalizeSteeringCommandResult({ success: true, delivery })).toEqual({
+			success: true,
+			delivery,
 		});
 	});
 

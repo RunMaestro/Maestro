@@ -22,6 +22,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(() => undefined),
+	readSettings: vi.fn(() => ({})),
 }));
 
 // The consult budget is a file under the Maestro data directory. The real rule

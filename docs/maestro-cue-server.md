@@ -193,14 +193,14 @@ The unit and the image set `MAESTRO_SERVER_MODE=1`, so a Cue agent does not inhe
 
 - system variables (`PATH`, `HOME`, `USER`, `LANG`, `TMPDIR` and the like), proxy and TLS trust variables (`HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS` and the like), and common toolchain homes;
 - every name starting with `LC_`, `XDG_`, `SSH_` or `MAESTRO_`;
-- the provider names Maestro knows: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `MAX_THINKING_TOKENS`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CODEX_HOME`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, `FACTORY_API_KEY`, `FACTORY_PROJECT_DIR`, `FACTORY_DISABLE_KEYRING`, `FACTORY_LOG_FILE`, `COPILOT_HOME`, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`;
+- the provider names Maestro knows: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `MAX_THINKING_TOKENS`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CODEX_HOME`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, `FACTORY_API_KEY`, `FACTORY_PROJECT_DIR`, `FACTORY_DISABLE_KEYRING`, `FACTORY_LOG_FILE`, `COPILOT_HOME`, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `GROK_HOME`, `GROK_AUTH_PATH`, `GROK_AUTH`, `XAI_API_KEY`, `GEMINI_API_KEY`, `AGY_ADC_AUTH`, `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GEMINI_BASE_URL`, `AGY_CLI_DISABLE_AUTO_UPDATE`, `ANTIGRAVITY_PYTHON`, `GOOGLE_GENAI_USE_VERTEXAI`;
 - the names you list, comma separated, in `MAESTRO_SERVER_ENV_ALLOW`;
 - the agent's declared secrets.
 
-Everything else stays with the engine. A key that passes reaches the agents of every provider, not only its own. A provider key not in the list (for example an OpenCode `GEMINI_API_KEY`, or the AWS or Google credentials behind `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`) needs a line such as:
+Everything else stays with the engine. A key that passes reaches the agents of every provider, not only its own. A provider key not in the list (for example an OpenCode `OPENROUTER_API_KEY`, or the AWS or Google credentials behind `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`) needs a line such as:
 
 ```bash
-MAESTRO_SERVER_ENV_ALLOW=GEMINI_API_KEY,AWS_PROFILE,AWS_REGION
+MAESTRO_SERVER_ENV_ALLOW=OPENROUTER_API_KEY,AWS_PROFILE,AWS_REGION
 ```
 
 On a VM these variables go in `/etc/maestro/maestro.env` (`sudo nano /etc/maestro/maestro.env`, one `KEY=value` per line). In a container they go in an env file passed with `--env-file maestro.env`, or `env_file` in Compose.

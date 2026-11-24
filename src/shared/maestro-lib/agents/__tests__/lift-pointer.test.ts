@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	hostedAgentsEnabled,
 	HOSTED_TURN_ENV_VAR,
 	hostedTurnEnv,
 	hostedTurnTargetRefusal,
@@ -37,6 +38,25 @@ describe('readLiftedTo', () => {
 });
 
 describe('liftedSendRefusal', () => {
+	it('refuses nothing while hosted agents are switched off, and reads the switch only when lifted', () => {
+		expect(liftedSendRefusal({ name: 'Builder', liftedTo: pointer }, false)).toBeUndefined();
+		let reads = 0;
+		const read = () => {
+			reads += 1;
+			return false;
+		};
+		expect(liftedSendRefusal({ name: 'Builder', liftedTo: pointer }, read)).toBeUndefined();
+		expect(liftedSendRefusal({ name: 'Local' }, read)).toBeUndefined();
+		expect(reads).toBe(1);
+	});
+
+	it('reads the switch from settings: absent or true is on, false is off', () => {
+		expect(hostedAgentsEnabled(undefined)).toBe(true);
+		expect(hostedAgentsEnabled({})).toBe(true);
+		expect(hostedAgentsEnabled({ federationHostedAgents: true })).toBe(true);
+		expect(hostedAgentsEnabled({ federationHostedAgents: false })).toBe(false);
+	});
+
 	it('is undefined for an agent that was not lifted', () => {
 		expect(liftedSendRefusal({ name: 'Local' })).toBeUndefined();
 	});

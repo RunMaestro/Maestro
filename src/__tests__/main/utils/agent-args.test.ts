@@ -21,7 +21,11 @@ import {
 } from '../../../main/utils/agent-args';
 import { grokLaunchArgsProblem as processGrokLaunchArgsProblem } from '../../../main/process-manager/types';
 import { grokLaunchArgsProblem as sharedGrokLaunchArgsProblem } from '../../../shared/maestro-lib/launch/agent-args';
-import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
+import {
+	AGENT_DEFINITIONS,
+	ANTIGRAVITY_READ_ONLY_SETTINGS,
+	getAgentDefinition,
+} from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
 import { logger as mockLogger } from '../../../main/utils/logger';
 import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
@@ -2265,15 +2269,19 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 		expect(result).toContain('055a398f-db14-4c5f-abbb-1bf03f8120a7');
 	});
 
-	it('drops the permission-skip flag in read-only mode and sandboxes the terminal instead', () => {
+	it('enforces read-only with a session deny list, not --sandbox', () => {
 		const result = buildAgentArgs(antigravity(), {
 			baseArgs: [],
 			prompt: 'read only please',
 			readOnlyMode: true,
 		});
 
-		expect(result).not.toContain('--dangerously-skip-permissions');
-		expect(result).toContain('--sandbox');
+		// agy applies a --settings deny list in every permission mode; --sandbox
+		// is not a write fence, so it is not used.
+		const settings = result.indexOf('--settings');
+		expect(settings).toBeGreaterThanOrEqual(0);
+		expect(result[settings + 1]).toBe(ANTIGRAVITY_READ_ONLY_SETTINGS);
+		expect(result).not.toContain('--sandbox');
 	});
 
 	it('raises the headless timeout past the 5m CLI default without any user config', () => {

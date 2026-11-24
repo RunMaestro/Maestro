@@ -183,7 +183,11 @@ import {
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
 import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
-import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
+import {
+	mergeQueuedItemIntoAbove,
+	removeQueuedItem,
+	toggleQueuedItemPaused,
+} from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
 	resolveCodexFollowup,
@@ -1819,11 +1823,10 @@ function MaestroConsoleInner() {
 	// instead of the conservative defaults.
 	useCapabilitiesPriming();
 
+	// The queued card's Remove: the one service `maestro-cli queue remove` reaches too, which
+	// also hands a hosted agent's host-queue item to its host.
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: s.executionQueue.filter((item) => item.id !== itemId),
-		}));
+		removeQueuedItem(activeSessionIdRef.current, itemId);
 	}, []);
 
 	const handleToggleQueuedItemPause = useCallback((itemId: string) => {

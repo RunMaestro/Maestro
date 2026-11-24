@@ -2840,9 +2840,12 @@ maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full repl
 
 # Take back a note no task has read yet (accepts a unique id prefix)
 maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+
+# Clear a delivered note and its reply once read (delivery id from list; accepts a unique prefix)
+maestro-cli steer-auto-run dismiss <delivery-id> -a <agent-id>
 ```
 
-`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts, or one delivery at a time with `dismiss`. `send --background` queues the note without the on-screen "Steering note queued" flash.
 
 ### Reviewing an Agent's Diff
 
@@ -3116,6 +3119,27 @@ maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
 The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote takes part in Federation. When the remote runs no host yet, the same action first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints shows before anything moves, drawn as a summary with a choice to send secret env vars, and **Copy Plan as Text** copies the CLI text. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+
+### Move a Hosted Agent Back
+
+`maestro-cli unlift <agent>` reverses a lift: the hosted agent becomes an SSH agent again. The host's tabs come back with their transcripts and provider session IDs, so a tab that moved lands on its own local tab and the next turn over SSH resumes the same conversation. A tab started on the host arrives as a new tab. Tabs are never dropped: a local tab the host closed stays. The host's copy is then removed, unless you pass `--keep-host-copy`. Automatic Federation leaves the agent an SSH agent from then on; **Move to Host** (or `lift`) hosts it again.
+
+| Refusal                                 | Code                    |
+| --------------------------------------- | ----------------------- |
+| The agent is not hosted                 | `RETURN_NOT_HOSTED`     |
+| The agent has no SSH remote to run on   | `RETURN_NO_SSH`         |
+| A turn is running on the host           | `RETURN_BUSY`           |
+| Messages still wait in the host's queue | `RETURN_QUEUED`         |
+| The local agent could not be restored   | `RETURN_RESTORE_FAILED` |
+
+When the host cannot be reached, `--offline` moves the agent back with only what this machine kept. Conversations started on the host stay there, and its copy is not removed: remove it on the host when it is back (`maestro-cli remove-agent <id>`).
+
+```bash
+maestro-cli unlift docs
+maestro-cli unlift docs --offline --json
+```
+
+The desktop app runs the same steps: right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. When the host cannot be reached, it offers to move the agent back offline.
 
 ### One Host Per Data Directory
 

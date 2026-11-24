@@ -39,7 +39,8 @@ import {
 	restoreTasksCheckedByFailedTurn,
 } from '../../../shared/markdownTaskScan';
 import { requestTurnRoute } from '../../services/autoTurn';
-import type { TierRouting } from '../../../shared/modelTiers';
+import { tierNeedsOfferedModels, type TierRouting } from '../../../shared/modelTiers';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	formatSteeringNotesBlock,
@@ -458,6 +459,21 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// The run's model source stands in for the agent's own, exactly as its
 			// model does: the baseline a document's tier hint can still override.
 			const runRunOn = runOverrides?.runOnOverride;
+			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
+			// A tier model the account does not offer fails the task by name, so a
+			// provider whose discovery is the account's catalogue is checked first
+			// (cached in main; a failed read is no evidence and keeps the mapping).
+			const offeredModels = tierNeedsOfferedModels(session.toolType, modelHint?.tier)
+				? await Promise.resolve()
+						.then(() =>
+							window.maestro.agents.getModels(
+								session.toolType,
+								false,
+								getSessionSshRemoteId(session)
+							)
+						)
+						.catch(() => undefined)
+				: undefined;
 			// Where a tier launches for this agent: its own tier targets, then the
 			// harness defaults. Read from the store per dispatch, not captured, so a
 			// change made while the run is going applies to the next task.
@@ -465,8 +481,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				tierTargets: session.tierTargets,
 				runOn: runRunOn ?? session.runOn,
 				harnessDefaults: useSettingsStore.getState().harnessTierDefaults,
+				offeredModels,
 			};
-			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
 
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also

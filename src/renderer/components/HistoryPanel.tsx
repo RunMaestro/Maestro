@@ -46,7 +46,12 @@ import type { PrecomputedGraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { localHistorySource, type HistorySource } from './History/historySource';
+import {
+	localHistorySource,
+	mirrorHistorySource,
+	type HistorySource,
+} from './History/historySource';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -62,15 +67,15 @@ import type { WorkSearchHit } from '../../shared/local-models/work-search';
 /** The fields of the agent a History panel shows. A mirrored agent passes a view, never a `Session`. */
 export type HistoryPanelAgent = Pick<
 	Session,
-	'id' | 'cwd' | 'projectRoot' | 'toolType' | 'sessionSshRemoteConfig'
+	'id' | 'cwd' | 'projectRoot' | 'toolType' | 'sessionSshRemoteConfig' | 'liftedTo'
 >;
 
 interface HistoryPanelProps {
 	session: HistoryPanelAgent;
 	/**
 	 * Where the entries come from. Default: the desktop's own History of `session`
-	 * (`localHistorySource`). A Federation peer's mirrored agent passes its host
-	 * (`mirrorHistorySource`), which is read-only.
+	 * (`localHistorySource`), or, for a hosted agent (`liftedTo`), its host's
+	 * (`mirrorHistorySource`), where its turns are recorded now. Read-only there.
 	 */
 	source?: HistorySource;
 	theme: Theme;
@@ -281,25 +286,29 @@ export const HistoryPanel = React.memo(
 		// reset on every render.
 		// The source is rebuilt only when what it reads changes, so `loadPage`
 		// keeps its identity across unrelated session field updates.
-		const historySource = useMemo(
-			() =>
-				source ??
-				localHistorySource({
-					id: session.id,
-					cwd: session.cwd,
-					projectRoot: session.projectRoot,
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-				}),
-			[
-				source,
-				session.id,
-				session.cwd,
-				session.projectRoot,
-				session.sessionSshRemoteConfig?.enabled,
-				session.sessionSshRemoteConfig?.remoteId,
-				session.sessionSshRemoteConfig?.syncHistory,
-			]
-		);
+		// With hosted agents switched off, a hosted agent reads its own History, as an SSH agent.
+		const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+		const historySource = useMemo(() => {
+			if (source) return source;
+			const hosted = hostingOn ? readLiftedTo(session.liftedTo) : undefined;
+			if (hosted) return mirrorHistorySource(hosted.peer, hosted.agentId);
+			return localHistorySource({
+				id: session.id,
+				cwd: session.cwd,
+				projectRoot: session.projectRoot,
+				sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+			});
+		}, [
+			source,
+			hostingOn,
+			session.liftedTo,
+			session.id,
+			session.cwd,
+			session.projectRoot,
+			session.sessionSshRemoteConfig?.enabled,
+			session.sessionSshRemoteConfig?.remoteId,
+			session.sessionSshRemoteConfig?.syncHistory,
+		]);
 		// `projectPath` is what lets the handler merge a non-SSH session's
 		// `<projectPath>/.maestro/history/*.jsonl` files (entries written
 		// by other Maestro instances pointed at the same project - typically

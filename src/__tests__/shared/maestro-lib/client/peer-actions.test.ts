@@ -33,6 +33,7 @@ function fakeClient() {
 			create: vi.fn(async () => ok({ tabId: 't-new' })),
 			rename: vi.fn(async () => ok(undefined)),
 			star: vi.fn(async () => ok(undefined)),
+			close: vi.fn(async () => ok(undefined)),
 			update: vi.fn(async () => ok(undefined)),
 		},
 		agents: {
@@ -154,6 +155,29 @@ describe('runPeerAgentAction', () => {
 			await runPeerAgentAction(asClient, agent, { kind: 'star-tab', tabId: 't1', starred: false })
 		).toEqual(ok({ kind: 'star-tab', tabId: 't1', starred: false }));
 		expect(client.tabs.star).toHaveBeenCalledWith('a1', 't1', false);
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'close-tab', tabId: 't2' })).toEqual(
+			ok({ kind: 'close-tab', tabId: 't2' })
+		);
+		expect(client.tabs.close).toHaveBeenCalledWith('a1', 't2');
+	});
+
+	it('sends the images with turns.send, and none when the list is empty', async () => {
+		const { client, asClient } = fakeClient();
+		const png = 'data:image/png;base64,AAAA';
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: '',
+			images: [png],
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: '', images: [png] });
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: 'hi',
+			images: [],
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'hi' });
 	});
 
 	it('changes the agent settings with agents.update and reports what the host applied', async () => {
@@ -281,7 +305,7 @@ describe('parsePeerAgentAction', () => {
 			tabId: 't1',
 		});
 		expect(
-			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: ' hi ', images: ['x'] })
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: ' hi ', name: 'ignored' })
 		).toEqual({ kind: 'send', tabId: 't1', text: ' hi ' });
 		expect(parsePeerAgentAction({ kind: 'rename-tab', tabId: 't1', name: ' Plan ' })).toEqual({
 			kind: 'rename-tab',
@@ -423,9 +447,35 @@ describe('parsePeerAgentAction', () => {
 		expect(send(['opus'])).toThrow('Invalid turn overrides');
 	});
 
+	it('reads a close and a send that carries images, even with no text', () => {
+		expect(parsePeerAgentAction({ kind: 'close-tab', tabId: 't1', extra: 1 })).toEqual({
+			kind: 'close-tab',
+			tabId: 't1',
+		});
+		const png = 'data:image/png;base64,AAAA';
+		expect(parsePeerAgentAction({ kind: 'send', tabId: 't1', text: '', images: [png] })).toEqual({
+			kind: 'send',
+			tabId: 't1',
+			text: '',
+			images: [png],
+		});
+	});
+
 	it('refuses what no host call can take', () => {
 		expect(() => parsePeerAgentAction(null)).toThrow('Missing action');
-		expect(() => parsePeerAgentAction({ kind: 'close-tab' })).toThrow('Unknown action: close-tab');
+		expect(() => parsePeerAgentAction({ kind: 'delete-agent' })).toThrow(
+			'Unknown action: delete-agent'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'close-tab' })).toThrow('Missing tab id');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', images: 'x' })
+		).toThrow('images must be a list of data URLs');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', images: ['/etc/passwd'] })
+		).toThrow('images must be a list of data URLs');
+		expect(() => parsePeerAgentAction({ kind: 'send', tabId: 't1', text: '', images: [] })).toThrow(
+			'nothing to send'
+		);
 		expect(() => parsePeerAgentAction({ kind: 'send', text: 'hi' })).toThrow('Missing tab id');
 		expect(() => parsePeerAgentAction({ kind: 'send', tabId: 't1', text: '   ' })).toThrow(
 			'nothing to send'

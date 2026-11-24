@@ -32,7 +32,21 @@ export interface PromptDeliveryAgent {
 	noPromptSeparator?: boolean;
 	/** Args that make the CLI read its query from stdin (Hermes: `--query-file -`). */
 	stdinPromptArgs?: string[];
+	/** Envelope for a stdin prompt (Antigravity: one NDJSON message); raw text when absent. */
+	stdinPromptEncoder?: (prompt: string) => string;
 	capabilities?: Pick<AgentCapabilities, 'supportsPromptViaStdin' | 'supportsStreamJsonInput'>;
+}
+
+/**
+ * The bytes a raw-stdin prompt delivery writes: the provider's envelope when
+ * it declares one (`stdinPromptEncoder`), else the prompt as is. Every raw
+ * stdin write goes through this, so a provider declares its format once.
+ */
+export function encodeStdinPrompt(
+	agent: Pick<PromptDeliveryAgent, 'stdinPromptEncoder'> | null | undefined,
+	prompt: string
+): string {
+	return agent?.stdinPromptEncoder ? agent.stdinPromptEncoder(prompt) : prompt;
 }
 
 /**

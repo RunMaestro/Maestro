@@ -212,7 +212,7 @@ describe('server mode in the packaging', () => {
 				...unitEnv,
 				...Object.fromEntries(templateKeys.map((key) => [key, `value-of-${key}`])),
 				DEPLOY_PASSWORD: 'engine-only',
-				GEMINI_API_KEY: 'gemini',
+				OPENROUTER_API_KEY: 'openrouter',
 				...options.maestroEnv,
 			};
 			const result = buildAgentLaunchPlan({
@@ -241,7 +241,7 @@ describe('server mode in the packaging', () => {
 				expect(env.DEPLOY_PASSWORD).toBeUndefined();
 				// A provider key outside the env catalog needs MAESTRO_SERVER_ENV_ALLOW
 				// (or a bundle-declared secret).
-				expect(env.GEMINI_API_KEY).toBeUndefined();
+				expect(env.OPENROUTER_API_KEY).toBeUndefined();
 				expect(env.MAESTRO_USER_DATA).toBe('/var/lib/maestro/data');
 			}
 		});
@@ -249,16 +249,16 @@ describe('server mode in the packaging', () => {
 		it('lets an operator add a name with MAESTRO_SERVER_ENV_ALLOW in maestro.env, and only that name', () => {
 			const env = launchUnderUnit('opencode', {
 				serverMode: true,
-				maestroEnv: { [SERVER_ENV_ALLOW_ENV_VAR]: 'GEMINI_API_KEY' },
+				maestroEnv: { [SERVER_ENV_ALLOW_ENV_VAR]: 'OPENROUTER_API_KEY' },
 			});
-			expect(env.GEMINI_API_KEY).toBe('gemini');
+			expect(env.OPENROUTER_API_KEY).toBe('openrouter');
 			expect(env.DEPLOY_PASSWORD).toBeUndefined();
 		});
 
 		it('keeps the whole environment without server mode (a standalone engine run by hand)', () => {
 			const env = launchUnderUnit('claude-code', { serverMode: false });
 			expect(env.DEPLOY_PASSWORD).toBe('engine-only');
-			expect(env.GEMINI_API_KEY).toBe('gemini');
+			expect(env.OPENROUTER_API_KEY).toBe('openrouter');
 		});
 	});
 });

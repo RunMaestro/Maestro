@@ -105,6 +105,18 @@ describe('suggestEnvVarKeys', () => {
 		expect(keys).toContain('GROK_HOME');
 	});
 
+	it('offers the Antigravity credential and Native SDK names, never GOOGLE_API_KEY', () => {
+		const keys = suggestEnvVarKeys({ toolType: 'antigravity', limit: 50 }).map(
+			(entry) => entry.key
+		);
+
+		expect(keys).toEqual(
+			expect.arrayContaining(['GEMINI_API_KEY', 'AGY_ADC_AUTH', 'ANTIGRAVITY_PYTHON'])
+		);
+		// agy does not read GOOGLE_API_KEY, so suggesting it would be a silent no-op.
+		expect(keys).not.toContain('GOOGLE_API_KEY');
+	});
+
 	it('falls back to the common set for a provider with no catalog', () => {
 		const suggestions = suggestEnvVarKeys({ toolType: 'terminal' });
 

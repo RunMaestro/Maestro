@@ -83,6 +83,7 @@ import {
 	type PromptDelivery,
 	type PromptDeliveryAgent,
 	type PromptFileDestination,
+	encodeStdinPrompt,
 } from './prompt-delivery';
 import type { AcpPromptBlock, EmbeddedImageSupport } from './image-refs';
 import {
@@ -650,7 +651,10 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			launchArgs,
 			cwd: input.cwd,
 			prompt,
-			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? effectivePrompt : undefined,
+			stdin:
+				prompt.via === 'stdin' && prompt.format === 'raw' && effectivePrompt !== undefined
+					? encodeStdinPrompt(agent, effectivePrompt)
+					: undefined,
 			envVars,
 			gateway: planGateway,
 			runOn: planRunOn,

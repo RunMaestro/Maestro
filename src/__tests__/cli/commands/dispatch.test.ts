@@ -28,6 +28,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSettingValue: vi.fn(),
 	readLiveSessions: vi.fn(() => []),
 	readGroups: vi.fn(() => []),
+	readSettings: vi.fn(() => ({})),
 }));
 
 // The consult budget is a file under the Maestro data directory. The real rule
