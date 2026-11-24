@@ -4,7 +4,7 @@ description: Click an element in an in-app browser tab and send it to the agent 
 icon: hand-pointer
 ---
 
-Design Mode turns a browser tab into an element picker. Point at the part of the page you want changed, click it, and Maestro puts that element into your agent's message: a CSS selector that finds it, its HTML, the computed styles that shape it, and a screenshot cropped to it. Add a note such as "make this match the brand purple" and send.
+Design Mode turns a browser tab into an element picker. Point at the part of the page you want changed and click it. Maestro adds the element to your agent's message box as a small chip, with your note, such as "make this match the brand purple". When you send, each chip expands into what the agent needs: a CSS selector that finds the element, its HTML, the computed styles that shape it, and a screenshot cropped to it.
 
 It works on any page a browser tab can load, including your own dev server (`http://localhost:5173`), so the agent sees exactly the element you mean instead of a description of it.
 
@@ -18,9 +18,9 @@ It works on any page a browser tab can load, including your own dev server (`htt
 4. Click the element (or press `Enter`). A card opens with the screenshot, the selector, and a note field.
 5. Type a note if you want one, then press `Enter` or **Add to Message**.
 
-Maestro adds the element to the agent's message, stages the screenshot beside it, and switches you to that chat with the caret after the element. Type anything else you want to say and send.
+Maestro adds a chip for the element above the agent's message box and switches you to that chat. Type anything else you want to say and send.
 
-To pick several elements for one message, press `Cmd+Enter` / `Ctrl+Enter` (or **Add and Pick Another**) instead. The element goes into the message and you stay in Design Mode to pick the next one.
+To pick several elements for one message, press `Cmd+Enter` / `Ctrl+Enter` (or **Add and Pick Another**) instead. The chip is added and you stay in Design Mode to pick the next one. Each pick is its own chip.
 
 While Design Mode is on, the page does not receive your clicks, so picking a button does not press it. You can still scroll with the mouse wheel or trackpad. The page's own hover effects do not show while you pick.
 
@@ -39,9 +39,19 @@ While Design Mode is on, the page does not receive your clicks, so picking a but
 
 You can do it all without a mouse: when Design Mode turns on, the element at the center of the page is outlined, and the arrow keys walk up and down from there. Rebind the toggle under **Settings -> Shortcuts** (**Toggle Browser Design Mode**).
 
+## Review the chips
+
+The chips sit in one row above the message box, in the order you picked them. Each chip shows the element's screenshot, a short label, and your note. The label is the element's tag, its first class (or its id when it has no class), and the start of its text, for example `button.cta "Sign up"`. When there are more chips than fit, scroll the row sideways.
+
+- **See what a chip sends.** Click the chip. A panel opens above it with the full block the chip adds to the message. You can select and copy that text, but you cannot edit it.
+- **Edit the note.** Type in the note field of the same panel. `Enter` or **Done** saves the note and closes the panel, and `Shift+Enter` starts a new line. `Esc` or a click outside the panel also saves it.
+- **Remove a chip.** Click its red X. Its screenshot goes with it.
+
+Chips stay on that AI tab until you send the message or remove them. A pick also takes the message box out of [command mode](./general-usage#command-mode), because a chip is part of a message for the agent.
+
 ## What the agent receives
 
-The element goes in as a block of Markdown, followed by your note:
+When you send, each chip becomes a block of Markdown, followed by its note:
 
 ````markdown
 Design Mode element from http://localhost:5173/pricing
@@ -75,11 +85,20 @@ Make this match the brand purple
 - **Screenshot.** Cropped to the element at your display's resolution. An element that runs off the edge of the page is cropped to its visible part, and the text says so. Maestro's own outline, banner, and card never appear in it.
 - **Browser tab.** When [Coworking](./coworking) is on and the tab is visible to agents, the block names the tab by its Coworking id. An agent with the Coworking tools can then re-read the element (`read_browser` with the selector) or take a fresh screenshot after it changes the code, using the same id.
 
-The element goes to the agent that owns the browser tab, into its active AI tab. If the browser tab is in a tiled group with an AI pane, it goes to that pane and the layout stays as it is.
+The chip goes to the agent that owns the browser tab, into its active AI tab. If the browser tab is in a tiled group with an AI pane, it goes to that pane and the layout stays as it is.
+
+### How the chips go into the message
+
+- **Order.** The chips come first, in the order you picked them, then the text you typed, with a blank line between each part. The agent reads the elements before your instructions.
+- **Text that starts with `@` or `/`.** When your message starts with a [mention of another agent](./cross-agent-mentions) or a command for the agent (`/command`), your text stays first and the chips follow it. A mention or a command counts only at the start of a message.
+- **Screenshots.** Each chip's screenshot is attached after the images you staged yourself.
+- **Chips only.** You can send a message that has chips and no typed text.
+- **A busy agent.** A message you send while the agent is working is queued with its chips already expanded, so the queued message has the full blocks and screenshots.
+- **Maestro's own commands.** A [Maestro slash command](./slash-commands) (such as `/history`) and command mode run without the chips. The chips stay for your next message.
 
 ## From the command line
 
-An agent or a script can make the same pick by selector with `maestro-cli browser-pick`. It runs the same code as a click and adds the same block to the agent's message:
+An agent or a script can make the same pick by selector with `maestro-cli browser-pick`. It runs the same code as a click and stages the same chip in the agent's message box:
 
 ```bash
 # The tab id open-browser printed, or a Coworking id such as browser:2
@@ -87,10 +106,22 @@ maestro-cli browser-pick <tab> --selector "section.hero button.cta" \
   --note "Make this match the brand purple" --background --json
 ```
 
-`--background` stages the element without switching the visible tab. `--json` returns the text that was added, the AI tab it went to, the tab's Coworking id, and whether a screenshot was attached. A tab hidden from agents (the eye button in the address bar) cannot be picked this way. See the [CLI reference](./cli-reference) for every flag.
+The chip is for the person at the message box. The caller gets what the chip adds to the message at send, note included. Plain output prints a summary (the AI tab, the chip id, the Coworking id, and whether a screenshot was attached), then the full block. `--json` returns the block as `text`, the chip id as `pickId`, the AI tab it went to, the tab's Coworking id, and whether a screenshot was attached. `--background` stages the chip without switching the visible tab. A tab hidden from agents (the eye button in the address bar) cannot be picked this way.
+
+`maestro-cli browser-picks` lists the chips waiting in an agent's message box, in the order they will be sent. `--remove` takes one off, as the chip's X does:
+
+```bash
+# Each chip's id, kind, label, url, note, block, and whether it has a screenshot
+maestro-cli browser-picks --json
+
+# The chip id from the list, or the pickId browser-pick returned
+maestro-cli browser-picks --remove <pickId>
+```
+
+Both forms act on the AI tab that a new pick lands in (the active AI tab, or the AI pane of the tiled group on screen). Chips on the agent's other AI tabs are not listed and cannot be removed. In the list, `text` is the block without the note, because the note is its own field, and `screenshot` is `true` or `false`; the image itself is not returned. Without `--agent`, `browser-pick` and `browser-picks` use the agent that is selected in Maestro. See the [CLI reference](./cli-reference) for every flag.
 
 ## Privacy and safety
 
-- Design Mode only reads the element you pick. It does not send anything until you press **Add to Message**, and nothing reaches the agent until you send the message yourself.
+- Design Mode only reads the element you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself.
 - The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.
