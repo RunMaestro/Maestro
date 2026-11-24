@@ -171,6 +171,13 @@ export interface AgentConfig extends BaseAgentConfig {
 		exclusivePromptFlags: readonly string[];
 	};
 	stdinPromptArgs?: string[]; // Args required to read a raw query from stdin instead of argv
+	/**
+	 * Wraps a stdin-delivered prompt in the envelope the CLI reads (for example,
+	 * one NDJSON message line). Absent: the prompt is written as raw text. Applied
+	 * by `encodeStdinPrompt()` at every raw-stdin write, so a CLI whose only stdin
+	 * input is a message format can still take long prompts off the command line.
+	 */
+	stdinPromptEncoder?: (prompt: string) => string;
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
@@ -227,6 +234,30 @@ function plainPathImagePrompt(imagePaths: string[]): string {
 
 /** Values Codex accepts for `model_reasoning_summary`. */
 const CODEX_REASONING_SUMMARIES = ['auto', 'concise', 'detailed', 'none'];
+
+/**
+ * Session-only agy settings (`--settings`) that deny every mutating action:
+ * shell commands, file writes, URL execution and MCP tools. Rule grammar is
+ * `action(target)` from agy's settings schema; deny beats ask and allow in
+ * every permission mode.
+ */
+export const ANTIGRAVITY_READ_ONLY_SETTINGS = JSON.stringify({
+	permissions: { deny: ['command(*)', 'write_file(*)', 'execute_url(*)', 'mcp(*)'] },
+});
+
+/** {@link ANTIGRAVITY_READ_ONLY_SETTINGS} plus file and URL reads: no tool can run. */
+export const ANTIGRAVITY_NO_TOOLS_SETTINGS = JSON.stringify({
+	permissions: {
+		deny: [
+			'command(*)',
+			'read_file(*)',
+			'write_file(*)',
+			'read_url(*)',
+			'execute_url(*)',
+			'mcp(*)',
+		],
+	},
+});
 
 // ============ Agent Definitions ============
 
@@ -471,19 +502,34 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// `agy -p "..." --conversation <id>` resumes a specific conversation. The id
 		// comes back as `conversation_id` on every stream-json event.
 		resumeArgs: (sessionId: string) => ['--conversation', sessionId],
-		// Best-effort only: `--sandbox` restricts terminal commands, but reading AND
-		// writing files inside the active workspace stays auto-allowed in headless
-		// mode. There is no CLI flag that makes the agent truly read-only, hence
-		// readOnlyCliEnforced: false and supportsReadOnlyMode: false.
-		//
-		// Consequence worth knowing: tab naming spawns with readOnlyMode: true and
-		// relies on `noToolsArgs` to keep a task-like first message from turning into
-		// a real agentic run. The CLI exposes no tool-disabling flag, so there is
-		// nothing to put in `noToolsArgs` and a naming run can still touch workspace
-		// files. Wire `noToolsArgs` here the moment such a flag ships.
-		readOnlyArgs: ['--sandbox'],
-		readOnlyCliEnforced: false,
+		// Read-only is a session-only permission deny list (`--settings`, never
+		// saved). agy applies deny rules in every mode, including the
+		// `--dangerously-skip-permissions` batch runs use, so this is CLI-enforced.
+		// Verified on agy 1.5.16: reads still answer, while shell commands, file
+		// writes inside and outside the workspace, and MCP calls are refused
+		// ("Matches user-configured deny rule"). `--sandbox` is NOT a write fence (a
+		// file-tool write outside the workspace went through), and `--mode plan`
+		// still ran shell commands under skip-permissions.
+		// https://antigravity.google/schemas/v1/settings.json (`permissions`)
+		readOnlyArgs: ['--settings', ANTIGRAVITY_READ_ONLY_SETTINGS],
+		readOnlyCliEnforced: true,
+		// The same deny list with reads denied too: tab naming gets a pure text reply
+		// instead of an agentic run. Appended after any read-only `--settings`, and
+		// agy reads the last one (verified), so this wins where both apply.
+		noToolsArgs: ['--settings', ANTIGRAVITY_NO_TOOLS_SETTINGS],
 		yoloModeArgs: ['--dangerously-skip-permissions'],
+		// `--add-dir` adds a folder to the workspace (repeatable), the root set the
+		// terminal sandbox and workspace rules use. Reads outside the workspace
+		// were already allowed, so it maps to every grant.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+		// agy has no raw-stdin prompt (`-p -` sends the literal "-"). Its stdin
+		// input is one NDJSON message per turn, `--input-format stream-json`, which
+		// keeps resume, permissions and models the same as `-p` (verified 1.5.16).
+		// Windows hosts take every prompt this way, so the embedded Maestro system
+		// prompt stays off the 32K command line.
+		stdinPromptArgs: ['--input-format', 'stream-json'],
+		stdinPromptEncoder: (prompt: string) =>
+			`${JSON.stringify({ event: 'user', message: { content: prompt } })}\n`,
 		// No working-directory flag; the CLI takes its workspace from the spawn cwd
 		// (echoed back as `init.cwd`).
 		workingDirArgs: undefined,

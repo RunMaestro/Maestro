@@ -678,8 +678,9 @@ describe('Agent Completeness', () => {
 			// Present with an unknown window on purpose, not missing.
 			expect(Object.prototype.hasOwnProperty.call(DEFAULT_CONTEXT_WINDOWS, 'grok')).toBe(true);
 			expect(DEFAULT_CONTEXT_WINDOWS.grok).toBe(0);
-			// Last on purpose: a synopsis is a read-only batch turn.
-			expect(SYNOPSIS_PROVIDER_PREFERENCE.at(-1)).toBe('grok');
+			// After the earlier providers on purpose: a synopsis is a read-only batch
+			// turn. Antigravity follows it for the same reason.
+			expect(SYNOPSIS_PROVIDER_PREFERENCE.slice(-2)).toEqual(['grok', 'antigravity']);
 			expect(supportsEffortSelection('grok')).toBe(true);
 			// No stable three-tier catalog: the configured model stays in charge.
 			expect(supportsTierSelection('grok')).toBe(false);

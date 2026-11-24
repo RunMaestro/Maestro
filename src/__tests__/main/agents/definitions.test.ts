@@ -573,6 +573,40 @@ describe('agent-definitions', () => {
 // ---------------------------------------------------------------------------
 // Additional Directories: per-provider grant mapping
 // ---------------------------------------------------------------------------
+describe('Antigravity read-only and no-tools settings', () => {
+	const agy = () => getAgentDefinition('antigravity')!;
+	const denies = (args: string[] | undefined) => {
+		expect(args?.[0]).toBe('--settings');
+		return JSON.parse(args![1]).permissions.deny as string[];
+	};
+
+	// agy applies deny rules in every permission mode, including the
+	// --dangerously-skip-permissions batch runs use (verified agy 1.5.16).
+	it('read-only denies every mutating action but keeps reads', () => {
+		const rules = denies(agy().readOnlyArgs);
+		expect(rules).toEqual(
+			expect.arrayContaining(['command(*)', 'write_file(*)', 'execute_url(*)', 'mcp(*)'])
+		);
+		expect(rules).not.toContain('read_file(*)');
+		expect(agy().readOnlyCliEnforced).toBe(true);
+		expect(getAgentCapabilities('antigravity').supportsReadOnlyMode).toBe(true);
+		// --sandbox only restricts terminal commands; it is not the fence.
+		expect(agy().readOnlyArgs).not.toContain('--sandbox');
+	});
+
+	it('no-tools denies reads too, and only uses rules agy parses', () => {
+		const rules = denies(agy().noToolsArgs);
+		expect(rules).toEqual(expect.arrayContaining(['read_file(*)', 'read_url(*)']));
+		expect(rules).toEqual(expect.arrayContaining(denies(agy().readOnlyArgs)));
+		// The settings schema pattern; agy ignores rules it cannot parse.
+		for (const rule of rules) {
+			expect(rule).toMatch(
+				/^(command|read_file|write_file|read_url|execute_url|mcp|unsandboxed)\(.*\)$/
+			);
+		}
+	});
+});
+
 describe('additionalDirArgs', () => {
 	const GRANTS = [
 		{ path: '/ref/docs', read: true, write: false }, // read-only
@@ -601,6 +635,17 @@ describe('additionalDirArgs', () => {
 
 	it('copilot-cli: same access semantics as Claude Code', () => {
 		expect(argsFor('copilot-cli')).toEqual([
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/out/drop',
+			'--add-dir',
+			'/shared/src',
+		]);
+	});
+
+	it('antigravity: --add-dir adds a workspace folder, so every granted dir maps', () => {
+		expect(argsFor('antigravity')).toEqual([
 			'--add-dir',
 			'/ref/docs',
 			'--add-dir',

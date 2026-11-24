@@ -2,6 +2,7 @@ import path from 'node:path';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import {
 	buildPromptArgv,
+	encodeStdinPrompt,
 	POSIX_PROMPT_ARGV_MAX_BYTES,
 	promptExceedsArgvLimit,
 	resolvePromptDelivery,
@@ -132,6 +133,29 @@ describe('resolvePromptDelivery', () => {
 			format: 'raw',
 			args: ['--query-file', '-'],
 		});
+	});
+
+	// agy has no raw stdin (`-p -` sends a literal "-"); it reads one NDJSON message
+	// per turn with `--input-format stream-json` (verified agy 1.5.16).
+	it('sends Antigravity over stdin on Windows, wrapped in its NDJSON input message', () => {
+		const agent = provider('antigravity');
+		const delivery = resolvePromptDelivery({ agent, prompt: 'line one\nline two', ...windows });
+		expect(delivery).toEqual({
+			via: 'stdin',
+			format: 'raw',
+			args: ['--input-format', 'stream-json'],
+		});
+		const written = encodeStdinPrompt(agent, 'line one\nline two');
+		expect(written.endsWith('\n')).toBe(true);
+		expect(JSON.parse(written)).toEqual({
+			event: 'user',
+			message: { content: 'line one\nline two' },
+		});
+	});
+
+	it('writes a raw stdin prompt unchanged for a provider with no envelope (Hermes)', () => {
+		expect(encodeStdinPrompt(provider('hermes'), 'hi')).toBe('hi');
+		expect(encodeStdinPrompt(undefined, 'hi')).toBe('hi');
 	});
 
 	it('keeps argv on Windows for an agent that does not read stdin (omp)', () => {

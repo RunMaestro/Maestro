@@ -44,7 +44,9 @@ export function resolveCueTurnSettings(
 	toolType: ToolType,
 	settings: CueTurnSettings | undefined,
 	agentModel?: string,
-	agentEffort?: string
+	agentEffort?: string,
+	/** The account's discovered models, when known; see `unofferedTierModel`. */
+	offeredModels?: readonly string[]
 ): ResolvedTurnSettings {
 	const pinnedModel = settings?.model?.trim();
 	// A pinned model replaces the tier outright. The validator refuses both on
@@ -58,7 +60,9 @@ export function resolveCueTurnSettings(
 			? { tier, effort, line: 0, scopes: { tier: 'subscription', effort: 'subscription' } }
 			: null,
 		agentModel,
-		agentEffort
+		agentEffort,
+		undefined,
+		offeredModels
 	);
 	if (pinnedModel) {
 		resolved.model = pinnedModel;

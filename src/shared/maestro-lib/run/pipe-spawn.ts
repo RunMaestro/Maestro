@@ -30,7 +30,7 @@ import type { QuerySource } from '../../querySource';
 import { logger } from '../host';
 import { buildChildProcessEnv } from '../launch/env';
 import { buildImagePromptPrefix } from '../launch/image-refs';
-import { buildPromptArgv, type PromptDelivery } from '../launch/prompt-delivery';
+import { buildPromptArgv, encodeStdinPrompt, type PromptDelivery } from '../launch/prompt-delivery';
 import { buildStreamJsonMessage } from '../launch/stream-json-message';
 import {
 	quoteCommandForCmdShell,
@@ -519,7 +519,7 @@ export function planPipeSpawn(
 			scriptLength: config.sshStdinScript.length,
 		});
 	} else if (sendPromptViaStdinRaw && effectivePrompt) {
-		stdinText = effectivePrompt;
+		stdinText = encodeStdinPrompt(getAgentDefinition(toolType), effectivePrompt);
 		logger.debug('[ProcessManager] Sending raw prompt via stdin', LOG_CONTEXT, {
 			sessionId,
 			promptLength: effectivePrompt.length,
