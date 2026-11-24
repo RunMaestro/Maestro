@@ -681,10 +681,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// namer, and the recall history. None of them sees a chip's page content.
 			const typedText = effectiveInputValue;
 			const typedImages = effectiveImages;
-			// The chip blocks the expansion placed in the message. Every queued copy
-			// carries them, so the drain and a queue edit re-plan `@mentions` from
-			// the message without them, as this submit plans from `typedText`.
-			let designPickFields: Pick<QueuedItem, 'designPickBlocks'> = {};
+			// The chips' page-derived text the expansion placed in the message.
+			// Every queued copy carries it, so the drain and a queue edit re-plan
+			// `@mentions` from the message without the page's words.
+			let designPickFields: Pick<QueuedItem, 'designPickPageText'> = {};
 			if (designPicks.length > 0) {
 				// From here on the message is what the agent receives: each chip's
 				// block, then the typed text, with the chips' screenshots after the
@@ -692,7 +692,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const expanded = expandDesignPicks(designPicks, typedText);
 				effectiveInputValue = expanded.text;
 				if (expanded.images.length > 0) effectiveImages = [...typedImages, ...expanded.images];
-				if (expanded.blocks.length > 0) designPickFields = { designPickBlocks: expanded.blocks };
+				if (expanded.pageText.length > 0)
+					designPickFields = { designPickPageText: expanded.pageText };
 			}
 			// A send with nothing typed (chips only) is named from its chips' blocks.
 			const namingText = typedText.trim() ? typedText : effectiveInputValue;

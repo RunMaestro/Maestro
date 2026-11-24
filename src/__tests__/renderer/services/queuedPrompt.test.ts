@@ -306,7 +306,7 @@ describe('resolveQueuedItemEdit', () => {
 					tabId: 'a',
 					type: 'message',
 					text: `${block}\n\nask @Codex`,
-					designPickBlocks: [block],
+					designPickPageText: [block],
 				},
 			],
 		});

@@ -38,7 +38,7 @@ import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { withoutDesignPickBlocks } from '../utils/designModePicker';
+import { withoutDesignPickPageText } from '../utils/designModePicker';
 import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
 // with retryStore is safe - both sides only touch each other inside runtime
@@ -455,14 +455,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// is what the turn's prompt has to be told about either.
 		let mentionDispatch: CrossAgentMentionDispatch | undefined;
 		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
-			// Resolved without the Design Mode chip blocks the send expanded in:
-			// page content must not consult an agent the user never named.
+			// Resolved without the page text of the Design Mode chips the send
+			// expanded in: page content must not consult an agent the user never named.
 			mentionDispatch = dispatchCrossAgentMentionsForMessage(
 				item.text,
 				session,
 				targetTab.id,
 				item.images,
-				withoutDesignPickBlocks(item.text, item.designPickBlocks)
+				withoutDesignPickPageText(item.text, item.designPickPageText)
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole

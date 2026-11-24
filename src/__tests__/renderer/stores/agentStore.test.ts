@@ -1594,7 +1594,7 @@ describe('agentStore', () => {
 				tabId: 'tab-1',
 				text: `${block}\n\nask @Backend about it`,
 				crossAgentMention: true,
-				designPickBlocks: [block],
+				designPickPageText: [block],
 			});
 
 			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);

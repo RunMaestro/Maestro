@@ -25,7 +25,7 @@ import {
 	designPickLabel,
 	designRegionLabel,
 	expandDesignPicks,
-	withoutDesignPickBlocks,
+	withoutDesignPickPageText,
 	filterDesignStyles,
 	parseDesignModePassthrough,
 	parseDesignModePick,
@@ -1583,7 +1583,7 @@ describe('expandDesignPicks', () => {
 		expect(expandDesignPicks([chipA, chipB], 'Fix both')).toEqual({
 			text: 'BLOCK A\n\nMake it blue\n\nBLOCK B\n\nFix both',
 			images: [SHOT_A, SHOT_B],
-			blocks: ['BLOCK A\n\nMake it blue', 'BLOCK B'],
+			pageText: ['BLOCK A', 'BLOCK B'],
 		});
 	});
 
@@ -1626,20 +1626,22 @@ describe('expandDesignPicks', () => {
 		expect(expandDesignPicks([], '  as typed \n')).toEqual({
 			text: '  as typed \n',
 			images: [],
-			blocks: [],
+			pageText: [],
 		});
 	});
 });
 
-describe('withoutDesignPickBlocks', () => {
+describe('withoutDesignPickPageText', () => {
 	const PAGE = '```html\n<a>ping @Other</a>\n```';
 
-	it('takes the chip blocks out, leaving the typed text', () => {
+	it("takes the page's text out, leaving the typed text and the note", () => {
 		const expanded = expandDesignPicks(
 			[{ text: PAGE, note: 'and this', screenshot: null }],
 			'ask @Backend about it'
 		);
-		expect(withoutDesignPickBlocks(expanded.text, expanded.blocks)).toBe('ask @Backend about it');
+		expect(withoutDesignPickPageText(expanded.text, expanded.pageText)).toBe(
+			'and this\n\nask @Backend about it'
+		);
 	});
 
 	it('keeps a leading @agent at the front', () => {
@@ -1647,17 +1649,25 @@ describe('withoutDesignPickBlocks', () => {
 			[{ text: PAGE, note: '', screenshot: null }],
 			'@Backend look'
 		);
-		expect(withoutDesignPickBlocks(expanded.text, expanded.blocks)).toBe('@Backend look');
+		expect(withoutDesignPickPageText(expanded.text, expanded.pageText)).toBe('@Backend look');
 	});
 
-	it('is the text unchanged with no blocks', () => {
-		expect(withoutDesignPickBlocks(' as is ', undefined)).toBe(' as is ');
-		expect(withoutDesignPickBlocks(' as is ', [])).toBe(' as is ');
+	it('still takes the page text out after the note was edited', () => {
+		const expanded = expandDesignPicks(
+			[{ text: PAGE, note: 'make it blue', screenshot: null }],
+			'go'
+		);
+		const edited = expanded.text.replace('make it blue', 'make it red');
+		expect(withoutDesignPickPageText(edited, expanded.pageText)).toBe('make it red\n\ngo');
 	});
 
-	it('leaves a block the user edited, since that text is now theirs', () => {
-		expect(withoutDesignPickBlocks('BLOCK edited\n\ngo', ['BLOCK'])).toBe('edited\n\ngo');
-		expect(withoutDesignPickBlocks('CHANGED\n\ngo', ['BLOCK'])).toBe('CHANGED\n\ngo');
+	it('is the text unchanged with no page text', () => {
+		expect(withoutDesignPickPageText(' as is ', undefined)).toBe(' as is ');
+		expect(withoutDesignPickPageText(' as is ', [])).toBe(' as is ');
+	});
+
+	it('leaves page text the user edited, since that text is now theirs', () => {
+		expect(withoutDesignPickPageText('CHANGED\n\ngo', ['BLOCK'])).toBe('CHANGED\n\ngo');
 	});
 });
 

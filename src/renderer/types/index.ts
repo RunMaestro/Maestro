@@ -509,11 +509,12 @@ export interface QueuedItem {
 	// mentioned agent is pulled in at the moment the message becomes the agent's
 	// turn - not when the user typed it into a queue that was minutes deep.
 	crossAgentMention?: boolean;
-	// The Design Mode chip blocks the send expanded into `text` (see
-	// `expandDesignPicks`). They are page content, not the user's words, so every
-	// re-plan of this item's `@mentions` (the drain, an edit) reads `text` with
-	// them removed: a picked page that says `@Other` must not consult Other.
-	designPickBlocks?: string[];
+	// The page-derived text of each Design Mode chip the send expanded into
+	// `text` (each block without its note; see `expandDesignPicks`). It is page
+	// content, not the user's words, so every re-plan of this item's `@mentions`
+	// (the drain, an edit, a note-only edit too) reads `text` with it removed: a
+	// picked page that says `@Other` must not consult Other.
+	designPickPageText?: string[];
 	// Queued with `planMentions: false` (its text is not the user's words, such
 	// as a queued Design Mode pick). It can never consult another agent: an edit
 	// keeps both mention flags off instead of re-planning them from the text.

@@ -1166,10 +1166,12 @@ export interface DesignPickExpansion {
 	/** The chips' screenshots in chip order, for the caller to add after the staged images. */
 	images: string[];
 	/**
-	 * The chip blocks placed in `text`, in order. A queued copy keeps them so a
-	 * later `@mention` re-plan can leave them out ({@link withoutDesignPickBlocks}).
+	 * Each chip's page-derived text placed in `text` (its block without the
+	 * note), in order. A queued copy keeps it so a later `@mention` re-plan can
+	 * leave the page's words out ({@link withoutDesignPickPageText}); the notes
+	 * are the user's, and an edit to one cannot break the match.
 	 */
-	blocks: string[];
+	pageText: string[];
 }
 
 /**
@@ -1188,29 +1190,30 @@ export function expandDesignPicks(
 	picks: ReadonlyArray<Pick<StagedDesignPick, 'text' | 'note' | 'screenshot'>>,
 	typedText: string
 ): DesignPickExpansion {
-	if (picks.length === 0) return { text: typedText, images: [], blocks: [] };
+	if (picks.length === 0) return { text: typedText, images: [], pageText: [] };
 	const blocks = picks.map(designPickBlock).filter((block) => block.trim() !== '');
 	const typed = typedText.trim();
 	const parts = !typed ? blocks : /^[@/]/.test(typed) ? [typed, ...blocks] : [...blocks, typed];
 	return {
 		text: parts.join('\n\n'),
 		images: picks.flatMap((pick) => (pick.screenshot ? [pick.screenshot] : [])),
-		blocks,
+		pageText: picks.map((pick) => pick.text).filter((text) => text.trim() !== ''),
 	};
 }
 
 /**
- * `text` with each of the Design Mode chip `blocks` an expansion placed in it
+ * `text` with each chip's page-derived text (`pageText`, from an expansion)
  * taken out once: what to resolve `@mentions` from, so a picked page's content
- * never names an agent the user did not. A block the user edited no longer
- * matches and stays, because the edited text is now theirs.
+ * never names an agent the user did not. The typed text and the notes stay,
+ * because the user wrote them. Page text the user edited no longer matches and
+ * stays, because the edited text is now theirs.
  */
-export function withoutDesignPickBlocks(text: string, blocks?: readonly string[]): string {
-	if (!blocks || blocks.length === 0) return text;
+export function withoutDesignPickPageText(text: string, pageText?: readonly string[]): string {
+	if (!pageText || pageText.length === 0) return text;
 	let rest = text;
-	for (const block of blocks) {
-		const at = rest.indexOf(block);
-		if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + block.length);
+	for (const page of pageText) {
+		const at = rest.indexOf(page);
+		if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + page.length);
 	}
 	return rest.trim();
 }

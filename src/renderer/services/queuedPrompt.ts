@@ -27,7 +27,7 @@ import type { QueuedSlashCommand } from '../utils/executionQueue';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
-import { withoutDesignPickBlocks } from '../utils/designModePicker';
+import { withoutDesignPickPageText } from '../utils/designModePicker';
 import { generateId } from '../utils/ids';
 
 /** What to queue, and where. */
@@ -159,8 +159,8 @@ export function matchQueuedSlashCommand(session: Session, text: string): QueuedS
  * agent answers at all. A message edited into one of the user's slash commands
  * becomes that command, with no mention to consult.
  *
- * The mentions are resolved without the Design Mode chip blocks the item's
- * send expanded in (`QueuedItem.designPickBlocks`), as the drain resolves
+ * The mentions are resolved without the page text of the Design Mode chips the
+ * item's send expanded in (`QueuedItem.designPickPageText`), as the drain resolves
  * them, and an item queued with `planMentions: false` (`mentionsDisabled`)
  * gets none at all, so an edit cannot turn page content into a consult.
  */
@@ -181,7 +181,7 @@ export function resolveQueuedItemEdit(
 		return { crossAgent: { crossAgentMention: false, crossAgentOnly: false } };
 	}
 	const mentionPlan = planCrossAgentMentions(
-		withoutDesignPickBlocks(patch.text, item?.designPickBlocks),
+		withoutDesignPickPageText(patch.text, item?.designPickPageText),
 		session.id
 	);
 	return {
