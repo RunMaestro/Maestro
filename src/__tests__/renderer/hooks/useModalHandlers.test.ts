@@ -368,6 +368,18 @@ describe('useModalHandlers', () => {
 			expect(order).toEqual(['save', 'quit']);
 		});
 
+		it('handleConfirmQuit saves nothing when the user turned resume off', async () => {
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			await act(async () => {
+				await result.current.handleConfirmQuit({ resumeAutoRuns: false });
+			});
+
+			expect(saveAutoRunsForRestart).not.toHaveBeenCalled();
+			expect(window.maestro.app.confirmQuit).toHaveBeenCalledOnce();
+		});
+
 		it('handleConfirmQuit still quits when the Auto Run save fails', async () => {
 			vi.mocked(saveAutoRunsForRestart).mockRejectedValueOnce(new Error('disk full'));
 			const { result } = renderHook(() =>

@@ -3,7 +3,7 @@ import type { Theme, Session } from '../../types';
 
 // Confirmation Modal Components
 import { ConfirmModal } from '../ConfirmModal';
-import { QuitConfirmModal } from '../QuitConfirmModal';
+import { QuitConfirmModal, type QuitConfirmOptions } from '../QuitConfirmModal';
 
 /**
  * Props for the AppConfirmModals component
@@ -22,7 +22,7 @@ export interface AppConfirmModalsProps {
 
 	// Quit Confirm Modal
 	quitConfirmModalOpen: boolean;
-	onConfirmQuit: () => void;
+	onConfirmQuit: (options: QuitConfirmOptions) => void;
 	onCancelQuit: () => void;
 	/** Defer the quit until all operations finish */
 	onQuitWhenIdle: () => void;

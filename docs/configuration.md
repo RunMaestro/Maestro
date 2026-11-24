@@ -385,6 +385,8 @@ You do not have to wait for an Auto Run to finish before you update. When you cl
 
 The same applies when you quit Maestro with an Auto Run going. Confirm the quit, and the next time you open Maestro each run continues where it stopped. A run saved by a quit stays resumable for 7 days; one saved by an update restart, for 1 hour.
 
+The quit dialog has a **Resume Auto Runs on next launch** checkbox, on by default. Clear it to use the quit as an emergency stop: every Auto Run stops and none of them comes back. This is the fastest way to stop a batch of runs you started by mistake. Press `Cmd+Q` / `Ctrl+Q`, clear the box, and choose **Quit Anyway**.
+
 ### Anonymous Check-in
 
 Alongside each update check, Maestro sends a small anonymous ping so we can count how many installs are active and which platforms and themes people actually use. It is the only usage data the app reports about itself.

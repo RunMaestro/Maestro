@@ -172,33 +172,65 @@ describe('QuitConfirmModal', () => {
 		});
 	});
 
-	describe('Auto Run resume note', () => {
-		afterEach(() => {
-			resetAutoRunRestartTrackingForTests();
-			useBatchStore.setState({ batchRunStates: {} });
-		});
-
-		it('tells the user a running Auto Run continues on the next launch', () => {
+	describe('Auto Run resume option', () => {
+		const startResumableRun = () => {
 			trackAutoRunLaunch('agent-a', { documents: [], prompt: '', loopEnabled: false }, '/f');
 			useBatchStore.setState({
 				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
 			});
+		};
+
+		const renderModal = (onConfirmQuit = vi.fn()) =>
 			renderWithLayerStack(
 				<QuitConfirmModal
 					theme={testTheme}
 					busyAgentCount={1}
 					busyAgentNames={['My Session (Auto Run)']}
-					onConfirmQuit={vi.fn()}
+					onConfirmQuit={onConfirmQuit}
+					onQuitWhenIdle={vi.fn()}
 					onCancel={vi.fn()}
 				/>
 			);
 
-			expect(screen.getByTestId('quit-autorun-resume-note')).toHaveTextContent(
-				'Your Auto Run will pick up where it left off when you open Maestro again'
-			);
+		afterEach(() => {
+			resetAutoRunRestartTrackingForTests();
+			useBatchStore.setState({ batchRunStates: {} });
 		});
 
-		it('shows no note when no Auto Run can resume', () => {
+		it('is checked by default and quits with resume on', () => {
+			startResumableRun();
+			const onConfirmQuit = vi.fn();
+			renderModal(onConfirmQuit);
+
+			const option = screen.getByTestId('quit-autorun-resume-option');
+			expect(option).toHaveTextContent('Resume Auto Run on next launch');
+			expect(option.querySelector('input')).toBeChecked();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Quit Anyway' }));
+			expect(onConfirmQuit).toHaveBeenCalledWith({ resumeAutoRuns: true });
+		});
+
+		it('unchecked, quits as an emergency stop that resumes nothing', () => {
+			startResumableRun();
+			const onConfirmQuit = vi.fn();
+			renderModal(onConfirmQuit);
+
+			const option = screen.getByTestId('quit-autorun-resume-option');
+			fireEvent.click(option.querySelector('input')!);
+			expect(option).toHaveTextContent('The Auto Run stops now and does not come back');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Quit Anyway' }));
+			expect(onConfirmQuit).toHaveBeenCalledWith({ resumeAutoRuns: false });
+		});
+
+		it('hides the option under Quit when idle, because the runs finish first', () => {
+			startResumableRun();
+			renderModal();
+			fireEvent.click(screen.getByRole('checkbox', { name: /Quit when idle/ }));
+			expect(screen.queryByTestId('quit-autorun-resume-option')).not.toBeInTheDocument();
+		});
+
+		it('shows no option when no Auto Run can resume', () => {
 			renderWithLayerStack(
 				<QuitConfirmModal
 					theme={testTheme}
@@ -208,7 +240,7 @@ describe('QuitConfirmModal', () => {
 					onCancel={vi.fn()}
 				/>
 			);
-			expect(screen.queryByTestId('quit-autorun-resume-note')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('quit-autorun-resume-option')).not.toBeInTheDocument();
 		});
 	});
 
