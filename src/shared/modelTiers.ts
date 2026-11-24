@@ -35,6 +35,7 @@
 import type { ToolType } from './types';
 import { FALLBACK_CONTEXT_WINDOW, getModelContextWindowOverride } from './agentConstants';
 import { getEffortRejection, type EffortRejection } from './effortRejection';
+import { splitAntigravityModelEffort } from './antigravityModels';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -91,6 +92,11 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// even minimal is absent from some native menus. Never clamp to a different
 	// rung or automatically request none; resolveEffortLevel requires evidence.
 	grok: { low: 'minimal', medium: 'medium', high: 'max' },
+	// Ladder (`agy --effort`): low, medium, high, xhigh, max, but each model
+	// accepts a subset (see antigravityModels.ts). `high` is the top rung every
+	// tier model below lists; `xhigh` is Neon and Hydrogen only, and no model
+	// takes `max`. A model that refuses a rung is recognized by effortRejection.ts.
+	antigravity: { low: 'low', medium: 'medium', high: 'high' },
 };
 
 /**
@@ -105,6 +111,13 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
  * - `factory-droid` takes one model family so the three tiers are genuinely
  *   comparable. The IDs are versioned and will need revising, but they are
  *   already hard-coded in the agent definition, so this is no new exposure.
+ * - `antigravity` maps the Gemini 4 family by the use Google states for each
+ *   (blog.google, "Introducing Gemini 4 Neon"): Hydrogen for fast everyday
+ *   execution, Neon for the balance of depth and efficiency, Carbon for the
+ *   hardest long-horizon work. The ids are base names with no effort suffix,
+ *   so the effort hint stays its own axis. Argon (the older model) and the
+ *   Orchestrator workflows are not tiers. Carbon needs an AI Ultra plan in
+ *   Antigravity; on a plan without it the CLI refuses the model by name.
  *
  * Absent on purpose: `codex` and `copilot-cli` discover their catalogues at
  * runtime (`models_cache.json`, models.dev) and their IDs churn per release;
@@ -121,6 +134,7 @@ const TIER_MODELS: Partial<Record<ToolType, Record<ModelTier, string>>> = {
 		medium: 'claude-sonnet-4-5-20250929',
 		high: 'claude-opus-4-5-20251101',
 	},
+	antigravity: { low: 'gemini-4-hydrogen', medium: 'gemini-4-neon', high: 'gemini-4-carbon' },
 };
 
 /**
@@ -147,10 +161,11 @@ export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | 
 export function resolveEffortLevel(
 	toolType: ToolType,
 	level: EffortLevel,
-	supportedEfforts?: readonly string[]
+	supportedEfforts?: readonly string[],
+	model?: string
 ): string | undefined {
 	const value = EFFORT_LADDERS[toolType]?.[level];
-	if (value === undefined || rejectedEffortForLevel(toolType, level)) return undefined;
+	if (value === undefined || rejectedEffortForLevel(toolType, level, model)) return undefined;
 	if (toolType === 'grok' && !supportedEfforts?.includes(value)) return undefined;
 	return value;
 }
@@ -164,13 +179,21 @@ export function resolveEffortLevel(
  * `undefined` - inherit the agent's own effort - instead of sending a value
  * that is known to fail the turn. Callers that explain an unmapped level to the
  * user read the refusal from here so they can say what actually happened.
+ *
+ * `model` is the model the turn will run. Antigravity refusals are per model
+ * (each model lists its own efforts), so one model's refusal withdraws the
+ * level for that model only; other providers ignore it.
  */
 export function rejectedEffortForLevel(
 	toolType: ToolType,
-	level: EffortLevel
+	level: EffortLevel,
+	model?: string
 ): EffortRejection | undefined {
 	const value = EFFORT_LADDERS[toolType]?.[level];
-	return value === undefined ? undefined : getEffortRejection(toolType, value);
+	if (value === undefined) return undefined;
+	const lookupModel =
+		toolType === 'antigravity' && model ? splitAntigravityModelEffort(model).base : model;
+	return getEffortRejection(toolType, value, lookupModel);
 }
 
 /**
@@ -225,7 +248,12 @@ export function cheapTurnSettings(
 } {
 	return {
 		model: resolveTierModel(toolType, 'low'),
-		effort: resolveEffortLevel(toolType, 'low', supportedEfforts),
+		effort: resolveEffortLevel(
+			toolType,
+			'low',
+			supportedEfforts,
+			resolveTierModel(toolType, 'low')
+		),
 	};
 }
 
@@ -238,8 +266,12 @@ export function cheapTurnSettings(
  * another model, and the cheap model reads the whole transcript cold (0 of 138k
  * input tokens cached in one measured Codex synopsis). Effort can still drop:
  * it is not part of the prompt, so the thread's cache stays warm.
+ *
+ * Antigravity resumes with `agy --conversation <id>`, which appends to the same
+ * conversation the tab keeps using, so its synopsis keeps the session's model
+ * too. Only one-shot cheap turns (tab naming, grooming) run on the low tier.
  */
-const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex']);
+const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex', 'antigravity']);
 
 /**
  * `cheapTurnSettings` for a turn that RESUMES the session it summarizes, with
@@ -272,7 +304,10 @@ export function cheapResumeTurnSettings(
 } {
 	const cheap = cheapTurnSettings(toolType, supportedEfforts);
 	if (RESUME_SHARES_THREAD.has(toolType)) {
-		return { model: current.model, effort: cheap.effort ?? current.effort };
+		// The turn runs on the session's model, so the low rung is checked against
+		// that model's refusals (Antigravity keys them per model), not the cheap tier's.
+		const effort = resolveEffortLevel(toolType, 'low', supportedEfforts, current.model);
+		return { model: current.model, effort: effort ?? current.effort };
 	}
 	const shrinksWindow =
 		(getModelContextWindowOverride(current.model) ?? FALLBACK_CONTEXT_WINDOW) >

@@ -518,11 +518,11 @@ The boundary is measured on the resolved model and effort, not on the words. On 
 
 The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:
 
-| You write         | Claude Code sends | Codex sends |
-| ----------------- | ----------------- | ----------- |
-| `effort="low"`    | `low`             | `low`       |
-| `effort="medium"` | `high`            | `medium`    |
-| `effort="high"`   | `max`             | `xhigh`     |
+| You write         | Claude Code sends | Codex sends | Antigravity sends |
+| ----------------- | ----------------- | ----------- | ----------------- |
+| `effort="low"`    | `low`             | `low`       | `low`             |
+| `effort="medium"` | `high`            | `medium`    | `medium`          |
+| `effort="high"`   | `max`             | `xhigh`     | `high`            |
 
 Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
 
@@ -530,13 +530,16 @@ Providers also retire rungs. If a provider rejects the value a level maps to, Ma
 
 ### Provider support
 
-| Provider      | Model tier              | Effort |
-| ------------- | ----------------------- | ------ |
-| Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
-| Factory Droid | Yes                     | Yes    |
-| Codex         | Agent default           | Yes    |
-| Copilot-CLI   | Agent default           | Yes    |
-| OpenCode      | Agent default           | None   |
+| Provider      | Model tier                 | Effort |
+| ------------- | -------------------------- | ------ |
+| Claude Code   | Yes (haiku/sonnet/opus)    | Yes    |
+| Antigravity   | Yes (hydrogen/neon/carbon) | Yes    |
+| Factory Droid | Yes                        | Yes    |
+| Codex         | Agent default              | Yes    |
+| Copilot-CLI   | Agent default              | Yes    |
+| OpenCode      | Agent default              | None   |
+
+On Antigravity the tiers follow Google's own positioning of the Gemini 4 family: `low` runs `gemini-4-hydrogen` (fast, everyday work), `medium` runs `gemini-4-neon` (the balance of speed and depth), and `high` runs `gemini-4-carbon` (the hardest, long-horizon work). Carbon needs a plan that includes it; on one that does not, the task fails naming the model, so set `tier="medium"` or leave `tier` off. Antigravity's `high` effort is `high` rather than `xhigh` because Carbon, the `high` tier model, stops at `high`. Antigravity checks efforts per model (GPT-OSS takes only `medium`, the Orchestrators take none); Maestro drops an effort an Orchestrator would refuse, and when a model refuses an effort it remembers that refusal for that model only.
 
 Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 

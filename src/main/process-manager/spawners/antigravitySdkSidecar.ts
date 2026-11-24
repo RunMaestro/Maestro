@@ -8,6 +8,8 @@ from importlib import metadata
 protocol_out = sys.stdout
 sys.stdout = sys.stderr
 
+import os
+
 from google.antigravity import Agent, LocalAgentConfig, CapabilitiesConfig
 from google.antigravity.hooks import policy
 
@@ -18,6 +20,33 @@ except metadata.PackageNotFoundError:
     installed_sdk = SUPPORTED_SDK
 if installed_sdk != SUPPORTED_SDK:
     raise RuntimeError(f"Maestro requires google-antigravity=={SUPPORTED_SDK}, found {installed_sdk}")
+
+
+# Maestro's effort words to the SDK's ThinkingLevel members. Matched by member
+# name because the value of EXTRA_HIGH changed across SDK releases
+# ("extra_high" in 0.1.22, "xhigh" in 0.1.24).
+THINKING_LEVEL_MEMBERS = {
+    "minimal": "MINIMAL",
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+    "xhigh": "EXTRA_HIGH",
+}
+
+
+def model_with_effort(model, effort):
+    """A ModelTarget carrying the thinking level on the endpoint LocalAgentConfig would build."""
+    member = THINKING_LEVEL_MEMBERS.get(effort)
+    if member is None:
+        raise ValueError(f"Antigravity SDK does not support effort '{effort}'")
+    from google.antigravity import types as agtypes
+    options = agtypes.GeminiModelOptions(thinking_level=agtypes.ThinkingLevel[member])
+    vertex = any(
+        os.environ.get(name, "").lower() in ("true", "1")
+        for name in ("GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_ENTERPRISE")
+    )
+    endpoint = agtypes.VertexEndpoint(options=options) if vertex else agtypes.GeminiAPIEndpoint(options=options)
+    return agtypes.ModelTarget(name=model, types=[agtypes.ModelType.TEXT], endpoint=endpoint)
 
 
 def emit(frame):
@@ -78,8 +107,15 @@ class Bridge:
         }
         if mode != "readonly":
             kwargs["capabilities"] = CapabilitiesConfig()
-        if params.get("model"):
-            kwargs["model"] = params["model"]
+        model = params.get("model")
+        effort = params.get("effort")
+        if effort:
+            if not model:
+                from google.antigravity import models as agmodels
+                model = agmodels.DEFAULT_MODEL
+            kwargs["model"] = model_with_effort(model, effort)
+        elif model:
+            kwargs["model"] = model
         self.agent = Agent(LocalAgentConfig(**kwargs))
         await self.agent.__aenter__()
         self.turn = asyncio.create_task(self.run_turn(params.get("prompt", "")))
