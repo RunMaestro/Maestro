@@ -207,6 +207,10 @@ export class RealtimeVoiceAdapter implements SttProvider, TtsProvider, BrainProv
 
 		this.opened = new Promise<void>((resolve, reject) => {
 			socket.on('open', () => {
+				if (this.socket !== socket) {
+					reject(sessionClosed(this.id));
+					return;
+				}
 				this.configureSession();
 				resolve();
 			});
@@ -218,10 +222,15 @@ export class RealtimeVoiceAdapter implements SttProvider, TtsProvider, BrainProv
 					)
 				)
 			);
+			socket.on('close', () => reject(sessionClosed(this.id)));
 		});
 
-		socket.on('message', (data) => this.handleMessage(data));
-		socket.on('close', () => this.handleClose());
+		socket.on('message', (data) => {
+			if (this.socket === socket) this.handleMessage(data);
+		});
+		socket.on('close', () => {
+			if (this.socket === socket) this.handleClose();
+		});
 
 		await this.opened;
 	}

@@ -3168,4 +3168,27 @@ describe('VoiceSessionService error cleanup and stop/start lifecycle races', () 
 		await expect(pending).resolves.toMatchObject({ state: 'idle' });
 		expect(h.types()).not.toContain('listen-start');
 	});
+
+	it('aborts startSession without emitting wake when stillRequested becomes false during teardown', async () => {
+		const h = makeHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		h.events.length = 0;
+
+		const stopping = deferred();
+		vi.spyOn(h.stt, 'stop').mockReturnValueOnce(stopping.promise);
+		const startStt = vi.spyOn(h.stt, 'start');
+
+		let requested = true;
+		const pending = h.service.startSession({
+			scope: { kind: 'agent', sessionId: 'agent-2' },
+			stillRequested: () => requested,
+		});
+		requested = false;
+		stopping.resolve();
+
+		await expect(pending).resolves.toMatchObject({ state: 'idle' });
+		expect(startStt).not.toHaveBeenCalled();
+		expect(h.types()).not.toContain('wake');
+		expect(h.types()).not.toContain('listen-start');
+	});
 });

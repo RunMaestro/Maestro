@@ -191,6 +191,28 @@ describe('with A Cappella on', () => {
 		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
 	});
 
+	it('stays quiet with no error when stopped during the permission prompt', async () => {
+		vi.mocked(window.maestro.voice.start).mockResolvedValueOnce({
+			snapshot: {
+				sessionId: null,
+				state: 'idle',
+				scope: null,
+				seq: 0,
+				providerIds: { stt: '', tts: '', brain: '' },
+			},
+			substitutions: [],
+		} as never);
+		const { result } = render();
+
+		await act(async () => {
+			result.current.toggle();
+		});
+
+		await waitFor(() => expect(window.maestro.voice.start).toHaveBeenCalledWith(QUICK_CHAT));
+		expect(result.current.error).toBeNull();
+		expect(result.current.active).toBe(false);
+	});
+
 	it('a hold with no session starts one on Quick Chat and holds it', async () => {
 		const { result } = render();
 

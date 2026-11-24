@@ -60,8 +60,33 @@ import { stopWakeTest } from './wake';
  * closed, and a restart clears it regardless.
  */
 let sendWaitOverrideMs: number | null = null;
+let pendingVoiceStart: { owner: VoiceWindowId } | null = null;
+
+/** Cancel any in-flight voice session start before it opens the microphone. */
+export function cancelPendingVoiceStart(): void {
+	pendingVoiceStart = null;
+}
+
+function idleVoiceSessionSnapshot(): VoiceSessionSnapshot {
+	return (
+		getVoiceSessionService()?.getSnapshot() ?? {
+			sessionId: null,
+			state: 'idle',
+			scope: null,
+			origin: { kind: 'local' },
+			windowId: null,
+			seq: 0,
+			listenPaused: false,
+			startedAt: null,
+			providerIds: { stt: '', tts: '', brain: '' },
+			lastDecision: null,
+			lastDispatch: null,
+		}
+	);
+}
 
 export function resetSessionState(): void {
+	cancelPendingVoiceStart();
 	sendWaitOverrideMs = null;
 	sharedState.voiceDisableGeneration += 1;
 }
@@ -132,6 +157,7 @@ export async function stopVoiceSessionForWindow(
 	windowId: string,
 	cause: 'closed' | 'hidden' = 'closed'
 ): Promise<void> {
+	if (pendingVoiceStart?.owner === windowId) cancelPendingVoiceStart();
 	const service = getVoiceSessionService();
 	if (!service || service.getSnapshot().windowId !== windowId) return;
 	logger.info(`Voice session ended: its window (${windowId}) was ${cause}`, LOG_CONTEXT);
@@ -160,11 +186,13 @@ export async function stopVoiceSessionForWindow(
  * own settings watcher; the transport stands down and stays reusable.
  */
 export async function shutdownACappellaForDisable(): Promise<void> {
+	cancelPendingVoiceStart();
 	sharedState.voiceDisableGeneration += 1;
 	void sharedState.handsFree?.sync();
 	// The advert and the phones go first. A device that still holds the floor
 	// would otherwise be able to reopen the microphone during the teardown below.
 	getACappellaTransport()?.standDown();
+	await sharedState.wakeEnrollment?.stopRecording();
 	await stopWakeTest();
 	// `shutdown` rather than `user`: nobody pressed stop, and the distinction is
 	// what the session's own telemetry and the History entry read.
@@ -206,7 +234,8 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		windowId: VoiceWindowId,
 		paused: boolean,
 		source: WakeSource = 'client-button',
-		origin?: VoiceOrigin
+		origin?: VoiceOrigin,
+		onSessionError?: (message: string) => void
 	): Promise<VoiceStartSessionResult> => {
 		requireACappellaEnabled(deps.settingsStore);
 		const stillEnabled = captureEnableFence(deps.settingsStore);
@@ -220,6 +249,13 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		// start --quick-chat` with no window behind it). Claimed before the
 		// microphone is asked for, so a refusal costs the user no permission prompt.
 		const owner = ownerWindowFor(scope, windowId);
+		const attempt = { owner };
+		pendingVoiceStart = attempt;
+		const stillRequested = (): boolean => pendingVoiceStart === attempt && stillEnabled();
+		const cancelledResult = (): VoiceStartSessionResult => ({
+			snapshot: idleVoiceSessionSnapshot(),
+			substitutions: [],
+		});
 		// The microphone is asked for HERE and nowhere earlier. Not at app
 		// launch, not when the Encore Feature is switched on: a first run that
 		// prompts for the microphone for a feature nobody turned on spends trust
@@ -230,25 +266,45 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 		// gate, which names the microphone as its own blocking slot with its own
 		// recovery; throwing a second, differently-worded error from here would
 		// give the same problem two voices.
-		await requestMicPermission();
-		assertStillEnabled();
-		// First start is what pays for the audio host: enabling the Encore
-		// Feature opens no device and builds no second renderer.
-		if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-		const { service, substitutions } = await ensureService();
-		assertStillEnabled();
-		const snapshot = await service.startSession({
-			scope,
-			source,
-			origin,
-			windowId: owner,
-			paused,
-		});
-		return { snapshot, substitutions };
+		try {
+			await requestMicPermission();
+			assertStillEnabled();
+			if (pendingVoiceStart !== attempt) return cancelledResult();
+			const { service, substitutions } = await ensureService();
+			assertStillEnabled();
+			if (pendingVoiceStart !== attempt) return cancelledResult();
+			// First start is what pays for the audio host: enabling the Encore
+			// Feature opens no device and builds no second renderer.
+			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+			const releaseErrorListener = onSessionError
+				? service.subscribe((event) => {
+						if (event.type === 'session-error') onSessionError(event.message);
+					})
+				: undefined;
+			let snapshot: VoiceSessionSnapshot;
+			try {
+				snapshot = await service.startSession({
+					scope,
+					source,
+					origin,
+					windowId: owner,
+					paused,
+					stillRequested,
+				});
+			} finally {
+				releaseErrorListener?.();
+			}
+			assertStillEnabled();
+			if (pendingVoiceStart !== attempt) return cancelledResult();
+			return { snapshot, substitutions };
+		} finally {
+			if (pendingVoiceStart === attempt) pendingVoiceStart = null;
+		}
 	};
 	const wrappedStart = withIpcErrorLogging(handlerOpts('startSession'), startSession);
 
 	const wrappedStop = withIpcErrorLogging(handlerOpts('stopSession'), async (): Promise<void> => {
+		cancelPendingVoiceStart();
 		await getVoiceSessionService()?.stopSession('user');
 	});
 
@@ -365,6 +421,7 @@ export function createSessionHandlers(deps: ACappellaHandlerDependencies) {
 			(await startSession(scope, deps.resolveVoiceWindowId?.() ?? null, false, source, origin))
 				.snapshot,
 		stopSession: async (reason) => {
+			cancelPendingVoiceStart();
 			await getVoiceSessionService()?.stopSession(reason);
 		},
 		interrupt: (source) => getVoiceSessionService()?.interrupt(source) ?? false,

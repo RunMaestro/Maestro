@@ -48,6 +48,8 @@ export interface UsePressAndHoldReturn {
 	beginPress: () => void;
 	/** Finish a press, as a hold-release or a tap. Call from `onPointerUp`. */
 	endPress: () => void;
+	/** Clear a cancelled press without treating it as a tap. */
+	cancelPress: () => void;
 }
 
 export function usePressAndHold({
@@ -98,34 +100,37 @@ export function usePressAndHold({
 		}, holdThresholdMs);
 	}, [clearHoldTimer, disabled, holdThresholdMs]);
 
-	const endPress = useCallback(() => {
-		if (!pressedRef.current) return;
-		pressedRef.current = false;
-		clearHoldTimer();
-		if (holdingRef.current) {
-			holdingRef.current = false;
-			setHolding(false);
-			callbacks.current.onHoldEnd();
-			return;
-		}
-		callbacks.current.onTap();
-	}, [clearHoldTimer]);
+	const finishPress = useCallback(
+		(tap: boolean) => {
+			if (!pressedRef.current) return;
+			pressedRef.current = false;
+			clearHoldTimer();
+			if (holdingRef.current) {
+				holdingRef.current = false;
+				setHolding(false);
+				callbacks.current.onHoldEnd();
+				return;
+			}
+			if (tap) callbacks.current.onTap();
+		},
+		[clearHoldTimer]
+	);
+	const endPress = useCallback(() => finishPress(true), [finishPress]);
+	const cancelPress = useCallback(() => finishPress(false), [finishPress]);
 
-	// Window-scoped release, so a press that ends with the pointer somewhere else
-	// still counts. Armed while a press is in flight, which is either the timer
-	// still running or the hold already started.
+	// Window-scoped release, so a press that ends or cancels with the pointer
+	// somewhere else (including before the hold threshold fires) still counts.
+	// Attached once and guarded by `pressedRef` inside `finishPress`.
 	useEffect(() => {
-		if (!holding && holdTimer.current === null) return;
-		const onUp = () => endPress();
-		window.addEventListener('pointerup', onUp);
-		window.addEventListener('pointercancel', onUp);
+		window.addEventListener('pointerup', endPress);
+		window.addEventListener('pointercancel', cancelPress);
 		return () => {
-			window.removeEventListener('pointerup', onUp);
-			window.removeEventListener('pointercancel', onUp);
+			window.removeEventListener('pointerup', endPress);
+			window.removeEventListener('pointercancel', cancelPress);
 		};
-	}, [endPress, holding]);
+	}, [cancelPress, endPress]);
 
-	return { holding, beginPress, endPress };
+	return { holding, beginPress, endPress, cancelPress };
 }
 
 export default usePressAndHold;

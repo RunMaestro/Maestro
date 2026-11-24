@@ -37,7 +37,7 @@ export function QuickChatVoiceButton({
 	/** The window's chord for the same toggle a click is, shown in the overlay. */
 	shortcut?: string | ShortcutChords;
 }) {
-	const { holding, beginPress, endPress } = usePressAndHold({
+	const { holding, beginPress, endPress, cancelPress } = usePressAndHold({
 		holdThresholdMs: voice.holdThresholdMs,
 		onHoldStart: voice.holdStart,
 		onHoldEnd: voice.holdEnd,
@@ -66,14 +66,17 @@ export function QuickChatVoiceButton({
 				onMouseDown={(event) => event.preventDefault()}
 				onPointerDown={(event) => {
 					if (event.button !== 0) return;
+					event.currentTarget.setPointerCapture?.(event.pointerId);
 					beginPress();
 				}}
 				onPointerUp={endPress}
+				onPointerCancel={cancelPress}
+				onLostPointerCapture={cancelPress}
 				// Keyboard users get the plain toggle, as on the document chat's
 				// microphone: a held key needs a keyup this button does not reliably
 				// receive, and a push-to-talk that fails to release is an open microphone.
 				onKeyDown={(event) => {
-					if (event.key !== 'Enter' && event.key !== ' ') return;
+					if (event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
 					event.preventDefault();
 					voice.toggle();
 				}}

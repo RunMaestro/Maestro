@@ -124,4 +124,77 @@ describe('usePressAndHold', () => {
 		expect(onHoldStart).not.toHaveBeenCalled();
 		expect(onTap).not.toHaveBeenCalled();
 	});
+
+	it('treats cancelPress and pointercancel during a short press as a cancel, not a tap', () => {
+		const { result, onTap, onHoldStart, onHoldEnd } = setup();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS - 1);
+		});
+		act(() => result.current.cancelPress());
+
+		expect(onTap).not.toHaveBeenCalled();
+		expect(onHoldStart).not.toHaveBeenCalled();
+		expect(onHoldEnd).not.toHaveBeenCalled();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			window.dispatchEvent(new Event('pointercancel'));
+		});
+
+		expect(onTap).not.toHaveBeenCalled();
+	});
+
+	it('ends an active hold on cancelPress and pointercancel', () => {
+		const { result, onTap, onHoldEnd } = setup();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS);
+		});
+		act(() => {
+			window.dispatchEvent(new Event('pointercancel'));
+		});
+
+		expect(onHoldEnd).toHaveBeenCalledTimes(1);
+		expect(onTap).not.toHaveBeenCalled();
+		expect(result.current.holding).toBe(false);
+	});
+
+	it('cancels a press via window pointercancel before the hold threshold without firing onHoldStart or onTap', () => {
+		const { result, onHoldStart, onHoldEnd, onTap } = setup();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS - 1);
+			window.dispatchEvent(new Event('pointercancel'));
+		});
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS);
+		});
+
+		expect(onHoldStart).not.toHaveBeenCalled();
+		expect(onHoldEnd).not.toHaveBeenCalled();
+		expect(onTap).not.toHaveBeenCalled();
+		expect(result.current.holding).toBe(false);
+	});
+
+	it('completes a tap via window pointerup before the hold threshold without firing onHoldStart', () => {
+		const { result, onHoldStart, onHoldEnd, onTap } = setup();
+
+		act(() => result.current.beginPress());
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS - 1);
+			window.dispatchEvent(new Event('pointerup'));
+		});
+		act(() => {
+			vi.advanceTimersByTime(HOLD_MS);
+		});
+
+		expect(onTap).toHaveBeenCalledTimes(1);
+		expect(onHoldStart).not.toHaveBeenCalled();
+		expect(onHoldEnd).not.toHaveBeenCalled();
+		expect(result.current.holding).toBe(false);
+	});
 });

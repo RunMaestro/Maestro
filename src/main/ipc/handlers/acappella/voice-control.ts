@@ -8,7 +8,7 @@ import { hostname } from 'os';
 
 import { isACappellaEnabled } from '../../../../shared/acappella/feature-flag';
 import type { AudioDeviceInfo } from '../../../../shared/acappella/audio-host';
-import type { VoiceWindowId } from '../../../../shared/acappella/protocol';
+import type { VoiceOrigin, VoiceWindowId, WakeSource } from '../../../../shared/acappella/protocol';
 import type { VoiceSendWait } from '../../../../shared/acappella/listen-mode';
 import { scopeRebindBlocker } from '../../../../shared/acappella/quick-chat-scope';
 import {
@@ -24,14 +24,10 @@ import {
 	getACappellaTransport,
 	getVoiceSessionService,
 	initACappellaTransport,
-	type VoiceSessionService,
 } from '../../../acappella';
 import type { ACappellaTransport } from '../../../acappella/transport';
 import type { VoiceHotkeyInstallation } from '../../../acappella/hotkeys';
-import {
-	readVoiceProviderSettings,
-	type VoiceProviderSubstitution,
-} from '../../../acappella/providers/provider-registry';
+import { readVoiceProviderSettings } from '../../../acappella/providers/provider-registry';
 import {
 	clearCredential,
 	listCredentialStates,
@@ -59,7 +55,7 @@ import {
 	listVoiceOptions,
 	previewVoiceLine,
 } from './providers';
-import { readSendWait } from './session';
+import { cancelPendingVoiceStart, readSendWait } from './session';
 import {
 	toVoiceSessionView,
 	type ACappellaHandlerDependencies,
@@ -130,14 +126,13 @@ export function initTransportAndDevices(
 }
 
 export interface VoiceControlSessionActions {
-	ensureService: () => Promise<{
-		service: VoiceSessionService;
-		substitutions: VoiceProviderSubstitution[];
-	}>;
 	startSession: (
 		rawScope: unknown,
 		windowId: VoiceWindowId,
-		paused: boolean
+		paused: boolean,
+		source?: WakeSource,
+		origin?: VoiceOrigin,
+		onSessionError?: (message: string) => void
 	) => Promise<VoiceStartSessionResult>;
 	setScope: (rawScope: unknown) => boolean;
 	sendNow: () => void;
@@ -187,26 +182,29 @@ export function registerVoiceControl(
 		start: async ({ scope, paused }) => {
 			// A start that cannot run says so on the event stream, which a caller
 			// with no HUD never sees. The message is caught here for the refusal.
-			const { service } = await actions.ensureService();
 			let failure: string | null = null;
-			const release = service.subscribe((event) => {
-				if (event.type === 'session-error') failure = event.message;
-			});
-			try {
-				const { snapshot, substitutions } = await actions.startSession(
-					scope,
-					deps.resolveVoiceWindowId?.() ?? null,
-					paused === true
-				);
-				if (snapshot.state === 'idle' || snapshot.state === 'error') {
-					throw new VoiceControlRefusal(failure ?? 'The voice session could not start.');
+			const { snapshot, substitutions } = await actions.startSession(
+				scope,
+				deps.resolveVoiceWindowId?.() ?? null,
+				paused === true,
+				undefined,
+				undefined,
+				(message) => {
+					failure = message;
 				}
-				return { session: toVoiceSessionView(snapshot) as VoiceSessionView, substitutions };
-			} finally {
-				release();
+			);
+			if (snapshot.state === 'idle' || snapshot.state === 'error') {
+				throw new VoiceControlRefusal(
+					failure ??
+						(snapshot.state === 'idle'
+							? 'The voice start was cancelled.'
+							: 'The voice session could not start.')
+				);
 			}
+			return { session: toVoiceSessionView(snapshot) as VoiceSessionView, substitutions };
 		},
 		stop: async () => {
+			cancelPendingVoiceStart();
 			await getVoiceSessionService()?.stopSession('user');
 			return { session: sessionView() };
 		},
