@@ -2855,6 +2855,13 @@ interface MaestroAPI {
 			message?: string;
 		}>;
 		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
+		// Auto Runs saved across an update restart. `take` reads and deletes.
+		saveRestartResume: (
+			entries: import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		) => Promise<number>;
+		takeRestartResume: () => Promise<
+			import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		>;
 		onStatusChanged: (
 			handler: (data: {
 				projectPath: string;

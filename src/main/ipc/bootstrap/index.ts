@@ -70,6 +70,7 @@ import {
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
+import { registerAutoRunRestartResumeHandlers } from '../../autorun-restart-resume';
 import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
 import { startCoworkingBridge } from '../../coworking/coworking-bridge';
 import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
@@ -135,6 +136,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+
+	// Auto Runs saved across an update restart - src/main/autorun-restart-resume.ts
+	registerAutoRunRestartResumeHandlers(deps.app.getPath('userData'));
 
 	// Playbook operations - extracted to src/main/ipc/handlers/playbooks.ts
 	registerPlaybooksHandlers({

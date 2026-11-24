@@ -7,10 +7,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Hourglass } from 'lucide-react';
+import { AlertTriangle, Hourglass, Play } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { useBatchStore } from '../stores/batchStore';
+import { selectResumableAutoRunIds } from '../services/autoRunRestartResume';
 
 interface QuitConfirmModalProps {
 	theme: Theme;
@@ -81,6 +84,12 @@ export function QuitConfirmModal({
 
 	const hasActiveOperations = busyAgentCount > 0 || hasTerminalTasks || hasCueRuns || hasGroupChats;
 
+	// Auto Runs are saved when the quit is confirmed and continue on the next
+	// launch (services/autoRunRestartResume.ts), so they are not lost work.
+	const resumableCount = useBatchStore(
+		useShallow((s) => selectResumableAutoRunIds(s.batchRunStates))
+	).length;
+
 	return (
 		<div
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[10000] animate-in fade-in duration-200"
@@ -147,6 +156,20 @@ export function QuitConfirmModal({
 						)}
 						Quitting now will interrupt active work.
 					</p>
+					{resumableCount > 0 && (
+						<p
+							className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed"
+							style={{ color: theme.colors.success }}
+							data-testid="quit-autorun-resume-note"
+						>
+							<Play className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+							<span>
+								{resumableCount === 1 ? 'Your Auto Run' : `Your ${resumableCount} Auto Runs`} will
+								pick up where {resumableCount === 1 ? 'it' : 'they'} left off when you open Maestro
+								again. The task in progress starts over.
+							</span>
+						</p>
+					)}
 
 					{/* List of busy agents */}
 					{busyAgentCount > 0 && (

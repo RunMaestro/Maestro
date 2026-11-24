@@ -302,6 +302,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()`, `getEffortRejection()`, `describeEffortRejection()` in `src/shared/effortRejection.ts`.
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`.
+- **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `remarkMaestroMarkers` (`src/renderer/components/Markdown/remarkMaestroMarkers.ts`) + `<MarkerPill>`.
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`.
 - **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`.

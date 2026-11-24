@@ -16,12 +16,19 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuitConfirmModal } from '../../../renderer/components/QuitConfirmModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import {
+	resetAutoRunRestartTrackingForTests,
+	trackAutoRunLaunch,
+} from '../../../renderer/services/autoRunRestartResume';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
 	MessageSquare: () => <svg data-testid="message-square-icon" />,
 	Hourglass: () => <svg data-testid="hourglass-icon" />,
+	Play: () => <svg data-testid="play-icon" />,
 }));
 
 // Create a test theme
@@ -162,6 +169,46 @@ describe('QuitConfirmModal', () => {
 			);
 
 			expect(screen.getByText(/currently active/)).toBeInTheDocument();
+		});
+	});
+
+	describe('Auto Run resume note', () => {
+		afterEach(() => {
+			resetAutoRunRestartTrackingForTests();
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		it('tells the user a running Auto Run continues on the next launch', () => {
+			trackAutoRunLaunch('agent-a', { documents: [], prompt: '', loopEnabled: false }, '/f');
+			useBatchStore.setState({
+				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['My Session (Auto Run)']}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTestId('quit-autorun-resume-note')).toHaveTextContent(
+				'Your Auto Run will pick up where it left off when you open Maestro again'
+			);
+		});
+
+		it('shows no note when no Auto Run can resume', () => {
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['Agent A']}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+			expect(screen.queryByTestId('quit-autorun-resume-note')).not.toBeInTheDocument();
 		});
 	});
 

@@ -373,6 +373,18 @@ When an update is available, you'll see:
 - **Download** button to get the latest release from GitHub
 - Option to enable/disable automatic update checks
 
+### Updating During an Auto Run
+
+You do not have to wait for an Auto Run to finish before you update. When you click **Restart to Update** while an Auto Run is going, choose **Restart and Resume Auto Run**. Maestro saves the place of each run, restarts into the new version, and continues each run at the document and loop pass it was on. The task in progress when the app quit starts over from the top, because its checkbox was not ticked yet.
+
+- A goal-driven run continues with the iterations it already used taken off its limit.
+- A reset-on-completion document continues in the working copy it was using, so the tasks it already checked off in that pass stay done.
+- A run you already asked to stop does not resume.
+- Other agents that are mid-reply when you restart are still interrupted. Only Auto Runs resume.
+- If you would rather wait, choose **Wait Until Auto Runs Finish** and Maestro restarts on its own when they are done.
+
+The same applies when you quit Maestro with an Auto Run going. Confirm the quit, and the next time you open Maestro each run continues where it stopped. A run saved by a quit stays resumable for 7 days; one saved by an update restart, for 1 hour.
+
 ### Anonymous Check-in
 
 Alongside each update check, Maestro sends a small anonymous ping so we can count how many installs are active and which platforms and themes people actually use. It is the only usage data the app reports about itself.

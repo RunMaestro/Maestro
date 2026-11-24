@@ -36,6 +36,8 @@ import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panel
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
+import { saveAutoRunsForRestart } from '../../services/autoRunRestartResume';
+import { logger } from '../../utils/logger';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 
@@ -297,8 +299,18 @@ export function useModalHandlers(
 	// Group C: Quit Handlers
 	// ====================================================================
 
-	const handleConfirmQuit = useCallback(() => {
+	const handleConfirmQuit = useCallback(async () => {
 		getModalActions().setQuitConfirmModalOpen(false);
+		// Save each running Auto Run's place so the next launch continues it. The
+		// user already chose to quit, so a failed save is logged and the quit
+		// still goes ahead: holding the app open over it would be worse.
+		try {
+			await saveAutoRunsForRestart('quit');
+		} catch (error) {
+			logger.error('[Quit] Could not save Auto Runs to resume', undefined, {
+				error: String(error),
+			});
+		}
 		window.maestro.app.confirmQuit();
 	}, []);
 

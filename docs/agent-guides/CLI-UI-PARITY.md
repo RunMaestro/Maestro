@@ -422,7 +422,11 @@ still missing. Grouped, highest value first:
 - **SSH remotes:** test, edit, enable/disable, set default.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing, persistent token (`live on/off/status` and the tunnel are covered).
-- **Updates:** check/download/install.
+- **Updates:** check/download/install. A CLI install verb must call
+  `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
+  same as the modal's Restart and Resume, or running Auto Runs will not resume.
+- **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`
+  before `confirmQuit()`, as `handleConfirmQuit` does.
 - **Exports:** tab as HTML.
 - **Usage Dashboard:** plan usage Refresh (re-sample every account), and the Shortcuts tab's
   keyboard mastery figure (the math lives in `src/renderer/constants/keyboardMastery.ts`, which
