@@ -266,8 +266,12 @@ export function cheapTurnSettings(
  * another model, and the cheap model reads the whole transcript cold (0 of 138k
  * input tokens cached in one measured Codex synopsis). Effort can still drop:
  * it is not part of the prompt, so the thread's cache stays warm.
+ *
+ * Antigravity resumes with `agy --conversation <id>`, which appends to the same
+ * conversation the tab keeps using, so its synopsis keeps the session's model
+ * too. Only one-shot cheap turns (tab naming, grooming) run on the low tier.
  */
-const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex']);
+const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex', 'antigravity']);
 
 /**
  * `cheapTurnSettings` for a turn that RESUMES the session it summarizes, with

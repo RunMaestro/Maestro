@@ -239,6 +239,15 @@ describe('cheap synopsis turn resumed on its session', () => {
 		expect(cheapResumeTurnSettings('codex')).toEqual({ model: undefined, effort: 'low' });
 	});
 
+	it('keeps the session model on Antigravity, whose --conversation resume shares the tab thread', () => {
+		// Antigravity has a cheap tier (Hydrogen), but a synopsis must not switch
+		// the user's own conversation onto it; only effort drops.
+		expect(
+			cheapResumeTurnSettings('antigravity', { model: 'gemini-4-carbon', effort: 'high' })
+		).toEqual({ model: 'gemini-4-carbon', effort: 'low' });
+		expect(cheapResumeTurnSettings('antigravity')).toEqual({ model: undefined, effort: 'low' });
+	});
+
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
