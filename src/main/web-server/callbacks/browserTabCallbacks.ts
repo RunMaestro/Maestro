@@ -14,7 +14,11 @@ import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/cowor
 import { runHostBrowserOp } from '../../coworking/coworking-tools';
 import { requestNewAITabWithPrompt } from '../../utils/new-ai-tab-request';
 import { requestFromRenderer } from './remoteRequest';
-import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
+import {
+	readBrowserPickTarget,
+	type BrowserOp,
+	type BrowserOpResult,
+} from '../../../shared/coworkingBrowser';
 import {
 	normalizeDesignPickCommandResult,
 	type DesignPickCommandRequest,
@@ -25,10 +29,11 @@ import {
 const COWORKING_BROWSER_ID = /^browser:\d+$/;
 
 /**
- * Design Mode by selector (`maestro-cli browser-pick`). Resolves the tab the
- * caller named, then runs the host-only `pick` op through the Coworking
- * browser resolver, so the CLI reaches the same renderer code (handle
- * resolution, mounting a kept-alive tab, the composer delivery) as a click.
+ * Design Mode by selector or by region (`maestro-cli browser-pick`). Resolves
+ * the tab the caller named, then runs the host-only `pick` op through the
+ * Coworking browser resolver, so the CLI reaches the same renderer code (handle
+ * resolution, mounting a kept-alive tab, the composer delivery) as a click or a
+ * drag.
  *
  * `tab` is either the tab id `open-browser` returned, which the renderer checks
  * against `sessionId`, or a Coworking id, which only resolves while Coworking
@@ -43,8 +48,8 @@ export async function pickBrowserElement(
 ): Promise<PickBrowserElementResult> {
 	const registry = deps.registry ?? coworkingRegistry;
 	const run = deps.run ?? runHostBrowserOp;
-	const selector = request.selector.trim();
-	if (!selector) return { success: false, error: 'Missing selector', screenshot: false };
+	const target = readBrowserPickTarget(request);
+	if (!target.ok) return { success: false, error: target.error, screenshot: false };
 
 	let tabId = request.tab.trim();
 	if (COWORKING_BROWSER_ID.test(tabId)) {
@@ -61,13 +66,14 @@ export async function pickBrowserElement(
 
 	const op: BrowserOp = {
 		kind: 'pick',
-		selector,
+		...target.target,
 		...(request.note ? { note: request.note } : {}),
 		background: request.background === true,
 		...(request.queue === true ? { queue: true } : {}),
 	};
-	// The resolver rejects with the renderer's message when the op fails
-	// (tab not live, no element matches the selector, no AI tab to take it).
+	// The resolver rejects with the renderer's message when the op fails (tab
+	// not live, no element matches the selector, no part of the region is on
+	// screen, no AI tab to take it).
 	let result: BrowserOpResult;
 	try {
 		result = await run(request.sessionId, tabId, op);

@@ -21,9 +21,11 @@ import type { BrowserTabViewHandle } from '../../components/MainPanel/BrowserTab
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
 import {
 	browserOpNeedsConfirm,
+	formatBrowserPickRect,
 	DEFAULT_BROWSER_CONFIRM_POLICY,
 	BROWSER_APPROVAL_TIMEOUT_MS,
 } from '../../../shared/coworkingBrowser';
+import type { DesignPickCapture } from '../../utils/designModePicker';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -110,7 +112,9 @@ function describeBrowserOp(op: BrowserOp): string {
 		case 'closeTab':
 			return 'close this browser tab';
 		case 'pick':
-			return `add the element ${op.selector} to the message`;
+			return op.rect !== undefined
+				? `add the region ${formatBrowserPickRect(op.rect)} to the message`
+				: `add the element ${op.selector} to the message`;
 		default:
 			return 'perform a browser action';
 	}
@@ -232,25 +236,47 @@ function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult
 }
 
 /**
- * The host-only `pick` op (`maestro-cli browser-pick`): the same describe,
- * crop, and composer delivery as a click in Design Mode, by selector. The
- * element lands as a chip; the result carries the block it adds at send and
- * the chip's id. With `op.queue` it is queued as its own message instead, as
- * the pick card's Queue button does (no chip, no view change, so `background`
- * is not read): the result carries the same block and the queue item's id.
+ * What a `pick` op names, captured: the element its selector matches (as a
+ * click describes it) or the region its rect covers (as a drag lists it), or
+ * the reason there is nothing to pick.
+ */
+async function capturePickTarget(
+	handle: BrowserTabViewHandle,
+	op: Extract<BrowserOp, { kind: 'pick' }>
+): Promise<DesignPickCapture | { miss: string }> {
+	if (op.rect !== undefined) {
+		const region = await handle.inspectRegion(op.rect);
+		return (
+			region ?? {
+				miss: `No part of the region ${formatBrowserPickRect(op.rect)} is in the page's viewport (--rect is CSS px from the viewport's top-left corner).`,
+			}
+		);
+	}
+	const capture = await handle.inspectElement(op.selector);
+	if (capture === 'invalid-selector') return { miss: `Not a valid CSS selector: ${op.selector}` };
+	if (capture === 'not-found' || capture === null) {
+		return { miss: `No element matches selector: ${op.selector}` };
+	}
+	return capture;
+}
+
+/**
+ * The host-only `pick` op (`maestro-cli browser-pick`): the same capture,
+ * crop, and composer delivery as Design Mode, for an element by selector (a
+ * click) or a region by rect (a drag). The pick lands as a chip; the result
+ * carries the block it adds at send and the chip's id. With `op.queue` it is
+ * queued as its own message instead, as the pick card's Queue button does (no
+ * chip, no view change, so `background` is not read): the result carries the
+ * same block and the queue item's id.
  */
 async function pickElement(
 	handle: BrowserTabViewHandle,
 	op: Extract<BrowserOp, { kind: 'pick' }>,
 	sessionId: string
 ): Promise<BrowserOpResult> {
-	const capture = await handle.inspectElement(op.selector);
-	if (capture === 'invalid-selector') {
-		return { ok: false, content: `Not a valid CSS selector: ${op.selector}` };
-	}
-	if (capture === 'not-found' || capture === null) {
-		return { ok: false, content: `No element matches selector: ${op.selector}` };
-	}
+	const capture = await capturePickTarget(handle, op);
+	if ('miss' in capture) return { ok: false, content: capture.miss };
+	const what = 'region' in capture ? 'region' : 'element';
 	const delivery = {
 		...capture,
 		sessionId,
@@ -266,8 +292,8 @@ async function pickElement(
 		return {
 			ok: false,
 			content: op.queue
-				? 'This agent has no AI tab to queue the element into.'
-				: 'This agent has no AI tab to add the element to.',
+				? `This agent has no AI tab to queue the ${what} into.`
+				: `This agent has no AI tab to add the ${what} to.`,
 		};
 	}
 	const meta = handle.getMeta();

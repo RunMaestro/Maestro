@@ -1869,8 +1869,66 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('pick_browser_element_result');
 			expect(response.success).toBe(false);
-			expect(response.error).toContain('Missing selector');
+			expect(response.error).toBe('Missing selector or rect');
 			expect(response.screenshot).toBe(false);
+			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
+		});
+
+		it('should forward a region (--rect) in place of a selector, queue included', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				// Only the four numbers travel on; anything else the client sent stays here.
+				rect: { x: 0, y: 120, width: 1280, height: 400, frame: { width: 1, height: 1 } },
+				note: 'tighten',
+				queue: true,
+				requestId: 'r3',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.pickBrowserElement as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				rect: { x: 0, y: 120, width: 1280, height: 400 },
+				note: 'tighten',
+				background: false,
+				queue: true,
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0])).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				requestId: 'r3',
+			});
+		});
+
+		it('should reject a selector and a rect together, or a malformed rect', () => {
+			for (const [fields, error] of [
+				[
+					{ selector: 'h1', rect: { x: 0, y: 0, width: 10, height: 10 } },
+					'Send a selector or a rect, not both',
+				],
+				[{ rect: { x: 0, y: 0, width: 0, height: 10 } }, 'Invalid rect'],
+				[{ rect: '0,0,10,10' }, 'Invalid rect'],
+				[{ rect: { x: 'a', y: 0, width: 10, height: 10 } }, 'Invalid rect'],
+			] as const) {
+				(client.socket.send as any).mockClear();
+				handler.handleMessage(client, {
+					type: 'pick_browser_element',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					...fields,
+				});
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('pick_browser_element_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain(error);
+			}
 			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
 		});
 

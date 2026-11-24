@@ -76,6 +76,7 @@ function makeHandle(overrides: Partial<BrowserTabViewHandle> = {}): BrowserTabVi
 		capturePage: vi.fn(async () => 'data:image/png;base64,AAAA'),
 		toggleDesignMode: vi.fn(),
 		inspectElement: vi.fn(async () => null),
+		inspectRegion: vi.fn(async () => null),
 		...overrides,
 	};
 }
@@ -458,6 +459,101 @@ describe('resolveAndRun', () => {
 				expect(res).toMatchObject({ ok: false, content });
 			}
 			expect(queueDesignPick).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('pick by region (browser-pick --rect)', () => {
+		const rect = { x: 0, y: 120, width: 1280, height: 400 };
+		const capture = {
+			region: {
+				url: 'https://e',
+				rect,
+				viewport: { width: 1280, height: 800 },
+				elements: [],
+				elementsTruncated: false,
+			},
+			screenshot: 'data:image/png;base64,REGION',
+		};
+		const handleWith = (inspected: unknown) =>
+			makeHandle({
+				getTabId: () => 'u-1',
+				inspectRegion: vi.fn(
+					async () => inspected
+				) as unknown as BrowserTabViewHandle['inspectRegion'],
+			});
+
+		it('lists the region and delivers it as a chip, unprompted, without touching the selector path', async () => {
+			vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+			const handle = handleWith(capture);
+			const requestApproval = vi.fn(async () => true);
+			const res = await resolveAndRun(
+				{ current: new Map([['u-1', handle]]) },
+				'u-1',
+				'sess-A',
+				{ kind: 'pick', rect, note: 'tighten', background: true },
+				requestApproval
+			);
+			expect(requestApproval).not.toHaveBeenCalled();
+			expect(handle.inspectRegion).toHaveBeenCalledWith(rect);
+			expect(handle.inspectElement).not.toHaveBeenCalled();
+			// The region capture itself is what is delivered, as a drag delivers it.
+			expect(deliverDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({
+					region: capture.region,
+					screenshot: 'data:image/png;base64,REGION',
+					sessionId: 'sess-A',
+					browserTabId: 'u-1',
+					note: 'tighten',
+					reveal: false,
+				})
+			);
+			expect(res).toMatchObject({
+				ok: true,
+				content: 'ELEMENT BLOCK',
+				aiTabId: 'ai-1',
+				pickId: 'pick-1',
+				dataUrl: 'data:image/png;base64,REGION',
+			});
+			expect(queueDesignPick).not.toHaveBeenCalled();
+		});
+
+		it('queues the region as its own message with queue', async () => {
+			const res = await applyBrowserOp(
+				handleWith(capture),
+				{ kind: 'pick', rect, queue: true },
+				'sess-A'
+			);
+			expect(queueDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({ region: capture.region, sessionId: 'sess-A' })
+			);
+			expect(vi.mocked(queueDesignPick).mock.calls[0][0]).not.toHaveProperty('reveal');
+			expect(deliverDesignPick).not.toHaveBeenCalled();
+			expect(res).toMatchObject({ ok: true, content: 'QUEUED BLOCK', queueItemId: 'queue-1' });
+			expect(res).not.toHaveProperty('pickId');
+		});
+
+		it('says so when none of the region is on the page, and delivers nothing', async () => {
+			const res = await applyBrowserOp(handleWith(null), { kind: 'pick', rect }, 'sess-A');
+			expect(res).toEqual({
+				ok: false,
+				content:
+					"No part of the region 0,120,1280,400 is in the page's viewport (--rect is CSS px from the viewport's top-left corner).",
+			});
+			expect(deliverDesignPick).not.toHaveBeenCalled();
+			expect(queueDesignPick).not.toHaveBeenCalled();
+		});
+
+		it('names the region when the agent has no AI tab for it', async () => {
+			vi.mocked(deliverDesignPick).mockResolvedValueOnce(null as never);
+			expect(await applyBrowserOp(handleWith(capture), { kind: 'pick', rect }, 'sess-A')).toEqual({
+				ok: false,
+				content: 'This agent has no AI tab to add the region to.',
+			});
+
+			vi.mocked(queueDesignPick).mockResolvedValueOnce(null as never);
+			expect(
+				await applyBrowserOp(handleWith(capture), { kind: 'pick', rect, queue: true }, 'sess-A')
+			).toEqual({ ok: false, content: 'This agent has no AI tab to queue the region into.' });
 		});
 	});
 

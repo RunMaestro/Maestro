@@ -23,6 +23,7 @@ import {
 	surfaceTabIds,
 } from '../../../../shared/uiSurfaces';
 import { parseDesignPickCommandRequest } from '../../../../shared/designPickCommands';
+import { readBrowserPickTarget } from '../../../../shared/coworkingBrowser';
 import { normalizeRenameTabResult } from '../../types';
 
 /**
@@ -590,13 +591,13 @@ export function handleCloseBrowserTab(
 }
 
 /**
- * Handle pick_browser_element message - Design Mode by selector
+ * Handle pick_browser_element message - Design Mode by selector or by region
  * (`maestro-cli browser-pick`). Describes the first element matching
- * `selector` in a browser tab and stages it as a chip in the owning agent's
- * composer, the same way a click in Design Mode does; with `queue: true` it
- * is queued as its own message instead, as the pick card's Queue button does.
- * `tab` is the tab id `open-browser` returned or the tab's Coworking id
- * (`browser:N`).
+ * `selector`, or lists the elements in `rect` (guest CSS px), in a browser tab
+ * and stages it as a chip in the owning agent's composer, the same way a click
+ * or a drag in Design Mode does; with `queue: true` it is queued as its own
+ * message instead, as the pick card's Queue button does. `tab` is the tab id
+ * `open-browser` returned or the tab's Coworking id (`browser:N`).
  */
 export function handlePickBrowserElement(
 	ctx: MessageHandlerContext,
@@ -605,15 +606,17 @@ export function handlePickBrowserElement(
 ): void {
 	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 	const tab = typeof message.tab === 'string' ? message.tab.trim() : '';
-	const selector = typeof message.selector === 'string' ? message.selector.trim() : '';
+	// Exactly one of a selector (an element) or a rect (a region).
+	const target = readBrowserPickTarget({ selector: message.selector, rect: message.rect });
 	const note = typeof message.note === 'string' && message.note.trim() ? message.note : undefined;
 	const background = readBackgroundField(message);
 	// Like `background`, only a literal `true` opts in: a pick that is not
 	// clearly a queue request stages a chip, the form that never sends anything.
 	const queue = message.queue === true;
 	// Selectors and notes can carry page or user text - log lengths only.
+	const selectorLength = typeof message.selector === 'string' ? message.selector.trim().length : 0;
 	logger.info(
-		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selector.length}, queue=${queue}`,
+		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selectorLength}, rect=${message.rect != null}, queue=${queue}`,
 		LOG_CONTEXT
 	);
 
@@ -642,8 +645,8 @@ export function handlePickBrowserElement(
 		reply({ success: false, error: 'Missing sessionId or tab' });
 		return;
 	}
-	if (!selector) {
-		reply({ success: false, error: 'Missing selector' });
+	if (!target.ok) {
+		reply({ success: false, error: target.error });
 		return;
 	}
 	if (!ctx.callbacks.pickBrowserElement) {
@@ -652,7 +655,14 @@ export function handlePickBrowserElement(
 	}
 
 	ctx.callbacks
-		.pickBrowserElement({ sessionId, tab, selector, note, background, ...(queue ? { queue } : {}) })
+		.pickBrowserElement({
+			sessionId,
+			tab,
+			...target.target,
+			note,
+			background,
+			...(queue ? { queue } : {}),
+		})
 		.then((result) => reply(result))
 		.catch((error) => {
 			reply({

@@ -9,7 +9,13 @@ import { withMaestroClient, resolveSessionId } from '../services/maestro-client'
 import { resolveAgentId } from '../services/storage';
 import { failCommand, resolveAgentOrActive } from '../services/session-command';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
-import { BROWSER_PICK_TIMEOUT_MS } from '../../shared/coworkingBrowser';
+import {
+	BROWSER_PICK_RECT_MIN_SIDE,
+	BROWSER_PICK_TIMEOUT_MS,
+	formatBrowserPickRect,
+	parseBrowserPickRect,
+	type BrowserPickTarget,
+} from '../../shared/coworkingBrowser';
 import type {
 	DesignPickCommandRequest,
 	DesignPickCommandResult,
@@ -159,6 +165,8 @@ export async function closeBrowser(tabId: string, options: CloseBrowserOptions):
 
 interface BrowserPickOptions {
 	selector?: string;
+	/** `x,y,width,height` in the page's CSS px; the region instead of an element. */
+	rect?: string;
 	note?: string;
 	agent?: string;
 	background?: boolean;
@@ -187,16 +195,23 @@ interface BrowserPickResult {
 const BROWSER_PICK_CLI_TIMEOUT_MS = BROWSER_PICK_TIMEOUT_MS + 5_000;
 
 /**
- * Design Mode by selector: describe the first element matching `--selector`
- * in a browser tab (selector path, trimmed HTML, computed styles, cropped
- * screenshot) and stage it as a chip in the owning agent's composer, as a
- * click in Design Mode does. `<tab>` is the tab id `open-browser` printed, or
- * the tab's Coworking id (`browser:N`, which needs Coworking on).
+ * Design Mode by selector or by region: describe the first element matching
+ * `--selector` in a browser tab (selector path, trimmed HTML, computed styles,
+ * cropped screenshot), or list the outermost elements in the `--rect` box with
+ * the region's screenshot, and stage it as a chip in the owning agent's
+ * composer, as a click or a drag in Design Mode does. Exactly one of the two.
+ * `<tab>` is the tab id `open-browser` printed, or the tab's Coworking id
+ * (`browser:N`, which needs Coworking on).
+ *
+ * `--rect x,y,width,height` is in the page's CSS px from the top-left of its
+ * viewport (what `getBoundingClientRect()` reports), so it names what is on
+ * screen now; the page clips the box to its viewport, as a drag stops at the
+ * page's edge.
  *
  * The chip is for the person at the composer; the caller gets the full block
  * the chip adds to the message at send, and the chip's id for `browser-picks`.
  *
- * `--queue` is the pick card's Queue button: the element goes out as its own
+ * `--queue` is the pick card's Queue button: the pick goes out as its own
  * message on the agent's execution queue (an idle agent starts it, a busy one
  * runs it after its turn) and no chip is staged. The composer and the view stay
  * as they are, so the caller gets the queue item's id for `queue remove`
@@ -211,8 +226,28 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 
 	const tabRef = tab.trim();
 	if (!tabRef) return fail('Tab cannot be empty');
-	const selector = (options.selector ?? '').trim();
-	if (!selector) return fail('--selector is required');
+	// An element or a region, never both: a flag that is present counts, even
+	// blank, so a script that fills both is told rather than guessed for.
+	if (options.selector !== undefined && options.rect !== undefined) {
+		return fail('Pass --selector or --rect, not both');
+	}
+	let target: BrowserPickTarget;
+	if (options.rect !== undefined) {
+		const rect = parseBrowserPickRect(options.rect);
+		if (!rect) {
+			return fail(
+				`--rect must be x,y,width,height in CSS px, with width and height at least ${BROWSER_PICK_RECT_MIN_SIDE} (got "${options.rect}")`
+			);
+		}
+		target = { rect };
+	} else {
+		const selector = (options.selector ?? '').trim();
+		if (!selector) return fail('--selector or --rect is required');
+		target = { selector };
+	}
+	// How the summary names the pick: the selector, or the region as typed.
+	const picked =
+		target.rect !== undefined ? `region ${formatBrowserPickRect(target.rect)}` : target.selector;
 
 	let sessionId = '';
 	try {
@@ -233,7 +268,7 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 					type: 'pick_browser_element',
 					sessionId,
 					tab: tabRef,
-					selector,
+					...target,
 					...(options.note ? { note: options.note } : {}),
 					background,
 					...(options.queue ? { queue: true } : {}),
@@ -246,7 +281,9 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 		return fail(error instanceof Error ? error.message : String(error));
 	}
 
-	if (!result.success) return fail(result.error || 'Failed to pick element');
+	if (!result.success) {
+		return fail(result.error || (target.rect ? 'Failed to pick region' : 'Failed to pick element'));
+	}
 
 	if (options.json) {
 		console.log(
@@ -258,7 +295,9 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 				aiTabId: result.aiTabId ?? null,
 				pickId: result.pickId ?? null,
 				queueItemId: result.queueItemId ?? null,
-				selector,
+				// What was asked for: one is set, the other null.
+				selector: target.selector ?? null,
+				rect: target.rect ?? null,
 				screenshot: result.screenshot === true,
 				background,
 				text: result.text ?? '',
@@ -269,13 +308,13 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 	if (options.queue) {
 		// Nothing moved, so there is no "(background)" to report.
 		console.log(
-			`Queued ${selector} from ${tabRef} for tab ${result.aiTabId ?? 'unknown'} as its own message`
+			`Queued ${picked} from ${tabRef} for tab ${result.aiTabId ?? 'unknown'} as its own message`
 		);
 		// The handle for `queue remove`, like the chip id below.
 		if (result.queueItemId) console.log(`  Queue item: ${result.queueItemId}`);
 	} else {
 		console.log(
-			`Added ${selector} from ${tabRef} to the composer of tab ${result.aiTabId ?? 'unknown'}${
+			`Added ${picked} from ${tabRef} to the composer of tab ${result.aiTabId ?? 'unknown'}${
 				background ? ' (background)' : ''
 			}`
 		);

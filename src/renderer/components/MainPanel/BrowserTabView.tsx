@@ -37,11 +37,13 @@ import {
 import { isWebDesktop } from '../../utils/runtimeContext';
 import {
 	captureDesignPick,
+	captureDesignRegion,
 	designModeGuestCall,
 	type DesignModeCapture,
 	type DesignModeGuestAccess,
 	type DesignModeMiss,
 	type DesignModeRect,
+	type DesignModeRegionCapture,
 	type DesignPickCapture,
 } from '../../utils/designModePicker';
 
@@ -148,6 +150,10 @@ export interface BrowserTabViewHandle {
 	/** Describe the first element matching `selector` and crop its screenshot,
 	 *  the same payload a click in Design Mode builds (`maestro-cli browser-pick`). */
 	inspectElement(selector: string): Promise<DesignModeCapture | DesignModeMiss | null>;
+	/** List the elements in `rect` (guest CSS px from the viewport's top-left)
+	 *  and crop its screenshot, the same payload a drag in Design Mode builds
+	 *  (`maestro-cli browser-pick --rect`). Null when none of it is on screen. */
+	inspectRegion(rect: DesignModeRect): Promise<DesignModeRegionCapture | null>;
 }
 
 /** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
@@ -553,6 +559,20 @@ export const BrowserTabView = React.memo(
 					return captureDesignPick(designAccessRef.current, {
 						type: 'describeSelector',
 						selector,
+					});
+				},
+				async inspectRegion(rect: DesignModeRect) {
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					await waitForReadyToRead(webview, isDomReadyRef);
+					// No frame: the box is already guest CSS px, not overlay px. Only
+					// the four numbers go to the page.
+					return captureDesignRegion(designAccessRef.current, {
+						type: 'region',
+						x: rect.x,
+						y: rect.y,
+						width: rect.width,
+						height: rect.height,
 					});
 				},
 			}),

@@ -908,21 +908,23 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
 
-// Browser pick command - Design Mode by selector: stage an element of a browser
-// tab (selector, trimmed HTML, computed styles, cropped screenshot) as a chip in
-// the owning agent's composer, through the same code a click in Design Mode runs.
-// With --queue it is queued as its own message instead, as the pick card's Queue
-// button does.
+// Browser pick command - Design Mode by selector or by region: stage an element
+// of a browser tab (selector, trimmed HTML, computed styles, cropped screenshot),
+// or a region of it (--rect: its screenshot and the outermost elements in it), as
+// a chip in the owning agent's composer, through the same code a click or a drag
+// in Design Mode runs. Exactly one of --selector and --rect. With --queue it is
+// queued as its own message instead, as the pick card's Queue button does.
 program
 	.command('browser-pick <tab>')
 	.description(
-		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+		"Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
 	)
-	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
-	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--rect <x,y,w,h>', 'Pick a region: x,y,width,height in viewport CSS px')
+	.option('--note <text>', 'Note added under the pick, as typed in the pick card')
 	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
 	.option('--background', 'Add it without switching the view to the AI tab')
-	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--focus', 'Switch to the AI tab the pick lands in (default)')
 	.option('--queue', 'Queue it as its own message instead of a chip')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPick);

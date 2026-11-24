@@ -184,7 +184,7 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
-	/** Design Mode by selector (`browser-pick`). See `PickBrowserElementCallback`. */
+	/** Design Mode by selector or region (`browser-pick`). See `PickBrowserElementCallback`. */
 	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
 	/** `maestro-cli browser-picks` - list the Design Mode chips in a composer, or remove one. */
 	designPickCommand?: DesignPickCommandCallback;

@@ -3241,6 +3241,55 @@ describe('BrowserTabView', () => {
 
 				expect(guestCalls(webview, 'region')).toHaveLength(0);
 			});
+
+			it('inspectRegion (browser-pick --rect) asks the page for the box in its own pixels and crops it', async () => {
+				// No Design Mode needed: the CLI names the box, nobody drags it.
+				const { ref, webview } = await setupReady(vi.fn());
+				regionPage(webview);
+
+				let result: Awaited<ReturnType<BrowserTabViewHandle['inspectRegion']>> = null;
+				await act(async () => {
+					result = await ref.current!.inspectRegion({
+						x: 100,
+						y: 80,
+						width: 640,
+						height: 220,
+						// Anything beyond the four numbers stays on the host side.
+						frame: { width: 1, height: 1 },
+					} as never);
+				});
+
+				// Guest CSS px: no frame, so the page does not scale the box.
+				expect(guestCalls(webview, 'region')).toEqual([
+					{ type: 'region', x: 100, y: 80, width: 640, height: 220 },
+				]);
+				// The crop is the region the page reported, in guest DIPs at zoom 1.5.
+				expect(webview.capturePage).toHaveBeenCalledWith({
+					x: 150,
+					y: 120,
+					width: 960,
+					height: 330,
+				});
+				expect(result).toMatchObject({
+					screenshot: SHOT,
+					region: { rect: REGION.rect, elements: REGION.elements },
+				});
+				// It opens no card and starts no Design Mode.
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			});
+
+			it('inspectRegion resolves null when the page reports no region', async () => {
+				const { ref, webview } = await setupReady(vi.fn());
+				regionPage(webview, null);
+
+				let result: Awaited<ReturnType<BrowserTabViewHandle['inspectRegion']>> | undefined;
+				await act(async () => {
+					result = await ref.current!.inspectRegion({ x: 5000, y: 5000, width: 10, height: 10 });
+				});
+
+				expect(result).toBeNull();
+				expect(webview.capturePage).not.toHaveBeenCalled();
+			});
 		});
 
 		it('the imperative toggle and inspectElement reach the same path', async () => {

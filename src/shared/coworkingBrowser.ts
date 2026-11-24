@@ -58,11 +58,32 @@ export type BrowserOp =
 	| BrowserPickOp;
 
 /**
- * Design Mode pick by selector: describe the first element matching `selector`
- * (selector path, trimmed outerHTML, computed styles, cropped screenshot) and
- * add it to the owning agent's composer as a chip, exactly as a click in Design
- * Mode does. With `queue` it goes out as its own queued message instead, exactly
- * as the pick card's Queue button does.
+ * A box in a browser tab's viewport, in the page's CSS pixels from the
+ * viewport's top-left corner: the region a `pick` names instead of an element
+ * (`maestro-cli browser-pick --rect`). The page clips it to what is on screen.
+ */
+export interface BrowserPickRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * What a Design Mode pick names: one element, by the first match of a CSS
+ * `selector`, or a region of the page, by a `rect`. Always exactly one.
+ */
+export type BrowserPickTarget =
+	| { selector: string; rect?: undefined }
+	| { rect: BrowserPickRect; selector?: undefined };
+
+/**
+ * Design Mode pick by selector or by region: describe the first element
+ * matching `selector` (selector path, trimmed outerHTML, computed styles,
+ * cropped screenshot), or list the outermost elements in `rect` with the
+ * region's screenshot, and add it to the owning agent's composer as a chip,
+ * exactly as a click or a drag in Design Mode does. With `queue` it goes out as
+ * its own queued message instead, exactly as the pick card's Queue button does.
  *
  * Not an MCP op. Only `maestro-cli browser-pick` sends it, through the same
  * resolver the MCP tools use, so the CLI and the agent tools address a tab the
@@ -71,10 +92,9 @@ export type BrowserOp =
  * through the CLI, like every other CLI verb: that is the CLI-parity contract,
  * and the bundled system prompt tells agents to pass `--background`.
  */
-export interface BrowserPickOp {
+export type BrowserPickOp = BrowserPickTarget & {
 	kind: 'pick';
-	selector: string;
-	/** Optional note appended under the element, as typed in the pick card. */
+	/** Optional note appended under the pick, as typed in the pick card. */
 	note?: string;
 	/** True leaves the visible agent and tab alone (CLI `--background`). */
 	background?: boolean;
@@ -84,6 +104,75 @@ export interface BrowserPickOp {
 	 * never touched, so `background` has nothing left to decide.
 	 */
 	queue?: boolean;
+};
+
+/**
+ * The smallest side a pick's region may have, in CSS pixels. The page finds
+ * no region under 1 px, as a drag that comes back to its start picks nothing.
+ */
+export const BROWSER_PICK_RECT_MIN_SIDE = 1;
+
+/** A plain decimal: optional minus, digits, optional fraction. No exponent, hex or blank. */
+const PLAIN_DECIMAL = /^-?(?:\d+(?:\.\d+)?|\.\d+)$/;
+
+/**
+ * Validate a pick's region: four finite numbers, and a width and height of at
+ * least {@link BROWSER_PICK_RECT_MIN_SIDE}. The origin can be negative or past
+ * the viewport, because the page clips the box to what is on screen.
+ *
+ * @returns A fresh box with only the four fields, or null.
+ */
+export function readBrowserPickRect(value: unknown): BrowserPickRect | null {
+	if (!value || typeof value !== 'object') return null;
+	const { x, y, width, height } = value as Record<string, unknown>;
+	const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+	if (!finite(x) || !finite(y) || !finite(width) || !finite(height)) return null;
+	if (width < BROWSER_PICK_RECT_MIN_SIDE || height < BROWSER_PICK_RECT_MIN_SIDE) return null;
+	return { x, y, width, height };
+}
+
+/**
+ * Parse a `--rect` value: `x,y,width,height` in CSS pixels, as in
+ * `0,120,1280,400`. Space around a number is allowed.
+ *
+ * @returns The box, or null when it is not four plain numbers or fails
+ * {@link readBrowserPickRect}.
+ */
+export function parseBrowserPickRect(text: string): BrowserPickRect | null {
+	const parts = text.split(',').map((part) => part.trim());
+	if (parts.length !== 4 || !parts.every((part) => PLAIN_DECIMAL.test(part))) return null;
+	const [x, y, width, height] = parts.map(Number);
+	return readBrowserPickRect({ x, y, width, height });
+}
+
+/** A region as `--rect` spells it, `x,y,width,height`: the inverse of {@link parseBrowserPickRect}. */
+export function formatBrowserPickRect(rect: BrowserPickRect): string {
+	return `${rect.x},${rect.y},${rect.width},${rect.height}`;
+}
+
+/**
+ * Read what a pick request names from its untrusted fields: a selector
+ * (trimmed) or a region, exactly one. Shared by the `pick_browser_element`
+ * handler and the main-process pick, between a CLI that can be any version and
+ * a renderer that must never be handed a half-formed pick.
+ */
+export function readBrowserPickTarget(fields: {
+	selector?: unknown;
+	rect?: unknown;
+}): { ok: true; target: BrowserPickTarget } | { ok: false; error: string } {
+	const selector = typeof fields.selector === 'string' ? fields.selector.trim() : '';
+	const rectSent = fields.rect !== undefined && fields.rect !== null;
+	if (selector && rectSent) return { ok: false, error: 'Send a selector or a rect, not both' };
+	if (rectSent) {
+		const rect = readBrowserPickRect(fields.rect);
+		if (rect) return { ok: true, target: { rect } };
+		return {
+			ok: false,
+			error: `Invalid rect: x, y, width and height must be numbers, and width and height at least ${BROWSER_PICK_RECT_MIN_SIDE}`,
+		};
+	}
+	if (!selector) return { ok: false, error: 'Missing selector or rect' };
+	return { ok: true, target: { selector } };
 }
 
 /** Interaction (state-changing) op kinds, gated behind the interaction

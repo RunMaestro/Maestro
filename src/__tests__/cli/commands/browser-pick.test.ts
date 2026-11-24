@@ -264,10 +264,175 @@ describe('browser-pick command', () => {
 		stubDesktop({ success: true });
 
 		await browserPick('tab-uuid', { selector: '  ' });
+		await browserPick('tab-uuid', {});
 
 		expect(withMaestroClient).not.toHaveBeenCalled();
-		expect(errorSpy).toHaveBeenCalledWith('Error: --selector is required');
+		expect(errorSpy.mock.calls.map((call) => call[0])).toEqual([
+			'Error: --selector or --rect is required',
+			'Error: --selector or --rect is required',
+		]);
 		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	describe('--rect', () => {
+		it('sends the region in place of a selector and names it in the summary', async () => {
+			const sent = stubDesktop({
+				success: true,
+				tabId: 'tab-uuid',
+				browserId: 'browser:2',
+				aiTabId: 'ai-1',
+				pickId: 'pick-9',
+				screenshot: true,
+				text: 'Design Mode region ...',
+			});
+
+			await browserPick('browser:2', {
+				rect: ' 0, 120.5 ,1280,400 ',
+				note: 'tighten this',
+				agent: 'agent-7',
+				background: true,
+			});
+
+			expect(sent).toHaveLength(1);
+			expect(sent[0].responseType).toBe('pick_browser_element_result');
+			expect(sent[0].timeoutMs).toBeGreaterThan(10_000);
+			// Numbers on the wire, not the text typed, and no selector.
+			expect(sent[0].message).toEqual({
+				type: 'pick_browser_element',
+				sessionId: 'resolved-agent-7',
+				tab: 'browser:2',
+				rect: { x: 0, y: 120.5, width: 1280, height: 400 },
+				note: 'tighten this',
+				background: true,
+			});
+			expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
+				'Added region 0,120.5,1280,400 from browser:2 to the composer of tab ai-1 (background)',
+				'  Chip: pick-9',
+				'  Coworking id: browser:2',
+				'  Screenshot: attached',
+				'\nDesign Mode region ...',
+			]);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('takes a negative origin: the page clips the box to its viewport', async () => {
+			const sent = stubDesktop({ success: true, aiTabId: 'ai-1', screenshot: false });
+
+			await browserPick('tab-uuid', { rect: '-20,-10,300,200' });
+
+			expect(sent[0].message.rect).toEqual({ x: -20, y: -10, width: 300, height: 200 });
+		});
+
+		it('prints the region and a null selector in JSON', async () => {
+			stubDesktop({
+				success: true,
+				tabId: 'tab-uuid',
+				aiTabId: 'ai-1',
+				pickId: 'pick-9',
+				screenshot: true,
+				text: 'the region block',
+			});
+
+			await browserPick('tab-uuid', { rect: '10,20,640,220', json: true });
+
+			expect(logSpy).toHaveBeenCalledTimes(1);
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+				success: true,
+				sessionId: 'active-session',
+				tabId: 'tab-uuid',
+				aiTabId: 'ai-1',
+				pickId: 'pick-9',
+				queueItemId: null,
+				selector: null,
+				rect: { x: 10, y: 20, width: 640, height: 220 },
+				screenshot: true,
+				text: 'the region block',
+			});
+		});
+
+		it('reports a null rect in JSON for a selector pick', async () => {
+			stubDesktop({ success: true, aiTabId: 'ai-1', screenshot: false });
+
+			await browserPick('tab-uuid', { selector: 'button', json: true });
+
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+				selector: 'button',
+				rect: null,
+			});
+		});
+
+		it('queues a region as its own message with --queue', async () => {
+			const sent = stubDesktop({
+				success: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-9',
+				screenshot: true,
+				text: 'Design Mode region ...',
+			});
+
+			await browserPick('browser:2', { rect: '0,0,800,600', queue: true });
+
+			expect(sent[0].message).toEqual({
+				type: 'pick_browser_element',
+				sessionId: 'active-session',
+				tab: 'browser:2',
+				rect: { x: 0, y: 0, width: 800, height: 600 },
+				background: false,
+				queue: true,
+			});
+			expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
+				'Queued region 0,0,800,600 from browser:2 for tab ai-1 as its own message',
+				'  Queue item: queue-9',
+				'  Screenshot: attached',
+				'\nDesign Mode region ...',
+			]);
+		});
+
+		it('refuses a rect that is not four numbers with a width and height of at least 1', async () => {
+			stubDesktop({ success: true });
+
+			for (const rect of [
+				'',
+				'10,20,640',
+				'10,20,640,220,5',
+				'a,b,c,d',
+				'0,0,0,100',
+				'1e3,0,9,9',
+			]) {
+				errorSpy.mockClear();
+				await browserPick('tab-uuid', { rect });
+				expect(errorSpy, rect).toHaveBeenCalledWith(
+					`Error: --rect must be x,y,width,height in CSS px, with width and height at least 1 (got "${rect}")`
+				);
+			}
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses --selector and --rect together, even with one of them blank', async () => {
+			stubDesktop({ success: true });
+
+			await browserPick('tab-uuid', { selector: 'h1', rect: '0,0,10,10', json: true });
+			await browserPick('tab-uuid', { selector: '', rect: '0,0,10,10', json: true });
+
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(logSpy.mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([
+				{ success: false, error: 'Pass --selector or --rect, not both' },
+				{ success: false, error: 'Pass --selector or --rect, not both' },
+			]);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('reports the desktop error for a region off the page and exits 1', async () => {
+			const miss =
+				"No part of the region 5000,5000,100,100 is in the page's viewport (--rect is CSS px from the viewport's top-left corner).";
+			stubDesktop({ success: false, error: miss });
+
+			await browserPick('tab-uuid', { rect: '5000,5000,100,100' });
+
+			expect(errorSpy).toHaveBeenCalledWith(`Error: ${miss}`);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
 	});
 
 	it('reports the desktop error and exits 1', async () => {

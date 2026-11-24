@@ -20,6 +20,7 @@ import type {
 	DesignPickCommandRequest,
 	DesignPickCommandResult,
 } from '../../shared/designPickCommands';
+import type { BrowserPickTarget } from '../../shared/coworkingBrowser';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -649,20 +650,21 @@ export type OpenBrowserTabCallback = (
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 
 /**
- * Design Mode by selector (`maestro-cli browser-pick`). `tab` is either the
- * tab id `open-browser` returned or the tab's Coworking id (`browser:N`),
- * resolved against `sessionId`. The pick runs through the Coworking browser
- * resolver, so it reaches the same renderer code a click in Design Mode does.
+ * Design Mode by selector or by region (`maestro-cli browser-pick`). Names an
+ * element (`selector`) or a region in guest CSS px (`rect`), exactly one.
+ * `tab` is either the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`), resolved against `sessionId`. The pick runs through the
+ * Coworking browser resolver, so it reaches the same renderer code a click or a
+ * drag in Design Mode does.
  */
-export interface PickBrowserElementRequest {
+export type PickBrowserElementRequest = BrowserPickTarget & {
 	sessionId: string;
 	tab: string;
-	selector: string;
 	note?: string;
 	background?: boolean;
 	/** True queues the pick as its own message instead of staging a chip. */
 	queue?: boolean;
-}
+};
 export interface PickBrowserElementResult {
 	success: boolean;
 	error?: string;

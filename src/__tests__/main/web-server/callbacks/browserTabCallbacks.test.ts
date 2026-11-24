@@ -201,6 +201,83 @@ describe('pickBrowserElement (browser-pick)', () => {
 			{ registry, run }
 		);
 		expect(run).not.toHaveBeenCalled();
-		expect(result).toEqual({ success: false, error: 'Missing selector', screenshot: false });
+		expect(result).toEqual({
+			success: false,
+			error: 'Missing selector or rect',
+			screenshot: false,
+		});
+	});
+
+	describe('region (browser-pick --rect)', () => {
+		const rect = { x: 0, y: 120, width: 1280, height: 400 };
+
+		it('runs the pick op with the rect in place of a selector', async () => {
+			run.mockResolvedValueOnce({
+				ok: true,
+				content: 'Design Mode region ...',
+				dataUrl: 'data:image/png;base64,AAAA',
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-2',
+			});
+			const result = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'browser:1', rect, note: 'tighten', queue: true },
+				{ registry, run }
+			);
+			expect(run).toHaveBeenCalledTimes(1);
+			// No selector key at all: the renderer tells the two apart by which is set.
+			expect(run.mock.calls[0][2]).toStrictEqual({
+				kind: 'pick',
+				rect,
+				note: 'tighten',
+				background: false,
+				queue: true,
+			});
+			expect(result).toEqual({
+				success: true,
+				tabId: 'uuid-a',
+				browserId: 'browser:1',
+				text: 'Design Mode region ...',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-2',
+			});
+		});
+
+		it('refuses a malformed rect, or a rect beside a selector, without reaching the renderer', async () => {
+			const malformed = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'uuid-a', rect: { ...rect, width: 0 } },
+				{ registry, run }
+			);
+			expect(malformed).toMatchObject({ success: false, screenshot: false });
+			expect(malformed.error).toContain('Invalid rect');
+
+			const both = await pickBrowserElement(
+				// The type forbids it; a caller that is not type-checked can still send it.
+				{ sessionId: 's1', tab: 'uuid-a', selector: 'h1', rect } as never,
+				{ registry, run }
+			);
+			expect(both).toEqual({
+				success: false,
+				error: 'Send a selector or a rect, not both',
+				screenshot: false,
+			});
+			expect(run).not.toHaveBeenCalled();
+		});
+
+		it('reports the renderer error for a region off the page', async () => {
+			run.mockRejectedValueOnce(
+				new Error("No part of the region 0,120,1280,400 is in the page's viewport")
+			);
+			const result = await pickBrowserElement(
+				{ sessionId: 's1', tab: 'uuid-a', rect },
+				{ registry, run }
+			);
+			expect(result).toEqual({
+				success: false,
+				error: "No part of the region 0,120,1280,400 is in the page's viewport",
+				tabId: 'uuid-a',
+				screenshot: false,
+			});
+		});
 	});
 });

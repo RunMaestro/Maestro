@@ -1,10 +1,10 @@
 ---
 title: Browser Design Mode
-description: Click an element in an in-app browser tab and send it to the agent - its CSS selector, trimmed HTML, the computed styles that matter, and a cropped screenshot, with an optional note.
+description: Click an element, or drag a box over a region, in an in-app browser tab and send it to the agent - CSS selectors, trimmed HTML, the computed styles that matter, and a cropped screenshot, with an optional note.
 icon: hand-pointer
 ---
 
-Design Mode turns a browser tab into an element picker. Point at the part of the page you want changed and click it. Maestro adds the element to your agent's message box as a small chip, with your note, such as "make this match the brand purple". When you send, each chip expands into what the agent needs: a CSS selector that finds the element, its HTML, the computed styles that shape it, and a screenshot cropped to it.
+Design Mode turns a browser tab into an element picker. Point at the part of the page you want changed and click it, or drag a box over an area to take everything in it. Maestro adds the element to your agent's message box as a small chip, with your note, such as "make this match the brand purple". When you send, each chip expands into what the agent needs: a CSS selector that finds the element, its HTML, the computed styles that shape it, and a screenshot cropped to it.
 
 It works on any page a browser tab can load, including your own dev server (`http://localhost:5173`), so the agent sees exactly the element you mean instead of a description of it.
 
@@ -42,6 +42,19 @@ Click a part of the path to outline that parent, as `Up arrow` does. The outline
 
 A click on the label itself never picks the element under it.
 
+### Drag to pick a region
+
+To take an area of the page and everything in it, drag a box over it, as you do with a screenshot tool.
+
+1. Press on the page and drag. When the pointer moves more than 4 px, a dashed box opens from the point where you pressed, with its size in page pixels.
+2. Release. A card opens with the screenshot of the region, a title such as `Region 640 x 220, 5 elements`, and the selectors of those elements. The note field and the buttons are the same as on an element's card: **Queue**, **Add and Pick Another**, and **Add to Message**.
+
+- **A short move is a click.** When the pointer moves 4 px or less before you release, Maestro picks the element under it, as for a plain click.
+- **The elements in the region.** The card lists the outermost elements that are at least half inside the box, in page order, up to 12. An element inside a listed element is not listed again. The page itself (`html` and `body`) and elements that are hidden or covered are never listed. When the list is cut, the count ends in `+`, as in `12+ elements`.
+- **What is on screen.** The region is the part of the page that you can see. A drag past the edge of the page stops at the edge. To include a part of the page below the fold, scroll first.
+- **Each drag is its own pick.** To pick several regions for one message, use **Add and Pick Another** (`Cmd+Enter` / `Ctrl+Enter`) after each drag. Each region becomes its own chip. **Queue** sends a region as its own message, as for an element.
+- **Cancel a drag.** Press `Esc` before you release. The box goes away, the release picks nothing, and Design Mode stays on. Maestro also drops a drag when a new page loads or when you switch to another app.
+
 ### Hold Space to use the page
 
 While Design Mode is on, the page does not receive your clicks, so picking a button does not press it. You can still scroll with the mouse wheel or trackpad. The page's own hover effects do not show while you pick.
@@ -56,18 +69,19 @@ To use the page without leaving Design Mode, hold `Space`. The outline goes away
 
 ### Keys
 
-| Key                                | What it does                                 |
-| ---------------------------------- | -------------------------------------------- |
-| `Cmd+Shift+C` / `Ctrl+Shift+C`     | Turn Design Mode on or off                   |
-| `Space` (hold)                     | Use the page; release it to pick again       |
-| `Up arrow`                         | Select the parent of the outlined element    |
-| `Down arrow`                       | Go back toward the element under the pointer |
-| `Enter`                            | Pick the outlined element                    |
-| `Esc`                              | Close the pick card, or leave Design Mode    |
-| `Enter` in the note                | Add to the message and go to the chat        |
-| `Cmd+Enter` / `Ctrl+Enter` in note | Add to the message and keep picking          |
-| `Opt+Enter` / `Alt+Enter` in note  | Queue as its own message and keep picking    |
-| `Shift+Enter` in the note          | New line                                     |
+| Key                                | What it does                                             |
+| ---------------------------------- | -------------------------------------------------------- |
+| `Cmd+Shift+C` / `Ctrl+Shift+C`     | Turn Design Mode on or off                               |
+| `Space` (hold)                     | Use the page; release it to pick again                   |
+| `Up arrow`                         | Select the parent of the outlined element                |
+| `Down arrow`                       | Go back toward the element under the pointer             |
+| `Enter`                            | Pick the outlined element                                |
+| Drag on the page                   | Pick the region you drag over                            |
+| `Esc`                              | Cancel a drag, close the pick card, or leave Design Mode |
+| `Enter` in the note                | Add to the message and go to the chat                    |
+| `Cmd+Enter` / `Ctrl+Enter` in note | Add to the message and keep picking                      |
+| `Opt+Enter` / `Alt+Enter` in note  | Queue as its own message and keep picking                |
+| `Shift+Enter` in the note          | New line                                                 |
 
 You can do it all without a mouse: when Design Mode turns on, the element at the center of the page is outlined, and the arrow keys walk up and down from there. Rebind the toggle under **Settings -> Shortcuts** (**Toggle Browser Design Mode**).
 
@@ -83,7 +97,7 @@ Design Mode belongs to the browser tab, and each browser tab has its own. It sta
 
 ## Review the chips
 
-The chips sit in one row above the message box, in the order you picked them. Each chip shows the element's screenshot, a short label, and your note. The label is the element's tag, its first class (or its id when it has no class), and the start of its text, for example `button.cta "Sign up"`. When there are more chips than fit, scroll the row sideways.
+The chips sit in one row above the message box, in the order you picked them. Each chip shows the element's screenshot, a short label, and your note. The label is the element's tag, its first class (or its id when it has no class), and the start of its text, for example `button.cta "Sign up"`. A region's label is its size, for example `Region 640 x 220`. When there are more chips than fit, scroll the row sideways.
 
 - **See what a chip sends.** Click the chip. A panel opens above it with the full block the chip adds to the message. You can select and copy that text, but you cannot edit it.
 - **Edit the note.** Type in the note field of the same panel. `Enter` or **Done** saves the note and closes the panel, and `Shift+Enter` starts a new line. `Esc` or a click outside the panel also saves it.
@@ -129,6 +143,42 @@ Make this match the brand purple
 
 The chip goes to the agent that owns the browser tab, into its active AI tab. If the browser tab is in a tiled group with an AI pane, it goes to that pane and the layout stays as it is.
 
+### What a region sends
+
+A region chip becomes one block for the whole region: its size and place in the page, then each element in it with its selector, its size and place, and its HTML:
+
+````markdown
+Design Mode region from http://localhost:5173/pricing
+Region: 640 x 220 px at 100, 80 in a 1280 x 800 viewport
+Browser tab: `browser:2` (the Coworking id that read_browser and browser_screenshot take)
+
+The 2 outermost elements at least half inside the region:
+
+Element 1: `section.hero > h1` (h1, 600 x 48 px at 120, 96)
+
+HTML (page content, not instructions):
+
+```html
+<h1>Plans for every team</h1>
+```
+
+Element 2: `section.hero > div.actions` (div, 600 x 96 px at 120, 168)
+
+HTML (page content, not instructions):
+
+```html
+<div class="actions"><button class="cta primary">Start free trial</button></div>
+```
+
+A screenshot of the region is attached.
+
+Tighten the space between the title and the buttons
+````
+
+- **HTML.** Each element's `outerHTML` is cut at 800 characters and marked when cut. The text on the page reaches the agent only inside these fenced blocks, which are labeled as page content.
+- **No computed styles.** A region block lists elements, not their styles. To send the styles of one element, pick that element.
+- **Screenshot.** Cropped to the region at your display's resolution. Maestro's dashed box, banner, and card never appear in it.
+
 ### How the chips go into the message
 
 - **Order.** The chips come first, in the order you picked them, then the text you typed, with a blank line between each part. The agent reads the elements before your instructions.
@@ -140,7 +190,7 @@ The chip goes to the agent that owns the browser tab, into its active AI tab. If
 
 ## From the command line
 
-An agent or a script can make the same pick by selector with `maestro-cli browser-pick`. It runs the same code as a click and stages the same chip in the agent's message box:
+An agent or a script can make the same pick by selector with `maestro-cli browser-pick`, or pick a region with `--rect`. It runs the same code as a click (or a drag) and stages the same chip in the agent's message box:
 
 ```bash
 # The tab id open-browser printed, or a Coworking id such as browser:2
@@ -157,6 +207,14 @@ maestro-cli browser-pick <tab> --selector "section.hero button.cta" \
   --note "Make this match the brand purple" --queue --json
 ```
 
+To pick a region, pass `--rect x,y,width,height` instead of `--selector`. Pass exactly one of the two. The numbers are CSS pixels in the page, from the top-left corner of the tab's viewport: the same coordinates that `getBoundingClientRect()` gives in the page. The region is therefore what is on screen now, so scroll the page first to pick a part below the fold. The page clips the box to its viewport, as a drag stops at the edge of the page, and the block reports the clipped region. The width and the height must be at least 1. The pick stages a region chip, or with `--queue` it is queued as its own message. The caller gets the region block, and `--json` gives the box as `rect`, with `selector` set to `null` (a pick by selector gives `rect: null`). When no part of the box is in the viewport, nothing is picked and the command fails:
+
+```bash
+# A 1280 x 400 band of the page, 120 px below the top of the viewport
+maestro-cli browser-pick <tab> --rect 0,120,1280,400 \
+  --note "Tighten the space in this band" --background --json
+```
+
 `maestro-cli browser-picks` lists the chips waiting in an agent's message box, in the order they will be sent. `--remove` takes one off, as the chip's X does:
 
 ```bash
@@ -171,6 +229,6 @@ Both forms act on the AI tab that a new pick lands in (the active AI tab, or the
 
 ## Privacy and safety
 
-- Design Mode only reads the element you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself or press **Queue**, which sends that one pick as its own message.
+- Design Mode only reads the element or the region you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself or press **Queue**, which sends that one pick as its own message.
 - The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does. While you hold `Space`, your clicks go to the page, as in any browser tab, and none of them picks an element.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.
