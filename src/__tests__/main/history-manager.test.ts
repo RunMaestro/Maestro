@@ -126,6 +126,7 @@ vi.mock('fs/promises', async () => {
 });
 
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import { app } from 'electron';
 import { logger } from '../../main/utils/logger';
 import { HistoryManager, getHistoryManager } from '../../main/history-manager';
@@ -376,7 +377,7 @@ describe('HistoryManager', () => {
 			expectFreshMarkerOnly();
 		});
 
-		it('should not need migration when legacy file is malformed', async () => {
+		it('quarantines a malformed legacy file to a sidecar and writes the marker once', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => {
 				const s = p.toString();
 				if (s.endsWith('history')) return true;
@@ -387,7 +388,91 @@ describe('HistoryManager', () => {
 			stageLegacyHistory('not-json{{{');
 
 			await manager.initialize();
+
+			expect(vi.mocked(fsp.rename)).toHaveBeenCalledWith(
+				path.join('/mock/userData', 'maestro-history.json'),
+				expect.stringMatching(/maestro-history\.corrupt-.*\.json$/)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(expect.any(SyntaxError), {
+				operation: 'history:corruptLegacy',
+				sidecarPath: expect.stringMatching(/maestro-history\.corrupt-.*\.json$/),
+			});
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('quarantined'),
+				expect.any(String)
+			);
 			expectFreshMarkerOnly();
+		});
+
+		it('does not write the marker if quarantining a malformed legacy file fails', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			stageLegacyHistory('not-json{{{');
+			const renameErr = Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
+			vi.mocked(fsp.rename).mockRejectedValueOnce(renameErr);
+
+			await manager.initialize();
+
+			expect(mockWriteFileSync).not.toHaveBeenCalled();
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to quarantine corrupt legacy history file'),
+				expect.any(String)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(renameErr, {
+				operation: 'history:checkMigration',
+			});
+		});
+
+		it('does not write the marker on an I/O read error and migrates on the next readable launch', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			const readErr = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+			mockReadFileSync.mockImplementationOnce(() => {
+				throw readErr;
+			});
+
+			await manager.initialize();
+
+			expect(mockWriteFileSync).not.toHaveBeenCalled();
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to read legacy history file during migration check'),
+				expect.any(String)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(readErr, {
+				operation: 'history:checkMigration',
+			});
+
+			// Next launch: the legacy file is readable and gets migrated.
+			stageLegacyHistory(
+				JSON.stringify({ entries: [createMockEntry({ sessionId: 's1', id: 'recovered-1' })] })
+			);
+			await manager.initialize();
+
+			const sessionCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith(`s1${HISTORY_JSONL_EXT}`)
+			);
+			expect(sessionCall).toBeDefined();
+			expect(parseJsonlWrite(sessionCall![1]).map((e) => e.id)).toEqual(['recovered-1']);
+
+			const markerCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith('history-migrated.json')
+			);
+			expect(markerCall).toBeDefined();
+			expect(JSON.parse(markerCall![1] as string)).toMatchObject({
+				legacyEntryCount: 1,
+				sessionsMigrated: 1,
+			});
 		});
 	});
 

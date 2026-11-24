@@ -24,6 +24,7 @@ import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
 import { parseJsonWithBom, stripJsonBom } from '../shared/jsonUtils';
+import { corruptStorePath, parseStoreJson } from '../shared/maestro-lib/store/corrupt-store';
 import { HistoryEntry } from '../shared/types';
 import {
 	HISTORY_VERSION,
@@ -175,9 +176,10 @@ export class HistoryManager {
 		logger.debug('Created history directory', LOG_CONTEXT);
 
 		// Check if migration is needed
-		if (await this.needsMigration()) {
+		const migrationState = await this.checkMigrationState();
+		if (migrationState === 'migrate') {
 			await this.migrateFromLegacy();
-		} else if (!(await pathExists(this.migrationMarkerPath))) {
+		} else if (migrationState === 'nothing') {
 			// A fresh data directory has nothing to migrate, but the marker is also
 			// how maestro-cli picks a format (`hasMigrated` in cli/services/storage.ts).
 			// Without it the CLI wrote send, run-doc, and playbook History to the
@@ -202,26 +204,63 @@ export class HistoryManager {
 	}
 
 	/**
-	 * Check if migration from legacy format is needed
+	 * Classify whether legacy history migration is needed, not needed, or blocked
+	 * by a transient read failure. Corrupt JSON is quarantined to a sidecar and
+	 * treated as nothing-to-migrate so future launches and the CLI are not stuck.
 	 */
-	private async needsMigration(): Promise<boolean> {
+	private async checkMigrationState(): Promise<
+		'already-migrated' | 'migrate' | 'nothing' | 'read-failed'
+	> {
 		// If marker exists, migration was already done
 		if (await pathExists(this.migrationMarkerPath)) {
-			return false;
+			return 'already-migrated';
 		}
 
 		// If legacy file exists with entries, need to migrate
 		if (await pathExists(this.legacyFilePath)) {
+			let raw: string;
 			try {
-				const raw = await fsp.readFile(this.legacyFilePath, 'utf-8');
-				const data = parseJsonWithBom<{ entries?: HistoryEntry[] }>(raw);
-				return (data.entries?.length ?? 0) > 0;
-			} catch {
-				return false;
+				raw = await fsp.readFile(this.legacyFilePath, 'utf-8');
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+					return 'nothing';
+				}
+				logger.warn(
+					`Failed to read legacy history file during migration check: ${error}`,
+					LOG_CONTEXT
+				);
+				void captureException(error, { operation: 'history:checkMigration' });
+				return 'read-failed';
 			}
+
+			const parsed = parseStoreJson<{ entries?: HistoryEntry[] }>(raw);
+			if (!parsed.ok) {
+				const sidecarPath = corruptStorePath(this.legacyFilePath);
+				try {
+					await fsp.rename(this.legacyFilePath, sidecarPath);
+				} catch (renameError) {
+					logger.warn(
+						`Failed to quarantine corrupt legacy history file ${this.legacyFilePath}: ${renameError}`,
+						LOG_CONTEXT
+					);
+					void captureException(renameError, { operation: 'history:checkMigration' });
+					return 'read-failed';
+				}
+				logger.warn(
+					`Legacy history file was corrupt and quarantined to ${sidecarPath}; marking migration complete`,
+					LOG_CONTEXT
+				);
+				void captureException(parsed.error, {
+					operation: 'history:corruptLegacy',
+					sidecarPath,
+				});
+				return 'nothing';
+			}
+
+			return (parsed.value.entries?.length ?? 0) > 0 ? 'migrate' : 'nothing';
 		}
 
-		return false;
+		return 'nothing';
 	}
 
 	/**
