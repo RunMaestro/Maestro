@@ -442,6 +442,11 @@ export const MODAL_PRIORITIES = {
 	 * lightbox and annotator, both of which open from inside it. */
 	STAGED_IMAGES_ORGANIZER: 143,
 
+	/** A Design Mode chip's popover in the composer (its block and note). Beside
+	 * the staged-images organizer, its neighbour above the composer; nothing
+	 * opens from inside it. */
+	DESIGN_PICK_POPOVER: 144,
+
 	/**
 	 * Record view for one row of a tabular preview - CSV/TSV and parquet both
 	 * open `<RecordDetailModal>` from the file preview beneath them. One

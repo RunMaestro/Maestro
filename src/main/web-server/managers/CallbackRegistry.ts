@@ -46,6 +46,10 @@ import type {
 	PickBrowserElementCallback,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
+	BrowserViewportCallback,
+	BrowserViewportRequest,
+	BrowserViewportResult,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -175,6 +179,10 @@ import type {
 	DiffReviewCommandResult,
 } from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../../shared/designPickCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -217,6 +225,8 @@ export interface WebServerCallbacks {
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
 	pickBrowserElement: PickBrowserElementCallback | null;
+	browserViewport: BrowserViewportCallback | null;
+	designPickCommand: DesignPickCommandCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -329,6 +339,8 @@ export class CallbackRegistry {
 		openBrowserTab: null,
 		closeBrowserTab: null,
 		pickBrowserElement: null,
+		browserViewport: null,
+		designPickCommand: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -606,6 +618,20 @@ export class CallbackRegistry {
 			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
 		}
 		return this.callbacks.pickBrowserElement(request);
+	}
+
+	async browserViewport(request: BrowserViewportRequest): Promise<BrowserViewportResult> {
+		if (!this.callbacks.browserViewport) {
+			return { success: false, error: 'Browser viewport not configured' };
+		}
+		return this.callbacks.browserViewport(request);
+	}
+
+	async designPickCommand(request: DesignPickCommandRequest): Promise<DesignPickCommandResult> {
+		if (!this.callbacks.designPickCommand) {
+			return { success: false, error: 'Browser Design Mode not configured' };
+		}
+		return this.callbacks.designPickCommand(request);
 	}
 
 	async openTerminalTab(
@@ -1290,6 +1316,14 @@ export class CallbackRegistry {
 
 	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
 		this.callbacks.pickBrowserElement = callback;
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbacks.browserViewport = callback;
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbacks.designPickCommand = callback;
 	}
 
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {

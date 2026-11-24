@@ -59,6 +59,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenBrowserTabCallback = vi.fn();
 			setCloseBrowserTabCallback = vi.fn();
 			setPickBrowserElementCallback = vi.fn();
+			setBrowserViewportCallback = vi.fn();
+			setDesignPickCommandCallback = vi.fn();
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
@@ -2495,6 +2497,50 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
 			const server = createWebServer() as any;
 			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('browserViewport callback', () => {
+		it('is registered, and resolves a Coworking id before it reaches the renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			expect(server.setBrowserViewportCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setBrowserViewportCallback.mock.calls[0][0];
+
+			// No tab of this agent carries that Coworking id, so the op never goes out.
+			const result = await callback({ sessionId: 'session-1', tab: 'browser:42', preset: 'phone' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('No browser tab browser:42 in this agent');
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('designPickCommand callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
+			const request = { action: 'remove', sessionId: 'session-1', pickId: 'pick-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:designPickCommand',
+				request,
+				expect.stringContaining('remote:designPickCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
 
 			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
 				success: false,

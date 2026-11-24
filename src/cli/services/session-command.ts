@@ -88,6 +88,24 @@ export function resolveAgentOrFail(agentId: string, json?: boolean): string {
 }
 
 /**
+ * The agent a verb acts on: `agentHint` (ID, prefix or name) when given, else
+ * the agent the desktop has selected. Not the first stored agent, which is
+ * what `resolveSessionId` falls back to: use this where acting on an agent the
+ * user is not looking at would do visible harm (a composer, the tab on screen).
+ *
+ * Throws when the hint resolves to nothing, or when there is no hint and the
+ * desktop never recorded a selection; `whose` finishes that message, as in
+ * `whose composer you mean`.
+ */
+export function resolveAgentOrActive(agentHint: string | undefined, whose: string): string {
+	const agentId = agentHint ? resolveAgentId(agentHint) : readActiveAgentId();
+	if (!agentId) {
+		throw new Error(`No active agent recorded. Pass --agent <id> to say ${whose}.`);
+	}
+	return agentId;
+}
+
+/**
  * Every open AI tab across all desktop agents, in tab-bar order within each
  * agent. Callers that care about position (tab reordering) rely on that
  * ordering, so do not sort the result.
@@ -120,12 +138,7 @@ export async function resolveTabEntry(tabId: string, agentHint?: string): Promis
 	const list = await listDesktopTabs();
 
 	if (tabId.trim().toLowerCase() === ACTIVE_TAB_KEYWORD) {
-		const agentId = agentHint ? resolveAgentId(agentHint) : readActiveAgentId();
-		if (!agentId) {
-			throw new Error(
-				'No active agent recorded. Pass --agent <id> to say whose active tab you mean.'
-			);
-		}
+		const agentId = resolveAgentOrActive(agentHint, 'whose active tab you mean');
 		const active = list.find((t) => t.agentId === agentId && t.active);
 		if (active) return active;
 		// An agent whose activeTabId points at a terminal / file tab has no active

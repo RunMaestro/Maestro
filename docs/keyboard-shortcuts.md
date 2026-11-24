@@ -254,6 +254,35 @@ Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the 
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
+### Browser Design Mode
+
+These work while [Browser Design Mode](./browser-design-mode) is on in a browser tab. `Cmd+Shift+C` / `Ctrl+Shift+C` (in the table above) turns the mode itself on and off, and it stays on for that tab until you turn it off.
+
+| Action                                                   | macOS          | Windows/Linux  |
+| -------------------------------------------------------- | -------------- | -------------- |
+| Use the page; release to pick again                      | `Space` (hold) | `Space` (hold) |
+| Select the parent of the outlined element                | `Up arrow`     | `Up arrow`     |
+| Go back toward the element under the pointer             | `Down arrow`   | `Down arrow`   |
+| Pick the outlined element                                | `Enter`        | `Enter`        |
+| Cancel a drag, close the pick card, or leave Design Mode | `Esc`          | `Esc`          |
+
+While you hold `Space`, the page gets the pointer, so you can follow a link or open a menu without leaving Design Mode. `Space` in the pick card's note or on a focused button is an ordinary key.
+
+To pick a region instead of one element, drag a box over the page. Release to open the region's card, or press `Esc` before you release to cancel the drag.
+
+#### Pick Card
+
+These work in the note field of the card that opens when you pick an element or a region.
+
+| Action                                    | macOS         | Windows/Linux |
+| ----------------------------------------- | ------------- | ------------- |
+| Add to the message and go to the chat     | `Enter`       | `Enter`       |
+| Add to the message and keep picking       | `Cmd+Enter`   | `Ctrl+Enter`  |
+| Queue as its own message and keep picking | `Opt+Enter`   | `Alt+Enter`   |
+| New line in the note                      | `Shift+Enter` | `Shift+Enter` |
+
+A queued pick goes to the agent's [execution queue](./general-usage#message-queue) as a separate message and leaves your message box alone. The **Queue** button on the card does the same.
+
 ### Tab Switcher
 
 The Tab Switcher provides fuzzy search across all open tabs with quick navigation:

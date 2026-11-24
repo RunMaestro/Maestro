@@ -5,10 +5,11 @@
  */
 
 import { memo } from 'react';
-import { PenLine, X } from 'lucide-react';
+import { PenLine } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { StagedImageDropLine, type StagedImageTileDragHandlers } from './stagedImageDrag';
 import { displayImageSrc } from '../../../utils/sessionImageSrc';
+import { RemoveBadgeButton } from '../../ui/RemoveBadgeButton';
 
 const TILE_SIZES = {
 	strip: { height: '4rem', maxWidth: '200px', badge: 'text-2xs px-1.5' },
@@ -112,19 +113,11 @@ export const StagedImageTile = memo(function StagedImageTile({
 				<PenLine className="w-3 h-3" />
 			</button>
 
-			<button
-				type="button"
-				draggable={false}
-				onClick={(e) => {
-					e.stopPropagation();
-					onRemove();
-				}}
-				title={`Remove image ${slot}`}
-				aria-label={`Remove image ${slot}`}
-				className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors opacity-90 hover:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-white"
-			>
-				<X className="w-3 h-3" />
-			</button>
+			<RemoveBadgeButton
+				label={`Remove image ${slot}`}
+				onRemove={onRemove}
+				className="absolute top-0.5 right-0.5"
+			/>
 
 			{/* Slot badge. Overlaid on the thumbnail rather than placed under it so
 			    revealing it mid-drag cannot reflow the row the user is dragging in.

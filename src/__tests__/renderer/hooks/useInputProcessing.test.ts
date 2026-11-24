@@ -48,7 +48,7 @@ import {
 	scheduleRetryForError,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import {
 	releaseConnectionHeldQueueItems,
@@ -62,7 +62,7 @@ import type {
 	BatchRunState,
 	QueuedItem,
 } from '../../../renderer/types';
-import { createMockAITab } from '../../helpers/mockTab';
+import { createMockAITab, createMockDesignPick } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Create a mock AITab
@@ -1257,6 +1257,339 @@ describe('useInputProcessing', () => {
 			expect(dispatchShellCommand).not.toHaveBeenCalled();
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 			expect(mockSetInputValue).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Design Mode chips', () => {
+		// A chip owns its screenshot; the staged images strip never holds it.
+		const SHOT_A = 'data:image/png;base64,CHIPA';
+		const SHOT_B = 'maestro-image://store/chip-b.png';
+		const PASTED = 'data:image/png;base64,PASTED';
+
+		/** An idle session whose active tab has `picks` staged. */
+		const sessionWithChips = (
+			picks: ReturnType<typeof createMockDesignPick>[],
+			overrides: Partial<Session> = {}
+		) => {
+			const tab = createMockTab({ stagedDesignPicks: picks });
+			return createMockSession({ aiTabs: [tab], activeTabId: tab.id, ...overrides });
+		};
+		const chip = (id: string, overrides: Parameters<typeof createMockDesignPick>[0] = {}) =>
+			createMockDesignPick({ id, text: `BLOCK ${id}`, ...overrides });
+		const liveTab = () => useSessionStore.getState().sessions[0].aiTabs[0];
+		const liveChipIds = () => (liveTab().stagedDesignPicks ?? []).map((pick) => pick.id);
+		const userLogs = () => liveTab().logs.filter((log) => log.source === 'user');
+		const spawnArg = () => vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+
+		it('sends a draft that holds only chips, as their blocks and screenshots', async () => {
+			const session = sessionWithChips([
+				chip('a', { note: 'Make it blue', screenshot: SHOT_A }),
+				chip('b'),
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const message = 'BLOCK a\n\nMake it blue\n\nBLOCK b';
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			expect(spawnArg().prompt).toContain(message);
+			expect(spawnArg().images).toEqual([SHOT_A]);
+			// The transcript shows what the agent received.
+			expect(userLogs().at(-1)).toMatchObject({ text: message, images: [SHOT_A] });
+			// Taken off the tab with the rest of the composer.
+			expect(liveChipIds()).toEqual([]);
+		});
+
+		it('puts the blocks before the typed text, and the screenshots after the staged images', async () => {
+			const session = sessionWithChips([
+				chip('a', { screenshot: SHOT_A }),
+				chip('b', { screenshot: SHOT_B }),
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Fix both',
+				stagedImages: [PASTED],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(spawnArg().prompt).toContain('BLOCK a\n\nBLOCK b\n\nFix both');
+			expect(spawnArg().images).toEqual([PASTED, SHOT_A, SHOT_B]);
+			expect(mockSetStagedImages).toHaveBeenCalledWith([]);
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			expect(liveChipIds()).toEqual([]);
+		});
+
+		it('queues the expanded message and its images when the agent is busy', async () => {
+			const session = sessionWithChips([chip('a', { note: 'Tighter', screenshot: SHOT_A })], {
+				state: 'busy',
+			});
+			session.aiTabs[0].state = 'busy';
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'after this lands',
+				stagedImages: [PASTED],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(1);
+			expect(live.executionQueue[0]).toMatchObject({
+				type: 'message',
+				text: 'BLOCK a\n\nTighter\n\nafter this lands',
+				images: [PASTED, SHOT_A],
+			});
+			expect(liveChipIds()).toEqual([]);
+		});
+
+		it('records the typed text in the recall history, and nothing for a chips-only send', async () => {
+			const session = sessionWithChips([chip('a')]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Make it pop',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			expect(useSessionStore.getState().sessions[0].aiCommandHistory).toEqual(['Make it pop']);
+
+			const chipsOnly = sessionWithChips([chip('b')]);
+			const chipsOnlyDeps = createDeps({
+				activeSession: chipsOnly,
+				sessionsRef: { current: [chipsOnly] },
+				inputValue: '',
+			});
+			const second = renderHook(() => useInputProcessing(chipsOnlyDeps));
+			await act(async () => {
+				await second.result.current.processInput();
+			});
+			expect(useSessionStore.getState().sessions[0].aiCommandHistory ?? []).toEqual([]);
+		});
+
+		it("resolves @mentions in a chip's note, which never leads the message", async () => {
+			// The note is the user's words, so its mention is planned, as the drain
+			// and a queue edit plan it. The chip still comes first, so the note's
+			// `@Backend` is not a leading mention that would silence this agent.
+			const onPlanCrossAgentMentions = vi.fn().mockReturnValue(null);
+			const session = sessionWithChips([
+				chip('a', { text: 'BLOCK a with @Frontend', note: '@Backend check spacing' }),
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '',
+				onPlanCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'(Design Mode pick)\n\n@Backend check spacing',
+				session,
+				session.activeTabId
+			);
+		});
+
+		it('resolves @mentions from the typed text and hands the consult the whole message', async () => {
+			// A chip's page content must not reach the mention resolver, and a typed
+			// leading mention stays at the front of the message it addresses.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = sessionWithChips([
+				chip('a', { text: 'BLOCK a with @Frontend in the page', screenshot: SHOT_A }),
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '@Backend is this accessible?',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'@Backend is this accessible?\n\n(Design Mode pick)',
+				session,
+				session.activeTabId
+			);
+			const message = '@Backend is this accessible?\n\nBLOCK a with @Frontend in the page';
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledWith(
+				expect.objectContaining({ targetSessionIds: ['backend'] }),
+				message,
+				session,
+				session.activeTabId,
+				[SHOT_A]
+			);
+			expect(userLogs().at(-1)?.text).toBe(message);
+			expect(liveChipIds()).toEqual([]);
+		});
+
+		it('leaves the chips staged for a Maestro slash command, as it does staged images', async () => {
+			const session = sessionWithChips([chip('a')]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '/history',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockOnHistoryCommand).toHaveBeenCalledTimes(1);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetStagedImages).not.toHaveBeenCalled();
+			expect(liveChipIds()).toEqual(['a']);
+		});
+
+		it('leaves the chips staged when the draft is a shell command, and runs nothing for chips alone', async () => {
+			const session = sessionWithChips([chip('a')]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'git status',
+				isCommandMode: () => 'shell',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(vi.mocked(dispatchShellCommand).mock.calls[0][0]).toMatchObject({
+				command: 'git status',
+			});
+			expect(liveChipIds()).toEqual(['a']);
+
+			// A shell prompt holding nothing typed: chips are not a command line.
+			vi.mocked(dispatchShellCommand).mockClear();
+			const emptyDeps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '',
+				isCommandMode: () => 'shell',
+			});
+			const second = renderHook(() => useInputProcessing(emptyDeps));
+			await act(async () => {
+				await second.result.current.processInput();
+			});
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(liveChipIds()).toEqual(['a']);
+		});
+
+		it('never reads or takes the chips for a send that does not come from the composer', async () => {
+			const session = sessionWithChips([chip('a', { screenshot: SHOT_A })]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'my unsent draft',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('replayed message');
+			});
+
+			expect(spawnArg().prompt).toContain('replayed message');
+			expect(spawnArg().prompt).not.toContain('BLOCK a');
+			expect(spawnArg().images ?? []).toEqual([]);
+			expect(liveChipIds()).toEqual(['a']);
+		});
+
+		it('sends the chips into an active wizard conversation', async () => {
+			const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+			const session = sessionWithChips([chip('a', { screenshot: SHOT_A })]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Plan this screen',
+				isWizardActive: true,
+				onWizardSendMessage,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onWizardSendMessage).toHaveBeenCalledWith('BLOCK a\n\nPlan this screen', [SHOT_A]);
+			expect(liveChipIds()).toEqual([]);
+		});
+
+		it('sends a chip staged while the first send was in flight, instead of taking it for a repeat', async () => {
+			let resolveProbe!: (value: []) => void;
+			vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
+				new Promise((resolve) => {
+					resolveProbe = resolve;
+				})
+			);
+			const session = sessionWithChips([chip('a')]);
+			const composer = { draft: 'first' };
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				getInputValue: () => composer.draft,
+				setInputValue: vi.fn((value: string) => {
+					composer.draft = value;
+				}),
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			let first!: Promise<void>;
+			let second!: Promise<void>;
+			act(() => {
+				first = result.current.processInput();
+			});
+			// The first send took its chip before its probe went out.
+			expect(liveChipIds()).toEqual([]);
+			act(() => {
+				updateAiTab(session.id, session.activeTabId, (tab) => ({
+					...tab,
+					stagedDesignPicks: [chip('b')],
+				}));
+				second = result.current.processInput();
+			});
+			await act(async () => {
+				resolveProbe([]);
+				await Promise.all([first, second]);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			expect(userLogs().map((log) => log.text)).toEqual(['BLOCK a\n\nfirst']);
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue.map((queued) => queued.text)).toEqual(['BLOCK b']);
+			expect(liveChipIds()).toEqual([]);
 		});
 	});
 
@@ -2661,6 +2994,55 @@ describe('useInputProcessing', () => {
 				cwd: '/test/project',
 				sessionSshRemoteConfig: undefined,
 			});
+		});
+
+		it('names the tab from the typed text, not the Design Mode chips expanded around it', async () => {
+			// A chip's block is page data; it would crowd the user's words out of
+			// the namer's character budget.
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+				stagedDesignPicks: [createMockDesignPick({ text: 'Design Mode element from a page' })],
+			});
+			const session = createMockSession({ aiTabs: [newTab], activeTabId: newTab.id });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Make the signup button blue',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).toHaveBeenCalledTimes(1);
+			expect(mockGenerateTabName).toHaveBeenCalledWith(
+				expect.objectContaining({ userMessage: 'Make the signup button blue' })
+			);
+		});
+
+		it('names a send of only chips from their blocks', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+				stagedDesignPicks: [createMockDesignPick({ text: 'Design Mode element from a page' })],
+			});
+			const session = createMockSession({ aiTabs: [newTab], activeTabId: newTab.id });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).toHaveBeenCalledWith(
+				expect.objectContaining({ userMessage: 'Design Mode element from a page' })
+			);
 		});
 
 		it('does not trigger tab naming when setting is disabled', async () => {

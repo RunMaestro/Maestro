@@ -5,22 +5,40 @@ import {
 	type BrowserApprovalRequester,
 } from '../../../../renderer/hooks/coworking/useCoworkingBrowserResponder';
 import type { BrowserTabViewHandle } from '../../../../renderer/components/MainPanel/BrowserTabView';
-import { selectActiveSession, useSessionStore } from '../../../../renderer/stores/sessionStore';
+import {
+	selectActiveSession,
+	selectSessionById,
+	updateBrowserTab,
+	useSessionStore,
+} from '../../../../renderer/stores/sessionStore';
 import type { SessionStore } from '../../../../renderer/stores/sessionStore';
 import type { BrowserTab, Session } from '../../../../renderer/types';
+import type { BrowserViewportPreset } from '../../../../shared/browserViewport';
 import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,
 } from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
 
 vi.mock('../../../../renderer/services/designModePick', () => ({
-	deliverDesignPick: vi.fn(async () => ({ aiTabId: 'ai-1', text: 'ELEMENT BLOCK' })),
+	deliverDesignPick: vi.fn(async () => ({
+		aiTabId: 'ai-1',
+		text: 'ELEMENT BLOCK',
+		pickId: 'pick-1',
+	})),
+	// Takes the delivery so a test can read what it was asked to queue.
+	queueDesignPick: vi.fn(async (_delivery: unknown) => ({
+		aiTabId: 'ai-1',
+		tabName: 'Fix the header',
+		queueItemId: 'queue-1',
+		text: 'QUEUED BLOCK',
+	})),
 }));
-import { deliverDesignPick } from '../../../../renderer/services/designModePick';
+import { deliverDesignPick, queueDesignPick } from '../../../../renderer/services/designModePick';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: { getState: vi.fn(() => ({})) },
 	selectActiveSession: vi.fn(),
+	updateBrowserTab: vi.fn(),
 	selectSessionById: vi.fn(() => () => ({
 		id: 'sess-A',
 		toolType: 'claude-code',
@@ -65,6 +83,7 @@ function makeHandle(overrides: Partial<BrowserTabViewHandle> = {}): BrowserTabVi
 		capturePage: vi.fn(async () => 'data:image/png;base64,AAAA'),
 		toggleDesignMode: vi.fn(),
 		inspectElement: vi.fn(async () => null),
+		inspectRegion: vi.fn(async () => null),
 		...overrides,
 	};
 }
@@ -363,7 +382,185 @@ describe('resolveAndRun', () => {
 			ok: true,
 			content: 'ELEMENT BLOCK',
 			aiTabId: 'ai-1',
+			pickId: 'pick-1',
 			dataUrl: 'data:image/png;base64,CROP',
+		});
+		// A chip is not a queued message.
+		expect(queueDesignPick).not.toHaveBeenCalled();
+		expect(res).not.toHaveProperty('queueItemId');
+	});
+
+	describe('pick with queue (browser-pick --queue)', () => {
+		const capture = {
+			pick: { selector: 'h1', tagName: 'h1' },
+			screenshot: 'data:image/png;base64,CROP',
+		};
+		const handleWith = (inspected: unknown) =>
+			makeHandle({
+				getTabId: () => 'u-1',
+				inspectElement: vi.fn(
+					async () => inspected
+				) as unknown as BrowserTabViewHandle['inspectElement'],
+			});
+
+		it('queues the element as its own message: no chip, and nothing asks to reveal', async () => {
+			vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+			const handle = handleWith(capture);
+			const requestApproval = vi.fn(async () => true);
+			const res = await resolveAndRun(
+				{ current: new Map([['u-1', handle]]) },
+				'u-1',
+				'sess-A',
+				{ kind: 'pick', selector: 'h1', note: 'bigger', background: true, queue: true },
+				requestApproval
+			);
+			// Like a chip pick, it needs no approval: it only adds to the queue.
+			expect(requestApproval).not.toHaveBeenCalled();
+			expect(queueDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'sess-A',
+					browserTabId: 'u-1',
+					note: 'bigger',
+					screenshot: 'data:image/png;base64,CROP',
+				})
+			);
+			// A queued pick moves nothing, so `reveal` is never part of the request.
+			expect(vi.mocked(queueDesignPick).mock.calls[0][0]).not.toHaveProperty('reveal');
+			expect(deliverDesignPick).not.toHaveBeenCalled();
+			expect(res).toMatchObject({
+				ok: true,
+				content: 'QUEUED BLOCK',
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+				dataUrl: 'data:image/png;base64,CROP',
+				url: 'https://e',
+				title: 'E',
+			});
+			expect(res).not.toHaveProperty('pickId');
+		});
+
+		it('says so when the agent has no AI tab to queue into', async () => {
+			// `null` is what the service returns (after its own toast) with no AI tab.
+			vi.mocked(queueDesignPick).mockResolvedValueOnce(null as never);
+			const res = await applyBrowserOp(
+				handleWith(capture),
+				{ kind: 'pick', selector: 'h1', queue: true },
+				'sess-A'
+			);
+			expect(res).toEqual({
+				ok: false,
+				content: 'This agent has no AI tab to queue the element into.',
+			});
+		});
+
+		it('queues nothing for a selector that misses or is invalid', async () => {
+			for (const [inspected, content] of [
+				['not-found', 'No element matches selector: .x'],
+				['invalid-selector', 'Not a valid CSS selector: .x'],
+			] as const) {
+				const res = await applyBrowserOp(
+					handleWith(inspected),
+					{ kind: 'pick', selector: '.x', queue: true },
+					'sess-A'
+				);
+				expect(res).toMatchObject({ ok: false, content });
+			}
+			expect(queueDesignPick).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('pick by region (browser-pick --rect)', () => {
+		const rect = { x: 0, y: 120, width: 1280, height: 400 };
+		const capture = {
+			region: {
+				url: 'https://e',
+				rect,
+				viewport: { width: 1280, height: 800 },
+				elements: [],
+				elementsTruncated: false,
+			},
+			screenshot: 'data:image/png;base64,REGION',
+		};
+		const handleWith = (inspected: unknown) =>
+			makeHandle({
+				getTabId: () => 'u-1',
+				inspectRegion: vi.fn(
+					async () => inspected
+				) as unknown as BrowserTabViewHandle['inspectRegion'],
+			});
+
+		it('lists the region and delivers it as a chip, unprompted, without touching the selector path', async () => {
+			vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+			const handle = handleWith(capture);
+			const requestApproval = vi.fn(async () => true);
+			const res = await resolveAndRun(
+				{ current: new Map([['u-1', handle]]) },
+				'u-1',
+				'sess-A',
+				{ kind: 'pick', rect, note: 'tighten', background: true },
+				requestApproval
+			);
+			expect(requestApproval).not.toHaveBeenCalled();
+			expect(handle.inspectRegion).toHaveBeenCalledWith(rect);
+			expect(handle.inspectElement).not.toHaveBeenCalled();
+			// The region capture itself is what is delivered, as a drag delivers it.
+			expect(deliverDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({
+					region: capture.region,
+					screenshot: 'data:image/png;base64,REGION',
+					sessionId: 'sess-A',
+					browserTabId: 'u-1',
+					note: 'tighten',
+					reveal: false,
+				})
+			);
+			expect(res).toMatchObject({
+				ok: true,
+				content: 'ELEMENT BLOCK',
+				aiTabId: 'ai-1',
+				pickId: 'pick-1',
+				dataUrl: 'data:image/png;base64,REGION',
+			});
+			expect(queueDesignPick).not.toHaveBeenCalled();
+		});
+
+		it('queues the region as its own message with queue', async () => {
+			const res = await applyBrowserOp(
+				handleWith(capture),
+				{ kind: 'pick', rect, queue: true },
+				'sess-A'
+			);
+			expect(queueDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({ region: capture.region, sessionId: 'sess-A' })
+			);
+			expect(vi.mocked(queueDesignPick).mock.calls[0][0]).not.toHaveProperty('reveal');
+			expect(deliverDesignPick).not.toHaveBeenCalled();
+			expect(res).toMatchObject({ ok: true, content: 'QUEUED BLOCK', queueItemId: 'queue-1' });
+			expect(res).not.toHaveProperty('pickId');
+		});
+
+		it('says so when none of the region is on the page, and delivers nothing', async () => {
+			const res = await applyBrowserOp(handleWith(null), { kind: 'pick', rect }, 'sess-A');
+			expect(res).toEqual({
+				ok: false,
+				content:
+					"No part of the region 0,120,1280,400 is in the page's viewport (--rect is CSS px from the viewport's top-left corner).",
+			});
+			expect(deliverDesignPick).not.toHaveBeenCalled();
+			expect(queueDesignPick).not.toHaveBeenCalled();
+		});
+
+		it('names the region when the agent has no AI tab for it', async () => {
+			vi.mocked(deliverDesignPick).mockResolvedValueOnce(null as never);
+			expect(await applyBrowserOp(handleWith(capture), { kind: 'pick', rect }, 'sess-A')).toEqual({
+				ok: false,
+				content: 'This agent has no AI tab to add the region to.',
+			});
+
+			vi.mocked(queueDesignPick).mockResolvedValueOnce(null as never);
+			expect(
+				await applyBrowserOp(handleWith(capture), { kind: 'pick', rect, queue: true }, 'sess-A')
+			).toEqual({ ok: false, content: 'This agent has no AI tab to queue the region into.' });
 		});
 	});
 
@@ -764,6 +961,182 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		expect(String(res.content)).toMatch(/not found in your session/i);
 		expect(sessions[0].browserTabs).toHaveLength(1);
 		expect(setSessions).not.toHaveBeenCalled();
+	});
+});
+
+describe('resolveAndRun viewport (browser-viewport)', () => {
+	/** A requester that would grant anything, so a test can see it was never asked. */
+	const ask = vi.fn(async () => true) as unknown as BrowserApprovalRequester &
+		ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	/**
+	 * One agent with these browser tabs, behind a store whose single-tab updater
+	 * applies the caller's mapper to them, as `updateBrowserTab()` does. Returns the
+	 * live session so a test can read what the op left on its tabs.
+	 */
+	function wireTabs(tabs: Array<Partial<BrowserTab>>, { focused = true } = {}) {
+		const session = {
+			id: 'sess-A',
+			toolType: 'claude-code',
+			activeBrowserTabId: null,
+			browserTabs: tabs,
+		};
+		vi.mocked(selectSessionById).mockReturnValue(() => session as unknown as Session);
+		vi.mocked(selectActiveSession).mockReturnValue(
+			focused ? (session as unknown as Session) : fakeActive('other', null)
+		);
+		vi.mocked(updateBrowserTab).mockImplementation((_sessionId, tabId, updater) => {
+			session.browserTabs = session.browserTabs.map((t) =>
+				t.id === tabId ? updater(t as BrowserTab) : t
+			);
+		});
+		return session;
+	}
+
+	const tab = (extra: Partial<BrowserTab> = {}): Partial<BrowserTab> => ({
+		id: 'u-1',
+		url: 'https://example.com/',
+		title: 'Example',
+		...extra,
+	});
+
+	const run = (op: { kind: 'viewport'; preset?: BrowserViewportPreset }) =>
+		resolveAndRun({ current: new Map() }, 'u-1', 'sess-A', op, ask);
+
+	it('sets the preset through the single-tab updater and reports it with the one before', async () => {
+		const session = wireTabs([tab()]);
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res).toMatchObject({
+			ok: true,
+			viewportPreset: 'phone',
+			previousViewportPreset: 'fit',
+			content: 'Phone (390 px wide)',
+		});
+		expect(updateBrowserTab).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(updateBrowserTab).mock.calls[0].slice(0, 2)).toEqual(['sess-A', 'u-1']);
+		// The write is the toolbar's: the tab keeps everything else it had.
+		expect(session.browserTabs[0]).toMatchObject({
+			id: 'u-1',
+			url: 'https://example.com/',
+			title: 'Example',
+			viewportPreset: 'phone',
+		});
+	});
+
+	it('reports the preset the tab had before, so the caller can put it back', async () => {
+		const session = wireTabs([tab({ viewportPreset: 'tablet' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'laptop' });
+
+		expect(res).toMatchObject({ viewportPreset: 'laptop', previousViewportPreset: 'tablet' });
+		expect(session.browserTabs[0].viewportPreset).toBe('laptop');
+	});
+
+	it('can put a tab back to Fit, which the toolbar writes as a preset too', async () => {
+		const session = wireTabs([tab({ viewportPreset: 'phone' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'fit' });
+
+		expect(res).toMatchObject({ viewportPreset: 'fit', previousViewportPreset: 'phone' });
+		expect(session.browserTabs[0].viewportPreset).toBe('fit');
+	});
+
+	it('reads without writing: Fit for a tab with no saved preset, the saved one otherwise', async () => {
+		wireTabs([tab()]);
+		expect(await run({ kind: 'viewport' })).toMatchObject({
+			ok: true,
+			viewportPreset: 'fit',
+			previousViewportPreset: 'fit',
+			content: "Fit (the tab's width)",
+		});
+
+		wireTabs([tab({ viewportPreset: 'desktop' })]);
+		expect(await run({ kind: 'viewport' })).toMatchObject({
+			ok: true,
+			viewportPreset: 'desktop',
+			previousViewportPreset: 'desktop',
+		});
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing when the tab already shows the preset', async () => {
+		wireTabs([tab({ viewportPreset: 'phone' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res).toMatchObject({
+			ok: true,
+			viewportPreset: 'phone',
+			previousViewportPreset: 'phone',
+		});
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('is a store update: it needs no webview, never asks for approval, and works for an agent that is not on screen', async () => {
+		const session = wireTabs([tab()], { focused: false });
+		const resolveBackgroundHandle = vi.fn(async () => null);
+
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			'u-1',
+			'sess-A',
+			{ kind: 'viewport', preset: 'tablet' },
+			ask,
+			resolveBackgroundHandle,
+			// Main says the policy would confirm an interaction; a viewport is not one.
+			true
+		);
+
+		expect(res).toMatchObject({ ok: true, viewportPreset: 'tablet' });
+		expect(session.browserTabs[0].viewportPreset).toBe('tablet');
+		expect(ask).not.toHaveBeenCalled();
+		expect(resolveBackgroundHandle).not.toHaveBeenCalled();
+		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).toEqual([]);
+	});
+
+	it('fails closed for a tab that is not in the agent, and writes nothing', async () => {
+		wireTabs([tab({ id: 'u-2' })]);
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res.ok).toBe(false);
+		expect(String(res.content)).toMatch(/not found in your session/i);
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('treats a tab hidden from agents as closed, for a read as well as a write', async () => {
+		wireTabs([tab({ hiddenFromAgent: true, viewportPreset: 'phone' })]);
+
+		for (const op of [
+			{ kind: 'viewport' as const },
+			{ kind: 'viewport' as const, preset: 'fit' as const },
+		]) {
+			const res = await run(op);
+			expect(res.ok).toBe(false);
+			expect(String(res.content)).toMatch(/not found in your session/i);
+			expect(res).not.toHaveProperty('viewportPreset');
+		}
+		expect(updateBrowserTab).not.toHaveBeenCalled();
+	});
+
+	it('says so when the store did not take the write, rather than reporting the preset asked for', async () => {
+		wireTabs([tab()]);
+		// The tab vanished between the check and the write: the updater matches nothing.
+		vi.mocked(updateBrowserTab).mockImplementation(() => {});
+
+		const res = await run({ kind: 'viewport', preset: 'phone' });
+
+		expect(res).toEqual({
+			ok: false,
+			content: 'The browser tab changed while its viewport was being set.',
+		});
 	});
 });
 

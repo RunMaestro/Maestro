@@ -4,6 +4,7 @@
 
 import { Command } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { BROWSER_VIEWPORT_PRESETS } from '../shared/browserViewport';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
@@ -29,7 +30,13 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
+import {
+	openBrowser,
+	closeBrowser,
+	browserPick,
+	browserPicks,
+	browserViewport,
+} from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -929,21 +936,54 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
 
-// Browser pick command - Design Mode by selector: add an element of a browser
-// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
-// owning agent's composer, through the same code a click in Design Mode runs.
+// Browser pick command - Design Mode by selector or by region: stage an element
+// of a browser tab (selector, trimmed HTML, computed styles, cropped screenshot),
+// or a region of it (--rect: its screenshot and the outermost elements in it), as
+// a chip in the owning agent's composer, through the same code a click or a drag
+// in Design Mode runs. Exactly one of --selector and --rect. With --queue it is
+// queued as its own message instead, as the pick card's Queue button does.
 program
 	.command('browser-pick <tab>')
 	.description(
-		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+		"Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
 	)
-	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
-	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--rect <x,y,w,h>', 'Pick a region: x,y,width,height in viewport CSS px')
+	.option('--note <text>', 'Note added under the pick, as typed in the pick card')
 	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
 	.option('--background', 'Add it without switching the view to the AI tab')
-	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--focus', 'Switch to the AI tab the pick lands in (default)')
+	.option('--queue', 'Queue it as its own message instead of a chip')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPick);
+
+// Browser picks command - the Design Mode chips waiting in an agent's composer:
+// list them, each with the block it adds to the message at send, edit one's
+// note as the chip's note box does, or take one off by id, as the chip's X does.
+program
+	.command('browser-picks')
+	.description(
+		"List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one"
+	)
+	.option('-a, --agent <id>', 'Agent whose composer holds the chips (defaults to active)')
+	.option('--edit <pickId>', "Replace this chip's note (with --note)")
+	.option('--note <text>', 'The new note for --edit (an empty string clears it)')
+	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPicks);
+
+// Browser viewport command - the width a browser tab shows its page at (Fit,
+// Desktop 1440, Laptop 1280, Tablet 768, Phone 390), as the toolbar's viewport
+// control sets it. Gives the preset to set it; always reports the one the tab
+// shows afterwards and the one it showed before. Never moves the view.
+program
+	.command('browser-viewport <tab> [preset]')
+	.description(
+		`Set or read the width a browser tab shows its page at (preset: ${BROWSER_VIEWPORT_PRESETS.join(', ')}; omit to read). tab: id from open-browser, or browser:N`
+	)
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserViewport);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program

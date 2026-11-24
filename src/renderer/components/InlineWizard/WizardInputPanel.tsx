@@ -33,8 +33,9 @@ import {
 	Brain,
 	Square,
 } from 'lucide-react';
-import type { Session, Theme } from '../../types';
+import type { Session, StagedDesignPick, Theme } from '../../types';
 import { WizardPill } from './WizardPill';
+import { DesignPickChips } from '../InputArea/components/DesignPickChips';
 import { WizardConfidenceGauge } from './WizardConfidenceGauge';
 import { WizardExitConfirmDialog } from './WizardExitConfirmDialog';
 import {
@@ -107,6 +108,14 @@ interface WizardInputPanelProps {
 	showThinking?: boolean;
 	/** Toggle show thinking mode */
 	onToggleShowThinking?: () => void;
+	/**
+	 * The Design Mode chips staged on this tab. A wizard message sends them as
+	 * the normal composer does, so the strip is shown here too, to read, edit
+	 * and remove them before they go.
+	 */
+	designPicks?: StagedDesignPick[];
+	onDesignPickNoteChange?: (pickId: string, note: string) => void;
+	onRemoveDesignPick?: (pickId: string) => void;
 }
 
 /**
@@ -147,6 +156,9 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	setLightboxImage,
 	showThinking = false,
 	onToggleShowThinking,
+	designPicks,
+	onDesignPickNoteChange,
+	onRemoveDesignPick,
 }: WizardInputPanelProps) {
 	// State for exit confirmation dialog
 	const [showExitConfirm, setShowExitConfirm] = useState(false);
@@ -285,6 +297,16 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 						</div>
 					))}
 				</div>
+			)}
+
+			{designPicks && onDesignPickNoteChange && onRemoveDesignPick && (
+				<DesignPickChips
+					isVisible={!isTerminalMode}
+					picks={designPicks}
+					theme={theme}
+					onNoteChange={onDesignPickNoteChange}
+					onRemove={onRemoveDesignPick}
+				/>
 			)}
 
 			<div className="flex gap-3">

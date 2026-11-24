@@ -21,6 +21,7 @@ import { createCueRemoteApi } from './process/cueRemote';
 import { createAutoRunConfigRemoteApi } from './process/autoRunConfigRemote';
 import { createAutoRunControlRemoteApi } from './process/autoRunControlRemote';
 import { createDiffReviewRemoteApi } from './process/diffReviewRemote';
+import { createDesignPickRemoteApi } from './process/designPickRemote';
 import { createPlaybookRemoteApi } from './process/playbookRemote';
 import { createSessionCrudRemoteApi } from './process/sessionCrudRemote';
 import { createGroupCrudRemoteApi } from './process/groupCrudRemote';
@@ -58,6 +59,7 @@ export function createProcessApi() {
 		...createSessionCrudRemoteApi(),
 		...createAutoRunControlRemoteApi(),
 		...createDiffReviewRemoteApi(),
+		...createDesignPickRemoteApi(),
 		...createPlaybookRemoteApi(),
 		...createSettingsRemoteApi(),
 		...createGroupCrudRemoteApi(),
