@@ -16,6 +16,7 @@ import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './historyConstants';
 import { formatCount, formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
+import { historySummaryPreview } from '../../../shared/history';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { CueGroupRuns } from './CueGroupRuns';
@@ -263,7 +264,9 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 				</span>
 			</div>
 
-			{/* Summary - 3 lines max, strip markdown for list view */}
+			{/* Summary - 3 lines max, strip markdown for list view. The preview cap
+			    runs BEFORE stripMarkdown: a multi-megabyte summary must never reach
+			    the regexes or the layout engine. */}
 			<p
 				className="text-xs leading-relaxed overflow-hidden"
 				style={{
@@ -273,7 +276,9 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					WebkitBoxOrient: 'vertical' as const,
 				}}
 			>
-				{entry.summary ? stripMarkdown(entry.summary) : 'No summary available'}
+				{entry.summary
+					? stripMarkdown(historySummaryPreview(entry.summary))
+					: 'No summary available'}
 			</p>
 
 			{/* CUE metadata subtitle. A grouped row spends the same line on what
