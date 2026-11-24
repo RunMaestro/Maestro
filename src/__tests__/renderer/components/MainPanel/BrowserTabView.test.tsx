@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import {
 	BrowserTabView,
 	type BrowserTabViewHandle,
@@ -2246,6 +2246,8 @@ describe('BrowserTabView', () => {
 				expect(await holdSpace(layer)).toBe(false);
 				expect(layer.style.pointerEvents).toBe('none');
 				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+				// The crumbs go with the outline: nothing over the page to click.
+				expect(screen.queryByTestId('browser-tab-design-mode-crumbs')).toBeNull();
 				expect(bannerText()).toContain('Using the page - release Space to pick');
 				// The picking hints do not apply while the page is in use.
 				expect(bannerText()).not.toContain('Arrows');
@@ -2510,6 +2512,231 @@ describe('BrowserTabView', () => {
 				});
 				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
 				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(2);
+			});
+		});
+
+		describe('ancestor crumbs', () => {
+			/** The element under the pointer, then its ancestors, as the guest walks them. */
+			const CHAIN = ['span.icon', 'button.primary', 'section.footer', 'main', 'body'];
+
+			/**
+			 * Answers every probe from CHAIN, clamped at <body> as the guest clamps
+			 * it. Each level has its own box (guest CSS px; jsdom draws them 1:1),
+			 * so a test can tell which element is outlined and where its label sits.
+			 */
+			function walkablePage(webview: MockWebview, { cut = false } = {}) {
+				const base = webview.executeJavaScript.getMockImplementation() as (
+					code: string
+				) => Promise<unknown>;
+				webview.executeJavaScript.mockImplementation((code: string) => {
+					const req = guestRequest(code);
+					if (req?.type !== 'probe') return base(code);
+					const depth = Math.min(Number(req.depth), CHAIN.length - 1);
+					return Promise.resolve({
+						rect: { x: 100 - depth * 20, y: 200 - depth * 40, width: 100, height: 40 },
+						label: CHAIN[depth],
+						depth,
+						ancestors: CHAIN.slice(depth + 1),
+						ancestorsTruncated: cut,
+						viewport: pickPayload.viewport,
+					});
+				});
+			}
+
+			const crumbRow = () => screen.getByTestId('browser-tab-design-mode-crumbs');
+			const crumbLabels = () =>
+				within(crumbRow())
+					.queryAllByRole('button')
+					.map((button) => button.textContent);
+			/** The outlined element: the crumb row's last, current entry. */
+			const outlined = () => crumbRow().querySelector('[aria-current]')?.textContent;
+			const crumb = (label: string) => within(crumbRow()).getByRole('button', { name: label });
+
+			/** Hover the element at (30, 60) and wait for its crumbs. */
+			async function hoverIcon() {
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				await waitFor(() => expect(outlined()).toBe('span.icon'));
+				return layer;
+			}
+
+			/** Click a crumb and wait for the ancestor it names to be outlined. */
+			async function clickCrumb(label: string) {
+				await act(async () => {
+					fireEvent.click(crumb(label));
+				});
+				await waitFor(() => expect(outlined()).toBe(label));
+			}
+
+			/**
+			 * Lays the crumb row out where the label for the hovered element sits:
+			 * a 300 x 22 box just above the element's top edge (jsdom does no
+			 * layout of its own).
+			 */
+			function layOutCrumbs() {
+				const box = { left: 100, top: 180, right: 400, bottom: 202, width: 300, height: 22 };
+				vi.spyOn(crumbRow(), 'getBoundingClientRect').mockReturnValue({
+					...box,
+					x: box.left,
+					y: box.top,
+					toJSON: () => box,
+				} as DOMRect);
+			}
+
+			it('the hover label is the path to the outlined element, farthest first', async () => {
+				const { webview } = await setupReady(vi.fn());
+				walkablePage(webview);
+				await arm();
+				await hoverIcon();
+
+				expect(crumbLabels()).toEqual(['body', 'main', 'section.footer', 'button.primary']);
+				// The outlined element closes the path, followed by its size.
+				expect(crumbRow().textContent).toBe(
+					'body>main>section.footer>button.primary>span.icon100 x 40'
+				);
+				// The banner names the gestures picking offers.
+				expect(screen.getByTestId('browser-tab-design-mode-banner').textContent).toContain(
+					'Space: use the page. Drag: region. Arrows: parent / child.'
+				);
+			});
+
+			it('a chain cut at the cap starts with an ellipsis', async () => {
+				const { webview } = await setupReady(vi.fn());
+				walkablePage(webview, { cut: true });
+				await arm();
+				await hoverIcon();
+				expect(crumbRow().textContent?.startsWith('…>body>')).toBe(true);
+			});
+
+			it('a crumb click outlines that ancestor, walked from the same point, and never picks', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+
+				// Over the crumbs the outline stays put: nothing asks about the
+				// point under them.
+				const probes = guestCalls(webview, 'probe').length;
+				await act(async () => {
+					fireEvent.mouseMove(crumb('section.footer'), { clientX: 120, clientY: 190 });
+				});
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				// Pressing a crumb leaves the keys with the layer (default prevented,
+				// so the button never takes focus), and Enter and the arrows go on working.
+				expect(fireEvent.mouseDown(crumb('section.footer'))).toBe(false);
+				expect(document.activeElement).toBe(layer);
+
+				await clickCrumb('section.footer');
+
+				// Two levels above the element under the pointer, asked at that point.
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 2 });
+				expect(crumbLabels()).toEqual(['body', 'main']);
+				expect(screen.getByTestId('browser-tab-design-mode-outline').style.left).toBe('58px');
+				// Not a pick: nothing described, no card, nothing delivered.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(onDesignPick).not.toHaveBeenCalled();
+			});
+
+			it('holds the ancestor near its crumbs: they stay put, and a click there picks it', async () => {
+				const { webview } = await setupReady(vi.fn().mockResolvedValue(true));
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+				// The label rests on the hovered element's top edge (y 200), reaching
+				// 2 px over it so the pointer can climb onto it.
+				const labelTop = () => crumbRow().parentElement!.style.top;
+				expect(labelTop()).toBe('202px');
+
+				await clickCrumb('section.footer');
+				// The outline moved up to the section; its crumbs did not move with it.
+				expect(screen.getByTestId('browser-tab-design-mode-outline').style.top).toBe('118px');
+				expect(labelTop()).toBe('202px');
+
+				// Back onto the page beside the crumbs: the outline stays on the ancestor.
+				layOutCrumbs();
+				const probes = guestCalls(webview, 'probe').length;
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 130, clientY: 230 });
+				});
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				expect(outlined()).toBe('section.footer');
+
+				// A click there picks the outlined ancestor, not the element under it.
+				await act(async () => {
+					fireEvent.click(layer, { clientX: 130, clientY: 230, button: 0 });
+				});
+				await screen.findByTestId('browser-tab-design-mode-card');
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 2 });
+				// The card's frozen outline is labeled by its tag, with no crumbs.
+				expect(screen.queryByTestId('browser-tab-design-mode-crumbs')).toBeNull();
+			});
+
+			it('Enter and the arrows go on from a held ancestor', async () => {
+				const { webview } = await setupReady(vi.fn().mockResolvedValue(true));
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+				await clickCrumb('section.footer');
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+				});
+				await waitFor(() => expect(outlined()).toBe('main'));
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 3 });
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+				});
+				await screen.findByTestId('browser-tab-design-mode-card');
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 3 });
+			});
+
+			it('moving away from the crumbs lets go: the outline follows the pointer again', async () => {
+				const { webview } = await setupReady(vi.fn().mockResolvedValue(true));
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+				await clickCrumb('main');
+				layOutCrumbs();
+
+				// More than 48 px from the crumbs.
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 600, clientY: 400 });
+				});
+				await waitFor(() => expect(outlined()).toBe('span.icon'));
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 600, y: 400, depth: 0 });
+
+				// And a click picks what is under it.
+				await act(async () => {
+					fireEvent.click(layer, { clientX: 600, clientY: 400, button: 0 });
+				});
+				await screen.findByTestId('browser-tab-design-mode-card');
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 600, y: 400, depth: 0 });
+			});
+
+			it('a page load lets go of a held ancestor', async () => {
+				const { webview } = await setupReady(vi.fn());
+				walkablePage(webview);
+				await arm();
+				await hoverIcon();
+				await clickCrumb('main');
+
+				await finishLoad(webview);
+
+				await waitFor(() => expect(outlined()).toBe('span.icon'));
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 0 });
+				// Let go: as the walk moves the outline, its label goes with it again.
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), {
+						key: 'ArrowUp',
+					});
+				});
+				await waitFor(() => expect(outlined()).toBe('button.primary'));
+				expect(crumbRow().parentElement!.style.top).toBe('162px');
 			});
 		});
 

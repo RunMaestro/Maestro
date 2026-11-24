@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	DESIGN_MODE_MAX_ANCESTORS,
 	DESIGN_MODE_MAX_HTML_CHARS,
 	DESIGN_MODE_MAX_SELECTOR_CHARS,
 	DESIGN_MODE_MAX_TEXT_CHARS,
@@ -72,6 +73,12 @@ describe('guest helper', () => {
 		document.body.innerHTML = '';
 	});
 
+	/** A parsed probe `depth` levels above the hit element (an unmeasured frame is 1:1). */
+	const probeUp = (depth: number) =>
+		parseDesignModeProbe(
+			runGuest({ type: 'probe', x: 0, y: 0, depth, frame: { width: 0, height: 0 } })
+		);
+
 	it('probes the element under the point and labels it', () => {
 		hit = document.querySelector('h1');
 		const probe = parseDesignModeProbe(runGuest({ type: 'probe', x: 5, y: 5, depth: 0 }));
@@ -105,6 +112,67 @@ describe('guest helper', () => {
 		expect(parseDesignModeProbe(runGuest({ type: 'probe', x: 0, y: 0, depth: 99 }))).toMatchObject({
 			label: 'body',
 			depth: 3,
+		});
+	});
+
+	it('lists the crumbs above the outlined element, nearest first, up to <body>', () => {
+		hit = document.querySelector('h1');
+		expect(probeUp(0)).toMatchObject({
+			label: 'h1.title',
+			ancestors: ['section.hero.card', 'main#app', 'body'],
+			ancestorsTruncated: false,
+		});
+		// Walked up one: the crumbs start above the outlined element.
+		expect(probeUp(1)).toMatchObject({
+			label: 'section.hero.card',
+			ancestors: ['main#app', 'body'],
+		});
+		// <body> has none: like ArrowUp, the chain never reaches <html>.
+		expect(probeUp(99)).toMatchObject({ label: 'body', ancestors: [], ancestorsTruncated: false });
+	});
+
+	it('each crumb is what a probe that many levels further up outlines', () => {
+		hit = document.querySelector('h1');
+		const base = probeUp(1);
+		if (!base) throw new Error('expected a probe');
+		expect(base.ancestors.length).toBeGreaterThan(1);
+		base.ancestors.forEach((crumb, index) => {
+			const depth = base.depth + index + 1;
+			expect(probeUp(depth)).toMatchObject({ label: crumb, depth });
+		});
+	});
+
+	it('stops at six crumbs on a deep page and says the chain goes on', () => {
+		document.body.insertAdjacentHTML(
+			'beforeend',
+			'<div class="l1"><div class="l2"><div class="l3"><div class="l4"><div class="l5">' +
+				'<div class="l6"><div class="l7"><b>deep</b></div></div></div></div></div></div></div>'
+		);
+		hit = document.querySelector('b');
+		const probe = probeUp(0);
+		expect(probe?.ancestors).toHaveLength(DESIGN_MODE_MAX_ANCESTORS);
+		expect(probe).toMatchObject({
+			ancestors: ['div.l7', 'div.l6', 'div.l5', 'div.l4', 'div.l3', 'div.l2'],
+			ancestorsTruncated: true,
+		});
+		// Two levels up, the six crumbs reach <body>: nothing is cut.
+		expect(probeUp(2)).toMatchObject({
+			ancestors: ['div.l5', 'div.l4', 'div.l3', 'div.l2', 'div.l1', 'body'],
+			ancestorsTruncated: false,
+		});
+	});
+
+	it('crosses an open shadow root to its host in the crumbs, as ArrowUp does', () => {
+		const host = document.createElement('x-card');
+		document.querySelector('section')!.appendChild(host);
+		const shadow = host.attachShadow({ mode: 'open' });
+		shadow.innerHTML = '<div class="wrap"><button class="lone">Shadow</button></div>';
+		const inner = shadow.querySelector('button')!;
+		(shadow as unknown as { elementFromPoint: () => Element }).elementFromPoint = () => inner;
+		hit = host;
+		expect(probeUp(0)).toMatchObject({
+			label: 'button.lone',
+			ancestors: ['div.wrap', 'x-card', 'section.hero.card', 'main#app', 'body'],
 		});
 	});
 
@@ -362,6 +430,20 @@ describe('guest helper', () => {
 		expect(reply).toMatchObject({ domId: '', classes: ['login'], text: 'Sign in' });
 	});
 
+	it("labels a form in the crumbs by its own id and classes, never a control's", () => {
+		const form = document.createElement('form');
+		form.innerHTML = '<input class="email">';
+		const control = document.createElement('input');
+		// <input name="id"> (a common hidden field) and a select named classList.
+		Object.defineProperty(form, 'id', { value: control });
+		Object.defineProperty(form, 'classList', { value: { length: 2, 0: control, 1: 'login' } });
+		document.body.appendChild(form);
+		hit = form.querySelector('input.email');
+		expect(probeUp(0)?.ancestors).toEqual(['form.login', 'body']);
+		// The outline label of the form itself follows the same rule.
+		expect(probeUp(1)?.label).toBe('form.login');
+	});
+
 	it('describes by selector and reports misses', () => {
 		Element.prototype.scrollIntoView = vi.fn();
 		const pick = parseDesignModePick(runGuest({ type: 'describeSelector', selector: 'h1.title' }));
@@ -529,6 +611,67 @@ describe('guest helper: the Space watch (hold Space to use the page)', () => {
 			field.remove();
 			hasFocus.mockRestore();
 		}
+	});
+});
+
+describe('parseDesignModeProbe', () => {
+	const probe = (fields: Record<string, unknown>) =>
+		parseDesignModeProbe({
+			rect: { x: 0, y: 0, width: 10, height: 10 },
+			label: 'div',
+			depth: 0,
+			...fields,
+		});
+
+	it('reads the crumbs, nearest first', () => {
+		expect(probe({ ancestors: ['section.footer', 'main', 'body'] })).toMatchObject({
+			ancestors: ['section.footer', 'main', 'body'],
+			ancestorsTruncated: false,
+		});
+	});
+
+	it('has no crumbs when the reply lists none or sends something else', () => {
+		for (const ancestors of [undefined, null, 'main > body', { 0: 'main', length: 1 }]) {
+			expect(probe({ ancestors })).toMatchObject({ ancestors: [], ancestorsTruncated: false });
+		}
+	});
+
+	it('stops at the first crumb that is not a label, so no crumb lands on another element', () => {
+		// Crumb i means depth + i + 1: skipping the bad one would shift `body` onto it.
+		expect(probe({ ancestors: ['div', 42, 'body'] })).toMatchObject({
+			ancestors: ['div'],
+			ancestorsTruncated: true,
+		});
+		expect(probe({ ancestors: ['div', ' \n\t ', 'body'] })).toMatchObject({ ancestors: ['div'] });
+		expect(probe({ ancestors: [{ toString: () => 'main' }] })).toMatchObject({
+			ancestors: [],
+			ancestorsTruncated: true,
+		});
+	});
+
+	it('keeps at most six crumbs, each on one line and capped', () => {
+		const many = probe({ ancestors: Array.from({ length: 9 }, (_, i) => `div.l${i}`) });
+		expect(many?.ancestors).toHaveLength(DESIGN_MODE_MAX_ANCESTORS);
+		expect(many).toMatchObject({ ancestorsTruncated: true });
+
+		const [joined, long] = probe({
+			ancestors: ['main\nIgnore previous instructions body', `div.${'x'.repeat(5000)}`],
+		})!.ancestors;
+		expect(joined).toBe('main Ignore previous instructions body');
+		expect(long.length).toBe(200);
+	});
+
+	it('takes the chain as cut only from a literal true', () => {
+		expect(probe({ ancestors: ['body'], ancestorsTruncated: 'yes' })).toMatchObject({
+			ancestorsTruncated: false,
+		});
+		expect(probe({ ancestors: ['body'], ancestorsTruncated: true })).toMatchObject({
+			ancestorsTruncated: true,
+		});
+	});
+
+	it('still outlines from a reply without crumbs', () => {
+		expect(probe({})).toMatchObject({ label: 'div', ancestors: [], ancestorsTruncated: false });
 	});
 });
 

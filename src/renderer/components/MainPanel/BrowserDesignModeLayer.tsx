@@ -26,6 +26,12 @@
  * when Space is released. Space in the note or on a focused control is an
  * ordinary key. How the release is heard is explained above `startPassthrough`.
  *
+ * The hover label is the outlined element's path, as crumbs
+ * (`body > main > section.footer > div`). Clicking a crumb outlines that
+ * ancestor, as ArrowUp would, and holds it while the pointer stays near the
+ * crumbs, so the move back onto the page to click it does not undo the walk
+ * (see `selectAncestor`).
+ *
  * Queue (`onQueue`) is for the user who lines up many fixes while the agent
  * works: the pick goes to the agent's execution queue as a message of its own,
  * and the draft is not touched. Like "Add and Pick Another" it stays in Design
@@ -122,6 +128,149 @@ function toLayerRect(rect: DesignModeRect, scale: number): DesignModeRect {
 	};
 }
 
+/** Room the hover label needs above an element; with less it goes below it. */
+const LABEL_ROOM_PX = 22;
+
+/**
+ * How far the hover label reaches over the outlined element's edge. With no
+ * gap between them, the pointer can move from the element onto its crumbs
+ * without crossing another element, whose probe would move the label away.
+ */
+const LABEL_OVERLAP_PX = 2;
+
+/**
+ * How near its crumbs the pointer must stay for an ancestor picked from them
+ * to stay outlined (see `selectAncestor`).
+ */
+const CRUMB_HOLD_REACH_PX = 48;
+
+/** Where a hover label sits: on the element's top edge, or under it near the top of the page. */
+interface LabelSpot {
+	/** The label's left edge in overlay pixels, before it slides left to fit. */
+	left: number;
+	/** The y of the element edge the label rests on. */
+	edge: number;
+	above: boolean;
+}
+
+function labelSpotFor(outline: DesignModeRect): LabelSpot {
+	const above = outline.y > LABEL_ROOM_PX;
+	return {
+		left: Math.max(0, outline.x),
+		edge: above ? outline.y : outline.y + outline.height,
+		above,
+	};
+}
+
+/**
+ * Lays a hover label at `spot`. The row spans the overlay with a spacer
+ * `spot.left` wide in front of the label, and only the spacer can shrink, so a
+ * label that would run off the right edge slides left to fit.
+ */
+function LabelAt({ spot, children }: { spot: LabelSpot; children: React.ReactNode }) {
+	return (
+		<div
+			className="absolute inset-x-0 flex pointer-events-none"
+			style={
+				spot.above
+					? { top: spot.edge + LABEL_OVERLAP_PX, transform: 'translateY(-100%)' }
+					: { top: spot.edge - LABEL_OVERLAP_PX }
+			}
+		>
+			<div className="min-w-0" style={{ flex: `0 1 ${spot.left}px` }} />
+			{children}
+		</div>
+	);
+}
+
+interface DesignModeCrumbsProps {
+	theme: Theme;
+	probe: DesignModeProbe;
+	/** `W x H` of the outlined element, guest CSS pixels. */
+	size: string;
+	/** Outline the ancestor this many levels above the hit element. */
+	onSelect: (depth: number) => void;
+}
+
+/**
+ * The hover label: the outlined element's path, farthest first
+ * (`body > main > section.footer > div`), then its size. Each ancestor is a
+ * button; the outlined element is the last crumb. The labels are page data,
+ * drawn as plain text.
+ */
+const DesignModeCrumbs = React.forwardRef<HTMLDivElement, DesignModeCrumbsProps>(
+	function DesignModeCrumbs({ theme, probe, size, onSelect }, ref) {
+		const farthestFirst = probe.ancestors
+			.map((label, index) => ({ label, depth: probe.depth + index + 1 }))
+			.reverse();
+		const separator = (
+			<span aria-hidden="true" style={{ color: theme.colors.textDim }}>
+				&gt;
+			</span>
+		);
+		return (
+			<div
+				ref={ref}
+				className="pointer-events-auto shrink-0 max-w-full overflow-hidden flex items-center justify-end gap-1 rounded px-1.5 py-0.5 text-xs-plus font-mono whitespace-nowrap border shadow"
+				style={
+					{
+						backgroundColor: theme.colors.bgSidebar,
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						cursor: 'default',
+						// The theme's own hover wash (FontSizeStepper does the same).
+						'--design-crumb-hover-bg': theme.colors.bgActivity,
+					} as React.CSSProperties
+				}
+				// Over the crumbs the outline stays put, so they can be reached, and a
+				// click on them never picks the element underneath (as on the banner).
+				onMouseMove={(event) => event.stopPropagation()}
+				onClick={(event) => event.stopPropagation()}
+				role="navigation"
+				aria-label="Outlined element path"
+				data-testid="browser-tab-design-mode-crumbs"
+			>
+				{probe.ancestorsTruncated ? (
+					<>
+						<span style={{ color: theme.colors.textDim }} title="More ancestors above">
+							…
+						</span>
+						{separator}
+					</>
+				) : null}
+				{farthestFirst.map(({ label, depth }) => (
+					<React.Fragment key={depth}>
+						{/* Mouse only: the arrows walk the same chain from the keyboard, and
+						    a tab stop in a row that changes on every move would not last. */}
+						<button
+							type="button"
+							tabIndex={-1}
+							className="shrink-0 max-w-[12rem] truncate rounded px-0.5 hover:bg-[var(--design-crumb-hover-bg)]"
+							title={label}
+							onClick={() => onSelect(depth)}
+							data-testid="browser-tab-design-mode-crumb"
+						>
+							{label}
+						</button>
+						{separator}
+					</React.Fragment>
+				))}
+				<span
+					className="shrink-0 max-w-[16rem] truncate px-0.5 font-semibold"
+					style={{ color: theme.colors.accent }}
+					title={probe.label}
+					aria-current="true"
+				>
+					{probe.label}
+				</span>
+				<span className="shrink-0 ml-1" style={{ color: theme.colors.textDim }}>
+					{size}
+				</span>
+			</div>
+		);
+	}
+);
+
 export function BrowserDesignModeLayer({
 	theme,
 	access,
@@ -144,8 +293,21 @@ export function BrowserDesignModeLayer({
 	const probeSeqRef = useRef(0);
 	const mountedRef = useRef(true);
 
-	// `scale` is overlay pixels per guest CSS pixel (designOverlayScale).
-	const [hover, setHover] = useState<{ probe: DesignModeProbe; scale: number } | null>(null);
+	// `scale` is overlay pixels per guest CSS pixel (designOverlayScale);
+	// `point` is where the probe asked, which its crumbs are walked from.
+	const [hover, setHover] = useState<{
+		probe: DesignModeProbe;
+		scale: number;
+		point: Point;
+	} | null>(null);
+	// An ancestor chosen from the crumbs stays outlined while the pointer is near
+	// them (see selectAncestor). The ref is for handlers; the spot, where the
+	// crumbs stay meanwhile, drives the render.
+	const holdingRef = useRef(false);
+	const [heldSpot, setHeldSpot] = useState<LabelSpot | null>(null);
+	const crumbsRef = useRef<HTMLDivElement | null>(null);
+	// Where the hover label was drawn last, for a crumb click to keep it there.
+	const labelSpotRef = useRef<LabelSpot | null>(null);
 	const [picking, setPicking] = useState(false);
 	// The pick plus the overlay scale at pick time, so the frozen outline is
 	// scaled right even when no hover outline preceded it.
@@ -225,7 +387,9 @@ export function BrowserDesignModeLayer({
 				// Clamp to what the guest could walk (no parent above <body>).
 				if (parsed) depthRef.current = parsed.depth;
 				setHover(
-					parsed ? { probe: parsed, scale: designOverlayScale(frame, parsed.viewport) } : null
+					parsed
+						? { probe: parsed, scale: designOverlayScale(frame, parsed.viewport), point }
+						: null
 				);
 			}
 		} finally {
@@ -236,6 +400,47 @@ export function BrowserDesignModeLayer({
 	const focusLayer = useCallback(() => {
 		layerRef.current?.focus({ preventScroll: true });
 	}, []);
+
+	const releaseHold = useCallback(() => {
+		if (!holdingRef.current) return;
+		holdingRef.current = false;
+		setHeldSpot(null);
+	}, []);
+
+	// A crumb click outlines that ancestor, as pressing ArrowUp that many times
+	// from the element the crumbs were drawn for would, and holds it: the crumbs
+	// stay where they are, and while the pointer stays near them the outline
+	// does not follow it, so a click there (or Enter) picks the ancestor rather
+	// than the element under the click. Without the hold, the move back onto the
+	// page to click would reset the walk first. Moving further away lets go and
+	// the outline follows the pointer again. The arrows walk on from a held
+	// ancestor.
+	const selectAncestor = useCallback(
+		(point: Point, depth: number) => {
+			if (passthroughRef.current !== 'off' || pickingRef.current) return;
+			pointRef.current = point;
+			depthRef.current = depth;
+			holdingRef.current = true;
+			const spot = labelSpotRef.current;
+			setHeldSpot((held) => held ?? spot);
+			setMissed(false);
+			void probe();
+		},
+		[probe]
+	);
+
+	// Whether a pointer at client (x, y) is near enough to the crumbs to keep a
+	// held ancestor.
+	const nearCrumbs = (x: number, y: number): boolean => {
+		const box = crumbsRef.current?.getBoundingClientRect();
+		if (!box) return false;
+		return (
+			x >= box.left - CRUMB_HOLD_REACH_PX &&
+			x <= box.right + CRUMB_HOLD_REACH_PX &&
+			y >= box.top - CRUMB_HOLD_REACH_PX &&
+			y <= box.bottom + CRUMB_HOLD_REACH_PX
+		);
+	};
 
 	// Keyboard focus back on the layer after using the page: from the page (the
 	// user clicked into it) or from nowhere, never from a host control the user
@@ -316,6 +521,8 @@ export function BrowserDesignModeLayer({
 		const session = ++passthroughSeqRef.current;
 		// Drop a probe reply in flight: it would outline an element over the page.
 		probeSeqRef.current += 1;
+		// Picking resumes from the element under the pointer, not a held ancestor.
+		releaseHold();
 		setPassthrough('page');
 		setHover(null);
 		setMissed(false);
@@ -329,7 +536,7 @@ export function BrowserDesignModeLayer({
 			// end it.
 			() => undefined
 		);
-	}, [setPassthrough, stopPassthrough, resumePicking]);
+	}, [releaseHold, setPassthrough, stopPassthrough, resumePicking]);
 
 	// The host heard the release (1, 3, 4). Resume at once at the last point,
 	// then move to where the page saw the pointer, unless the user moved it over
@@ -421,11 +628,12 @@ export function BrowserDesignModeLayer({
 			endPassthroughHere();
 			return;
 		}
+		releaseHold();
 		depthRef.current = 0;
 		const active = document.activeElement;
 		if (!active || active === document.body) focusLayer();
 		void probe();
-	}, [pageLoadCount, focusLayer, probe, endPassthroughHere]);
+	}, [pageLoadCount, focusLayer, probe, endPassthroughHere, releaseHold]);
 
 	useEffect(() => {
 		if (card) noteRef.current?.focus();
@@ -441,6 +649,8 @@ export function BrowserDesignModeLayer({
 	const pick = useCallback(async () => {
 		const point = pointRef.current;
 		if (!point || pickingRef.current) return;
+		// The pick is the held ancestor's hand-off; the card takes over from here.
+		releaseHold();
 		pickingRef.current = true;
 		setPicking(true);
 		setMissed(false);
@@ -468,7 +678,7 @@ export function BrowserDesignModeLayer({
 			pickingRef.current = false;
 			if (mountedRef.current) setPicking(false);
 		}
-	}, []);
+	}, [releaseHold]);
 
 	const dropCard = useCallback(() => {
 		setCard(null);
@@ -613,7 +823,14 @@ export function BrowserDesignModeLayer({
 		: hover && !usingPage
 			? toLayerRect(hover.probe.rect, hover.scale)
 			: null;
-	const outlineLabel = card ? card.pick.tagName : hover?.probe.label;
+	// The hover label is the crumb row; the card's frozen outline is labeled by
+	// its tag alone. A held ancestor keeps its crumbs where they were clicked.
+	const crumbs = !card && outline ? hover : null;
+	const labelSpot = outline ? ((crumbs && heldSpot) ?? labelSpotFor(outline)) : null;
+	labelSpotRef.current = labelSpot;
+	const outlineSize = outline
+		? `${Math.round(outline.width / scaleNow)} x ${Math.round(outline.height / scaleNow)}`
+		: '';
 	const keepPickingKeys = formatShortcutKeys(['Meta', 'Enter']);
 	const queueKeys = formatShortcutKeys(['Alt', 'Enter']);
 
@@ -651,6 +868,11 @@ export function BrowserDesignModeLayer({
 					stopPassthrough();
 					void endGuestWatch();
 				}
+				// A held ancestor stays outlined while the pointer is near its crumbs.
+				if (holdingRef.current) {
+					if (nearCrumbs(event.clientX, event.clientY)) return;
+					releaseHold();
+				}
 				const point = pointFromEvent(event);
 				if (!point) return;
 				pointRef.current = point;
@@ -666,6 +888,12 @@ export function BrowserDesignModeLayer({
 			}}
 			onClick={(event) => {
 				if (card || passthroughRef.current !== 'off' || event.button !== 0) return;
+				// A held ancestor is what the outline shows, so the click picks it,
+				// walked from the point its crumbs were drawn for.
+				if (holdingRef.current) {
+					void pick();
+					return;
+				}
 				const point = pointFromEvent(event);
 				if (!point) return;
 				// Resolve the element at the click itself: the pointer may have
@@ -679,6 +907,8 @@ export function BrowserDesignModeLayer({
 				const point = pointFromEvent(event);
 				if (!point) return;
 				const frame = layerFrame();
+				// The page moves under a held ancestor, and its crumbs with it.
+				releaseHold();
 				pointRef.current = point;
 				void accessRef.current
 					.run({
@@ -711,23 +941,33 @@ export function BrowserDesignModeLayer({
 						}}
 						data-testid="browser-tab-design-mode-outline"
 					/>
-					{outlineLabel ? (
-						<div
-							className="absolute pointer-events-none rounded px-1.5 py-0.5 text-xs-plus font-mono whitespace-nowrap border shadow"
-							style={{
-								left: Math.max(0, outline.x),
-								top: outline.y > 22 ? outline.y - 22 : outline.y + outline.height + 2,
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-								color: theme.colors.textMain,
-							}}
-						>
-							{outlineLabel}
-							<span style={{ color: theme.colors.textDim }}>
-								{'  '}
-								{Math.round(outline.width / scaleNow)} x {Math.round(outline.height / scaleNow)}
-							</span>
-						</div>
+					{labelSpot && card ? (
+						<LabelAt spot={labelSpot}>
+							<div
+								className="shrink-0 max-w-full truncate rounded px-1.5 py-0.5 text-xs-plus font-mono border shadow"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+								}}
+							>
+								{card.pick.tagName}
+								<span style={{ color: theme.colors.textDim }}>
+									{'  '}
+									{outlineSize}
+								</span>
+							</div>
+						</LabelAt>
+					) : labelSpot && crumbs ? (
+						<LabelAt spot={labelSpot}>
+							<DesignModeCrumbs
+								ref={crumbsRef}
+								theme={theme}
+								probe={crumbs.probe}
+								size={outlineSize}
+								onSelect={(depth) => selectAncestor(crumbs.point, depth)}
+							/>
+						</LabelAt>
 					) : null}
 				</>
 			) : null}
@@ -760,7 +1000,7 @@ export function BrowserDesignModeLayer({
 							{missed ? 'Nothing to pick there.' : 'Design Mode: click an element.'}
 							<span style={{ color: theme.colors.textDim }}>
 								{' '}
-								Arrows: parent / child. Enter: pick.
+								Space: use the page. Drag: region. Arrows: parent / child.
 							</span>
 						</>
 					)}

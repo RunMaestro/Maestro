@@ -48,6 +48,15 @@ export const DESIGN_MODE_MAX_TEXT_CHARS = 80;
 const DESIGN_PICK_LABEL_TEXT_CHARS = 40;
 
 /**
+ * Most ancestors a probe lists for the hover label's crumbs, nearest first.
+ * A deeper element's chain is cut there, and the probe says so.
+ */
+export const DESIGN_MODE_MAX_ANCESTORS = 6;
+
+/** Longest outline or crumb label kept from a probe. */
+const MAX_PROBE_LABEL_CHARS = 200;
+
+/**
  * Joins the selector segments of an element inside open shadow roots: each
  * segment is unique within its own root, and the next one is queried in the
  * previous match's `shadowRoot`. It is Puppeteer's deep combinator; Playwright
@@ -135,6 +144,14 @@ export interface DesignModeProbe {
 	rect: DesignModeRect;
 	/** `tag#id.class` for the outline label. */
 	label: string;
+	/**
+	 * The labels of the element's ancestors, nearest first, ending at `<body>`
+	 * and at most {@link DESIGN_MODE_MAX_ANCESTORS}: the hover label's crumbs.
+	 * Crumb `i` is the element `depth + i + 1` levels above the hit element.
+	 */
+	ancestors: string[];
+	/** Whether the chain goes on past the last ancestor listed (it was cut at the cap). */
+	ancestorsTruncated: boolean;
 	/** How many ancestors above the hit element this is (ArrowUp count, clamped). */
 	depth: number;
 	/** The guest viewport, CSS pixels, for scaling `rect` onto the overlay. */
@@ -214,6 +231,7 @@ export type DesignModeGuestRequest =
 const GUEST_HELPER = `function(req){
 	var MAX_HTML=${DESIGN_MODE_MAX_HTML_CHARS};
 	var MAX_TEXT=${DESIGN_MODE_MAX_TEXT_CHARS};
+	var MAX_ANCESTORS=${DESIGN_MODE_MAX_ANCESTORS};
 	var PROPS=${JSON.stringify(DESIGN_MODE_STYLE_PROPERTIES)};
 	function up(el){
 		if(el.parentElement)return el.parentElement;
@@ -254,12 +272,23 @@ const GUEST_HELPER = `function(req){
 	function classes(el){
 		return el.classList?Array.prototype.slice.call(el.classList,0,2):[];
 	}
+	// Strings only (see isStr below): every element inside a form with an
+	// <input name="id"> would otherwise read "form#[object HTMLInputElement]"
+	// in the crumbs.
 	function label(el){
 		var s=el.tagName.toLowerCase();
-		if(el.id)s+='#'+el.id;
-		var c=classes(el);
+		if(isStr(el.id)&&el.id)s+='#'+el.id;
+		var c=classes(el).filter(isStr);
 		if(c.length)s+='.'+c.join('.');
 		return s;
+	}
+	// The hover label's crumbs: what lift() can still walk to above el, nearest
+	// first, so crumb i is depth+i+1. Like lift() it never goes past <body> to
+	// <html>. truncated: the cap cut the chain, not the top of the page.
+	function ancestors(el){
+		var list=[];var p=up(el);
+		while(p&&p!==document.documentElement&&list.length<MAX_ANCESTORS){list.push(label(p));p=up(p);}
+		return {list:list,truncated:!!p&&p!==document.documentElement};
 	}
 	var PIERCE=${JSON.stringify(DESIGN_MODE_SHADOW_PIERCE)};
 	function unique(parts,root,el){
@@ -431,8 +460,12 @@ const GUEST_HELPER = `function(req){
 	}
 	if(!hit)return null;
 	var lifted=lift(hit,req.depth);
-	if(req.type==='probe')return {rect:box(lifted.el),label:label(lifted.el),depth:lifted.depth,
-		viewport:{width:window.innerWidth,height:window.innerHeight}};
+	if(req.type==='probe'){
+		var chain=ancestors(lifted.el);
+		return {rect:box(lifted.el),label:label(lifted.el),depth:lifted.depth,
+			ancestors:chain.list,ancestorsTruncated:chain.truncated,
+			viewport:{width:window.innerWidth,height:window.innerHeight}};
+	}
 	return describe(lifted.el);
 }`;
 
@@ -523,14 +556,45 @@ function readStyles(value: unknown): Record<string, string> {
 	return styles;
 }
 
-/** Parse a `probe` reply. Null for anything malformed (or no element there). */
+/**
+ * A probe's crumb labels, at most {@link DESIGN_MODE_MAX_ANCESTORS}, each on
+ * one line and capped. Crumb `i` stands for a depth, so the list stops at the
+ * first entry that is not a usable label: skipping it would move every crumb
+ * after it onto the wrong element.
+ */
+function readAncestors(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const labels: string[] = [];
+	for (const entry of value.slice(0, DESIGN_MODE_MAX_ANCESTORS)) {
+		const label = typeof entry === 'string' ? oneLine(entry, MAX_PROBE_LABEL_CHARS) : '';
+		if (!label) break;
+		labels.push(label);
+	}
+	return labels;
+}
+
+/**
+ * Parse a `probe` reply. Null for anything malformed (or no element there).
+ * The crumbs are page data: strings only, one line each, length-capped.
+ */
 export function parseDesignModeProbe(value: unknown): DesignModeProbe | null {
 	if (!value || typeof value !== 'object') return null;
 	const p = value as Record<string, unknown>;
 	const rect = readRect(p.rect);
 	if (!rect || typeof p.label !== 'string') return null;
 	const depth = isFiniteNumber(p.depth) && p.depth >= 0 ? Math.floor(p.depth) : 0;
-	return { rect, label: oneLine(p.label, 200), depth, viewport: readViewport(p.viewport) };
+	const ancestors = readAncestors(p.ancestors);
+	return {
+		rect,
+		label: oneLine(p.label, MAX_PROBE_LABEL_CHARS),
+		ancestors,
+		// More above the last crumb: the guest says so, or this parser cut the list.
+		ancestorsTruncated:
+			p.ancestorsTruncated === true ||
+			(Array.isArray(p.ancestors) && p.ancestors.length > ancestors.length),
+		depth,
+		viewport: readViewport(p.viewport),
+	};
 }
 
 /** What the page reports when its Space watch (`passthrough`) ends. */
