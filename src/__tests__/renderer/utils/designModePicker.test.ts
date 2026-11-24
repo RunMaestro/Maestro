@@ -1,7 +1,7 @@
 /**
  * Tests for Design Mode's pure half: the guest helper (run for real in jsdom),
- * the reply parsers, the crop rect, the prompt, the chip label and block, and
- * captureDesignPick.
+ * the reply parsers, the crop rect, the prompt, the chip label and block, the
+ * send-time expansion, and captureDesignPick.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ import {
 	designPickBlock,
 	designPickCropRect,
 	designPickLabel,
+	expandDesignPicks,
 	filterDesignStyles,
 	parseDesignModePick,
 	parseDesignModeProbe,
@@ -638,6 +639,59 @@ describe('designPickBlock', () => {
 	it('is the block alone when there is no note', () => {
 		expect(designPickBlock({ text: 'BLOCK', note: '' })).toBe('BLOCK');
 		expect(designPickBlock({ text: 'BLOCK', note: ' \n ' })).toBe('BLOCK');
+	});
+});
+
+describe('expandDesignPicks', () => {
+	const SHOT_A = 'data:image/png;base64,AAAA';
+	const SHOT_B = 'maestro-image://store/b.png';
+	const chipA = { text: 'BLOCK A', note: 'Make it blue', screenshot: SHOT_A };
+	const chipB = { text: 'BLOCK B', note: '', screenshot: SHOT_B };
+
+	it('puts each block with its note, in chip order, then the typed text', () => {
+		expect(expandDesignPicks([chipA, chipB], 'Fix both')).toEqual({
+			text: 'BLOCK A\n\nMake it blue\n\nBLOCK B\n\nFix both',
+			images: [SHOT_A, SHOT_B],
+		});
+	});
+
+	it('is only the blocks when nothing was typed', () => {
+		expect(expandDesignPicks([chipA, chipB], '  \n ').text).toBe(
+			'BLOCK A\n\nMake it blue\n\nBLOCK B'
+		);
+		expect(expandDesignPicks([chipB], '').text).toBe('BLOCK B');
+	});
+
+	it('trims the typed text it joins, and keeps its inner lines', () => {
+		expect(expandDesignPicks([chipB], '\n  First line\n\nSecond line  \n').text).toBe(
+			'BLOCK B\n\nFirst line\n\nSecond line'
+		);
+	});
+
+	it('keeps a leading @agent or /command at the front, with the chips after it', () => {
+		expect(expandDesignPicks([chipA, chipB], '  @Codex is this accessible?').text).toBe(
+			'@Codex is this accessible?\n\nBLOCK A\n\nMake it blue\n\nBLOCK B'
+		);
+		expect(expandDesignPicks([chipB], '/review these').text).toBe('/review these\n\nBLOCK B');
+		// A mention or slash later in the text does not move it.
+		expect(expandDesignPicks([chipB], 'ask @Codex about a/b').text).toBe(
+			'BLOCK B\n\nask @Codex about a/b'
+		);
+	});
+
+	it('adds only the screenshots there are, in chip order', () => {
+		const noShot = { text: 'BLOCK C', note: '', screenshot: null };
+		expect(expandDesignPicks([noShot, chipB, chipA], 'x').images).toEqual([SHOT_B, SHOT_A]);
+		expect(expandDesignPicks([noShot], 'x').images).toEqual([]);
+	});
+
+	it('skips a chip with nothing in it rather than leave a stray gap', () => {
+		const empty = { text: '', note: ' ', screenshot: null };
+		expect(expandDesignPicks([empty, chipB], 'Go').text).toBe('BLOCK B\n\nGo');
+	});
+
+	it('hands the typed text back untouched when there are no chips', () => {
+		expect(expandDesignPicks([], '  as typed \n')).toEqual({ text: '  as typed \n', images: [] });
 	});
 });
 

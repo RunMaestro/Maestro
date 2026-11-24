@@ -21,6 +21,8 @@
  *     {@link buildDesignModePrompt}: the payload assembler.
  *  4. {@link designPickLabel}, {@link designPickBlock}: the composer chip's
  *     label and the block it adds to the message at send.
+ *  5. {@link expandDesignPicks}: the message and images a send builds from the
+ *     staged chips and the typed text.
  */
 
 import { markdownFenceFor } from './quoteSelection';
@@ -668,6 +670,39 @@ export function designPickLabel(
 export function designPickBlock(chip: Pick<StagedDesignPick, 'text' | 'note'>): string {
 	const note = chip.note.trim();
 	return note ? `${chip.text}\n\n${note}` : chip.text;
+}
+
+/** What {@link expandDesignPicks} sends: the message text and the chips' screenshots. */
+export interface DesignPickExpansion {
+	text: string;
+	/** The chips' screenshots in chip order, for the caller to add after the staged images. */
+	images: string[];
+}
+
+/**
+ * The message a composer send builds from its staged Design Mode chips: each
+ * chip's {@link designPickBlock} (block, then note) in chip order, then the
+ * typed text, with a blank line between each. Context comes first, so the
+ * agent reads the elements before the instruction.
+ *
+ * A typed text that starts with `@` or `/` keeps the front, and the chips
+ * follow it: a leading `@agent` (a message for that agent only) and an agent's
+ * own `/command` count only at the very start of a message.
+ *
+ * With no chips the typed text comes back unchanged and there are no images.
+ */
+export function expandDesignPicks(
+	picks: ReadonlyArray<Pick<StagedDesignPick, 'text' | 'note' | 'screenshot'>>,
+	typedText: string
+): DesignPickExpansion {
+	if (picks.length === 0) return { text: typedText, images: [] };
+	const blocks = picks.map(designPickBlock).filter((block) => block.trim() !== '');
+	const typed = typedText.trim();
+	const parts = !typed ? blocks : /^[@/]/.test(typed) ? [typed, ...blocks] : [...blocks, typed];
+	return {
+		text: parts.join('\n\n'),
+		images: picks.flatMap((pick) => (pick.screenshot ? [pick.screenshot] : [])),
+	};
 }
 
 /** What the host needs from a webview to resolve and photograph a pick. */

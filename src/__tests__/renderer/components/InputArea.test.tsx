@@ -9,6 +9,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createMockDesignPick } from '../../helpers/mockTab';
 
 import { mockTheme } from '../../helpers/mockTheme';
 
@@ -843,16 +844,10 @@ describe('InputArea', () => {
 	});
 
 	describe('Design Mode chips', () => {
-		const chip = {
-			id: 'pick-1',
-			kind: 'element' as const,
-			label: 'button.cta "Sign up"',
-			url: 'https://example.com',
+		const chip = createMockDesignPick({
 			note: 'Make it blue',
 			text: 'Design Mode element from https://example.com',
-			screenshot: null,
-			createdAt: 1,
-		};
+		});
 
 		/** A session whose active tab has `chip` staged, in the store and on screen. */
 		function renderWithChip(inputMode: 'ai' | 'terminal' = 'ai') {
@@ -2785,6 +2780,30 @@ describe('InputArea on a phone', () => {
 	it('marks a folded handle when an unsent draft is waiting behind it', () => {
 		render(<InputArea {...createDefaultProps({ inputValue: 'half a thought' })} />);
 		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+	});
+
+	describe('Design Mode chips behind the fold', () => {
+		/** A session whose active tab holds one chip and no text. */
+		function sessionWithChip(inputMode: 'ai' | 'terminal'): Session {
+			const base = createMockSession({ inputMode });
+			return {
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({
+					...tab,
+					stagedDesignPicks: [createMockDesignPick()],
+				})),
+			};
+		}
+
+		it('marks the handle when only chips wait behind it: they send on their own', () => {
+			render(<InputArea {...createDefaultProps({ session: sessionWithChip('ai') })} />);
+			expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+		});
+
+		it("does not count the AI tab's chips behind the terminal composer", () => {
+			render(<InputArea {...createDefaultProps({ session: sessionWithChip('terminal') })} />);
+			expect(screen.queryByTestId('phone-composer-handle-draft')).not.toBeInTheDocument();
+		});
 	});
 
 	it('draws no handle at all on desktop', () => {

@@ -436,7 +436,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const phone = usePhoneLayout();
 	const composerFold = usePersistedToggle(PHONE_COMPOSER_COLLAPSED_KEY, true);
 	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
-	const phoneHandleHasDraft = inputValue.trim().length > 0 || stagedImages.length > 0;
+	// Chips are an AI draft, like staged images (which read empty in terminal mode).
+	const phoneHandleHasDraft =
+		inputValue.trim().length > 0 ||
+		stagedImages.length > 0 ||
+		(!isTerminalMode && stagedDesignPicks.length > 0);
 
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {

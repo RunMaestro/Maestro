@@ -14,7 +14,8 @@
  * Once staged, a chip is edited and removed by id on its tab through
  * {@link setStagedDesignPickNote} and {@link removeStagedDesignPick}: the
  * chip strip in the composer uses them, so any other caller reaches the same
- * code.
+ * code. A send reads the chips with {@link getStagedDesignPicks}, expands them
+ * into the message, and takes them off with {@link removeStagedDesignPicks}.
  */
 
 import { stageDesignPickOnAgent } from './quoteIntoComposer';
@@ -98,15 +99,23 @@ export async function deliverDesignPick(
 	return aiTabId ? { aiTabId, text: designPickBlock(chip), pickId: chip.id } : null;
 }
 
+/**
+ * The chips staged on `sessionId`'s AI tab `tabId`, in order, from the live
+ * store rather than a render-time snapshot. Empty when there are none or the
+ * tab is gone.
+ */
+export function getStagedDesignPicks(sessionId: string, tabId: string): StagedDesignPick[] {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	return session?.aiTabs.find((t) => t.id === tabId)?.stagedDesignPicks ?? [];
+}
+
 /** The chip `pickId` on `sessionId`'s AI tab `tabId`, from the live store. */
 function findStagedDesignPick(
 	sessionId: string,
 	tabId: string,
 	pickId: string
 ): StagedDesignPick | undefined {
-	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	const tab = session?.aiTabs.find((t) => t.id === tabId);
-	return tab?.stagedDesignPicks?.find((p) => p.id === pickId);
+	return getStagedDesignPicks(sessionId, tabId).find((p) => p.id === pickId);
 }
 
 /**
@@ -134,14 +143,30 @@ export function setStagedDesignPickNote(
 }
 
 /**
+ * Take staged chips off their tab by id, screenshots and all: the chips a
+ * sent message expanded, or one the user removed. Chips with other ids stay,
+ * so one staged after a send read its chips is left for the next message.
+ * Returns how many were taken; 0 writes nothing.
+ */
+export function removeStagedDesignPicks(
+	sessionId: string,
+	tabId: string,
+	pickIds: readonly string[]
+): number {
+	const ids = new Set(pickIds);
+	const taken = getStagedDesignPicks(sessionId, tabId).filter((p) => ids.has(p.id)).length;
+	if (taken === 0) return 0;
+	updateAiTab(sessionId, tabId, (tab) => ({
+		...tab,
+		stagedDesignPicks: (tab.stagedDesignPicks ?? []).filter((p) => !ids.has(p.id)),
+	}));
+	return taken;
+}
+
+/**
  * Take one staged chip off its tab, screenshot and all. Returns false when the
  * chip is not on that tab.
  */
 export function removeStagedDesignPick(sessionId: string, tabId: string, pickId: string): boolean {
-	if (!findStagedDesignPick(sessionId, tabId, pickId)) return false;
-	updateAiTab(sessionId, tabId, (tab) => ({
-		...tab,
-		stagedDesignPicks: (tab.stagedDesignPicks ?? []).filter((p) => p.id !== pickId),
-	}));
-	return true;
+	return removeStagedDesignPicks(sessionId, tabId, [pickId]) > 0;
 }

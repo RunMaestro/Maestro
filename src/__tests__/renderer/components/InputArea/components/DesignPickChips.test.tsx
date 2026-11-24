@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesignPickChips } from '../../../../../renderer/components/InputArea/components/DesignPickChips';
 import { MODAL_PRIORITIES } from '../../../../../renderer/constants/modalPriorities';
 import type { StagedDesignPick } from '../../../../../renderer/types';
+import { createMockDesignPick } from '../../../../helpers';
 import { inputAreaTheme } from '../_fixtures';
 
 // Escape reaches the popover through the layer stack. Keep the layer the
@@ -33,17 +34,13 @@ const BLOCK = [
 ].join('\n');
 
 function makePick(overrides: Partial<StagedDesignPick> = {}): StagedDesignPick {
-	return {
-		id: 'pick-1',
-		kind: 'element',
-		label: 'button.cta "Sign up"',
+	return createMockDesignPick({
 		url: 'https://example.com/pricing',
 		note: 'Make it blue',
 		text: BLOCK,
 		screenshot: 'data:image/png;base64,AAA',
-		createdAt: 1,
 		...overrides,
-	};
+	});
 }
 
 function renderChips(overrides: Partial<ComponentProps<typeof DesignPickChips>> = {}) {

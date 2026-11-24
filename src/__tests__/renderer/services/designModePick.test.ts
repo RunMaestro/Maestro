@@ -1,6 +1,6 @@
 /**
  * Tests for delivering a Design Mode pick into the agent's composer as a chip,
- * and for editing and removing a staged chip.
+ * and for reading, editing and removing staged chips.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,14 +12,16 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	deliverDesignPick,
+	getStagedDesignPicks,
 	removeStagedDesignPick,
+	removeStagedDesignPicks,
 	setStagedDesignPickNote,
 } from '../../../renderer/services/designModePick';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
-import { createMockAITab, createMockSession } from '../../helpers';
+import { createMockAITab, createMockDesignPick, createMockSession } from '../../helpers';
 import type { DesignModePick } from '../../../renderer/utils/designModePicker';
 import type { StagedDesignPick } from '../../../renderer/types';
 
@@ -65,16 +67,9 @@ function chips() {
 
 /** Seed the tab with one staged chip per id, each with the note `old`. */
 function stageChips(ids: string[], tabOverrides = {}): StagedDesignPick[] {
-	const staged = ids.map((id) => ({
-		id,
-		kind: 'element' as const,
-		label: id,
-		url: 'https://example.com',
-		note: 'old',
-		text: `block ${id}`,
-		screenshot: null,
-		createdAt: 1,
-	}));
+	const staged = ids.map((id) =>
+		createMockDesignPick({ id, label: id, note: 'old', text: `block ${id}` })
+	);
 	seed({ ...tabOverrides, stagedDesignPicks: staged });
 	return staged;
 }
@@ -394,5 +389,45 @@ describe('removeStagedDesignPick', () => {
 
 		expect(session().aiTabs[0]).toMatchObject({ inputValue: 'Fix it', stagedImages: [PASTED] });
 		expect(chips()).toEqual([]);
+	});
+});
+
+describe('getStagedDesignPicks', () => {
+	it("reads the tab's chips, in pick order, from the live store", () => {
+		const staged = stageChips(['a', 'b']);
+		expect(getStagedDesignPicks(SESSION_ID, TAB_ID)).toEqual(staged);
+
+		removeStagedDesignPick(SESSION_ID, TAB_ID, 'a');
+		expect(getStagedDesignPicks(SESSION_ID, TAB_ID).map((c) => c.id)).toEqual(['b']);
+	});
+
+	it('is empty for a tab with no chips, another tab, or an agent that is gone', () => {
+		seed();
+		expect(getStagedDesignPicks(SESSION_ID, TAB_ID)).toEqual([]);
+		stageChips(['a']);
+		expect(getStagedDesignPicks(SESSION_ID, 'other-tab')).toEqual([]);
+		expect(getStagedDesignPicks('no-such-agent', TAB_ID)).toEqual([]);
+	});
+});
+
+describe('removeStagedDesignPicks', () => {
+	it('takes the named chips off and keeps any other chip, so a later pick survives a send', () => {
+		stageChips(['sent-1', 'later', 'sent-2']);
+
+		expect(removeStagedDesignPicks(SESSION_ID, TAB_ID, ['sent-1', 'sent-2'])).toBe(2);
+
+		expect(chips().map((c) => c.id)).toEqual(['later']);
+	});
+
+	it('counts only the chips still there, and writes nothing when none are', () => {
+		stageChips(['a', 'b']);
+		expect(removeStagedDesignPicks(SESSION_ID, TAB_ID, ['a', 'gone'])).toBe(1);
+		expect(chips().map((c) => c.id)).toEqual(['b']);
+
+		const before = session();
+		expect(removeStagedDesignPicks(SESSION_ID, TAB_ID, ['gone'])).toBe(0);
+		expect(removeStagedDesignPicks(SESSION_ID, TAB_ID, [])).toBe(0);
+		expect(removeStagedDesignPicks(SESSION_ID, 'other-tab', ['b'])).toBe(0);
+		expect(session()).toBe(before);
 	});
 });

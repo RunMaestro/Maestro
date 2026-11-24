@@ -13,7 +13,8 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
-import type { Session, StagedDesignPick } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import { createMockDesignPick } from '../../helpers';
 
 function seed(overrides: Partial<Session> = {}): void {
 	const session = {
@@ -189,18 +190,7 @@ describe('insertIntoAgentComposer', () => {
 });
 
 describe('stageDesignPickOnAgent', () => {
-	function chip(id: string): StagedDesignPick {
-		return {
-			id,
-			kind: 'element',
-			label: 'button.cta "Sign up"',
-			url: 'https://example.com',
-			note: '',
-			text: 'BLOCK',
-			screenshot: null,
-			createdAt: 1,
-		};
-	}
+	const chip = (id: string) => createMockDesignPick({ id });
 
 	function tab(id: string) {
 		return useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === id);
