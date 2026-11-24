@@ -41,6 +41,7 @@ import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
+	HOSTED_AGENTS_SETTING,
 	liftedOwnerOfProcess,
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
@@ -267,7 +268,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
 		if (config.toolType !== 'terminal') {
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
-			const refusal = lifted && liftedSendRefusal(lifted);
+			const refusal =
+				lifted &&
+				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, true) !== false);
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

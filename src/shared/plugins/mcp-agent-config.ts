@@ -558,4 +558,14 @@ export const MCP_CONFIG_BY_AGENT: Record<string, McpConfigCapability> = {
 	// agent id; never auto-injected while `verified: false`.
 	hermes: { strategy: 'mcp-json-file', verified: false, fileName: 'maestro-hermes-mcp.json' },
 	pi: { strategy: 'mcp-json-file', verified: false, fileName: 'maestro-pi-mcp.json' },
+	// antigravity: `agy` reads the `{ mcpServers }` shape (stdio `command`/`args`/`env`,
+	// or a Streamable HTTP `serverUrl`) from `~/.gemini/config/mcp_config.json` and
+	// `<workspace>/.agents/mcp_config.json` (antigravity.google/docs/mcp). No flag or
+	// env var points it at a separate file, so injecting would mean rewriting one of
+	// the user's own config files. Kept inert until agy offers an overlay.
+	antigravity: {
+		strategy: 'mcp-json-file',
+		verified: false,
+		fileName: 'maestro-antigravity-mcp.json',
+	},
 };

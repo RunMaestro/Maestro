@@ -1,0 +1,322 @@
+/**
+ * Moving a hosted agent back from its Federation host: the reverse of a lift. Shared by
+ * `maestro-cli unlift` and the desktop's "Move Back from Host" right-click action.
+ *
+ * A lift kept the local record (every tab and transcript) and gave it a `liftedTo` pointer. Moving
+ * back turns that pointer into an SSH agent again:
+ *
+ * 1. Refusals that cost no dial: not hosted, or no SSH remote to run on once it is back.
+ * 2. The host's copy is read: its tabs and each tab's transcript. A running turn or a message that
+ *    still waits in the host's queue is refused: it would be lost or run twice. The host's tab ids
+ *    and provider session ids are the ones the lift sent, so a tab that moved comes back onto its
+ *    own local tab, and the next turn over SSH resumes the same provider session.
+ * 3. The local record is restored (`withReturnedFromHost()`): no pointer, the host's tabs merged
+ *    in, and `hostedOptOut`, so automatic Federation does not move it straight back.
+ * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again.
+ *
+ * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
+ * this machine kept, and the result says the host's copy is still there.
+ *
+ * Tabs are never dropped: a local tab the host no longer has stays, and a host transcript shorter
+ * than the local one does not replace it.
+ */
+
+import type { ClientError, MaestroClient } from '../client/types';
+import type { AITabRecord, AgentRecord } from '../store/records';
+import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
+import { LiftRunError } from './lift-run';
+
+export interface ReturnRunOptions {
+	/** The host cannot be reached: restore from this machine's copy only, and keep the host's. */
+	offline?: boolean;
+	/** Leave the agent on the host too (it then has two owners until one is removed). */
+	keepHostCopy?: boolean;
+}
+
+/** A client attached to the agent's host. `release()` is the caller's. */
+export interface ReturnHostConnection {
+	peer: string;
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
+	release(): Promise<void>;
+}
+
+/** What the host held, to merge into the local record. Each tab carries its transcript. */
+export interface ReturnedFromHost {
+	tabs: AITabRecord[];
+	activeTabId?: string;
+}
+
+export interface ReturnRunDeps {
+	readAgents(): AgentRecord[];
+	/** The agent id `ref` names. Throws when it names none. Default: `ref` is the id. */
+	resolveAgentId?(ref: string): string;
+	/** Reach the host that runs on SSH remote `remoteId`. Throws when it cannot. */
+	connect(remoteId: string, peer: string): Promise<ReturnHostConnection>;
+	hostCallError?(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error;
+	/** Write the restored record (see `withReturnedFromHost()`). Throws on failure. */
+	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
+}
+
+export interface ReturnResult {
+	agent: { id: string; name: string };
+	/** `peer:agentId` the agent was hosted as. */
+	from: string;
+	/** Host tabs read back (0 when offline). */
+	tabs: number;
+	/** Host tabs this machine did not have, added as new tabs. */
+	newTabs: number;
+	hostCopyRemoved: boolean;
+	notices?: string[];
+}
+
+function defaultHostCallError(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error {
+	return new LiftRunError('RETURN_HOST_FAILED', `Peer "${peer}": ${error.message}`);
+}
+
+function sshRemoteIdOf(agent: AgentRecord): string | undefined {
+	const ssh = (agent as { sessionSshRemoteConfig?: { enabled?: boolean; remoteId?: unknown } })
+		.sessionSshRemoteConfig;
+	return ssh?.enabled && typeof ssh.remoteId === 'string' && ssh.remoteId
+		? ssh.remoteId
+		: undefined;
+}
+
+/** A host tab as a local tab record: the fields a local tab needs, idle, with its transcript. */
+function asLocalTab(tab: AITabRecord): AITabRecord {
+	const {
+		state: _state,
+		thinkingStartTime: _thinkingStartTime,
+		hidden: _hidden,
+		consultOrigin: _consultOrigin,
+		...rest
+	} = tab;
+	return {
+		...rest,
+		agentSessionId: tab.agentSessionId ?? null,
+		name: tab.name ?? null,
+		starred: tab.starred === true,
+		logs: Array.isArray(tab.logs) ? tab.logs : [],
+		inputValue: typeof tab.inputValue === 'string' ? tab.inputValue : '',
+		stagedImages: Array.isArray(tab.stagedImages) ? tab.stagedImages : [],
+		createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : Date.now(),
+		state: 'idle',
+	};
+}
+
+/**
+ * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
+ * merged in by tab id. A tab both sides have takes the host's transcript (the conversation went on
+ * there) unless the host's is shorter, plus its name, star, and provider session. A host tab this
+ * machine lacks is appended. Local tabs the host closed stay. Pure.
+ */
+export function withReturnedFromHost<T extends Record<string, unknown>>(
+	record: T,
+	returned: ReturnedFromHost
+): T {
+	const localTabs = (Array.isArray(record.aiTabs) ? record.aiTabs : []) as AITabRecord[];
+	const hostById = new Map(returned.tabs.map((tab) => [tab.id, tab]));
+	const merged: AITabRecord[] = localTabs.map((local) => {
+		const host = hostById.get(local.id);
+		if (!host) return local;
+		const hostLogs = Array.isArray(host.logs) ? host.logs : [];
+		const localLogs = Array.isArray(local.logs) ? local.logs : [];
+		return {
+			...local,
+			agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
+			name: host.name ?? local.name ?? null,
+			starred: host.starred === true,
+			logs: hostLogs.length >= localLogs.length ? hostLogs : localLogs,
+			...(host.usageStats ? { usageStats: host.usageStats } : {}),
+			state: 'idle',
+		};
+	});
+	const localIds = new Set(localTabs.map((tab) => tab.id));
+	const added = returned.tabs.filter((tab) => !localIds.has(tab.id)).map(asLocalTab);
+	const aiTabs = [...merged, ...added];
+
+	const order = Array.isArray(record.unifiedTabOrder)
+		? [...(record.unifiedTabOrder as { type: string; id: string }[])]
+		: undefined;
+	if (order) for (const tab of added) order.push({ type: 'ai', id: tab.id });
+
+	const activeTabId =
+		returned.activeTabId && aiTabs.some((tab) => tab.id === returned.activeTabId)
+			? returned.activeTabId
+			: record.activeTabId;
+
+	const { liftedTo: _liftedTo, ...rest } = record;
+	return {
+		...rest,
+		aiTabs,
+		...(order ? { unifiedTabOrder: order } : {}),
+		...(activeTabId !== undefined ? { activeTabId } : {}),
+		hostedOptOut: true,
+	} as unknown as T;
+}
+
+/**
+ * A `returnedFromHost` value that crossed a process boundary (the bridge, IPC), or undefined when
+ * it is malformed. Tabs need an id; everything else is kept as the host sent it.
+ */
+export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const raw = value as { tabs?: unknown; activeTabId?: unknown };
+	if (!Array.isArray(raw.tabs)) return undefined;
+	const tabs: AITabRecord[] = [];
+	for (const tab of raw.tabs) {
+		if (!tab || typeof tab !== 'object' || Array.isArray(tab)) return undefined;
+		const id = (tab as { id?: unknown }).id;
+		if (typeof id !== 'string' || !id) return undefined;
+		tabs.push(tab as AITabRecord);
+	}
+	return {
+		tabs,
+		...(typeof raw.activeTabId === 'string' && raw.activeTabId
+			? { activeTabId: raw.activeTabId }
+			: {}),
+	};
+}
+
+/** Why `record` cannot take a restore right now, or undefined when it can. */
+export function returnRestoreRefusal(record: { liftedTo?: unknown }): string | undefined {
+	return readLiftedTo(record.liftedTo) ? undefined : 'Agent is not hosted';
+}
+
+/**
+ * Every step of moving a hosted agent back. Throws `LiftRunError` (`RETURN_*` codes), or whatever
+ * `connect` / `hostCallError` throw.
+ */
+export async function runReturnFromHost(
+	agentRef: string,
+	options: ReturnRunOptions,
+	deps: ReturnRunDeps
+): Promise<ReturnResult> {
+	let agentId: string;
+	try {
+		agentId = deps.resolveAgentId ? deps.resolveAgentId(agentRef) : agentRef;
+	} catch (error) {
+		throw new LiftRunError(
+			'AGENT_NOT_FOUND',
+			error instanceof Error ? error.message : String(error)
+		);
+	}
+	const agent = deps.readAgents().find((record) => record.id === agentId);
+	if (!agent) throw new LiftRunError('AGENT_NOT_FOUND', `Agent not found: ${agentRef}`);
+	const pointer: LiftedToPointer | undefined = readLiftedTo(agent.liftedTo);
+	if (!pointer) {
+		throw new LiftRunError(
+			'RETURN_NOT_HOSTED',
+			`"${agent.name}" is not hosted: nothing to move back.`
+		);
+	}
+	const remoteId = sshRemoteIdOf(agent);
+	if (!remoteId) {
+		throw new LiftRunError(
+			'RETURN_NO_SSH',
+			`"${agent.name}" has no SSH remote to run on once it is back. Set one in Edit Agent first.`
+		);
+	}
+	const from = peerAgentRef(pointer.peer, pointer.agentId);
+	const summary = { id: agent.id, name: agent.name };
+
+	if (options.offline) {
+		await restoreOrThrow(deps, agent, { tabs: [] });
+		return {
+			agent: summary,
+			from,
+			tabs: 0,
+			newTabs: 0,
+			hostCopyRemoved: false,
+			notices: [
+				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. Remove it on the host when it is back: maestro-cli remove-agent ${pointer.agentId}`,
+			],
+		};
+	}
+
+	const connection = await deps.connect(remoteId, pointer.peer);
+	try {
+		const hostError = deps.hostCallError ?? defaultHostCallError;
+		const notices: string[] = [];
+		let returned: ReturnedFromHost = { tabs: [] };
+		const hostAgent = await connection.client.agents.get(pointer.agentId);
+		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
+		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
+
+		if (hostAgent.ok) {
+			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
+			if (busy) {
+				throw new LiftRunError(
+					'RETURN_BUSY',
+					`"${agent.name}" is running a turn on its host. Wait for it to finish, or stop it, then move it back.`
+				);
+			}
+			const queue = await connection.client.turns.queue.list(pointer.agentId);
+			if (!queue.ok) throw hostError(connection.peer, queue.error);
+			if (queue.value.length > 0) {
+				throw new LiftRunError(
+					'RETURN_QUEUED',
+					`${queue.value.length} message(s) still wait in "${agent.name}"'s queue on its host. Let them run or remove them, then move it back.`
+				);
+			}
+			const tabs = await connection.client.tabs.list(pointer.agentId);
+			if (!tabs.ok) throw hostError(connection.peer, tabs.error);
+			const withLogs: AITabRecord[] = [];
+			for (const tab of tabs.value) {
+				const transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
+				if (!transcript.ok) throw hostError(connection.peer, transcript.error);
+				withLogs.push({ ...tab, logs: transcript.value });
+			}
+			returned = {
+				tabs: withLogs,
+				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
+			};
+		} else {
+			notices.push(
+				`The host no longer has ${from}: the agent comes back with this machine's copy.`
+			);
+		}
+
+		await restoreOrThrow(deps, agent, returned);
+
+		let hostCopyRemoved = false;
+		if (hostAgent.ok && !options.keepHostCopy) {
+			const removed = await connection.client.agents.remove(pointer.agentId);
+			if (removed.ok) hostCopyRemoved = true;
+			else {
+				notices.push(
+					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} On the remote, run: maestro-cli remove-agent ${pointer.agentId}`
+				);
+			}
+		} else if (hostAgent.ok) {
+			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
+		}
+
+		const localIds = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
+		return {
+			agent: summary,
+			from,
+			tabs: returned.tabs.length,
+			newTabs: returned.tabs.filter((tab) => !localIds.has(tab.id)).length,
+			hostCopyRemoved,
+			...(notices.length > 0 ? { notices } : {}),
+		};
+	} finally {
+		await connection.release();
+	}
+}
+
+async function restoreOrThrow(
+	deps: ReturnRunDeps,
+	agent: AgentRecord,
+	returned: ReturnedFromHost
+): Promise<void> {
+	try {
+		await deps.restore(agent.id, returned);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new LiftRunError(
+			'RETURN_RESTORE_FAILED',
+			`Could not move "${agent.name}" back: ${message}. Nothing changed on the host.`
+		);
+	}
+}

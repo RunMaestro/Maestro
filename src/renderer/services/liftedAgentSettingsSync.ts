@@ -23,6 +23,7 @@
  * agreed state (the baseline) is kept per agent in this window's local storage.
  */
 
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	applyLiftSyncPull,
 	fromStored,
@@ -31,7 +32,6 @@ import {
 	planLiftedSettingsSync,
 	readLiftSyncBaseline,
 	settleLiftSyncBaseline,
-	toStored,
 	type LiftSyncBaseline,
 	type LiftSyncEcho,
 	type LiftSyncPlan,
@@ -125,85 +125,11 @@ function connectedHostAgent(
 	return undefined;
 }
 
-/** The lifted local agent that points at a host agent, if this machine holds one. */
-export function liftedPointerFor(peerId: string, agentId: string): Session | undefined {
-	return useSessionStore.getState().sessions.find((session) => {
-		const pointer = readLiftedTo(session.liftedTo);
-		return pointer?.peer === peerId && pointer.agentId === agentId;
-	});
-}
-
 let scheduleSync: (() => void) | undefined;
 
 /** Run a sync pass soon (after a resolution or a save). A no-op while the sync is not running. */
 export function requestHostedSettingsSync(): void {
 	scheduleSync?.();
-}
-
-/**
- * Save what the person set in the settings editor of a mirrored agent. The edit lands where this
- * machine keeps its copy of that agent: the lifted pointer when there is one, else the pending
- * edits. The sync then sends it (or holds it while the peer is down).
- */
-export function saveHostedAgentSettings(
-	peerId: string,
-	host: AgentRecord,
-	edited: AgentRecord
-): void {
-	const before = liftSyncAgentValues(host);
-	const after = liftSyncAgentValues(edited);
-	const ids = new Set([...Object.keys(before), ...Object.keys(after)]);
-	const changed = [...ids].filter((id) => before[id] !== after[id]);
-
-	const pointer = liftedPointerFor(peerId, host.id);
-	if (pointer) {
-		if (changed.length > 0) {
-			const agent: Record<string, string | number | boolean | undefined> = {};
-			const env: Record<string, string | undefined> = {};
-			for (const id of changed) {
-				if (id.startsWith('env:')) {
-					const value = after[id];
-					env[id.slice(4)] = typeof value === 'string' ? value : undefined;
-				} else {
-					agent[id] = after[id];
-				}
-			}
-			updateSessionWith(
-				pointer.id,
-				(session) =>
-					applyLiftSyncPull(session as unknown as AgentRecord, {
-						agent,
-						env,
-						tabs: {},
-					}) as unknown as Session
-			);
-		}
-		requestHostedSettingsSync();
-		return;
-	}
-
-	const key = mirrorKey(peerId, host.id);
-	const store = useHostedAgentSettingsStore.getState();
-	const existing = store.pending[key];
-	const values = { ...(existing?.values ?? {}) };
-	const base = { ...(existing?.base ?? {}) };
-	for (const id of ids) {
-		if (before[id] === after[id]) continue;
-		values[id] = toStored(after[id]);
-		if (!(id in base)) base[id] = toStored(before[id]);
-	}
-	// A field set back to the host's value is no edit any more.
-	for (const id of Object.keys(values)) {
-		if (fromStored(values[id]) === before[id] && after[id] === before[id]) {
-			delete values[id];
-			delete base[id];
-		}
-	}
-	const envKeys = Object.keys(values)
-		.filter((id) => id.startsWith('env:'))
-		.map((id) => id.slice(4));
-	store.setPending(key, { values, base, envKeys });
-	requestHostedSettingsSync();
 }
 
 /** The conflicts waiting for a person, as the CLI and the modal list them. */
@@ -280,6 +206,8 @@ export function startLiftedAgentSettingsSync(): () => void {
 		const { sessions, sessionsReadOk } = useSessionStore.getState();
 		// Before the registry is read, an empty list is not "no lifted agents".
 		if (disposed || !sessionsReadOk) return;
+		// Hosted agents switched off: each works as its SSH agent, so nothing is sent to a host.
+		if (useSettingsStore.getState().federationHostedAgents === false) return;
 		const peers = usePeerMirrorStore.getState().peers;
 		const hosted = useHostedAgentSettingsStore.getState();
 		const targets = new Set<string>();

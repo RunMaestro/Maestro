@@ -53,6 +53,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	addHistoryEntry: vi.fn(),
 	readStoredAiTabs: vi.fn(() => []),
+	readSettings: vi.fn(() => ({})),
 }));
 
 // Mock the desktop tab list `--session` is checked against

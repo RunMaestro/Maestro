@@ -17,6 +17,8 @@ import {
 	resolveTierModel,
 	supportsEffortSelection,
 	supportsTierSelection,
+	tierNeedsOfferedModels,
+	unofferedTierModel,
 } from '../../shared/modelTiers';
 
 describe('tier vocabulary', () => {
@@ -450,6 +452,30 @@ describe('Antigravity tiers and effort', () => {
 		expect(resolveTierModel('antigravity', 'medium')).toBe('gemini-4-neon');
 		expect(resolveTierModel('antigravity', 'high')).toBe('gemini-4-carbon');
 		expect(supportsTierSelection('antigravity')).toBe(true);
+	});
+
+	// Captured agy 1.5.16 `agy models` on an account without Neon or Carbon; agy
+	// refused both as "not recognized as a known model".
+	const offered = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'claude-sonnet-4-6', 'gpt-oss-120b'];
+
+	it('withholds a tier model the account does not offer', () => {
+		expect(resolveTierModel('antigravity', 'low', offered)).toBe('gemini-4-hydrogen');
+		expect(resolveTierModel('antigravity', 'medium', offered)).toBeUndefined();
+		expect(unofferedTierModel('antigravity', 'high', offered)).toBe('gemini-4-carbon');
+		// Suffixed ids in the catalogue still count as the base model.
+		expect(resolveTierModel('antigravity', 'medium', ['gemini-4-neon-high'])).toBe('gemini-4-neon');
+	});
+
+	it('treats a missing catalogue, or a provider whose list is not exact, as no evidence', () => {
+		expect(resolveTierModel('antigravity', 'high', [])).toBe('gemini-4-carbon');
+		expect(resolveTierModel('antigravity', 'high', undefined)).toBe('gemini-4-carbon');
+		// Claude's discovered list holds aliases, not the pinned dated ids.
+		expect(resolveTierModel('claude-code', 'high', ['opus', 'sonnet'])).toBe(
+			resolveTierModel('claude-code', 'high')
+		);
+		expect(tierNeedsOfferedModels('antigravity', 'high')).toBe(true);
+		expect(tierNeedsOfferedModels('antigravity', 'default')).toBe(false);
+		expect(tierNeedsOfferedModels('claude-code', 'high')).toBe(false);
 	});
 
 	it('maps effort levels to rungs every tier model accepts', () => {

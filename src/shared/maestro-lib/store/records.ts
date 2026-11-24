@@ -133,6 +133,8 @@ export interface AgentRecord extends UnknownFields {
 	contextWindowSource?: string;
 	/** Federation: the agent was lifted onto its host. Read it through `readLiftedTo()`. */
 	liftedTo?: import('../agents/lift-pointer').LiftedToPointer;
+	/** Federation: moved back from its host by the person; automatic moves leave it here. */
+	hostedOptOut?: boolean;
 }
 
 /** One Left Bar group, mirroring `Group` in `src/shared/types.ts`. */

@@ -163,7 +163,7 @@ it('auto-fills CLI defaults and requires consent for a newly selected account', 
 const SAFETY_CONTRACTS: Record<MemoryCliProvider, string[]> = {
 	'claude-code': ['--tools', '--safe-mode'],
 	codex: ['read-only', '--ephemeral'],
-	antigravity: ['--sandbox'],
+	antigravity: ['--sandbox', '--settings'],
 	'qwen3-coder': ['--approval-mode', 'plan'],
 	hermes: ['--query-file', '--toolsets'],
 	pi: ['--no-tools'],

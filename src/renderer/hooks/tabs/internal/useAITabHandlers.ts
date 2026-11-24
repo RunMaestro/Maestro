@@ -33,6 +33,12 @@ import {
 	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
+import {
+	closeHostedTab,
+	hostedTargetOf,
+	openHostedTab,
+	starHostedTab,
+} from '../../../services/hostedTurns';
 
 /** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
@@ -44,6 +50,15 @@ export function useAITabHandlers(
 		const { activeSessionId } = useSessionStore.getState();
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 		if (!activeSessionId) return;
+
+		// A hosted agent's AI tabs live on its host: the host makes the tab, and it shows here
+		// at once (`openHostedTab()`); the host sync fills it in.
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!isWebDesktop() && hostedTargetOf(activeSession)) {
+			inputRef?.current?.focus();
+			if (activeSession) void openHostedTab(activeSession);
+			return;
+		}
 
 		if (isWebDesktop()) {
 			// Focus the composer SYNCHRONOUSLY, inside the tap that asked for the
@@ -147,6 +162,8 @@ export function useAITabHandlers(
 			}
 
 			clearLiveDraft(tabId);
+			// A hosted agent's tab closes on its host too, so the host sync does not bring it back.
+			if (sessionBeforeClose) closeHostedTab(sessionBeforeClose, tabId);
 			updateSessionWith(activeSessionId, (s) => {
 				const tab = s.aiTabs.find((t) => t.id === tabId);
 				const isWizardTab = tab && hasActiveWizard(tab);
@@ -329,6 +346,7 @@ export function useAITabHandlers(
 		if (!tabToStar?.agentSessionId) return;
 
 		persistTabStarred(session, tabToStar, starred);
+		starHostedTab(session, tabId, starred);
 		updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));
 	}, []);
 

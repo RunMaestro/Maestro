@@ -62,7 +62,7 @@ import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
-import { liftedSendRefusal } from '../../../shared/maestro-lib/agents/lift-pointer';
+import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -470,19 +470,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// A lifted agent runs on its Federation host now: the local copy keeps its tabs and
-			// transcripts, but a turn here would resume the session the host owns. The draft stays.
-			const liftedRefusal =
-				activeSession.inputMode === 'ai' ? liftedSendRefusal(activeSession) : undefined;
-			if (liftedRefusal) {
-				notifyToast({
-					color: 'yellow',
-					title: 'Message not sent',
-					message: liftedRefusal,
-					dismissible: true,
-					skipCustomNotification: true,
-					skipOsNotification: true,
-				});
+			// A hosted agent's turns run on its Federation host: the message, its images, and this
+			// tab's own settings go there (`sendHostedTurn()`), and the host queues it when the tab is
+			// busy. Nothing spawns here. The draft clears only once the host took it, so a host that
+			// is down leaves it in place.
+			if (activeSession.inputMode === 'ai' && hostedTargetOf(activeSession)) {
+				const text = stripShellCommandEscape(effectiveInputValue);
+				const sent = await sendHostedTurn(activeSession, targetTabId, text, effectiveImages);
+				if (sent && isComposerSubmit) {
+					setInputValue('');
+					if (!usingOverrideImages) setStagedImages([]);
+					syncAiInputToSession('', syncTarget);
+					if (inputRef.current) inputRef.current.style.height = 'auto';
+				}
 				return;
 			}
 

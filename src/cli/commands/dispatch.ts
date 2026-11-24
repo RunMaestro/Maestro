@@ -12,8 +12,13 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
+	readSettings,
 } from '../services/storage';
-import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
+import {
+	AGENT_LIFTED_CODE,
+	hostedAgentsEnabled,
+	liftedSendRefusal,
+} from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
@@ -507,7 +512,9 @@ export async function runDispatch(
 	}
 
 	// A lifted agent runs on its host now: queueing here would start a second owner of its session.
-	const liftedRefusal = liftedSendRefusal(getSessionById(agentId) ?? {});
+	const liftedRefusal = liftedSendRefusal(getSessionById(agentId) ?? {}, () =>
+		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
+	);
 	if (liftedRefusal) return { success: false, error: liftedRefusal, code: AGENT_LIFTED_CODE };
 
 	// A routing only steers the consults a message's `@mentions` start, so a

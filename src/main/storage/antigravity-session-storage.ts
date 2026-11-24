@@ -64,7 +64,8 @@ const USER_STEP = 14;
 const MODEL_STEP = 15;
 const TOOL_STEP = 132;
 
-interface SummaryRow {
+/** One row of agy's conversation summary index. */
+export interface SummaryRow {
 	conversation_id: string;
 	title: string;
 	step_count: number;
@@ -235,8 +236,11 @@ export function parseConversationSteps(
 }
 
 /** Read a conversation's steps, or null if its store cannot be opened. */
-function readConversation(conversationId: string): ParsedConversation | null {
-	const db = openAntigravityDb(antigravityConversationDbPath(conversationId));
+export function readConversation(
+	conversationId: string,
+	home = antigravityHome()
+): ParsedConversation | null {
+	const db = openAntigravityDb(antigravityConversationDbPath(conversationId, home));
 	if (!db) return null;
 	try {
 		const rows = db
@@ -257,9 +261,9 @@ function readConversation(conversationId: string): ParsedConversation | null {
 	}
 }
 
-/** Top-level conversations from agy's summary index. */
-function readSummaries(): SummaryRow[] {
-	const db = openAntigravityDb(path.join(antigravityHome(), 'conversation_summaries.db'));
+/** Top-level conversations from agy's summary index ([] when it is missing or unreadable). */
+export function readSummaries(home = antigravityHome()): SummaryRow[] {
+	const db = openAntigravityDb(path.join(home, 'conversation_summaries.db'));
 	if (!db) return [];
 	try {
 		return db
@@ -276,11 +280,52 @@ function readSummaries(): SummaryRow[] {
 	}
 }
 
+/** One top-level conversation agy indexed, fingerprinted without opening its store. */
+export interface AntigravityConversationStore {
+	conversationId: string;
+	/** Newest of the index row's time, the store's mtime and its `-wal` mtime. */
+	mtimeMs: number;
+	sizeBytes: number;
+}
+
+/**
+ * Every top-level conversation that still has a store, across all projects
+ * (the lifetime usage scan's discovery; listing stays per project). The index
+ * row moves with every step and a live run writes `-wal` before the `.db`, so
+ * the newest of the three changes whenever the conversation does. No agy
+ * folder, or no index, is an empty list.
+ */
+export function listConversationStores(): AntigravityConversationStore[] {
+	const out: AntigravityConversationStore[] = [];
+	for (const row of readSummaries()) {
+		if (!ANTIGRAVITY_CONVERSATION_ID.test(row.conversation_id)) continue;
+		const dbPath = antigravityConversationDbPath(row.conversation_id);
+		let stat: fs.Stats;
+		try {
+			stat = fs.statSync(dbPath);
+		} catch {
+			continue; // indexed, but the store is gone
+		}
+		let walMtimeMs = 0;
+		try {
+			walMtimeMs = fs.statSync(`${dbPath}-wal`).mtimeMs;
+		} catch {
+			// A finished store has no sidecar.
+		}
+		out.push({
+			conversationId: row.conversation_id,
+			mtimeMs: Math.max(Date.parse(row.last_modified_time) || 0, stat.mtimeMs, walMtimeMs),
+			sizeBytes: stat.size,
+		});
+	}
+	return out;
+}
+
 /** conversation id -> folder, from agy's per-folder last-conversation map. */
-function readLastConversationFolders(): Map<string, string> {
+export function readLastConversationFolders(home = antigravityHome()): Map<string, string> {
 	const out = new Map<string, string>();
 	try {
-		const file = path.join(antigravityHome(), 'cache', 'last_conversations.json');
+		const file = path.join(home, 'cache', 'last_conversations.json');
 		const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
 		for (const [folder, id] of Object.entries(parsed)) {
 			if (typeof id === 'string') out.set(id, folder);
@@ -291,9 +336,21 @@ function readLastConversationFolders(): Map<string, string> {
 	return out;
 }
 
+/**
+ * The folders a summary row names without opening its store: the index's
+ * workspace_uris, else agy's folder -> last-conversation map. [] means only
+ * `firstCommandCwd` can still attribute it.
+ */
+export function indexedWorkspaces(row: SummaryRow, lastFolders: Map<string, string>): string[] {
+	const indexed = workspacePaths(row.workspace_uris);
+	if (indexed.length > 0) return indexed;
+	const last = lastFolders.get(row.conversation_id);
+	return last ? [last] : [];
+}
+
 /** The `Cwd` of the conversation's first run_command, or null if it ran none. */
-export function firstCommandCwd(conversationId: string): string | null {
-	const db = openAntigravityDb(antigravityConversationDbPath(conversationId));
+export function firstCommandCwd(conversationId: string, home = antigravityHome()): string | null {
+	const db = openAntigravityDb(antigravityConversationDbPath(conversationId, home));
 	if (!db) return null;
 	try {
 		const rows = db
@@ -327,10 +384,8 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 		row: SummaryRow,
 		lastFolders: Map<string, string>
 	): Promise<string[]> {
-		const indexed = workspacePaths(row.workspace_uris);
-		if (indexed.length > 0) return indexed;
-		const last = lastFolders.get(row.conversation_id);
-		if (last) return [last];
+		const known = indexedWorkspaces(row, lastFolders);
+		if (known.length > 0) return known;
 		const cached = this.scannedCwd.get(row.conversation_id);
 		if (cached && cached.steps === row.step_count) return cached.cwd ? [cached.cwd] : [];
 		// The scan is synchronous SQLite on the main process: yield between stores

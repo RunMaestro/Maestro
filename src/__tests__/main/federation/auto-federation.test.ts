@@ -226,6 +226,17 @@ describe('AutoFederationCoordinator: moving SSH agents', () => {
 	});
 });
 
+describe('AutoFederationCoordinator: an agent moved back from its host', () => {
+	it('leaves it an SSH agent, manual, and says how to host it again', async () => {
+		const w = world({ agents: [{ ...agent('a1', 'r1'), hostedOptOut: true }] });
+		const snapshot = await w.coordinator.runNow({ force: false });
+		expect(w.deps.lift).not.toHaveBeenCalled();
+		expect(snapshot.agents[0]).toMatchObject({ agentId: 'a1', state: 'manual' });
+		expect(snapshot.agents[0].reason).toContain('moved it back');
+		expect(snapshot.agents[0].fix).toContain('Move to Host');
+	});
+});
+
 describe('AutoFederationCoordinator: keeping hosts', () => {
 	it('starts a stopped host even with automatic moves off, and leaves the agents manual', async () => {
 		const w = world({ autoMove: false, peers: [peer('r1', 'host-down')] });

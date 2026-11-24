@@ -27,10 +27,16 @@ import { effectiveAgentCustomEnvVars, resolveAgentProfile } from './providerProf
 
 /**
  * Providers the feedback interview knows how to drive, in fallback order. Grok
- * is last so it never displaces an automatic pick that worked before it was
- * listed: its provider default only leads when nothing earlier is installed.
+ * and Antigravity are last so neither displaces an automatic pick that worked
+ * before it was listed: each leads only when nothing earlier is installed.
  */
-export const FEEDBACK_PROVIDERS = ['claude-code', 'codex', 'opencode', 'grok'] as const;
+export const FEEDBACK_PROVIDERS = [
+	'claude-code',
+	'codex',
+	'opencode',
+	'grok',
+	'antigravity',
+] as const;
 export type FeedbackProvider = (typeof FEEDBACK_PROVIDERS)[number];
 
 export function isFeedbackProvider(toolType: string): toolType is FeedbackProvider {
@@ -44,7 +50,7 @@ export function isFeedbackProvider(toolType: string): toolType is FeedbackProvid
  * diagnostics to the model, so it needs a headless JSON turn and a read-only
  * mode the CLI itself enforces (a prompt-only read-only is not a guarantee).
  */
-const ROUTE_QUALIFIED_PROVIDERS: ReadonlySet<FeedbackProvider> = new Set(['grok']);
+const ROUTE_QUALIFIED_PROVIDERS: ReadonlySet<FeedbackProvider> = new Set(['grok', 'antigravity']);
 
 /**
  * Why the feedback interview cannot run on this provider, or null when its

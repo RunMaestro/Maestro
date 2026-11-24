@@ -8,8 +8,8 @@
  * The panel owns both halves of the gesture now - the Steer button that sends a
  * note, and the list that shows what is still pending.
  *
- * `runRemoteSteeringCommand` is the same three gestures - send, read, take back -
- * for a caller that is not looking at the panel (`maestro-cli steer-auto-run`).
+ * `runRemoteSteeringCommand` is the same four gestures - send, read, take back,
+ * dismiss - for a caller that is not looking at the panel (`maestro-cli steer-auto-run`).
  * It runs the functions below rather than a copy of them, and it asks
  * `steeringBlocker` the same question the panel's Steer button asks, so a click
  * and a CLI call cannot disagree about whether a run can be steered.
@@ -112,6 +112,26 @@ export function submitSteeringNote(args: SubmitSteeringNoteArgs): AutoRunSteerin
  */
 export function cancelSteeringNote(sessionId: string, noteId: string): void {
 	useAutoRunSteeringStore.getState().removeNote(sessionId, noteId);
+}
+
+/**
+ * Clear one delivered group - the notes one task took and its reply - after the
+ * operator has read it. The panel's X on a delivered note and
+ * `steer-auto-run dismiss` both land here. Returns the group that was cleared,
+ * or `null` when no delivery has that id (already dismissed, or a new run
+ * cleared the record).
+ */
+export function dismissSteeringDelivery(
+	sessionId: string,
+	deliveryId: string
+): SteeringDelivery | null {
+	const store = useAutoRunSteeringStore.getState();
+	const target = groupSteeringDeliveries(store.delivered[sessionId] ?? []).find(
+		(delivery) => delivery.deliveryId === deliveryId
+	);
+	if (!target) return null;
+	store.dismissDelivery(sessionId, deliveryId);
+	return target;
 }
 
 /**
@@ -219,6 +239,23 @@ export function runRemoteSteeringCommand(request: SteeringCommandRequest): Steer
 			};
 		}
 		return { success: true, note: toNoteSummary(note) };
+	}
+
+	if (action === 'dismiss') {
+		const deliveryId = request.deliveryId;
+		if (!deliveryId) return { success: false, error: 'steering dismiss requires a delivery id' };
+		const dismissed = dismissSteeringDelivery(sessionId, deliveryId);
+		if (!dismissed) {
+			// A pending note is not a delivery: point at the verb that takes it back.
+			const pending = (store.notes[sessionId] ?? []).some((note) => note.id === deliveryId);
+			return {
+				success: false,
+				error: pending
+					? 'That is a pending note, not a delivery; take it back with steer-auto-run cancel'
+					: `No delivered steering notes with delivery id ${deliveryId}`,
+			};
+		}
+		return { success: true, delivery: toDeliverySummary(dismissed) };
 	}
 
 	const noteId = request.noteId;

@@ -23,6 +23,8 @@ import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemS
 import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import { tierNeedsOfferedModels } from '../../../shared/modelTiers';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 import { restoreTasksCheckedByFailedTurn } from '../../../shared/markdownTaskScan';
 import {
 	formatSteeringNotesBlock,
@@ -439,11 +441,28 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
 			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
 			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
+			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
+			// A tier model the account does not offer fails the task by name, so a
+			// provider whose discovery is the account's catalogue is checked first
+			// (cached in main; a failed read is no evidence and keeps the mapping).
+			const offeredModels = tierNeedsOfferedModels(session.toolType, modelHint?.tier)
+				? await Promise.resolve()
+						.then(() =>
+							window.maestro.agents.getModels(
+								session.toolType,
+								false,
+								getSessionSshRemoteId(session)
+							)
+						)
+						.catch(() => undefined)
+				: undefined;
 			const turnSettings = resolveTurnSettings(
 				session.toolType,
-				ignoreModelHints ? null : findActiveModelHint(documentContent),
+				modelHint,
 				baselineModel,
-				baselineEffort
+				baselineEffort,
+				undefined,
+				offeredModels
 			);
 			for (const warning of turnSettings.warnings) {
 				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });

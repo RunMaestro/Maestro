@@ -22,6 +22,7 @@ const HISTORY_PROVIDERS = [
 	['copilot-cli', 'Copilot CLI'],
 	['omp', 'Oh My Pi'],
 	['grok', 'Grok'],
+	['antigravity', 'Antigravity'],
 ] as const;
 
 interface MemorySetupProps {

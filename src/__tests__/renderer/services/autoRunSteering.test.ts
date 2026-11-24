@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	submitSteeringNote,
 	cancelSteeringNote,
+	dismissSteeringDelivery,
 	takeSteeringNotesForDispatch,
 	recordSteeringResponse,
 	clearSteeringNotes,
@@ -198,6 +199,30 @@ describe('cancelSteeringNote', () => {
 		cancelSteeringNote(SESSION_ID, noteId);
 
 		expect(deliveredCount()).toBe(1);
+	});
+});
+
+describe('dismissSteeringDelivery', () => {
+	it('drops only the named delivery and leaves pending notes alone', () => {
+		startRun();
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'first', announce: false });
+		takeSteeringNotesForDispatch(SESSION_ID);
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'second', announce: false });
+		takeSteeringNotesForDispatch(SESSION_ID);
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'waiting', announce: false });
+		const firstId = useAutoRunSteeringStore.getState().delivered[SESSION_ID][0].deliveryId;
+
+		const dismissed = dismissSteeringDelivery(SESSION_ID, firstId);
+
+		expect(dismissed?.notes.map((n) => n.text)).toEqual(['first']);
+		expect(useAutoRunSteeringStore.getState().delivered[SESSION_ID].map((n) => n.text)).toEqual([
+			'second',
+		]);
+		expect(pendingCount()).toBe(1);
+	});
+
+	it('returns null for a delivery that is not there', () => {
+		expect(dismissSteeringDelivery(SESSION_ID, 'missing')).toBeNull();
 	});
 });
 
@@ -527,6 +552,81 @@ describe('runRemoteSteeringCommand', () => {
 			});
 
 			expect(result).toEqual({ success: false, error: 'No pending steering note with id nope' });
+		});
+	});
+
+	describe('dismiss', () => {
+		it('clears a delivered group, reply included, and returns it', () => {
+			startRun();
+			submitSteeringNote({ sessionId: SESSION_ID, text: 'first', announce: false });
+			submitSteeringNote({ sessionId: SESSION_ID, text: 'second', announce: false });
+			const taken = takeSteeringNotesForDispatch(SESSION_ID);
+			recordSteeringResponse(SESSION_ID, taken, {
+				summary: '[steered] did both',
+				text: '[steered] did both',
+				success: true,
+			});
+			const [delivery] = runRemoteSteeringCommand({
+				action: 'list',
+				sessionId: SESSION_ID,
+			}).deliveries!;
+
+			const result = runRemoteSteeringCommand({
+				action: 'dismiss',
+				sessionId: SESSION_ID,
+				deliveryId: delivery.deliveryId,
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.delivery?.notes.map((n) => n.text)).toEqual(['first', 'second']);
+			expect(result.delivery?.reply?.summary).toBe('[steered] did both');
+			expect(deliveredCount()).toBe(0);
+		});
+
+		// The delivered record outlives the run on purpose, so dismissing it must
+		// not depend on a run being in flight.
+		it('works after the run has ended', () => {
+			startRun();
+			submitSteeringNote({ sessionId: SESSION_ID, text: 'late', announce: false });
+			takeSteeringNotesForDispatch(SESSION_ID);
+			useBatchStore.setState({ batchRunStates: {} } as never);
+			const [delivery] = runRemoteSteeringCommand({
+				action: 'list',
+				sessionId: SESSION_ID,
+			}).deliveries!;
+
+			expect(
+				runRemoteSteeringCommand({
+					action: 'dismiss',
+					sessionId: SESSION_ID,
+					deliveryId: delivery.deliveryId,
+				}).success
+			).toBe(true);
+			expect(deliveredCount()).toBe(0);
+		});
+
+		it('points a pending note id at cancel instead', () => {
+			startRun();
+			const note = submitSteeringNote({ sessionId: SESSION_ID, text: 'wait', announce: false })!;
+
+			const result = runRemoteSteeringCommand({
+				action: 'dismiss',
+				sessionId: SESSION_ID,
+				deliveryId: note.id,
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/steer-auto-run cancel/);
+			expect(pendingCount()).toBe(1);
+		});
+
+		it('refuses an id that names nothing', () => {
+			expect(
+				runRemoteSteeringCommand({ action: 'dismiss', sessionId: SESSION_ID, deliveryId: 'nope' })
+			).toEqual({
+				success: false,
+				error: 'No delivered steering notes with delivery id nope',
+			});
 		});
 	});
 

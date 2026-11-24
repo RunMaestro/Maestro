@@ -1,14 +1,10 @@
 import type { MirroredPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
-import type { MirrorSelection } from '../../../stores/peerMirrorStore';
 import type { QuickAction } from '../types';
 
 interface BuildFederationCommandsArgs {
 	/** Peers in stored order, from `peerMirrorStore`. Empty while the feature is off. */
 	peers: MirroredPeer[];
-	/** The mirrored agent the Main Window shows, if any. */
-	activeMirror: MirrorSelection | null;
 	reconnectPeer: (peerId: string) => void | Promise<void>;
-	copyPeerAgentRef: (peerId: string, agentId: string) => void | Promise<void>;
 	/**
 	 * The active local SSH agent whose remote takes part (`canMoveToHost()`). `hostReady` false: the
 	 * same Move to Host sets a host up first.
@@ -16,12 +12,14 @@ interface BuildFederationCommandsArgs {
 	moveToHost?: { sessionId: string; agentName: string; peerName: string; hostReady: boolean };
 	/** Open the Move to Host modal for an agent. */
 	requestMoveToHost: (sessionId: string) => void;
-	/** The active local agent's lift pointer (`useLiftedMirrorTarget()`). */
-	liftedTarget?: { ref: string };
-	/** Show the mirrored agent the active local agent moved to. */
-	openLiftedAgent: () => void;
-	/** Open Edit Agent for a mirrored agent, saved to its host (`HostedAgentSettingsModal`). */
-	editHostedAgent?: (peerId: string, agentId: string) => void;
+	/**
+	 * The hosted-agents switch (`federationHostedAgents`), offered while any hosted agent exists.
+	 * Off: every hosted agent works as its SSH agent from this machine.
+	 */
+	hostedAgents?: { enabled: boolean; setEnabled: (enabled: boolean) => void };
+	/** The active agent is hosted: Move Back from Host (`maestro-cli unlift`) is offered. */
+	moveBackFromHost?: { sessionId: string; agentName: string; peerName: string };
+	requestMoveBackFromHost?: (sessionId: string, agentName: string, peerName: string) => void;
 	/** Fields of hosted agents waiting for the person (`hostedAgentSettingsStore`). */
 	settingsConflictCount?: number;
 	openSettingsConflicts?: () => void;
@@ -33,22 +31,18 @@ interface BuildFederationCommandsArgs {
 
 /**
  * The Federation entries: add a host's agent to the Left Bar (`maestro-cli federation add`),
- * reconnect a peer (a hosted row's menu and `maestro-cli federation reconnect`), and, while a
- * hosted agent is shown, copy its `peer:agent` address. For the active local agent: Move to Host
- * (`maestro-cli lift`) while its remote is a connected peer, or, once it moved, open it on the
- * host. Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher
- * lists them.
+ * reconnect a peer (`maestro-cli federation reconnect`), the hosted-agents switch, and, for the
+ * active agent, Move to Host (`maestro-cli lift`) or Move Back from Host (`maestro-cli unlift`).
+ * Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher lists them.
  */
 export function buildFederationCommands({
 	peers,
-	activeMirror,
 	reconnectPeer,
-	copyPeerAgentRef,
 	moveToHost,
 	requestMoveToHost,
-	liftedTarget,
-	openLiftedAgent,
-	editHostedAgent,
+	moveBackFromHost,
+	requestMoveBackFromHost,
+	hostedAgents,
 	settingsConflictCount = 0,
 	openSettingsConflicts,
 	addableHostedAgentCount = 0,
@@ -92,39 +86,34 @@ export function buildFederationCommands({
 			},
 		});
 	}
-	if (liftedTarget) {
+	if (hostedAgents) {
 		actions.push({
-			id: 'federation-open-lifted-agent',
-			label: `Open on Host (${liftedTarget.ref})`,
-			subtext: 'This agent moved to a Federation host',
+			id: 'federation-toggle-hosted-agents',
+			label: hostedAgents.enabled ? 'Turn Hosted Agents Off' : 'Turn Hosted Agents On',
+			subtext: hostedAgents.enabled
+				? 'Every hosted agent works as its SSH agent from this machine; nothing on the host changes'
+				: 'Run hosted agents on their Maestro host again',
 			action: () => {
-				openLiftedAgent();
+				hostedAgents.setEnabled(!hostedAgents.enabled);
 				setQuickActionOpen(false);
 			},
 		});
 	}
-	if (activeMirror) {
-		const ref = activeMirror.key;
+	if (moveBackFromHost && requestMoveBackFromHost) {
 		actions.push({
-			id: 'federation-copy-peer-agent-ref',
-			label: `Copy Peer Agent Address (${ref})`,
-			subtext: 'The peer:agent address maestro-cli takes',
+			id: 'federation-move-back-from-host',
+			label: `Move Back from Host: ${moveBackFromHost.agentName} (${moveBackFromHost.peerName})`,
+			subtext:
+				'Make this hosted agent an SSH agent again; its conversations on the host come back here',
 			action: () => {
-				void copyPeerAgentRef(activeMirror.peerId, activeMirror.agentId);
+				requestMoveBackFromHost(
+					moveBackFromHost.sessionId,
+					moveBackFromHost.agentName,
+					moveBackFromHost.peerName
+				);
 				setQuickActionOpen(false);
 			},
 		});
-		if (editHostedAgent) {
-			actions.push({
-				id: 'federation-edit-hosted-agent',
-				label: `Edit Agent on Host (${ref})`,
-				subtext: 'Settings every conductor of this agent shares, saved on its host',
-				action: () => {
-					editHostedAgent(activeMirror.peerId, activeMirror.agentId);
-					setQuickActionOpen(false);
-				},
-			});
-		}
 	}
 	for (const peer of peers) {
 		actions.push({

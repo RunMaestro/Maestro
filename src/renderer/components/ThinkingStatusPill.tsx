@@ -22,7 +22,6 @@ import { formatElapsedTicker } from '../../shared/duration';
 import { StopTurnButton } from './ui/StopTurnButton';
 import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
 import { useWindowContextOptional } from '../contexts/WindowContext';
-import { interruptMirroredAgent, openMirroredAgentByKey } from '../services/peerMirror';
 import {
 	selectPendingSteeringNotes,
 	useAutoRunSteeringStore,
@@ -643,12 +642,9 @@ function ThinkingStatusPillInner({
 	onInterrupt,
 }: ThinkingStatusPillProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
-	// A Federation peer's entry carries its mirror key as its id: a click on it opens the mirrored
-	// agent. Every other id is a local agent, which the caller jumps to.
+	// Forwarded exactly as called: some rows name a tab, an Auto Run row does not.
 	const onSessionClick = useCallback(
 		(...args: [sessionId: string, tabId?: string]) => {
-			if (openMirroredAgentByKey(args[0], args[1])) return;
-			// Forwarded exactly as called: some rows name a tab, an Auto Run row does not.
 			onLocalSessionClick?.(...args);
 		},
 		[onLocalSessionClick]
@@ -766,12 +762,8 @@ function ThinkingStatusPillInner({
 	const hasMultiple = extraCount > 0;
 
 	const { session: primarySession, tab: primaryTab } = primaryItem;
-	// Stop acts on the entry the pill names. A mirrored one is stopped on its host, never through
-	// the caller's local interrupt.
-	const primaryMirror = primaryItem.mirror;
-	const stopPrimary = primaryMirror
-		? () => void interruptMirroredAgent(primaryMirror.peerId, primaryMirror.agentId, primaryTab?.id)
-		: onInterrupt;
+	// Stop acts on the entry the pill names (a hosted agent's reaches its host in `interruptTurn()`).
+	const stopPrimary = onInterrupt;
 
 	// Get tokens for current thinking cycle only (not cumulative context)
 	const primaryTokens = primarySession.currentCycleTokens || 0;

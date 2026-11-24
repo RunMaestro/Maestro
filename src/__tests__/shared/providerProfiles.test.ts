@@ -19,6 +19,7 @@ import {
 	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
 	isAccountDirName,
+	isImplicitDefaultProfile,
 	makeAccountKeyHelpers,
 	parseProviderProfileKey,
 	providerProfileKey,
@@ -158,6 +159,40 @@ describe('profile labels', () => {
 	it('falls back to the provider name when there is no account', () => {
 		expect(providerProfileShortLabel('opencode', null)).toBe('OpenCode');
 		expect(providerProfileLabel('opencode', null)).toBe('OpenCode');
+	});
+});
+
+describe('isImplicitDefaultProfile', () => {
+	const local = { credential: null, sshRemoteId: null };
+
+	it('is true only for the local implicit ~/<subdir> account', () => {
+		expect(isImplicitDefaultProfile('codex', { ...local, accountKey: '/Users/me/.codex' })).toBe(
+			true
+		);
+		expect(
+			isImplicitDefaultProfile('claude-code', { ...local, accountKey: '/Users/me/.claude/' })
+		).toBe(true);
+	});
+
+	it('is false for a named account, a remote host, a credential, or no account', () => {
+		expect(
+			isImplicitDefaultProfile('codex', { ...local, accountKey: '/Users/me/.codex-work' })
+		).toBe(false);
+		expect(
+			isImplicitDefaultProfile('codex', {
+				accountKey: '/home/me/.codex',
+				credential: null,
+				sshRemoteId: 'remote-1',
+			})
+		).toBe(false);
+		expect(
+			isImplicitDefaultProfile('claude-code', {
+				accountKey: null,
+				credential: { kind: 'api-key', id: 'api-key:abcd', label: 'API key …abcd' },
+				sshRemoteId: null,
+			})
+		).toBe(false);
+		expect(isImplicitDefaultProfile('opencode', { ...local, accountKey: null })).toBe(false);
 	});
 });
 

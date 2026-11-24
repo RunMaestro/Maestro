@@ -347,6 +347,15 @@ export class AutoFederationCoordinator {
 			const ready = await this.ensureHost(remote, agents.length > 0 && autoMove);
 			for (const agent of agents) {
 				if (this.stopped) return;
+				// The person moved it back from its host: leave it an SSH agent.
+				if (agent.hostedOptOut === true) {
+					this.setAgent(agent, remote.id, {
+						state: 'manual',
+						reason: 'You moved it back from its host, so automatic moves leave it here.',
+						fix: 'Right-click the agent > Move to Host to host it again.',
+					});
+					continue;
+				}
 				// Read again before each move: it may have been switched off while setup ran.
 				if (!autoMove || !this.deps.isAutoMoveEnabled()) {
 					this.setAgent(agent, remote.id, {

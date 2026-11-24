@@ -157,6 +157,8 @@ describe('media tools boundary', () => {
 		'provider-custom',
 		'cached-custom',
 		'sandbox',
+		'antigravity',
+		'unproven-provider',
 	] as const)(
 		'prepares the final runner prompt only for an accessible destination: %s',
 		async (destination) => {
@@ -182,7 +184,12 @@ describe('media tools boundary', () => {
 				getAgent: () =>
 					({
 						id: 'a',
-						toolType: 'codex',
+						toolType:
+							destination === 'antigravity'
+								? 'antigravity'
+								: destination === 'unproven-provider'
+									? 'opencode'
+									: 'codex',
 						cwd: root,
 						...(destination === 'ssh' ? { sessionSshRemoteConfig: { enabled: true } } : {}),
 						...(destination === 'routed' ? { runOn: { source: 'remote', model: 'model' } } : {}),
@@ -232,7 +239,11 @@ describe('media tools boundary', () => {
 						{ originalAttachment: lease }
 					)
 			);
-			if (destination === 'local' || destination === 'provider-model') {
+			if (
+				destination === 'local' ||
+				destination === 'provider-model' ||
+				destination === 'antigravity'
+			) {
 				await expect(result).resolves.toMatchObject({
 					success: true,
 					originalAttachments: [

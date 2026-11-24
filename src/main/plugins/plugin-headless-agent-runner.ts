@@ -66,6 +66,13 @@ export interface PluginHeadlessRunnerDeps {
 	recordRelayOrigin?: (agent: SessionInfo, providerSessionId: string) => void;
 }
 
+/** Providers whose local standard harness is proven to read a staged original by path. */
+const ORIGINAL_ATTACHMENT_PROVIDERS: ReadonlySet<string> = new Set([
+	'codex',
+	'claude-code',
+	'antigravity',
+]);
+
 const EMPTY_RUN_EVIDENCE: PluginToolRunEvidence = {
 	advertisements: 0,
 	advertisedToolIds: [],
@@ -107,11 +114,14 @@ export function createPluginHeadlessAgentRunner(
 			attachment.check();
 			// Only the local standard harness is proven to share this filesystem.
 			// Custom launchers/arguments, Auto routing and remote targets fail closed.
+			// The original is staged in the agent's cwd and named by path in the
+			// prompt, so a provider qualifies when its local turn reads workspace
+			// files by path (Antigravity opens prompt-named paths with view_file).
 			if (
 				!local ||
 				('runOn' in agent && agent.runOn) ||
 				config?.runOn ||
-				!['codex', 'claude-code'].includes(agent.toolType) ||
+				!ORIGINAL_ATTACHMENT_PROVIDERS.has(agent.toolType) ||
 				agent.customPath ||
 				config?.customPath ||
 				agent.customArgs ||

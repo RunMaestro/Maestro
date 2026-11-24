@@ -15,7 +15,6 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	answerHostedSettingsRequest,
-	saveHostedAgentSettings,
 	startLiftedAgentSettingsSync,
 } from '../../../renderer/services/liftedAgentSettingsSync';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
@@ -98,8 +97,6 @@ describe('services/liftedAgentSettingsSync', () => {
 			pending: {},
 			conflicts: {},
 			resolutions: {},
-			tabChoices: {},
-			editing: null,
 			conflictsOpen: false,
 		});
 		localStorage.clear();
@@ -237,66 +234,6 @@ describe('services/liftedAgentSettingsSync', () => {
 			await pass();
 			expect(act$).not.toHaveBeenCalled();
 			expect(useHostedAgentSettingsStore.getState().conflicts).toEqual({});
-		});
-	});
-
-	describe('edits on a mirrored agent', () => {
-		beforeEach(() => {
-			useSessionStore.setState({ sessionsReadOk: true, sessions: [] });
-		});
-
-		it('sends an edit saved in the editor, and drops it once the host took it', async () => {
-			showPeer(hostAgent());
-			stop = startLiftedAgentSettingsSync();
-			saveHostedAgentSettings('box', hostAgent(), hostAgent({ customModel: 'sonnet' }));
-			expect(useHostedAgentSettingsStore.getState().pending[KEY]).toEqual({
-				values: { customModel: 'sonnet' },
-				base: { customModel: null },
-				envKeys: [],
-			});
-			await pass();
-			expect(act$).toHaveBeenCalledWith('box', 'host-1', {
-				kind: 'update-agent',
-				patch: { model: 'sonnet' },
-			});
-			expect(useHostedAgentSettingsStore.getState().pending[KEY]).toBeUndefined();
-		});
-
-		it('holds an edit while the peer is down', async () => {
-			showPeer(hostAgent(), 'lost');
-			stop = startLiftedAgentSettingsSync();
-			saveHostedAgentSettings('box', hostAgent(), hostAgent({ nudgeMessage: 'later' }));
-			await pass();
-			expect(act$).not.toHaveBeenCalled();
-			expect(useHostedAgentSettingsStore.getState().pending[KEY]?.values).toEqual({
-				nudgeMessage: 'later',
-			});
-			showPeer(hostAgent());
-			await pass();
-			expect(act$).toHaveBeenCalledWith('box', 'host-1', {
-				kind: 'update-agent',
-				patch: { nudgeMessage: 'later' },
-			});
-		});
-
-		it('asks when the host changed the same field after the edit was made', async () => {
-			showPeer(hostAgent(), 'lost');
-			stop = startLiftedAgentSettingsSync();
-			saveHostedAgentSettings('box', hostAgent(), hostAgent({ nudgeMessage: 'mine' }));
-			showPeer(hostAgent({ nudgeMessage: 'theirs' }));
-			await pass();
-			expect(act$).not.toHaveBeenCalled();
-			expect(useHostedAgentSettingsStore.getState().conflicts[KEY]?.conflicts).toEqual([
-				expect.objectContaining({ id: 'nudgeMessage', local: 'mine', host: 'theirs' }),
-			]);
-		});
-
-		it('writes an editor save onto the lifted pointer when this machine has one', () => {
-			showPeer(hostAgent());
-			showPointer();
-			saveHostedAgentSettings('box', hostAgent(), hostAgent({ nudgeMessage: 'via editor' }));
-			expect(pointer().nudgeMessage).toBe('via editor');
-			expect(useHostedAgentSettingsStore.getState().pending).toEqual({});
 		});
 	});
 

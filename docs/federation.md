@@ -102,7 +102,7 @@ A blocked agent is tried again when its record or its remote changes, or after a
 
 Maestro never replaces a running host on its own to upgrade it, because that would interrupt its work. A host on an older version keeps running and gets agents, and the status names the upgrade command.
 
-Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
+An agent you moved back with **Move Back from Host** is never moved automatically again. Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
 
 ### When Maestro needs you
 
@@ -163,7 +163,7 @@ maestro-cli remote-host status build-box
 maestro-cli remote-host start build-box
 ```
 
-`remote-host status` reports whether Maestro is installed, whether a host runs, and whether its version differs from yours. `remote-host start` starts a stopped host. Neither prints the host's token or secret. In the desktop app, right-click a hosted agent whose host went down and choose **Start Host**: it installs or upgrades `maestro-cli` first when it needs to. To keep the host running across reboots, see [Durability](#durability).
+`remote-host status` reports whether Maestro is installed, whether a host runs, and whether its version differs from yours. `remote-host start` starts a stopped host. Neither prints the host's token or secret. In the desktop app, open a hosted agent whose host went down and choose **Start Host** in the banner above its tabs: it installs or upgrades `maestro-cli` first when it needs to. To keep the host running across reboots, see [Durability](#durability).
 
 ### See the host's agents
 
@@ -187,23 +187,22 @@ maestro-cli federation reconnect build-box
 
 ## Drive a hosted agent
 
-Click a hosted agent's row to open it. Its tabs, transcript, and live output come from the host. When the agent moved from this machine, the tabs it had before the move follow the host's tabs in the same strip. Each tab then carries a pill that says where it lives: the host's name, or `Local` for a tab this machine kept. A `Local` tab is read only: continue that conversation in a tab on the host. The composer works as it does for a local agent:
+A hosted agent is the same agent it was as an SSH agent. It opens in the same Main Window, with the same Right Bar (Files, History, Auto Run), the same header buttons, terminal mode (<kbd>Cmd</kbd>+<kbd>J</kbd>), file tabs, and browser tabs. The one mark that it is hosted is the **Hosted** badge beside its name in the header and in the Left Bar. Hover it to see which host runs it and how the connection stands.
 
-- **Send** a message. While a tab is busy, the message queues on the host, not here. It shows as a queued card under the transcript, as a local queued message does, and leaves the list when the host starts it. **Remove** and **Hold** / **Resume** on a card act on the host's queue.
-- **Stop** the running turn. The Thinking pill above the composer shows a busy mirrored tab with its elapsed time, the same as a local one, and its Stop button stops the turn on the host.
-- **New tab**, **rename**, and **star** a tab, from the controls beside the tab strip.
-- **Choose your model, effort, read-only, and save to History** for the tab with the chips under the message box. They are yours only: they go with each message you send and never change the tab for other conductors. See [Settings of a hosted agent](#settings-of-a-hosted-agent).
-- **Edit Agent** from the gear beside the agent's name, to change the settings every conductor shares.
+What changes is where its AI turns run. A message you send goes to the Maestro host on the remote instead of starting the provider over SSH from here, so the turn keeps going while your laptop sleeps:
 
-Some things stay off, with a tooltip that says why, because the host does not serve them:
+- **Send** a message, with images (paste, drop, or **Attach Image**). While a tab is busy, the message queues on the host. It shows as a queued card, and **Remove** and **Hold** / **Resume** on it act on the host's queue.
+- **Stop** a running turn from the Thinking pill or the shortcut. The Stop reaches the host.
+- **New tab**, **close**, **rename**, and **star** act on the host's tabs, from the tab strip and the shortcuts, as for any agent.
+- The model, effort, read-only, and save to History pills under the message box are yours: they go with each message you send and never change the tab for other conductors. See [Settings of a hosted agent](#settings-of-a-hosted-agent).
 
-- **Slash commands.** They run in your local window, and the host receives plain messages only.
-- **Shell command mode.** It would run the command on your laptop, not on the host.
-- **Images.** The host receives text only for now.
+The tabs and transcripts you see are the host's, copied into this machine's record of the agent as they change, including the live output of a running turn. The copy stays here, so the agent still shows its last known state when the host is out of reach, and a later Move Back from Host keeps every conversation. Conversations this machine kept from before the move stay in the tab strip; a message sent in one of them continues in a new tab on the host.
 
-A send while the peer is disconnected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer.
+The Right Bar's History reads the host, where the agent's turns are recorded now. Files, Auto Run documents, the Memory Viewer, and Agent Sessions read the remote over SSH, as they did before the move.
 
-A busy tab of a hosted agent in your Left Bar also shows on the Thinking pill while you look at a local agent, named `<agent> on <peer>`. Click it to open the hosted agent. Its Stop button stops that turn on the host.
+A send while the host is not connected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer. The Hosted badge turns red, and its hover card says why.
+
+Not yet routed to the host: running an Auto Run, and resuming a past session from Agent Sessions into a new tab. Both still act on this machine.
 
 ### Close the lid, open it again
 
@@ -211,7 +210,7 @@ The queue and the turns belong to the host, so they keep going while your laptop
 
 ### History
 
-Toggle the Right Bar, or press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, to show a mirrored agent's History beside its transcript. It is the same History panel a local agent has: the activity graph, the type, host, and sender filters, search, and the detail view. It is read-only, because the host owns the entries.
+The Right Bar's History tab (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>) shows a hosted agent's History. It is the same History panel a local agent has: the activity graph, the type, host, and sender filters, search, and the detail view. It is read-only, because the host owns the entries.
 
 The entries come from the host. They are the agent's own History, plus the shared History of its project (`<project>/.maestro/history/`). That is the same shared History desktops already use when several people work one project over SSH, so the host's entries and theirs appear together:
 
@@ -234,7 +233,7 @@ maestro-cli tab star active --agent build-box:docs
 
 A hosted agent's settings belong to its host, and every conductor that drives it follows them. When Maestro connects to a peer it loads the host's settings. While it stays connected, the host sends every change as it happens, so when one conductor changes the agent's default model, everyone else sees it.
 
-Change the shared settings with **Edit Agent**: the gear beside the agent's name in its view, **Edit Agent...** in the right-click menu of a mirrored agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
+Change the shared settings with the agent's own **Edit Agent**, as for any agent: its changes and `maestro-cli update-agent` go to the host. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
 
 - **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
 - **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you.
@@ -274,7 +273,28 @@ maestro-cli lift docs              # move it
 maestro-cli lift docs --with-env   # also send secret env vars
 ```
 
-A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. A lift is one way: there is no automatic move back to an SSH agent. [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
+A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. To undo a lift, see [Move a hosted agent back](#move-a-hosted-agent-back). [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
+
+## Switch hosting off
+
+To go back to plain SSH agents without changing anything, turn off **Run hosted agents on their host** in Settings > SSH Hosts, or run **Turn Hosted Agents Off** from the command palette. Every hosted agent then works as the SSH agent it was, from this machine: its turns run over SSH, nothing is sent to its host, and nothing moves onto a host automatically. Nothing on the host or in the agent changes, so turning the switch back on restores hosting. From the CLI:
+
+```bash
+maestro-cli settings set federationHostedAgents false   # hosting off
+maestro-cli settings set federationHostedAgents true    # hosting on again
+```
+
+While hosting is off, do not drive the same agent from its host too: both would continue the same provider conversation.
+
+## Move a hosted agent back
+
+Right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. The agent becomes an SSH agent again, with everything an SSH agent has (terminal mode, browser tabs, the full Main Window):
+
+- The host's tabs come back with their transcripts and provider session IDs. A tab that moved lands on its own tab here, and a tab started on the host arrives as a new tab. The next turn over SSH resumes the same conversation. No tab is dropped.
+- The host's copy is removed, so the agent has one owner again.
+- Automatic moves leave the agent an SSH agent from then on. **Move to Host** hosts it again.
+
+It refuses while a turn runs on the host or messages wait in its queue there. When the host cannot be reached, it offers to move the agent back with only this machine's copy; conversations started on the host then stay there, and its copy there is not removed. From the CLI: `maestro-cli unlift <agent>` (see [Move a Hosted Agent Back](./cli#move-a-hosted-agent-back)).
 
 ## Durability
 
@@ -322,7 +342,7 @@ Run the host as the same user your SSH agents run as. The host then reads the sa
 - **No worktrees for host-owned agents.** You cannot create or scan worktrees for a mirrored agent.
 - **No `@mention` of a mirrored agent** from a local composer. Use `maestro-cli ask peer:agent` instead.
 - **Auto Run and Cue status are not mirrored.** They run on the host. Check them there with `maestro-cli` over SSH.
-- **History of Auto Run and Cue runs refreshes on the next turn.** The History column reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
+- **History of Auto Run and Cue runs refreshes on the next turn.** A hosted agent's History reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
 - **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, and resume a message. Edit, merge, reorder, Force Send, and steer stay off, because the host does not serve them.
 - **The queue lives in the host's memory.** If the host process stops or the machine reboots, the messages still waiting are lost, and a turn that was running is recorded as interrupted. Run the host as a service (see [Durability](#durability)).
 - **Some agent settings stay on this machine for now.** Extra directories, the Agent Resilience retry switches, Codex automatic reset, and env vars you parked with the eye button are not sent to the host yet, so a hosted agent runs without them. Set them on the host's own Maestro if you need them there.
