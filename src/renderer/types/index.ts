@@ -1085,6 +1085,11 @@ export interface BrowserTab {
 	// partition and is dropped from persisted session state, so it never
 	// survives an app restart.
 	ephemeral?: boolean;
+	// When true, Design Mode is on for this tab. Sticky: it survives page loads,
+	// tab switches and restarts, and the picker overlay re-arms whenever the tab is
+	// the active surface again. Only Escape and the Design Mode toggle (toolbar
+	// button, shortcut, command palette) turn it off. Persisted.
+	designMode?: boolean;
 	// Runtime-only: populated by the embedded Electron browser surface, never persisted
 	webContentsId?: number;
 }

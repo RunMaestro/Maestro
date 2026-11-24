@@ -139,8 +139,9 @@ export interface BrowserTabViewHandle {
 	 *  DIPs, see designPickCropRect) within it. Throws when capture is
 	 *  unavailable (e.g. webview not ready). */
 	capturePage(rect?: DesignModeRect): Promise<string>;
-	/** Turn Design Mode on or off (toolbar button, shortcut, palette). No-op on a
-	 *  tab that cannot offer it (blank page, web build). */
+	/** Turn Design Mode on or off (toolbar button, shortcut, palette). Turning it
+	 *  on is a no-op on a tab that cannot offer it (blank page, web build);
+	 *  turning it off always works. */
 	toggleDesignMode(): void;
 	/** Describe the first element matching `selector` and crop its screenshot,
 	 *  the same payload a click in Design Mode builds (`maestro-cli browser-pick`). */
@@ -318,22 +319,44 @@ export const BrowserTabView = React.memo(
 		// stays null when the guest element is never mounted.
 		const webDesktop = isWebDesktop();
 		// Design Mode needs a live page to pick from: not the blank tab, and not
-		// the web build, whose <webview> is inert.
+		// the web build, whose <webview> is inert. This guard only hides the
+		// overlay; it never turns Design Mode off, so a load that passes through
+		// the blank URL (or a page the address bar cannot show) keeps it on.
 		// Read by the imperative toggle, whose handle is built once.
 		const designModeAvailableRef = useRef(false);
 		const designModeAvailable =
 			!!onDesignPick && !webDesktop && tab.url !== DEFAULT_BROWSER_TAB_URL;
 		designModeAvailableRef.current = designModeAvailable;
-		const exitDesignMode = useCallback(() => setDesignMode(false), []);
+		// Design Mode is per-tab state on the tab itself (`tab.designMode`), so it
+		// survives page loads, tab switches, keep-alive remounts and restarts.
+		// Read by the setter and the imperative toggle through a ref.
+		const designMode = tab.designMode === true;
+		const designModeRef = useRef(designMode);
+		designModeRef.current = designMode;
+		// Written through onUpdateTab, which lands in the store's single-tab
+		// browser updater (updateBrowserTab). The ref moves ahead of the store
+		// round trip, so a second toggle in the same tick flips the new value.
+		const setDesignMode = useCallback((on: boolean) => {
+			if (designModeRef.current === on) return;
+			designModeRef.current = on;
+			onUpdateTabRef.current(latestTabRef.current.id, { designMode: on });
+		}, []);
+		// The overlay is up only while this tab is the active surface. A hidden or
+		// covered tab keeps the flag but draws no picker, so it swallows nothing,
+		// and showing the tab again re-arms it: a fresh layer that takes focus and
+		// probes from the center.
+		const designModeArmed = designMode && designModeAvailable && isActive;
+		const exitDesignMode = useCallback(() => setDesignMode(false), [setDesignMode]);
 		const onDesignPickRef = useRef(onDesignPick);
 		onDesignPickRef.current = onDesignPick;
+		// Design Mode stays on after a pick either way. Without keepPicking the
+		// pick reveals the chat, which takes this tab off screen; the picker
+		// re-arms when the tab is shown again.
 		const handleDesignDeliver = useCallback(
 			async (capture: DesignModeCapture, note: string, keepPicking: boolean) => {
 				const deliver = onDesignPickRef.current;
 				if (!deliver) return false;
-				const ok = await deliver({ ...capture, note, reveal: !keepPicking });
-				if (ok && !keepPicking) setDesignMode(false);
-				return ok;
+				return deliver({ ...capture, note, reveal: !keepPicking });
 			},
 			[]
 		);
@@ -345,12 +368,14 @@ export const BrowserTabView = React.memo(
 				(await onDesignQueueRef.current?.({ ...capture, note })) ?? null,
 			[]
 		);
-		// Design Mode: while on, BrowserDesignModeLayer covers the webview and does
-		// the picking (see the trust model in utils/designModePicker.ts).
-		const [designMode, setDesignMode] = useState(false);
+		// Design Mode: while armed, BrowserDesignModeLayer covers the webview and
+		// does the picking (see the trust model in utils/designModePicker.ts).
 		const designModeShortcut = useSettingsStore(
 			(s) => s.tabShortcuts.toggleBrowserDesignMode?.keys
 		);
+		// Bumped on every finished page load, so the Design Mode overlay re-probes
+		// the new document instead of keeping the old page's outline.
+		const [pageLoadCount, setPageLoadCount] = useState(0);
 
 		useEffect(() => {
 			latestTabRef.current = tab;
@@ -512,7 +537,8 @@ export const BrowserTabView = React.memo(
 					return captureGuestRef.current(rect);
 				},
 				toggleDesignMode(): void {
-					if (designModeAvailableRef.current) setDesignMode((on) => !on);
+					if (designModeRef.current) setDesignMode(false);
+					else if (designModeAvailableRef.current) setDesignMode(true);
 				},
 				async inspectElement(selector: string) {
 					const webview = webviewRef.current;
@@ -578,15 +604,16 @@ export const BrowserTabView = React.memo(
 			}
 			webviewRef.current?.blur();
 			userClickedRef.current = false;
-			// A picker left on over a hidden tab would swallow the next click on it.
-			setDesignMode(false);
+			// Design Mode is not turned off here. The overlay is gated on isActive
+			// (designModeArmed), so it unmounts and swallows nothing while the tab
+			// is hidden or covered, and the flag on the tab re-arms it on return.
 		}, [isActive]);
 
-		// The overlay takes keyboard focus while Design Mode is on; the guest must
-		// not keep it, or Enter and the arrows would reach the page.
+		// The overlay takes keyboard focus while Design Mode is armed; the guest
+		// must not keep it, or Enter and the arrows would reach the page.
 		useEffect(() => {
-			if (designMode) webviewRef.current?.blur();
-		}, [designMode]);
+			if (designModeArmed) webviewRef.current?.blur();
+		}, [designModeArmed]);
 
 		useEffect(() => {
 			if (!isAddressFocusedRef.current) {
@@ -822,6 +849,8 @@ export const BrowserTabView = React.memo(
 			};
 			// Re-inject guest listeners on navigation (page JS state resets)
 			const handleDidNavigateForInjection = () => injectGuestListeners();
+			// A new document is loaded: Design Mode stays on and re-probes it.
+			const handleFinishLoadForDesignMode = () => setPageLoadCount((count) => count + 1);
 			// Find-in-page result reporting. Chromium fires `found-in-page` with
 			// `requestId`, `activeMatchOrdinal`, and `matches`. Stale results from a
 			// prior query can arrive after a newer findInPage() call; we ignore them
@@ -850,6 +879,7 @@ export const BrowserTabView = React.memo(
 			webview.addEventListener('did-navigate-in-page', handleNavigate);
 			webview.addEventListener('did-fail-load', handleDidFailLoad);
 			webview.addEventListener('did-finish-load', updateNavigationState);
+			webview.addEventListener('did-finish-load', handleFinishLoadForDesignMode);
 			webview.addEventListener('page-title-updated', handleTitleUpdated);
 			webview.addEventListener('page-favicon-updated', handleFaviconUpdated);
 			webview.addEventListener('dom-ready', handleDomReady);
@@ -878,6 +908,7 @@ export const BrowserTabView = React.memo(
 				webview.removeEventListener('did-navigate-in-page', handleNavigate);
 				webview.removeEventListener('did-fail-load', handleDidFailLoad);
 				webview.removeEventListener('did-finish-load', updateNavigationState);
+				webview.removeEventListener('did-finish-load', handleFinishLoadForDesignMode);
 				webview.removeEventListener('page-title-updated', handleTitleUpdated);
 				webview.removeEventListener('page-favicon-updated', handleFaviconUpdated);
 				webview.removeEventListener('dom-ready', handleDomReady);
@@ -1185,8 +1216,10 @@ export const BrowserTabView = React.memo(
 						{onDesignPick && !webDesktop ? (
 							<button
 								type="button"
-								onClick={() => setDesignMode((on) => !on)}
-								disabled={!designModeAvailable}
+								onClick={() => setDesignMode(!designMode)}
+								// Off is always allowed: a sticky flag must never be stuck on a
+								// tab that cannot show the picker (the blank page).
+								disabled={!designModeAvailable && !designMode}
 								aria-pressed={designMode}
 								aria-label="Design Mode"
 								className="flex items-center justify-center w-8 h-8 rounded transition-colors disabled:opacity-40"
@@ -1297,10 +1330,11 @@ export const BrowserTabView = React.memo(
 							src={initialSrcRef.current}
 						/>
 					)}
-					{designMode && designModeAvailable ? (
+					{designModeArmed ? (
 						<BrowserDesignModeLayer
 							theme={theme}
 							access={designAccessRef.current}
+							pageLoadCount={pageLoadCount}
 							onExit={exitDesignMode}
 							onDeliver={handleDesignDeliver}
 							onQueue={onDesignQueue ? handleDesignQueue : undefined}

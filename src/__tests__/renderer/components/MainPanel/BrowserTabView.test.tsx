@@ -11,6 +11,7 @@ import {
 	useCenterFlashStore,
 } from '../../../../renderer/stores/centerFlashStore';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPersistence';
+import { normalizeBrowserTabUpdates } from '../../../../renderer/hooks/tabs/internal/browserTabHelpers';
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 
@@ -54,6 +55,32 @@ type MockWebview = HTMLElement & {
 	stopFindInPage?: ReturnType<typeof vi.fn>;
 	reload?: ReturnType<typeof vi.fn>;
 };
+
+type BrowserTabViewProps = React.ComponentProps<typeof BrowserTabView>;
+
+/**
+ * Holds the tab the way the session store does: an onUpdateTab call is merged
+ * with the store's own normalizeBrowserTabUpdates and comes back as the `tab`
+ * prop. Design Mode lives on the tab (`tab.designMode`), so a toggle only shows
+ * through this round trip. `onUpdateTab` still sees every write.
+ */
+const StatefulBrowserTabView = React.forwardRef<
+	BrowserTabViewHandle,
+	Omit<BrowserTabViewProps, 'tab' | 'onUpdateTab' | 'ref'> & {
+		initialTab: BrowserTab;
+		onUpdateTab?: BrowserTabViewProps['onUpdateTab'];
+	}
+>(function StatefulBrowserTabView({ initialTab, onUpdateTab, ...rest }, ref) {
+	const [tab, setTab] = React.useState(initialTab);
+	const handleUpdateTab = React.useCallback(
+		(tabId: string, updates: Partial<BrowserTab>) => {
+			onUpdateTab?.(tabId, updates);
+			setTab((current) => normalizeBrowserTabUpdates(current, updates));
+		},
+		[onUpdateTab]
+	);
+	return <BrowserTabView ref={ref} tab={tab} onUpdateTab={handleUpdateTab} {...rest} />;
+});
 
 describe('BrowserTabView', () => {
 	beforeEach(() => {
@@ -1451,24 +1478,30 @@ describe('BrowserTabView', () => {
 			} = {}
 		) {
 			const ref = React.createRef<BrowserTabViewHandle>();
-			const view = render(
-				<BrowserTabView
+			const onUpdateTab = vi.fn();
+			const element = (isActive: boolean | undefined) => (
+				<StatefulBrowserTabView
 					ref={ref}
-					tab={props.tab ?? mockTab}
+					initialTab={props.tab ?? mockTab}
 					theme={mockTheme}
-					onUpdateTab={vi.fn()}
+					onUpdateTab={onUpdateTab}
 					onDesignPick={onDesignPick}
 					onDesignQueue={props.onDesignQueue}
-					isActive={props.isActive}
+					isActive={isActive}
 				/>
 			);
+			const view = render(element(props.isActive));
+			/** Hide or show the tab the way MainPanelContent does: through isActive. */
+			const setActive = (isActive: boolean) => view.rerender(element(isActive));
 			const webview = getWebview() as MockWebview & {
 				getZoomFactor: ReturnType<typeof vi.fn>;
 				capturePage: ReturnType<typeof vi.fn>;
 			};
 			webview.canGoBack = vi.fn(() => false);
 			webview.canGoForward = vi.fn(() => false);
-			webview.getURL = vi.fn(() => 'https://example.com');
+			// The harness keeps what the webview reports, so report the tab's own
+			// page (a blank tab must stay blank after dom-ready).
+			webview.getURL = vi.fn(() => (props.tab ?? mockTab).url);
 			webview.getTitle = vi.fn(() => 'Example');
 			webview.isLoading = vi.fn(() => false);
 			webview.getWebContentsId = vi.fn(() => 99);
@@ -1491,7 +1524,7 @@ describe('BrowserTabView', () => {
 			await act(async () => {
 				webview.dispatchEvent(new Event('dom-ready'));
 			});
-			return { webview, ref, view };
+			return { webview, ref, view, onUpdateTab, setActive };
 		}
 
 		async function arm() {
@@ -1499,6 +1532,20 @@ describe('BrowserTabView', () => {
 				fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
 			});
 			return screen.getByTestId('browser-tab-design-mode-layer');
+		}
+
+		/** The Design Mode flag writes that reached onUpdateTab, in order. */
+		function designModeWrites(onUpdateTab: ReturnType<typeof vi.fn>) {
+			return onUpdateTab.mock.calls
+				.map(([, updates]) => (updates as Partial<BrowserTab>).designMode)
+				.filter((value) => value !== undefined);
+		}
+
+		/** The guest finished loading a document, as Electron reports it. */
+		async function finishLoad(webview: MockWebview) {
+			await act(async () => {
+				webview.dispatchEvent(new Event('did-finish-load'));
+			});
 		}
 
 		it('offers no toggle when nobody receives picks', async () => {
@@ -1626,7 +1673,7 @@ describe('BrowserTabView', () => {
 
 		it('a click picks at the click point, crops the guest frame, and opens the card', async () => {
 			const onDesignPick = vi.fn().mockResolvedValue(true);
-			const { webview } = await setupReady(onDesignPick);
+			const { webview, onUpdateTab } = await setupReady(onDesignPick);
 			const layer = await arm();
 
 			await act(async () => {
@@ -1661,7 +1708,35 @@ describe('BrowserTabView', () => {
 					reveal: true,
 				})
 			);
-			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull());
+			// Add to Message reveals the chat but does not leave Design Mode: the
+			// card closes and the flag stays on (only Escape and the toggle clear
+			// it). Here nothing hides the tab, so the picker is still up.
+			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull());
+			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+			expect(designModeWrites(onUpdateTab)).toEqual([true]);
+		});
+
+		it('after Add to Message hides the tab, the picker is back when the tab is shown again', async () => {
+			const onDesignPick = vi.fn().mockResolvedValue(true);
+			const { setActive } = await setupReady(onDesignPick);
+			const layer = await arm();
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'Enter' });
+			});
+			const note = await screen.findByTestId('browser-tab-design-mode-note');
+			await act(async () => {
+				fireEvent.keyDown(note, { key: 'Enter' });
+			});
+			expect(onDesignPick).toHaveBeenCalledWith(expect.objectContaining({ reveal: true }));
+
+			// The reveal switched to the chat (MainPanelContent: isActive false).
+			await act(async () => setActive(false));
+			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			await act(async () => setActive(true));
+
+			const rearmed = screen.getByTestId('browser-tab-design-mode-layer');
+			expect(document.activeElement).toBe(rearmed);
+			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
 		});
 
 		it('Cmd+Enter adds the pick and keeps picking', async () => {
@@ -1895,8 +1970,8 @@ describe('BrowserTabView', () => {
 			});
 		});
 
-		it('Escape closes the card first, then leaves Design Mode', async () => {
-			await setupReady(vi.fn());
+		it('Escape closes the card first, then turns Design Mode off on the tab', async () => {
+			const { onUpdateTab } = await setupReady(vi.fn());
 			const layer = await arm();
 			await act(async () => {
 				fireEvent.keyDown(layer, { key: 'Enter' });
@@ -1904,8 +1979,13 @@ describe('BrowserTabView', () => {
 			const card = await screen.findByTestId('browser-tab-design-mode-card');
 			fireEvent.keyDown(card, { key: 'Escape' });
 			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			expect(designModeWrites(onUpdateTab)).toEqual([true]);
 			fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), { key: 'Escape' });
 			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			expect(designModeWrites(onUpdateTab)).toEqual([true, false]);
+			expect(
+				screen.getByTestId('browser-tab-design-mode-toggle').getAttribute('aria-pressed')
+			).toBe('false');
 		});
 
 		it('Escape closes the card even when focus fell back to the layer', async () => {
@@ -1944,20 +2024,145 @@ describe('BrowserTabView', () => {
 			expect(onDesignPick).not.toHaveBeenCalled();
 		});
 
-		it('leaves Design Mode when the tab stops being the active surface', async () => {
-			const onDesignPick = vi.fn();
-			const { view } = await setupReady(onDesignPick);
-			await arm();
-			view.rerender(
-				<BrowserTabView
-					tab={mockTab}
-					theme={mockTheme}
-					onUpdateTab={vi.fn()}
-					onDesignPick={onDesignPick}
-					isActive={false}
-				/>
-			);
-			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+		describe('sticky per tab', () => {
+			function toggleButton() {
+				return screen.getByTestId('browser-tab-design-mode-toggle') as HTMLButtonElement;
+			}
+
+			it('the toolbar toggle writes the flag on the tab, and the layer follows the tab', async () => {
+				const { onUpdateTab } = await setupReady(vi.fn());
+				await arm();
+				expect(onUpdateTab).toHaveBeenCalledWith('browser-1', { designMode: true });
+				expect(toggleButton().getAttribute('aria-pressed')).toBe('true');
+
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+				expect(onUpdateTab).toHaveBeenCalledWith('browser-1', { designMode: false });
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			});
+
+			it('a hidden or covered tab draws no picker but keeps the flag, and re-arms when shown', async () => {
+				const { webview, onUpdateTab, setActive } = await setupReady(vi.fn());
+				await arm();
+				const probesBefore = guestCalls(webview, 'probe').length;
+
+				await act(async () => setActive(false));
+				// Nothing left over the page to swallow a click, and the flag is kept.
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+				expect(toggleButton().getAttribute('aria-pressed')).toBe('true');
+
+				await act(async () => setActive(true));
+				// A fresh layer: it takes focus and probes from the center again.
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				expect(document.activeElement).toBe(layer);
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').length).toBeGreaterThan(probesBefore)
+				);
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+			});
+
+			it('a tab saved with Design Mode on comes up armed, and its first page load fills in the outline', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn(), {
+					tab: { ...mockTab, designMode: true },
+				});
+				// Armed without a toggle. The probe at mount found no guest to ask yet.
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				expect(document.activeElement).toBe(layer);
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+
+				await finishLoad(webview);
+
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+				expect(designModeWrites(onUpdateTab)).toEqual([]);
+			});
+
+			it('a finished page load re-probes at the same point, from the element itself', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn());
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+				});
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').some((req) => req?.depth === 1)).toBe(true)
+				);
+				const probesBefore = guestCalls(webview, 'probe').length;
+
+				await finishLoad(webview);
+
+				// Still in Design Mode, asking the new document at the pointer, with
+				// the walked depth reset: depth 1 meant a parent on the old page.
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').length).toBeGreaterThan(probesBefore)
+				);
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 0 });
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+			});
+
+			it('a page load takes keyboard focus back only when nothing holds it', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const layer = await arm();
+
+				// A page that focused itself on load was pushed out: focus is nowhere.
+				act(() => layer.blur());
+				expect(document.activeElement).toBe(document.body);
+				await finishLoad(webview);
+				expect(document.activeElement).toBe(layer);
+
+				// The user is typing in the address bar: a load must not take it.
+				const address = screen.getByLabelText('Browser URL');
+				act(() => address.focus());
+				await finishLoad(webview);
+				expect(document.activeElement).toBe(address);
+			});
+
+			it('the blank page hides the picker without turning it off, and the next page re-arms it', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn());
+				await arm();
+
+				webview.getURL = vi.fn(() => DEFAULT_BROWSER_TAB_URL);
+				await act(async () => {
+					webview.dispatchEvent(
+						Object.assign(new Event('did-navigate'), { url: DEFAULT_BROWSER_TAB_URL })
+					);
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(toggleButton().getAttribute('aria-pressed')).toBe('true');
+
+				webview.getURL = vi.fn(() => 'https://example.com/next');
+				await act(async () => {
+					webview.dispatchEvent(
+						Object.assign(new Event('did-navigate'), { url: 'https://example.com/next' })
+					);
+				});
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+			});
+
+			it('on the blank page the toggle can still turn a sticky Design Mode off, but not on', async () => {
+				const { ref, onUpdateTab } = await setupReady(vi.fn(), {
+					tab: { ...mockTab, url: DEFAULT_BROWSER_TAB_URL, designMode: true },
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(toggleButton().disabled).toBe(false);
+
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+				expect(designModeWrites(onUpdateTab)).toEqual([false]);
+				expect(toggleButton().disabled).toBe(true);
+
+				// The shortcut and the palette cannot turn it on here either.
+				await act(async () => {
+					ref.current!.toggleDesignMode();
+				});
+				expect(designModeWrites(onUpdateTab)).toEqual([false]);
+			});
 		});
 
 		it('the imperative toggle and inspectElement reach the same path', async () => {

@@ -10,6 +10,7 @@ import {
 	isEphemeralBrowserTab,
 	isHttpBrowserTabUrl,
 	normalizeBrowserTabUrl,
+	rehydrateBrowserTab,
 	sanitizeBrowserTabForPersistence,
 	resolveBrowserTabNavigationTarget,
 	toWebviewSrc,
@@ -241,6 +242,32 @@ describe('browserTabPersistence', () => {
 				partition: 'persist:maestro-browser-session-session-2',
 				favicon: null,
 			});
+		});
+
+		it('keeps Design Mode across a restart, and only as a literal true', () => {
+			const tab: BrowserTab = {
+				id: 'browser-3',
+				url: 'https://example.com',
+				title: 'Example',
+				createdAt: 1,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			};
+			// Sticky per tab: the user's choice, not guest runtime state.
+			expect(
+				rehydrateBrowserTab(
+					sanitizeBrowserTabForPersistence({ ...tab, designMode: true }, 's1'),
+					's1'
+				).designMode
+			).toBe(true);
+			expect(sanitizeBrowserTabForPersistence(tab, 's1')).not.toHaveProperty('designMode');
+			expect(
+				sanitizeBrowserTabForPersistence({ ...tab, designMode: false }, 's1')
+			).not.toHaveProperty('designMode');
+			// A damaged store value is dropped, not read as truthy.
+			const damaged = { ...tab, designMode: 'false' } as unknown as BrowserTab;
+			expect(sanitizeBrowserTabForPersistence(damaged, 's1')).not.toHaveProperty('designMode');
 		});
 
 		describe('ephemeral (incognito) partitions', () => {

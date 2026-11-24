@@ -9,6 +9,12 @@
  * a click or Enter shows a pick card where the user can add a note before the
  * element goes into the agent's message.
  *
+ * Design Mode is sticky per browser tab (`BrowserTab.designMode`). The host
+ * mounts this layer only while the tab is the active surface and unmounts it
+ * otherwise, so each return to the tab is a fresh layer (focus, center probe).
+ * A finished page load (`pageLoadCount`) is not an exit: the layer probes the
+ * new document at the same point.
+ *
  * Keys (the overlay holds focus): Enter picks, ArrowUp / ArrowDown walk to the
  * parent / back toward the child, Escape closes the card or leaves Design
  * Mode. In the card (from the note): Enter adds to the message, Cmd/Ctrl+Enter
@@ -24,8 +30,8 @@
  *
  * Escape is handled here rather than through the layer stack on purpose: a
  * registered layer makes the browser tab inactive (`layerCount === 0` gates it
- * in MainPanelContent), and an inactive tab leaves Design Mode. The in-page
- * find bar handles its Escape the same way.
+ * in MainPanelContent), and an inactive tab unmounts this overlay, card and
+ * all. The in-page find bar handles its Escape the same way.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -50,11 +56,18 @@ import {
 export interface BrowserDesignModeLayerProps {
 	theme: Theme;
 	access: DesignModeGuestAccess;
+	/**
+	 * Finished page loads in the webview so far. A change means a new document
+	 * is under the pointer: the layer drops the old page's outline state and
+	 * probes again at the same point.
+	 */
+	pageLoadCount: number;
 	/** Leave Design Mode. */
 	onExit: () => void;
 	/**
-	 * Hand a pick to the agent. `keepPicking` stays in Design Mode on this tab;
-	 * otherwise the caller leaves Design Mode and shows the message. Resolves
+	 * Hand a pick to the agent. `keepPicking` keeps the user picking here;
+	 * otherwise the caller shows the message, which takes the tab off screen
+	 * (Design Mode stays on and re-arms when the tab is shown again). Resolves
 	 * false when nothing was delivered (the card stays open).
 	 */
 	onDeliver: (capture: DesignModeCapture, note: string, keepPicking: boolean) => Promise<boolean>;
@@ -84,6 +97,7 @@ function toLayerRect(rect: DesignModeRect, scale: number): DesignModeRect {
 export function BrowserDesignModeLayer({
 	theme,
 	access,
+	pageLoadCount,
 	onExit,
 	onDeliver,
 	onQueue,
@@ -188,6 +202,23 @@ export function BrowserDesignModeLayer({
 		void probe();
 	}, [focusLayer, probe]);
 
+	// A new page loaded under the overlay (a link, a reload, the agent
+	// navigating). The outline, its label and the walked depth describe the old
+	// document, so start again from the element at the same point. A page that
+	// focuses itself on load is pushed back out by the host's focus guard,
+	// which leaves focus nowhere; take it back then, so Escape and the arrows
+	// still work, but never from a control the user is in (address bar, note).
+	const seenPageLoadRef = useRef(pageLoadCount);
+	useEffect(() => {
+		if (seenPageLoadRef.current === pageLoadCount) return;
+		seenPageLoadRef.current = pageLoadCount;
+		depthRef.current = 0;
+		setMissed(false);
+		const active = document.activeElement;
+		if (!active || active === document.body) focusLayer();
+		void probe();
+	}, [pageLoadCount, focusLayer, probe]);
+
 	useEffect(() => {
 		if (card) noteRef.current?.focus();
 	}, [card]);
@@ -231,12 +262,16 @@ export function BrowserDesignModeLayer({
 		}
 	}, []);
 
-	const closeCard = useCallback(() => {
+	const dropCard = useCallback(() => {
 		setCard(null);
 		setNote('');
+	}, []);
+
+	const closeCard = useCallback(() => {
+		dropCard();
 		focusLayer();
 		void probe();
-	}, [focusLayer, probe]);
+	}, [dropCard, focusLayer, probe]);
 
 	// One hand-off at a time: Add, Add and Pick Another and Queue share this
 	// guard, so a double press (or a click and Alt+Enter in the same tick) sends
@@ -262,9 +297,17 @@ export function BrowserDesignModeLayer({
 		(keepPicking: boolean) =>
 			handOff(async (capture) => {
 				const ok = await onDeliver(capture, note, keepPicking);
-				if (ok && keepPicking && mountedRef.current) closeCard();
+				if (!ok || !mountedRef.current) return;
+				if (keepPicking) {
+					closeCard();
+					return;
+				}
+				// The host is showing the chat, which unmounts this layer once the
+				// tab is off screen. Drop the card, but leave focus to the host:
+				// taking it back here would race the composer's focus request.
+				dropCard();
 			}),
-		[handOff, note, onDeliver, closeCard]
+		[handOff, note, onDeliver, closeCard, dropCard]
 	);
 
 	const queue = useCallback(async () => {

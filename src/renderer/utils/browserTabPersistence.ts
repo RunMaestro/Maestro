@@ -224,9 +224,14 @@ export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: str
 			? normalizeBrowserTabUrl(tab.url)
 			: DEFAULT_BROWSER_TAB_URL;
 	const title = getBrowserTabTitle(url, tab.title);
+	// Design Mode is the user's choice for this tab, not guest runtime state, so it
+	// survives a restart (the picker re-arms when the tab is shown). Only a literal
+	// true counts; anything else is dropped rather than read as truthy.
+	const { designMode, ...rest } = tab;
 
 	return {
-		...tab,
+		...rest,
+		...(designMode === true ? { designMode: true } : {}),
 		url,
 		title,
 		partition: getSafeBrowserTabPartition(tab.partition, sessionId),
