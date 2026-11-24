@@ -90,6 +90,15 @@ interface BrowserTabViewProps {
 	onDesignPick?: (
 		capture: DesignModeCapture & { note: string; reveal: boolean }
 	) => Promise<boolean>;
+	/**
+	 * Queues a picked element as its own message for the agent instead of adding
+	 * it to the draft, and the user keeps picking. Resolves the name of the tab it
+	 * was queued on, or null when it could not be queued. The pick card offers
+	 * Queue only when this is provided.
+	 */
+	onDesignQueue?: (
+		capture: DesignModeCapture & { note: string }
+	) => Promise<{ tabName: string } | null>;
 }
 
 export interface BrowserTabViewHandle {
@@ -256,7 +265,7 @@ function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 
 export const BrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(
-		{ tab, theme, onUpdateTab, isActive = true, onDesignPick },
+		{ tab, theme, onUpdateTab, isActive = true, onDesignPick, onDesignQueue },
 		ref
 	) {
 		const webviewRef = useRef<ElectronWebviewElement | null>(null);
@@ -326,6 +335,14 @@ export const BrowserTabView = React.memo(
 				if (ok && !keepPicking) setDesignMode(false);
 				return ok;
 			},
+			[]
+		);
+		// Queueing never leaves Design Mode: the user is lining up more picks.
+		const onDesignQueueRef = useRef(onDesignQueue);
+		onDesignQueueRef.current = onDesignQueue;
+		const handleDesignQueue = useCallback(
+			async (capture: DesignModeCapture, note: string) =>
+				(await onDesignQueueRef.current?.({ ...capture, note })) ?? null,
 			[]
 		);
 		// Design Mode: while on, BrowserDesignModeLayer covers the webview and does
@@ -1286,6 +1303,7 @@ export const BrowserTabView = React.memo(
 							access={designAccessRef.current}
 							onExit={exitDesignMode}
 							onDeliver={handleDesignDeliver}
+							onQueue={onDesignQueue ? handleDesignQueue : undefined}
 						/>
 					) : null}
 					{findOpen ? (

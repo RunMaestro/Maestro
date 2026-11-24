@@ -345,15 +345,25 @@ describe('queueDesignPick', () => {
 	};
 
 	it('queues the pick as its own message with the screenshot as its image, and returns it', async () => {
-		seed();
+		seed({ name: 'Fix header' });
 
 		const result = await queueDesignPick({ ...delivery, note: '  Make it blue ' });
 
 		expect(getBrowserId).toHaveBeenCalledWith(SESSION_ID, BROWSER_TAB_ID);
 		expect(queue()).toHaveLength(1);
 		const [item] = queue();
-		expect(result).toEqual({ aiTabId: TAB_ID, queueItemId: item.id, text: item.text });
-		expect(item).toMatchObject({ type: 'message', tabId: TAB_ID, images: [SHOT] });
+		expect(result).toEqual({
+			aiTabId: TAB_ID,
+			tabName: 'Fix header',
+			queueItemId: item.id,
+			text: item.text,
+		});
+		expect(item).toMatchObject({
+			type: 'message',
+			tabId: TAB_ID,
+			tabName: 'Fix header',
+			images: [SHOT],
+		});
 		// The element block, then the trimmed note after a blank line.
 		expect(item.text!.startsWith('Design Mode element from https://example.com')).toBe(true);
 		expect(item.text).toContain('Browser tab: `browser:2`');
@@ -433,7 +443,10 @@ describe('queueDesignPick', () => {
 		seed(
 			{},
 			{
-				aiTabs: [createMockAITab({ id: TAB_ID }), createMockAITab({ id: 'tab-2' })],
+				aiTabs: [
+					createMockAITab({ id: TAB_ID, name: 'First' }),
+					createMockAITab({ id: 'tab-2', name: 'Second' }),
+				],
 				activeTabId: 'tab-2',
 			}
 		);
@@ -441,7 +454,18 @@ describe('queueDesignPick', () => {
 		const result = await queueDesignPick(delivery);
 
 		expect(result?.aiTabId).toBe('tab-2');
+		// The name belongs to the tab it went to, for "Queued for <tab>".
+		expect(result?.tabName).toBe('Second');
 		expect(queue()[0].tabId).toBe('tab-2');
+	});
+
+	it('names an unnamed tab the way the queue does: by its provider session id', async () => {
+		seed({ name: null, agentSessionId: 'abcd1234-5678-90ab-cdef-1234567890ab' });
+
+		const result = await queueDesignPick(delivery);
+
+		expect(result?.tabName).toBe('ABCD1234');
+		expect(queue()[0].tabName).toBe('ABCD1234');
 	});
 
 	it('goes to the AI pane of the tiled group on screen, not a standalone tab', async () => {

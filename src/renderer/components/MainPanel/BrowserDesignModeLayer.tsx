@@ -11,8 +11,16 @@
  *
  * Keys (the overlay holds focus): Enter picks, ArrowUp / ArrowDown walk to the
  * parent / back toward the child, Escape closes the card or leaves Design
- * Mode. In the card: Enter adds to the message, Cmd/Ctrl+Enter adds and keeps
- * picking, Shift+Enter is a newline.
+ * Mode. In the card (from the note): Enter adds to the message, Cmd/Ctrl+Enter
+ * adds and keeps picking, Alt/Option+Enter queues the pick as its own message
+ * and keeps picking, Shift+Enter is a newline.
+ *
+ * Queue (`onQueue`) is for the user who lines up many fixes while the agent
+ * works: the pick goes to the agent's execution queue as a message of its own,
+ * and the draft is not touched. Like "Add and Pick Another" it stays in Design
+ * Mode. Nothing else on this surface shows where the pick went, so it says so
+ * with a center flash naming the tab. A host that cannot queue leaves `onQueue`
+ * out: the card then has no Queue button and Alt+Enter does nothing.
  *
  * Escape is handled here rather than through the layer stack on purpose: a
  * registered layer makes the browser tab inactive (`layerCount === 0` gates it
@@ -25,6 +33,7 @@ import { ImageOff, MousePointerClick } from 'lucide-react';
 import type { Theme } from '../../types';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { Spinner } from '../ui/Spinner';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import {
@@ -49,6 +58,12 @@ export interface BrowserDesignModeLayerProps {
 	 * false when nothing was delivered (the card stays open).
 	 */
 	onDeliver: (capture: DesignModeCapture, note: string, keepPicking: boolean) => Promise<boolean>;
+	/**
+	 * Queue a pick as its own message and stay in Design Mode. Resolves the name
+	 * of the tab it was queued on, or null when nothing was queued (the card
+	 * stays open). Leave it out where the host cannot queue.
+	 */
+	onQueue?: (capture: DesignModeCapture, note: string) => Promise<{ tabName: string } | null>;
 }
 
 interface Point {
@@ -71,6 +86,7 @@ export function BrowserDesignModeLayer({
 	access,
 	onExit,
 	onDeliver,
+	onQueue,
 }: BrowserDesignModeLayerProps) {
 	const layerRef = useRef<HTMLDivElement | null>(null);
 	const noteRef = useRef<HTMLTextAreaElement | null>(null);
@@ -222,20 +238,46 @@ export function BrowserDesignModeLayer({
 		void probe();
 	}, [focusLayer, probe]);
 
-	const deliver = useCallback(
-		async (keepPicking: boolean) => {
-			if (!card || delivering) return;
+	// One hand-off at a time: Add, Add and Pick Another and Queue share this
+	// guard, so a double press (or a click and Alt+Enter in the same tick) sends
+	// the pick once, not twice. A ref, not the `delivering` state, which only
+	// drives the disabled buttons: state is not re-read until the next render.
+	const handingOffRef = useRef(false);
+	const handOff = useCallback(
+		async (send: (capture: DesignModeCapture) => Promise<void>) => {
+			if (!card || handingOffRef.current) return;
+			handingOffRef.current = true;
 			setDelivering(true);
 			try {
-				const { pick: picked, screenshot } = card;
-				const ok = await onDeliver({ pick: picked, screenshot }, note, keepPicking);
-				if (ok && keepPicking && mountedRef.current) closeCard();
+				await send({ pick: card.pick, screenshot: card.screenshot });
 			} finally {
+				handingOffRef.current = false;
 				if (mountedRef.current) setDelivering(false);
 			}
 		},
-		[card, delivering, note, onDeliver, closeCard]
+		[card]
 	);
+
+	const deliver = useCallback(
+		(keepPicking: boolean) =>
+			handOff(async (capture) => {
+				const ok = await onDeliver(capture, note, keepPicking);
+				if (ok && keepPicking && mountedRef.current) closeCard();
+			}),
+		[handOff, note, onDeliver, closeCard]
+	);
+
+	const queue = useCallback(async () => {
+		if (!onQueue) return;
+		await handOff(async (capture) => {
+			const queued = await onQueue(capture, note);
+			if (!queued) return; // The card stays open; the host already said why.
+			// The pick is queued whether or not the layer is still mounted, so the
+			// user is told either way.
+			notifyCenterFlash({ message: `Queued for ${queued.tabName}`, color: 'green' });
+			if (mountedRef.current) closeCard();
+		});
+	}, [handOff, note, onQueue, closeCard]);
 
 	const handleLayerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
 		if (card) {
@@ -289,7 +331,10 @@ export function BrowserDesignModeLayer({
 			// button (Back to picking, Add and Pick Another), not Add to Message.
 			event.preventDefault();
 			event.stopPropagation();
-			void deliver(event.metaKey || event.ctrlKey);
+			// Alt/Option+Enter queues. With Cmd/Ctrl also held it is still the
+			// keep-picking chord, as it was before Queue existed.
+			if (event.altKey && !event.metaKey && !event.ctrlKey) void queue();
+			else void deliver(event.metaKey || event.ctrlKey);
 		}
 	};
 
@@ -302,6 +347,7 @@ export function BrowserDesignModeLayer({
 			: null;
 	const outlineLabel = card ? card.pick.tagName : hover?.probe.label;
 	const keepPickingKeys = formatShortcutKeys(['Meta', 'Enter']);
+	const queueKeys = formatShortcutKeys(['Alt', 'Enter']);
 
 	return (
 		<div
@@ -495,7 +541,20 @@ export function BrowserDesignModeLayer({
 						}}
 						data-testid="browser-tab-design-mode-note"
 					/>
-					<div className="flex items-center justify-end gap-2">
+					<div className="flex flex-wrap items-center justify-end gap-2">
+						{onQueue ? (
+							<button
+								type="button"
+								onClick={() => void queue()}
+								disabled={delivering}
+								className="px-2.5 py-1 rounded text-xs border transition-colors disabled:opacity-50"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								title={`Queue as its own message and pick another element (${queueKeys})`}
+								data-testid="browser-tab-design-mode-queue"
+							>
+								Queue
+							</button>
+						) : null}
 						<button
 							type="button"
 							onClick={() => void deliver(true)}

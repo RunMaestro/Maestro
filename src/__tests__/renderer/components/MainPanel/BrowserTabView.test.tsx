@@ -6,8 +6,13 @@ import {
 	type BrowserTabViewHandle,
 } from '../../../../renderer/components/MainPanel/BrowserTabView';
 import type { BrowserTab, Theme } from '../../../../renderer/types';
+import {
+	dismissCenterFlash,
+	useCenterFlashStore,
+} from '../../../../renderer/stores/centerFlashStore';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPersistence';
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
+import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -1439,7 +1444,11 @@ describe('BrowserTabView', () => {
 
 		async function setupReady(
 			onDesignPick?: ReturnType<typeof vi.fn>,
-			props: { isActive?: boolean; tab?: BrowserTab } = {}
+			props: {
+				isActive?: boolean;
+				tab?: BrowserTab;
+				onDesignQueue?: ReturnType<typeof vi.fn>;
+			} = {}
 		) {
 			const ref = React.createRef<BrowserTabViewHandle>();
 			const view = render(
@@ -1449,6 +1458,7 @@ describe('BrowserTabView', () => {
 					theme={mockTheme}
 					onUpdateTab={vi.fn()}
 					onDesignPick={onDesignPick}
+					onDesignQueue={props.onDesignQueue}
 					isActive={props.isActive}
 				/>
 			);
@@ -1588,7 +1598,8 @@ describe('BrowserTabView', () => {
 
 		it('Enter on a focused control runs that control, not a pick or a delivery', async () => {
 			const onDesignPick = vi.fn().mockResolvedValue(true);
-			const { webview } = await setupReady(onDesignPick);
+			const onDesignQueue = vi.fn().mockResolvedValue({ tabName: 'Fix header' });
+			const { webview } = await setupReady(onDesignPick, { onDesignQueue });
 			await arm();
 			// The banner's ESC pill: Enter must not pick.
 			fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-cancel'), { key: 'Enter' });
@@ -1601,6 +1612,7 @@ describe('BrowserTabView', () => {
 			// Card buttons: Enter belongs to the button, never Add to Message.
 			for (const id of [
 				'browser-tab-design-mode-card-close',
+				'browser-tab-design-mode-queue',
 				'browser-tab-design-mode-add-another',
 			]) {
 				await act(async () => {
@@ -1608,6 +1620,7 @@ describe('BrowserTabView', () => {
 				});
 			}
 			expect(onDesignPick).not.toHaveBeenCalled();
+			expect(onDesignQueue).not.toHaveBeenCalled();
 			expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
 		});
 
@@ -1665,6 +1678,221 @@ describe('BrowserTabView', () => {
 			expect(onDesignPick).toHaveBeenCalledWith(expect.objectContaining({ reveal: false }));
 			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull());
 			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+		});
+
+		describe('Queue', () => {
+			const QUEUED_TO = { tabName: 'Fix header' };
+			type QueuedTo = typeof QUEUED_TO | null;
+
+			afterEach(() => {
+				dismissCenterFlash();
+			});
+
+			/** Arm Design Mode, pick the element under the center, and wait for its card. */
+			async function openCard(options: {
+				onDesignQueue?: ReturnType<typeof vi.fn>;
+				onDesignPick?: ReturnType<typeof vi.fn>;
+			}) {
+				const onDesignPick = options.onDesignPick ?? vi.fn().mockResolvedValue(true);
+				await setupReady(onDesignPick, { onDesignQueue: options.onDesignQueue });
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+				});
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				return { note, onDesignPick };
+			}
+
+			function queueButton() {
+				return screen.getByTestId('browser-tab-design-mode-queue') as HTMLButtonElement;
+			}
+
+			/** A queue call the test settles by hand, to hold the hand-off in flight. */
+			function pendingQueue() {
+				let finish: (value: QueuedTo) => void = () => {};
+				const onDesignQueue = vi.fn(
+					() =>
+						new Promise<QueuedTo>((resolve) => {
+							finish = resolve;
+						})
+				);
+				return { onDesignQueue, finish: (value: QueuedTo) => finish(value) };
+			}
+
+			it('puts a Queue button left of Add and Pick Another and names its shortcut', async () => {
+				await openCard({ onDesignQueue: vi.fn() });
+				const addAnother = screen.getByTestId('browser-tab-design-mode-add-another');
+
+				expect(queueButton().textContent).toBe('Queue');
+				expect(
+					queueButton().compareDocumentPosition(addAnother) & Node.DOCUMENT_POSITION_FOLLOWING
+				).toBeTruthy();
+				expect(queueButton().title).toContain(formatShortcutKeys(['Alt', 'Enter']));
+			});
+
+			it('offers no Queue where the host cannot queue, and Alt+Enter then does nothing', async () => {
+				const { note, onDesignPick } = await openCard({});
+
+				expect(screen.queryByTestId('browser-tab-design-mode-queue')).toBeNull();
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				// The chord is reserved for Queue: it must not fall through to Add.
+				expect(onDesignPick).not.toHaveBeenCalled();
+				expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+			});
+
+			it('the button queues the pick with its note and screenshot, keeps Design Mode on, and names the tab', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Make it blue' } });
+
+				await act(async () => {
+					fireEvent.click(queueButton());
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				const [capture] = onDesignQueue.mock.calls[0];
+				expect(capture).toMatchObject({
+					pick: { selector: 'button.primary' },
+					screenshot: SHOT,
+					note: 'Make it blue',
+				});
+				// A queued pick takes no `reveal`, and never goes down the add path.
+				expect(capture).not.toHaveProperty('reveal');
+				expect(onDesignPick).not.toHaveBeenCalled();
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(useCenterFlashStore.getState().active).toMatchObject({
+					message: 'Queued for Fix header',
+					color: 'green',
+				});
+			});
+
+			it('Alt+Enter from the note queues the same way', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Make it blue' } });
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledWith(
+					expect.objectContaining({ note: 'Make it blue', screenshot: SHOT })
+				);
+				expect(onDesignPick).not.toHaveBeenCalled();
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
+
+			it('leaves the other Enter chords alone: Shift+Alt+Enter is a newline, Alt+Cmd+Enter keeps picking', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true, shiftKey: true });
+				});
+				expect(onDesignQueue).not.toHaveBeenCalled();
+				expect(onDesignPick).not.toHaveBeenCalled();
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true, metaKey: true });
+				});
+				expect(onDesignPick).toHaveBeenCalledWith(expect.objectContaining({ reveal: false }));
+				expect(onDesignQueue).not.toHaveBeenCalled();
+			});
+
+			it('only the note owns Alt+Enter: on a focused card button it queues nothing', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				await openCard({ onDesignQueue });
+
+				for (const id of [
+					'browser-tab-design-mode-card-close',
+					'browser-tab-design-mode-queue',
+					'browser-tab-design-mode-add-another',
+				]) {
+					await act(async () => {
+						fireEvent.keyDown(screen.getByTestId(id), { key: 'Enter', altKey: true });
+					});
+				}
+
+				expect(onDesignQueue).not.toHaveBeenCalled();
+				expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+			});
+
+			it('keeps the card, the note and the mode when the host queued nothing', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(null);
+				const { note } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Keep this note' } });
+
+				await act(async () => {
+					fireEvent.click(queueButton());
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(
+					(screen.getByTestId('browser-tab-design-mode-note') as HTMLTextAreaElement).value
+				).toBe('Keep this note');
+				expect(useCenterFlashStore.getState().active).toBeNull();
+				// Free again, so the user can retry.
+				expect(queueButton().disabled).toBe(false);
+			});
+
+			it('hands off once: a press in the same tick, or while one is in flight, does nothing', async () => {
+				const { onDesignQueue, finish } = pendingQueue();
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+
+				// A click and Alt+Enter in one tick: the second finds the first running
+				// before React has re-rendered the disabled button.
+				await act(async () => {
+					fireEvent.click(queueButton());
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+				// Add is held back too while the queue call is pending.
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter' });
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				expect(onDesignPick).not.toHaveBeenCalled();
+				expect(queueButton().disabled).toBe(true);
+
+				await act(async () => {
+					finish(QUEUED_TO);
+				});
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+			});
+
+			it('still says where the pick went when Design Mode was left while it was in flight', async () => {
+				const { onDesignQueue, finish } = pendingQueue();
+				const { note } = await openCard({ onDesignQueue });
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				// Escape closes the card, a second Escape leaves Design Mode.
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-card'), { key: 'Escape' });
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), { key: 'Escape' });
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+
+				await act(async () => {
+					finish(QUEUED_TO);
+				});
+
+				// The pick is in the queue whether or not the layer is still there.
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
 		});
 
 		it('Escape closes the card first, then leaves Design Mode', async () => {

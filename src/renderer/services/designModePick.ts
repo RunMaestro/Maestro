@@ -33,6 +33,7 @@ import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessi
 import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
 import { generateId } from '../utils/ids';
+import { getTabDisplayName } from '../utils/tabHelpers';
 import {
 	buildDesignModePrompt,
 	designPickBlock,
@@ -72,6 +73,8 @@ export interface DesignPickDelivered {
 /** What {@link queueDesignPick} queued where, or null when it could not. */
 export interface DesignPickQueued {
 	aiTabId: string;
+	/** That tab's name as the queue labels it, for "Queued for <tab>". */
+	tabName: string;
 	/** The queued message's id, as it sits in the agent's execution queue. */
 	queueItemId: string;
 	/** The message that was queued: the element block, note included. */
@@ -169,7 +172,7 @@ export async function queueDesignPick(
 				planMentions: false,
 			})
 		: null;
-	if (!item) {
+	if (!target || !item) {
 		notifyToast({
 			color: 'yellow',
 			title: 'Nothing to Queue Into',
@@ -177,7 +180,14 @@ export async function queueDesignPick(
 		});
 		return null;
 	}
-	return { aiTabId: item.tabId, queueItemId: item.id, text };
+	return {
+		aiTabId: item.tabId,
+		// The item stores this same label (`buildQueuedMessageItem`); read from the
+		// tab itself because the item's copy is typed optional.
+		tabName: getTabDisplayName(target.tab),
+		queueItemId: item.id,
+		text,
+	};
 }
 
 /**

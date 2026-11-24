@@ -38,7 +38,7 @@ import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
-import { deliverDesignPick } from '../../services/designModePick';
+import { deliverDesignPick, queueDesignPick } from '../../services/designModePick';
 import type {
 	Session,
 	Theme,
@@ -1322,6 +1322,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									sessionId: activeSession.id,
 									browserTabId: tabId,
 								}))
+							}
+							onDesignQueue={(capture) =>
+								queueDesignPick({
+									...capture,
+									sessionId: activeSession.id,
+									browserTabId: tabId,
+								})
 							}
 						/>
 					</div>
