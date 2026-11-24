@@ -13,7 +13,7 @@ It works on any page a browser tab can load, including your own dev server (`htt
 ## Pick an element
 
 1. Open the page in a browser tab (`Cmd+B` / `Ctrl+B`, then type the URL).
-2. Turn on Design Mode with the pointer button in the address bar, `Cmd+Shift+C` / `Ctrl+Shift+C`, or **Design Mode: Pick an Element** in the command palette (`Cmd+K` / `Ctrl+K`).
+2. Turn on Design Mode with the pointer button in the address bar, `Cmd+Shift+C` / `Ctrl+Shift+C`, or **Design Mode: Pick an Element** in the command palette (`Cmd+K` / `Ctrl+K`). The Left Bar and Right Bar fold away to give the page more room (see [Room for the page](#room-for-the-page)).
 3. Move the mouse over the page. The element under the pointer gets an outline and a label with the path to it, such as `body > main > section.footer > div`, and its size.
 4. Click the element (or press `Enter`). A card opens with the screenshot, the selector, and a note field.
 5. Type a note if you want one, then press `Enter` or **Add to Message**.
@@ -94,6 +94,45 @@ Design Mode belongs to the browser tab, and each browser tab has its own. It sta
 - **Add to Message.** Going to the chat after a pick does not turn Design Mode off.
 - **A restart.** A browser tab that is in Design Mode when you quit Maestro is in Design Mode when you open Maestro again.
 - **The blank tab.** A new browser tab with no page shows no picker. Design Mode stays on and starts when a page loads, and you can still turn it off there.
+
+## Room for the page
+
+A page picks its layout from the width of its window. With both side bars open, a laptop screen can leave the page so little room that it shows its phone layout. Design Mode folds the side bars away to prevent this, and the viewport control sets the width the page sees.
+
+### Side bars fold away
+
+When Design Mode turns on in the browser tab you are looking at, Maestro collapses the Left Bar to its narrow strip and closes the Right Bar, so the page gets as much of the window as it can. When Design Mode turns off, or you leave the tab, Maestro opens the bars it folded.
+
+- **Only open bars fold.** A bar that is already closed stays closed.
+- **Your own changes win.** If you change a bar yourself while Design Mode is on (open it, or hide the Left Bar), Maestro leaves that bar as you set it.
+- **A dialog does not unfold them.** The command palette and other dialogs hide the picker for a moment, but the bars stay folded, so the page does not change size.
+- **Add to Message.** When it switches you to the chat, the bars come back with it. They fold again when you return to the browser tab.
+- **The blank tab.** A new tab with no page folds nothing. The bars fold when a page loads.
+- **A narrow window.** When the window is so narrow that the bars are drawers over the page, there is nothing to fold and nothing to open again.
+- **A restart.** If you quit Maestro while Design Mode is on, the bars are still folded when you open it again, and turning Design Mode off does not bring them back. Open them with `Opt+Cmd+Left` and `Opt+Cmd+Right` (`Alt+Ctrl+Left` and `Alt+Ctrl+Right` on Windows and Linux).
+
+To keep the bars where they are, turn off **Collapse side bars in Design Mode** in **Settings -> General -> Browser**. It is on by default. An agent or a script can change it with `maestro-cli settings set designModeCollapsePanels false`.
+
+### Viewport presets
+
+The viewport control sits in the address bar, left of the Design Mode button. It has one icon for each preset. Hover an icon to see its name and width.
+
+| Preset  | Page width           |
+| ------- | -------------------- |
+| Fit     | The width of the tab |
+| Desktop | 1440 px              |
+| Laptop  | 1280 px              |
+| Tablet  | 768 px               |
+| Phone   | 390 px               |
+
+- **Fit.** The page fills the tab, as in any browser tab. This is the default.
+- **A preset.** The page is laid out at the preset's width and at the full height of the tab, so its responsive layout switches as it would in a browser window of that width.
+- **A tab wider than the preset.** The page keeps its size and sits in the middle, with the tab's background on both sides.
+- **A tab narrower than the preset.** The page keeps the preset's width and is scaled down to fit the tab. It looks smaller, but it still lays out at the preset's width.
+- **One preset for each tab.** The preset belongs to the browser tab, not to Design Mode. It works with Design Mode off, it is saved with the tab, and it is still set after a restart.
+- **With Design Mode.** The outline, the drag box, and the screenshots line up with the page as you see it, scaled or not. The sizes in the labels and on the cards are page pixels, so they do not change when the page is scaled down.
+
+To set a preset from the keyboard, open the command palette (`Cmd+K` / `Ctrl+K`) while a browser tab is open in front and run **Browser: Viewport Fit**, **Browser: Viewport Desktop (1440)**, **Browser: Viewport Laptop (1280)**, **Browser: Viewport Tablet (768)**, or **Browser: Viewport Phone (390)**.
 
 ## Review the chips
 
@@ -226,6 +265,16 @@ maestro-cli browser-picks --remove <pickId>
 ```
 
 Both forms act on the AI tab that a new pick lands in (the active AI tab, or the AI pane of the tiled group on screen). Chips on the agent's other AI tabs are not listed and cannot be removed. In the list, `text` is the block without the note, because the note is its own field, and `screenshot` is `true` or `false`; the image itself is not returned. Without `--agent`, `browser-pick` and `browser-picks` use the agent that is selected in Maestro. See the [CLI reference](./cli-reference) for every flag.
+
+`maestro-cli browser-viewport` sets or reads the [viewport preset](#viewport-presets) of a browser tab. Give it the tab (the id `open-browser` printed, or a Coworking id such as `browser:2`) and, to set it, one of `fit`, `desktop`, `laptop`, `tablet`, or `phone`. Without a preset it only reports the current one:
+
+```bash
+# Show the page at the phone width, then read the preset back as JSON
+maestro-cli browser-viewport browser:2 phone
+maestro-cli browser-viewport browser:2 --json
+```
+
+A set prints the new preset and the one it replaced (`Was:`), so a script can put it back. `--json` returns `preset`, `width` (`null` for `fit`), `previous`, `changed`, and the tab's Coworking id as `browserId`. The command works on a tab that is not on screen, never moves the view, and fails on a name that is not a preset instead of reading the current one. A tab hidden from agents cannot be reached this way. Without `--agent`, it uses the agent that is selected in Maestro.
 
 ## Privacy and safety
 
