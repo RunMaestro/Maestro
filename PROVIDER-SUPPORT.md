@@ -61,6 +61,43 @@ The `agent-completeness.test.ts` test validates:
 - Every pickable agent has a real, non-hidden definition and a usable re-auth command
 - Every pickable agent draws a real logo rather than the blank fallback ring (`AgentSelectionScreen/components.test.tsx`)
 
+#### Feature Coverage Audit (what CI does not check)
+
+Passing the completeness test means the agent launches. It does not mean the agent takes part in every feature. Many features keep their own per-provider table, switch, or allowlist, and a provider missing from one is silently skipped: no error, just a feature that never fires for it. The 2026-11 Antigravity audit found eleven of these on an integration that passed CI.
+
+Make a decision at every row below: add an entry, gate it on a capability, or write down why the provider is absent on purpose (in the code comment next to the table, the way `PROVIDER_PROFILE_CONFIGS` does). "Not checked" is not one of the options.
+
+| Area                 | Where                                                                                                                                               | What to decide                                                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Models and effort    | `discoverModels` / `runConfigOptionDiscovery` in `src/main/agents/detector.ts`; `dynamic: true` config options in the definition                    | Does the CLI list its models and efforts? Read them instead of hard-coding, and keep a static fallback for a signed-out CLI                              |
+| Auto Run tiers       | `TIER_MODELS`, `EFFORT_LADDERS`, `RESUME_SHARES_THREAD` in `src/shared/modelTiers.ts`                                                               | Tier models and effort ladder, and whether a resumed synopsis writes into the tab's own thread (then it must keep the session's model)                   |
+| Effort refusals      | `parseEffortRejection` in `src/shared/effortRejection.ts`                                                                                           | The CLI's exact refusal text, and whether refusals are per model                                                                                         |
+| Credentials          | `classifyCredentialKind` in `src/shared/providerAuthIdentity.ts`; `getKnownAuthDirs` in `src/main/ipc/handlers/agents.ts`                           | Every non-login credential (API key, gateway URL, cloud ADC). Unclassified ones default to `oauth`, and Maestro then offers a login that cannot fix them |
+| Accounts             | `PROVIDER_PROFILE_CONFIGS` in `src/shared/providerProfiles.ts`                                                                                      | The env var that relocates the account home, or a dated "absent on purpose" note                                                                         |
+| Env var suggestions  | `PROVIDER_ENV_VAR_SUGGESTIONS` in `src/shared/envVarCatalog.ts`                                                                                     | The vars users reach for: credentials, gateway, account dir, and any var Maestro itself reads for the provider                                           |
+| Install and PATH     | `path-prober.ts` (both tables); the Windows extra-PATH list in `src/shared/pathUtils.ts`; `TOOL_TYPE_ALIASES` in `src/shared/agent-run/provider.ts` | Installer locations on every OS, and the binary name as an alias when it differs from the agent id                                                       |
+| MCP                  | `MCP_CONFIG_BY_AGENT` in `src/shared/plugins/mcp-agent-config.ts`; coworking installers                                                             | The config file shape and whether a flag or env var can overlay it. Ship `verified: false` until a live run proves injection                             |
+| Lifetime stats       | `getGlobalStats` in `src/main/ipc/handlers/agentSessions.ts`                                                                                        | With `supportsUsageStats` and session storage, the provider belongs in the About and Usage Dashboard totals                                              |
+| Pianola memory       | `HISTORY_PROVIDERS` in `src/main/storage/historical-inventory.ts` and `PianolaModal/MemorySetup.tsx`; `memory-providers.ts`                         | If it can run memory extraction, its own history should be a source too                                                                                  |
+| Answer assembly      | `streamsTokenDeltaText` in `src/shared/agentConstants.ts`; usage modes in `cue-process-lifecycle.ts` and `turn-capture.ts`                          | Are partial `text` events token deltas (join with nothing) or whole messages (join with `\n`)? Is usage per step, cumulative, or terminal?               |
+| Read-only features   | `SYNOPSIS_PROVIDER_PREFERENCE` (`directorNotesProvider.ts`), `FEEDBACK_PROVIDERS` (`feedbackAccounts.ts`), wizard discovery                         | These need a CLI-enforced read-only turn. Re-check `supportsReadOnlyMode` against the CLI's plan or approval modes, not just `--sandbox`                 |
+| Wizards              | `supportsWizard`; `src/renderer/utils/grokWizard.ts` as the pattern for a provider-specific wizard helper                                           | A live discovery turn that returns the structured reply; desktop `onData` already carries answer text                                                    |
+| Context transfer     | `AGENT_ARTIFACTS`, `AGENT_TARGET_NOTES` in `src/renderer/services/contextGroomer.ts`                                                                | Brand, model, path and flag terms to scrub, and what the target cannot do                                                                                |
+| Provider translation | `src/shared/maestro-lib/translation/support.ts` and the [Provider Translation Contract](#provider-translation-contract)                             | Declared directions, or explicit limitations per resource class                                                                                          |
+| Plugin attachments   | `ORIGINAL_ATTACHMENT_PROVIDERS` in `src/main/plugins/plugin-headless-agent-runner.ts`                                                               | Whether a local turn reads a staged file named by path in the prompt                                                                                     |
+| Steering and control | `SDK_PROVIDERS`, `NATIVE_STEERING_PROVIDERS` in `src/shared/maestro-lib/providers/native-control.ts`; `sendMenu.ts`, `executionQueue.ts`            | Does the CLI steer a running turn (ACP, app server, SDK)? See [Native Harness Control](docs/agent-guides/NATIVE-HARNESS-CONTROL.md)                      |
+| Slash commands       | Discovery chains in `src/main/ipc/handlers/agents.ts` and `useWizardHandlers.ts`                                                                    | Only when `supportsSlashCommands` is true in the mode Maestro runs                                                                                       |
+
+**Find the tables you missed.** List every source file that names three or more other provider ids but never yours, then read each one:
+
+```bash
+P=antigravity  # your agent id
+grep -rlE "['\"](claude-code|codex|opencode|grok|copilot-cli|factory-droid|qwen3-coder)['\"]" src \
+  --include='*.ts' --include='*.tsx' | grep -v __tests__ | xargs grep -L "$P"
+```
+
+**Re-audit `false` against upstream.** A capability set to `false` because something was "not documented" goes stale when the CLI ships it. On every CLI version bump, check each `false` flag against the vendor's current docs and changelog, and record the version you checked in the flag's comment (`// agy 1.5.16: no flag`). The Antigravity flags `supportsAdditionalDirectories`, `supportsStreamJsonInput`, and `supportsReadOnlyMode` were all `false` with "undocumented" comments after the CLI had added `--add-dir`, `--input-format stream-json`, and `--mode plan`.
+
 See detailed instructions below.
 
 ## Table of Contents

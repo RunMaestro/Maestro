@@ -90,7 +90,13 @@ import {
 	mapWithConcurrency,
 	LOCAL_SESSION_READ_CONCURRENCY,
 	LOCAL_SESSION_PARSE_CONCURRENCY,
+	yieldToEventLoop,
 } from '../../utils/concurrency';
+import {
+	listConversationStores as listAntigravityConversationStores,
+	readConversation as readAntigravityConversation,
+	type AntigravityConversationStore,
+} from '../../storage/antigravity-session-storage';
 import { resolveAgentAccountDir, getProviderAccountDirs } from '../../agents/provider-account-dirs';
 import { resolveSshLaunchTarget } from '../../utils/ssh-remote-resolver';
 import { nativeAccountRef } from '../../../shared/agentAccountDir';
@@ -1583,6 +1589,28 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				if (costCoverage !== 'unknown') result.hasCostData = true;
 			}
 
+			// Aggregate Antigravity stats: tokens as the registered storage's
+			// reader sums each conversation's steps. agy records no cost, so,
+			// like Codex, the amount stays absent rather than priced from tokens.
+			const antigravitySessions = cache.providers['antigravity']?.sessions || {};
+			const antigravityAgg = aggregateProviderStats(antigravitySessions, false);
+			if (antigravityAgg.sessions > 0) {
+				result.byProvider['antigravity'] = {
+					sessions: antigravityAgg.sessions,
+					messages: antigravityAgg.messages,
+					inputTokens: antigravityAgg.inputTokens,
+					outputTokens: antigravityAgg.outputTokens,
+					costUsd: 0,
+					hasCostData: false,
+				};
+				result.totalSessions += antigravityAgg.sessions;
+				result.totalMessages += antigravityAgg.messages;
+				result.totalInputTokens += antigravityAgg.inputTokens;
+				result.totalOutputTokens += antigravityAgg.outputTokens;
+				result.totalCacheReadTokens += antigravityAgg.cacheReadTokens;
+				result.totalSizeBytes += antigravityAgg.sizeBytes;
+			}
+
 			// Once any provider reports coverage, the total's coverage counts every
 			// provider: a legacy one with cost data as covered, one without as
 			// unknown, so a total missing a provider's cost is never complete.
@@ -1626,10 +1654,14 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			cache.providers['grok'] = { sessions: {} };
 		}
 		const grokCache = cache.providers['grok'].sessions;
+		if (!cache.providers['antigravity']) {
+			cache.providers['antigravity'] = { sessions: {} };
+		}
+		const antigravityCache = cache.providers['antigravity'].sessions;
 
 		// Discover all session files
 		logger.info('Discovering session files for global stats', LOG_CONTEXT);
-		const [claudeFiles, codexFiles, discoveredGrokDirs] = await Promise.all([
+		const [claudeFiles, codexFiles, discoveredGrokDirs, discoveredAntigravity] = await Promise.all([
 			discoverClaudeSessionFiles(),
 			discoverCodexSessionFiles(),
 			// A failed account discovery must not archive every Grok session as
@@ -1641,7 +1673,31 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				});
 				return null;
 			}),
+			// Same rule for Antigravity. No ~/.gemini/antigravity-cli (or no
+			// index) is simply an empty list.
+			Promise.resolve()
+				.then((): AntigravityConversationStore[] => listAntigravityConversationStores())
+				.catch((error: unknown) => {
+					void captureException(error, {
+						operation: 'agentSessions:discoverAntigravityConversations',
+					});
+					logger.warn(
+						'Antigravity conversation discovery failed; cached Antigravity stats kept',
+						LOG_CONTEXT,
+						{ error }
+					);
+					return null;
+				}),
 		]);
+		const antigravityStores = discoveredAntigravity ?? [];
+		if (discoveredAntigravity) {
+			const currentAntigravityKeys = new Set(
+				discoveredAntigravity.map((store) => store.conversationId)
+			);
+			for (const [key, session] of Object.entries(antigravityCache)) {
+				session.archived = !currentAntigravityKeys.has(key);
+			}
+		}
 		const grokDirs = discoveredGrokDirs ?? [];
 		if (discoveredGrokDirs) {
 			const currentGrokKeys = new Set(discoveredGrokDirs.map((info) => info.key));
@@ -1707,11 +1763,25 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			return !cached || cached.fileMtimeMs < info.mtimeMs;
 		});
 
-		const totalToProcess = claudeToProcess.length + codexToProcess.length + grokToProcess.length;
-		const cachedCount = claudeFiles.length + codexFiles.length + grokDirs.length - totalToProcess;
+		const antigravityToProcess = antigravityStores.filter((store) => {
+			const cached = antigravityCache[store.conversationId];
+			return !cached || cached.fileMtimeMs < store.mtimeMs;
+		});
+
+		const totalToProcess =
+			claudeToProcess.length +
+			codexToProcess.length +
+			grokToProcess.length +
+			antigravityToProcess.length;
+		const cachedCount =
+			claudeFiles.length +
+			codexFiles.length +
+			grokDirs.length +
+			antigravityStores.length -
+			totalToProcess;
 
 		logger.info(
-			`Global stats: ${totalToProcess} to process (${claudeToProcess.length} Claude, ${codexToProcess.length} Codex, ${grokToProcess.length} Grok), ${cachedCount} cached`,
+			`Global stats: ${totalToProcess} to process (${claudeToProcess.length} Claude, ${codexToProcess.length} Codex, ${grokToProcess.length} Grok, ${antigravityToProcess.length} Antigravity), ${cachedCount} cached`,
 			LOG_CONTEXT
 		);
 
@@ -1809,6 +1879,37 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				if (entry?.identity && present.has(`${entry.identity.accountScope}\0${parent}`)) {
 					grokCache[key] = withoutParentAttributedUsage(entry);
 				}
+			}
+		}
+
+		// Antigravity conversations are read one store at a time by the storage's
+		// own reader: synchronous SQLite on the main process, so yield between
+		// stores. A store that cannot be read (or holds no message) keeps its
+		// previous entry, if any, and is retried on the next scan.
+		for (const store of antigravityToProcess) {
+			await yieldToEventLoop();
+			try {
+				const parsed = readAntigravityConversation(store.conversationId);
+				if (!parsed || parsed.messages.length === 0) continue;
+				antigravityCache[store.conversationId] = {
+					messages: parsed.messages.length,
+					inputTokens: parsed.inputTokens,
+					outputTokens: parsed.outputTokens,
+					cacheReadTokens: parsed.cacheReadTokens,
+					cacheCreationTokens: 0,
+					cachedInputTokens: 0,
+					sizeBytes: store.sizeBytes,
+					fileMtimeMs: store.mtimeMs,
+					archived: false,
+				};
+				processedCount++;
+				if (processedCount % 10 === 0) sendUpdate(cache, false);
+			} catch (error) {
+				void captureException(error, { operation: 'agentSessions:antigravityGlobalStats' });
+				logger.warn('Failed to read an Antigravity conversation for global stats', LOG_CONTEXT, {
+					error,
+					conversationId: store.conversationId,
+				});
 			}
 		}
 

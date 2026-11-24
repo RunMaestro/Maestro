@@ -332,6 +332,8 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			path.join(appData, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli'),
 			// Codex CLI install location (npm global)
 			path.join(appData, 'npm', 'node_modules', '@openai', 'codex', 'bin'),
+			// Antigravity CLI (agy) install.ps1 / install.cmd location
+			path.join(localAppData, 'agy', 'bin'),
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),

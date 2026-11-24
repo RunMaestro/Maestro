@@ -192,7 +192,10 @@ Beta, tier-1 qualification pending: no Grok binary is qualified (`GROK_CAPABILIT
 - **Resume:** `--conversation <id>` (emitted as `conversation_id` on every event)
 - **Read-only:** Not supported (`supportsReadOnlyMode: false`). `--sandbox` is best-effort: it restricts terminal commands, but workspace reads and writes stay auto-allowed
 - **YOLO Mode:** `--dangerously-skip-permissions`
-- **Known Limitations:** no session storage (on-disk format undocumented), no thinking display (only `thinking_tokens` counts), and no tool-disabling flag, so a tab-naming run (`readOnlyMode: true`, empty `noToolsArgs`) can still touch workspace files
+- **History:** `AntigravitySessionStorage` reads `~/.gemini/antigravity-cli/conversation_summaries.db` and `conversations/<id>.db` (SQLite, protobuf steps; local only). The same stores feed lifetime stats (`getGlobalStats`) and Pianola memory history (`historical-inventory.ts`)
+- **Thinking:** the stream reports only `thinking_tokens`; the summary text is read from the conversation store by `antigravity-step-store.ts`
+- **Accounts:** one per machine. State lives in a fixed `~/.gemini/antigravity-cli` and credentials in the OS keyring, so there is no `PROVIDER_PROFILE_CONFIGS` entry
+- **Known Limitations:** no tool-disabling flag, so a tab-naming run (`readOnlyMode: true`, empty `noToolsArgs`) can still touch workspace files
 
 ### Qwen3 Coder
 

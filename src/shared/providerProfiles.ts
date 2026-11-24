@@ -59,7 +59,10 @@ export interface ProviderProfileConfig {
  *     surface is `FACTORY_API_KEY`, `FACTORY_API_KEY_HELPER_TTL_MS`,
  *     `FACTORY_DISABLE_KEYRING`, `FACTORY_DROID_AUTO_UPDATE_ENABLED`,
  *     `FACTORY_LOG_FILE`, and `FACTORY_PROJECT_DIR`.
- * If either ships one, the single-line entry here is the whole change.
+ *   - `antigravity` (agy 1.5.16, 2026-11-24) keeps its state in a fixed
+ *     `~/.gemini/antigravity-cli` and its credentials in the OS keyring; no
+ *     documented var relocates either, so two agents cannot hold two accounts.
+ * If any of them ships one, the single-line entry here is the whole change.
  */
 export const PROVIDER_PROFILE_CONFIGS: Readonly<Record<string, ProviderProfileConfig>> = {
 	'claude-code': {
