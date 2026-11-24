@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	agentCliLabel,
 	agentNotInstalledMessage,
+	classifyAgentErrorMissingBinary,
 	classifyMissingBinary,
 	getAgentInstallCommand,
 	getAgentInstallInfo,
@@ -292,6 +293,40 @@ describe('agentInstall', () => {
 			const message = agentNotInstalledMessage('grok', 'not-found', 'darwin');
 			expect(message).not.toContain('Install it with:');
 			expect(message).toMatch(/install guide/);
+		});
+	});
+
+	describe('classifyAgentErrorMissingBinary', () => {
+		it('extracts runtime-missing from an agent_not_installed error raw payload', () => {
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_not_installed',
+					raw: { exitCode: 127, stderr: 'env: node: No such file or directory' },
+				})
+			).toEqual({ reason: 'runtime-missing', runtime: 'node' });
+
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_not_installed',
+					raw: { exitCode: 127, stderr: 'env: bun: No such file or directory' },
+				})
+			).toEqual({ reason: 'runtime-missing', runtime: 'bun' });
+		});
+
+		it('returns null for non-agent_not_installed errors or when raw lacks runtime evidence', () => {
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_crashed',
+					raw: { exitCode: 127, stderr: 'env: node: No such file or directory' },
+				})
+			).toBeNull();
+
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_not_installed',
+					raw: { exitCode: 127, stderr: 'sh: codex: command not found' },
+				})
+			).toBeNull();
 		});
 	});
 });

@@ -129,6 +129,60 @@ describe('useAgentErrorRecovery', () => {
 			);
 			expect(result.current.recoveryActions).toEqual([]);
 		});
+
+		it('withholds Install and keeps Try Again as primary when Node.js runtime is missing', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+			const onInstall = vi.fn();
+			const onRetry = vi.fn();
+
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: {
+						...notInstalled,
+						raw: { exitCode: 127, stderr: 'env: node: No such file or directory' },
+					},
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall,
+					onRetry,
+				})
+			);
+
+			expect(result.current.recoveryActions).toHaveLength(1);
+			const [retryAction] = result.current.recoveryActions;
+			expect(retryAction.id).toBe('retry');
+			expect(retryAction.label).toBe('Try Again');
+			expect(retryAction.primary).toBe(true);
+			expect(retryAction.description).toBe('Restore Node.js to PATH, then send again');
+
+			act(() => retryAction.onClick());
+			expect(onRetry).toHaveBeenCalledTimes(1);
+			expect(onInstall).not.toHaveBeenCalled();
+		});
+
+		it('names other missing runtimes such as Bun when withholding Install', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: {
+						...notInstalled,
+						raw: { exitCode: 127, stderr: 'env: bun: No such file or directory' },
+					},
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall: vi.fn(),
+					onRetry: vi.fn(),
+				})
+			);
+
+			expect(result.current.recoveryActions).toHaveLength(1);
+			expect(result.current.recoveryActions[0].id).toBe('retry');
+			expect(result.current.recoveryActions[0].primary).toBe(true);
+			expect(result.current.recoveryActions[0].description).toBe(
+				'Restore Bun to PATH, then send again'
+			);
+		});
 	});
 
 	it('offers restart + new session for agent crashes', () => {
