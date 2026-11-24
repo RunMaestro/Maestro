@@ -591,7 +591,14 @@ describe('SqliteViewer', () => {
 		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
 		expect(screen.getByTestId('sqlite-object-pane')).toHaveTextContent('on users');
 
+		// Rail order is tables, views, indexes, triggers: up from the index
+		// reaches the view, then the last table.
 		fireEvent.keyDown(screen.getByTestId('sqlite-rail-object-users_email'), { key: 'ArrowUp' });
+		expect(screen.getByTestId('sqlite-rail-object-active_users')).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		fireEvent.keyDown(screen.getByTestId('sqlite-rail-object-active_users'), { key: 'ArrowUp' });
 		expect(screen.getByTestId('sqlite-rail-object-users')).toHaveAttribute('aria-selected', 'true');
 		fireEvent.keyDown(screen.getByTestId('sqlite-rail-object-users'), { key: 'End' });
 		expect(screen.getByTestId('sqlite-rail-object-users_audit')).toHaveAttribute(
@@ -798,8 +805,12 @@ describe('SqliteViewer table view', () => {
 		expect(second).toHaveTextContent('click');
 		expect(second).toHaveTextContent('BLOB 2.0 KB · ff …');
 		// The tooltip gives the exact size and says how to save it.
-		const blob = within(second).getByTitle(/^BLOB, 2\.0 KB \(2,048 bytes\)\nff …\n/);
-		expect(blob.getAttribute('title')).toContain('Double-click the row to save it to a file');
+		// getByTitle collapses whitespace, so match the first line and check the
+		// lines on the attribute itself.
+		const blob = within(second).getByTitle(/^BLOB, 2\.0 KB \(2,048 bytes\)/);
+		expect(blob.getAttribute('title')).toBe(
+			'BLOB, 2.0 KB (2,048 bytes)\nff …\nDouble-click the row to save it to a file'
+		);
 	});
 
 	it('shows column types from the statement and the order in the footer', async () => {

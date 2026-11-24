@@ -139,7 +139,7 @@ vi.mock('../../../main/sqlite/sqlite-identity', async (importOriginal) => ({
 		state.editability[object.name],
 }));
 
-import { describeSqliteBusy } from '../../../main/sqlite/sqlite-connection';
+import { describeSqliteBusy, sqliteBusyMessage } from '../../../main/sqlite/sqlite-connection';
 import {
 	deleteSqliteRow,
 	insertSqliteRow,
@@ -1222,8 +1222,7 @@ describe('the statement log', () => {
 		expect(statementLog.records).toHaveLength(1);
 		expect(statementLog.records[0].record.outcome).toEqual({
 			ok: false,
-			error:
-				'Another process has this database open and kept it locked past the 1 s wait, so nothing was changed.',
+			error: sqliteBusyMessage('write'),
 		});
 	});
 

@@ -524,11 +524,15 @@ export function SqliteTableView({
 		// countEpoch: a write changed how many rows there are, so count again.
 	}, [handle, name, appliedFilter, countAll, reportSettled, countEpoch]);
 
+	// The filter bar is drawn only once the columns arrive, so a request made
+	// while they load (Cmd+F from the Schema view) waits for the bar instead of
+	// being cleared with nothing focused.
+	const filterBarShown = columns !== null;
 	useEffect(() => {
-		if (!focusFilterRequested) return;
+		if (!focusFilterRequested || !filterBarShown) return;
 		filterBarRef.current?.focus();
 		onFilterFocused();
-	}, [focusFilterRequested, onFilterFocused]);
+	}, [focusFilterRequested, filterBarShown, onFilterFocused]);
 
 	const completions = useMemo(
 		() =>

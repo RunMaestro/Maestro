@@ -28,6 +28,7 @@ import {
 	type SqliteInsertDraft,
 	type SqliteInsertFieldMode,
 } from './sqliteRowInsert';
+import { isImeComposing } from '../../utils/ime';
 
 const MODE_OPTIONS = [
 	{
@@ -79,7 +80,7 @@ export function SqliteInsertRowModal({
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLInputElement>) => {
-			if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+			if (event.key !== 'Enter' || event.shiftKey || isImeComposing(event)) return;
 			event.preventDefault();
 			if (!saving) onInsert();
 		},

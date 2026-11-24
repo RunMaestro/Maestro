@@ -292,7 +292,9 @@ describe('beginSqliteTransaction', () => {
 			schemaChanges: [],
 			backup: { path: '/data/app.maestro-backup-1.db' },
 		});
-		expect(begun.expiresAt - begun.startedAt).toBe(SQLITE_TRANSACTION_IDLE_MS);
+		// The idle clock starts once BEGIN has run, a moment after startedAt.
+		expect(begun.expiresAt).toBeGreaterThanOrEqual(begun.startedAt + SQLITE_TRANSACTION_IDLE_MS);
+		expect(begun.expiresAt).toBeLessThanOrEqual(Date.now() + SQLITE_TRANSACTION_IDLE_MS);
 		expect(editing.writes).toBe(1);
 		expect(editing.held).toEqual(['h1']);
 		expect(driver.connections).toHaveLength(1);

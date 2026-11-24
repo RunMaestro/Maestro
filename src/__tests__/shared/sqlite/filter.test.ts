@@ -193,7 +193,8 @@ describe('compileSqliteFilter: text matching', () => {
 describe('sqliteNumberBindValue', () => {
 	it('reads integers exactly, a bigint past 2^53, and decimals as doubles', () => {
 		expect(sqliteNumberBindValue('42')).toBe(42);
-		expect(sqliteNumberBindValue('-0')).toBe(-0);
+		// An integer has no negative zero: `-0` binds as the INTEGER 0.
+		expect(sqliteNumberBindValue('-0')).toBe(0);
 		expect(sqliteNumberBindValue('+7')).toBe(7);
 		expect(sqliteNumberBindValue('9007199254740993')).toBe(9007199254740993n);
 		expect(sqliteNumberBindValue('.5')).toBe(0.5);

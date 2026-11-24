@@ -131,6 +131,7 @@ import { describeSqliteBusy, reportSqliteBusy } from './sqlite-connection';
 import { beginSqliteWrite, requireSqliteEditing, type SqliteWriteSession } from './sqlite-editing';
 import {
 	resolveSqliteEditability,
+	SQLITE_ROWID_TEXT,
 	sqliteKeyBindValue,
 	sqliteRowKeyColumns,
 	sqliteRowKeyCondition,
@@ -1048,7 +1049,12 @@ async function undoEdit(request: SqliteUndoRequest): Promise<SqliteUndoResult> {
 			if (!values || typeof values !== 'object' || Array.isArray(values)) {
 				throw new Error("An undo step that restores a row needs the row's values by column name.");
 			}
-			if (step.rowid !== null && typeof step.rowid !== 'string') {
+			// Checked here, before the write gate and its backup, whatever the
+			// table's rowid alias: a malformed step never reaches the file.
+			if (
+				step.rowid !== null &&
+				(typeof step.rowid !== 'string' || !SQLITE_ROWID_TEXT.test(step.rowid))
+			) {
 				throw new Error(`"${String(step.rowid)}" is not a rowid.`);
 			}
 			const fields = Object.entries(values).map(([column, value]) =>

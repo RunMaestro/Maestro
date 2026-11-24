@@ -87,9 +87,12 @@ function createMockClient(): WebClient {
 	};
 }
 
+// The last frame sent, without the `timestamp` every frame carries, so a
+// test can compare the whole reply.
 function lastResponse(client: WebClient): Record<string, unknown> {
 	const calls = (client.socket.send as ReturnType<typeof vi.fn>).mock.calls;
-	return JSON.parse(calls[calls.length - 1][0] as string);
+	const { timestamp: _timestamp, ...reply } = JSON.parse(calls[calls.length - 1][0] as string);
+	return reply;
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));

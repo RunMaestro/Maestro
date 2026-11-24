@@ -24,6 +24,7 @@ import type {
 } from '../../../shared/sqlite/types';
 import type { Theme } from '../../types';
 import { SegmentedControl } from '../ui/SegmentedControl';
+import { isImeComposing } from '../../utils/ime';
 
 /** What a box holds before anyone types in it: empty text. */
 export const EMPTY_SQLITE_PARAMETER_VALUE: SqliteParameterValue = { type: 'text', text: '' };
@@ -76,7 +77,7 @@ export function SqliteQueryParameters({
 }: SqliteQueryParametersProps) {
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLInputElement>) => {
-			if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+			if (event.key !== 'Enter' || event.shiftKey || isImeComposing(event)) return;
 			event.preventDefault();
 			onRun();
 		},

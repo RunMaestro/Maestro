@@ -149,6 +149,7 @@ import { SqliteQueryParameters, sqliteParameterValuesFor } from './SqliteQueryPa
 import { SqliteQueryPlanView } from './SqliteQueryPlanView';
 import { announceSqliteBackup, sqliteOtherChangesText } from './sqliteWriteNotice';
 import type { SqliteTransactionControl } from './useSqliteTransaction';
+import { isImeComposing } from '../../utils/ime';
 
 /** The last statement run in Query mode and what it returned so far. */
 export interface SqliteQueryRunState {
@@ -500,6 +501,7 @@ export function SqliteQueryPanel({
 	 */
 	const handleEditorKey = useCallback(
 		(event: KeyboardEvent): boolean => {
+			if (isImeComposing(event)) return false;
 			if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) || event.shiftKey) {
 				return false;
 			}

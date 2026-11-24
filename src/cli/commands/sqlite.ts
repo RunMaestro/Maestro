@@ -915,9 +915,7 @@ export async function sqliteQuery(
 		fail(`--format must be csv or jsonl (got "${options.format}")`, options.json);
 	}
 	const editing = options.enableEditing === true;
-	if (editing && options.output !== undefined) {
-		fail('--output exports a read-only statement; it does not take --enable-editing', options.json);
-	}
+	// A dry run's own refusals first: they name what a dry run cannot do.
 	const dryRun = options.dryRun === true;
 	if (dryRun) {
 		if (!editing) {
@@ -933,6 +931,9 @@ export async function sqliteQuery(
 		if (options.offset !== undefined && options.offset !== '0') {
 			fail('--dry-run reads the first rows only; it does not take --offset', options.json);
 		}
+	}
+	if (editing && options.output !== undefined) {
+		fail('--output exports a read-only statement; it does not take --enable-editing', options.json);
 	}
 	// A plan is shown whole and an export writes every row: no window applies.
 	const whole = plan || options.output !== undefined;
