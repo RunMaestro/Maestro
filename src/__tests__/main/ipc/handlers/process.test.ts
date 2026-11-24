@@ -4335,6 +4335,26 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.sendPromptViaStdin).toBe(false);
 		});
 
+		it('delivers an Antigravity prompt over raw stdin on a Windows host (MAESTRO-NM)', async () => {
+			// agy has no Claude-shaped stream-json input, so it takes the raw path;
+			// the spawner then writes its own stream-json line (see definitions.ts).
+			await setHostWindows(true);
+			const { getAgentCapabilities } = await vi.importActual<
+				typeof import('../../../../main/agents/capabilities')
+			>('../../../../main/agents/capabilities');
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'antigravity',
+				name: 'Antigravity CLI',
+				path: 'C:\\agy\\bin\\agy.exe',
+				capabilities: getAgentCapabilities('antigravity'),
+			});
+
+			const spawnCall = await spawnWith({ toolType: 'antigravity', command: 'agy' });
+
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+		});
+
 		it('uses stream-json stdin on Windows when images accompany the prompt', async () => {
 			await setHostWindows(true);
 			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);

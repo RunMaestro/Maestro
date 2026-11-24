@@ -292,6 +292,29 @@ describe('cue-spawn-builder', () => {
 				}
 			});
 
+			it('writes the stdin line format an agent declares (Antigravity stream-json)', async () => {
+				useStdinCapableCodex();
+				mockGetAgentDefinition.mockReturnValue({
+					...codexDef,
+					stdinPromptArgs: ['--input-format', 'stream-json'],
+					stdinPromptMessage: (prompt: string) =>
+						JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n',
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					multiLinePrompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.args).toEqual(['exec', '--json', '--input-format', 'stream-json']);
+					expect(result.spec.stdinPrompt).toBe(
+						JSON.stringify({ event: 'user', message: { content: multiLinePrompt } }) + '\n'
+					);
+				}
+			});
+
 			it('quotes a shim path containing spaces for cmd.exe', async () => {
 				useStdinCapableCodex();
 				const spaced = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\codex.cmd';
