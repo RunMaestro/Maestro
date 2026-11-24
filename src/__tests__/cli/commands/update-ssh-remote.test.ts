@@ -8,7 +8,7 @@ import type { SshRemoteConfig } from '../../../shared/types';
 
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
-	readSshRemotes: vi.fn(),
+	readSshRemotesForEdit: vi.fn(),
 	writeSshRemotes: vi.fn(),
 	writeSettingValue: vi.fn(),
 	resolveSshRemoteId: vi.fn((id: string) => id),
@@ -22,12 +22,19 @@ vi.mock('../../../cli/output/formatter', () => ({
 
 import { updateSshRemote } from '../../../cli/commands/update-ssh-remote';
 import {
-	readSshRemotes,
+	readSshRemotesForEdit,
 	writeSshRemotes,
 	writeSettingValue,
 	resolveSshRemoteId,
 } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
+
+/** The settings directory `readSshRemotesForEdit` reports; writes must land there. */
+const STORE_DIR = '/store';
+
+function mockStoredRemotes(remotes: SshRemoteConfig[]): void {
+	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, dir: STORE_DIR });
+}
 
 const mockRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
 	id: 'remote-1',
@@ -55,7 +62,7 @@ describe('update-ssh-remote command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-		vi.mocked(readSshRemotes).mockReturnValue([mockRemote()]);
+		mockStoredRemotes([mockRemote()]);
 		vi.mocked(resolveSshRemoteId).mockImplementation((id: string) => id);
 	});
 
@@ -121,9 +128,7 @@ describe('update-ssh-remote command', () => {
 
 		it('merges with existing options rather than replacing them', () => {
 			// A single edit must not silently drop the rest of the set.
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22' } }),
-			]);
+			mockStoredRemotes([mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22' } })]);
 
 			updateSshRemote('remote-1', { sshOption: ['ConnectTimeout=45'] });
 
@@ -134,9 +139,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('overwrites the value of an option already present', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ sshOptions: { ConnectTimeout: '45' } }),
-			]);
+			mockStoredRemotes([mockRemote({ sshOptions: { ConnectTimeout: '45' } })]);
 
 			updateSshRemote('remote-1', { sshOption: ['ConnectTimeout=90'] });
 
@@ -144,9 +147,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('clears every option with --clear-ssh-options', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22' } }),
-			]);
+			mockStoredRemotes([mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22' } })]);
 
 			updateSshRemote('remote-1', { clearSshOptions: true });
 
@@ -154,7 +155,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('clears then re-adds when both flags are passed', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
+			mockStoredRemotes([
 				mockRemote({ sshOptions: { ProxyCommand: 'old', ConnectTimeout: '45' } }),
 			]);
 
@@ -186,7 +187,7 @@ describe('update-ssh-remote command', () => {
 
 	describe('parking entries (the CLI spelling of the eye button)', () => {
 		it('switches an ssh option off, keeping its value', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
+			mockStoredRemotes([
 				mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' } }),
 			]);
 
@@ -197,9 +198,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('switches a parked ssh option back on', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' } }),
-			]);
+			mockStoredRemotes([mockRemote({ sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' } })]);
 
 			updateSshRemote('remote-1', { enableSshOption: ['ProxyCommand'] });
 
@@ -208,9 +207,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('parks and unparks env vars the same way', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ remoteEnv: { FOO: '1' }, remoteEnvDisabled: { BAR: '2' } }),
-			]);
+			mockStoredRemotes([mockRemote({ remoteEnv: { FOO: '1' }, remoteEnvDisabled: { BAR: '2' } })]);
 
 			updateSshRemote('remote-1', { disableEnv: ['FOO'], enableEnv: ['BAR'] });
 
@@ -219,7 +216,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('runs disable before enable so one command can swap which key is live', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
+			mockStoredRemotes([
 				mockRemote({
 					sshOptions: { ConnectTimeout: '45' },
 					sshOptionsDisabled: { ProxyJump: 'bastion' },
@@ -236,9 +233,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('ignores a key that exists in neither record', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ sshOptions: { ConnectTimeout: '45' } }),
-			]);
+			mockStoredRemotes([mockRemote({ sshOptions: { ConnectTimeout: '45' } })]);
 
 			updateSshRemote('remote-1', { disableSshOption: ['NoSuchOption'] });
 
@@ -247,7 +242,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('clears the parked record too, so --clear leaves nothing resurrectable', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
+			mockStoredRemotes([
 				mockRemote({
 					sshOptions: { ConnectTimeout: '45' },
 					sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' },
@@ -265,9 +260,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('reports parked entries in JSON but keeps them out of the resolved set', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([
-				mockRemote({ sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' } }),
-			]);
+			mockStoredRemotes([mockRemote({ sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' } })]);
 
 			updateSshRemote('remote-1', { json: true });
 
@@ -279,7 +272,7 @@ describe('update-ssh-remote command', () => {
 
 	describe('environment variables', () => {
 		it('merges with existing env vars', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ remoteEnv: { FOO: '1' } })]);
+			mockStoredRemotes([mockRemote({ remoteEnv: { FOO: '1' } })]);
 
 			updateSshRemote('remote-1', { env: ['BAR=2'] });
 
@@ -287,7 +280,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('clears every env var with --clear-env', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ remoteEnv: { FOO: '1' } })]);
+			mockStoredRemotes([mockRemote({ remoteEnv: { FOO: '1' } })]);
 
 			updateSshRemote('remote-1', { clearEnv: true });
 
@@ -297,7 +290,7 @@ describe('update-ssh-remote command', () => {
 
 	describe('errors and output', () => {
 		it('reports an unknown remote', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([]);
+			mockStoredRemotes([]);
 
 			updateSshRemote('nope', { name: 'x' });
 
@@ -331,7 +324,7 @@ describe('update-ssh-remote command', () => {
 		});
 
 		it('reports a failure as JSON when --json is set', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([]);
+			mockStoredRemotes([]);
 
 			updateSshRemote('nope', { name: 'x', json: true });
 

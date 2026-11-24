@@ -340,11 +340,15 @@ export function readSettingValue(key: string): unknown {
 export function writeSettingValue(key: string, value: unknown): boolean {
 	// Read and write the same directory, resolved for a write, so the merge
 	// starts from the file the desktop reads and never from a stale copy.
-	const dir = getStoreFileDir(SETTINGS_FILE, true);
+	writeSettingValueIn(getStoreFileDir(SETTINGS_FILE, true), key, value);
+	return true;
+}
+
+/** `writeSettingValue` against a settings directory the caller already resolved. */
+function writeSettingValueIn(dir: string, key: string, value: unknown): void {
 	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
 	setNestedValue(settings, key, value);
 	writeStoreFile(SETTINGS_FILE, settings, dir);
-	return true;
 }
 
 /**
@@ -771,25 +775,38 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 
 /**
  * Read all SSH remote configurations from settings.
- *
- * Pass `{ forWrite: true }` when the list is about to be changed and written
- * back with `writeSshRemotes()`. That read resolves the settings file the way
- * the write will (creating a missing custom Storage Location), so the edit
- * starts from the list the desktop reads and never copies a stale config-dir
- * list into the synced store (issue #2082).
  */
-export function readSshRemotes(options: { forWrite?: boolean } = {}): SshRemoteConfig[] {
-	const settings = options.forWrite
-		? readStoreFile<SettingsStore>(SETTINGS_FILE, getStoreFileDir(SETTINGS_FILE, true)) || {}
-		: readSettings();
+export function readSshRemotes(): SshRemoteConfig[] {
+	const settings = readSettings();
 	return (settings.sshRemotes as SshRemoteConfig[]) || [];
 }
 
+/** An SSH remote list read for an edit, with the settings directory it came from. */
+export interface SshRemotesEdit {
+	remotes: SshRemoteConfig[];
+	dir: string;
+}
+
 /**
- * Write SSH remotes array back to settings
+ * Read the SSH remote list for an edit. Resolves the settings file the way a
+ * write does (creating a missing custom Storage Location), so the edit starts
+ * from the list the desktop reads (issue #2082). Pass the returned `dir` to
+ * `writeSshRemotes()` so the write lands in the same store even if a later
+ * resolution would pick a different directory.
  */
-export function writeSshRemotes(remotes: SshRemoteConfig[]): void {
-	writeSettingValue('sshRemotes', remotes);
+export function readSshRemotesForEdit(): SshRemotesEdit {
+	const dir = getStoreFileDir(SETTINGS_FILE, true);
+	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
+	return { remotes: (settings.sshRemotes as SshRemoteConfig[]) || [], dir };
+}
+
+/**
+ * Write SSH remotes array back to settings. `dir` is the directory
+ * `readSshRemotesForEdit()` returned; without it the directory is resolved for
+ * a write.
+ */
+export function writeSshRemotes(remotes: SshRemoteConfig[], dir?: string): void {
+	writeSettingValueIn(dir ?? getStoreFileDir(SETTINGS_FILE, true), 'sshRemotes', remotes);
 }
 
 /**

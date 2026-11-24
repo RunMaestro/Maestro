@@ -1,7 +1,7 @@
 // Remove SSH remote command - delete an SSH remote configuration
 
 import {
-	readSshRemotes,
+	readSshRemotesForEdit,
 	writeSshRemotes,
 	resolveSshRemoteId,
 	readSettingValue,
@@ -28,7 +28,7 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 		return process.exit(1);
 	}
 
-	const remotes = readSshRemotes({ forWrite: true });
+	const { remotes, dir } = readSshRemotesForEdit();
 	const index = remotes.findIndex((r) => r.id === resolvedId);
 
 	if (index === -1) {
@@ -43,7 +43,7 @@ export function removeSshRemote(remoteId: string, options: RemoveSshRemoteOption
 
 	const removedName = remotes[index].name;
 	remotes.splice(index, 1);
-	writeSshRemotes(remotes);
+	writeSshRemotes(remotes, dir);
 
 	// Clear default if it was the deleted remote
 	const defaultId = readSettingValue('defaultSshRemoteId') as string | null;

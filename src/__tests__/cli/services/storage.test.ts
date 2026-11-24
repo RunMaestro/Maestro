@@ -59,6 +59,7 @@ import {
 	getSyncDir,
 	addHistoryEntry,
 	readSshRemotes,
+	readSshRemotesForEdit,
 	writeSshRemotes,
 	resolveSshRemoteId,
 } from '../../../cli/services/storage';
@@ -312,8 +313,34 @@ describe('storage service', () => {
 			// A plain read still sees the config-dir copy and creates nothing.
 			expect(readSshRemotes().map((r) => r.id)).toEqual(['stale']);
 			// A read for an edit starts from the store the desktop will read.
-			expect(readSshRemotes({ forWrite: true })).toEqual([]);
+			expect(readSshRemotesForEdit()).toEqual({ remotes: [], dir: syncDir });
 			expect(fs.mkdirSync).toHaveBeenCalledWith(syncDir, { recursive: true });
+		});
+
+		it('writes an SSH remote edit back to the store it read, even if a later resolution differs', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			// Creating the custom folder fails for the read, then would succeed for the write.
+			vi.mocked(fs.mkdirSync).mockImplementationOnce(() => {
+				throw new Error('EACCES');
+			});
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					sshRemotes: [{ id: 'local', name: 'Local' }],
+				},
+			});
+
+			const { remotes, dir } = readSshRemotesForEdit();
+			expect(dir).toBe(configDir);
+			writeSshRemotes([...remotes, { ...remotes[0], id: 'added' }], dir);
+
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [file, content] = vi.mocked(fs.writeFileSync).mock.calls[0];
+			expect(file).toBe(path.join(configDir, 'maestro-settings.json'));
+			expect(JSON.parse(content as string).sshRemotes.map((r: { id: string }) => r.id)).toEqual([
+				'local',
+				'added',
+			]);
 		});
 	});
 
