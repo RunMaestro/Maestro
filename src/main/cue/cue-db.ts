@@ -928,10 +928,24 @@ export interface CueSubscriptionTriggerStat {
 }
 
 /**
+ * Rows a queue cleanup wrote for work it discarded without running it (stale,
+ * malformed, or whose agent is gone). Both cleanup paths (`cue-run-manager.ts`
+ * and `cue-queue-persistence.ts`) mark them `droppedFromQueue: true` in the
+ * payload and stamp them with the cleanup time. A real run that timed out
+ * carries no such flag. `json_valid` guards `json_extract`, which throws on a
+ * payload that is not JSON, and `IS 1` (not `= 1`) keeps rows with no flag:
+ * `= 1` on a missing key is NULL, and `NOT NULL` would drop the row.
+ */
+const CUE_EVENT_DROPPED_FROM_QUEUE_SQL = `(payload IS NOT NULL AND json_valid(payload) AND json_extract(payload, '$.droppedFromQueue') IS 1)`;
+
+/**
  * Per-subscription trigger counts and last-trigger times across all retained
  * Cue history. Unlike {@link getCueEventGroupCounts}, this does NOT apply
  * {@link CUE_EVENT_WORTH_SHOWING_SQL}: a quiet heartbeat that completes with
- * no output still fired, and `cue list` must say so.
+ * no output still fired, and `cue list` must say so. It does exclude
+ * {@link CUE_EVENT_DROPPED_FROM_QUEUE_SQL}: discarding queued work is not a
+ * trigger, and counting it would report a fresh last-trigger time for a run
+ * that never happened.
  *
  * Returns `[]` when the DB is not initialized, so `cue list` falls back to
  * "never triggered" instead of throwing.
@@ -944,6 +958,7 @@ export function getCueSubscriptionTriggerStats(): CueSubscriptionTriggerStat[] {
 				COUNT(*) AS trigger_count,
 				MAX(created_at) AS last_triggered
 			FROM cue_events
+			WHERE NOT ${CUE_EVENT_DROPPED_FROM_QUEUE_SQL}
 			GROUP BY session_id, subscription_name`
 		)
 		.all() as Array<{

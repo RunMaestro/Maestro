@@ -631,6 +631,10 @@ describe('cue-db event journal', () => {
 		const sql = prepareCalls.find((s) => s.includes('trigger_count')) ?? '';
 		expect(sql).toContain('GROUP BY session_id, subscription_name');
 		expect(sql).not.toContain('output_excerpt');
+		// Work a queue cleanup discarded is not a trigger (#2046 review).
+		expect(sql).toContain(
+			"NOT (payload IS NOT NULL AND json_valid(payload) AND json_extract(payload, '$.droppedFromQueue') IS 1)"
+		);
 		expect(stats).toEqual([
 			{
 				sessionId: 'session-1',
