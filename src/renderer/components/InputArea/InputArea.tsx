@@ -25,6 +25,7 @@ import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
 import { PhoneComposerHandle } from './components/PhoneComposerHandle';
 import { StagedImagesStrip } from './components/StagedImagesStrip';
+import { DesignPickChips } from './components/DesignPickChips';
 import { ToolbarControls } from './components/ToolbarControls';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
@@ -50,9 +51,14 @@ import {
 	moveStagedImage,
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
+import { removeStagedDesignPick, setStagedDesignPickNote } from '../../services/designModePick';
+import type { StagedDesignPick } from '../../types';
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */
 export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
+
+/** One shared "no chips", so a tab without any never hands the strip a fresh []. */
+const EMPTY_DESIGN_PICKS: StagedDesignPick[] = [];
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -284,6 +290,26 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			if (renumbered !== draft) setInputValue(renumbered);
 		},
 		[stagedImages.length, setStagedImages, setInputValue]
+	);
+
+	// The Design Mode chips staged on the tab this composer drafts for. They live
+	// on the tab, so the strip edits them there, by id, and a tab switch shows
+	// the next tab's chips.
+	const activeTabId = activeTab?.id;
+	const tabDesignPicks = activeTab?.stagedDesignPicks;
+	const stagedDesignPicks =
+		tabDesignPicks && tabDesignPicks.length > 0 ? tabDesignPicks : EMPTY_DESIGN_PICKS;
+	const handleDesignPickNoteChange = useCallback(
+		(pickId: string, note: string) => {
+			if (activeTabId) setStagedDesignPickNote(session.id, activeTabId, pickId, note);
+		},
+		[session.id, activeTabId]
+	);
+	const handleRemoveDesignPick = useCallback(
+		(pickId: string) => {
+			if (activeTabId) removeStagedDesignPick(session.id, activeTabId, pickId);
+		},
+		[session.id, activeTabId]
 	);
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
@@ -571,6 +597,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				setStagedImages={setStagedImages}
 				openAnnotator={openAnnotator}
 				onReorder={handleReorderStagedImages}
+			/>
+
+			<DesignPickChips
+				isVisible={session.inputMode === 'ai'}
+				picks={stagedDesignPicks}
+				theme={theme}
+				onNoteChange={handleDesignPickNoteChange}
+				onRemove={handleRemoveDesignPick}
 			/>
 
 			<SlashCommandPopover

@@ -1,5 +1,6 @@
 /**
- * Tests for delivering a Design Mode pick into the agent's composer as a chip.
+ * Tests for delivering a Design Mode pick into the agent's composer as a chip,
+ * and for editing and removing a staged chip.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,13 +10,18 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 	notifyToast: vi.fn(() => 'toast-id'),
 }));
 
-import { deliverDesignPick } from '../../../renderer/services/designModePick';
+import {
+	deliverDesignPick,
+	removeStagedDesignPick,
+	setStagedDesignPickNote,
+} from '../../../renderer/services/designModePick';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createMockAITab, createMockSession } from '../../helpers';
 import type { DesignModePick } from '../../../renderer/utils/designModePicker';
+import type { StagedDesignPick } from '../../../renderer/types';
 
 const SESSION_ID = 'session-1';
 const TAB_ID = 'tab-1';
@@ -55,6 +61,22 @@ function session() {
 
 function chips() {
 	return session().aiTabs[0].stagedDesignPicks ?? [];
+}
+
+/** Seed the tab with one staged chip per id, each with the note `old`. */
+function stageChips(ids: string[], tabOverrides = {}): StagedDesignPick[] {
+	const staged = ids.map((id) => ({
+		id,
+		kind: 'element' as const,
+		label: id,
+		url: 'https://example.com',
+		note: 'old',
+		text: `block ${id}`,
+		screenshot: null,
+		createdAt: 1,
+	}));
+	seed({ ...tabOverrides, stagedDesignPicks: staged });
+	return staged;
 }
 
 const getBrowserId = vi.fn(async (): Promise<string | null> => 'browser:2');
@@ -308,5 +330,69 @@ describe('deliverDesignPick', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringContaining('pick the element again') })
 		);
+	});
+});
+
+describe('setStagedDesignPickNote', () => {
+	it('replaces the trimmed note on that chip and leaves the others as they were', () => {
+		const [, second] = stageChips(['a', 'b']);
+
+		expect(setStagedDesignPickNote(SESSION_ID, TAB_ID, 'a', '  Make it blue \n')).toBe(true);
+
+		expect(chips().map((c) => c.note)).toEqual(['Make it blue', 'old']);
+		expect(chips()[0]).toMatchObject({ id: 'a', text: 'block a', label: 'a' });
+		expect(chips()[1]).toBe(second);
+	});
+
+	it('clears a note', () => {
+		stageChips(['a']);
+		expect(setStagedDesignPickNote(SESSION_ID, TAB_ID, 'a', '   ')).toBe(true);
+		expect(chips()[0].note).toBe('');
+	});
+
+	it('writes nothing when the note is unchanged once trimmed', () => {
+		stageChips(['a']);
+		const before = session();
+		expect(setStagedDesignPickNote(SESSION_ID, TAB_ID, 'a', ' old ')).toBe(true);
+		expect(session()).toBe(before);
+	});
+
+	it('reports a chip that is not on that tab, and writes nothing', () => {
+		stageChips(['a']);
+		const before = session();
+		expect(setStagedDesignPickNote(SESSION_ID, TAB_ID, 'sent-already', 'x')).toBe(false);
+		expect(setStagedDesignPickNote(SESSION_ID, 'other-tab', 'a', 'x')).toBe(false);
+		expect(setStagedDesignPickNote('no-such-agent', TAB_ID, 'a', 'x')).toBe(false);
+		expect(session()).toBe(before);
+	});
+});
+
+describe('removeStagedDesignPick', () => {
+	it('takes that chip off its tab and keeps the rest in pick order', () => {
+		stageChips(['a', 'b', 'c']);
+		expect(removeStagedDesignPick(SESSION_ID, TAB_ID, 'b')).toBe(true);
+		expect(chips().map((c) => c.id)).toEqual(['a', 'c']);
+
+		expect(removeStagedDesignPick(SESSION_ID, TAB_ID, 'a')).toBe(true);
+		expect(removeStagedDesignPick(SESSION_ID, TAB_ID, 'c')).toBe(true);
+		expect(chips()).toEqual([]);
+	});
+
+	it('reports a chip that is not there, and writes nothing', () => {
+		stageChips(['a']);
+		const before = session();
+		expect(removeStagedDesignPick(SESSION_ID, TAB_ID, 'missing')).toBe(false);
+		expect(removeStagedDesignPick(SESSION_ID, 'other-tab', 'a')).toBe(false);
+		expect(removeStagedDesignPick('no-such-agent', TAB_ID, 'a')).toBe(false);
+		expect(session()).toBe(before);
+	});
+
+	it('never touches the draft or the staged images', () => {
+		stageChips(['a'], { inputValue: 'Fix it', stagedImages: [PASTED] });
+
+		removeStagedDesignPick(SESSION_ID, TAB_ID, 'a');
+
+		expect(session().aiTabs[0]).toMatchObject({ inputValue: 'Fix it', stagedImages: [PASTED] });
+		expect(chips()).toEqual([]);
 	});
 });

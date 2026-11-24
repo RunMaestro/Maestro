@@ -5,6 +5,7 @@ import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -838,6 +839,69 @@ describe('InputArea', () => {
 			const updaterFn = setStagedImages.mock.calls[0][0];
 			const result = updaterFn(stagedImages);
 			expect(result).toEqual(['data:image/png;base64,DEF456']);
+		});
+	});
+
+	describe('Design Mode chips', () => {
+		const chip = {
+			id: 'pick-1',
+			kind: 'element' as const,
+			label: 'button.cta "Sign up"',
+			url: 'https://example.com',
+			note: 'Make it blue',
+			text: 'Design Mode element from https://example.com',
+			screenshot: null,
+			createdAt: 1,
+		};
+
+		/** A session whose active tab has `chip` staged, in the store and on screen. */
+		function renderWithChip(inputMode: 'ai' | 'terminal' = 'ai') {
+			const base = createMockSession({ inputMode });
+			const session = {
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({ ...tab, stagedDesignPicks: [chip] })),
+			};
+			useSessionStore.setState({ sessions: [session] } as never);
+			// The chip's popover registers with the layer stack (Escape closes it).
+			render(
+				<LayerStackProvider>
+					<InputArea {...createDefaultProps({ session })} />
+				</LayerStackProvider>
+			);
+		}
+
+		function storedChips() {
+			return useSessionStore.getState().sessions[0].aiTabs[0].stagedDesignPicks;
+		}
+
+		it("shows the active tab's chips in AI mode", () => {
+			renderWithChip();
+			expect(screen.getAllByTestId('design-pick-chip')).toHaveLength(1);
+			expect(screen.getByText('button.cta "Sign up"')).toBeInTheDocument();
+		});
+
+		it('does NOT show chips in terminal mode', () => {
+			renderWithChip('terminal');
+			expect(screen.queryByTestId('design-pick-chip')).not.toBeInTheDocument();
+		});
+
+		it('removes a chip from the tab through the store', () => {
+			renderWithChip();
+			fireEvent.click(screen.getByRole('button', { name: 'Remove pick button.cta "Sign up"' }));
+			expect(storedChips()).toEqual([]);
+		});
+
+		it('saves an edited note on the tab when the popover closes', () => {
+			renderWithChip();
+			fireEvent.click(
+				screen.getByRole('button', { name: 'Design Mode pick button.cta "Sign up"' })
+			);
+			fireEvent.change(screen.getByTestId('design-pick-popover-note'), {
+				target: { value: ' Make it red ' },
+			});
+			fireEvent.click(screen.getByTestId('design-pick-popover-done'));
+
+			expect(storedChips()).toEqual([{ ...chip, note: 'Make it red' }]);
 		});
 	});
 

@@ -10,9 +10,15 @@
  * `stagedImages`.
  *
  * The click in the overlay and `maestro-cli browser-pick` both end here.
+ *
+ * Once staged, a chip is edited and removed by id on its tab through
+ * {@link setStagedDesignPickNote} and {@link removeStagedDesignPick}: the
+ * chip strip in the composer uses them, so any other caller reaches the same
+ * code.
  */
 
 import { stageDesignPickOnAgent } from './quoteIntoComposer';
+import { updateAiTab, useSessionStore } from '../stores/sessionStore';
 import { captureException } from '../utils/sentry';
 import { generateId } from '../utils/ids';
 import {
@@ -90,4 +96,52 @@ export async function deliverDesignPick(
 		missingTabMessage: 'This agent has no AI tab. Open one, then pick the element again.',
 	});
 	return aiTabId ? { aiTabId, text: designPickBlock(chip), pickId: chip.id } : null;
+}
+
+/** The chip `pickId` on `sessionId`'s AI tab `tabId`, from the live store. */
+function findStagedDesignPick(
+	sessionId: string,
+	tabId: string,
+	pickId: string
+): StagedDesignPick | undefined {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const tab = session?.aiTabs.find((t) => t.id === tabId);
+	return tab?.stagedDesignPicks?.find((p) => p.id === pickId);
+}
+
+/**
+ * Replace the note on one staged chip, trimmed the way a delivered note is.
+ * Writes nothing when the note is unchanged. Returns false when the chip is
+ * not on that tab (it was sent or removed meanwhile).
+ */
+export function setStagedDesignPickNote(
+	sessionId: string,
+	tabId: string,
+	pickId: string,
+	note: string
+): boolean {
+	const pick = findStagedDesignPick(sessionId, tabId, pickId);
+	if (!pick) return false;
+	const trimmed = note.trim();
+	if (trimmed === pick.note) return true;
+	updateAiTab(sessionId, tabId, (tab) => ({
+		...tab,
+		stagedDesignPicks: (tab.stagedDesignPicks ?? []).map((p) =>
+			p.id === pickId ? { ...p, note: trimmed } : p
+		),
+	}));
+	return true;
+}
+
+/**
+ * Take one staged chip off its tab, screenshot and all. Returns false when the
+ * chip is not on that tab.
+ */
+export function removeStagedDesignPick(sessionId: string, tabId: string, pickId: string): boolean {
+	if (!findStagedDesignPick(sessionId, tabId, pickId)) return false;
+	updateAiTab(sessionId, tabId, (tab) => ({
+		...tab,
+		stagedDesignPicks: (tab.stagedDesignPicks ?? []).filter((p) => p.id !== pickId),
+	}));
+	return true;
 }
