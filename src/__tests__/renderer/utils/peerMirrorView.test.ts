@@ -5,14 +5,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
-	setPeerConnection,
 	type MirroredPeer,
 } from '../../../shared/maestro-lib/client/peer-mirror';
-import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
@@ -31,19 +28,6 @@ const entry = (id: string, text: string, extra: Partial<LogEntryRecord> = {}): L
 	text,
 	...extra,
 });
-
-const agent: AgentRecord = {
-	id: 'a1',
-	name: 'Builder',
-	toolType: 'codex',
-	cwd: '/srv/app',
-	activeTabId: 't2',
-	aiTabs: [
-		{ id: 't1', name: 'First', starred: true },
-		{ id: 't2', state: 'busy' },
-		{ id: 't3', hidden: true },
-	],
-};
 
 describe('mirrorLogEntry', () => {
 	it('copies the drawn fields and maps an unknown kind to a system line', () => {
@@ -113,20 +97,6 @@ describe('mirrorQueuedItem', () => {
 		expect(item.text).toBe('/x y');
 		expect(item.paused).toBe(true);
 	});
-});
-
-describe('Move to Host (FED-SSH-06)', () => {
-	const connected = (peerId: string, remoteId: string): MirroredPeer =>
-		setPeerConnection(
-			replacePeerAgents(
-				createMirroredPeer({ peerId, remoteId, name: peerId }),
-				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [] }],
-				[],
-				1
-			).peer,
-			'connected'
-		).peer;
-	const ssh = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
 });
 
 describe('Federation status of a local agent', () => {

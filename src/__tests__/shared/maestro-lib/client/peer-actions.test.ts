@@ -305,7 +305,7 @@ describe('parsePeerAgentAction', () => {
 			tabId: 't1',
 		});
 		expect(
-			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: ' hi ', images: ['x'] })
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: ' hi ', name: 'ignored' })
 		).toEqual({ kind: 'send', tabId: 't1', text: ' hi ' });
 		expect(parsePeerAgentAction({ kind: 'rename-tab', tabId: 't1', name: ' Plan ' })).toEqual({
 			kind: 'rename-tab',

@@ -219,7 +219,7 @@ describe('federation IPC handlers', () => {
 		});
 
 		it('refuses a bad action before the service is touched', async () => {
-			await expect(call('federation:act', 'a', 'x', { kind: 'close-tab' })).rejects.toThrow(
+			await expect(call('federation:act', 'a', 'x', { kind: 'delete-agent' })).rejects.toThrow(
 				/Unknown action/
 			);
 			await expect(
