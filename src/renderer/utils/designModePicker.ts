@@ -19,12 +19,25 @@
  *  2. {@link parseDesignModeProbe} / {@link parseDesignModePick}: reply parsers.
  *  3. {@link designPickCropRect}, {@link filterDesignStyles},
  *     {@link buildDesignModePrompt}: the payload assembler.
+ *  4. {@link designPickLabel}, {@link designPickBlock}: the composer chip's
+ *     label and the block it adds to the message at send.
  */
 
 import { markdownFenceFor } from './quoteSelection';
+import { truncateAtWordBoundary } from '../../shared/formatters';
+import type { StagedDesignPick } from '../types';
 
 /** Longest `outerHTML` the guest reports; anything past it is cut with a marker. */
 export const DESIGN_MODE_MAX_HTML_CHARS = 6000;
+
+/**
+ * Longest element text the guest reports, whitespace collapsed. It is a little
+ * more than a chip label quotes, so the label can tell when the text was cut.
+ */
+export const DESIGN_MODE_MAX_TEXT_CHARS = 80;
+
+/** Most characters of an element's text that a chip label quotes. */
+const DESIGN_PICK_LABEL_TEXT_CHARS = 40;
 
 /**
  * Joins the selector segments of an element inside open shadow roots: each
@@ -132,6 +145,15 @@ export interface DesignModePick {
 	 * by {@link DESIGN_MODE_SHADOW_PIERCE}.
 	 */
 	selector: string;
+	/** The element's `id` attribute, '' when it has none. For the chip label. */
+	domId: string;
+	/** Its first classes (at most two), as the page spelled them. For the chip label. */
+	classes: string[];
+	/**
+	 * Its text as rendered, on one line, capped at
+	 * {@link DESIGN_MODE_MAX_TEXT_CHARS}. For the chip label.
+	 */
+	text: string;
 	/** `outerHTML`, already capped at {@link DESIGN_MODE_MAX_HTML_CHARS}. */
 	html: string;
 	/** Whether `html` was cut short. */
@@ -172,6 +194,7 @@ export type DesignModeGuestRequest =
  */
 const GUEST_HELPER = `function(req){
 	var MAX_HTML=${DESIGN_MODE_MAX_HTML_CHARS};
+	var MAX_TEXT=${DESIGN_MODE_MAX_TEXT_CHARS};
 	var PROPS=${JSON.stringify(DESIGN_MODE_STYLE_PROPERTIES)};
 	function up(el){
 		if(el.parentElement)return el.parentElement;
@@ -279,11 +302,22 @@ const GUEST_HELPER = `function(req){
 		var r=el.getBoundingClientRect();
 		return {x:r.left,y:r.top,width:r.width,height:r.height};
 	}
+	// The chip label's parts. A form's named controls shadow element
+	// properties (<input name="id">, <select name="classList">), so each part
+	// is checked to be a string: an element in the reply would fail the pick.
+	function isStr(v){return typeof v==='string';}
+	// innerText where the element has it (it skips hidden nodes and script),
+	// textContent where it does not (SVG).
+	function textOf(el){
+		var t=isStr(el.innerText)?el.innerText:isStr(el.textContent)?el.textContent:'';
+		return t.slice(0,MAX_TEXT*8).replace(/\\s+/g,' ').trim().slice(0,MAX_TEXT);
+	}
 	function describe(el){
 		var cs=window.getComputedStyle(el);var styles={};
 		for(var i=0;i<PROPS.length;i++){styles[PROPS[i]]=cs.getPropertyValue(PROPS[i]);}
 		var html=el.outerHTML||'';var cut=html.length>MAX_HTML;
 		return {url:location.href,tagName:el.tagName.toLowerCase(),selector:selectorFor(el),
+			domId:isStr(el.id)?el.id:'',classes:classes(el).filter(isStr),text:textOf(el),
 			html:cut?html.slice(0,MAX_HTML):html,htmlTruncated:cut,styles:styles,rect:box(el),
 			viewport:{width:window.innerWidth,height:window.innerHeight}};
 	}
@@ -400,6 +434,19 @@ function readViewport(value: unknown): DesignModePick['viewport'] | null {
 	return { width: v.width, height: v.height };
 }
 
+/** Longest id or class name kept for a chip label. */
+const MAX_LABEL_PART = 200;
+
+/** At most two class names, each on one line; anything that is not a string is dropped. */
+function readClasses(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.slice(0, 2)
+		.filter((c): c is string => typeof c === 'string')
+		.map((c) => oneLine(c, MAX_LABEL_PART))
+		.filter(Boolean);
+}
+
 function readStyles(value: unknown): Record<string, string> {
 	const styles: Record<string, string> = {};
 	if (!value || typeof value !== 'object') return styles;
@@ -456,6 +503,11 @@ export function parseDesignModePick(value: unknown): DesignModePick | DesignMode
 		// past the safety cap is dropped instead, and the prompt says so.
 		selector:
 			p.selector.length > DESIGN_MODE_MAX_SELECTOR_CHARS ? '' : withoutLineBreaks(p.selector),
+		// Label parts are optional: a reply without them still makes a pick,
+		// and its chip is labeled by the tag alone.
+		domId: typeof p.domId === 'string' ? oneLine(p.domId, MAX_LABEL_PART) : '',
+		classes: readClasses(p.classes),
+		text: typeof p.text === 'string' ? oneLine(p.text, DESIGN_MODE_MAX_TEXT_CHARS) : '',
 		html: p.html.slice(0, DESIGN_MODE_MAX_HTML_CHARS),
 		htmlTruncated: p.htmlTruncated === true || p.html.length > DESIGN_MODE_MAX_HTML_CHARS,
 		styles: readStyles(p.styles),
@@ -532,11 +584,13 @@ export interface DesignModePromptContext {
 	hasScreenshot: boolean;
 	/** The tab's Coworking id (`browser:2`), when the tab is visible to agents. */
 	browserId?: string | null;
-	/** What the user typed in the pick card. */
-	note?: string;
 }
 
-/** The Markdown block added to the composer for one pick. */
+/**
+ * The Markdown block one pick adds to the message: a chip's `text`. The
+ * user's note is not part of it; it stays editable on the chip, and
+ * {@link designPickBlock} adds it at send.
+ */
 export function buildDesignModePrompt(
 	pick: DesignModePick,
 	context: DesignModePromptContext
@@ -590,12 +644,30 @@ export function buildDesignModePrompt(
 				: 'A screenshot of the element is attached.'
 		);
 	}
-	const note = context.note?.trim();
-	if (note) {
-		lines.push('');
-		lines.push(note);
-	}
 	return lines.join('\n');
+}
+
+/**
+ * The short label a composer chip shows for an element pick: the tag, its
+ * first class (its id when it has no class), and up to 40 characters of its
+ * text, as in `button.cta "Sign up"`. Every part is page data, so the label
+ * is drawn as plain text and never goes into the message.
+ */
+export function designPickLabel(
+	pick: Pick<DesignModePick, 'tagName' | 'domId' | 'classes' | 'text'>
+): string {
+	const name = pick.classes[0] ? `.${pick.classes[0]}` : pick.domId ? `#${pick.domId}` : '';
+	const text = truncateAtWordBoundary(pick.text, DESIGN_PICK_LABEL_TEXT_CHARS);
+	return text ? `${pick.tagName}${name} "${text}"` : `${pick.tagName}${name}`;
+}
+
+/**
+ * What one chip adds to the message at send: its block, then the user's note
+ * after a blank line when there is one.
+ */
+export function designPickBlock(chip: Pick<StagedDesignPick, 'text' | 'note'>): string {
+	const note = chip.note.trim();
+	return note ? `${chip.text}\n\n${note}` : chip.text;
 }
 
 /** What the host needs from a webview to resolve and photograph a pick. */

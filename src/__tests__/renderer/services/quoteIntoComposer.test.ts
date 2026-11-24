@@ -7,12 +7,13 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 import {
 	insertIntoAgentComposer,
 	quoteIntoAgentComposer,
+	stageDesignPickOnAgent,
 } from '../../../renderer/services/quoteIntoComposer';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
-import type { Session } from '../../../renderer/types';
+import type { Session, StagedDesignPick } from '../../../renderer/types';
 
 function seed(overrides: Partial<Session> = {}): void {
 	const session = {
@@ -183,6 +184,168 @@ describe('insertIntoAgentComposer', () => {
 			aiValue: 'typing elsewhere',
 			aiValueTabId: 'other-tab',
 		});
+		expect(useUIStore.getState().focusRequest).toBeNull();
+	});
+});
+
+describe('stageDesignPickOnAgent', () => {
+	function chip(id: string): StagedDesignPick {
+		return {
+			id,
+			kind: 'element',
+			label: 'button.cta "Sign up"',
+			url: 'https://example.com',
+			note: '',
+			text: 'BLOCK',
+			screenshot: null,
+			createdAt: 1,
+		};
+	}
+
+	function tab(id: string) {
+		return useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === id);
+	}
+
+	beforeEach(() => {
+		useComposerInputStore.setState({ aiValue: '', aiValueTabId: null, aiCommandMode: 'off' });
+		useUIStore.setState({ focusRequest: null } as never);
+		vi.mocked(notifyToast).mockClear();
+	});
+
+	it('stages the chip on the active AI tab, leaves the draft alone, and lands there', () => {
+		seed();
+		useComposerInputStore.setState({ aiValue: 'my question', aiValueTabId: 'tab-a' });
+
+		expect(stageDesignPickOnAgent('agent-1', chip('p1'))).toBe('tab-a');
+
+		expect(tab('tab-a')?.stagedDesignPicks).toEqual([chip('p1')]);
+		expect(tab('tab-a')?.inputValue).toBe('saved draft');
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValue: 'my question',
+			aiValueTabId: 'tab-a',
+		});
+		const session = useSessionStore.getState().sessions[0];
+		// The file tab no longer hides the chat.
+		expect(session.activeFileTabId).toBeNull();
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-a' } });
+	});
+
+	it('adds after the chips already staged, in order', () => {
+		seed({
+			aiTabs: [
+				{ id: 'tab-a', inputValue: '', commandMode: 'off', stagedDesignPicks: [chip('p1')] },
+			],
+		} as unknown as Partial<Session>);
+
+		stageDesignPickOnAgent('agent-1', chip('p2'), { reveal: false });
+
+		expect(tab('tab-a')?.stagedDesignPicks?.map((c) => c.id)).toEqual(['p1', 'p2']);
+	});
+
+	it('leaves command mode on the target tab, never on the tab the live slot holds', () => {
+		seed({
+			aiTabs: [
+				{ id: 'tab-a', inputValue: 'ls', commandMode: 'shell' },
+				{ id: 'tab-b', inputValue: '', commandMode: 'off' },
+			],
+		} as unknown as Partial<Session>);
+		// The user is typing a shell line on another tab.
+		useComposerInputStore.setState({
+			aiValue: 'git status',
+			aiValueTabId: 'tab-b',
+			aiCommandMode: 'shell',
+		});
+
+		stageDesignPickOnAgent('agent-1', chip('p1'), { reveal: false });
+
+		expect(tab('tab-a')?.commandMode).toBe('off');
+		expect(tab('tab-a')?.inputValue).toBe('ls');
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValue: 'git status',
+			aiValueTabId: 'tab-b',
+			aiCommandMode: 'shell',
+		});
+
+		// When the live slot holds the target tab's draft, the live mode is the one to drop.
+		useComposerInputStore.setState({
+			aiValue: 'ls',
+			aiValueTabId: 'tab-a',
+			aiCommandMode: 'shell',
+		});
+		stageDesignPickOnAgent('agent-1', chip('p2'), { reveal: false });
+		expect(useComposerInputStore.getState()).toMatchObject({ aiValue: 'ls', aiCommandMode: 'off' });
+	});
+
+	it('stages on the AI pane of the tiled group on screen and keeps the split', () => {
+		seed({
+			activeGroupId: 'g1',
+			tabGroups: [
+				{
+					id: 'g1',
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 'root',
+						children: [
+							{ kind: 'leaf', id: 'l1', tab: { type: 'file', id: 'file-1' } },
+							{ kind: 'leaf', id: 'l2', tab: { type: 'ai', id: 'tab-b' } },
+						],
+					},
+				},
+			],
+		} as unknown as Partial<Session>);
+
+		expect(stageDesignPickOnAgent('agent-1', chip('p1'))).toBe('tab-b');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(tab('tab-b')?.stagedDesignPicks).toEqual([chip('p1')]);
+		expect(tab('tab-a')?.stagedDesignPicks).toBeUndefined();
+		expect(session.activeGroupId).toBe('g1');
+		expect(session.tabGroups?.[0].focusedPaneId).toBe('l2');
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-b' } });
+	});
+
+	it('in the background, stages the chip and moves nothing', () => {
+		seed();
+		useComposerInputStore.setState({ aiValue: 'typing elsewhere', aiValueTabId: 'other-tab' });
+
+		expect(stageDesignPickOnAgent('agent-1', chip('p1'), { reveal: false })).toBe('tab-a');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(tab('tab-a')?.stagedDesignPicks).toEqual([chip('p1')]);
+		expect(session.activeFileTabId).toBe('file-1');
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValue: 'typing elsewhere',
+			aiValueTabId: 'other-tab',
+		});
+		expect(useUIStore.getState().focusRequest).toBeNull();
+	});
+
+	it('brings a background agent on screen when revealing', () => {
+		seed();
+		useSessionStore.setState({ activeSessionId: 'someone-else' } as never);
+
+		expect(stageDesignPickOnAgent('agent-1', chip('p1'))).toBe('tab-a');
+
+		expect(useSessionStore.getState().activeSessionId).toBe('agent-1');
+		expect(tab('tab-a')?.stagedDesignPicks).toEqual([chip('p1')]);
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-a' } });
+	});
+
+	it('says so, and stages nothing, when the agent has no AI tab', () => {
+		seed({ aiTabs: [], activeTabId: undefined } as Partial<Session>);
+
+		expect(stageDesignPickOnAgent('agent-1', chip('p1'))).toBeNull();
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('then pick again') })
+		);
+
+		expect(
+			stageDesignPickOnAgent('gone', chip('p1'), { missingTabMessage: 'Pick the region again.' })
+		).toBeNull();
+		expect(notifyToast).toHaveBeenLastCalledWith(
+			expect.objectContaining({ message: 'Pick the region again.' })
+		);
 		expect(useUIStore.getState().focusRequest).toBeNull();
 	});
 });

@@ -3,16 +3,25 @@
  *
  * A browser tab has no composer under it, so a pick goes where "Quote in
  * Message" from a file tab goes: the agent's active AI tab (the tiled group's
- * AI pane when a group is showing), through {@link insertIntoAgentComposer}.
- * The cropped screenshot is staged on that tab, the same `stagedImages` list a
- * pasted image uses, and the element block is appended to its draft.
+ * AI pane when a group is showing). It lands there as a chip, through
+ * {@link stageDesignPickOnAgent}: a short label, the cropped screenshot, and
+ * the user's note, with the full element block kept on the chip until the
+ * message is sent. The chip owns the screenshot; it never goes into the tab's
+ * `stagedImages`.
  *
  * The click in the overlay and `maestro-cli browser-pick` both end here.
  */
 
-import { insertIntoAgentComposer } from './quoteIntoComposer';
+import { stageDesignPickOnAgent } from './quoteIntoComposer';
 import { captureException } from '../utils/sentry';
-import { buildDesignModePrompt, type DesignModeCapture } from '../utils/designModePicker';
+import { generateId } from '../utils/ids';
+import {
+	buildDesignModePrompt,
+	designPickBlock,
+	designPickLabel,
+	type DesignModeCapture,
+} from '../utils/designModePicker';
+import type { StagedDesignPick } from '../types';
 
 export interface DesignPickDelivery extends DesignModeCapture {
 	/** The agent that owns the browser tab. */
@@ -24,10 +33,13 @@ export interface DesignPickDelivery extends DesignModeCapture {
 	reveal?: boolean;
 }
 
-/** What {@link deliverDesignPick} put where, or null when it could not. */
+/** What {@link deliverDesignPick} staged where, or null when it could not. */
 export interface DesignPickDelivered {
 	aiTabId: string;
+	/** The block the chip adds to the message at send, note included. */
 	text: string;
+	/** The staged chip's id. */
+	pickId: string;
 }
 
 /**
@@ -47,20 +59,35 @@ async function lookUpBrowserId(sessionId: string, browserTabId: string): Promise
 	}
 }
 
+/**
+ * The chip for one pick. Its `text` is the element block without the note:
+ * the note stays editable on the chip and {@link designPickBlock} adds it at
+ * send.
+ */
+async function buildDesignPickChip(delivery: DesignPickDelivery): Promise<StagedDesignPick> {
+	const browserId = await lookUpBrowserId(delivery.sessionId, delivery.browserTabId);
+	return {
+		id: generateId(),
+		kind: 'element',
+		label: designPickLabel(delivery.pick),
+		url: delivery.pick.url,
+		note: delivery.note?.trim() ?? '',
+		text: buildDesignModePrompt(delivery.pick, {
+			hasScreenshot: !!delivery.screenshot,
+			browserId,
+		}),
+		screenshot: delivery.screenshot,
+		createdAt: Date.now(),
+	};
+}
+
 export async function deliverDesignPick(
 	delivery: DesignPickDelivery
 ): Promise<DesignPickDelivered | null> {
-	const browserId = await lookUpBrowserId(delivery.sessionId, delivery.browserTabId);
-	const text = buildDesignModePrompt(delivery.pick, {
-		hasScreenshot: !!delivery.screenshot,
-		browserId,
-		note: delivery.note,
-	});
-	const aiTabId = insertIntoAgentComposer(delivery.sessionId, text, {
-		format: 'block',
-		images: delivery.screenshot ? [delivery.screenshot] : undefined,
+	const chip = await buildDesignPickChip(delivery);
+	const aiTabId = stageDesignPickOnAgent(delivery.sessionId, chip, {
 		reveal: delivery.reveal,
 		missingTabMessage: 'This agent has no AI tab. Open one, then pick the element again.',
 	});
-	return aiTabId ? { aiTabId, text } : null;
+	return aiTabId ? { aiTabId, text: designPickBlock(chip), pickId: chip.id } : null;
 }

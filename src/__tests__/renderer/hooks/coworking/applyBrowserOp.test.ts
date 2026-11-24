@@ -14,7 +14,11 @@ import {
 } from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
 
 vi.mock('../../../../renderer/services/designModePick', () => ({
-	deliverDesignPick: vi.fn(async () => ({ aiTabId: 'ai-1', text: 'ELEMENT BLOCK' })),
+	deliverDesignPick: vi.fn(async () => ({
+		aiTabId: 'ai-1',
+		text: 'ELEMENT BLOCK',
+		pickId: 'pick-1',
+	})),
 }));
 import { deliverDesignPick } from '../../../../renderer/services/designModePick';
 
