@@ -213,6 +213,8 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
 | Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
+Inside a group chat, **Toggle Tab Unread** marks the room itself unread (or read) in the Left Bar. The dot stays until you open the room again.
+
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
 ### Walking Unread and Draft Tabs

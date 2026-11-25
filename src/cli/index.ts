@@ -64,6 +64,7 @@ import {
 	groupChatStop,
 	groupChatArchive,
 	groupChatAdd,
+	groupChatUnread,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -238,6 +239,12 @@ import {
 	diffReviewList,
 	diffReviewRemove,
 	diffReviewSend,
+	fileReviewAdd,
+	fileReviewClear,
+	fileReviewEdit,
+	fileReviewList,
+	fileReviewRemove,
+	fileReviewSend,
 } from './commands/diff-review';
 import { promptLinkCreate, promptLinkList, promptLinkRevoke } from './commands/prompt-link';
 import { removePlaybook } from './commands/remove-playbook';
@@ -746,6 +753,14 @@ program
 		'--with-context',
 		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
 	)
+	.option(
+		'--btw',
+		"Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card"
+	)
+	.option(
+		'--tab <tab-id>',
+		'With --btw: the AI tab whose conversation to fork (default: its active tab)'
+	)
 	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
 	.option('--json', 'Output the answer as JSON')
 	.action(ask);
@@ -1117,6 +1132,18 @@ groupChat
 	.option('--restore', 'Unarchive the chat instead')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatArchive);
+
+groupChat
+	.command('unread <chat>')
+	.description('Mark a group chat unread (the red dot on its Left Bar row)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, true, options));
+
+groupChat
+	.command('read <chat>')
+	.description("Clear a group chat's unread dot")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, false, options));
 
 // Open file command - open a file in the Maestro desktop app.
 //
@@ -1512,6 +1539,69 @@ diffReview
 	.option('--focus', 'Take the user to the agent, as the Send Review button does')
 	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
 	.action(diffReviewSend);
+
+// File review comments - the CLI half of the File Preview's Review tray.
+// Comments are pinned to lines of one file ("Comment on line" on the File
+// Preview's right-click menu) and sent to the agent as one prompt, each with
+// its path:lines and the lines it quotes.
+const fileReview = program
+	.command('file-review')
+	.description('Pin review comments to lines of a file and send them to an agent as one review');
+
+fileReview
+	.command('list <file>')
+	.description('Show the pending comments on a file, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewList);
+
+fileReview
+	.command('add <file> <lines> <comment>')
+	.description('Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(fileReviewAdd);
+
+fileReview
+	.command('edit <file> <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(fileReviewEdit);
+
+fileReview
+	.command('remove <file> <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(fileReviewRemove);
+
+fileReview
+	.command('clear <file>')
+	.description('Discard every pending comment on a file')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewClear);
+
+fileReview
+	.command('send <file>')
+	.description('Send every current comment on a file to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(fileReviewSend);
 
 // Prompt Links - `maestro://run/<token>` URLs that open a new tab in one agent
 // and send one stored prompt. The URL carries only a random token; creating a

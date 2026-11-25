@@ -31,6 +31,16 @@ describe('resolveLocalImagePath', () => {
 		);
 	});
 
+	it('drops the slash before a Windows drive in a file:/// URL (#2067)', () => {
+		expect(resolveLocalImagePath('file:///D:/work/My%20Shots/a.png')).toBe(
+			'D:/work/My Shots/a.png'
+		);
+	});
+
+	it('leaves a bare Windows drive path as written', () => {
+		expect(resolveLocalImagePath('D:/work/shots/a.png')).toBe('D:/work/shots/a.png');
+	});
+
 	it('leaves a malformed percent sequence alone instead of throwing', () => {
 		expect(resolveLocalImagePath('/Users/p/100%/chart.png')).toBe('/Users/p/100%/chart.png');
 	});

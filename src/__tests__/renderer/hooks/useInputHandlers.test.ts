@@ -3288,7 +3288,7 @@ describe('Grok completion assembly and real keyboard acceptance', () => {
 					expect(commands.map(({ command }) => command)).toEqual([
 						'/history',
 						'/wizard',
-						...(toolType === 'claude-code' ? ['/skills'] : []),
+						...(toolType === 'claude-code' ? ['/btw', '/skills'] : []),
 						...(supportsProviderCommands ? ['/provider:review'] : []),
 					]);
 					if (supportsProviderCommands) {

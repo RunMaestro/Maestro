@@ -29,6 +29,7 @@ import {
 	Hash,
 	Replace,
 	ReplaceAll,
+	MessageSquarePlus,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
@@ -133,6 +134,10 @@ import {
 	useDataviewEnabled,
 	withDataviewLanguageRenderers,
 } from '../Markdown/components/dataviewSurface';
+import type { PluggableList } from 'unified';
+import { useFileReview } from './useFileReview';
+import { previewLinesAtPoint, sourceLineProps, type PreviewLineSource } from './previewLineSpan';
+import { formatCommentOnLinesLabel } from '../../utils/fileReviewComments';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
@@ -219,6 +224,7 @@ export const FilePreview = React.memo(
 			showFloatingControls = true,
 			onSendSelectionToAgent,
 			onQuoteSelection,
+			reviewSessionId,
 		},
 		ref
 	) {
@@ -283,8 +289,11 @@ export const FilePreview = React.memo(
 		const [showJqHelp, setShowJqHelp] = useState(false);
 		const [jqError, setJqError] = useState<string | null>(null);
 		const jqHelpRef = useRef<HTMLDivElement>(null);
+		// Right-click on a line: the editor gutter, a line's text, or a line (or
+		// rendered block, `endLine`) of a read view.
 		const [lineCtxMenu, setLineCtxMenu] = useState<{
 			lineNumber: number;
+			endLine?: number;
 			x: number;
 			y: number;
 		} | null>(null);
@@ -292,7 +301,13 @@ export const FilePreview = React.memo(
 		// passage as an agent receives it (path:lines + fenced text); `rawText`
 		// is what Copy puts on the clipboard.
 		const [editorSelectionMenu, setEditorSelectionMenu] = useState<
-			(TerminalSelectionContextMenuState & { rawText: string; sourceName: string }) | null
+			| (TerminalSelectionContextMenuState & {
+					rawText: string;
+					sourceName: string;
+					startLine: number;
+					endLine: number;
+			  })
+			| null
 		>(null);
 		// Replace field of the find bar (code editor only).
 		const [replaceText, setReplaceText] = useState('');
@@ -511,6 +526,21 @@ export const FilePreview = React.memo(
 
 		// Any non-binary, non-image file can be edited as text
 		const isEditableText = !isImage && !isBinary && !isDataViewer;
+
+		// Line review comments ("Comment on line" -> Review tray -> the agent).
+		const review = useFileReview({
+			theme,
+			sessionId: reviewSessionId,
+			filePath: file?.path,
+			sshRemoteId,
+			content: markdownEditMode ? editContent : (file?.content ?? ''),
+			language,
+			canEdit: isEditableText && !isMedia,
+			editMode: markdownEditMode,
+			setEditMode: setMarkdownEditMode,
+			editorRef,
+		});
+		const closeReviewEditor = review.closeEditor;
 
 		// A gist body is plain text. Same predicate the file tab's overlay menu
 		// uses, so the toolbar button and the menu entry appear on the same files.
@@ -905,7 +935,11 @@ export const FilePreview = React.memo(
 		// Memoize rehypePlugins array to prevent unnecessary re-renders.
 		// rehypeSourceLine runs first so it reads the original source positions
 		// before rehypeRaw re-parses raw HTML (which discards position info).
-		const rehypePlugins = useMemo(() => [rehypeSourceLine, rehypeRaw, rehypeSlug], []);
+		// `endLine` lets "Comment on line" name a paragraph's whole span.
+		const rehypePlugins = useMemo<PluggableList>(
+			() => [[rehypeSourceLine, { endLine: true }], rehypeRaw, rehypeSlug],
+			[]
+		);
 
 		// Shared handler for external links clicked inside rendered markdown, used
 		// by both the ReactMarkdown and fast-preview render paths. In the desktop
@@ -1258,6 +1292,37 @@ export const FilePreview = React.memo(
 			}
 		};
 
+		// Right-click in a read view: offer "Comment on line" on the line (or the
+		// rendered block, or the selected lines) under the pointer. Views with no
+		// line mapping (fast / giant tiers, tables, HTML, diagrams) keep the
+		// native menu, and so do images, which have their own.
+		const handlePreviewContextMenu = (e: React.MouseEvent) => {
+			if (!review.enabled || markdownEditMode) return;
+			const target = e.target as Node;
+			if (target instanceof HTMLImageElement) return;
+			let where: { source: PreviewLineSource; container: HTMLElement } | null = null;
+			if (codeContainerRef.current?.contains(target)) {
+				where = { source: 'tagged', container: codeContainerRef.current };
+			} else if (markdownContainerRef.current) {
+				const sync = previewSyncSource();
+				if (sync === 'markdown-dom') {
+					where = { source: 'tagged', container: markdownContainerRef.current };
+				} else if (sync === 'text-dom') {
+					where = { source: 'text', container: markdownContainerRef.current };
+				}
+			}
+			if (!where) return;
+			const span = previewLinesAtPoint(where.source, where.container, target, e.clientX, e.clientY);
+			if (!span) return;
+			e.preventDefault();
+			setLineCtxMenu({
+				lineNumber: span.startLine,
+				endLine: span.endLine,
+				x: e.clientX,
+				y: e.clientY,
+			});
+		};
+
 		// Capture-phase scroll listener keeps the top-line refs fresh. Stored in a
 		// ref so the listener (attached once) always runs against current state.
 		const captureTopLineRef = useRef<() => void>(() => {});
@@ -1322,7 +1387,10 @@ export const FilePreview = React.memo(
 				// (the user had to click into the editor before Cmd+E worked
 				// again). setTimeout(0) runs as a macrotask after paint, where
 				// focus reliably sticks.
-				setTimeout(() => editorRef.current?.focus(), 0);
+				// A review comment box opened with the switch keeps the focus.
+				setTimeout(() => {
+					if (!review.isEditingRef.current) editorRef.current?.focus();
+				}, 0);
 			} else if (!markdownEditMode && wasEditMode && containerRef.current) {
 				// Exiting edit mode - the editor has already unmounted, so use the
 				// scroll-tracked top line to re-anchor the preview.
@@ -1630,6 +1698,8 @@ export const FilePreview = React.memo(
 		// In tab mode: Escape only closes internal UI (search, TOC), not the tab itself
 		// Tabs close via Cmd+W or clicking the close button, not Escape
 		const handleEscapeRequest = useCallback(() => {
+			// An open review comment box is the innermost layer.
+			if (closeReviewEditor()) return;
 			if (showTocOverlay) {
 				setShowTocOverlay(false);
 				containerRef.current?.focus();
@@ -1651,7 +1721,7 @@ export const FilePreview = React.memo(
 				}
 			}
 			// In tab mode with no internal UI open, Escape does nothing
-		}, [showTocOverlay, searchOpen, hasChanges, onClose, isTabMode]);
+		}, [closeReviewEditor, showTocOverlay, searchOpen, hasChanges, onClose, isTabMode]);
 
 		// Register layer on mount - only for overlay mode (not tab mode)
 		// Tab mode: File preview is part of the main panel content, not an overlay
@@ -1730,6 +1800,8 @@ export const FilePreview = React.memo(
 					}),
 					rawText: selection.text,
 					sourceName: formatFileLineReference(file.name, selection.startLine, selection.endLine),
+					startLine: selection.startLine,
+					endLine: selection.endLine,
 				});
 			},
 			[file, cwd, language]
@@ -2238,6 +2310,7 @@ export const FilePreview = React.memo(
 				    zoom is a repaint, not a re-parse. */}
 				<div
 					ref={contentRef}
+					onContextMenu={handlePreviewContextMenu}
 					// The parquet viewer is a full-height application pane with its
 					// own virtualized scroller and a pinned footer, so it takes the
 					// content box edge to edge. The CSV / JSONL tables keep the
@@ -2730,6 +2803,14 @@ export const FilePreview = React.memo(
 									y: event.clientY,
 								});
 							}}
+							onLineContextMenu={
+								review.enabled
+									? (lineNumber, event) =>
+											setLineCtxMenu({ lineNumber, x: event.clientX, y: event.clientY })
+									: undefined
+							}
+							commentSlots={review.commentSlots}
+							onCommentSlotElement={review.onCommentSlotElement}
 							onKeyDown={(e) => {
 								// CodeMirror's defaultKeymap already binds Cmd/Ctrl+ArrowUp/Down
 								// to doc start/end, PageUp/PageDown for paging, and the usual
@@ -3052,6 +3133,10 @@ export const FilePreview = React.memo(
 									fontSize: `${CODE_BASE_FONT_PX * fontScale}px`,
 								}}
 								showLineNumbers
+								// One tagged span per source line, so a right-click maps to
+								// its line ("Comment on line", see previewLineSpan).
+								wrapLines
+								lineProps={sourceLineProps}
 								PreTag="div"
 							>
 								{displayContent}
@@ -3090,6 +3175,11 @@ export const FilePreview = React.memo(
 						/>
 					)}
 				</div>
+
+				{/* Review comments: inline in the editor (portals into its slots)
+				    and the tray that sends them to the agent as one review. */}
+				{review.portals}
+				{review.tray}
 
 				{/* Copy / save flashes are now rendered globally by <CenterFlash /> */}
 
@@ -3157,6 +3247,19 @@ export const FilePreview = React.memo(
 								? (text) => onSendSelectionToAgent(text, editorSelectionMenu.sourceName)
 								: undefined
 						}
+						onComment={
+							review.enabled
+								? () =>
+										review.commentOnLines(
+											editorSelectionMenu.startLine,
+											editorSelectionMenu.endLine
+										)
+								: undefined
+						}
+						commentLabel={formatCommentOnLinesLabel(
+							editorSelectionMenu.startLine,
+							editorSelectionMenu.endLine
+						)}
 					/>
 				)}
 				{lineCtxMenu && (
@@ -3178,6 +3281,21 @@ export const FilePreview = React.memo(
 								minWidth: '14rem',
 							}}
 						>
+							{review.enabled && (
+								<button
+									type="button"
+									onClick={() => {
+										review.commentOnLines(lineCtxMenu.lineNumber, lineCtxMenu.endLine);
+										setLineCtxMenu(null);
+									}}
+									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+									style={{ color: theme.colors.textMain }}
+									data-testid="file-preview-comment-on-line"
+								>
+									<MessageSquarePlus className="w-3.5 h-3.5" />
+									{formatCommentOnLinesLabel(lineCtxMenu.lineNumber, lineCtxMenu.endLine)}
+								</button>
+							)}
 							<button
 								type="button"
 								onClick={() => {

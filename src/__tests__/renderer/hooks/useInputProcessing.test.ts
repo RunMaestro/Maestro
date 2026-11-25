@@ -37,7 +37,13 @@ vi.mock('../../../renderer/services/aiCommand', () => ({
 	dismissAiCommand: vi.fn((entry: { request: string }) => entry.request),
 }));
 
+// `/btw` asks a forked session; assert where it is asked, not the answer.
+vi.mock('../../../renderer/services/sideQuestion', () => ({
+	askSideQuestion: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
+import { askSideQuestion } from '../../../renderer/services/sideQuestion';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
@@ -452,6 +458,35 @@ describe('useInputProcessing', () => {
 				}
 			}
 		);
+	});
+
+	describe('built-in /btw side question', () => {
+		it('asks on the pinned tab, not whichever tab is active', async () => {
+			const tabA = createMockTab({ id: 'tab-a' });
+			const tabB = createMockTab({ id: 'tab-b' });
+			const session = createMockSession({ aiTabs: [tabA, tabB], activeTabId: 'tab-b' });
+			const deps = createDeps({ activeSession: session, inputValue: '/btw which file?' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { tabId: 'tab-a' });
+			});
+
+			expect(askSideQuestion).toHaveBeenCalledWith(
+				expect.objectContaining({ tabId: 'tab-a', question: 'which file?' })
+			);
+		});
+
+		it('does not intercept while the wizard is active', async () => {
+			const deps = createDeps({ inputValue: '/btw which file?', isWizardActive: true });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(askSideQuestion).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('built-in /history command', () => {

@@ -100,6 +100,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
@@ -268,7 +269,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
-- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
+- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
@@ -363,6 +364,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
 - **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
+- **Line review comments (pin comments to lines, send them as one review):** `createReviewCommentStore()` in `src/renderer/stores/reviewCommentStore.ts`, `formatReviewPrompt()` in `src/renderer/utils/reviewPrompt.ts`, `sendReviewPrompt()` in `src/renderer/services/reviewDelivery.ts`
 - **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Whether a composer paste carries an image (text pastes are never rewritten):** `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
@@ -417,6 +419,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()` in `src/shared/effortRejection.ts`; `rejectedEffortForLevel()` in `src/shared/modelTiers.ts`; `armEffortFallback()` in `src/renderer/services/effortRejection.ts`
 - **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
+- **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Turning an Auto Run prompt template into a task prompt:** `resolveAutoRunPromptTemplate()`, `namesAutoRunDocument()` in `src/shared/autorunPromptTemplate.ts`; desktop `buildDesktopAutoRunPrompt()` / `prepareDesktopAutoRunPrompt()` in `src/renderer/hooks/batch/batchUtils.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`

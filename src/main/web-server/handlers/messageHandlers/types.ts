@@ -420,6 +420,7 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	setGroupChatUnread: (chatId: string, unread: boolean) => Promise<boolean>;
 	addGroupChatParticipant: (
 		chatId: string,
 		agentId: string

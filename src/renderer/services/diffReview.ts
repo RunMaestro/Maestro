@@ -3,35 +3,22 @@
  * was taken for (issue #1475), and the CLI half of the same thing
  * (`maestro-cli diff-review`).
  *
- * Two ways out, both self-sourcing from the stores so the viewer needs no
- * callbacks threaded through the modal host:
- *
- * - `sendDiffReview` QUEUES the review into the agent's AI tab through
- *   `enqueuePromptForTab`, the path the CLI's `dispatch --queue` and a snooze's
- *   wake prompt use. An idle agent runs it on the queue's next drain and a busy
- *   one when its turn ends, so a review never interrupts work in progress.
- * - `editDiffReviewInComposer` appends the review to that tab's draft through
- *   `insertIntoAgentComposer`, for a user who wants to reword it or add a note
- *   before it goes.
- *
  * `deliverDiffReview` is the one place a review leaves the store: it drops the
  * comments the current diff has outdated, formats the rest, hands them to one
- * of the two, and forgets only what was delivered. The viewer's buttons and the
+ * of the two ways out in `reviewDelivery.ts` (queue it, or put it in the
+ * composer), and forgets only what was delivered. The viewer's buttons and the
  * CLI's `send` both go through it.
- *
- * From the viewer both land the user on the tab the review went to: sending a
- * review is asking to watch the agent act on it. A CLI caller passing
- * `--background` gets the same delivery with nothing moved.
  */
 
 import type { Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
-import { notifyCenterFlash } from '../stores/centerFlashStore';
-import { notifyToast } from '../stores/notificationStore';
 import { diffReviewKey, useDiffReviewStore } from '../stores/diffReviewStore';
-import { enqueuePromptForTab } from './queuedPrompt';
-import { insertIntoAgentComposer, resolveComposerTarget } from './quoteIntoComposer';
-import { jumpToAgent } from './agentNavigation';
+import {
+	canReceiveReview,
+	deliverPendingReview,
+	type ReviewDeliveryMode,
+	type ReviewDeliveryResult,
+} from './reviewDelivery';
 import { gitService } from './git';
 import { resolveGitCwd, resolveGitSshRemoteId } from '../hooks/git/useGitAgentActions';
 import { parseGitDiff, type ParsedFileDiff } from '../utils/gitDiffParser';
@@ -50,99 +37,10 @@ import type {
 	DiffReviewCommentSummary,
 } from '../../shared/diffReviewCommands';
 
-/**
- * Whether an agent can receive a diff review. Terminal-only agents have no
- * conversation to send it to.
- */
-export function canReceiveDiffReview(
-	session: Pick<Session, 'toolType'> | null | undefined
-): boolean {
-	return !!session && session.toolType !== 'terminal';
-}
-
-/** How a review is handed over, and whether the user is taken to it. */
-export interface DiffReviewDeliveryOptions {
-	/** Write it and move nothing: no agent or tab switch, no flash. */
-	background?: boolean;
-}
-
-/**
- * Queue `prompt` for the agent's AI tab and bring that tab on screen (inside
- * its tiled group when it is a pane of one).
- *
- * @returns `false` (and says why in a toast) when the agent or its AI tab no
- * longer exists, so the caller keeps the comments.
- */
-export function sendDiffReview(
-	sessionId: string,
-	prompt: string,
-	options: DiffReviewDeliveryOptions = {}
-): boolean {
-	if (!prompt.trim()) return false;
-	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	const target = session && canReceiveDiffReview(session) ? resolveComposerTarget(session) : null;
-	const item = target
-		? enqueuePromptForTab({ sessionId, tabId: target.tabId, text: prompt })
-		: null;
-	if (!session || !target || !item) {
-		notifyToast({
-			color: 'red',
-			title: 'Review Not Sent',
-			message: session
-				? `${session.name} has no AI tab to receive the review. Your comments are kept.`
-				: 'The agent this diff belongs to no longer exists. Your comments are kept.',
-		});
-		return false;
-	}
-
-	if (options.background) return true;
-	jumpToAgent(sessionId, { tabId: item.tabId, stayInTiledGroup: true });
-	notifyCenterFlash({
-		message: `Review sent to ${session.name}`,
-		detail: session.state === 'busy' ? 'Queued behind the current turn' : undefined,
-		color: 'green',
-	});
-	return true;
-}
-
-/**
- * Put `prompt` in the agent's composer for editing instead of sending it.
- *
- * @returns `false` when there is no AI tab to put it in (the composer helper
- * toasts), so the caller keeps the comments.
- */
-export function editDiffReviewInComposer(
-	sessionId: string,
-	prompt: string,
-	options: DiffReviewDeliveryOptions = {}
-): boolean {
-	if (!prompt.trim()) return false;
-	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	if (!session || !canReceiveDiffReview(session)) {
-		notifyToast({
-			color: 'red',
-			title: 'No Composer to Fill',
-			message: 'The agent this diff belongs to cannot take a review. Your comments are kept.',
-		});
-		return false;
-	}
-	// The helper switches to the agent (keeping its tiled group) unless this is
-	// a background delivery, which only writes the tab's draft.
-	return (
-		insertIntoAgentComposer(sessionId, prompt, {
-			format: 'block',
-			reveal: !options.background,
-			missingTabMessage: 'This agent has no AI tab. Open one, then send the review again.',
-		}) !== null
-	);
-}
-
 /** Which of the two ways out a delivery takes. */
-export type DiffReviewDeliveryMode = 'send' | 'compose';
+export type DiffReviewDeliveryMode = ReviewDeliveryMode;
 
-export type DiffReviewDeliveryResult =
-	| { ok: true; delivered: DiffComment[]; outdated: DiffComment[]; prompt: string }
-	| { ok: false; error: string; outdated: DiffComment[] };
+export type DiffReviewDeliveryResult = ReviewDeliveryResult<DiffComment>;
 
 /**
  * Deliver one repository's pending review against the diff as it is now.
@@ -167,35 +65,21 @@ export function deliverDiffReview({
 	mode: DiffReviewDeliveryMode;
 	background?: boolean;
 }): DiffReviewDeliveryResult {
-	const comments = useDiffReviewStore.getState().commentsByRepo[key] ?? [];
-	const outdatedIds = findOutdatedComments(comments, files);
-	const outdated = comments.filter((c) => outdatedIds.has(c.id));
-	const current = comments.filter((c) => !outdatedIds.has(c.id) && c.body.trim());
+	const comments = useDiffReviewStore.getState().commentsByKey[key] ?? [];
 	// The diff is taken where the agent's git view points (its terminal's cwd in
 	// terminal mode); the agent itself runs in its own cwd. Name the repo when
 	// those differ, so relative paths cannot land in the wrong one.
 	const agentCwd = useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.cwd;
 	const repoDir = agentCwd !== undefined && !isSameDirectory(cwd, agentCwd) ? cwd : undefined;
-	const prompt = formatDiffReviewPrompt(current, { repoDir });
-	if (!prompt) {
-		return {
-			ok: false,
-			outdated,
-			error:
-				outdated.length > 0
-					? 'Every pending comment is outdated: its lines changed since it was written'
-					: 'There are no comments to send',
-		};
-	}
-	const deliver = mode === 'compose' ? editDiffReviewInComposer : sendDiffReview;
-	if (!deliver(sessionId, prompt, { background })) {
-		return { ok: false, outdated, error: 'The agent has no AI tab to receive the review' };
-	}
-	useDiffReviewStore.getState().removeComments(
-		key,
-		current.map((c) => c.id)
-	);
-	return { ok: true, delivered: current, outdated, prompt };
+	return deliverPendingReview({
+		sessionId,
+		comments,
+		outdatedIds: findOutdatedComments(comments, files),
+		formatPrompt: (current) => formatDiffReviewPrompt(current, { repoDir }),
+		forget: (ids) => useDiffReviewStore.getState().removeComments(key, ids),
+		mode,
+		background,
+	});
 }
 
 // ============================================================================
@@ -235,7 +119,7 @@ export async function runRemoteDiffReviewCommand(
 ): Promise<DiffReviewCommandResult> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === request.sessionId);
 	if (!session) return { success: false, error: `Agent not found: ${request.sessionId}` };
-	if (!canReceiveDiffReview(session)) {
+	if (!canReceiveReview(session)) {
 		return {
 			success: false,
 			error: `${session.name} is a terminal agent and cannot take a review`,
@@ -246,7 +130,7 @@ export async function runRemoteDiffReviewCommand(
 	const loadFiles = async () =>
 		parseGitDiff((await gitService.getDiff(repo.cwd, undefined, repo.sshRemoteId)).diff);
 	const listAgainst = (files: readonly ParsedFileDiff[]) => {
-		const comments = useDiffReviewStore.getState().commentsByRepo[repo.key] ?? [];
+		const comments = useDiffReviewStore.getState().commentsByKey[repo.key] ?? [];
 		const outdated = findOutdatedComments(comments, files);
 		return comments.map((c) => summarize(c, outdated.has(c.id)));
 	};
@@ -272,7 +156,7 @@ export async function runRemoteDiffReviewCommand(
 
 		case 'edit': {
 			const pending = () =>
-				(useDiffReviewStore.getState().commentsByRepo[repo.key] ?? []).find(
+				(useDiffReviewStore.getState().commentsByKey[repo.key] ?? []).find(
 					(c) => c.id === request.commentId
 				);
 			const missing = { success: false, error: `No pending comment ${request.commentId}` };
@@ -299,7 +183,7 @@ export async function runRemoteDiffReviewCommand(
 		}
 
 		case 'remove': {
-			const existing = (store.commentsByRepo[repo.key] ?? []).find(
+			const existing = (store.commentsByKey[repo.key] ?? []).find(
 				(c) => c.id === request.commentId
 			);
 			if (!existing) return { success: false, error: `No pending comment ${request.commentId}` };
@@ -308,7 +192,7 @@ export async function runRemoteDiffReviewCommand(
 		}
 
 		case 'clear': {
-			const count = (store.commentsByRepo[repo.key] ?? []).length;
+			const count = (store.commentsByKey[repo.key] ?? []).length;
 			store.clearComments(repo.key);
 			return { success: true, cwd: repo.cwd, cleared: count };
 		}

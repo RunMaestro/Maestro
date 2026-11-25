@@ -131,6 +131,20 @@ export interface AgentConfig extends BaseAgentConfig {
 	skipBatchModeArgsInStandardMode?: boolean;
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
+	/**
+	 * Args that turn a resumed turn into a throwaway branch of the session: the
+	 * turn reads the whole conversation but writes nothing back to it and leaves
+	 * no new transcript on disk. Only applied together with `resumeArgs`. Used by
+	 * side questions (`/btw`), which must never land in the tab's own history.
+	 * Agents without it cannot answer a side question with context.
+	 */
+	ephemeralForkArgs?: string[];
+	/**
+	 * Args that stop a fresh (non-resumed) turn from saving a session at all.
+	 * The no-session counterpart of `ephemeralForkArgs`: a side question on a tab
+	 * that has not had a turn yet must not leave a transcript behind either.
+	 */
+	noPersistenceArgs?: string[];
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	noToolsArgs?: string[]; // Args that disable ALL tool use, forcing a pure text response (e.g., ['--tools', ''] for Claude). Used by tab naming so a task-like first message produces a name instead of triggering a real agentic investigation.
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
@@ -295,6 +309,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// mode the permission relay mediates each tool call instead.
 		fullAccessArgs: ['--dangerously-skip-permissions'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
+		// `--fork-session` gives the resumed turn a new session id, so the original
+		// transcript is never appended to; `--no-session-persistence` stops the fork
+		// itself from being written, so nothing shows up in the session browser.
+		// Print mode only: maestro-p tails the transcript it resumed, which a fork
+		// never writes, so side questions always run `claude --print`.
+		ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
+		noPersistenceArgs: ['--no-session-persistence'],
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		// `--add-dir` allows tool access to a dir (read AND write), so it maps to

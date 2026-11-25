@@ -33,6 +33,8 @@ import {
 	requestWizardTabAutoName,
 } from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
+import { askSideQuestion } from '../../services/sideQuestion';
+import { parseSideQuestion } from '../../../shared/sideQuestion';
 import { gitService } from '../../services/git';
 import {
 	queuedMentionFields,
@@ -498,6 +500,27 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (effectiveInputValue.trim().startsWith('/')) {
 				const commandText = effectiveInputValue.trim();
 				const isTerminalMode = activeSession.inputMode === 'terminal';
+
+				// Built-in /btw side question (AI mode, Claude Code only). Handled here,
+				// ahead of the queue further down, because it must run NOW even while
+				// the tab is busy: it forks the tab's session instead of adding a turn
+				// to it, and the answer goes to a card above the composer, never into
+				// the transcript.
+				// Not while the wizard is active: its panel replaces the composer, so
+				// the card would never render and the answer would be lost.
+				const sideQuestion = isTerminalMode ? null : parseSideQuestion(commandText);
+				if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
+					const targetTab = resolveTargetTab(activeSession);
+					if (targetTab) {
+						clearComposerText();
+						void askSideQuestion({
+							session: activeSession,
+							tabId: targetTab.id,
+							question: sideQuestion,
+						});
+						return;
+					}
+				}
 
 				// Handle built-in /history command (only in AI mode)
 				// This is intercepted here because it requires Maestro to handle the synopsis generation

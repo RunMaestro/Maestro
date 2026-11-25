@@ -1,8 +1,9 @@
 /**
- * Tests for src/renderer/services/diffReview.ts: a review left in the Git Diff
- * viewer either QUEUES into the agent's AI tab (never spawns past a busy turn)
- * or lands in that tab's composer for editing. A failed delivery says so and
- * returns false so the viewer keeps the comments.
+ * Tests for src/renderer/services/diffReview.ts and the delivery it shares
+ * with the File Preview review (reviewDelivery.ts): a review either QUEUES
+ * into the agent's AI tab (never spawns past a busy turn) or lands in that
+ * tab's composer for editing. A failed delivery says so and returns false so
+ * the view keeps the comments.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -24,12 +25,14 @@ vi.mock('../../../renderer/services/git', () => ({
 }));
 
 import {
-	canReceiveDiffReview,
 	deliverDiffReview,
-	editDiffReviewInComposer,
 	runRemoteDiffReviewCommand,
-	sendDiffReview,
 } from '../../../renderer/services/diffReview';
+import {
+	canReceiveReview,
+	editReviewPromptInComposer,
+	sendReviewPrompt,
+} from '../../../renderer/services/reviewDelivery';
 import { diffReviewKey, useDiffReviewStore } from '../../../renderer/stores/diffReviewStore';
 import { parseGitDiff } from '../../../renderer/utils/gitDiffParser';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -56,16 +59,16 @@ function seed(overrides: Partial<Session> = {}, activeSessionId = 'other'): void
 
 const target = () => useSessionStore.getState().sessions.find((s) => s.id === 'agent-1')!;
 
-describe('canReceiveDiffReview', () => {
+describe('canReceiveReview', () => {
 	it('refuses terminal-only agents and missing ones', () => {
-		expect(canReceiveDiffReview({ toolType: 'claude-code' })).toBe(true);
-		expect(canReceiveDiffReview({ toolType: 'terminal' })).toBe(false);
-		expect(canReceiveDiffReview(undefined)).toBe(false);
-		expect(canReceiveDiffReview(null)).toBe(false);
+		expect(canReceiveReview({ toolType: 'claude-code' })).toBe(true);
+		expect(canReceiveReview({ toolType: 'terminal' })).toBe(false);
+		expect(canReceiveReview(undefined)).toBe(false);
+		expect(canReceiveReview(null)).toBe(false);
 	});
 });
 
-describe('sendDiffReview', () => {
+describe('sendReviewPrompt', () => {
 	beforeEach(() => {
 		vi.mocked(notifyToast).mockClear();
 		vi.mocked(notifyCenterFlash).mockClear();
@@ -73,7 +76,7 @@ describe('sendDiffReview', () => {
 
 	it("queues the review into the agent's AI tab and takes the user there", () => {
 		seed();
-		expect(sendDiffReview('agent-1', 'Fix line 2.')).toBe(true);
+		expect(sendReviewPrompt('agent-1', 'Fix line 2.')).toBe(true);
 
 		const queue = target().executionQueue;
 		expect(queue).toHaveLength(1);
@@ -87,7 +90,7 @@ describe('sendDiffReview', () => {
 
 	it('says the review waits its turn when the agent is busy', () => {
 		seed({ state: 'busy' });
-		expect(sendDiffReview('agent-1', 'Fix it.')).toBe(true);
+		expect(sendReviewPrompt('agent-1', 'Fix it.')).toBe(true);
 		expect(target().executionQueue).toHaveLength(1);
 		expect(notifyCenterFlash).toHaveBeenCalledWith(
 			expect.objectContaining({ detail: 'Queued behind the current turn' })
@@ -96,7 +99,7 @@ describe('sendDiffReview', () => {
 
 	it('keeps the comments (returns false) when the agent has no AI tab', () => {
 		seed({ aiTabs: [], activeTabId: '' });
-		expect(sendDiffReview('agent-1', 'Fix it.')).toBe(false);
+		expect(sendReviewPrompt('agent-1', 'Fix it.')).toBe(false);
 		expect(target().executionQueue).toHaveLength(0);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ color: 'red', title: 'Review Not Sent' })
@@ -105,19 +108,19 @@ describe('sendDiffReview', () => {
 
 	it('refuses a terminal-only agent and a missing one', () => {
 		seed({ toolType: 'terminal' });
-		expect(sendDiffReview('agent-1', 'Fix it.')).toBe(false);
-		expect(sendDiffReview('gone', 'Fix it.')).toBe(false);
+		expect(sendReviewPrompt('agent-1', 'Fix it.')).toBe(false);
+		expect(sendReviewPrompt('gone', 'Fix it.')).toBe(false);
 		expect(target().executionQueue).toHaveLength(0);
 	});
 
 	it('does nothing for a blank prompt', () => {
 		seed();
-		expect(sendDiffReview('agent-1', '  ')).toBe(false);
+		expect(sendReviewPrompt('agent-1', '  ')).toBe(false);
 		expect(notifyToast).not.toHaveBeenCalled();
 	});
 });
 
-describe('editDiffReviewInComposer', () => {
+describe('editReviewPromptInComposer', () => {
 	beforeEach(() => {
 		useComposerInputStore.setState({ aiValue: '', aiValueTabId: null, aiCommandMode: 'off' });
 		vi.mocked(notifyToast).mockClear();
@@ -127,7 +130,7 @@ describe('editDiffReviewInComposer', () => {
 		seed({ aiTabs: [createMockAITab({ id: 'tab-a', inputValue: 'my note' })] });
 		useComposerInputStore.setState({ aiValue: 'other tab text', aiValueTabId: 'tab-other' });
 
-		expect(editDiffReviewInComposer('agent-1', '## Comment 1 of 1\n\nFix it.')).toBe(true);
+		expect(editReviewPromptInComposer('agent-1', '## Comment 1 of 1\n\nFix it.')).toBe(true);
 
 		expect(useSessionStore.getState().activeSessionId).toBe('agent-1');
 		// Written to the tab's saved draft, which the composer loads on the
@@ -161,7 +164,7 @@ describe('editDiffReviewInComposer', () => {
 			],
 		} as unknown as Partial<Session>);
 
-		expect(editDiffReviewInComposer('agent-1', 'Fix it.')).toBe(true);
+		expect(editReviewPromptInComposer('agent-1', 'Fix it.')).toBe(true);
 
 		expect(target().activeGroupId).toBe('g1');
 		expect(target().activeTabId).toBe('tab-b');
@@ -171,7 +174,7 @@ describe('editDiffReviewInComposer', () => {
 
 	it('refuses a terminal-only agent', () => {
 		seed({ toolType: 'terminal' });
-		expect(editDiffReviewInComposer('agent-1', 'Fix it.')).toBe(false);
+		expect(editReviewPromptInComposer('agent-1', 'Fix it.')).toBe(false);
 		expect(notifyToast).toHaveBeenCalled();
 	});
 });
@@ -195,7 +198,7 @@ describe('background delivery (CLI --background)', () => {
 
 	it('queues the review without switching agent, tab, or flashing', () => {
 		seed({}, 'other');
-		expect(sendDiffReview('agent-1', 'Fix.', { background: true })).toBe(true);
+		expect(sendReviewPrompt('agent-1', 'Fix.', { background: true })).toBe(true);
 		expect(target().executionQueue).toHaveLength(1);
 		expect(useSessionStore.getState().activeSessionId).toBe('other');
 		expect(notifyCenterFlash).not.toHaveBeenCalled();
@@ -214,7 +217,7 @@ describe('deliverDiffReview', () => {
 	};
 
 	beforeEach(() => {
-		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByKey: {}, draftsByKey: {} });
 		seed();
 	});
 
@@ -246,7 +249,7 @@ describe('deliverDiffReview', () => {
 		expect(result.ok).toBe(true);
 		expect(target().executionQueue[0].text).toContain('Rename.');
 		expect(target().executionQueue[0].text).not.toContain('Old thought.');
-		expect(useDiffReviewStore.getState().commentsByRepo['/repo'].map((c) => c.id)).toEqual([
+		expect(useDiffReviewStore.getState().commentsByKey['/repo'].map((c) => c.id)).toEqual([
 			'stale',
 		]);
 	});
@@ -306,7 +309,7 @@ describe('deliverDiffReview', () => {
 		});
 		expect(result).toMatchObject({ ok: false, error: expect.stringContaining('outdated') });
 		expect(target().executionQueue).toHaveLength(0);
-		expect(useDiffReviewStore.getState().commentsByRepo['/repo']).toHaveLength(1);
+		expect(useDiffReviewStore.getState().commentsByKey['/repo']).toHaveLength(1);
 	});
 });
 
@@ -314,7 +317,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 	const key = () => diffReviewKey(target().cwd);
 
 	beforeEach(() => {
-		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByKey: {}, draftsByKey: {} });
 		seed();
 		mockGetDiff.mockResolvedValue({ diff: DIFF });
 	});
@@ -333,7 +336,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 			success: true,
 			comment: { location: 'src/app.ts:2', outdated: false },
 		});
-		expect(useDiffReviewStore.getState().commentsByRepo[key()]).toEqual([
+		expect(useDiffReviewStore.getState().commentsByKey[key()]).toEqual([
 			expect.objectContaining({ changeKeys: ['I2'], lineContents: ['const fresh = 3;'] }),
 		]);
 		// Same cwd and SSH remote the viewer is opened with.
@@ -374,7 +377,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 		expect(sent.prompt).toContain('`src/app.ts:2`');
 		expect(target().executionQueue).toHaveLength(1);
 		expect(useSessionStore.getState().activeSessionId).toBe('other');
-		expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+		expect(useDiffReviewStore.getState().commentsByKey).toEqual({});
 	});
 
 	it('edits in place, keeping the id and lines, and refuses an outdated comment', async () => {
@@ -386,7 +389,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 			side: 'new',
 			body: 'A',
 		});
-		const before = useDiffReviewStore.getState().commentsByRepo[key()][0];
+		const before = useDiffReviewStore.getState().commentsByKey[key()][0];
 		const edited = await runRemoteDiffReviewCommand({
 			action: 'edit',
 			sessionId: 'agent-1',
@@ -394,7 +397,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 			body: 'B',
 		});
 		expect(edited).toMatchObject({ success: true, comment: { id: before.id, body: 'B' } });
-		expect(useDiffReviewStore.getState().commentsByRepo[key()]).toEqual([{ ...before, body: 'B' }]);
+		expect(useDiffReviewStore.getState().commentsByKey[key()]).toEqual([{ ...before, body: 'B' }]);
 
 		mockGetDiff.mockResolvedValue({ diff: DIFF.replace('+const fresh = 3;', '+const x = 3;') });
 		const refused = await runRemoteDiffReviewCommand({
@@ -415,7 +418,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 			side: 'new',
 			body: 'A',
 		});
-		const id = useDiffReviewStore.getState().commentsByRepo[key()][0].id;
+		const id = useDiffReviewStore.getState().commentsByKey[key()][0].id;
 		mockGetDiff.mockImplementationOnce(async () => {
 			// The viewer sends or removes it while git diff runs.
 			useDiffReviewStore.getState().removeComment(key(), id);
@@ -428,7 +431,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 			body: 'B',
 		});
 		expect(result).toMatchObject({ success: false, error: `No pending comment ${id}` });
-		expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+		expect(useDiffReviewStore.getState().commentsByKey).toEqual({});
 	});
 
 	it('removes and clears', async () => {
@@ -440,7 +443,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 			side: 'new',
 			body: 'A',
 		});
-		const id = useDiffReviewStore.getState().commentsByRepo[key()][0].id;
+		const id = useDiffReviewStore.getState().commentsByKey[key()][0].id;
 		expect(
 			await runRemoteDiffReviewCommand({ action: 'remove', sessionId: 'agent-1', commentId: id })
 		).toMatchObject({ success: true });

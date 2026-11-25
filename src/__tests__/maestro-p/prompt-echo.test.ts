@@ -102,6 +102,24 @@ describe('checkPromptEcho', () => {
 		expect(checkPromptEcho(prompt, prompt.normalize('NFC'))).toBeNull();
 	});
 
+	it('passes when the editor dropped invisible format characters (zero-width space)', () => {
+		// The 2026-11-22 Pedsidian command-bus failures: a forwarded email held
+		// "coming up soon​." and claude logged it without the U+200B, so the
+		// same prompt failed as truncated on all three retries.
+		const prompt = `${longPrompt()}\n\nYour payment is coming up soon​.\nWord‍joiner­hyphen﻿ end.`;
+		const logged = prompt.replace(/[​‍­﻿]/g, '');
+		expect(checkPromptEcho(prompt, logged)).toBeNull();
+	});
+
+	it('points the snippet at the hole even after a zero-width space', () => {
+		const prompt = `Soon​. ${longPrompt()}`;
+		const holeStart = prompt.indexOf('Rule 5:');
+		const logged = (prompt.slice(0, holeStart) + prompt.slice(holeStart + 1022)).replace('​', '');
+		const mismatch = checkPromptEcho(prompt, logged);
+		expect(mismatch).not.toBeNull();
+		expect(mismatch!.missingFrom.startsWith('Rule 5:')).toBe(true);
+	});
+
 	it('passes when the editor logged part of the typing as a paste', () => {
 		// claude 2.1.294+ wraps a span it read as a paste in paste markers; the
 		// synopsis turns that failed this way had every character inside them.

@@ -268,6 +268,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
 		archiveGroupChat: vi.fn().mockResolvedValue(true),
+		setGroupChatUnread: vi.fn().mockResolvedValue(true),
 		addGroupChatParticipant: vi
 			.fn()
 			.mockResolvedValue({ success: true, participantName: 'Isabelle', alreadyMember: false }),
@@ -2812,6 +2813,46 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse()).toMatchObject({ archived: false, requestId: 'req-6' });
 			});
 			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('marks a chat unread, and only a literal unread: false marks it read', async () => {
+			handler.handleMessage(client, {
+				type: 'set_group_chat_unread',
+				chatId: 'chat-1',
+				requestId: 'req-u1',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'set_group_chat_unread_result',
+					success: true,
+					chatId: 'chat-1',
+					unread: true,
+					requestId: 'req-u1',
+				});
+			});
+			expect(callbacks.setGroupChatUnread).toHaveBeenLastCalledWith('chat-1', true);
+
+			handler.handleMessage(client, {
+				type: 'set_group_chat_unread',
+				chatId: 'chat-1',
+				unread: false,
+				requestId: 'req-u2',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({ unread: false, requestId: 'req-u2' });
+			});
+			expect(callbacks.setGroupChatUnread).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('tags a missing chatId on set_group_chat_unread with the requestId', () => {
+			handler.handleMessage(client, { type: 'set_group_chat_unread', requestId: 'req-u3' });
+
+			expect(lastResponse()).toMatchObject({
+				type: 'error',
+				message: 'Missing chatId',
+				requestId: 'req-u3',
+			});
+			expect(callbacks.setGroupChatUnread).not.toHaveBeenCalled();
 		});
 
 		it('adds a participant by agent ID and answers with the result', async () => {

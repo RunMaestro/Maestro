@@ -85,28 +85,34 @@ beforeEach(() => {
 });
 
 describe('TokenSpeedCards', () => {
-	it('shows average and peak input, output, and total rates', () => {
+	it('shows average and peak input, output, and total rates', async () => {
 		render(<TokenSpeedCards speed={summary()} theme={theme} />);
 
 		const cards = screen.getByTestId('token-speed-cards');
-		for (const label of [
-			'Avg Output',
-			'Avg Input',
-			'Avg Total',
-			'Peak Output',
-			'Peak Input',
-			'Peak Total',
-		]) {
-			expect(within(cards).getByText(label)).toBeInTheDocument();
+		// One card per measure, each pairing its average with its peak.
+		const tiles = within(cards).getAllByTestId('metric-card');
+		expect(tiles.map((t) => t.getAttribute('aria-label')?.split(':')[0])).toEqual([
+			'Output tok/s',
+			'Input tok/s',
+			'Total tok/s',
+		]);
+		for (const tile of tiles) {
+			expect(within(tile).getByTestId('metric-card-split')).toBeInTheDocument();
+			expect(within(tile).getByText('Avg')).toBeInTheDocument();
+			expect(within(tile).getByText('Peak')).toBeInTheDocument();
 		}
-		expect(within(cards).getByText('100 tok/s')).toBeInTheDocument();
-		expect(within(cards).getByText('10.0K tok/s')).toBeInTheDocument();
-		expect(within(cards).getByText('250 tok/s')).toBeInTheDocument();
+		// The unit is on the label, so each figure is a bare number.
+		expect(within(cards).getAllByTestId('metric-card-unit')).toHaveLength(3);
+		expect(within(cards).queryByText(/\d tok\/s$/)).not.toBeInTheDocument();
+		// The figures count up from 0 (AnimatedNumber), so wait for them to land.
+		expect(await within(cards).findByText('100')).toBeInTheDocument();
+		expect(await within(cards).findByText('10.0K')).toBeInTheDocument();
+		expect(await within(cards).findByText('250')).toBeInTheDocument();
 		// Where the output peak happened, and on what.
-		expect(within(cards).getByText(/claude-opus-5-5 · Oct 15, 2 PM/)).toBeInTheDocument();
+		expect(within(cards).getByText(/peak on claude-opus-5-5 · Oct 15, 2 PM/)).toBeInTheDocument();
 		// The fleet figure is labeled as its own measure, not as a per-model peak.
 		expect(
-			within(cards).getByText(/all agents' busiest clock hour averaged 30.4K tok\/s/)
+			within(cards).getByText(/all agents' busiest clock hour: 30.4K tok\/s/)
 		).toBeInTheDocument();
 	});
 

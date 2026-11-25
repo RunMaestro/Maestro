@@ -454,7 +454,7 @@ Ask another agent a question and print its answer (background consult - never to
 | `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
 | `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
-`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history. Pass `--btw` to ask a side question (`/btw`) instead: it is answered from a throwaway fork of the agent's tab conversation (`--tab <tab-id>` picks the tab, default its active tab), runs even while that tab is busy, and is never written to it. Claude Code agents only.
 
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
@@ -815,6 +815,22 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 | `--restore` | Unarchive the chat instead     | -       |
 | `--json`    | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -1165,6 +1181,77 @@ Discard every pending comment
 ## `maestro-cli diff-review send`
 
 Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
 
 | Option             | Description                                                        | Default |
 | ------------------ | ------------------------------------------------------------------ | ------- |

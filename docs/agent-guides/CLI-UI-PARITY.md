@@ -536,6 +536,9 @@ No real host dialog is exercised by the fixture composition tests.
 | SSH outage dialog: which remotes are down, "Check Now" | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state) |
 | System Log Viewer: read (level and context filters), Clear | `logs [--level] [--context] [--since] [--limit] [--json]`, `logs --clear` |
 | File editor Vim keybindings (Settings -> Display -> File Edit & Preview) | `settings set fileEditVimMode true` |
+| Side question about a tab (`/btw <question>`) | `ask <agent> "<question>" --btw [--tab <tab-id>]` |
+| File Preview review comments: Comment on Line(s), edit, remove, discard, send, compose | `file-review add <file> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose` |
+| Left Bar / Cmd+Shift+U: Mark a group chat unread / read | `group-chat unread <chat>` / `group-chat read <chat>` (read back with `group-chat list`) |
 
 ## Open gaps
 
@@ -641,7 +644,11 @@ still missing. Grouped, highest value first:
   logs (`logs`), reset stuck busy state, restart agent, retry.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing (the web interface and tunnel URLs are `live status`).
-- **Updates:** check/download/install.
+- **Updates:** check/download/install. A CLI install verb must call
+  `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
+  same as the modal's Restart and Resume, or running Auto Runs will not resume.
+- **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`
+  before `confirmQuit()`, as `handleConfirmQuit` does.
 - **Exports:** tab as HTML.
 - **Usage Dashboard:** plan usage Refresh (re-sample every account), and the Shortcuts tab's
   keyboard mastery figure (the math lives in `src/renderer/constants/keyboardMastery.ts`, which

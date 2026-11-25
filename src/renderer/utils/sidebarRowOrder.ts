@@ -99,7 +99,8 @@ export interface GroupSectionLayoutContext {
 /**
  * Which group sections are drawn, in order, and whether each one shows its
  * agents as rows. Groups hidden by a collapsed Groups+ parent, or emptied by the
- * unread filter, are left out. The unread filter forces every group open.
+ * unread filter, are left out. The unread filter never opens a collapsed group:
+ * only the user does, so toggling the filter cannot undo a collapse.
  */
 export function layoutGroupSections(
 	displayGroups: readonly Group[],
@@ -113,7 +114,7 @@ export function layoutGroupSections(
 				? ctx.groupById.get(group.parentGroupId)
 				: undefined;
 		const nested = Boolean(parentGroup && !parentGroup.parentGroupId);
-		if (nested && parentGroup?.collapsed && !ctx.showUnreadAgentsOnly) continue;
+		if (nested && parentGroup?.collapsed) continue;
 		const childGroups = ctx.groupsPlusEnabled ? (ctx.childrenByParentId.get(group.id) ?? []) : [];
 		const hasVisibleChild = childGroups.some(
 			(child) => (ctx.sessionsByGroupId.get(child.id) ?? []).length > 0
@@ -124,7 +125,7 @@ export function layoutGroupSections(
 			group,
 			sessions,
 			nested,
-			expanded: !group.collapsed || ctx.showUnreadAgentsOnly,
+			expanded: !group.collapsed,
 		});
 	}
 	return layouts;
