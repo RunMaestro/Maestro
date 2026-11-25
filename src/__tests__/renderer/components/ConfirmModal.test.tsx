@@ -114,6 +114,129 @@ describe('ConfirmModal', () => {
 				expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Confirm' }));
 			});
 		});
+
+		it('focuses the cancel button on mount when initialFocus is cancel', async () => {
+			renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message="Test"
+					onConfirm={vi.fn()}
+					onClose={vi.fn()}
+					initialFocus="cancel"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+			});
+		});
+
+		it('takes focus in the mount commit when ignoreHeldKeys is set', () => {
+			// No frame where focus sits behind the dialog: checked without waitFor.
+			renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message="Test"
+					onConfirm={vi.fn()}
+					onClose={vi.fn()}
+					initialFocus="cancel"
+					ignoreHeldKeys
+				/>
+			);
+
+			expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+		});
+	});
+
+	describe('opt-in props', () => {
+		it('labels the cancel button with cancelLabel', () => {
+			renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message="Test"
+					onConfirm={vi.fn()}
+					onClose={vi.fn()}
+					confirmLabel="Allow"
+					cancelLabel="Deny"
+				/>
+			);
+
+			expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+		});
+
+		it('renders children under the message', () => {
+			renderWithLayerStack(
+				<ConfirmModal theme={testTheme} message="Run this?" onConfirm={vi.fn()} onClose={vi.fn()}>
+					<pre data-testid="extra">document.title</pre>
+				</ConfirmModal>
+			);
+
+			const message = screen.getByText('Run this?');
+			const extra = screen.getByTestId('extra');
+			expect(extra).toHaveTextContent('document.title');
+			expect(
+				message.compareDocumentPosition(extra) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('sizes the dialog with width, 450 by default', () => {
+			const { unmount } = renderWithLayerStack(
+				<ConfirmModal theme={testTheme} message="Wide" onConfirm={vi.fn()} onClose={vi.fn()} />
+			);
+			const card = () => screen.getByText('Wide').closest('[role="dialog"] > div') as HTMLElement;
+			expect(card().style.width).toContain('450px');
+			unmount();
+
+			renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message="Wide"
+					onConfirm={vi.fn()}
+					onClose={vi.fn()}
+					width={640}
+				/>
+			);
+			expect(card().style.width).toContain('640px');
+		});
+
+		it('ignores a held Enter on Confirm with ignoreHeldKeys, and only then', () => {
+			const onConfirm = vi.fn();
+			const { unmount } = renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message="Test"
+					onConfirm={onConfirm}
+					onClose={vi.fn()}
+					ignoreHeldKeys
+				/>
+			);
+
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), {
+				key: 'Enter',
+				repeat: true,
+			});
+			expect(onConfirm).not.toHaveBeenCalled();
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), { key: 'Enter' });
+			expect(onConfirm).toHaveBeenCalledTimes(1);
+			unmount();
+
+			// Default callers keep the old behavior.
+			const onConfirmDefault = vi.fn();
+			renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message="Test"
+					onConfirm={onConfirmDefault}
+					onClose={vi.fn()}
+				/>
+			);
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), {
+				key: 'Enter',
+				repeat: true,
+			});
+			expect(onConfirmDefault).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('button handlers', () => {

@@ -163,3 +163,61 @@ export function processCarriageReturns(text: string): string {
 	});
 	return processedLines.join('\n');
 }
+
+/**
+ * Characters a reader cannot see in rendered text but a parser still acts on:
+ * C0 and C1 controls, format characters (bidi embeddings, overrides and
+ * isolates, zero-width spaces and joiners, the byte order mark, tag
+ * characters), lone surrogates, the Unicode line and paragraph separators, and
+ * every other default-ignorable code point (variation selectors, and the
+ * Hangul fillers, which are legal JavaScript identifiers that render as blank
+ * space). `\r\n` is matched as one unit so a Windows line ending stays one
+ * plain line break.
+ */
+const HIDDEN_CHARACTER_PATTERN =
+	/\r\n|[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+
+/** Line terminators to JavaScript other than LF: a lone CR, U+2028, U+2029. */
+const LINE_ENDING_HIDDEN_CHARACTERS = new Set([
+	'\r',
+	String.fromCodePoint(0x2028),
+	String.fromCodePoint(0x2029),
+]);
+
+/** The brackets of a mark (U+27E8, U+27E9), which no code uses for syntax. */
+const MARK_OPEN = String.fromCodePoint(0x27e8);
+const MARK_CLOSE = String.fromCodePoint(0x27e9);
+
+/** The display form of a text, from `revealHiddenCharacters()`. */
+export interface RevealedText {
+	/** The text with every hidden character replaced by a mark naming it. */
+	text: string;
+	/** How many characters were replaced. */
+	hiddenCount: number;
+}
+
+/**
+ * Make every character of untrusted text visible before a person approves it
+ * (the script a coworking `eval` will run). Each hidden character becomes a
+ * mark that names its code point, `U+202E` between the brackets U+27E8 and
+ * U+27E9, so bidi controls cannot reorder what the reader sees (Trojan Source,
+ * CVE-2021-42574) and an invisible identifier cannot pass for blank space. A
+ * lone CR, U+2028 and U+2029 end a line to JavaScript but not in an HTML text
+ * block, so their mark is followed by a line break: a `//` comment cannot seem
+ * to swallow the statement after it. Tab, line feed and CRLF (shown as a line
+ * feed) are ordinary layout and stay as they are.
+ *
+ * Display only: the caller still runs or stores the original text.
+ */
+export function revealHiddenCharacters(text: string): RevealedText {
+	let hiddenCount = 0;
+	const revealed = text.replace(HIDDEN_CHARACTER_PATTERN, (char) => {
+		if (char === '\n' || char === '\t') return char;
+		if (char === '\r\n') return '\n';
+		hiddenCount += 1;
+		const codePoint = (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0');
+		const mark = `${MARK_OPEN}U+${codePoint}${MARK_CLOSE}`;
+		return LINE_ENDING_HIDDEN_CHARACTERS.has(char) ? `${mark}\n` : mark;
+	});
+	return { text: revealed, hiddenCount };
+}

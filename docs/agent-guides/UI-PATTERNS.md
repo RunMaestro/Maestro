@@ -1508,6 +1508,8 @@ Standard cancel/confirm button layout:
 />
 ```
 
+A dialog that can appear on its own while the user types, or one of a queue that replaces the dialog just answered, passes `ignoreHeldKeys`: an Enter or Space that auto-repeats, or that was pressed before the footer mounted, then answers nothing. `<ConfirmModal ignoreHeldKeys>` forwards it and also takes focus in the mount commit, so a held key cannot fall through to the surface behind it while one queued dialog swaps for the next. Key such a dialog by its request id so each one mounts fresh (`CoworkingApprovalHost` is the reference). `ConfirmModal` also takes `cancelLabel`, `initialFocus="cancel"` (a dialog whose stray Enter must decline), `width`, and `children` under the message.
+
 ### `<ShortcutHint>` (`src/renderer/components/ui/ShortcutHint.tsx`)
 
 The keys badge at the right edge of a tab overlay-menu row:

@@ -80,7 +80,7 @@ export type BrowserApprovalRequester = (
 ) => Promise<boolean>;
 
 /** Human-readable phrase describing what a browser op will do (for the approval
- *  dialog). Truncates free-form text/code so the dialog stays readable. */
+ *  dialog). Free-form text an op carries is not in it: see browserOpDetail. */
 function describeBrowserOp(op: BrowserOp): string {
 	switch (op.kind) {
 		case 'navigate':
@@ -88,9 +88,9 @@ function describeBrowserOp(op: BrowserOp): string {
 		case 'click':
 			return `click the element ${op.selector}`;
 		case 'type':
-			return `type into ${op.selector}: "${op.text.slice(0, 120)}"`;
+			return `type this text into ${op.selector}`;
 		case 'eval':
-			return `run JavaScript in the page:\n${op.code.slice(0, 300)}`;
+			return 'run this JavaScript in the page';
 		case 'back':
 			return 'navigate the browser back';
 		case 'forward':
@@ -116,9 +116,17 @@ function describeBrowserOp(op: BrowserOp): string {
 	}
 }
 
+/** The free-form text a browser op carries, which the approval dialog shows
+ *  in full: the dialog must show everything that will run (or be typed). */
+function browserOpDetail(op: BrowserOp): string | undefined {
+	if (op.kind === 'eval') return op.code;
+	if (op.kind === 'type') return op.text;
+	return undefined;
+}
+
 /** Default approval requester: reads the per-agent confirm policy and, when the
  *  op needs approval, shows the confirm dialog and awaits the user's decision. */
-async function defaultRequestApproval(
+export async function defaultRequestApproval(
 	op: BrowserOp,
 	ctx: { agentId: string; sessionId: string; forceConfirm?: boolean }
 ): Promise<boolean> {
@@ -126,12 +134,16 @@ async function defaultRequestApproval(
 	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
 	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
 	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind)) return true;
+	const detail = browserOpDetail(op);
 	return requestCoworkingApproval(
 		{
 			agentId: ctx.agentId,
 			sessionId: ctx.sessionId,
 			title: 'Allow browser action?',
-			message: `The "${ctx.agentId}" agent wants to ${describeBrowserOp(op)}.`,
+			message: `The "${ctx.agentId}" agent wants to ${describeBrowserOp(op)}${detail === undefined ? '.' : ':'}`,
+			detail,
+			// A script runs with the page's privileges: a stray Enter must decline.
+			focusDeny: op.kind === 'eval',
 		},
 		// Auto-decline before the main resolver's interaction timeout so a late
 		// decision never executes the op after the caller has already given up.

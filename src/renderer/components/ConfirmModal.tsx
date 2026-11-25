@@ -1,4 +1,4 @@
-import React, { memo, useRef, useCallback } from 'react';
+import React, { memo, useRef, useCallback, useLayoutEffect } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -14,6 +14,23 @@ interface ConfirmModalProps {
 	icon?: React.ReactNode;
 	destructive?: boolean;
 	confirmLabel?: string;
+	/** Cancel button label. Defaults to 'Cancel'. */
+	cancelLabel?: string;
+	/** The button that has focus when the dialog opens. Defaults to 'confirm'. */
+	initialFocus?: 'confirm' | 'cancel';
+	/**
+	 * Answer only a key press that began after the dialog mounted (see
+	 * `ModalFooter`'s `ignoreHeldKeys`), and take focus in the mount commit
+	 * rather than a frame later. When a queued dialog replaces the one just
+	 * answered, a held key then neither answers the new one nor lands, for that
+	 * frame, in the surface the closing dialog hands focus back to.
+	 * Defaults to false.
+	 */
+	ignoreHeldKeys?: boolean;
+	/** Dialog width in pixels. Defaults to 450. */
+	width?: number;
+	/** Content shown under the message across the full width (a code block). */
+	children?: React.ReactNode;
 }
 
 export const ConfirmModal = memo(function ConfirmModal({
@@ -26,8 +43,22 @@ export const ConfirmModal = memo(function ConfirmModal({
 	icon,
 	destructive = true,
 	confirmLabel,
+	cancelLabel,
+	initialFocus = 'confirm',
+	ignoreHeldKeys = false,
+	width = 450,
+	children,
 }: ConfirmModalProps) {
 	const confirmButtonRef = useRef<HTMLButtonElement>(null);
+	const cancelButtonRef = useRef<HTMLButtonElement>(null);
+	const initialFocusRef = initialFocus === 'cancel' ? cancelButtonRef : confirmButtonRef;
+
+	// Modal focuses `initialFocusRef` a frame after mount. Claiming the same
+	// button in the commit leaves no gap for the layer stack's deferred focus
+	// hand-back to put the caret behind the dialog.
+	useLayoutEffect(() => {
+		if (ignoreHeldKeys) initialFocusRef.current?.focus();
+	}, []);
 
 	const handleConfirm = useCallback(() => {
 		if (onConfirm) {
@@ -45,9 +76,9 @@ export const ConfirmModal = memo(function ConfirmModal({
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
 			headerIcon={headerIcon ?? <Trash2 className="w-4 h-4" style={{ color: iconColor }} />}
-			width={450}
+			width={width}
 			zIndex={10000}
-			initialFocusRef={confirmButtonRef}
+			initialFocusRef={initialFocusRef}
 			footer={
 				<ModalFooter
 					theme={theme}
@@ -55,7 +86,10 @@ export const ConfirmModal = memo(function ConfirmModal({
 					onConfirm={handleConfirm}
 					destructive={destructive}
 					confirmLabel={confirmLabel}
+					cancelLabel={cancelLabel}
 					confirmButtonRef={confirmButtonRef}
+					cancelButtonRef={cancelButtonRef}
+					ignoreHeldKeys={ignoreHeldKeys}
 				/>
 			}
 		>
@@ -70,6 +104,7 @@ export const ConfirmModal = memo(function ConfirmModal({
 					{message}
 				</p>
 			</div>
+			{children}
 		</Modal>
 	);
 });

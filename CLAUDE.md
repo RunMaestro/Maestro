@@ -112,6 +112,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable()` in `src/shared/sshConnection.ts`
 - **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
+- **Showing untrusted text a person must approve (hidden characters marked):** `revealHiddenCharacters()` in `src/shared/stringUtils.ts`
 - **Lines added and removed by a save:** `countLineChanges(before, after)` in `src/shared/lineChanges.ts`
 - **Matching error patterns against an agent's exit output:** `stripJsonEventLines()` in `src/shared/agentErrorPatterns.ts`
 - **Reading what a TUI painted from a raw capture:** `replayTerminalScreen(raw)`, `capturedAlternateScreen(raw)` in `src/maestro-p/screen-replay.ts`
