@@ -151,6 +151,38 @@ describe('SettingsSearch navigation', () => {
 		expect(onNavigate).toHaveBeenCalledWith('general', 'general-tool-calls');
 	});
 
+	it('opens the section once when the breadcrumb text in the header is clicked', () => {
+		const { panelFor, onNavigate } = setup('tool calls');
+		const header = panelFor('thinkingMode').querySelector<HTMLElement>('[role="button"]')!;
+		expect(header.getAttribute('aria-label')).toMatch(/ in General$/);
+		const breadcrumb = header.firstElementChild as HTMLElement;
+		expect(breadcrumb.textContent).toMatch(/^General › /);
+
+		fireEvent.click(breadcrumb);
+
+		expect(onNavigate).toHaveBeenCalledTimes(1);
+		expect(onNavigate).toHaveBeenCalledWith('general', 'general-tool-calls');
+	});
+
+	it('opens the section from the header with Enter and Space', () => {
+		const { panelFor, onNavigate } = setup('tool calls');
+		const header = panelFor('thinkingMode').querySelector<HTMLElement>('[role="button"]')!;
+
+		fireEvent.keyDown(header, { key: 'Enter' });
+		fireEvent.keyDown(header, { key: ' ' });
+
+		expect(onNavigate).toHaveBeenCalledTimes(2);
+		expect(onNavigate).toHaveBeenLastCalledWith('general', 'general-tool-calls');
+	});
+
+	it('keeps Show all on its own toggle, not the header jump', () => {
+		const { getByText, onNavigate } = setup('tool calls');
+
+		fireEvent.click(getByText(/^Show all 2 in /));
+
+		expect(onNavigate).not.toHaveBeenCalled();
+	});
+
 	it('opens the tab from a row that has nothing to change in place', () => {
 		const { rowFor, onNavigate } = setup("director's notes");
 

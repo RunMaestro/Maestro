@@ -413,6 +413,8 @@ function SearchResultPanel({
 	}, [mounted, filtered, partial, matchedKey]);
 
 	const target = matches[0];
+	const [headerHovered, setHeaderHovered] = useState(false);
+	const [headerFocused, setHeaderFocused] = useState(false);
 
 	return (
 		<div
@@ -421,9 +423,24 @@ function SearchResultPanel({
 			className="rounded border"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 		>
+			{/* The whole header opens the section on its tab; the icon is only the cue. */}
 			<div
-				className="flex items-center gap-2 px-3 py-2 border-b select-none"
-				style={{ borderColor: theme.colors.border }}
+				role="button"
+				tabIndex={0}
+				onClick={() => onNavigate(target)}
+				onKeyDown={onActivationKey(() => onNavigate(target))}
+				onMouseEnter={() => setHeaderHovered(true)}
+				onMouseLeave={() => setHeaderHovered(false)}
+				onFocus={() => setHeaderFocused(true)}
+				onBlur={() => setHeaderFocused(false)}
+				title={`Open ${panel.title} in ${panel.tabLabel}`}
+				aria-label={`Open ${panel.title} in ${panel.tabLabel}`}
+				className="flex items-center gap-2 px-3 py-2 border-b cursor-pointer outline-none select-none rounded-t"
+				style={{
+					borderColor: theme.colors.border,
+					backgroundColor: headerHovered || headerFocused ? theme.colors.bgActivity : 'transparent',
+					boxShadow: headerFocused ? `inset 0 0 0 1px ${theme.colors.accent}` : undefined,
+				}}
 			>
 				<div
 					className="flex-1 min-w-0 text-xs font-bold uppercase truncate"
@@ -436,14 +453,11 @@ function SearchResultPanel({
 						{matches.length} of {total}
 					</span>
 				)}
-				<GhostIconButton
-					onClick={() => onNavigate(target)}
-					padding="p-1"
-					title={`Open in ${panel.tabLabel}`}
-					ariaLabel={`Open ${panel.title} in ${panel.tabLabel}`}
-				>
-					<CornerDownLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-				</GhostIconButton>
+				<CornerDownLeft
+					aria-hidden
+					className="w-3.5 h-3.5 m-1 flex-shrink-0"
+					style={{ color: headerFocused ? theme.colors.accent : theme.colors.textDim }}
+				/>
 			</div>
 			<div
 				ref={bodyRef}
@@ -491,12 +505,7 @@ function SearchResultJumpRow({
 			role="button"
 			tabIndex={0}
 			onClick={() => onNavigate(setting)}
-			onKeyDown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					onNavigate(setting);
-				}
-			}}
+			onKeyDown={onActivationKey(() => onNavigate(setting))}
 			onFocus={() => setFocused(true)}
 			onBlur={() => setFocused(false)}
 			title={`Open in ${setting.tabLabel}`}
@@ -523,6 +532,16 @@ function SearchResultJumpRow({
 			<ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.textDim }} />
 		</div>
 	);
+}
+
+/** Enter or Space on a `role="button"` element runs `activate`, as a click would. */
+function onActivationKey(activate: () => void) {
+	return (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			activate();
+		}
+	};
 }
 
 /** Paints the query terms in `text` with the accent color. */
