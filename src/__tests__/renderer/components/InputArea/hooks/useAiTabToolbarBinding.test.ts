@@ -5,12 +5,24 @@ import { createInputAreaSession } from '../_fixtures';
 import type { AITab } from '../../../../../renderer/types';
 
 const mockUpdateSessionWith = vi.fn();
+const storeMocks = vi.hoisted(() => ({ sessions: [] as unknown[] }));
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
 	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+	useSessionStore: { getState: () => ({ sessions: storeMocks.sessions }) },
+	selectSessionById: (id: string) => (state: { sessions: { id: string }[] }) =>
+		state.sessions.find((session) => session.id === id),
+}));
+const mockUpdateHostedTab = vi.fn();
+vi.mock('../../../../../renderer/services/hostedTurns', () => ({
+	updateHostedTab: (...args: unknown[]) => mockUpdateHostedTab(...args),
 }));
 
 describe('useAiTabToolbarBinding', () => {
-	afterEach(() => mockUpdateSessionWith.mockClear());
+	afterEach(() => {
+		mockUpdateSessionWith.mockClear();
+		mockUpdateHostedTab.mockClear();
+		storeMocks.sessions = [];
+	});
 
 	function bind(tabOverrides: Partial<AITab> = {}) {
 		const base = createInputAreaSession();
@@ -59,6 +71,16 @@ describe('useAiTabToolbarBinding', () => {
 		result.current.onThinkingModeChange('sticky');
 
 		expect(lastUpdatedTab(session).showThinking).toBe('sticky');
+	});
+
+	it('hands the thinking mode to the same tab on a hosted agent host (no-op for the others)', () => {
+		const { session, result } = bind();
+		storeMocks.sessions = [session];
+
+		result.current.onThinkingModeChange('on');
+
+		// updateHostedTab() is a no-op for a local or SSH agent, so every mode takes one path.
+		expect(mockUpdateHostedTab).toHaveBeenCalledWith(session, 'tab-1', { thinking: 'on' });
 	});
 
 	it('writes nothing without an active tab', () => {
