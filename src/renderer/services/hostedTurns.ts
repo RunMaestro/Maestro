@@ -8,6 +8,7 @@
  *   read-only, and save to History as the sender's `TurnOverrides`. A busy tab queues on the host.
  * - `interruptHostedTurn()`: Stop (the pill, the shortcut, `maestro-cli interrupt`).
  * - `openHostedTab()`, `closeHostedTab()`, `renameHostedTab()`, `starHostedTab()`: the strip.
+ * - `startHostedConversation()`: a new tab whose first turn this machine wrote (Fork).
  * - `updateHostedTab()`: a tab setting the host must hold before a turn starts (thinking).
  * - `settleHostedWizardTab()`: a wizard that ran here hands its tab name and session to the host.
  * - `startHostedAutoRun()`, `controlHostedAutoRun()`: the Auto Run panel's Run, Stop, and pause
@@ -109,31 +110,127 @@ export function hostedTurnOverrides(tab: AITab | undefined): TurnOverrides | und
 	return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
-/** Show `tabId` on the record, adding a blank tab for it until the host's update fills it in. */
-function focusHostTab(sessionId: string, tabId: string): void {
+/** Where a new host tab goes in the strip, and what it carries until the host's update fills it. */
+export interface HostedTabPlacement {
+	/** Right after this tab, as a local tab created at a position goes. Absent: at the end. */
+	afterTabId?: string;
+	/**
+	 * Fields only this record holds (a permission mode, a local-only notice in `logs`). The host's
+	 * update keeps them: a projection takes the name, session, and state from the host, and merges
+	 * local-only log entries with the host's in time order (`mergeHostedLogs()`).
+	 */
+	fields?: Partial<Omit<AITab, 'id'>>;
+}
+
+/** `list` with `item` moved (or added) right after the first element `isAnchor` matches. */
+function placeAfter<T>(
+	list: readonly T[],
+	item: T,
+	isItem: (x: T) => boolean,
+	isAnchor: (x: T) => boolean
+): T[] {
+	const rest = list.filter((x) => !isItem(x));
+	const at = rest.findIndex(isAnchor);
+	return at === -1 ? [...rest, item] : [...rest.slice(0, at + 1), item, ...rest.slice(at + 1)];
+}
+
+/**
+ * Show `tabId` on the record, adding a blank tab for it until the host's update fills it in. The
+ * host's update may land first (it appends the tab); a placement then moves it into place.
+ */
+function focusHostTab(sessionId: string, tabId: string, placement: HostedTabPlacement = {}): void {
 	updateSessionWith(sessionId, (session) => {
+		const { afterTabId, fields } = placement;
+		const existing = session.aiTabs.find((tab) => tab.id === tabId);
 		let next = session;
-		if (!next.aiTabs.some((tab) => tab.id === tabId)) {
+		if (!existing || afterTabId || fields) {
+			const base = existing ?? mirrorTab({ id: tabId });
+			const seededLogs = fields?.logs ?? [];
+			const tab: AITab = {
+				...base,
+				...fields,
+				logs: [
+					...seededLogs,
+					...(base.logs ?? []).filter((log) => !seededLogs.some((s) => s.id === log.id)),
+				],
+			};
+			const isTab = (candidate: AITab) => candidate.id === tabId;
+			const isRef = (ref: { type: string; id: string }) => ref.type === 'ai' && ref.id === tabId;
 			next = {
-				...next,
-				aiTabs: [...next.aiTabs, mirrorTab({ id: tabId })],
-				unifiedTabOrder: [...(next.unifiedTabOrder ?? []), { type: 'ai', id: tabId }],
+				...session,
+				aiTabs: afterTabId
+					? placeAfter(session.aiTabs, tab, isTab, (candidate) => candidate.id === afterTabId)
+					: existing
+						? session.aiTabs.map((candidate) => (isTab(candidate) ? tab : candidate))
+						: [...session.aiTabs, tab],
+				unifiedTabOrder:
+					afterTabId || !existing
+						? placeAfter(
+								session.unifiedTabOrder ?? [],
+								{ type: 'ai', id: tabId },
+								isRef,
+								(ref) => !!afterTabId && ref.type === 'ai' && ref.id === afterTabId
+							)
+						: session.unifiedTabOrder,
 			};
 		}
 		return setActiveTab(next, tabId)?.session ?? next;
 	});
 }
 
-/** Open a tab on the host and show it. Answers the new tab's id, or null when the host refused. */
+/**
+ * Open a tab on the host and show it, at `placement` when given. Answers the new tab's id, or null
+ * when the host refused.
+ */
 export async function openHostedTab(
-	session: Pick<Session, 'id' | 'liftedTo'>
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	placement?: HostedTabPlacement
 ): Promise<string | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
 	const result = await actOnMirroredAgent(target.peerId, target.agentId, { kind: 'new-tab' });
 	if (result?.kind !== 'new-tab') return null;
-	focusHostTab(session.id, result.tabId);
+	focusHostTab(session.id, result.tabId, placement);
 	return result.tabId;
+}
+
+/** A new conversation that starts from text this machine built (a fork of a hosted tab). */
+export interface HostedConversationStart extends HostedTabPlacement {
+	/** The tab's name, on the host too (the host's update would clear a name only held here). */
+	name: string;
+	/** The first turn's prompt. The host records it as the tab's first user message. */
+	prompt: string;
+}
+
+/**
+ * Start a conversation in a new host tab, as a local fork starts one in a new tab: the tab opens
+ * where `start` places it, takes its name on the host, and its first turn runs there with the
+ * tab's own model, effort, read-only, and save to History. The new tab's id, or null when the host
+ * refused (a refusal shows as a toast). Null for an agent that is not hosted.
+ */
+export async function startHostedConversation(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	start: HostedConversationStart
+): Promise<string | null> {
+	const target = hostedTargetOf(session);
+	if (!target) return null;
+	const tabId = await openHostedTab(session, {
+		afterTabId: start.afterTabId,
+		fields: { ...start.fields, name: start.name },
+	});
+	if (!tabId) return null;
+	await renameMirrorTab(target.peerId, target.agentId, tabId, start.name);
+	const tab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	await sendToMirroredTab(
+		target.peerId,
+		target.agentId,
+		tabId,
+		start.prompt,
+		hostedTurnOverrides(tab)
+	);
+	return tabId;
 }
 
 /**

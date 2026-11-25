@@ -17,6 +17,7 @@ import {
 	sendHostedTurn,
 	settleHostedWizardTab,
 	startHostedAutoRun,
+	startHostedConversation,
 	starHostedTab,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -171,6 +172,74 @@ describe('hostedTurns', () => {
 			{ kind: 'star-tab', tabId: 't1', starred: true },
 			{ kind: 'interrupt', tabId: 't1' },
 		]);
+	});
+
+	it('starts a conversation in a host tab placed after its source, named, with its first turn', async () => {
+		hydrateHost();
+		const session = row();
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+		const notice = { id: 'n1', timestamp: 1, source: 'system' as const, text: 'Forked' };
+		let tabId: string | null = null;
+		await act(async () => {
+			tabId = await startHostedConversation(session, {
+				afterTabId: 't1',
+				name: 'Forked: Docs',
+				prompt: '# Forked Conversation',
+				fields: { logs: [notice], permissionMode: 'readonly', readOnlyMode: true },
+			});
+		});
+		expect(tabId).toBe('t-fork');
+		expect(act$.mock.calls.map((call) => call[2])).toEqual([
+			{ kind: 'new-tab' },
+			{ kind: 'rename-tab', tabId: 't-fork', name: 'Forked: Docs' },
+			{
+				kind: 'send',
+				tabId: 't-fork',
+				text: '# Forked Conversation',
+				overrides: { readOnly: true },
+			},
+		]);
+		const shown = useSessionStore.getState().sessions[0];
+		expect(shown.aiTabs.map((tab) => tab.id)).toEqual(['t1', 't-fork', 'kept']);
+		expect(shown.activeTabId).toBe('t-fork');
+		const forked = shown.aiTabs[1];
+		expect(forked.name).toBe('Forked: Docs');
+		expect(forked.logs).toEqual([notice]);
+		expect(forked.readOnlyMode).toBe(true);
+	});
+
+	it("moves a new host tab into place when the host's update drew it first", async () => {
+		hydrateHost();
+		const session = createMockSession({
+			...row(),
+			aiTabs: [...row().aiTabs, createMockAITab({ id: 't-fork', logs: [] })],
+			unifiedTabOrder: [
+				{ type: 'ai', id: 't1' },
+				{ type: 'ai', id: 'kept' },
+				{ type: 'ai', id: 't-fork' },
+			],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } });
+		await act(async () => {
+			await openHostedTab(session, { afterTabId: 't1' });
+		});
+		const shown = useSessionStore.getState().sessions[0];
+		expect(shown.aiTabs.map((tab) => tab.id)).toEqual(['t1', 't-fork', 'kept']);
+		expect(shown.unifiedTabOrder?.map((ref) => ref.id)).toEqual(['t1', 't-fork', 'kept']);
+	});
+
+	it('starts no conversation for an agent that is not hosted', async () => {
+		const plain = createMockSession({ ...row(), liftedTo: undefined });
+		expect(await startHostedConversation(plain, { name: 'x', prompt: 'y' })).toBeNull();
+		expect(act$).not.toHaveBeenCalled();
 	});
 
 	it("hands the host tab a finished wizard's name and provider session, as a local tab keeps them", async () => {
