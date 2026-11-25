@@ -486,7 +486,9 @@ export interface UseSettingsReturn {
 	coworkingBrowserInteraction: string[];
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	coworkingBrowserTypingWithoutConfirmation: string[];
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	setCoworkingBrowserTypingWithoutConfirmation: (value: string[]) => void;
 	coworkingBackgroundBrowsers: boolean;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	coworkingBackgroundBrowsersLimit: number;

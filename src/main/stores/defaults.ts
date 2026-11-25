@@ -163,6 +163,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)
 	coworkingBrowserInteractionConfirm: {},
+	coworkingBrowserTypingWithoutConfirmation: [],
 	// Coworking: opt-in background webview host for cross-session browser access + LRU cap
 	coworkingBackgroundBrowsers: false,
 	coworkingBackgroundBrowsersLimit: 2,

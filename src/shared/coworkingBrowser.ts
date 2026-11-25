@@ -253,23 +253,19 @@ export interface BrowserOpResult {
 
 /** Per-agent policy for whether a state-changing browser op needs an explicit
  *  per-call user approval, layered on top of the per-agent interaction permission.
- *  - 'off'       : no per-call approval (the interaction permission alone gates),
- *                  EXCEPT `eval`, which always requires approval (see below).
- *  - 'dangerous' : approve the sharp-edge ops (navigate, eval, type, newTab, closeTab). Default.
+ *  - 'off'       : approve eval, plus typing until separately allowed.
+ *  - 'dangerous' : approve navigate, eval, newTab, closeTab, and typing until separately allowed. Default.
  *  - 'all'       : approve every interaction op. */
 export type BrowserConfirmPolicy = 'off' | 'dangerous' | 'all';
 
 /** Policy used when an agent has no explicit confirm entry configured. */
 export const DEFAULT_BROWSER_CONFIRM_POLICY: BrowserConfirmPolicy = 'dangerous';
 
-/** Ops the 'dangerous' policy routes through per-call approval. `type` is
- *  included because a silent form-fill can populate login / cross-site fields;
- *  `newTab` is navigation-equivalent (loads an arbitrary URL) and `closeTab`
- *  is destructive, so both sit alongside navigate/eval. */
+/** Ops the 'dangerous' policy routes through per-call approval after the
+ *  separate typing and eval checks. New tabs can navigate to arbitrary URLs,
+ *  and closing tabs is destructive. */
 export const ALWAYS_CONFIRM_KINDS: readonly BrowserInteractionKind[] = [
 	'navigate',
-	'eval',
-	'type',
 	'newTab',
 	'closeTab',
 ];
@@ -283,15 +279,18 @@ export const FORCE_CONFIRM_KINDS: readonly BrowserInteractionKind[] = ['eval'];
  *  `read` never needs approval; `eval` always does. */
 export function browserOpNeedsConfirm(
 	policy: BrowserConfirmPolicy,
-	kind: BrowserOp['kind']
+	kind: BrowserOp['kind'],
+	allowUnconfirmedTyping = false
 ): boolean {
 	// `pick` and `viewport` never change the page and only reach here from the
 	// host (CLI), so they are never gated, like `read`.
 	if (isUngatedBrowserOp(kind)) return false;
 	// eval is force-confirmed even when the policy is 'off'.
 	if (FORCE_CONFIRM_KINDS.includes(kind as BrowserInteractionKind)) return true;
-	if (policy === 'off') return false;
 	if (policy === 'all') return true;
+	// A saved permissive policy alone does not authorize filling fields.
+	if (kind === 'type') return allowUnconfirmedTyping !== true;
+	if (policy === 'off') return false;
 	// 'dangerous': only the sharp-edge ops.
 	return ALWAYS_CONFIRM_KINDS.includes(kind);
 }

@@ -147,9 +147,16 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	coworkingBrowserInteractionConfirm: {
 		description:
-			'Per-agent policy (off | dangerous | all) for requiring per-call user approval of Coworking browser interaction ops. Missing agents default to "dangerous" (confirm navigate and eval).',
+			'Per-agent policy (off | dangerous | all) for requiring per-call user approval of Coworking browser interaction ops. Missing agents default to "dangerous". JavaScript always requires confirmation and typing has a separate opt-in.',
 		type: 'object',
 		default: {},
+		category: 'advanced',
+	},
+	coworkingBrowserTypingWithoutConfirmation: {
+		description:
+			'Provider ids allowed to use Coworking browser_type without per-call confirmation when browser interaction is enabled and the policy is not Every action. Empty array means typing always requires confirmation.',
+		type: 'array',
+		default: [],
 		category: 'advanced',
 	},
 	coworkingBackgroundBrowsers: {

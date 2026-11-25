@@ -21,20 +21,20 @@ import {
 	DEFAULT_BROWSER_CONFIRM_POLICY,
 	type BrowserConfirmPolicy,
 } from '../../../shared/coworkingBrowser';
+import { ToggleSettingRow } from './tabs/DisplayTab/components/ToggleSettingRow';
 
-/** Segmented-control options for the per-call approval policy, in escalating
- *  paranoia order. Labels are user language; values are the wire policy. */
+/** Labels for the per-call approval policies. */
 const CONFIRM_POLICY_OPTIONS: ReadonlyArray<{ value: BrowserConfirmPolicy; label: string }> = [
 	{ value: 'dangerous', label: 'Risky only' },
 	{ value: 'all', label: 'Every action' },
-	{ value: 'off', label: 'JS only' },
+	{ value: 'off', label: 'Fewer prompts' },
 ];
 
 const CONFIRM_POLICY_DESCRIPTIONS: Record<BrowserConfirmPolicy, string> = {
 	dangerous:
-		'Asks before risky actions: navigating, running JavaScript, typing into fields, opening or closing tabs.',
+		'Asks before navigating, running JavaScript, and opening or closing tabs. Typing follows its own setting below.',
 	all: 'Asks before every browser action, including clicks and screenshots.',
-	off: 'Only asks before running JavaScript (always required); every other action runs immediately.',
+	off: 'Asks before running JavaScript. Typing follows its own setting below. Other actions run immediately.',
 };
 
 interface CoworkingInstallStatus {
@@ -82,6 +82,12 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 			setBrowserConfirm({ ...browserConfirm, [agentId]: policy });
 		},
 		[browserConfirm, setBrowserConfirm]
+	);
+	const unconfirmedTypingAgents = useSettingsStore(
+		(s) => s.coworkingBrowserTypingWithoutConfirmation
+	);
+	const setUnconfirmedTypingAgents = useSettingsStore(
+		(s) => s.setCoworkingBrowserTypingWithoutConfirmation
 	);
 	const backgroundBrowsers = useSettingsStore((s) => s.coworkingBackgroundBrowsers);
 	const setBackgroundBrowsers = useSettingsStore((s) => s.setCoworkingBackgroundBrowsers);
@@ -292,6 +298,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 				{sortedStatuses.map((s) => {
 					const isBusy = busyAgentId === s.agentId || busyAll;
 					const interactionOn = browserInteractionAgents.includes(s.agentId);
+					const allowUnconfirmedTyping = unconfirmedTypingAgents.includes(s.agentId);
 					const confirmPolicy = browserConfirm[s.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
 					return (
 						<div
@@ -422,13 +429,33 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 											</div>
 										</div>
 									)}
+									{interactionOn && (
+										<div data-setting-id="coworking-browser-typing-without-confirmation">
+											<ToggleSettingRow
+												theme={theme}
+												title="Allow typing without confirmation"
+												ariaLabel={`Allow typing without confirmation for ${getAgentDisplayName(s.agentId as AgentId)}`}
+												description="When enabled, this provider can fill fields in its permitted browser tabs, including on signed-in pages, without asking each time. The Every action policy still asks before typing. Running JavaScript always requires approval."
+												checked={allowUnconfirmedTyping}
+												onChange={(checked) =>
+													setUnconfirmedTypingAgents(
+														checked
+															? [...unconfirmedTypingAgents, s.agentId]
+															: unconfirmedTypingAgents.filter((id) => id !== s.agentId)
+													)
+												}
+												clickableRow
+											/>
+										</div>
+									)}
 									{interactionOn && confirmPolicy === 'off' && (
 										<p
 											className="text-xs flex items-center gap-1.5"
 											style={{ color: theme.colors.warning }}
 										>
 											<AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-											This agent can drive your browser without ever asking you.
+											This provider can navigate, click, and open or close its browser tabs without
+											asking.
 										</p>
 									)}
 								</div>

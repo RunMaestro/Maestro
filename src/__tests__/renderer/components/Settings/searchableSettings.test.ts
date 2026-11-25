@@ -69,6 +69,16 @@ describe('searchableSettings', () => {
 		expect(encoreTileForSetting('encore-pianola-auto-fix')).toBe('pianola');
 	});
 
+	it.each(['Allow typing without confirmation', 'browser_type', 'signed-in pages'])(
+		'finds the typing permission for %s only while Coworking is enabled',
+		(query) => {
+			const id = 'coworking-browser-typing-without-confirmation';
+			expect(searchSettings(query, [], { coworking: true }).some((s) => s.id === id)).toBe(true);
+			expect(searchSettings(query, [], { coworking: false }).some((s) => s.id === id)).toBe(false);
+			expect(encoreTileForSetting(id)).toBe('coworking');
+		}
+	);
+
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));

@@ -1,7 +1,10 @@
+import { createElement, useState } from 'react';
+import { act, render, renderHook, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	applyBrowserOp,
 	resolveAndRun,
+	useCoworkingBrowserResponder,
 	type BrowserApprovalRequester,
 } from '../../../../renderer/hooks/coworking/useCoworkingBrowserResponder';
 import type { BrowserTabViewHandle } from '../../../../renderer/components/MainPanel/BrowserTabView';
@@ -19,6 +22,11 @@ import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,
 } from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
+
+import type { BrowserOp } from '../../../../shared/coworkingBrowser';
+import type { CoworkingApi } from '../../../../main/preload/coworking';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useCoworkingApprovalStore } from '../../../../renderer/stores/coworkingApprovalStore';
 
 vi.mock('../../../../renderer/services/designModePick', () => ({
 	deliverDesignPick: vi.fn(async () => ({
@@ -156,6 +164,78 @@ describe('applyBrowserOp', () => {
 		expect(js).toContain('"#in"');
 		expect(js).toContain(JSON.stringify('hi "there"'));
 	});
+
+	it.each(['input', 'textarea'] as const)(
+		'types into a controlled React %s and submits via the click op',
+		async (tag) => {
+			const submitted = vi.fn();
+			function Form() {
+				const [value, setValue] = useState('');
+				return createElement(
+					'form',
+					{
+						onSubmit: (event) => {
+							event.preventDefault();
+							submitted(value);
+						},
+					},
+					createElement(tag, {
+						id: 'controlled',
+						value,
+						onChange: (event) => setValue(event.currentTarget.value),
+					}),
+					createElement('button', { type: 'submit', disabled: !value }, 'Submit')
+				);
+			}
+			render(createElement(Form));
+			const handle = makeHandle({ executeJavaScript: async (script) => window.eval(script) });
+			const button = screen.getByRole('button', { name: 'Submit' });
+			const text = 'Text with "quotes" and \\slashes';
+			expect(button).toBeDisabled();
+
+			await act(async () => {
+				expect(
+					await applyBrowserOp(handle, { kind: 'type', selector: '#controlled', text })
+				).toMatchObject({ ok: true });
+			});
+			expect(screen.getByRole('textbox')).toHaveValue(text);
+			expect(button).toBeEnabled();
+
+			await act(async () => {
+				expect(await applyBrowserOp(handle, { kind: 'click', selector: 'button' })).toMatchObject({
+					ok: true,
+				});
+			});
+			expect(submitted).toHaveBeenCalledExactlyOnceWith(text);
+		}
+	);
+
+	it.each(['input', 'textarea', 'div'] as const)(
+		'preserves the existing text, focus, and event behavior for a plain %s',
+		async (tag) => {
+			const { container } = render(
+				createElement(tag, { id: 'plain', contentEditable: tag === 'div' })
+			);
+			const field = container.querySelector(tag)!;
+			const events: string[] = [];
+			for (const event of ['input', 'change']) {
+				container.addEventListener(event, (event) => events.push(event.type));
+			}
+			const handle = makeHandle({ executeJavaScript: async (script) => window.eval(script) });
+
+			expect(
+				await applyBrowserOp(handle, { kind: 'type', selector: '#plain', text: 'Updated' })
+			).toMatchObject({ ok: true });
+			if (tag === 'div') {
+				expect(field).toHaveTextContent('Updated');
+				expect(events).toEqual([]);
+			} else {
+				expect(field).toHaveFocus();
+				expect(field).toHaveValue('Updated');
+				expect(events).toEqual(['input', 'change']);
+			}
+		}
+	);
 
 	it('eval stringifies a non-string result', async () => {
 		const executeJavaScript = vi.fn(async () => ({ a: 1 }));
@@ -1190,5 +1270,72 @@ describe('resolveAndRun keep-alive pin', () => {
 		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).not.toContain(
 			'u-1'
 		);
+	});
+});
+
+describe('Coworking browser responder approval', () => {
+	it('executes only with matching opt-in or per-call approval', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+		const settings = useSettingsStore.getState();
+		const approvalStore = useCoworkingApprovalStore.getState();
+		const previousBridge = window.maestro.coworking;
+		const sendBrowserOpResponse = vi.fn();
+		const onRequestBrowserOp = vi.fn<CoworkingApi['onRequestBrowserOp']>(() => () => {});
+		window.maestro.coworking = { onRequestBrowserOp, sendBrowserOpResponse } as CoworkingApi;
+		const executeJavaScript = vi.fn(async () => 'ok');
+		const handle = makeHandle({ getTabId: () => 'u-1', executeJavaScript });
+
+		try {
+			useSettingsStore.setState({
+				coworkingBrowserInteraction: ['claude-code'],
+				coworkingBrowserInteractionConfirm: {},
+				coworkingBrowserTypingWithoutConfirmation: [],
+			});
+			const { unmount } = renderHook(() =>
+				useCoworkingBrowserResponder({ current: new Map([['u-1', handle]]) })
+			);
+			const [receive] = onRequestBrowserOp.mock.lastCall!;
+			const type: BrowserOp = { kind: 'type', selector: 'textarea', text: 'fixture' };
+
+			async function expectApproval(op: BrowserOp, mainNeedsConfirm = false) {
+				executeJavaScript.mockClear();
+				receive('u-1', 'sess-A', op, 'response', mainNeedsConfirm);
+				const [request] = useCoworkingApprovalStore.getState().queue;
+				expect(request).toBeDefined();
+				expect(executeJavaScript).not.toHaveBeenCalled();
+				await act(async () => approvalStore.settle(request!.id, false));
+				expect(sendBrowserOpResponse).toHaveBeenLastCalledWith(
+					'response',
+					expect.objectContaining({ ok: false })
+				);
+				expect(executeJavaScript).not.toHaveBeenCalled();
+			}
+
+			await expectApproval(type);
+			useSettingsStore.setState({ coworkingBrowserTypingWithoutConfirmation: ['claude-code'] });
+			await act(async () => receive('u-1', 'sess-A', type, 'response', false));
+			expect(executeJavaScript).toHaveBeenCalledOnce();
+			expect(sendBrowserOpResponse).toHaveBeenLastCalledWith(
+				'response',
+				expect.objectContaining({ ok: true })
+			);
+			expect(useCoworkingApprovalStore.getState().queue).toHaveLength(0);
+			await expectApproval(type, true);
+			await expectApproval({ kind: 'eval', code: '1 + 1' });
+			useSettingsStore.setState({ coworkingBrowserTypingWithoutConfirmation: [] });
+			await expectApproval(type);
+			unmount();
+		} finally {
+			window.maestro.coworking = previousBridge;
+			useSettingsStore.setState({
+				coworkingBrowserInteraction: settings.coworkingBrowserInteraction,
+				coworkingBrowserInteractionConfirm: settings.coworkingBrowserInteractionConfirm,
+				coworkingBrowserTypingWithoutConfirmation:
+					settings.coworkingBrowserTypingWithoutConfirmation,
+			});
+			for (const { id } of useCoworkingApprovalStore.getState().queue)
+				approvalStore.settle(id, false);
+			useCoworkingBrowserKeepAliveStore.getState().clear();
+		}
 	});
 });

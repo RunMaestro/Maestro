@@ -138,9 +138,11 @@ async function defaultRequestApproval(
 	ctx: { agentId: string; sessionId: string; forceConfirm?: boolean }
 ): Promise<boolean> {
 	if (isUngatedBrowserOp(op.kind)) return true;
-	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
-	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
-	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind)) return true;
+	const settings = useSettingsStore.getState();
+	const policy =
+		settings.coworkingBrowserInteractionConfirm[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
+	const allowTyping = settings.coworkingBrowserTypingWithoutConfirmation.includes(ctx.agentId);
+	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind, allowTyping)) return true;
 	return requestCoworkingApproval(
 		{
 			agentId: ctx.agentId,
@@ -417,8 +419,27 @@ export async function applyBrowserOp(
 			return { ok: true, content: `clicked ${op.selector}` };
 		}
 		case 'type': {
+			// React tracks assignments through an instance setter. Use the platform
+			// setter so the bubbling input event delivers the change to React.
 			const res = await handle.executeJavaScript(
-				`(function(){var el=document.querySelector(${JSON.stringify(op.selector)});if(!el)return 'notfound';if(el.focus)el.focus();if('value' in el){el.value=${JSON.stringify(op.text)};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{el.textContent=${JSON.stringify(op.text)};}return 'ok';})()`
+				`(() => {
+					const el = document.querySelector(${JSON.stringify(op.selector)});
+					if (!el) return 'notfound';
+					if (el.focus) el.focus();
+					const text = ${JSON.stringify(op.text)};
+					if ('value' in el) {
+						const prototype = el instanceof HTMLInputElement ? HTMLInputElement.prototype
+							: el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : null;
+						const setter = prototype && Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+						if (setter) setter.call(el, text);
+						else el.value = text;
+						el.dispatchEvent(new Event('input', { bubbles: true }));
+						el.dispatchEvent(new Event('change', { bubbles: true }));
+					} else {
+						el.textContent = text;
+					}
+					return 'ok';
+				})()`
 			);
 			if (res === 'notfound') {
 				return { ok: false, content: `No element matches selector: ${op.selector}` };
