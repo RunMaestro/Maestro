@@ -12,7 +12,7 @@ import {
 	getBusyTabs,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { applyAgentConfigOverrides } from '../../../shared/maestro-lib/launch/agent-args';
+import { resolveModelEffort } from './useAgentModelEffortOptions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import {
 	hasRunnableQueueItem,
@@ -213,6 +213,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	// Track active synopsis session IDs for cancellation
 	// Map: maestroSessionId -> Set of active synopsis process session IDs
 	const activeSynopsisSessionsRef = useRef<Map<string, Set<string>>>(new Map());
+	const synopsisCancelGenerationRef = useRef<Map<string, number>>(new Map());
 	const accumulateUsageStats = useCallback(
 		(current: UsageStats | undefined, usageStats: UsageStats): UsageStats => ({
 			...usageStats,
@@ -832,6 +833,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			},
 			options?: BackgroundTurnOptions
 		): Promise<AgentSpawnResult> => {
+			const cancelGeneration = synopsisCancelGenerationRef.current.get(sessionId) ?? 0;
 			try {
 				const agent = await window.maestro.agents.get(toolType);
 				if (!agent) {
@@ -846,20 +848,28 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				}
 
 				// For shared-thread providers (Codex, Antigravity), resolve the
-				// effective model the same way the spawn handler does, so per-model
-				// effort refusals are checked against the model that actually runs
-				// even when it comes from agent config or default rather than the tab.
+				// effective model the same way the spawn handler does (tab > agent
+				// config > provider default, without relying on stripped argBuilder),
+				// so per-model effort refusals are checked against the model that
+				// actually runs even when it comes from agent config or default.
 				// Non-shared providers keep their existing tab-only input.
 				let resolvedModel = sessionConfig?.customModel;
 				if (resumeSharesThread(toolType)) {
 					const agentConfigValues =
 						(await window.maestro.agents.getConfig?.(toolType).catch(() => undefined)) ?? undefined;
+					const configModel =
+						typeof agentConfigValues?.model === 'string' ? agentConfigValues.model : '';
+					const optionDefault = agent.configOptions?.find((opt) => opt.key === 'model')?.default;
+					const defaultModel =
+						configModel || (typeof optionDefault === 'string' ? optionDefault : '');
 					resolvedModel =
-						applyAgentConfigOverrides(agent, [], {
-							agentConfigValues,
-							sessionCustomModel: sessionConfig?.customModel,
-							sessionCustomArgs: sessionConfig?.customArgs,
-						}).modelId ?? sessionConfig?.customModel;
+						resolveModelEffort(sessionConfig, undefined, {
+							defaultModel,
+							defaultEffort: '',
+						}).model || undefined;
+				}
+				if ((synopsisCancelGenerationRef.current.get(sessionId) ?? 0) !== cancelGeneration) {
+					return { success: false };
 				}
 				const synopsisCurrent = {
 					model: resolvedModel,
@@ -1097,6 +1107,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * Called when user clicks Stop to prevent synopsis from running after interruption.
 	 */
 	const cancelPendingSynopsis = useCallback(async (maestroSessionId: string): Promise<void> => {
+		synopsisCancelGenerationRef.current.set(
+			maestroSessionId,
+			(synopsisCancelGenerationRef.current.get(maestroSessionId) ?? 0) + 1
+		);
 		const synopsisSessions = activeSynopsisSessionsRef.current.get(maestroSessionId);
 		if (!synopsisSessions || synopsisSessions.size === 0) {
 			return;

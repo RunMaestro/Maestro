@@ -649,14 +649,13 @@ describe('useAgentExecution', () => {
 			id: 'antigravity',
 			command: 'agy',
 			args: [],
+			// Real IPC (stripAgentFunctions) strips argBuilder from configOptions.
 			configOptions: [
 				{
 					key: 'model',
 					type: 'select',
 					label: 'Model',
 					default: '',
-					argBuilder: (value: unknown) =>
-						typeof value === 'string' && value ? ['--model', value] : [],
 				},
 			],
 		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
@@ -836,6 +835,55 @@ describe('useAgentExecution', () => {
 		});
 
 		expect((await spawnPromise).success).toBe(true);
+	});
+
+	it('does not spawn a synopsis if cancelPendingSynopsis is called while resolving agent config', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		let resolveConfig!: (value: Record<string, unknown>) => void;
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveConfig = resolve;
+				})
+		);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-cancelled-during-await',
+			'Summarize session',
+			'antigravity'
+		);
+
+		await waitFor(() => {
+			expect(window.maestro.agents.getConfig).toHaveBeenCalledTimes(1);
+		});
+
+		await act(async () => {
+			await result.current.cancelPendingSynopsis(session.id);
+		});
+		resolveConfig({ model: 'gpt-oss-120b' });
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(mockProcess.spawn).not.toHaveBeenCalled();
 	});
 
 	it('includes appendSystemPrompt in batch spawns', async () => {
