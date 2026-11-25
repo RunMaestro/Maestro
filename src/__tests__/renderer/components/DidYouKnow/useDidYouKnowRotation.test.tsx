@@ -21,7 +21,9 @@ vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) 
 }));
 
 describe('useDidYouKnowRotation', () => {
+	const originalBrowserSession = window.maestro.browserSession;
 	beforeEach(() => {
+		window.maestro.browserSession = { ...originalBrowserSession, createTab: vi.fn() };
 		vi.mocked(isWebDesktop).mockReturnValue(false);
 		resetStore(useSettingsStore);
 		resetStore(useSessionStore);
@@ -34,6 +36,7 @@ describe('useDidYouKnowRotation', () => {
 	});
 
 	afterEach(() => {
+		window.maestro.browserSession = originalBrowserSession;
 		cleanup();
 		vi.restoreAllMocks();
 	});
@@ -50,6 +53,66 @@ describe('useDidYouKnowRotation', () => {
 			expect(new Set(useSettingsStore.getState().didYouKnowSeenTipIds).size).toBe(order.length);
 			unmount();
 		}
+	});
+
+	it('marks the visible tip again after history is reset and keeps Next moving', () => {
+		const { result } = renderHook(() => useDidYouKnowRotation({}), { wrapper: StrictMode });
+		act(() => useSettingsStore.getState().setDidYouKnowSeenTipIds([]));
+		expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual(['maestro-cue']);
+		act(() => result.current.goNext());
+		expect(result.current.tip?.id).toBe('auto-run');
+		act(() => result.current.goNext());
+		expect(result.current.tip?.id).toBe('cross-agent-mentions');
+	});
+
+	it('keeps the gallery visible and explains when there is no active agent', () => {
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		const { result } = renderHook(() => useDidYouKnowRotation({}));
+		act(() => result.current.openDocs());
+		expect(result.current.isReading).toBe(false);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: expect.stringContaining('Select or create an agent'),
+			})
+		);
+	});
+
+	it('keeps the gallery visible when the host cannot create a documentation tab', async () => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		vi.spyOn(window.maestro.browserSession, 'createTab').mockRejectedValueOnce(
+			new Error('Unavailable')
+		);
+		const { result } = renderHook(() => useDidYouKnowRotation({}));
+		await act(async () => result.current.openDocs());
+		expect(result.current.isReading).toBe(false);
+		expect(useSessionStore.getState().sessions[0].browserTabs).toHaveLength(0);
+	});
+
+	it('does not dock after a pending request is cancelled', async () => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		let finish!: (tab: BrowserTab) => void;
+		vi.spyOn(window.maestro.browserSession, 'createTab').mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const { result } = renderHook(() => useDidYouKnowRotation({}));
+		act(() => result.current.openDocs());
+		expect(result.current.isReading).toBe(false);
+		act(() => result.current.exitReading());
+		await act(async () =>
+			finish({
+				id: 'cancelled-docs',
+				url: 'https://docs.runmaestro.ai/maestro-cue',
+				title: 'Docs',
+				createdAt: 0,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: true,
+			})
+		);
+		expect(result.current.isReading).toBe(false);
 	});
 
 	it('opens themed docs once and reuses the tab for Next, Back, and forward history', () => {
@@ -103,6 +166,7 @@ describe('useDidYouKnowRotation', () => {
 		try {
 			const { result } = renderHook(() => useDidYouKnowRotation({}));
 			act(() => result.current.openDocs());
+			expect(result.current.isReading).toBe(false);
 			act(() => result.current.goNext());
 			if (back) act(() => result.current.goBack());
 			const next = result.current.tip!;
@@ -118,6 +182,7 @@ describe('useDidYouKnowRotation', () => {
 					isLoading: true,
 				});
 			});
+			expect(result.current.isReading).toBe(true);
 			expect(useSessionStore.getState().sessions[0].browserTabs).toEqual([
 				expect.objectContaining({
 					id: 'host-docs',

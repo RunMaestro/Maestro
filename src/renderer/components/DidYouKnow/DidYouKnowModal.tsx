@@ -31,7 +31,7 @@ interface DidYouKnowModalProps {
 
 /** Mount rotation only while visible, giving each opening its own browsing history. */
 export function DidYouKnowModal(props: DidYouKnowModalProps) {
-	return props.isOpen ? <DidYouKnowModalContent {...props} /> : null;
+	return props.isOpen ? <DidYouKnowModalContent key={props.startTipId ?? ''} {...props} /> : null;
 }
 
 function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalProps) {

@@ -40,6 +40,23 @@ describe('DidYouKnowModal', () => {
 		vi.restoreAllMocks();
 	});
 
+	it('shows a newly requested tip while already open and leaves reading mode', () => {
+		const props = { theme: mockTheme, isOpen: true, onClose: vi.fn() };
+		const { rerender } = render(<DidYouKnowModal {...props} startTipId="maestro-cue" />, {
+			wrapper: LayerStackProvider,
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Read more' }));
+		expect(screen.getByRole('button', { name: 'Back to tips' })).toBeInTheDocument();
+		rerender(<DidYouKnowModal {...props} startTipId="auto-run" />);
+		expect(screen.getByRole('heading', { name: 'Auto Run' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Back to tips' })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Previous tip' })).toBeDisabled();
+		fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));
+		const heading = screen.getByRole('heading', { level: 2 }).textContent;
+		rerender(<DidYouKnowModal {...props} startTipId="auto-run" />);
+		expect(screen.getByRole('heading', { level: 2 }).textContent).toBe(heading);
+	});
+
 	it('remembers a resized gallery and restores it after reading and reopening', async () => {
 		const props = { theme: mockTheme, isOpen: true, onClose: vi.fn() };
 		const { rerender } = render(<DidYouKnowModal {...props} />, { wrapper: LayerStackProvider });

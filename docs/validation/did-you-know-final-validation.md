@@ -279,3 +279,39 @@ Validation on macOS with Node.js 22.19.0 and the committed lockfile:
 Local logs and screenshots are in `tmp/readiness-nov14/`. Full-suite and
 live-provider testing remain outside the contribution playbook's scope. Fork
 CI approval and the merge into `rc` still require the maintainer.
+
+## November 25 review fixes and rebase
+
+Rebased onto `rc` at `4b76ba8141fdfe694c1472d9254240d2072d2554`.
+Resolved conflicts in browser-focus handling, command-palette tests, shortcut
+documentation, and surface-opener imports. Preserved upstream browser Design
+Mode/current-tab behavior, the Privacy command, and hosted-agent settings.
+
+Verified and fixed all three November 14 CodeRabbit findings:
+
+- Resetting tip history while the card is open re-marks the visible tip, so Next
+  advances. The effect depends on that tip's seen membership rather than every
+  history reorder, avoiding competing writes between open windows.
+- Read more enters reading mode only after a documentation tab opens. With no
+  active agent, the gallery remains visible and explains how to open docs.
+  Failed host creation also leaves the gallery visible. Delayed creation still
+  supports Next/Back and does not dock after cancellation or unmount.
+- A changed requested tip id remounts the card content immediately and clears
+  its reading/history state. An unchanged requested id preserves that state.
+
+Validation with the committed dependency lockfile and Node.js 22.19.0:
+
+- All 3,035 tests across the existing 56-file regression manifest passed, with
+  no failures or skipped tests, including new reset, missing-agent, failed-host,
+  delayed/cancelled-opening, and requested-tip tests.
+- TypeScript, ESLint, formatting of tracked files, and documentation checks
+  passed. Main/preload and renderer builds passed. The web-desktop build emitted
+  its bundle but initially returned a nonzero status without an error; a
+  standalone rerun with an 8 GB Node heap completed successfully.
+- A hidden, isolated Electron run verified live documentation, native mouse
+  navigation, PageDown scrolling, tab reuse on Next, and return to the gallery.
+  No agent turn was sent and the test window stayed invisible.
+
+Logs and reports are in `tmp/readiness-nov25/`. Full-suite and live-provider
+checks remain outside the contribution playbook's validation scope. Fork CI
+approval and merging into `rc` still require the maintainer.

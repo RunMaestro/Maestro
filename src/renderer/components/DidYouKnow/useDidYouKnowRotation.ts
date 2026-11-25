@@ -35,6 +35,13 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 	});
 	const [cursor, setCursor] = useState(0);
 	const [isReading, setIsReading] = useState(false);
+	const readingRequested = useRef(false);
+	useEffect(
+		() => () => {
+			readingRequested.current = false;
+		},
+		[]
+	);
 	const readingTab = useRef<{ sessionId: string; tabId: string } | null>(null);
 	const pendingTab = useRef<{ sessionId: string; promise: Promise<BrowserTab | undefined> } | null>(
 		null
@@ -69,9 +76,11 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 		[setSeenIds, order]
 	);
 
+	// React to reset membership, not every reorder from another open window.
+	const currentTipSeen = seenIds.includes(currentId);
 	useEffect(() => {
 		if (currentId) markSeen(currentId);
-	}, [currentId, markSeen]);
+	}, [currentId, markSeen, currentTipSeen]);
 
 	const navigateDocs = useCallback((nextTip: DidYouKnowTip) => {
 		if (!nextTip.docsSlug) {
@@ -83,13 +92,22 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 				skipOsNotification: true,
 				skipCustomNotification: true,
 			});
-			return;
+			return false;
 		}
 		const url = buildMaestroUrl(`https://docs.runmaestro.ai/${nextTip.docsSlug}`);
 		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) {
+			notifyToast({
+				color: 'theme',
+				title: 'Documentation unavailable',
+				message: 'Select or create an agent to open documentation in a browser tab.',
+				skipOsNotification: true,
+				skipCustomNotification: true,
+			});
+			return false;
+		}
 		const target = readingTab.current;
 		if (
-			session &&
 			target?.sessionId === session.id &&
 			session.browserTabs?.some((t) => t.id === target.tabId)
 		) {
@@ -101,14 +119,22 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 				...browserTabFocusFields(target.tabId),
 				activeGroupId: null,
 			}));
-		} else if (session) {
+			return true;
+		} else {
 			const pending = pendingTab.current;
 			const opened =
 				pending?.sessionId === session.id
 					? pending.promise
 					: openBrowserTabAt(url, { title: nextTip.title });
 			const remember = (tab: BrowserTab | undefined) => {
-				if (!tab) return;
+				if (
+					!tab ||
+					!useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === session.id)
+						?.browserTabs?.some((item) => item.id === tab.id)
+				)
+					return false;
 				readingTab.current = { sessionId: session.id, tabId: tab.id };
 				// Next/Back may have been pressed while the host was creating the tab.
 				if (
@@ -124,35 +150,50 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 						),
 					}));
 				}
+				return true;
 			};
 			if (opened instanceof Promise) {
 				pendingTab.current = { sessionId: session.id, promise: opened };
-				void opened.then(remember).finally(() => {
+				return opened.then(remember).finally(() => {
 					if (pendingTab.current?.promise === opened) pendingTab.current = null;
 				});
 			} else {
-				remember(opened);
+				return remember(opened);
 			}
 		}
 	}, []);
 
 	const openDocs = useCallback(() => {
 		if (!tip) return;
-		navigateDocs(tip);
-		if (tip.docsSlug) setIsReading(true);
+		readingRequested.current = true;
+		const opened = navigateDocs(tip);
+		if (opened instanceof Promise) {
+			void opened.then((success) => {
+				if (readingRequested.current) {
+					readingRequested.current = success;
+					setIsReading(success);
+				}
+			});
+		} else {
+			readingRequested.current = opened;
+			setIsReading(opened);
+		}
 	}, [tip, navigateDocs]);
-	const exitReading = useCallback(() => setIsReading(false), []);
+	const exitReading = useCallback(() => {
+		readingRequested.current = false;
+		setIsReading(false);
+	}, []);
 
 	const goNext = useCallback(() => {
 		if (cursor < history.length - 1) {
 			setCursor(cursor + 1);
 			const next = getTipById(history[cursor + 1], order);
-			if (isReading && next) navigateDocs(next);
+			if ((isReading || readingRequested.current) && next) navigateDocs(next);
 			return;
 		}
 		const next = pickNextTip(order, seenIds, currentId);
 		if (next) {
-			if (isReading) navigateDocs(next);
+			if (isReading || readingRequested.current) navigateDocs(next);
 			setHistory([...history, next.id]);
 			setCursor(history.length);
 		}
@@ -162,7 +203,7 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 		if (cursor === 0) return;
 		setCursor(cursor - 1);
 		const previous = getTipById(history[cursor - 1], order);
-		if (isReading && previous) navigateDocs(previous);
+		if ((isReading || readingRequested.current) && previous) navigateDocs(previous);
 	}, [cursor, history, order, isReading, navigateDocs]);
 	const dismissForever = useCallback(() => setEnabled(false), [setEnabled]);
 
