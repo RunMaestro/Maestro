@@ -25,6 +25,14 @@ import type { ClientError, MaestroClient } from '../client/types';
 import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
+import type { ReturnedFromHost } from './lift-return-record';
+
+export {
+	readReturnedFromHost,
+	returnRestoreRefusal,
+	withReturnedFromHost,
+	type ReturnedFromHost,
+} from './lift-return-record';
 
 export interface ReturnRunOptions {
 	/** The host cannot be reached: restore from this machine's copy only, and keep the host's. */
@@ -38,12 +46,6 @@ export interface ReturnHostConnection {
 	peer: string;
 	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
 	release(): Promise<void>;
-}
-
-/** What the host held, to merge into the local record. Each tab carries its transcript. */
-export interface ReturnedFromHost {
-	tabs: AITabRecord[];
-	activeTabId?: string;
 }
 
 export interface ReturnRunDeps {
@@ -79,107 +81,6 @@ function sshRemoteIdOf(agent: AgentRecord): string | undefined {
 	return ssh?.enabled && typeof ssh.remoteId === 'string' && ssh.remoteId
 		? ssh.remoteId
 		: undefined;
-}
-
-/** A host tab as a local tab record: the fields a local tab needs, idle, with its transcript. */
-function asLocalTab(tab: AITabRecord): AITabRecord {
-	const {
-		state: _state,
-		thinkingStartTime: _thinkingStartTime,
-		hidden: _hidden,
-		consultOrigin: _consultOrigin,
-		...rest
-	} = tab;
-	return {
-		...rest,
-		agentSessionId: tab.agentSessionId ?? null,
-		name: tab.name ?? null,
-		starred: tab.starred === true,
-		logs: Array.isArray(tab.logs) ? tab.logs : [],
-		inputValue: typeof tab.inputValue === 'string' ? tab.inputValue : '',
-		stagedImages: Array.isArray(tab.stagedImages) ? tab.stagedImages : [],
-		createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : Date.now(),
-		state: 'idle',
-	};
-}
-
-/**
- * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
- * merged in by tab id. A tab both sides have takes the host's transcript (the conversation went on
- * there) unless the host's is shorter, plus its name, star, and provider session. A host tab this
- * machine lacks is appended. Local tabs the host closed stay. Pure.
- */
-export function withReturnedFromHost<T extends Record<string, unknown>>(
-	record: T,
-	returned: ReturnedFromHost
-): T {
-	const localTabs = (Array.isArray(record.aiTabs) ? record.aiTabs : []) as AITabRecord[];
-	const hostById = new Map(returned.tabs.map((tab) => [tab.id, tab]));
-	const merged: AITabRecord[] = localTabs.map((local) => {
-		const host = hostById.get(local.id);
-		if (!host) return local;
-		const hostLogs = Array.isArray(host.logs) ? host.logs : [];
-		const localLogs = Array.isArray(local.logs) ? local.logs : [];
-		return {
-			...local,
-			agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
-			name: host.name ?? local.name ?? null,
-			starred: host.starred === true,
-			logs: hostLogs.length >= localLogs.length ? hostLogs : localLogs,
-			...(host.usageStats ? { usageStats: host.usageStats } : {}),
-			state: 'idle',
-		};
-	});
-	const localIds = new Set(localTabs.map((tab) => tab.id));
-	const added = returned.tabs.filter((tab) => !localIds.has(tab.id)).map(asLocalTab);
-	const aiTabs = [...merged, ...added];
-
-	const order = Array.isArray(record.unifiedTabOrder)
-		? [...(record.unifiedTabOrder as { type: string; id: string }[])]
-		: undefined;
-	if (order) for (const tab of added) order.push({ type: 'ai', id: tab.id });
-
-	const activeTabId =
-		returned.activeTabId && aiTabs.some((tab) => tab.id === returned.activeTabId)
-			? returned.activeTabId
-			: record.activeTabId;
-
-	const { liftedTo: _liftedTo, ...rest } = record;
-	return {
-		...rest,
-		aiTabs,
-		...(order ? { unifiedTabOrder: order } : {}),
-		...(activeTabId !== undefined ? { activeTabId } : {}),
-		hostedOptOut: true,
-	} as unknown as T;
-}
-
-/**
- * A `returnedFromHost` value that crossed a process boundary (the bridge, IPC), or undefined when
- * it is malformed. Tabs need an id; everything else is kept as the host sent it.
- */
-export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefined {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-	const raw = value as { tabs?: unknown; activeTabId?: unknown };
-	if (!Array.isArray(raw.tabs)) return undefined;
-	const tabs: AITabRecord[] = [];
-	for (const tab of raw.tabs) {
-		if (!tab || typeof tab !== 'object' || Array.isArray(tab)) return undefined;
-		const id = (tab as { id?: unknown }).id;
-		if (typeof id !== 'string' || !id) return undefined;
-		tabs.push(tab as AITabRecord);
-	}
-	return {
-		tabs,
-		...(typeof raw.activeTabId === 'string' && raw.activeTabId
-			? { activeTabId: raw.activeTabId }
-			: {}),
-	};
-}
-
-/** Why `record` cannot take a restore right now, or undefined when it can. */
-export function returnRestoreRefusal(record: { liftedTo?: unknown }): string | undefined {
-	return readLiftedTo(record.liftedTo) ? undefined : 'Agent is not hosted';
 }
 
 /**

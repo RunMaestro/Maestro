@@ -524,7 +524,16 @@ export function extractQuickTabName(message: string): string | null {
 }
 
 /**
- * Check if a tab has draft content (unsent input or staged images).
+ * Whether a tab's composer holds staged attachments: images, or Design Mode
+ * chips. Either one is a sendable draft on its own, with no text typed.
+ */
+export function hasStagedAttachments(tab: AITab): boolean {
+	return (tab.stagedImages?.length ?? 0) > 0 || (tab.stagedDesignPicks?.length ?? 0) > 0;
+}
+
+/**
+ * Check if a tab has draft content (unsent input, staged images, or Design
+ * Mode chips).
  * Used for determining if a tab should be shown in "unread only" filter mode.
  *
  * Prefers the live textarea value from liveDraftStore (which the active tab
@@ -533,12 +542,12 @@ export function extractQuickTabName(message: string): string | null {
  * sync with what's actually on screen.
  *
  * @param tab - The AI tab to check
- * @returns True if the tab has unsent text input or staged images
+ * @returns True if the tab has unsent text input or staged attachments
  */
 export function hasDraft(tab: AITab): boolean {
 	const liveValue = getLiveDraft(tab.id);
 	const text = liveValue !== undefined ? liveValue : (tab.inputValue ?? '');
-	return text.trim() !== '' || (tab.stagedImages && tab.stagedImages.length > 0);
+	return text.trim() !== '' || hasStagedAttachments(tab);
 }
 
 /**
@@ -554,7 +563,8 @@ export function hasActiveWizard(tab: AITab): boolean {
 
 /**
  * Check if a tab's active wizard has any user interaction.
- * Returns true if the user has sent messages, typed input, or staged images.
+ * Returns true if the user has sent messages, typed input, or staged images
+ * or Design Mode chips.
  * Used to decide whether closing the wizard should show a confirmation dialog.
  *
  * @param tab - The AI tab to check
@@ -565,8 +575,7 @@ export function hasWizardInteraction(tab: AITab): boolean {
 	const hasUserMessages =
 		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
 	const hasInput = (tab.inputValue ?? '').trim() !== '';
-	const hasImages = tab.stagedImages?.length > 0;
-	return hasUserMessages || hasInput || hasImages;
+	return hasUserMessages || hasInput || hasStagedAttachments(tab);
 }
 
 /**

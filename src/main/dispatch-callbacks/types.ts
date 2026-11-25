@@ -103,6 +103,12 @@ export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	 * still running, so a failing exit parks instead of firing.
 	 */
 	retryPending?: boolean;
+	/**
+	 * Tail of the display text the dispatched process emitted since it started.
+	 * The source of {{DISPATCH_OUTPUT}}: History only gets an entry for this
+	 * turn after an opt-in synopsis, long after the callback fires.
+	 */
+	output?: string;
 }
 
 /** Payload handed to the delivery side when a callback fires. */
@@ -111,6 +117,13 @@ export interface DispatchCallbackFire {
 	status: DispatchCallbackStatus;
 	exitCode: number | null;
 	durationMs: number;
+	/** Captured tail of the dispatched turn's output (see DispatchCallbackEntry.output). */
+	output?: string;
+	/**
+	 * The callback waited for an Auto Run batch the turn started. `output` then
+	 * holds only the turn's launch reply, so the batch summary in History wins.
+	 */
+	awaitedAutoRun?: boolean;
 	/** Auto Run progress, when the dispatch ended via an Auto Run batch. */
 	tasksCompleted?: number;
 	tasksTotal?: number;

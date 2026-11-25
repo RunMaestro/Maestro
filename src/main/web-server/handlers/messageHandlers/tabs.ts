@@ -4,7 +4,8 @@ import { planMentions } from '../../../../shared/maestro-lib/mentions/roster';
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: select_tab, new_tab,
  * close_tab, rename_tab, star_tab, reorder_tab, toggle_bookmark,
- * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt,
+ * open_file_tab, open_browser_tab, pick_browser_element, browser_viewport,
+ * design_pick_command, open_terminal_tab, new_ai_tab_with_prompt,
  * open_document_graph.
  */
 
@@ -45,7 +46,13 @@ import {
 	type UiSurfaceTab,
 } from '../../../../shared/uiSurfaces';
 import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults';
-import { normalizeRenameTabResult } from '../../types';
+import { parseDesignPickCommandRequest } from '../../../../shared/designPickCommands';
+import { readBrowserPickTarget } from '../../../../shared/coworkingBrowser';
+import {
+	BROWSER_VIEWPORT_PRESETS,
+	parseBrowserViewportPreset,
+} from '../../../../shared/browserViewport';
+import { normalizeRenameTabResult, type BrowserViewportResult } from '../../types';
 
 const newTabAdmissions = new WeakMap<MessageHandlerContext['callbacks'], PianolaNewTabDispatch>();
 /**
@@ -651,11 +658,13 @@ export function handleCloseBrowserTab(
 }
 
 /**
- * Handle pick_browser_element message - Design Mode by selector
+ * Handle pick_browser_element message - Design Mode by selector or by region
  * (`maestro-cli browser-pick`). Describes the first element matching
- * `selector` in a browser tab and adds it to the owning agent's composer, the
- * same way a click in Design Mode does. `tab` is the tab id `open-browser`
- * returned or the tab's Coworking id (`browser:N`).
+ * `selector`, or lists the elements in `rect` (guest CSS px), in a browser tab
+ * and stages it as a chip in the owning agent's composer, the same way a click
+ * or a drag in Design Mode does; with `queue: true` it is queued as its own
+ * message instead, as the pick card's Queue button does. `tab` is the tab id
+ * `open-browser` returned or the tab's Coworking id (`browser:N`).
  */
 export function handlePickBrowserElement(
 	ctx: MessageHandlerContext,
@@ -664,12 +673,17 @@ export function handlePickBrowserElement(
 ): void {
 	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 	const tab = typeof message.tab === 'string' ? message.tab.trim() : '';
-	const selector = typeof message.selector === 'string' ? message.selector.trim() : '';
+	// Exactly one of a selector (an element) or a rect (a region).
+	const target = readBrowserPickTarget({ selector: message.selector, rect: message.rect });
 	const note = typeof message.note === 'string' && message.note.trim() ? message.note : undefined;
 	const background = readBackgroundField(message);
+	// Like `background`, only a literal `true` opts in: a pick that is not
+	// clearly a queue request stages a chip, the form that never sends anything.
+	const queue = message.queue === true;
 	// Selectors and notes can carry page or user text - log lengths only.
+	const selectorLength = typeof message.selector === 'string' ? message.selector.trim().length : 0;
 	logger.info(
-		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selector.length}`,
+		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selectorLength}, rect=${message.rect != null}, queue=${queue}`,
 		LOG_CONTEXT
 	);
 
@@ -681,6 +695,8 @@ export function handlePickBrowserElement(
 		text?: string;
 		screenshot?: boolean;
 		aiTabId?: string;
+		pickId?: string;
+		queueItemId?: string;
 	}) => {
 		ctx.send(client, {
 			type: 'pick_browser_element_result',
@@ -696,8 +712,8 @@ export function handlePickBrowserElement(
 		reply({ success: false, error: 'Missing sessionId or tab' });
 		return;
 	}
-	if (!selector) {
-		reply({ success: false, error: 'Missing selector' });
+	if (!target.ok) {
+		reply({ success: false, error: target.error });
 		return;
 	}
 	if (!ctx.callbacks.pickBrowserElement) {
@@ -706,13 +722,130 @@ export function handlePickBrowserElement(
 	}
 
 	ctx.callbacks
-		.pickBrowserElement({ sessionId, tab, selector, note, background })
+		.pickBrowserElement({
+			sessionId,
+			tab,
+			...target.target,
+			note,
+			background,
+			...(queue ? { queue } : {}),
+		})
 		.then((result) => reply(result))
 		.catch((error) => {
 			reply({
 				success: false,
 				error: `Failed to pick element: ${error instanceof Error ? error.message : String(error)}`,
 			});
+		});
+}
+
+/**
+ * Handle browser_viewport message - set or read a browser tab's viewport preset
+ * (`maestro-cli browser-viewport`). `tab` is the tab id `open-browser` returned
+ * or the tab's Coworking id (`browser:N`). A `preset` (one of
+ * BROWSER_VIEWPORT_PRESETS) sets it; leaving it out only reads. Either way the
+ * reply names the preset the tab shows now and the one it showed before.
+ */
+export function handleBrowserViewport(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const tab = typeof message.tab === 'string' ? message.tab.trim() : '';
+	// A preset that is present but not one of the five is refused, never read as
+	// "no preset": a script that typos `phone` must not get a quiet read back.
+	const presetSent = message.preset !== undefined && message.preset !== null;
+	const preset = presetSent ? parseBrowserViewportPreset(message.preset) : null;
+	logger.info(
+		`[Web] Received browser_viewport message: session=${sessionId}, tab=${tab}, set=${presetSent}`,
+		LOG_CONTEXT
+	);
+
+	const reply = (result: BrowserViewportResult) => {
+		ctx.send(client, {
+			type: 'browser_viewport_result',
+			...result,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId || !tab) {
+		reply({ success: false, error: 'Missing sessionId or tab' });
+		return;
+	}
+	if (presetSent && !preset) {
+		reply({
+			success: false,
+			error: `Unknown viewport preset. Use one of: ${BROWSER_VIEWPORT_PRESETS.join(', ')}`,
+		});
+		return;
+	}
+	if (!ctx.callbacks.browserViewport) {
+		reply({ success: false, error: 'Browser viewport not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.browserViewport({ sessionId, tab, ...(preset ? { preset } : {}) })
+		.then((result) => reply(result))
+		.catch((error) => {
+			reply({
+				success: false,
+				error: `Failed to ${preset ? 'set' : 'read'} the viewport: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			});
+		});
+}
+
+/**
+ * Handle design_pick_command message - the Design Mode chips staged in an
+ * agent's composer (`maestro-cli browser-picks`): list them, edit one's note, or
+ * remove one by id. Nothing is decided here: the chips live in the renderer's
+ * session store, so this validates the request and forwards it. Every outcome
+ * is answered with the request id, because the CLI blocks on it.
+ */
+export function handleDesignPickCommand(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sendResult = (payload: Record<string, unknown>) => {
+		ctx.send(client, {
+			type: 'design_pick_command_result',
+			...payload,
+			requestId: message.requestId,
+		});
+	};
+
+	const parsed = parseDesignPickCommandRequest(message as Record<string, unknown>);
+	if (!parsed.ok) {
+		sendResult({ success: false, error: parsed.error });
+		return;
+	}
+	const request = parsed.request;
+	logger.info(
+		`[Web] Received design_pick_command: action=${request.action}, session=${request.sessionId}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.getSessionDetail?.(request.sessionId)) {
+		sendResult({ success: false, error: `Session not found: ${request.sessionId}` });
+		return;
+	}
+	if (!ctx.callbacks.designPickCommand) {
+		sendResult({ success: false, error: 'Browser Design Mode not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.designPickCommand(request)
+		.then((result) => sendResult({ ...result }))
+		.catch((error) => {
+			const detail = error instanceof Error ? error.message : String(error);
+			sendResult({ success: false, error: `Design Mode chip ${request.action} failed: ${detail}` });
 		});
 }
 

@@ -37,12 +37,15 @@ import {
 import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
+import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import { runRemoteDiffReviewCommand } from '../../services/diffReview';
+import { runRemoteFileReviewCommand } from '../../services/fileReview';
+import { runRemoteDesignPickCommand } from '../../services/designModePick';
 import type { DiffReviewCommandResult } from '../../../shared/diffReviewCommands';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
@@ -1013,7 +1016,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		const unsubscribeCrossAgentAsk = window.maestro.process.onRemoteCrossAgentAsk(
 			(request, responseChannel) => {
-				void runCrossAgentAsk(request)
+				// `ask --btw` rides the same wire but forks the target's tab instead of
+				// consulting it, exactly as a typed `/btw` in that tab would.
+				const run = request.sideQuestion
+					? runRemoteSideQuestion({
+							targetSessionId: request.targetSessionId,
+							question: request.question,
+							tabId: request.targetTabId,
+						}).then((outcome) => ({
+							success: outcome.success,
+							answer: outcome.answer,
+							error: outcome.error,
+							targetAgentName: outcome.agentName,
+							targetTabId: outcome.tabId,
+						}))
+					: runCrossAgentAsk(request);
+				void run
 					.then((result) => {
 						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, result);
 					})
@@ -2353,19 +2371,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle a remote Git Diff review verb (`maestro-cli diff-review`). The
-	// pending comments are this renderer's state (the viewer draws them), so
-	// every verb is answered here, through the same service the viewer's Send
-	// Review and Edit in Composer buttons call.
+	// Handle a remote review verb: `maestro-cli diff-review` (Git Diff viewer)
+	// or `maestro-cli file-review` (File Preview line comments, which name a
+	// `file`). The pending comments are this renderer's state (the views draw
+	// them), so every verb is answered here, through the same service the
+	// views' Send Review and Edit in Composer buttons call.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteDiffReviewCommand(
 			(request, responseChannel) => {
 				const reply = (result: DiffReviewCommandResult) =>
 					window.maestro.process.sendRemoteDiffReviewCommandResponse(responseChannel, result);
-				runRemoteDiffReviewCommand(request)
+				const { file } = request;
+				(file
+					? runRemoteFileReviewCommand({ ...request, file })
+					: runRemoteDiffReviewCommand(request)
+				)
 					.then(reply)
 					.catch((error) => {
-						logger.error('[useRemoteIntegration] Diff review command failed', undefined, error);
+						logger.error('[useRemoteIntegration] Review command failed', undefined, error);
 						reply({
 							success: false,
 							error: error instanceof Error ? error.message : String(error),
@@ -2377,6 +2400,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	// Handle a remote Design Mode chip verb (`maestro-cli browser-picks`): list
+	// the chips waiting in an agent's composer, or take one off. The chips are
+	// this renderer's state (the composer draws them), so the service answers
+	// from the live store, through the same remover the chip's X calls. The
+	// preload sends the answer back, a throw included.
+	useEffect(
+		() => window.maestro.process.onRemoteDesignPickCommand?.(runRemoteDesignPickCommand),
+		[]
+	);
 
 	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
 	// notes are this renderer's state and its run loop is what reads them, so

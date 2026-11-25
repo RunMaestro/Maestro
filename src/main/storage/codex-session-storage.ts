@@ -42,9 +42,17 @@ import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { forEachJsonlLine, readFirstJsonlLine } from '../utils/jsonl-stream';
-import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
-import { CodexTokenSpeedTracker } from '../../shared/tokenSpeed';
+import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
+import {
+	CODEX_FIRST_MESSAGE_PREVIEW_LENGTH,
+	extractCwdFromText,
+	extractTextFromContent,
+	isSystemContextMessage,
+	normalizeProjectPath,
+	type CodexMessageContent,
+	type CodexSessionMetadata,
+} from '../transcript-parse/codex-session-info';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -79,56 +87,6 @@ const CODEX_SESSION_CACHE_VERSION = 6;
 const CODEX_SESSION_CACHE_FILENAME = 'codex-sessions-cache.json';
 
 /**
- * Parse limits for session files
- */
-const CODEX_SESSION_PARSE_LIMITS = {
-	FIRST_MESSAGE_SCAN_LINES: 50,
-	LAST_TIMESTAMP_SCAN_LINES: 20,
-	FIRST_MESSAGE_PREVIEW_LENGTH: 200,
-} as const;
-
-/**
- * Codex session metadata structure (first line of JSONL)
- * Format: { type: 'session_meta', payload: { id, cwd, timestamp, ... } }
- */
-interface CodexSessionMetadata {
-	type?: string;
-	timestamp?: string;
-	payload?: {
-		id: string;
-		cwd?: string;
-		timestamp?: string;
-		originator?: string;
-		cli_version?: string;
-		model_provider?: string;
-		git?: {
-			commit_hash?: string;
-			branch?: string;
-			repository_url?: string;
-		};
-	};
-	// Legacy format (direct fields)
-	id?: string;
-	git?: {
-		commit_hash?: string;
-		branch?: string;
-		repository_url?: string;
-	};
-}
-
-/**
- * Codex message content structure
- */
-interface CodexMessageContent {
-	type: string;
-	text?: string;
-	// Tool use fields
-	tool?: string;
-	args?: unknown;
-	output?: string;
-}
-
-/**
  * Tool use entry shape used when building SessionMessage.toolUse arrays.
  * Provides type safety for the tool call / tool output merge logic.
  */
@@ -155,59 +113,6 @@ function extractSessionIdFromFilename(filename: string): string | null {
 	}
 	// Fallback: use filename without extension
 	return filename.replace('.jsonl', '');
-}
-
-/**
- * Extract text from Codex message content array
- */
-function extractTextFromContent(content: CodexMessageContent[] | undefined): string {
-	if (!content || !Array.isArray(content)) {
-		return '';
-	}
-
-	const textParts = content
-		.filter(
-			(part) => part.type === 'input_text' || part.type === 'text' || part.type === 'output_text'
-		)
-		.map((part) => part.text || '')
-		.filter((text) => text.trim());
-
-	return textParts.join(' ');
-}
-
-/**
- * Check if text is a system/environment context message that should be skipped for preview
- */
-function isSystemContextMessage(text: string): boolean {
-	if (!text) return false;
-	const trimmed = text.trim();
-	// Skip messages that start with environment/system context XML tags
-	if (
-		trimmed.startsWith('<environment_context>') ||
-		trimmed.startsWith('<cwd>') ||
-		trimmed.startsWith('<system>') ||
-		trimmed.startsWith('<approval_policy>')
-	) {
-		return true;
-	}
-	// Skip markdown-formatted system context (e.g., "# Context Your name is **Maestro Codex**...")
-	if (
-		trimmed.startsWith('# Context') ||
-		trimmed.startsWith('# Maestro System Context') ||
-		trimmed.startsWith('# System Context')
-	) {
-		return true;
-	}
-	return false;
-}
-
-function extractCwdFromText(text: string): string | null {
-	const match = text.match(/<cwd>([^<]+)<\/cwd>/i);
-	return match ? match[1].trim() : null;
-}
-
-function normalizeProjectPath(projectPath: string): string {
-	return path.resolve(projectPath);
 }
 
 function isSessionForProject(sessionProjectPath: string, projectPath: string): boolean {
@@ -264,7 +169,12 @@ async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {
 }
 
 /**
- * Parse a Codex session file and extract metadata
+ * Parse a Codex session file and extract metadata (local filesystem).
+ *
+ * Read and parsed on the transcript parse worker pool, streamed: a rollout can
+ * run to hundreds of MB, and an Auto Run grows it on every task, so reading it
+ * whole here put several hundred MB of garbage on the main heap per reparse
+ * (#2084). See `codex-session-info.ts`.
  */
 async function parseSessionFile(
 	filePath: string,
@@ -280,213 +190,16 @@ async function parseSessionFile(
 			return null;
 		}
 
-		const content = await fs.readFile(filePath, 'utf-8');
-		const lines = content.split('\n').filter((l) => l.trim());
-
-		if (lines.length === 0) {
-			return null;
-		}
-
-		// Parse first line as metadata
-		let metadata: CodexSessionMetadata | null = null;
-		let timestamp = new Date(stats.mtimeMs).toISOString();
-		let sessionProjectPath: string | null = null;
-
-		try {
-			const firstLine = JSON.parse(lines[0]);
-			// New format: { type: 'session_meta', payload: { id, cwd, timestamp, ... } }
-			if (firstLine.type === 'session_meta' && firstLine.payload) {
-				metadata = firstLine as CodexSessionMetadata;
-				timestamp = firstLine.payload.timestamp || firstLine.timestamp || timestamp;
-				// Get project path directly from session_meta
-				if (firstLine.payload.cwd) {
-					sessionProjectPath = firstLine.payload.cwd;
-				}
-			}
-			// Legacy format: { id, timestamp, ... } at top level
-			else if (firstLine.id && firstLine.timestamp) {
-				metadata = firstLine as CodexSessionMetadata;
-				timestamp = firstLine.timestamp || timestamp;
-			}
-		} catch {
-			// First line may not be metadata, continue parsing
-		}
-
-		// Count messages and find first assistant response (preferred) or user message (fallback)
-		let firstAssistantMessage = '';
-		let firstUserMessage = '';
-		let userMessageCount = 0;
-		let assistantMessageCount = 0;
-		const tokenCounts = new CodexTokenCounts();
-		const speedTracker = new CodexTokenSpeedTracker();
-		let firstTimestamp = timestamp;
-		let lastTimestamp = timestamp;
-		// Codex is single-model per session; the model id lives on turn_context /
-		// session_meta entries rather than on the usage events. Capture the last
-		// seen one so per-model token attribution has a real model to key on.
-		let capturedModel: string | undefined =
-			metadata?.payload && 'model' in metadata.payload
-				? (metadata.payload as { model?: string }).model
-				: undefined;
-
-		for (let i = 0; i < lines.length; i++) {
-			try {
-				const entry = JSON.parse(lines[i]);
-
-				// Capture the model id from turn_context entries (current Codex format)
-				if (entry.type === 'turn_context' && entry.payload?.model) {
-					capturedModel = entry.payload.model;
-				}
-
-				speedTracker.observe(entry, capturedModel);
-
-				// Handle turn.completed for usage stats (already per-turn)
-				if (entry.type === 'turn.completed' && entry.usage) {
-					tokenCounts.addTurn(entry.usage);
-				}
-
-				// Handle Codex "event_msg" usage stats
-				if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-					tokenCounts.addTokenCountEvent(entry.payload.info);
-				}
-
-				// Handle message entries (legacy format)
-				if (entry.type === 'message') {
-					if (entry.role === 'user') {
-						userMessageCount++;
-						// Extract text and check for system context
-						if (entry.content) {
-							const text = extractTextFromContent(entry.content);
-							// Capture first user message as fallback preview (skip system context)
-							if (!firstUserMessage && text.trim() && !isSystemContextMessage(text)) {
-								firstUserMessage = text;
-							}
-							// Fallback: extract cwd from message content if not in session_meta
-							if (!sessionProjectPath) {
-								const cwd = extractCwdFromText(text);
-								if (cwd) {
-									sessionProjectPath = cwd;
-								}
-							}
-						}
-					} else if (entry.role === 'assistant') {
-						assistantMessageCount++;
-						// Capture first assistant message as preferred preview
-						if (!firstAssistantMessage && entry.content) {
-							const text = extractTextFromContent(entry.content);
-							if (text.trim()) {
-								firstAssistantMessage = text;
-							}
-						}
-					}
-				}
-
-				// Handle response_item entries (current Codex format)
-				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-					if (entry.payload.role === 'user') {
-						userMessageCount++;
-						// Extract text and check for system context
-						if (entry.payload.content) {
-							const text = extractTextFromContent(entry.payload.content);
-							// Capture first user message as fallback preview (skip system context)
-							if (!firstUserMessage && text.trim() && !isSystemContextMessage(text)) {
-								firstUserMessage = text;
-							}
-							// Fallback: extract cwd from message content if not in session_meta
-							if (!sessionProjectPath) {
-								const cwd = extractCwdFromText(text);
-								if (cwd) {
-									sessionProjectPath = cwd;
-								}
-							}
-						}
-					} else if (entry.payload.role === 'assistant') {
-						assistantMessageCount++;
-						// Capture first assistant message as preferred preview
-						if (!firstAssistantMessage && entry.payload.content) {
-							const text = extractTextFromContent(entry.payload.content);
-							if (text.trim()) {
-								firstAssistantMessage = text;
-							}
-						}
-					}
-				}
-
-				// Handle item.completed for agent messages
-				if (entry.type === 'item.completed' && entry.item) {
-					if (entry.item.type === 'agent_message') {
-						assistantMessageCount++;
-						// Capture first agent message as preferred preview
-						if (!firstAssistantMessage && entry.item.text) {
-							firstAssistantMessage = entry.item.text;
-						}
-					}
-				}
-
-				// Track timestamps for duration
-				if (entry.timestamp) {
-					const entryTime = new Date(entry.timestamp).getTime();
-					const firstTime = new Date(firstTimestamp).getTime();
-					const lastTime = new Date(lastTimestamp).getTime();
-
-					if (entryTime < firstTime) {
-						firstTimestamp = entry.timestamp;
-					}
-					if (entryTime > lastTime) {
-						lastTimestamp = entry.timestamp;
-					}
-				}
-			} catch {
-				// Skip malformed lines
-			}
-		}
-
-		// Use assistant response as preview if available, otherwise fall back to user message
-		const previewMessage = firstAssistantMessage || firstUserMessage;
-
-		const messageCount = userMessageCount + assistantMessageCount;
-
-		const startTime = new Date(firstTimestamp).getTime();
-		const endTime = new Date(lastTimestamp).getTime();
-		const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-
-		// Extract session ID from metadata (new format uses payload.id, legacy uses id)
-		const metadataSessionId = metadata?.payload?.id || metadata?.id || sessionId;
-
-		const modelAcc = new ModelUsageAccumulator();
-		if (!tokenCounts.isEmpty) {
-			modelAcc.add(capturedModel, {
-				inputTokens: tokenCounts.inputTokens,
-				outputTokens: tokenCounts.outputTokens,
-				cacheReadTokens: tokenCounts.cachedTokens,
-				cacheCreationTokens: 0,
-			});
-		}
-
-		return {
-			sessionId: metadataSessionId,
-			projectPath: sessionProjectPath ? normalizeProjectPath(sessionProjectPath) : '',
-			timestamp: firstTimestamp,
-			modifiedAt: new Date(stats.mtimeMs).toISOString(),
-			firstMessage: previewMessage.slice(
-				0,
-				CODEX_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
-			),
-			messageCount,
+		return await runTranscriptParse({
+			kind: 'codex-session-info',
+			filePath,
+			sessionId,
 			sizeBytes: stats.size,
-			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			inputTokens: tokenCounts.inputTokens,
-			outputTokens: tokenCounts.outputTokens,
-			cacheReadTokens: tokenCounts.cachedTokens,
-			cacheCreationTokens: 0, // Codex doesn't report cache creation separately
-			durationSeconds,
-			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
-			speed: speedTracker.result(),
-		};
+			mtimeMs: stats.mtimeMs,
+		});
 	} catch (error) {
-		// RangeError: Invalid string length occurs when the file is too large for V8
-		// string allocation (e.g., under MAX_SESSION_FILE_SIZE but system memory is low).
-		// This is expected and not worth reporting to Sentry.
+		// RangeError: Invalid string length occurs when a single line is too large for
+		// V8 string allocation. This is expected and not worth reporting to Sentry.
 		if (error instanceof RangeError) {
 			logger.warn('Codex session file too large to parse', LOG_CONTEXT, { filePath });
 			return null;
@@ -859,10 +572,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				projectPath: sessionProjectPath ? normalizeProjectPath(sessionProjectPath) : '',
 				timestamp: firstTimestamp,
 				modifiedAt: new Date(stats.mtimeMs).toISOString(),
-				firstMessage: previewMessage.slice(
-					0,
-					CODEX_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
-				),
+				firstMessage: previewMessage.slice(0, CODEX_FIRST_MESSAGE_PREVIEW_LENGTH),
 				messageCount,
 				sizeBytes: stats.size,
 				inputTokens: tokenCounts.inputTokens,

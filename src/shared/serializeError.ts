@@ -50,24 +50,27 @@ export function toLoggableData(data: unknown): unknown {
 	return copy ?? data;
 }
 
-const IPC_PREFIX = /^Error invoking remote method '[^']+':\s*/;
-const ERROR_PREFIX = /^Error:\s*/;
+const IPC_PREFIX = /^Error invoking remote method '[^']*':\s*/;
+const ERROR_CLASS_PREFIX = /^[A-Za-z]*Error:\s*/;
 
 /**
  * The message to SHOW for a rejected `window.maestro.*` call.
  *
  * Electron wraps a main-process throw as `Error invoking remote method
- * 'fs:writeFile': Error: <message>`, and a handler that re-throws with its own
- * prefix adds another `: Error: ` layer (`Failed to write file: Error: Unable
- * to connect to "pedtome" over SSH.`). The innermost message is the one that
- * names the cause, so that is what comes back.
+ * 'fs:writeFile': TypeError: <message>`. Drop that wrapper and its error
+ * class, keeping the handler's complete message, including embedded colons
+ * and Error text. Unwrapped messages are literal. Without an explicit
+ * fallback, non-Errors keep the renderer's existing String(value) contract.
  */
-export function ipcErrorMessage(error: unknown, fallback = 'Unknown error'): string {
-	const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-	const message = raw.replace(IPC_PREFIX, '').replace(ERROR_PREFIX, '');
-	const innermost = message
-		.split(/:\s*Error:\s*/)
-		.pop()
-		?.trim();
-	return innermost || fallback;
+export function ipcErrorMessage(error: unknown, fallback?: string): string {
+	const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+	if (!text) return fallback ?? String(error);
+
+	const unwrapped = text.replace(IPC_PREFIX, '');
+	if (unwrapped !== text) return unwrapped.replace(ERROR_CLASS_PREFIX, '').trim() || fallback || '';
+
+	// Forwarded IPC failures may already be strings. Keep unwrapped strings
+	// literal for legacy renderer callers without a fallback.
+	if (typeof error === 'string' && fallback === undefined) return error;
+	return text.trim() || fallback || '';
 }

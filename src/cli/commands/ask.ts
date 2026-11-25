@@ -45,6 +45,13 @@ export interface AskOptions {
 	from?: string;
 	/** Forward your current transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a side question (`/btw`) of the target's tab instead of consulting the
+	 * agent: answered from a throwaway fork of that tab's conversation.
+	 */
+	btw?: boolean;
+	/** With `btw`: the target's AI tab to fork. Defaults to its active tab. */
+	tab?: string;
 	/** Seconds to wait for the answer. */
 	timeout?: string;
 	json?: boolean;
@@ -98,6 +105,15 @@ export async function ask(agentId: string, question: string, options: AskOptions
 
 	const route = routeAgentTarget(agentId);
 	if (route.kind === 'peer') {
+		// A side question forks a desktop tab; a peer's host has no tab to fork.
+		if (options.btw === true || options.tab !== undefined) {
+			fail(
+				`${options.btw === true ? '--btw' : '--tab'} forks a tab on this desktop, which the host on peer "${route.target.peer}" does not offer. Ask without it.`,
+				{},
+				ExitCode.InvalidUsage
+			);
+			return;
+		}
 		if (options.from !== undefined || options.withContext) {
 			fail(
 				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${route.target.peer}" cannot see. Ask without it.`,
@@ -154,7 +170,18 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	} else {
 		fromSessionId = caller?.agentId;
 	}
-	if (fromSessionId && fromSessionId === targetSessionId) {
+	const sideQuestion = options.btw === true;
+	if (options.tab !== undefined && !sideQuestion) {
+		fail('--tab only applies to --btw');
+		return;
+	}
+	if (sideQuestion && options.withContext) {
+		fail('--with-context does not apply to --btw: a side question already reads the tab');
+		return;
+	}
+	// A side question forks a tab and never writes to it, so an agent asking
+	// about its own conversation is fine; a consult of itself would deadlock.
+	if (!sideQuestion && fromSessionId && fromSessionId === targetSessionId) {
 		fail('an agent cannot consult itself');
 		return;
 	}
@@ -216,6 +243,8 @@ async function consult(
 					question,
 					...fromFields,
 					withContext: options.withContext === true,
+					...(options.btw === true ? { sideQuestion: true } : {}),
+					...(options.tab ? { targetTabId: options.tab } : {}),
 					timeoutMs,
 				},
 				'cross_agent_ask_result',

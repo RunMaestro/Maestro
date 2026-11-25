@@ -241,6 +241,43 @@ import type {
 	ParquetSortSpec,
 } from '../shared/parquet/types';
 import type {
+	SqliteBlobRequest,
+	SqliteBlobSaved,
+	SqliteCellUpdateRequest,
+	SqliteCellUpdateResult,
+	SqliteColumnCatalog,
+	SqliteCountRequest,
+	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteEditingGrant,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
+	SqliteObjectKind,
+	SqliteObjectList,
+	SqliteObjectSchema,
+	SqliteObjectStats,
+	SqliteQueryExported,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
+	SqliteQueryRequest,
+	SqliteQueryResult,
+	SqliteRowCount,
+	SqliteRowDeleteRequest,
+	SqliteRowDeleteResult,
+	SqliteRowInsertRequest,
+	SqliteRowInsertResult,
+	SqliteRowsPage,
+	SqliteRowsRequest,
+	SqliteStatementLog,
+	SqliteTransactionEnd,
+	SqliteTransactionEndRequest,
+	SqliteTransactionRequest,
+	SqliteTransactionState,
+	SqliteTransactionStatus,
+	SqliteUndoRequest,
+	SqliteUndoResult,
+} from '../shared/sqlite/types';
+import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
 	GitWorktreeRunSetupResult,
@@ -985,6 +1022,10 @@ interface MaestroAPI {
 			callback: (chatId: string, archived: boolean, responseChannel: string) => void
 		) => () => void;
 		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSetGroupChatUnread: (
+			callback: (chatId: string, unread: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetGroupChatUnreadResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;
@@ -1014,6 +1055,9 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
+					sideQuestion?: boolean;
+					targetTabId?: string;
 				},
 				responseChannel: string
 			) => void
@@ -1204,6 +1248,11 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
 		) => void;
+		onRemoteDesignPickCommand: (
+			callback: (
+				request: import('../shared/designPickCommands').DesignPickCommandRequest
+			) => import('../shared/designPickCommands').DesignPickCommandResult
+		) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;
@@ -1960,6 +2009,45 @@ interface MaestroAPI {
 		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
 		close: (handle: string) => Promise<void>;
 		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void) => () => void;
+	};
+	/**
+	 * SQLite preview. The database stays open read-only in the main process
+	 * and only names and numbers cross this bridge - see
+	 * src/shared/sqlite/preview.ts for why a SQLite read returns a marker.
+	 */
+	sqlite: {
+		open: (filePath: string) => Promise<SqliteDatabaseInfo>;
+		readSummary: (handle: string) => Promise<SqliteDatabaseSummary>;
+		checkIntegrity: (handle: string, mode: SqliteIntegrityMode) => Promise<SqliteIntegrityResult>;
+		listObjects: (handle: string) => Promise<SqliteObjectList>;
+		readObjectStats: (handle: string, names: string[]) => Promise<SqliteObjectStats[]>;
+		readSchema: (
+			handle: string,
+			name: string,
+			kind?: SqliteObjectKind
+		) => Promise<SqliteObjectSchema>;
+		readColumns: (handle: string) => Promise<SqliteColumnCatalog>;
+		readRows: (request: SqliteRowsRequest) => Promise<SqliteRowsPage>;
+		countRows: (request: SqliteCountRequest) => Promise<SqliteRowCount>;
+		runQuery: (request: SqliteQueryRequest) => Promise<SqliteQueryResult>;
+		cancelQuery: (queryId: string) => Promise<boolean>;
+		exportQuery: (request: SqliteQueryExportRequest) => Promise<SqliteQueryExported>;
+		readQueryHistory: (handle: string) => Promise<SqliteQueryHistory>;
+		forgetQueryHistory: (handle: string, entryId: string | null) => Promise<SqliteQueryHistory>;
+		readStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		clearStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		onStatementLogged: (callback: (databasePath: string) => void) => () => void;
+		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
+		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
+		disableEditing: (handle: string, editToken: string) => Promise<boolean>;
+		updateCell: (request: SqliteCellUpdateRequest) => Promise<SqliteCellUpdateResult>;
+		insertRow: (request: SqliteRowInsertRequest) => Promise<SqliteRowInsertResult>;
+		deleteRow: (request: SqliteRowDeleteRequest) => Promise<SqliteRowDeleteResult>;
+		undoEdit: (request: SqliteUndoRequest) => Promise<SqliteUndoResult>;
+		beginTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionState>;
+		readTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionStatus>;
+		endTransaction: (request: SqliteTransactionEndRequest) => Promise<SqliteTransactionEnd>;
+		close: (handle: string) => Promise<void>;
 	};
 	fs: {
 		homeDir: () => Promise<string>;
@@ -3204,6 +3292,13 @@ interface MaestroAPI {
 			message?: string;
 		}>;
 		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
+		// Auto Runs saved across an update restart. `take` reads and deletes.
+		saveRestartResume: (
+			entries: import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		) => Promise<number>;
+		takeRestartResume: () => Promise<
+			import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		>;
 		onStatusChanged: (
 			handler: (data: {
 				projectPath: string;
@@ -4798,6 +4893,26 @@ interface MaestroAPI {
 				status?: 'running' | 'finished' | 'cancelled';
 			}[];
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
+	// Side question API (`/btw`: ask about a tab through a throwaway session fork)
+	sideQuestion: {
+		ask: (config: {
+			question: string;
+			agentType: string;
+			cwd: string;
+			agentSessionId?: string;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; answer?: string; error?: string }>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

@@ -36,6 +36,7 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerParquetHandlers,
+	registerSqliteHandlers,
 	registerCodexVisualizationHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
@@ -51,6 +52,7 @@ import {
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
+	registerSideQuestionHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -80,6 +82,7 @@ import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
 import { startCoworkingService } from '../../coworking/coworking-lifecycle';
 import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
+import { registerAutoRunRestartResumeHandlers } from '../../autorun-restart-resume';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
@@ -176,6 +179,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+
+	// Auto Runs saved across an update restart - src/main/autorun-restart-resume.ts
+	registerAutoRunRestartResumeHandlers(deps.app.getPath('userData'));
 
 	// Playbook operations - extracted to src/main/ipc/handlers/playbooks.ts
 	registerPlaybooksHandlers({
@@ -551,6 +557,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// never runs and every Parquet preview fails with no handler.
 	registerParquetHandlers();
 
+	// SQLite preview handlers, registered here for the same reason as parquet.
+	registerSqliteHandlers();
+
 	// Codex `visualize` content references rendered inline in the transcript.
 	registerCodexVisualizationHandlers();
 
@@ -598,6 +607,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// AI Command handlers (plain-English request -> one shell command line).
 	// Same dependency shape as tab naming: both spawn a short-lived agent turn.
 	registerAiCommandHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
+	// Side question handlers (`/btw`): a throwaway fork of the tab's session.
+	registerSideQuestionHandlers({
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,

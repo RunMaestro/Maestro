@@ -42,6 +42,16 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: null,
 		category: 'advanced',
 	},
+	// --- Primary Agent (#2050) ---
+	// The default receiver of the user's input. Grants nothing: peer access to
+	// the primary agent stays explicit. See src/shared/primaryAgent.ts.
+	primaryAgentId: {
+		description:
+			'Id of the Primary Agent: the agent that features such as Quick Chat use when you name no agent. Each feature can still override it. It grants no peer access. When null, no Primary Agent is set. `settings set primaryAgentId` also accepts an agent name or a partial id.',
+		type: 'string',
+		default: null,
+		category: 'advanced',
+	},
 	allowConcurrentSend: {
 		description:
 			'Allow `maestro-cli dispatch --force` to write into a tab that is itself mid-turn. Off by default because two answers interleave in one conversation. An idle tab of a busy agent needs no setting: it runs its own turn in parallel.',

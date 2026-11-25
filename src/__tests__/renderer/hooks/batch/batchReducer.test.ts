@@ -53,6 +53,29 @@ describe('batchReducer', () => {
 			expect(result['session-1'].processingState).toBe('INITIALIZING');
 		});
 
+		it('starts on loop pass 0 unless a resumed run carries its saved pass', () => {
+			const payload = {
+				documents: ['doc1.md'],
+				lockedDocuments: ['doc1.md'],
+				totalTasksAcrossAllDocs: 1,
+				loopEnabled: true,
+				maxLoops: 5,
+				folderPath: '/test/folder',
+				worktreeActive: false,
+				startTime: 1000,
+				cumulativeTaskTimeMs: 0,
+				accumulatedElapsedMs: 0,
+				lastActiveTimestamp: 1000,
+			};
+			const fresh = batchReducer({}, { type: 'START_BATCH', sessionId: 's', payload });
+			const resumed = batchReducer(
+				{},
+				{ type: 'START_BATCH', sessionId: 's', payload: { ...payload, loopIteration: 3 } }
+			);
+			expect(fresh.s.loopIteration).toBe(0);
+			expect(resumed.s.loopIteration).toBe(3);
+		});
+
 		it('records pre-checked tasks as the ETA baseline', () => {
 			const result = batchReducer(
 				{},

@@ -38,6 +38,7 @@ export interface TurnRecording {
 	toolType:
 		| 'claude-code'
 		| 'opencode'
+		| 'kilo'
 		| 'codex'
 		| 'copilot-cli'
 		| 'factory-droid'

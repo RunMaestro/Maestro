@@ -42,9 +42,15 @@ function setChatState(chatId: string, state: GroupChatState): void {
 	if (activeGroupChatId === chatId) setGroupChatState(state);
 }
 
+function isChatUnread(chatId: string): boolean {
+	return useGroupChatStore.getState().unreadGroupChatIds.has(chatId);
+}
+
 export async function listRemoteGroupChats(): Promise<RemoteGroupChatState[]> {
 	const chats = await window.maestro.groupChat.list();
-	return chats.map((chat) => toRemoteGroupChatState(chat, chatState(chat.id)));
+	return chats.map((chat) =>
+		toRemoteGroupChatState(chat, chatState(chat.id), [], { unread: isChatUnread(chat.id) })
+	);
 }
 
 export async function getRemoteGroupChatState(
@@ -56,7 +62,10 @@ export async function getRemoteGroupChatState(
 		window.maestro.groupChat.getMessages(chatId),
 		window.maestro.groupChat.getQueue(chatId),
 	]);
-	return toRemoteGroupChatState(chat, chatState(chatId), messages, queue);
+	return toRemoteGroupChatState(chat, chatState(chatId), messages, {
+		queue,
+		unread: isChatUnread(chatId),
+	});
 }
 
 /**
@@ -150,4 +159,19 @@ export async function archiveGroupChat(chatId: string, archived: boolean): Promi
 	useGroupChatStore
 		.getState()
 		.setGroupChats((prev) => prev.map((c) => (c.id === chatId ? updated : c)));
+}
+
+/**
+ * Set a room's unread dot (`maestro-cli group-chat unread|read`). The flag is
+ * renderer state, so this is the only place it can be written from outside the
+ * window; it lands on the same store the Left Bar menu and Cmd+Shift+U toggle.
+ * Returns false for a chat id that does not exist.
+ */
+export async function setRemoteGroupChatUnread(chatId: string, unread: boolean): Promise<boolean> {
+	const chat = await window.maestro.groupChat.load(chatId);
+	if (!chat) return false;
+	const { markGroupChatUnread, clearGroupChatUnread } = useGroupChatStore.getState();
+	if (unread) markGroupChatUnread(chatId);
+	else clearGroupChatUnread(chatId);
+	return true;
 }

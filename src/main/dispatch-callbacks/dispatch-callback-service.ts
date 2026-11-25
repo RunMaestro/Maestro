@@ -35,7 +35,10 @@ export interface DispatchCallbackServiceDeps {
 	 * first turn. Used when the callback has no tab of its own to return to.
 	 */
 	openTab: (agentId: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
-	/** Best-effort result text for the finished dispatch. */
+	/**
+	 * Fallback result text for the finished dispatch, used only when the
+	 * registry captured no live output for it.
+	 */
 	getTargetOutput?: (
 		agentId: string,
 		since: number
@@ -150,14 +153,23 @@ async function deliverCallback(
 	deps: DispatchCallbackServiceDeps
 ): Promise<void> {
 	const { entry } = fire;
-	let output: string | undefined;
-	try {
-		output = await deps.getTargetOutput?.(entry.targetAgentId, entry.createdAt);
-	} catch (error) {
-		deps.logger?.warn(
-			`Failed to read target output for ${entry.callbackId}: ${String(error)}`,
-			LOG_CONTEXT
-		);
+	// Prefer the text the dispatched process itself emitted. The History
+	// fallback rarely has an entry yet: an interactive turn writes one only after
+	// its opt-in synopsis, which lands well after the callback fires. An Auto Run
+	// callback is the reverse: the captured text is the turn's launch reply, and
+	// the batch summary is already in History when the batch reports done.
+	const captured = fire.output?.trim() ? fire.output : undefined;
+	let output: string | undefined = fire.awaitedAutoRun ? undefined : captured;
+	if (output === undefined) {
+		try {
+			output = await deps.getTargetOutput?.(entry.targetAgentId, entry.createdAt);
+		} catch (error) {
+			deps.logger?.warn(
+				`Failed to read target output for ${entry.callbackId}: ${String(error)}`,
+				LOG_CONTEXT
+			);
+		}
+		if (!output) output = captured;
 	}
 
 	// An Auto Run delegation goes back to the run, never into a tab: the run is

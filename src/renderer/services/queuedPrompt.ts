@@ -37,6 +37,7 @@ import {
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
 import type { MentionRouting } from '../../shared/crossAgentContext';
+import { withoutDesignPickPageText } from '../utils/designModePicker';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -198,6 +199,13 @@ export interface QueuedPromptOptions {
 	 * drain re-plans from the text and the text alone would route it by wording.
 	 */
 	mentionRouting?: MentionRouting;
+	/**
+	 * Whether to read `text` for `@mentions`. Default true. Pass false when the
+	 * text is not the user's own words (a Design Mode pick holds the page's text
+	 * and HTML): the drain fires a stamped mention as a real consult, so a page
+	 * that said `@Backend` would otherwise pull that agent in.
+	 */
+	planMentions?: boolean;
 }
 
 /**
@@ -212,7 +220,9 @@ export interface QueuedPromptOptions {
  *
  * The `@mention` flags are stamped but NOT fired: a consult must reach the
  * other agent when this item becomes the agent's turn, not when it was queued.
- * `agentStore.processQueuedItem` fires it at drain time.
+ * `agentStore.processQueuedItem` fires it at drain time, and only for an item
+ * that carries the flag, so `planMentions: false` leaves a message unable to
+ * consult anyone.
  */
 export function buildQueuedMessageItem({
 	session,
@@ -221,12 +231,12 @@ export function buildQueuedMessageItem({
 	images,
 	slashCommand,
 	mentionRouting,
+	planMentions = true,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
 	const firstWhitespace = commandText?.search(/\s/) ?? -1;
-	const mentionPlan = slashCommand
-		? null
-		: planCrossAgentMentions(text, session.id, mentionRouting);
+	const mentionPlan =
+		slashCommand || !planMentions ? null : planCrossAgentMentions(text, session.id, mentionRouting);
 	const item: QueuedItem = {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -244,6 +254,8 @@ export function buildQueuedMessageItem({
 		turnSettings: captureQueuedTurnSettings(tab, session),
 		...queuedMentionFields(mentionPlan),
 		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
+		// Kept on the item so an edit cannot re-plan what this opted out of.
+		...(!planMentions && { mentionsDisabled: true }),
 	};
 	if (item.type === 'command' && session.toolType === 'grok') {
 		item.commandScope = { provider: 'grok' };
@@ -297,16 +309,26 @@ function matchSlashCommand(
  *
  * @returns The queued item, or null when the agent is gone or has no AI tab.
  */
-export function enqueuePromptForTab(options: {
-	sessionId: string;
-	tabId: string;
-	text: string;
-	images?: string[];
-	slashCommand?: boolean;
-	expandCommands?: boolean;
-	mentionRouting?: MentionRouting;
-}): QueuedItem | null {
-	const { sessionId, tabId, text, images, slashCommand, expandCommands, mentionRouting } = options;
+export function enqueuePromptForTab(
+	options: Pick<
+		QueuedPromptOptions,
+		'text' | 'images' | 'slashCommand' | 'mentionRouting' | 'planMentions'
+	> & {
+		sessionId: string;
+		tabId: string;
+		expandCommands?: boolean;
+	}
+): QueuedItem | null {
+	const {
+		sessionId,
+		tabId,
+		text,
+		images,
+		slashCommand,
+		expandCommands,
+		mentionRouting,
+		planMentions,
+	} = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
@@ -323,6 +345,7 @@ export function enqueuePromptForTab(options: {
 		images,
 		slashCommand: slashCommand || !!command,
 		mentionRouting,
+		planMentions,
 	});
 	const item: QueuedItem = command
 		? { ...message, commandDescription: command.description }
@@ -539,11 +562,16 @@ export function matchQueuedSlashCommand(session: Session, text: string): QueuedS
  * can add, remove, or move a mention, and where it sits decides whether this
  * agent answers at all. A message edited into one of the user's slash commands
  * becomes that command, with no mention to consult.
+ *
+ * The mentions are resolved without the page text of the Design Mode chips the
+ * item's send expanded in (`QueuedItem.designPickPageText`), as the drain resolves
+ * them, and an item queued with `planMentions: false` (`mentionsDisabled`)
+ * gets none at all, so an edit cannot turn page content into a consult.
  */
 export function resolveQueuedItemEdit(
 	session: Session,
-	patch: QueuedItemEditPatch,
-	itemId?: string
+	itemId: string,
+	patch: QueuedItemEditPatch
 ): {
 	crossAgent: Pick<QueuedItem, 'crossAgentOnly' | 'mentionRouting'> & {
 		crossAgentMention: boolean;
@@ -557,12 +585,19 @@ export function resolveQueuedItemEdit(
 			slashCommand,
 		};
 	}
+	const item = session.executionQueue?.find((queued) => queued.id === itemId);
+	if (item?.mentionsDisabled) {
+		return {
+			crossAgent: { crossAgentMention: false, crossAgentOnly: false, mentionRouting: undefined },
+		};
+	}
 	// A routing the user PICKED when queuing it survives the edit; the plan
 	// drops it only when the edit removes every mention.
-	const pickedRouting = itemId
-		? session.executionQueue?.find((item) => item.id === itemId)?.mentionRouting
-		: undefined;
-	const mentionPlan = planCrossAgentMentions(patch.text, session.id, pickedRouting);
+	const mentionPlan = planCrossAgentMentions(
+		withoutDesignPickPageText(patch.text, item?.designPickPageText),
+		session.id,
+		item?.mentionRouting
+	);
 	return {
 		crossAgent: {
 			crossAgentMention: !!mentionPlan,

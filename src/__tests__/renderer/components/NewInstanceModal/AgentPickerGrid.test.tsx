@@ -421,6 +421,7 @@ describe('AgentPickerGrid', () => {
 				'Factory Droid',
 				'Grok CLI',
 				'Hermes',
+				'Kilo',
 				'Oh My Pi',
 				'OpenCode',
 				'Pi',

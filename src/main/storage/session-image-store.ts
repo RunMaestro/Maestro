@@ -245,9 +245,12 @@ export function resolveToDataUrlSync(value: string): string | null {
  * otherwise), so it is cheap to run on every persistence flush - a scan over
  * already-relocated sessions does no writes and allocates nothing new.
  *
- * Walks `aiTabs[].logs[].images`, `aiTabs[].stagedImages`, the same two fields
- * of every closed AI tab in `unifiedClosedTabHistory`, and
- * `executionQueue[].images` - the fields that carry pasted images.
+ * Walks `aiTabs[].logs[].images`, `aiTabs[].stagedImages`,
+ * `aiTabs[].stagedDesignPicks[].screenshot`, the same three fields of every
+ * closed AI tab in `unifiedClosedTabHistory`, and `executionQueue[].images` -
+ * the fields that carry pasted or captured images. A Design Mode chip owns its
+ * screenshot (it is never copied into `stagedImages`), which is why the chips
+ * get a walk of their own.
  *
  * @returns the (possibly new) sessions array plus the number of images relocated.
  */
@@ -256,6 +259,16 @@ export async function relocateSessionImages<T>(
 ): Promise<{ sessions: T[]; relocated: number }> {
 	let relocated = 0;
 
+	// Store one value if it is an inline image data URL and return its ref.
+	// Anything else (a ref, null, a non-image string) comes back unchanged, so
+	// callers detect a no-op by comparing against what they passed in.
+	const relocateValue = async (value: unknown): Promise<unknown> => {
+		if (typeof value !== 'string' || !isInlineImageDataUrl(value)) return value;
+		const ref = await storeInlineImage(value);
+		if (ref !== value) relocated++;
+		return ref;
+	};
+
 	// Replace inline data URLs in a string[] with refs. Returns the same array
 	// reference when nothing changed so callers can detect no-ops.
 	const relocateArray = async (images: unknown): Promise<string[] | undefined> => {
@@ -263,22 +276,32 @@ export async function relocateSessionImages<T>(
 		let changed = false;
 		const next: string[] = new Array(images.length);
 		for (let i = 0; i < images.length; i++) {
-			const img = images[i];
-			if (typeof img === 'string' && isInlineImageDataUrl(img)) {
-				const ref = await storeInlineImage(img);
-				next[i] = ref;
-				if (ref !== img) {
-					changed = true;
-					relocated++;
-				}
-			} else {
-				next[i] = img as string;
-			}
+			next[i] = (await relocateValue(images[i])) as string;
+			if (next[i] !== images[i]) changed = true;
 		}
 		return changed ? next : (images as string[]);
 	};
 
-	// One AI tab's `logs[].images` and `stagedImages`. Returns the same tab
+	// Replace each chip's inline `screenshot` with a ref. Same contract as
+	// relocateArray: the original array (and every untouched chip) comes back by
+	// reference when nothing changed.
+	const relocateDesignPicks = async (picks: unknown): Promise<unknown> => {
+		if (!Array.isArray(picks) || picks.length === 0) return picks;
+		let changed = false;
+		const next = await Promise.all(
+			picks.map(async (pick: unknown) => {
+				if (!pick || typeof pick !== 'object') return pick;
+				const chip = pick as Record<string, unknown>;
+				const screenshot = await relocateValue(chip.screenshot);
+				if (screenshot === chip.screenshot) return pick;
+				changed = true;
+				return { ...chip, screenshot };
+			})
+		);
+		return changed ? next : picks;
+	};
+
+	// One AI tab's `logs[].images`, `stagedImages` and `stagedDesignPicks`. Returns the same tab
 	// reference when nothing changed.
 	const relocateTab = async (tab: Record<string, unknown>): Promise<Record<string, unknown>> => {
 		let tabChanged = false;
@@ -309,6 +332,12 @@ export async function relocateSessionImages<T>(
 			tabChanged = true;
 		}
 
+		const nextPicks = await relocateDesignPicks(tab.stagedDesignPicks);
+		if (nextPicks !== tab.stagedDesignPicks) {
+			tabPatch.stagedDesignPicks = nextPicks;
+			tabChanged = true;
+		}
+
 		return tabChanged ? { ...tab, ...tabPatch } : tab;
 	};
 
@@ -318,7 +347,8 @@ export async function relocateSessionImages<T>(
 			let sessionChanged = false;
 			const patch: Record<string, unknown> = {};
 
-			// aiTabs[].logs[].images + aiTabs[].stagedImages
+			// aiTabs[].logs[].images + aiTabs[].stagedImages +
+			// aiTabs[].stagedDesignPicks[].screenshot
 			const aiTabs = session.aiTabs as Array<Record<string, unknown>> | undefined;
 			if (Array.isArray(aiTabs)) {
 				let tabsChanged = false;

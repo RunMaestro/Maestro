@@ -68,6 +68,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenBrowserTabCallback = vi.fn();
 			setCloseBrowserTabCallback = vi.fn();
 			setPickBrowserElementCallback = vi.fn();
+			setBrowserViewportCallback = vi.fn();
+			setDesignPickCommandCallback = vi.fn();
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
@@ -136,6 +138,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetGroupChatStateCallback = vi.fn();
 			setStopGroupChatCallback = vi.fn();
 			setArchiveGroupChatCallback = vi.fn();
+			setSetGroupChatUnreadCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setSteerGroupChatCallback = vi.fn();
 			setTabContextOpCallback = vi.fn();
@@ -1976,6 +1979,65 @@ describe('web-server/web-server-factory', () => {
 			expect(filtered[0].sessionId).toBe('agent-2');
 		});
 
+		// Issue #2046: every heartbeat showed "never triggered" because the
+		// callback hard-coded triggerCount 0 and never set lastTriggered.
+		it('fills lastTriggered and triggerCount from the event journal per session and name', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Ops',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'hourly-heartbeat',
+							event: 'time.heartbeat',
+							enabled: true,
+							prompt: '',
+							interval_minutes: 60,
+						},
+						{ name: 'idle', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Other',
+					toolType: 'claude-code',
+					subscriptions: [
+						{ name: 'hourly-heartbeat', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+			]);
+			const getCueSubscriptionTriggerStats = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					subscriptionName: 'hourly-heartbeat',
+					triggerCount: 312,
+					lastTriggered: 1_700_000_000_000,
+				},
+			]);
+
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueGraphData,
+				getCueSubscriptionTriggerStats,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(all[0]).toMatchObject({
+				sessionId: 'agent-1',
+				name: 'hourly-heartbeat',
+				triggerCount: 312,
+				lastTriggered: 1_700_000_000_000,
+			});
+			// Same name on another agent must not borrow agent-1's runs.
+			expect(all[1]).toMatchObject({ name: 'idle', triggerCount: 0 });
+			expect(all[1].lastTriggered).toBeUndefined();
+			expect(all[2]).toMatchObject({ sessionId: 'agent-2', triggerCount: 0 });
+			expect(all[2].lastTriggered).toBeUndefined();
+		});
+
 		it('returns [] and warns when the engine dependency is missing', async () => {
 			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData: undefined });
 			const server = createWebServer() as any;
@@ -2968,6 +3030,50 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
 			const server = createWebServer() as any;
 			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('browserViewport callback', () => {
+		it('is registered, and resolves a Coworking id before it reaches the renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			expect(server.setBrowserViewportCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setBrowserViewportCallback.mock.calls[0][0];
+
+			// No tab of this agent carries that Coworking id, so the op never goes out.
+			const result = await callback({ sessionId: 'session-1', tab: 'browser:42', preset: 'phone' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('No browser tab browser:42 in this agent');
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('designPickCommand callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
+			const request = { action: 'remove', sessionId: 'session-1', pickId: 'pick-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:designPickCommand',
+				request,
+				expect.stringContaining('remote:designPickCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
 
 			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
 				success: false,

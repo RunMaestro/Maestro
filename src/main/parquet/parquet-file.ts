@@ -33,6 +33,7 @@ import type {
 } from '../../shared/parquet/types';
 import { isParquetFile } from '../../shared/parquet/preview';
 import { getSshRemoteById } from '../stores/getters';
+import { createIdleHandleRegistry } from '../utils/idle-handle-registry';
 import { readBinaryFileBlockRemoteAsBase64, statRemote } from '../utils/remote-fs';
 
 /**
@@ -177,31 +178,17 @@ export interface OpenParquetFile {
 	compressors: Compressors;
 	/** Modification time at open, used to detect the file changing underneath. */
 	mtimeMs: number;
-	lastUsedAt: number;
 	/** Cached scan sessions, owned by parquet-query.ts. */
 	scans: Map<string, unknown>;
 }
 
-const openFiles = new Map<string, OpenParquetFile>();
-let reaperTimer: NodeJS.Timeout | null = null;
-
-/** Close handles nobody has touched in a while so descriptors are not leaked. */
-function startReaper(): void {
-	if (reaperTimer) return;
-	reaperTimer = setInterval(() => {
-		const now = Date.now();
-		for (const [id, file] of openFiles) {
-			if (now - file.lastUsedAt > HANDLE_IDLE_MS) void closeParquetFile(id);
-		}
-		if (openFiles.size === 0 && reaperTimer) {
-			clearInterval(reaperTimer);
-			reaperTimer = null;
-		}
-	}, HANDLE_IDLE_MS);
-	// An interval that keeps the event loop alive would delay app quit for as
-	// long as the idle window.
-	reaperTimer.unref?.();
-}
+const openFiles = createIdleHandleRegistry<OpenParquetFile>({
+	idleMs: HANDLE_IDLE_MS,
+	release: (file) => {
+		file.scans.clear();
+		return file.fileHandle.close();
+	},
+});
 
 // ─── Schema description ───────────────────────────────────────────────────────
 
@@ -685,16 +672,13 @@ export async function openParquetFile(
 	const stat = await fs.stat(localPath);
 	if (!stat.isFile()) throw new Error(`Not a file: ${filePath}`);
 
-	for (const file of openFiles.values()) {
-		if (
+	const alreadyOpen = openFiles.find(
+		(file) =>
 			file.displayPath === filePath &&
 			file.sshRemoteId === sshRemoteId &&
 			file.mtimeMs === stat.mtimeMs
-		) {
-			file.lastUsedAt = Date.now();
-			return file.info;
-		}
-	}
+	);
+	if (alreadyOpen) return alreadyOpen.info;
 
 	const { hyparquet, compressors } = await loadParquetReader();
 	const fileHandle = await fs.open(localPath, 'r');
@@ -735,7 +719,7 @@ export async function openParquetFile(
 			...(sshRemoteId ? { fetchedFromRemote: true } : {}),
 		};
 
-		openFiles.set(id, {
+		openFiles.add(id, {
 			id,
 			displayPath: filePath,
 			localPath,
@@ -747,10 +731,8 @@ export async function openParquetFile(
 			info,
 			compressors,
 			mtimeMs: stat.mtimeMs,
-			lastUsedAt: Date.now(),
 			scans: new Map(),
 		});
-		startReaper();
 		return info;
 	} catch (error) {
 		await fileHandle.close().catch(() => undefined);
@@ -762,26 +744,17 @@ export async function openParquetFile(
 export function getParquetFile(handle: string): OpenParquetFile {
 	const file = openFiles.get(handle);
 	if (!file) throw new Error('Parquet file handle is no longer open. Reopen the file to continue.');
-	file.lastUsedAt = Date.now();
 	return file;
 }
 
 /** Close a handle and drop its cached scans. Safe to call more than once. */
-export async function closeParquetFile(handle: string): Promise<void> {
-	const file = openFiles.get(handle);
-	if (!file) return;
-	openFiles.delete(handle);
-	file.scans.clear();
-	await file.fileHandle.close().catch(() => undefined);
+export function closeParquetFile(handle: string): Promise<void> {
+	return openFiles.close(handle);
 }
 
 /** Close every handle. Called on app quit. */
-export async function closeAllParquetFiles(): Promise<void> {
-	await Promise.all([...openFiles.keys()].map((handle) => closeParquetFile(handle)));
-	if (reaperTimer) {
-		clearInterval(reaperTimer);
-		reaperTimer = null;
-	}
+export function closeAllParquetFiles(): Promise<void> {
+	return openFiles.closeAll();
 }
 
 /** Test seam: how many handles are currently open. */

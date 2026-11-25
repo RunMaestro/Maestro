@@ -3,12 +3,14 @@
  *
  * Shown when the user right-clicks while text is highlighted in the terminal
  * (and no URL link is being hovered - that case is handled by LinkContextMenu),
- * and on a selection inside the AI transcript (TerminalOutput), where it also
- * offers "Quote in Message". Each item renders only when its handler is passed.
+ * on a selection inside the AI transcript (TerminalOutput), where it also
+ * offers "Quote in Message", and on a selection in the File Preview editor,
+ * where it also offers "Comment on Lines" (a review comment). Each item renders
+ * only when its handler is passed.
  */
 
 import { useRef, useCallback } from 'react';
-import { Copy, Quote, Send } from 'lucide-react';
+import { Copy, MessageSquarePlus, Quote, Send } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../hooks/utils/useEventListener';
@@ -31,6 +33,10 @@ interface TerminalSelectionContextMenuProps {
 	onSendToAgent?: (text: string) => void;
 	/** Append the selection to the composer as a Markdown quote. */
 	onQuote?: (text: string) => void;
+	/** Open a review comment box on the selected lines (File Preview editor). */
+	onComment?: () => void;
+	/** Label of the comment item, naming the lines (`Comment on Lines 12-14`). */
+	commentLabel?: string;
 }
 
 export function TerminalSelectionContextMenu({
@@ -40,6 +46,8 @@ export function TerminalSelectionContextMenu({
 	onCopy,
 	onSendToAgent,
 	onQuote,
+	onComment,
+	commentLabel = 'Comment on Lines',
 }: TerminalSelectionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
@@ -71,6 +79,11 @@ export function TerminalSelectionContextMenu({
 		onDismiss();
 	}, [menu.selection, onQuote, onDismiss]);
 
+	const handleComment = useCallback(() => {
+		onComment?.();
+		onDismiss();
+	}, [onComment, onDismiss]);
+
 	return (
 		<div
 			ref={menuRef}
@@ -89,6 +102,17 @@ export function TerminalSelectionContextMenu({
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>
+			{onComment && (
+				<button
+					onClick={handleComment}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					data-testid="selection-menu-comment"
+				>
+					<MessageSquarePlus className="w-3.5 h-3.5" />
+					{commentLabel}
+				</button>
+			)}
 			{onQuote && (
 				<button
 					onClick={handleQuote}

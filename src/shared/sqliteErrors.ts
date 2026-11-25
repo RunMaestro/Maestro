@@ -22,3 +22,16 @@ export function isSqliteCorruptionError(err: unknown): boolean {
 		code === 'SQLITE_NOTADB' || code === 'SQLITE_CORRUPT' || code.startsWith('SQLITE_CORRUPT_')
 	);
 }
+
+/**
+ * True when `err` is SQLite saying another connection holds the lock it needs
+ * and the busy timeout ran out: `SQLITE_BUSY` and its extended codes
+ * (`SQLITE_BUSY_SNAPSHOT`, `SQLITE_BUSY_RECOVERY`, `SQLITE_BUSY_TIMEOUT`).
+ *
+ * Not `SQLITE_LOCKED`: that is a conflict inside one connection (or one shared
+ * cache), never another process, and waiting does not clear it.
+ */
+export function isSqliteBusyError(err: unknown): boolean {
+	const code = (err as { code?: unknown } | null)?.code;
+	return typeof code === 'string' && (code === 'SQLITE_BUSY' || code.startsWith('SQLITE_BUSY_'));
+}

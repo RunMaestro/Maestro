@@ -10,11 +10,12 @@ Maestro includes an extensible slash command system with autocomplete. Type `/` 
 
 Maestro provides built-in slash commands that are handled internally (not sent to the AI agent):
 
-| Command    | Description                                                             |
-| ---------- | ----------------------------------------------------------------------- |
-| `/history` | Generate a synopsis of recent work and add to the History panel         |
-| `/wizard`  | Start the planning wizard for Auto Run documents                        |
-| `/skills`  | List available Claude Code skills for this project _(Claude Code only)_ |
+| Command    | Description                                                                           |
+| ---------- | ------------------------------------------------------------------------------------- |
+| `/history` | Generate a synopsis of recent work and add to the History panel                       |
+| `/wizard`  | Start the planning wizard for Auto Run documents                                      |
+| `/skills`  | List available Claude Code skills for this project _(Claude Code only)_               |
+| `/btw`     | Ask a side question about this conversation without adding to it _(Claude Code only)_ |
 
 <Tip>
 The `/wizard` command can take optional natural language input: `/wizard add user authentication feature` to provide initial context.
@@ -38,6 +39,18 @@ Each skill is displayed with its name, approximate token count, and description.
 <Note>
 The `/skills` command is a Maestro feature that reads skill files directly - it doesn't invoke Claude Code's native `/skills` command (which requires an interactive terminal).
 </Note>
+
+### Side Questions
+
+`/btw <question>` asks the tab's own model a quick question about the conversation so far, such as "which file did we rename?" or "what was the failing test called?". It is Maestro's version of Claude Code's interactive `/btw`:
+
+- **It runs at once, even while the tab is working.** It is never queued behind the current turn.
+- **It sees the whole conversation**, including tool calls and their results up to now.
+- **It is not kept.** Neither the question nor the answer is added to the tab's transcript or to Claude Code's session. The answer shows on a card above the message box until you close it (the X, or <kbd>Esc</kbd> on an empty message box), or until the next `/btw` replaces it.
+
+Maestro runs it as a throwaway fork of the tab's session (`claude --resume <id> --fork-session --no-session-persistence`) with tools off, at the tab's current model and effort. Nothing is written to disk for the fork. Side questions always run through `claude --print`, also for an agent set to the TUI token source.
+
+From a script, `maestro-cli ask <agent> "<question>" --btw [--tab <tab-id>]` asks the same question, prints the answer, and shows it on that tab's card.
 
 ## Custom AI Commands
 

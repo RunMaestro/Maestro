@@ -18,6 +18,13 @@ export function setupDispatchCallbackListener(processManager: ProcessManager): v
 		getDispatchCallbackRegistry()?.noteSpawn(sessionId);
 	});
 
+	// The dispatched turn's reply, for {{DISPATCH_OUTPUT}}. `data` carries the
+	// same display text the renderer appends to the tab's transcript.
+	processManager.on('data', (sessionId: string, data: string) => {
+		if (typeof data !== 'string') return;
+		getDispatchCallbackRegistry()?.noteData(sessionId, data);
+	});
+
 	processManager.on('exit', (sessionId: string, code: number) => {
 		getDispatchCallbackRegistry()?.noteExit(sessionId, code ?? null);
 	});

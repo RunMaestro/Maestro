@@ -1,7 +1,14 @@
 import React from 'react';
+import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: vi.fn() };
+});
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
@@ -12,6 +19,29 @@ import { mockTheme } from '../../helpers/mockTheme';
 import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
+	// Icons the SQLite and Parquet viewers draw (FilePreview renders them inline).
+	AlertCircle: () => <span data-testid="alert-circle-icon">AlertCircle</span>,
+	ArrowDown: () => <span data-testid="arrow-down-icon">ArrowDown</span>,
+	ArrowUp: () => <span data-testid="arrow-up-icon">ArrowUp</span>,
+	Check: () => <span data-testid="check-icon">Check</span>,
+	CheckCircle2: () => <span data-testid="check-circle-2-icon">CheckCircle2</span>,
+	Columns3: () => <span data-testid="columns-3-icon">Columns3</span>,
+	Download: () => <span data-testid="download-icon">Download</span>,
+	FlaskConical: () => <span data-testid="flask-conical-icon">FlaskConical</span>,
+	HelpCircle: () => <span data-testid="help-circle-icon">HelpCircle</span>,
+	History: () => <span data-testid="history-icon">History</span>,
+	KeyRound: () => <span data-testid="key-round-icon">KeyRound</span>,
+	Layers: () => <span data-testid="layers-icon">Layers</span>,
+	ListTree: () => <span data-testid="list-tree-icon">ListTree</span>,
+	Lock: () => <span data-testid="lock-icon">Lock</span>,
+	Play: () => <span data-testid="play-icon">Play</span>,
+	Plus: () => <span data-testid="plus-icon">Plus</span>,
+	ScrollText: () => <span data-testid="scroll-text-icon">ScrollText</span>,
+	Search: () => <span data-testid="search-icon">Search</span>,
+	Square: () => <span data-testid="square-icon">Square</span>,
+	Table2: () => <span data-testid="table-2-icon">Table2</span>,
+	Undo2: () => <span data-testid="undo-2-icon">Undo2</span>,
+	Unlock: () => <span data-testid="unlock-icon">Unlock</span>,
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
 	Eye: () => <span data-testid="eye-icon">Eye</span>,
 	ChevronUp: () => <span data-testid="chevron-up">ChevronUp</span>,
@@ -226,6 +256,36 @@ const defaultProps = {
 };
 
 describe('FilePreview', () => {
+	it('shows the complete handler context when a real Save caller rejects', async () => {
+		const filePath = path.join(process.cwd(), 'save-fixture.md');
+		const onSave = vi
+			.fn()
+			.mockRejectedValue(
+				new Error(
+					"Error invoking remote method 'fs:writeFile': TypeError: Save failed: Error: remote rejected"
+				)
+			);
+		render(
+			<FilePreview
+				{...defaultProps}
+				file={{ name: 'save-fixture.md', path: filePath, content: '# Original' }}
+				markdownEditMode={true}
+				externalEditContent="# Edited"
+				onSave={onSave}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Save Failed',
+					message: 'Save failed: Error: remote rejected',
+				})
+			)
+		);
+		expect(onSave).toHaveBeenCalledExactlyOnceWith(filePath, '# Edited');
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Default every test to the Electron desktop build; the web-desktop tests

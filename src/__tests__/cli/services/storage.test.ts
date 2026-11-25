@@ -61,7 +61,9 @@ import {
 	getSyncDirFallbackReason,
 	addHistoryEntry,
 	readSshRemotes,
+	readSshRemotesForEdit,
 	writeSshRemotes,
+	writeSettingValueIn,
 	resolveSshRemoteId,
 } from '../../../cli/services/storage';
 
@@ -278,6 +280,93 @@ describe('storage service', () => {
 
 			expect(getSyncDir()).toBe(configDir);
 			expect(readSessions().map((s) => s.id)).toEqual(['local']);
+			expect(fs.mkdirSync).not.toHaveBeenCalled();
+		});
+
+		it('writes settings into a missing sync directory the desktop would create (#2082)', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.mkdirSync).mockClear();
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					activeThemeId: 'old-theme',
+					fontSize: 12,
+				},
+			});
+
+			writeSettingValue('activeThemeId', 'new-theme');
+
+			expect(fs.mkdirSync).toHaveBeenCalledWith(syncDir, { recursive: true });
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [file, content] = vi.mocked(fs.writeFileSync).mock.calls[0];
+			expect(file).toBe(path.join(syncDir, 'maestro-settings.json'));
+			// The merge starts from the (empty) store the desktop will read, not the stale local copy.
+			expect(JSON.parse(content as string)).toEqual({ activeThemeId: 'new-theme' });
+		});
+
+		it('reads SSH remotes for an edit from the directory the write will use (#2082)', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					sshRemotes: [{ id: 'stale', name: 'Stale' }],
+				},
+			});
+
+			// A plain read still sees the config-dir copy and creates nothing.
+			expect(readSshRemotes().map((r) => r.id)).toEqual(['stale']);
+			// A read for an edit starts from the store the desktop will read.
+			expect(readSshRemotesForEdit()).toEqual({ remotes: [], defaultId: null, dir: syncDir });
+			expect(fs.mkdirSync).toHaveBeenCalledWith(syncDir, { recursive: true });
+		});
+
+		it('writes an SSH remote edit back to the store it read, even if a later resolution differs', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			// Creating the custom folder fails for the read, then would succeed for the write.
+			vi.mocked(fs.mkdirSync).mockImplementationOnce(() => {
+				throw new Error('EACCES');
+			});
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					sshRemotes: [{ id: 'local', name: 'Local' }],
+				},
+			});
+
+			const { remotes, dir } = readSshRemotesForEdit();
+			expect(dir).toBe(configDir);
+			writeSshRemotes([...remotes, { ...remotes[0], id: 'added' }], dir);
+
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [file, content] = vi.mocked(fs.writeFileSync).mock.calls[0];
+			expect(file).toBe(path.join(configDir, 'maestro-settings.json'));
+			expect(JSON.parse(content as string).sshRemotes.map((r: { id: string }) => r.id)).toEqual([
+				'local',
+				'added',
+			]);
+		});
+
+		it('writes the default remote to the store the list came from, even if a later resolution differs', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.mkdirSync).mockImplementationOnce(() => {
+				throw new Error('EACCES');
+			});
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-settings.json')]: {
+					sshRemotes: [{ id: 'local', name: 'Local' }],
+					defaultSshRemoteId: 'local',
+				},
+			});
+
+			const { defaultId, dir } = readSshRemotesForEdit();
+			expect(defaultId).toBe('local');
+			writeSettingValueIn(dir, 'defaultSshRemoteId', null);
+
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			const [file, content] = vi.mocked(fs.writeFileSync).mock.calls[0];
+			expect(file).toBe(path.join(configDir, 'maestro-settings.json'));
+			expect(JSON.parse(content as string).defaultSshRemoteId).toBeNull();
 		});
 
 		// A command that deletes on the agent list asks this before it trusts the list.

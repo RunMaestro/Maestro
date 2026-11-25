@@ -63,9 +63,23 @@ export function EditAgentModal({
 	onClose,
 	onSave,
 	theme,
-	session,
+	session: openedSession,
 	existingSessions,
 }: EditAgentModalProps) {
+	// The opener's copy of the agent can be stale. The Left Bar subscribes with
+	// `sidebarSessionEquality`, which ignores fields it does not draw, so after a
+	// save its copy still holds the old Additional Directories, nudge and New
+	// Session Message. Seeding the form from that copy shows the old values, and
+	// saving writes them back over the new ones (#2068). Read the store's copy
+	// once per open instead; the modal unmounts on close, so this never moves
+	// the fields under someone mid-edit.
+	const session = useMemo(
+		() =>
+			openedSession
+				? (selectSessionById(openedSession.id)(useSessionStore.getState()) ?? openedSession)
+				: null,
+		[openedSession]
+	);
 	const [instanceName, setInstanceName] = useState('');
 	const [workingDir, setWorkingDir] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');

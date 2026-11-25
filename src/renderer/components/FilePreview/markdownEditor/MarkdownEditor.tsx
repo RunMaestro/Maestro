@@ -4,7 +4,9 @@ import { EditorView } from '@codemirror/view';
 import { buildEditorTheme } from '../giantPreview/themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions, mainSelectionDetails } from './extensions';
+import { problemMarkExtension, setProblemRangeEffect } from './problemMark';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
+import { commentSlotsExtension, setCommentSlots } from './commentSlots';
 import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
 
 /**
@@ -67,6 +69,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			value,
 			onChange,
 			language,
+			languageExtension,
 			theme,
 			spellCheck = false,
 			readOnly = false,
@@ -84,6 +87,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			vimMode = false,
 			onShortcutUsed,
 			onSelectionContextMenu,
+			onLineContextMenu,
+			commentSlots,
+			onCommentSlotElement,
+			problemRange = null,
 			className,
 		},
 		ref
@@ -101,9 +108,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		const onSelectionContextMenuRef = useRef(onSelectionContextMenu);
 		onShortcutUsedRef.current = onShortcutUsed;
 		onSelectionContextMenuRef.current = onSelectionContextMenu;
-		// Only whether a selection menu exists changes the extension set; the
-		// handler itself is read through the ref.
+		const onLineContextMenuRef = useRef(onLineContextMenu);
+		onLineContextMenuRef.current = onLineContextMenu;
+		const onCommentSlotElementRef = useRef(onCommentSlotElement);
+		onCommentSlotElementRef.current = onCommentSlotElement;
+		// Only whether a menu exists changes the extension set; the handlers
+		// themselves are read through the refs.
 		const hasSelectionContextMenu = Boolean(onSelectionContextMenu);
+		const hasLineContextMenu = Boolean(onLineContextMenu);
 		useEffect(() => {
 			onChangeRef.current = onChange;
 		}, [onChange]);
@@ -154,6 +166,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				onSelectionContextMenu: hasSelectionContextMenu
 					? (selection, event) => onSelectionContextMenuRef.current?.(selection, event)
 					: undefined,
+				onLineContextMenu: hasLineContextMenu
+					? (lineNumber, event) => onLineContextMenuRef.current?.(lineNumber, event)
+					: undefined,
 			});
 
 		// Mount once. All subsequent prop changes flow through dispatch or
@@ -180,6 +195,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
+					commentSlotsExtension((id, el, previous) =>
+						onCommentSlotElementRef.current?.(id, el, previous)
+					),
+					problemMarkExtension(),
 					updateListener,
 				],
 			});
@@ -187,9 +206,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const view = new EditorView({ state, parent: host });
 			viewRef.current = view;
 
-			// Async language load.
+			// Async language load. A host-built grammar (`languageExtension`)
+			// arrives through the language effect below instead.
 			let cancelled = false;
-			if (hasLanguageSupport(language)) {
+			if (!languageExtension && hasLanguageSupport(language)) {
 				void loadLanguageExtension(language).then((langExt) => {
 					if (cancelled || !langExt || !viewRef.current) return;
 					viewRef.current.dispatch({
@@ -214,9 +234,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			if (!view) return;
 			const current = view.state.doc.toString();
 			if (current === value) return;
+			// Diff in CM coordinates so a CRLF does not insert a second line break.
+			const next = view.state.toText(value).toString();
+			if (current === next) return;
 			applyingExternalRef.current = true;
 			try {
-				view.dispatch({ changes: minimalReplacement(current, value) });
+				view.dispatch({ changes: minimalReplacement(current, next) });
 			} finally {
 				applyingExternalRef.current = false;
 			}
@@ -238,10 +261,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		}, [theme, fontScale, fontFamily, baseFontPx, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
-		// an empty extension so the previously loaded grammar is cleared.
+		// an empty extension so the previously loaded grammar is cleared. A
+		// host-built grammar replaces the loader outright.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
+			if (languageExtension) {
+				view.dispatch({ effects: compartments.language.reconfigure(languageExtension) });
+				return;
+			}
 			let cancelled = false;
 			if (!hasLanguageSupport(language)) {
 				view.dispatch({ effects: compartments.language.reconfigure([]) });
@@ -256,7 +284,24 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			return () => {
 				cancelled = true;
 			};
-		}, [language, compartments.language]);
+		}, [language, languageExtension, compartments.language]);
+
+		// Host-flagged problem span → repaint it. Keyed on the span's numbers so
+		// a host that rebuilds an equal object every render dispatches nothing.
+		const problemFrom = problemRange?.from ?? null;
+		const problemTo = problemRange?.to ?? null;
+		const problemMessage = problemRange?.message;
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			view.dispatch({
+				effects: setProblemRangeEffect.of(
+					problemFrom === null || problemTo === null
+						? null
+						: { from: problemFrom, to: problemTo, message: problemMessage }
+				),
+			});
+		}, [problemFrom, problemTo, problemMessage]);
 
 		// Toggle-able base options → reconfigure the base compartment.
 		useEffect(() => {
@@ -273,8 +318,20 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			codeEditing,
 			completion,
 			hasSelectionContextMenu,
+			hasLineContextMenu,
 			compartments.base,
 		]);
+
+		// Review comment slots, rebuilt whenever the host's list changes. Declared
+		// after the `value` effect, so a commit that changes both places the
+		// slots against the new text.
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			view.dispatch({
+				effects: setCommentSlots.of(commentSlots ?? { slots: [], lineColor: 'transparent' }),
+			});
+		}, [commentSlots]);
 
 		// Vim keybindings, loaded on first use so the package never enters the
 		// bundle path of anyone who leaves the setting off.

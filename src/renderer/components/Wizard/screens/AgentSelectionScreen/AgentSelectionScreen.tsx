@@ -50,6 +50,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		setSessionSshRemoteConfig: setWizardSessionSshRemoteConfig,
 		nextStep,
 		canProceedToNext,
+		duplicateAgentName,
 	} = useWizard();
 
 	const [focusedTileIndex, setFocusedTileIndex] = useState(0);
@@ -347,6 +348,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			<AgentSelectionHeader
 				theme={theme}
 				agentName={state.agentName}
+				duplicateAgentName={duplicateAgentName}
 				isNameFieldFocused={isNameFieldFocused}
 				nameInputRef={nameInputRef}
 				sshRemotes={sshRemotes}

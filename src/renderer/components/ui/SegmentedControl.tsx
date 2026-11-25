@@ -19,7 +19,7 @@
  * ```
  */
 
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { revealActiveProps, useRevealActiveItem } from '../../hooks/ui/useRevealActiveItem';
 import type { Theme } from '../../types';
 
@@ -36,6 +36,8 @@ export interface SegmentedOption<T extends string> {
 	shortLabel?: string;
 	/** Tooltip text. Useful when the label is abbreviated to fit the bar. */
 	title?: string;
+	/** Drawn before the label (or alone, with `iconOnly`). Size and color are the caller's. */
+	icon?: ReactNode;
 }
 
 export interface SegmentedControlProps<T extends string> {
@@ -47,6 +49,12 @@ export interface SegmentedControlProps<T extends string> {
 	ariaLabel: string;
 	/** Test id for the container. Each segment gets `${testId}-${option.value}`. */
 	testId?: string;
+	/**
+	 * Draw each option's icon and no text, for a bar that has to stay narrow. The
+	 * label still names the segment to assistive tech and is its tooltip unless
+	 * the option sets a `title`. Every option needs an `icon` then.
+	 */
+	iconOnly?: boolean;
 }
 
 export function SegmentedControl<T extends string>({
@@ -56,6 +64,7 @@ export function SegmentedControl<T extends string>({
 	theme,
 	ariaLabel,
 	testId,
+	iconOnly = false,
 }: SegmentedControlProps<T>) {
 	// Arrow keys move between segments, matching how a native radio group
 	// behaves - the bar is one tab stop, not one per option.
@@ -101,7 +110,9 @@ export function SegmentedControl<T extends string>({
 						type="button"
 						{...revealActiveProps(isActive)}
 						onClick={() => onChange(opt.value)}
-						className="shrink-0 px-2 py-1 text-xs transition-colors whitespace-nowrap"
+						className={`shrink-0 px-2 py-1 text-xs transition-colors whitespace-nowrap${
+							opt.icon ? ' inline-flex items-center gap-1.5' : ''
+						}`}
 						style={{
 							backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
 							color: isActive ? theme.colors.accent : theme.colors.textDim,
@@ -110,11 +121,13 @@ export function SegmentedControl<T extends string>({
 						role="radio"
 						aria-checked={isActive}
 						aria-pressed={isActive}
-						title={opt.title}
+						title={opt.title ?? (iconOnly ? opt.label : undefined)}
+						aria-label={iconOnly ? opt.label : undefined}
 						tabIndex={isActive ? 0 : -1}
 						data-testid={testId ? `${testId}-${opt.value}` : undefined}
 					>
-						{opt.shortLabel ? (
+						{opt.icon}
+						{iconOnly ? null : opt.shortLabel ? (
 							<>
 								<span className="segmented-label-full">{opt.label}</span>
 								<span className="segmented-label-short hidden">{opt.shortLabel}</span>

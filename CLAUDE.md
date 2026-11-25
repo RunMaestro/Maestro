@@ -71,6 +71,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
+- **A history `summary` from free-form text, and the part of one a row renders:** `historySummaryLine()`, `historySummaryPreview()`, `clampHistoryEntry()` in `src/shared/history.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts`: `humanizeDuration(ms, opts)` plus its presets (never another `Math.floor(ms / 86400000)` ladder)
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts; perf traces only)
@@ -102,7 +103,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Opening a caller's local path or `file:` URL with the OS (never launching it):** `openLocalPath()`, `isLaunchableLocalPath()`, `openExternalUrl()` in `src/main/utils/open-local-path.ts`, over `isLaunchableFile()` in `src/shared/fileCategories.ts`
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
+- **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
@@ -127,6 +130,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
 - **Web permissions on a browser-tab session:** `hardenBrowserTabSession()`, `isBrowserTabPermissionGranted()` in `src/main/app-lifecycle/guest-webview-security.ts`
+- **Whether a Coworking browser op skips the interaction gate and per-call approval:** `isUngatedBrowserOp(kind)`, `UNGATED_BROWSER_OP_KINDS` in `src/shared/coworkingBrowser.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)
@@ -140,7 +144,36 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
 - **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()`, `quarantineCorruptStore()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
+- **A JSON store file only the main process writes (read once, one queue, atomic replace):** `createJsonStoreFile()` in `src/main/utils/json-store-file.ts`
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
+- **Telling a person SQLite found the database busy:** `isSqliteBusyError()` in `src/shared/sqliteErrors.ts`; `reportSqliteBusy()`, `describeSqliteBusy()`, `sqliteBusyMessage()` in `src/main/sqlite/sqlite-connection.ts`
+- **Whether a file is really a SQLite database:** `hasSqliteHeader()`, `isSqliteCandidateFile()`, `isSqlitePreviewMarker()` in `src/shared/sqlite/preview.ts`; `isSqliteDatabaseFile()` in `src/main/sqlite/sqlite-detect.ts`
+- **Opening a user's SQLite database to read it:** `openSqliteDatabase()`, `getSqliteDatabase()`, `closeAllSqliteDatabases()` in `src/main/sqlite/sqlite-database.ts`; a second connection via `openReadOnlySqliteConnection()` in `src/main/sqlite/sqlite-connection.ts`
+- **A SQLite database's header facts and integrity check:** `readSqliteDatabaseSummary()` in `src/main/sqlite/sqlite-summary.ts`; `checkSqliteIntegrity()` in `src/main/sqlite/sqlite-integrity.ts`; `sqliteSummaryFacts()`, `formatSqliteIntegrity()` in `src/shared/sqlite/summary.ts`
+- **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
+- **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()`, `sqliteIdentifierForSql()`, `isSqliteKeyword()` in `src/shared/sqlite/sql.ts`
+- **Reading a window of a SQLite table's rows (LIMIT/OFFSET, server-side sort):** `readSqliteRows()` in `src/main/sqlite/sqlite-rows.ts`; `formatSqliteCell()`, `formatSqliteRecordValue()` in `src/shared/sqlite/cells.ts`
+- **Counting a SQLite table's rows (a converging count):** `countSqliteRows()`, `countAllSqliteRows()` in `src/main/sqlite/sqlite-count.ts`; `sqliteConvergingRowTotal()` in `src/shared/sqlite/objects.ts`
+- **Filtering a SQLite table's rows (a parameterised WHERE):** `buildSqliteFilter()`, `compileSqliteFilter()`, `sqliteRegexpTest()` in `src/shared/sqlite/filter.ts`
+- **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()`, `readSqliteColumnCatalog()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
+- **Saving a SQLite BLOB to a file:** `saveSqliteBlob()`, `readSqliteBlob()` in `src/main/sqlite/sqlite-blob.ts`; `formatSqliteBlobHex()`, `sqliteBlobFileName()` in `src/shared/sqlite/cells.ts`
+- **Whether a tab may write to a SQLite database (the "Enable editing" unlock):** `enableSqliteEditing()`, `disableSqliteEditing()`, `requireSqliteEditing()` in `src/main/sqlite/sqlite-editing.ts`
+- **Starting a write to a SQLite database (backup before the first write):** `beginSqliteWrite()`, `beginSqliteWorkerWrite()` in `src/main/sqlite/sqlite-editing.ts`; `ensureSqliteBackup()`, `sqliteBackupPath()` in `src/main/sqlite/sqlite-backup.ts`
+- **Whether a SQLite table's rows can be edited, and how an edit names a row:** `resolveSqliteEditability()`, `reachableRowidAlias()`, `sqliteRowKeyCondition()` in `src/main/sqlite/sqlite-identity.ts`; `formatSqliteEditability()`, `sqliteEditabilityLabel()` in `src/shared/sqlite/schema.ts`
+- **Changing one cell of a SQLite table (the single-row UPDATE):** `updateSqliteCell()` in `src/main/sqlite/sqlite-row-edit.ts`; `sqliteCellEditRefusal()`, `sqliteCellEditValue()`, `sqliteCellEditValueProblem()`, `sqliteRowKeyAt()` in `src/renderer/components/SqliteViewer/sqliteCellEdit.ts`
+- **Inserting or deleting one row of a SQLite table (the single-row INSERT and DELETE):** `insertSqliteRow()`, `deleteSqliteRow()` in `src/main/sqlite/sqlite-row-edit.ts`; `sqliteInsertValues()`, `sqliteInsertColumns()` in `src/renderer/components/SqliteViewer/sqliteRowInsert.ts`
+- **Refusing a write to a SQLite row that changed since it was read:** `sqliteRowVersion()`, `registerSqliteRowVersion()`, `sqliteRowVersionExpression()`, `sqliteRowVersionParam()` in `src/main/sqlite/sqlite-row-version.ts`; `sqliteStaleRowMessage()`, `isSqliteStaleRowMessage()` in `src/shared/sqlite/schema.ts`
+- **Undoing the last write to a SQLite table:** `undoSqliteEdit()` in `src/main/sqlite/sqlite-row-edit.ts`; `sqliteUndoLabel()`, `sqliteUndoOutcome()`, `sqliteUndoUnavailableMessage()` in `src/shared/sqlite/undo.ts`; `isSqliteUndoChord()` in `src/renderer/components/SqliteViewer/sqliteUndo.ts`
+- **What a column's affinity does to a value written into it (refuse, never store converted):** `sqliteStoredValueProblem()`, `sqliteRowidValueProblem()`, `isNumericSqliteAffinity()` in `src/shared/sqlite/affinity.ts`; `sqliteNumberTextProblem()` in `src/shared/sqlite/filter.ts`
+- **Running a read-only SQL statement a person wrote:** `runSqliteQuery()`, `cancelSqliteQuery()` in `src/main/sqlite/sqlite-query.ts`; `sqliteQueryRefusal()`, `sqliteQueryParameters()`, `sqliteQueryBinding()` in `src/shared/sqlite/query.ts`; `startSqliteWorkerTask()` in `src/main/sqlite/sqlite-worker-runner.ts`
+- **Dry-running a SQLite statement (what it is, what it would change, nothing changed):** `classifySqliteStatement()`, `sqliteSchemaChanges()`, `formatSqliteDryRun()`, `sqliteDryRunRefusal()` in `src/shared/sqlite/dryRun.ts`; `beginSqliteWorkerTrial()` in `src/main/sqlite/sqlite-editing.ts`
+- **An explicit SQLite transaction (Begin, statements in it, Commit or Roll back):** `beginSqliteTransaction()`, `runInSqliteTransaction()`, `endSqliteTransaction()` in `src/main/sqlite/sqlite-transaction.ts`; `sqliteTransactionEndReason()` in `src/shared/sqlite/transaction.ts`
+- **Where a SQLite query error points in the statement:** `sqliteQueryErrorLocation()`, `sqliteSyntaxErrorOffset()`, `withSqliteErrorOffset()`, `splitSqliteErrorOffset()` in `src/shared/sqlite/queryError.ts`; `sqliteTokens()` in `src/shared/sqlite/tokens.ts`
+- **Reading a SQLite query plan (`EXPLAIN QUERY PLAN` as a tree):** `sqliteQueryPlanSteps()`, `formatSqliteQueryPlan()`, `sqliteQueryPlanStepKind()` in `src/shared/sqlite/plan.ts`
+- **A SQLite database's query history:** `readSqliteQueryHistory()`, `forgetSqliteQueryHistory()`, `getSqliteQueryHistory()` in `src/main/sqlite/sqlite-query-history.ts`; `addSqliteQueryHistoryRun()`, `formatSqliteQueryHistoryOutcome()` in `src/shared/sqlite/history.ts`
+- **A SQLite database's statement log (every write):** `logSqliteStatement()`, `readSqliteStatementLog()`, `onSqliteStatementLogged()` in `src/main/sqlite/sqlite-statement-log.ts`; `sqliteRowWriteStatement()`, `sqliteStatementLogStanding()` in `src/shared/sqlite/statementLog.ts`
+- **Writing rows to CSV or JSON Lines (a data viewer's Export):** `createTabularRowEncoder()`, `csvField()`, `tabularExportFormatForPath()`, `TABULAR_EXPORT_FILE_FILTERS` in `src/shared/tabularExport.ts`; a SQLite result via `exportSqliteQuery()` in `src/main/sqlite/sqlite-query.ts`
+- **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`
 - **A cache derivation upgrade that survives being killed:** `isDerivationStale()`, `accumulateUpgradeBaseline()`, `finishDerivationUpgrade()` in `src/main/utils/statsCache.ts`; `createCacheCheckpointer()` in `src/main/utils/cache-checkpointer.ts`
@@ -246,7 +279,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
-- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
+- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
@@ -273,6 +306,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rebasing unsaved session changes during recovery:** `rebasePendingSessionChanges()`, `SESSION_PERSISTENCE_BASELINE_EVENT`, `SessionPersistenceBaseline` in `src/renderer/hooks/utils/useDebouncedPersistence.ts`
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
+- **The Primary Agent (app-level default receiver of the user's input):** `PRIMARY_AGENT_SETTING_KEY`, `pickPrimaryAgentSeed()` in `src/shared/primaryAgent.ts`; `readPrimaryAgentId()` in `src/cli/services/storage.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith()`, `updateAiTab()`, `updateFileTab()`, `updateBrowserTab()` in `src/renderer/stores/sessionStore.ts` (never `setSessions(prev => prev.map(...))` for one agent or tab)
 - **Which agent this client is looking at:** `persistActiveSessionId()`, `readPersistedActiveSessionId()` in `src/renderer/utils/activeSessionPersistence.ts` (never `sessions.getActiveSessionId()` directly)
@@ -342,7 +376,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
 - **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
-- **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
+- **Line review comments (pin comments to lines, send them as one review):** `createReviewCommentStore()` in `src/renderer/stores/reviewCommentStore.ts`, `formatReviewPrompt()` in `src/renderer/utils/reviewPrompt.ts`, `sendReviewPrompt()` in `src/renderer/services/reviewDelivery.ts`
+- **Picking an element or a region in a browser tab (Design Mode):** `captureDesignPick()`, `captureDesignRegion()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`; `readBrowserPickTarget()` in `src/shared/coworkingBrowser.ts`
+- **A Design Mode pick as a composer chip (stage, queue, edit, expand at send, CLI):** `stageDesignPickOnAgent()` in `src/renderer/services/quoteIntoComposer.ts`, `queueDesignPick()` in `src/renderer/services/designModePick.ts`, `getStagedDesignPicks()` in `src/renderer/services/stagedDesignPicks.ts`
+- **Showing a browser tab's page at a set width (Fit / Desktop / Laptop / Tablet / Phone):** `BROWSER_VIEWPORT_PRESETS`, `parseBrowserViewportPreset()`, `browserViewportWidth()` in `src/shared/browserViewport.ts`; `computeBrowserViewportBox()` in `src/renderer/utils/browserViewport.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Whether a composer paste carries an image (text pastes are never rewritten):** `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
@@ -354,7 +391,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
 - **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`, bound by `useTemplateAutocomplete()` (textarea) or `useEditorTemplateAutocomplete()` (CodeMirror)
-- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it)
+- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it; `planMentions: false` for text the user did not write)
 - **Running or withdrawing one queued item now:** `sendQueuedItemNow()`, `removeQueuedItem()` in `src/renderer/services/queuedPrompt.ts`
 - **The tab a queued item is going to:** `resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` (label), `resolveQueuedItemTarget()` in `src/renderer/utils/tabHelpers` (tab); never render `item.tabName`
 - **Whether a queued item's tab is still mid-turn:** `isQueuedItemTargetBusy(session, item)` in `src/renderer/utils/tabHelpers` (every queue drain path asks it before dequeuing)
@@ -396,6 +433,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()` in `src/shared/effortRejection.ts`; `rejectedEffortForLevel()` in `src/shared/modelTiers.ts`; `armEffortFallback()` in `src/renderer/services/effortRejection.ts`
 - **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
+- **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Turning an Auto Run prompt template into a task prompt:** `resolveAutoRunPromptTemplate()`, `namesAutoRunDocument()` in `src/shared/autorunPromptTemplate.ts`; desktop `buildDesktopAutoRunPrompt()` / `prepareDesktopAutoRunPrompt()` in `src/renderer/hooks/batch/batchUtils.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
@@ -448,7 +486,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
 - **Pan and zoom a diagram or image:** `usePanZoom()` in `src/renderer/hooks/ui/usePanZoom.ts`; full-window viewer via `openZoomViewer(element)` in `src/renderer/components/ZoomViewer/zoomViewerStore.ts`
 - **Diagram content clipped at the SVG edge:** `expandSvgViewBoxToContent(svg, padding?)` in `src/renderer/utils/svgViewBox.ts`
-- **The message of a rejected IPC call:** `ipcErrorMessage(error)` in `src/renderer/utils/ipcErrorMessage.ts` (never show `error.message` raw)
+- **The message of a rejected IPC call:** `ipcErrorMessage(error, fallback?)` in `src/shared/serializeError.ts` (renderer compatibility export in `src/renderer/utils/ipcErrorMessage.ts`)
 
 #### Keyboard and shortcuts
 
@@ -467,6 +505,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### UI components and widgets
 
+- **The red X that removes a staged attachment (image tile, Design Mode chip):** `<RemoveBadgeButton>` in `src/renderer/components/ui/RemoveBadgeButton.tsx`
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
 - **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
@@ -479,6 +518,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A list of editable `key = value` pairs:** `<KeyValueRows>` in `src/renderer/components/ui/KeyValueRows.tsx`, with `recordToKeyValueRows()` / `keyValueRowsToRecords()` beside it
 - **Switching a `key = value` entry off without deleting it:** `splitParkedEntries()` / `setKeysParked()` / `parkedPairKeys()` in `src/shared/parkedRecords.ts`
 - **Record view for one table row:** `<RecordDetailModal>` in `src/renderer/components/ui/RecordDetailModal.tsx`
+- **A virtualized grid over rows an engine pages in:** `<DataGrid>`, `dataGridColumnWidth()`, `nextDataGridSort()` in `src/renderer/components/ui/DataGrid.tsx`
+- **A filter-expression box over a data viewer (Parquet, SQLite):** `<FilterExpressionBar>` in `src/renderer/components/ui/FilterExpressionBar.tsx`, `quoteFilterColumnName()` in `src/shared/parquet/filterExpression.ts`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
 - **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/SummaryCards.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`
@@ -494,6 +535,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a string is a CSS color (lenient, or safe to write raw into CSS text):** `isValidCssColor()`, `isStrictCssColor()`, `strictCssColors()` in `src/shared/cssColor.ts`
 - **Naming the OS file manager in copy:** `getFileManagerName()`, `fileManagerName()`, `getRevealLabel()`, `getOpenInLabel()` in `src/renderer/utils/platformUtils.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts`, then `getCachedAnsiHtml()` in `src/renderer/utils/textProcessing.ts`
+- **A SQL editor with completion from a SQLite database:** `buildSqliteSqlLanguage()` in `src/renderer/components/SqliteViewer/sqliteSqlLanguage.ts`, via `<MarkdownEditor languageExtension>`
 - **Previewing a parquet file:** `<ParquetViewer>` in `src/renderer/components/ParquetViewer/`, over the main-process engine in `src/main/parquet/` and the shared filter language in `src/shared/parquet/`
 - **Graphing a set of documents rather than one:** `BuildOptions.scopeFiles` / `scopeDirectory` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`, opened via `openGraphScope()` in `fileExplorerStore.ts`
 - **Sizing a Document Graph node:** `calculateNodeWidth()`, `calculateNodeHeight()` in `src/renderer/components/DocumentGraph/mindMapLayouts.ts` (never the `NODE_WIDTH` constant)
@@ -532,13 +574,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Layout, scroll, sizing, and hook utilities
 
+- **Folding the Left Bar and Right Bar while a surface needs the room, then giving back only what it closed:** `collapseSidePanels()` in `src/renderer/utils/sidePanelCollapse.ts`, `useDesignModePanelCollapse(shown)` in `src/renderer/hooks/ui/useDesignModePanelCollapse.ts`
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
 - **Pausing looping animations while the window is unfocused:** `installMotionPause()`, `MOTION_PAUSED_CLASS` in `src/renderer/utils/motionPause.ts`
 - **Keeping a scrolling strip's active item on screen:** `useRevealActiveItem()`, `revealActiveProps()`, `computeRevealScroll()` in `src/renderer/hooks/ui/useRevealActiveItem.ts`
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect, never a `ref` on the row; a plain list uses `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Sizing a virtualized row the user's font decides:** `virtualizer.measureElement` + `data-index` and NO inline `height` (see `HistoryPanel`, `FileSearchModal`)
-- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
+- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)`, `useElementSize(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
 - **Keeping a floating menu on screen:** `useContextMenuPosition(menuRef, x, y)` in `src/renderer/hooks/ui/useContextMenuPosition.ts` (apply BOTH `maxHeight` and `overflowY: 'auto'`)
 - **How a floating surface looks (popover, menu, hover card, tooltip):** `elevatedSurfaceStyle(theme)`, `getElevatedSurfaceColors(colors)` in `src/renderer/utils/elevatedSurface.ts`
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`
@@ -708,6 +751,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `factory-droid` | Factory Droid   | **Beta**   |
 | `grok`          | Grok CLI        | **Beta**   |
 | `hermes`        | Hermes          | **Beta**   |
+| `kilo`          | Kilo            | **Beta**   |
 | `omp`           | Oh My Pi        | **Beta**   |
 | `opencode`      | OpenCode        | **Beta**   |
 | `pi`            | Pi              | **Beta**   |

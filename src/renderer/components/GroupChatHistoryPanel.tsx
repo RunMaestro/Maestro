@@ -24,6 +24,7 @@ import { useListNavigation, useScrollIntoView } from '../hooks';
 import { CUE_COLOR, tintedPillColors } from './History/historyConstants';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 import { isImeComposing } from '../utils/ime';
+import { historySummaryPreview } from '../../shared/history';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -891,7 +892,7 @@ export function GroupChatHistoryPanel({
 
 								{/* Summary - strip markdown for clean display */}
 								<p className="text-xs leading-relaxed" style={{ color: theme.colors.textMain }}>
-									{stripMarkdown(entry.summary)}
+									{stripMarkdown(historySummaryPreview(entry.summary))}
 								</p>
 
 								{/* Footer with cost */}

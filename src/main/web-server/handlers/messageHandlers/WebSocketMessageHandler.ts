@@ -131,6 +131,23 @@ import { handleLiveCommand } from './live';
 import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
+import {
+	handleSqliteCountRows,
+	handleSqliteDeleteRow,
+	handleSqliteExportQuery,
+	handleSqliteInsertRow,
+	handleSqliteListObjects,
+	handleSqliteQueryHistory,
+	handleSqliteStatementLog,
+	handleSqliteReadRows,
+	handleSqliteReadSchema,
+	handleSqliteReadSummary,
+	handleSqliteRunQuery,
+	handleSqliteRunTransaction,
+	handleSqliteSaveBlob,
+	handleSqliteUndoEdit,
+	handleSqliteUpdateCell,
+} from './sqlite';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleDiffReviewCommand } from './diffReview';
 import { handlePromptLinkCommand } from './promptLinks';
@@ -153,6 +170,8 @@ import {
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
 	handlePickBrowserElement,
+	handleBrowserViewport,
+	handleDesignPickCommand,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -180,6 +199,7 @@ import {
 	handleSteerGroupChat,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleSetGroupChatUnread,
 	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
@@ -442,6 +462,65 @@ export class WebSocketMessageHandler {
 				void handleDataviewCommand(this.ctx, client, message);
 				break;
 
+			case 'sqlite_read_summary':
+				void handleSqliteReadSummary(this.ctx, client, message);
+				break;
+
+			case 'sqlite_list_objects':
+				void handleSqliteListObjects(this.ctx, client, message);
+				break;
+
+			case 'sqlite_read_schema':
+				void handleSqliteReadSchema(this.ctx, client, message);
+				break;
+
+			case 'sqlite_read_rows':
+				void handleSqliteReadRows(this.ctx, client, message);
+				break;
+
+			case 'sqlite_count_rows':
+				void handleSqliteCountRows(this.ctx, client, message);
+				break;
+
+			case 'sqlite_save_blob':
+				void handleSqliteSaveBlob(this.ctx, client, message);
+				break;
+
+			case 'sqlite_run_query':
+				void handleSqliteRunQuery(this.ctx, client, message);
+				break;
+
+			case 'sqlite_export_query':
+				void handleSqliteExportQuery(this.ctx, client, message);
+				break;
+
+			case 'sqlite_query_history':
+				void handleSqliteQueryHistory(this.ctx, client, message);
+				break;
+			case 'sqlite_statement_log':
+				void handleSqliteStatementLog(this.ctx, client, message);
+				break;
+
+			case 'sqlite_update_cell':
+				void handleSqliteUpdateCell(this.ctx, client, message);
+				break;
+
+			case 'sqlite_insert_row':
+				void handleSqliteInsertRow(this.ctx, client, message);
+				break;
+
+			case 'sqlite_delete_row':
+				void handleSqliteDeleteRow(this.ctx, client, message);
+				break;
+
+			case 'sqlite_undo_edit':
+				void handleSqliteUndoEdit(this.ctx, client, message);
+				break;
+
+			case 'sqlite_run_transaction':
+				void handleSqliteRunTransaction(this.ctx, client, message);
+				break;
+
 			case 'auto_run_steering_command':
 				handleAutoRunSteeringCommand(this.ctx, client, message);
 				break;
@@ -504,6 +583,14 @@ export class WebSocketMessageHandler {
 
 			case 'pick_browser_element':
 				handlePickBrowserElement(this.ctx, client, message);
+				break;
+
+			case 'browser_viewport':
+				handleBrowserViewport(this.ctx, client, message);
+				break;
+
+			case 'design_pick_command':
+				handleDesignPickCommand(this.ctx, client, message);
 				break;
 
 			case 'open_terminal_tab':
@@ -724,6 +811,10 @@ export class WebSocketMessageHandler {
 
 			case 'archive_group_chat':
 				handleArchiveGroupChat(this.ctx, client, message);
+				break;
+
+			case 'set_group_chat_unread':
+				handleSetGroupChatUnread(this.ctx, client, message);
 				break;
 
 			case 'add_group_chat_participant':

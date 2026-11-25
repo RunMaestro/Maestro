@@ -255,15 +255,21 @@ export function dispatchCrossAgentMentions(
  * or deleted while the message sat in the queue then resolves correctly, or
  * drops out, instead of consulting a stale id. Returns what
  * `dispatchCrossAgentMentions` does.
+ *
+ * `options.planText` is what the mentions are resolved from when the message
+ * holds text the user did not type (Design Mode chip blocks); the consult still
+ * gets the whole `message`. `options.routingOverride` is a routing the user
+ * picked when queuing it (`QueuedItem.mentionRouting`), which wins over wording.
  */
 export function dispatchCrossAgentMentionsForMessage(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
 	images?: string[],
-	routingOverride?: MentionRouting
+	options: { routingOverride?: MentionRouting; planText?: string } = {}
 ): CrossAgentMentionDispatch {
-	const plan = planCrossAgentMentions(message, sourceSession.id, routingOverride);
+	const { routingOverride, planText = message } = options;
+	const plan = planCrossAgentMentions(planText, sourceSession.id, routingOverride);
 	if (!plan) return NO_MENTION_DISPATCH;
 	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId, images);
 }

@@ -269,6 +269,8 @@ List all agents
 | `-g, --group <id>` | Filter by group ID                                                                 | -       |
 | `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
 | `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
+| `--visible-only`   | Only agents whose group is not hidden from the Left Bar                            | -       |
+| `--hidden-only`    | Only agents in a hidden group                                                      | -       |
 | `--json`           | Output as JSON lines (for scripting)                                               | -       |
 
 ## `maestro-cli list playbooks`
@@ -455,7 +457,7 @@ Ask another agent a question and print its answer (background consult - never to
 | `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
 | `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
-`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history. Pass `--btw` to ask a side question (`/btw`) instead: it is answered from a throwaway fork of the agent's tab conversation (`--tab <tab-id>` picks the tab, default its active tab), runs even while that tab is busy, and is never written to it. Claude Code agents only.
 
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
@@ -816,6 +818,22 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 | `--restore` | Unarchive the chat instead     | -       |
 | `--json`    | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -898,16 +916,39 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 
 ## `maestro-cli browser-pick <tab>`
 
-Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
 
-| Option                 | Description                                             | Default |
-| ---------------------- | ------------------------------------------------------- | ------- |
-| `-s, --selector <css>` | CSS selector of the element (the first match is used)   | -       |
-| `--note <text>`        | Note added under the element, as typed in the pick card | -       |
-| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)            | -       |
-| `--background`         | Add it without switching the view to the AI tab         | -       |
-| `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
-| `--json`               | Output as JSON (for scripting)                          | -       |
+| Option                 | Description                                           | Default |
+| ---------------------- | ----------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used) | -       |
+| `--rect <x,y,w,h>`     | Pick a region: x,y,width,height in viewport CSS px    | -       |
+| `--note <text>`        | Note added under the pick, as typed in the pick card  | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)          | -       |
+| `--background`         | Add it without switching the view to the AI tab       | -       |
+| `--focus`              | Switch to the AI tab the pick lands in (default)      | -       |
+| `--queue`              | Queue it as its own message instead of a chip         | -       |
+| `--json`               | Output as JSON (for scripting)                        | -       |
+
+## `maestro-cli browser-picks`
+
+List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one
+
+| Option              | Description                                               | Default |
+| ------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Agent whose composer holds the chips (defaults to active) | -       |
+| `--edit <pickId>`   | Replace this chip's note (with --note)                    | -       |
+| `--note <text>`     | The new note for --edit (an empty string clears it)       | -       |
+| `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
+| `--json`            | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli browser-viewport <tab> [preset]`
+
+Set or read the width a browser tab shows its page at (preset: fit, desktop, laptop, tablet, phone; omit to read). tab: id from open-browser, or browser:N
+
+| Option             | Description                                  | Default |
+| ------------------ | -------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (defaults to active) | -       |
+| `--json`           | Output as JSON (for scripting)               | -       |
 
 ## `maestro-cli open-terminal`
 
@@ -1166,6 +1207,77 @@ Discard every pending comment
 ## `maestro-cli diff-review send`
 
 Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
 
 | Option             | Description                                                        | Default |
 | ------------------ | ------------------------------------------------------------------ | ------- |
@@ -3409,6 +3521,174 @@ List the vault roots whose DataviewJS blocks run without asking
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli sqlite`
+
+SQLite: inspect a database the way the file preview shows it (read-only)
+
+## `maestro-cli sqlite info <path>`
+
+Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity
+
+| Option           | Description                                                                                                                | Default |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--check <mode>` | Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found | -       |
+| `--json`         | Output as JSON (for scripting)                                                                                             | -       |
+
+## `maestro-cli sqlite tables <path>`
+
+List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes
+
+| Option       | Description                                                                  | Default |
+| ------------ | ---------------------------------------------------------------------------- | ------- |
+| `--internal` | Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables) | -       |
+| `--json`     | Output as JSON (for scripting)                                               | -       |
+
+## `maestro-cli sqlite schema <path> <object>`
+
+Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL
+
+| Option          | Description                                                                          | Default |
+| --------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--kind <kind>` | Pick table, view, index, or trigger when a trigger shares a name with another object | -       |
+| `--json`        | Output as JSON (for scripting)                                                       | -       |
+
+## `maestro-cli sqlite rows <path> <object>`
+
+Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite
+
+| Option            | Description                                                                                                                            | Default |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--offset <n>`    | Rows to skip                                                                                                                           | `0`     |
+| `--limit <n>`     | Rows to show (at most 1000)                                                                                                            | `50`    |
+| `--sort <column>` | Sort by this column (server side, ties broken by rowid or primary key)                                                                 | -       |
+| `--desc`          | Sort descending (needs --sort)                                                                                                         | -       |
+| `--filter <expr>` | Filter rows in SQLite, in the viewer's filter language (e.g. "status = active and price > 100", or a bare word to search every column) | -       |
+| `--json`          | Output as JSON (for scripting)                                                                                                         | -       |
+
+## `maestro-cli sqlite count <path> <object>`
+
+Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them
+
+| Option            | Description                                                              | Default |
+| ----------------- | ------------------------------------------------------------------------ | ------- |
+| `--filter <expr>` | Count only the rows this filter matches, in the viewer's filter language | -       |
+| `--json`          | Output as JSON (for scripting)                                           | -       |
+
+## `maestro-cli sqlite blob <path> <object> <column>`
+
+Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)
+
+| Option            | Description                                                                                             | Default |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`    | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                         | -       |
+| `--offset <n>`    | The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter | -       |
+| `--sort <column>` | Order used to place --offset (as for `sqlite rows`)                                                     | -       |
+| `--desc`          | Sort descending (needs --sort)                                                                          | -       |
+| `--filter <expr>` | Filter used to place --offset (as for `sqlite rows`)                                                    | -       |
+| `--output <file>` | File to write; replaced if it exists                                                                    | -       |
+| `--json`          | Output as JSON (for scripting)                                                                          | -       |
+
+## `maestro-cli sqlite query <path> <sql>`
+
+Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about
+
+| Option                        | Description                                                                                                                                                                                                                                                                                                                                                      | Default |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--param <name=value>`        | Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL                                                                                                                                                                                                                                                       | `[]`    |
+| `--param-number <name=value>` | Bind a parameter as a number (repeatable)                                                                                                                                                                                                                                                                                                                        | `[]`    |
+| `--param-null <name>`         | Bind a parameter as NULL (repeatable)                                                                                                                                                                                                                                                                                                                            | `[]`    |
+| `--plan`                      | Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables                                                                                                                                                                                                             | -       |
+| `--offset <n>`                | Result rows to skip (not with --plan or --output)                                                                                                                                                                                                                                                                                                                | `0`     |
+| `--limit <n>`                 | Rows to show (at most 1000; not with --plan or --output)                                                                                                                                                                                                                                                                                                         | `50`    |
+| `--output <file>`             | Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it                                                                                                                                                                                                                             | -       |
+| `--format <format>`           | Export format: csv or jsonl (default: from the --output name)                                                                                                                                                                                                                                                                                                    | -       |
+| `--enable-editing`            | Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused | -       |
+| `--dry-run`                   | With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried                                                                                                    | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                                                                                                                                                                                                                   | -       |
+
+## `maestro-cli sqlite history <path>`
+
+List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)
+
+| Option          | Description                                                      | Default |
+| --------------- | ---------------------------------------------------------------- | ------- |
+| `--forget <id>` | Forget one entry, by its id or the start of it the listing shows | -       |
+| `--clear`       | Forget the database's whole query history                        | -       |
+| `--json`        | Output as JSON (for scripting)                                   | -       |
+
+## `maestro-cli sqlite log <path>`
+
+List every write made to a database through Maestro, newest first, as the viewer's Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"
+
+| Option        | Description                               | Default |
+| ------------- | ----------------------------------------- | ------- |
+| `--limit <n>` | Writes to show, newest first              | `20`    |
+| `--clear`     | Forget the database's whole statement log | -       |
+| `--json`      | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli sqlite set <path> <table> <column>`
+
+Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                        | Description                                                                                                                                                         | Default |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                     | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                    | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                                                                                  | `[]`    |
+| `--value <text>`              | The new value, bound as TEXT (the column affinity converts it)                                                                                                      | -       |
+| `--value-number <n>`          | The new value, bound as a number                                                                                                                                    | -       |
+| `--null`                      | Set the cell to NULL                                                                                                                                                | -       |
+| `--if-version <version>`      | Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                        | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                      | -       |
+
+## `maestro-cli sqlite insert <path> <table>`
+
+Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                          | Description                                                                                  | Default |
+| ------------------------------- | -------------------------------------------------------------------------------------------- | ------- |
+| `--value <column=value>`        | A column value, bound as TEXT (repeatable; the column affinity must keep it as text)         | `[]`    |
+| `--value-number <column=value>` | A column value, bound as a number (repeatable)                                               | `[]`    |
+| `--null <column>`               | Set a column to NULL (repeatable); a NULL rowid column takes the next rowid                  | `[]`    |
+| `--enable-editing`              | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
+| `--json`                        | Output as JSON (for scripting)                                                               | -       |
+
+## `maestro-cli sqlite delete <path> <table>`
+
+Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                        | Description                                                                                                                                                     | Default |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                 | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                                                                              | `[]`    |
+| `--if-version <version>`      | Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                    | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                  | -       |
+
+## `maestro-cli sqlite undo <path>`
+
+Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing
+
+| Option             | Description                                                                                  | Default |
+| ------------------ | -------------------------------------------------------------------------------------------- | ------- |
+| `--step <json>`    | The undo step as JSON, or @file holding it                                                   | -       |
+| `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
+| `--json`           | Output as JSON (for scripting)                                                               | -       |
+
+## `maestro-cli sqlite transaction <path> <sql...>`
+
+Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing
+
+| Option             | Description                                                                                                                     | Default |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--commit`         | Commit at the end, when every statement ran                                                                                     | -       |
+| `--rollback`       | Roll back at the end: see what the statements do, keep nothing                                                                  | -       |
+| `--limit <n>`      | Rows to show per statement that returns rows (at most 1000)                                                                     | `50`    |
+| `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); the session's first change backs the file up beside itself first | -       |
+| `--json`           | Output as JSON (for scripting)                                                                                                  | -       |
 
 ## `maestro-cli quick-chat`
 

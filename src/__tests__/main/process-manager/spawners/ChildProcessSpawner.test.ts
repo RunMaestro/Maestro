@@ -587,6 +587,52 @@ describe('ChildProcessSpawner', () => {
 			expect(mockChildProcess.stdin.end).toHaveBeenCalled();
 		});
 
+		it('sends an over-long Antigravity prompt as its stream-json stdin line', () => {
+			const agy = getAgentDefinition('antigravity')!;
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(getRealAgentCapabilities('antigravity'));
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'antigravity',
+					command: 'agy',
+					args: [...agy.jsonOutputArgs!],
+					promptArgs: agy.promptArgs,
+					prompt: longPrompt,
+				})
+			);
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual([
+				'--output-format',
+				'stream-json',
+				'--input-format',
+				'stream-json',
+			]);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				JSON.stringify({ event: 'user', message: { content: longPrompt } }) + '\n',
+				expect.any(Function)
+			);
+		});
+
+		it('keeps a short Antigravity prompt on `-p`', () => {
+			const agy = getAgentDefinition('antigravity')!;
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(getRealAgentCapabilities('antigravity'));
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'antigravity',
+					command: 'agy',
+					args: [...agy.jsonOutputArgs!],
+					promptArgs: agy.promptArgs,
+					prompt: 'short',
+				})
+			);
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--output-format', 'stream-json', '-p', 'short']);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
 		it('keeps a prompt under the limit in argv', () => {
 			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
 			const { spawner } = createTestContext();
@@ -2024,6 +2070,67 @@ describe('ChildProcessSpawner', () => {
 				expect.any(Function)
 			);
 			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
+		});
+
+		// MAESTRO-NM / MAESTRO-16E: `agy -p <prompt>` overran the Windows command
+		// line limit (spawn ENAMETOOLONG). Antigravity reads the prompt as one
+		// stream-json line on stdin instead, and drops any prompt given by flag.
+		it('delivers a long Antigravity prompt as one stream-json line on stdin (MAESTRO-NM)', () => {
+			const { spawner } = createTestContext();
+			const agy = getAgentDefinition('antigravity')!;
+			const capabilities = getRealAgentCapabilities('antigravity');
+			expect(capabilities.supportsPromptViaStdin).toBe(true);
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(capabilities);
+			const prompt = 'Private playbook text "quoted" & %PATH% 日本語\n'.repeat(1000);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'antigravity',
+					command: 'C:\\agy\\bin\\agy.exe',
+					args: [...agy.batchModeArgs!, ...agy.jsonOutputArgs!],
+					promptArgs: agy.promptArgs,
+					prompt,
+					sendPromptViaStdinRaw: capabilities.supportsPromptViaStdin,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual([
+				'--dangerously-skip-permissions',
+				'--output-format',
+				'stream-json',
+				'--input-format',
+				'stream-json',
+			]);
+			expect(args).not.toContain('-p');
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n',
+				expect.any(Function)
+			);
+			const line = vi.mocked(mockChildProcess.stdin.write).mock.calls[0][0] as string;
+			expect(line.indexOf('\n')).toBe(line.length - 1);
+			expect(JSON.parse(line)).toEqual({ event: 'user', message: { content: prompt } });
+			// Closing stdin is what lets agy exit after the turn.
+			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
+		});
+
+		it('keeps writing plain text for a stdin agent with no stdin line format', () => {
+			const { spawner } = createTestContext();
+			const codex = getAgentDefinition('codex')!;
+			expect(codex.stdinPromptEncoder).toBeUndefined();
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(getRealAgentCapabilities('codex'));
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'codex',
+					command: 'codex.cmd',
+					args: ['exec', '--json'],
+					prompt: 'plain prompt',
+					sendPromptViaStdinRaw: true,
+				})
+			);
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['exec', '--json']);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				'plain prompt',
+				expect.any(Function)
+			);
 		});
 
 		it.each([false, true])('keeps prompt content out of spawn diagnostics (stdin=%s)', (stdin) => {

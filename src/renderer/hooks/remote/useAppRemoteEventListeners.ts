@@ -79,7 +79,7 @@ import {
 	readReturnedFromHost,
 	returnRestoreRefusal,
 	withReturnedFromHost,
-} from '../../../shared/maestro-lib/agents/lift-return';
+} from '../../../shared/maestro-lib/agents/lift-return-record';
 import {
 	TAB_CONTEXT_OP_EVENT,
 	runRemoteTabContextOp,

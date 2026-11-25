@@ -69,6 +69,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 10,
 		category: 'editor',
 	},
+	designModeCollapsePanels: {
+		description:
+			'When enabled, turning on Design Mode in a browser tab folds the Left Bar and Right Bar away so the page gets the full width, and turning it off (or leaving the tab) brings back only the bars Design Mode closed.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {
@@ -140,9 +147,16 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	coworkingBrowserInteractionConfirm: {
 		description:
-			'Per-agent policy (off | dangerous | all) for requiring per-call user approval of Coworking browser interaction ops. Missing agents default to "dangerous" (confirm navigate and eval).',
+			'Per-agent policy (off | dangerous | all) for requiring per-call user approval of Coworking browser interaction ops. Missing agents default to "dangerous". JavaScript always requires confirmation and typing has a separate opt-in.',
 		type: 'object',
 		default: {},
+		category: 'advanced',
+	},
+	coworkingBrowserTypingWithoutConfirmation: {
+		description:
+			'Provider ids allowed to use Coworking browser_type without per-call confirmation when browser interaction is enabled and the policy is not Every action. Empty array means typing always requires confirmation.',
+		type: 'array',
+		default: [],
 		category: 'advanced',
 	},
 	coworkingBackgroundBrowsers: {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { UpdateStatus } from '../types';
 import {
 	X,
@@ -12,6 +13,7 @@ import {
 	RotateCcw,
 	FlaskConical,
 	Clock,
+	Play,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
@@ -24,6 +26,12 @@ import { openUrl } from '../utils/openUrl';
 import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../stores/batchStore';
 import { useRestartPendingStore } from '../stores/restartPendingStore';
+import { notifyToast } from '../stores/notificationStore';
+import {
+	saveAutoRunsForRestart,
+	selectResumableAutoRunIds,
+} from '../services/autoRunRestartResume';
+import { ipcErrorMessage } from '../../shared/serializeError';
 
 interface Release {
 	tag_name: string;
@@ -68,6 +76,29 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const isAppActive = anySessionBusy || anyBatchRunning;
 	const restartPending = useRestartPendingStore((s) => s.pending);
 	const setRestartPending = useRestartPendingStore((s) => s.setPending);
+
+	// Auto Runs survive the restart: each one's place is saved and the next
+	// launch continues it (services/autoRunRestartResume.ts). Work that does
+	// NOT survive is an interactive turn, or a run this client cannot save
+	// (a mirror of another window's run, or one already stopping).
+	const resumableAutoRunIds = useBatchStore(
+		useShallow((s) => selectResumableAutoRunIds(s.batchRunStates))
+	);
+	const runningBatchIds = useBatchStore(
+		useShallow((s) =>
+			Object.entries(s.batchRunStates)
+				.filter(([, state]) => state.isRunning)
+				.map(([sessionId]) => sessionId)
+		)
+	);
+	const otherAgentsBusy = useSessionStore((s) =>
+		s.sessions.some((session) => session.state === 'busy' && !runningBatchIds.includes(session.id))
+	);
+	const resumableCount = resumableAutoRunIds.length;
+	const onlyResumableWork =
+		resumableCount > 0 && !otherAgentsBusy && runningBatchIds.length === resumableCount;
+	const autoRunNoun = resumableCount === 1 ? 'Auto Run' : 'Auto Runs';
+	const [savingAutoRuns, setSavingAutoRuns] = useState(false);
 	// Check for updates on mount
 	useEffect(() => {
 		checkForUpdates();
@@ -166,7 +197,23 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 		window.maestro.updates.install();
 	};
 
-	const handleRestartNow = () => {
+	const handleRestartNow = async () => {
+		if (resumableCount > 0) {
+			setSavingAutoRuns(true);
+			try {
+				await saveAutoRunsForRestart('update');
+			} catch (error) {
+				// Restarting now would drop the runs the user was told would resume.
+				setSavingAutoRuns(false);
+				notifyToast({
+					type: 'error',
+					title: 'Restart Canceled',
+					message: `Could not save Auto Run progress: ${ipcErrorMessage(error)}`,
+					dismissible: true,
+				});
+				return;
+			}
+		}
 		setShowBusyWarning(false);
 		setRestartPending(false);
 		window.maestro.updates.install();
@@ -275,6 +322,21 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									<div className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 										Current: v{result.currentVersion} → Latest: v{result.latestVersion}
 									</div>
+									{resumableCount > 0 && (
+										<div
+											className="flex items-center gap-1.5 text-xs mt-2"
+											style={{ color: theme.colors.success }}
+											data-testid="update-autorun-resume-note"
+										>
+											<Play className="w-3.5 h-3.5 shrink-0" />
+											<span>
+												No need to wait: your{' '}
+												{resumableCount === 1 ? 'Auto Run' : `${resumableCount} Auto Runs`} will
+												pick up where {resumableCount === 1 ? 'it' : 'they'} left off after the
+												update.
+											</span>
+										</div>
+									)}
 								</div>
 							</div>
 						</div>
@@ -501,54 +563,110 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 										/>
 										<div className="flex-1">
 											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-												Maestro is busy
+												{onlyResumableWork ? `${autoRunNoun} will resume` : 'Maestro is busy'}
 											</div>
 											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-												{anySessionBusy && anyBatchRunning
-													? 'Agents are working and Auto Runs are in progress.'
-													: anySessionBusy
-														? 'One or more agents are currently working.'
-														: 'One or more Auto Runs are in progress.'}{' '}
-												Restarting now will interrupt them.
+												{onlyResumableWork ? (
+													<>
+														Maestro saves {resumableCount === 1 ? 'its' : 'each run’s'} place,
+														restarts into the new version, and continues at the task it was on. That
+														task starts over from the top.
+													</>
+												) : (
+													<>
+														{anySessionBusy && anyBatchRunning
+															? 'Agents are working and Auto Runs are in progress.'
+															: anySessionBusy
+																? 'One or more agents are currently working.'
+																: 'One or more Auto Runs are in progress.'}{' '}
+														{resumableCount > 0
+															? `Restarting now interrupts agent work in progress. ${autoRunNoun} resume${resumableCount === 1 ? 's' : ''} after the restart.`
+															: 'Restarting now will interrupt them.'}
+													</>
+												)}
 											</div>
 										</div>
 									</div>
-									<div className="flex flex-col gap-2">
-										<button
-											onClick={handleRestartWhenIdle}
-											className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90"
-											style={{
-												backgroundColor: theme.colors.accent,
-												color: theme.colors.bgMain,
-											}}
-										>
-											<Clock className="w-4 h-4" />
-											Restart App When Idle
-										</button>
-										<div className="flex gap-2">
-											<button
-												onClick={() => setShowBusyWarning(false)}
-												className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-												style={{
-													borderColor: theme.colors.border,
-													borderWidth: 1,
-													color: theme.colors.textMain,
-												}}
-											>
-												Cancel
-											</button>
+									{onlyResumableWork ? (
+										<div className="flex flex-col gap-2">
 											<button
 												onClick={handleRestartNow}
-												className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+												disabled={savingAutoRuns}
+												className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90 disabled:opacity-50"
 												style={{
-													backgroundColor: theme.colors.warning,
+													backgroundColor: theme.colors.accent,
 													color: theme.colors.bgMain,
 												}}
 											>
-												Restart Now Anyway
+												{savingAutoRuns ? <Spinner size={16} /> : <RotateCcw className="w-4 h-4" />}
+												Restart and Resume {autoRunNoun}
 											</button>
+											<div className="flex gap-2">
+												<button
+													onClick={() => setShowBusyWarning(false)}
+													disabled={savingAutoRuns}
+													className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10 disabled:opacity-50"
+													style={{
+														borderColor: theme.colors.border,
+														borderWidth: 1,
+														color: theme.colors.textMain,
+													}}
+												>
+													Cancel
+												</button>
+												<button
+													onClick={handleRestartWhenIdle}
+													disabled={savingAutoRuns}
+													className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10 disabled:opacity-50"
+													style={{
+														borderColor: theme.colors.border,
+														borderWidth: 1,
+														color: theme.colors.textMain,
+													}}
+												>
+													<Clock className="w-3.5 h-3.5" />
+													Wait Until {autoRunNoun} Finish
+												</button>
+											</div>
 										</div>
-									</div>
+									) : (
+										<div className="flex flex-col gap-2">
+											<button
+												onClick={handleRestartWhenIdle}
+												className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90"
+												style={{
+													backgroundColor: theme.colors.accent,
+													color: theme.colors.bgMain,
+												}}
+											>
+												<Clock className="w-4 h-4" />
+												Restart App When Idle
+											</button>
+											<div className="flex gap-2">
+												<button
+													onClick={() => setShowBusyWarning(false)}
+													className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+													style={{
+														borderColor: theme.colors.border,
+														borderWidth: 1,
+														color: theme.colors.textMain,
+													}}
+												>
+													Cancel
+												</button>
+												<button
+													onClick={handleRestartNow}
+													className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+													style={{
+														backgroundColor: theme.colors.warning,
+														color: theme.colors.bgMain,
+													}}
+												>
+													Restart Now Anyway
+												</button>
+											</div>
+										</div>
+									)}
 								</div>
 							) : isDownloaded ? (
 								<button

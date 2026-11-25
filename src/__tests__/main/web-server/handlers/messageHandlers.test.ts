@@ -186,7 +186,16 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			text: 'Element `h1` ...',
 			screenshot: true,
 			aiTabId: 'ai-1',
+			pickId: 'pick-1',
 		}),
+		browserViewport: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'browser-tab-1',
+			browserId: 'browser:1',
+			preset: 'phone',
+			previous: 'fit',
+		}),
+		designPickCommand: vi.fn().mockResolvedValue({ success: true, aiTabId: 'ai-1', picks: [] }),
 		openTerminalTab: vi.fn().mockResolvedValue({ success: true, tabId: 'terminal-tab-1' }),
 		writeTerminalTab: vi
 			.fn()
@@ -268,6 +277,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
 		archiveGroupChat: vi.fn().mockResolvedValue(true),
+		setGroupChatUnread: vi.fn().mockResolvedValue(true),
 		addGroupChatParticipant: vi
 			.fn()
 			.mockResolvedValue({ success: true, participantName: 'Isabelle', alreadyMember: false }),
@@ -2043,6 +2053,7 @@ describe('WebSocketMessageHandler', () => {
 				browserId: 'browser:1',
 				screenshot: true,
 				aiTabId: 'ai-1',
+				pickId: 'pick-1',
 				sessionId: 'session-1',
 				background: true,
 				requestId: 'r1',
@@ -2067,6 +2078,69 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('should forward a queue request and answer with the queued message id', async () => {
+			(callbacks.pickBrowserElement as any).mockResolvedValueOnce({
+				success: true,
+				tabId: 'browser-tab-1',
+				text: 'Element `h1` ...',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+			});
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				selector: 'h1',
+				queue: true,
+				requestId: 'r2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					selector: 'h1',
+					note: undefined,
+					background: false,
+					queue: true,
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+				requestId: 'r2',
+			});
+			// A queued pick stages no chip.
+			expect(response).not.toHaveProperty('pickId');
+		});
+
+		it('should treat only a literal true as a queue request', async () => {
+			// Same rule as `background`: a value that is not clearly an opt-in must
+			// leave the safe form, a staged chip that sends nothing, in force.
+			for (const queue of ['true', 'yes', 1, false, null]) {
+				(callbacks.pickBrowserElement as any).mockClear();
+				handler.handleMessage(client, {
+					type: 'pick_browser_element',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					selector: 'button',
+					queue,
+				});
+				await vi.waitFor(() => {
+					expect(callbacks.pickBrowserElement).toHaveBeenCalledTimes(1);
+				});
+				const request = (callbacks.pickBrowserElement as any).mock.calls[0][0];
+				expect(request, `queue: ${String(queue)}`).not.toHaveProperty('queue');
+			}
+		});
+
 		it('should reject a missing selector without calling the desktop', () => {
 			handler.handleMessage(client, {
 				type: 'pick_browser_element',
@@ -2077,8 +2151,66 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('pick_browser_element_result');
 			expect(response.success).toBe(false);
-			expect(response.error).toContain('Missing selector');
+			expect(response.error).toBe('Missing selector or rect');
 			expect(response.screenshot).toBe(false);
+			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
+		});
+
+		it('should forward a region (--rect) in place of a selector, queue included', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				// Only the four numbers travel on; anything else the client sent stays here.
+				rect: { x: 0, y: 120, width: 1280, height: 400, frame: { width: 1, height: 1 } },
+				note: 'tighten',
+				queue: true,
+				requestId: 'r3',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.pickBrowserElement as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				rect: { x: 0, y: 120, width: 1280, height: 400 },
+				note: 'tighten',
+				background: false,
+				queue: true,
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0])).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				requestId: 'r3',
+			});
+		});
+
+		it('should reject a selector and a rect together, or a malformed rect', () => {
+			for (const [fields, error] of [
+				[
+					{ selector: 'h1', rect: { x: 0, y: 0, width: 10, height: 10 } },
+					'Send a selector or a rect, not both',
+				],
+				[{ rect: { x: 0, y: 0, width: 0, height: 10 } }, 'Invalid rect'],
+				[{ rect: '0,0,10,10' }, 'Invalid rect'],
+				[{ rect: { x: 'a', y: 0, width: 10, height: 10 } }, 'Invalid rect'],
+			] as const) {
+				(client.socket.send as any).mockClear();
+				handler.handleMessage(client, {
+					type: 'pick_browser_element',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					...fields,
+				});
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('pick_browser_element_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain(error);
+			}
 			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
 		});
 
@@ -2107,6 +2239,281 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.type).toBe('pick_browser_element_result');
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Browser Viewport (Web → Desktop)', () => {
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('forwards a set with the trimmed tab and a normalized preset, and answers with both presets', async () => {
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: ' browser:1 ',
+				preset: ' Phone ',
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.browserViewport).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					preset: 'phone',
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(lastResponse()).toEqual({
+				type: 'browser_viewport_result',
+				success: true,
+				tabId: 'browser-tab-1',
+				browserId: 'browser:1',
+				preset: 'phone',
+				previous: 'fit',
+				sessionId: 'session-1',
+				requestId: 'r1',
+				timestamp: expect.any(Number),
+			});
+		});
+
+		it('forwards a read with no preset key at all', async () => {
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.browserViewport).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.browserViewport as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+		});
+
+		it('treats a null preset as a read', async () => {
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				preset: null,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.browserViewport).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.browserViewport as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+		});
+
+		it.each([['wide'], [390], [''], [{ preset: 'phone' }]])(
+			'refuses the preset %j rather than reading the tab',
+			(preset) => {
+				handler.handleMessage(client, {
+					type: 'browser_viewport',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					preset,
+					requestId: 'r2',
+				});
+
+				expect(callbacks.browserViewport).not.toHaveBeenCalled();
+				expect(lastResponse()).toMatchObject({
+					type: 'browser_viewport_result',
+					success: false,
+					requestId: 'r2',
+				});
+				expect(lastResponse().error).toBe(
+					'Unknown viewport preset. Use one of: fit, desktop, laptop, tablet, phone'
+				);
+			}
+		);
+
+		it.each([
+			[{ tab: 'tab-uuid' }],
+			[{ sessionId: 'session-1' }],
+			[{ sessionId: 'session-1', tab: '   ' }],
+		])('refuses a request missing the agent or the tab: %j', (fields) => {
+			handler.handleMessage(client, { type: 'browser_viewport', preset: 'phone', ...fields });
+
+			expect(callbacks.browserViewport).not.toHaveBeenCalled();
+			expect(lastResponse().success).toBe(false);
+			expect(lastResponse().error).toBe('Missing sessionId or tab');
+		});
+
+		it('answers with the failure the callback reports', async () => {
+			(callbacks.browserViewport as any).mockResolvedValueOnce({
+				success: false,
+				error: 'Browser tab not found in your session (it may have been closed).',
+				tabId: 'tab-uuid',
+			});
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				preset: 'phone',
+			});
+
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'browser_viewport_result',
+					success: false,
+					error: 'Browser tab not found in your session (it may have been closed).',
+					tabId: 'tab-uuid',
+				});
+			});
+		});
+
+		it('says the viewport is not configured when the callback is absent', () => {
+			const bare = new WebSocketMessageHandler();
+			bare.setCallbacks({});
+			bare.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+
+			expect(lastResponse()).toMatchObject({
+				type: 'browser_viewport_result',
+				success: false,
+				error: 'Browser viewport not configured',
+			});
+		});
+
+		it('names a set or a read in the failure when the callback rejects', async () => {
+			(callbacks.browserViewport as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				preset: 'phone',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse().error).toBe('Failed to set the viewport: boom');
+			});
+
+			(callbacks.browserViewport as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse().error).toBe('Failed to read the viewport: boom');
+			});
+		});
+	});
+
+	describe('Design Mode chips (Web → Desktop)', () => {
+		// The chips are renderer state: this hop validates, refuses an unknown
+		// agent, and always answers with the request id, because the CLI blocks on it.
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('forwards a list and answers with what the renderer found', async () => {
+			const chip = { id: 'pick-1', kind: 'element', label: 'h1', url: '', note: '', text: 'B' };
+			(callbacks.designPickCommand as any).mockResolvedValueOnce({
+				success: true,
+				aiTabId: 'ai-1',
+				picks: [chip],
+			});
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'session-1',
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(lastResponse()).toEqual({
+					type: 'design_pick_command_result',
+					success: true,
+					aiTabId: 'ai-1',
+					picks: [chip],
+					requestId: 'r1',
+					timestamp: expect.any(Number),
+				});
+			});
+			expect(callbacks.designPickCommand).toHaveBeenCalledWith({
+				action: 'list',
+				sessionId: 'session-1',
+			});
+		});
+
+		it('forwards a remove with its trimmed chip id', async () => {
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'remove',
+				sessionId: 'session-1',
+				pickId: ' pick-1 ',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.designPickCommand).toHaveBeenCalledWith({
+					action: 'remove',
+					sessionId: 'session-1',
+					pickId: 'pick-1',
+				});
+			});
+		});
+
+		it('refuses a malformed request before it reaches the renderer', () => {
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'remove',
+				sessionId: 'session-1',
+				requestId: 'r2',
+			});
+			expect(lastResponse()).toEqual({
+				type: 'design_pick_command_result',
+				success: false,
+				error: 'browser-picks remove requires a chip id',
+				requestId: 'r2',
+				timestamp: expect.any(Number),
+			});
+			expect(callbacks.designPickCommand).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown agent', () => {
+			(callbacks.getSessionDetail as any).mockReturnValueOnce(null);
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'ghost',
+				requestId: 'r3',
+			});
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Session not found: ghost',
+				requestId: 'r3',
+			});
+			expect(callbacks.designPickCommand).not.toHaveBeenCalled();
+		});
+
+		it('answers a renderer failure instead of hanging', async () => {
+			(callbacks.designPickCommand as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'session-1',
+				requestId: 'r4',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'design_pick_command_result',
+					success: false,
+					error: 'Design Mode chip list failed: boom',
+					requestId: 'r4',
+				});
 			});
 		});
 	});
@@ -2812,6 +3219,46 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse()).toMatchObject({ archived: false, requestId: 'req-6' });
 			});
 			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('marks a chat unread, and only a literal unread: false marks it read', async () => {
+			handler.handleMessage(client, {
+				type: 'set_group_chat_unread',
+				chatId: 'chat-1',
+				requestId: 'req-u1',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'set_group_chat_unread_result',
+					success: true,
+					chatId: 'chat-1',
+					unread: true,
+					requestId: 'req-u1',
+				});
+			});
+			expect(callbacks.setGroupChatUnread).toHaveBeenLastCalledWith('chat-1', true);
+
+			handler.handleMessage(client, {
+				type: 'set_group_chat_unread',
+				chatId: 'chat-1',
+				unread: false,
+				requestId: 'req-u2',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({ unread: false, requestId: 'req-u2' });
+			});
+			expect(callbacks.setGroupChatUnread).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('tags a missing chatId on set_group_chat_unread with the requestId', () => {
+			handler.handleMessage(client, { type: 'set_group_chat_unread', requestId: 'req-u3' });
+
+			expect(lastResponse()).toMatchObject({
+				type: 'error',
+				message: 'Missing chatId',
+				requestId: 'req-u3',
+			});
+			expect(callbacks.setGroupChatUnread).not.toHaveBeenCalled();
 		});
 
 		it('adds a participant by agent ID and answers with the result', async () => {

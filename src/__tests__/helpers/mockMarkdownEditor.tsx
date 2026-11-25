@@ -41,6 +41,18 @@ interface MockEditorProps {
 	 */
 	fontFamily?: string;
 	baseFontPx?: number;
+	/**
+	 * Grammar hints. The double cannot highlight, so it exposes them as
+	 * `data-language` and `data-language-extension` (`host` when the host built
+	 * its own grammar, `loader` otherwise) for a suite to assert on.
+	 */
+	language?: string;
+	languageExtension?: unknown;
+	/**
+	 * The host-flagged problem span. The double cannot paint it, so it exposes
+	 * it as `data-problem-from`, `data-problem-to`, and `data-problem-message`.
+	 */
+	problemRange?: { from: number; to: number; message?: string } | null;
 }
 
 /**
@@ -59,6 +71,9 @@ export function markdownEditorModuleMock() {
 			className,
 			fontFamily,
 			baseFontPx,
+			language,
+			languageExtension,
+			problemRange,
 		},
 		ref
 	) {
@@ -158,6 +173,11 @@ export function markdownEditorModuleMock() {
 				placeholder={placeholder}
 				readOnly={readOnly}
 				className={className}
+				data-language={language}
+				data-language-extension={languageExtension ? 'host' : 'loader'}
+				data-problem-from={problemRange?.from}
+				data-problem-to={problemRange?.to}
+				data-problem-message={problemRange?.message}
 				style={{
 					...(fontFamily ? { fontFamily } : {}),
 					...(baseFontPx ? { fontSize: `${baseFontPx}px` } : {}),

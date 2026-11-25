@@ -4,6 +4,7 @@
 
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { BROWSER_VIEWPORT_PRESETS } from '../shared/browserViewport';
 import { parseCliBool, parseCliPort, parseCliSeconds, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
@@ -47,7 +48,13 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
+import {
+	openBrowser,
+	closeBrowser,
+	browserPick,
+	browserPicks,
+	browserViewport,
+} from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -64,6 +71,7 @@ import {
 	groupChatStop,
 	groupChatArchive,
 	groupChatAdd,
+	groupChatUnread,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -162,6 +170,22 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
+import {
+	sqliteBlob,
+	sqliteCount,
+	sqliteDelete,
+	sqliteHistory,
+	sqliteLog,
+	sqliteInfo,
+	sqliteInsert,
+	sqliteQuery,
+	sqliteRows,
+	sqliteSchema,
+	sqliteSet,
+	sqliteTables,
+	sqliteTransaction,
+	sqliteUndo,
+} from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -222,6 +246,12 @@ import {
 	diffReviewList,
 	diffReviewRemove,
 	diffReviewSend,
+	fileReviewAdd,
+	fileReviewClear,
+	fileReviewEdit,
+	fileReviewList,
+	fileReviewRemove,
+	fileReviewSend,
 } from './commands/diff-review';
 import { promptLinkCreate, promptLinkList, promptLinkRevoke } from './commands/prompt-link';
 import { removePlaybook } from './commands/remove-playbook';
@@ -452,6 +482,8 @@ list
 		'--all-peers',
 		'List local agents, then the agents on every SSH remote that runs a Federation host'
 	)
+	.option('--visible-only', 'Only agents whose group is not hidden from the Left Bar')
+	.option('--hidden-only', 'Only agents in a hidden group')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
 
@@ -730,6 +762,14 @@ program
 	.option(
 		'--with-context',
 		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
+	)
+	.option(
+		'--btw',
+		"Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card"
+	)
+	.option(
+		'--tab <tab-id>',
+		'With --btw: the AI tab whose conversation to fork (default: its active tab)'
 	)
 	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
 	.option('--json', 'Output the answer as JSON')
@@ -1103,6 +1143,18 @@ groupChat
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatArchive);
 
+groupChat
+	.command('unread <chat>')
+	.description('Mark a group chat unread (the red dot on its Left Bar row)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, true, options));
+
+groupChat
+	.command('read <chat>')
+	.description("Clear a group chat's unread dot")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, false, options));
+
 // Open file command - open a file in the Maestro desktop app.
 //
 // Also the verb that PLAYS media: the renderer's open path recognizes a
@@ -1210,21 +1262,54 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
 
-// Browser pick command - Design Mode by selector: add an element of a browser
-// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
-// owning agent's composer, through the same code a click in Design Mode runs.
+// Browser pick command - Design Mode by selector or by region: stage an element
+// of a browser tab (selector, trimmed HTML, computed styles, cropped screenshot),
+// or a region of it (--rect: its screenshot and the outermost elements in it), as
+// a chip in the owning agent's composer, through the same code a click or a drag
+// in Design Mode runs. Exactly one of --selector and --rect. With --queue it is
+// queued as its own message instead, as the pick card's Queue button does.
 program
 	.command('browser-pick <tab>')
 	.description(
-		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+		"Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
 	)
-	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
-	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--rect <x,y,w,h>', 'Pick a region: x,y,width,height in viewport CSS px')
+	.option('--note <text>', 'Note added under the pick, as typed in the pick card')
 	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
 	.option('--background', 'Add it without switching the view to the AI tab')
-	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--focus', 'Switch to the AI tab the pick lands in (default)')
+	.option('--queue', 'Queue it as its own message instead of a chip')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(browserPick);
+
+// Browser picks command - the Design Mode chips waiting in an agent's composer:
+// list them, each with the block it adds to the message at send, edit one's
+// note as the chip's note box does, or take one off by id, as the chip's X does.
+program
+	.command('browser-picks')
+	.description(
+		"List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one"
+	)
+	.option('-a, --agent <id>', 'Agent whose composer holds the chips (defaults to active)')
+	.option('--edit <pickId>', "Replace this chip's note (with --note)")
+	.option('--note <text>', 'The new note for --edit (an empty string clears it)')
+	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPicks);
+
+// Browser viewport command - the width a browser tab shows its page at (Fit,
+// Desktop 1440, Laptop 1280, Tablet 768, Phone 390), as the toolbar's viewport
+// control sets it. Gives the preset to set it; always reports the one the tab
+// shows afterwards and the one it showed before. Never moves the view.
+program
+	.command('browser-viewport <tab> [preset]')
+	.description(
+		`Set or read the width a browser tab shows its page at (preset: ${BROWSER_VIEWPORT_PRESETS.join(', ')}; omit to read). tab: id from open-browser, or browser:N`
+	)
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserViewport);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program
@@ -1497,6 +1582,69 @@ diffReview
 	.option('--focus', 'Take the user to the agent, as the Send Review button does')
 	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
 	.action(diffReviewSend);
+
+// File review comments - the CLI half of the File Preview's Review tray.
+// Comments are pinned to lines of one file ("Comment on line" on the File
+// Preview's right-click menu) and sent to the agent as one prompt, each with
+// its path:lines and the lines it quotes.
+const fileReview = program
+	.command('file-review')
+	.description('Pin review comments to lines of a file and send them to an agent as one review');
+
+fileReview
+	.command('list <file>')
+	.description('Show the pending comments on a file, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewList);
+
+fileReview
+	.command('add <file> <lines> <comment>')
+	.description('Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(fileReviewAdd);
+
+fileReview
+	.command('edit <file> <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(fileReviewEdit);
+
+fileReview
+	.command('remove <file> <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(fileReviewRemove);
+
+fileReview
+	.command('clear <file>')
+	.description('Discard every pending comment on a file')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewClear);
+
+fileReview
+	.command('send <file>')
+	.description('Send every current comment on a file to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(fileReviewSend);
 
 // Prompt Links - `maestro://run/<token>` URLs that open a new tab in one agent
 // and send one stored prompt. The URL carries only a random token; creating a
@@ -3894,6 +4042,281 @@ dataviewCmd
 	.description('List the vault roots whose DataviewJS blocks run without asking')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => dataviewTrusted(options));
+
+// SQLite commands - read a database the way the file preview's SQLite viewer
+// shows it. The app opens the file read-only and answers with the viewer's own
+// functions, so the app must be running.
+const sqliteCmd = program
+	.command('sqlite')
+	.description('SQLite: inspect a database the way the file preview shows it (read-only)');
+
+sqliteCmd
+	.command('info <path>')
+	.description(
+		"Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity"
+	)
+	.option(
+		'--check <mode>',
+		'Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteInfo(file, options));
+
+sqliteCmd
+	.command('tables <path>')
+	.description(
+		'List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes'
+	)
+	.option(
+		'--internal',
+		'Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteTables(file, options));
+
+sqliteCmd
+	.command('schema <path> <object>')
+	.description(
+		"Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL"
+	)
+	.option(
+		'--kind <kind>',
+		'Pick table, view, index, or trigger when a trigger shares a name with another object'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteSchema(file, object, options));
+
+sqliteCmd
+	.command('rows <path> <object>')
+	.description(
+		"Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite"
+	)
+	.option('--offset <n>', 'Rows to skip', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
+	.option(
+		'--sort <column>',
+		'Sort by this column (server side, ties broken by rowid or primary key)'
+	)
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option(
+		'--filter <expr>',
+		'Filter rows in SQLite, in the viewer\'s filter language (e.g. "status = active and price > 100", or a bare word to search every column)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteRows(file, object, options));
+
+sqliteCmd
+	.command('count <path> <object>')
+	.description(
+		"Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them"
+	)
+	.option(
+		'--filter <expr>',
+		"Count only the rows this filter matches, in the viewer's filter language"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteCount(file, object, options));
+
+sqliteCmd
+	.command('blob <path> <object> <column>')
+	.description(
+		"Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--offset <n>',
+		'The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter'
+	)
+	.option('--sort <column>', 'Order used to place --offset (as for `sqlite rows`)')
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option('--filter <expr>', 'Filter used to place --offset (as for `sqlite rows`)')
+	.requiredOption('--output <file>', 'File to write; replaced if it exists')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, column, options) => sqliteBlob(file, object, column, options));
+
+sqliteCmd
+	.command('query <path> <sql>')
+	.description(
+		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about"
+	)
+	.option(
+		'--param <name=value>',
+		'Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-number <name=value>',
+		'Bind a parameter as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-null <name>',
+		'Bind a parameter as NULL (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--plan',
+		"Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables"
+	)
+	.option('--offset <n>', 'Result rows to skip (not with --plan or --output)', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000; not with --plan or --output)', '50')
+	.option(
+		'--output <file>',
+		"Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it"
+	)
+	.option('--format <format>', 'Export format: csv or jsonl (default: from the --output name)')
+	.option(
+		'--enable-editing',
+		"Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused"
+	)
+	.option(
+		'--dry-run',
+		"With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, sql, options) => sqliteQuery(file, sql, options));
+
+sqliteCmd
+	.command('history <path>')
+	.description(
+		"List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)"
+	)
+	.option('--forget <id>', 'Forget one entry, by its id or the start of it the listing shows')
+	.option('--clear', "Forget the database's whole query history")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteHistory(file, options));
+
+sqliteCmd
+	.command('log <path>')
+	.description(
+		'List every write made to a database through Maestro, newest first, as the viewer\'s Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"'
+	)
+	.option('--limit <n>', 'Writes to show, newest first', '20')
+	.option('--clear', "Forget the database's whole statement log")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteLog(file, options));
+
+sqliteCmd
+	.command('set <path> <table> <column>')
+	.description(
+		"Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option('--value <text>', 'The new value, bound as TEXT (the column affinity converts it)')
+	.option('--value-number <n>', 'The new value, bound as a number')
+	.option('--null', 'Set the cell to NULL')
+	.option(
+		'--if-version <version>',
+		"Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten"
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, column, options) => sqliteSet(file, table, column, options));
+
+sqliteCmd
+	.command('insert <path> <table>')
+	.description(
+		"Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option(
+		'--value <column=value>',
+		'A column value, bound as TEXT (repeatable; the column affinity must keep it as text)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--value-number <column=value>',
+		'A column value, bound as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--null <column>',
+		'Set a column to NULL (repeatable); a NULL rowid column takes the next rowid',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteInsert(file, table, options));
+
+sqliteCmd
+	.command('delete <path> <table>')
+	.description(
+		"Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--if-version <version>',
+		"Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed"
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteDelete(file, table, options));
+
+sqliteCmd
+	.command('undo <path>')
+	.description(
+		"Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing"
+	)
+	.option('--step <json>', 'The undo step as JSON, or @file holding it')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteUndo(file, options));
+
+sqliteCmd
+	.command('transaction <path> <sql...>')
+	.description(
+		"Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing"
+	)
+	.option('--commit', 'Commit at the end, when every statement ran')
+	.option('--rollback', 'Roll back at the end: see what the statements do, keep nothing')
+	.option('--limit <n>', 'Rows to show per statement that returns rows (at most 1000)', '50')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); the session\'s first change backs the file up beside itself first'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, statements, options) => sqliteTransaction(file, statements, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

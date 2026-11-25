@@ -8,6 +8,7 @@ import {
 	readLiftedTo,
 	type LiftedToPointer,
 } from '../../shared/maestro-lib/agents/lift-pointer';
+import { agentGroupLookup, type AgentGroupInfo } from '../../shared/groupHierarchy';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SessionInfo } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
@@ -15,6 +16,7 @@ import {
 	readLiveSessions,
 	readGroups,
 	getSessionsByGroup,
+	readPrimaryAgentId,
 	resolveGroupId,
 } from '../services/storage';
 import {
@@ -32,7 +34,13 @@ interface ListAgentsOptions {
 	peer?: string;
 	/** Federation: list local agents, then every opted-in peer's, one peer at a time. */
 	allPeers?: boolean;
+	/** Only agents whose group is NOT hidden (ungrouped agents count as visible). */
+	visibleOnly?: boolean;
+	/** Only agents in a hidden group (or under a hidden parent group). */
+	hiddenOnly?: boolean;
 }
+
+type GroupLookup = (groupId: string | undefined) => AgentGroupInfo;
 
 /** One `list agents --json` row. `peer` is present only when a peer flag was passed. */
 interface AgentJsonRow {
@@ -41,9 +49,18 @@ interface AgentJsonRow {
 	toolType: string;
 	cwd: string;
 	groupId?: string;
+	/** The group's name; null when the agent has no group (or the peer could not list groups). */
+	groupName: string | null;
+	/**
+	 * True when the agent's group, or that group's parent, is hidden from the Left Bar. Null only
+	 * on a peer's agent whose host could not list its groups.
+	 */
+	groupHidden: boolean | null;
 	autoRunFolderPath?: string;
 	worktreeBasePath: string | null;
 	bookmarked: boolean;
+	/** Whether this is the Primary Agent (Settings > General). Always false for a peer's agent. */
+	primary: boolean;
 	sessionSshRemoteConfig: unknown;
 	/** Where a lifted local agent runs now (`peer`, `agentId`, `at`); null when it was not lifted. */
 	liftedTo: LiftedToPointer | null;
@@ -52,25 +69,31 @@ interface AgentJsonRow {
 }
 
 /** A local agent as a JSON row. */
-function localJsonRow(s: SessionInfo): AgentJsonRow {
+function localJsonRow(
+	s: SessionInfo,
+	groupOf: GroupLookup,
+	primaryAgentId: string | null
+): AgentJsonRow {
 	return {
 		id: s.id,
 		name: s.name,
 		toolType: s.toolType,
 		cwd: s.cwd,
 		groupId: s.groupId,
+		...groupOf(s.groupId),
 		autoRunFolderPath: s.autoRunFolderPath,
 		// Where this agent's worktrees go, so a caller can honor it instead of
 		// inventing a location the desktop never sees. Null when unset.
 		worktreeBasePath: s.worktreeConfig?.basePath ?? null,
 		bookmarked: !!s.bookmarked,
+		primary: s.id === primaryAgentId,
 		sessionSshRemoteConfig: s.sessionSshRemoteConfig ?? null,
 		liftedTo: readLiftedTo(s.liftedTo) ?? null,
 	};
 }
 
 /** A host's agent as a JSON row, in the same shape as a local one. */
-function hostJsonRow(record: AgentRecord, peer: string): AgentJsonRow {
+function hostJsonRow(record: AgentRecord, peer: string, groupOf: GroupLookup | null): AgentJsonRow {
 	const worktree = record.worktreeConfig as { basePath?: string } | undefined;
 	return {
 		id: record.id,
@@ -78,9 +101,12 @@ function hostJsonRow(record: AgentRecord, peer: string): AgentJsonRow {
 		toolType: record.toolType,
 		cwd: record.cwd ?? '',
 		groupId: record.groupId,
+		...(groupOf ? groupOf(record.groupId) : { groupName: null, groupHidden: null }),
 		autoRunFolderPath: record.autoRunFolderPath,
 		worktreeBasePath: worktree?.basePath ?? null,
 		bookmarked: !!record.bookmarked,
+		// The Primary Agent is a setting of THIS machine; a peer's agent is never it.
+		primary: false,
 		sessionSshRemoteConfig: record.sessionSshRemoteConfig ?? null,
 		liftedTo: readLiftedTo(record.liftedTo) ?? null,
 		peer,
@@ -94,39 +120,63 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
 		toolType: row.toolType,
 		cwd: row.cwd,
 		groupId: row.groupId,
+		...(row.groupName ? { groupName: row.groupName } : {}),
+		...(row.groupHidden ? { groupHidden: true } : {}),
 		autoRunFolderPath: row.autoRunFolderPath,
 		bookmarked: row.bookmarked,
+		primary: row.primary,
 		...(row.peer ? { peer: row.peer } : {}),
 		...(row.liftedTo ? { liftedTo: liftedAgentRef(row) } : {}),
 	};
 }
 
+/**
+ * Apply `--visible-only` / `--hidden-only`. A row whose hidden state is unknown (a peer that could
+ * not list its groups) passes neither filter: a caller asking for visible agents only is asking
+ * NOT to touch what the user put away, so an unknown is left out.
+ */
+function filterByGroupVisibility(rows: AgentJsonRow[], options: ListAgentsOptions): AgentJsonRow[] {
+	if (options.visibleOnly) return rows.filter((row) => row.groupHidden === false);
+	if (options.hiddenOnly) return rows.filter((row) => row.groupHidden === true);
+	return rows;
+}
+
 export function listAgents(options: ListAgentsOptions): void | Promise<void> {
+	if (options.visibleOnly && options.hiddenOnly) {
+		const message = 'Pass --visible-only or --hidden-only, not both.';
+		if (options.json) console.error(JSON.stringify({ error: message }));
+		else console.error(formatError(message));
+		process.exit(ExitCode.InvalidUsage);
+	}
 	if (options.peer !== undefined || options.allPeers) return listAgentsWithPeers(options);
 	try {
 		let sessions;
 		let groupName: string | undefined;
+		const groups = readGroups();
+		const groupOf = agentGroupLookup(groups);
 
 		if (options.group) {
 			// Resolve partial group ID
 			const groupId = resolveGroupId(options.group);
 			sessions = getSessionsByGroup(groupId);
 			// Get the group name for display
-			const groups = readGroups();
-			const group = groups.find((g) => g.id === groupId);
-			groupName = group?.name;
+			groupName = groupOf(groupId).groupName ?? undefined;
 		} else {
 			sessions = readLiveSessions();
 		}
 
+		const primaryAgentId = readPrimaryAgentId();
+		const rows = filterByGroupVisibility(
+			sessions.map((s) => localJsonRow(s, groupOf, primaryAgentId)),
+			options
+		);
 		if (options.json) {
 			// JSON array output. Include sessionSshRemoteConfig so SSH execution
 			// state is verifiable without reading raw store files.
-			const output = sessions.map(localJsonRow);
-			console.log(JSON.stringify(output, null, 2));
+			console.log(JSON.stringify(rows, null, 2));
 		} else {
 			// Human-readable output
-			const displayAgents: AgentDisplay[] = sessions.map((s) => displayRow(localJsonRow(s)));
+			const displayAgents: AgentDisplay[] = rows.map(displayRow);
 			console.log(formatAgents(displayAgents, groupName));
 		}
 	} catch (error) {
@@ -184,16 +234,21 @@ async function readPeerRows(peerRef: string): Promise<{ peer: string; rows: Agen
 	const connection = await connectPeer(peerRef);
 	try {
 		const agents = await listHostAgents(connection);
+		// Group names and hidden state are labels: a host that cannot list its groups still lists
+		// its agents, with `groupName` and `groupHidden` null.
+		const groups = await connection.client.groups.list();
+		const groupOf = groups.ok ? agentGroupLookup(groups.value) : null;
 		return {
 			peer: connection.peer,
-			rows: agents.map((record) => hostJsonRow(record, connection.peer)),
+			rows: agents.map((record) => hostJsonRow(record, connection.peer, groupOf)),
 		};
 	} finally {
 		await connection.release();
 	}
 }
 
-function printRows(rows: AgentJsonRow[], options: ListAgentsOptions, peer?: string): void {
+function printRows(allRows: AgentJsonRow[], options: ListAgentsOptions, peer?: string): void {
+	const rows = filterByGroupVisibility(allRows, options);
 	if (options.json) {
 		console.log(JSON.stringify(rows, null, 2));
 	} else {
@@ -238,7 +293,12 @@ async function listAgentsWithPeers(options: ListAgentsOptions): Promise<void> {
 	// not hide the others; it is reported after the list, and the exit code is its exit code.
 	let rows: AgentJsonRow[];
 	try {
-		rows = readLiveSessions().map((s) => ({ ...localJsonRow(s), peer: null }));
+		const groupOf = agentGroupLookup(readGroups());
+		const primaryAgentId = readPrimaryAgentId();
+		rows = readLiveSessions().map((s) => ({
+			...localJsonRow(s, groupOf, primaryAgentId),
+			peer: null,
+		}));
 	} catch (error) {
 		const failure = toFailure(error);
 		reportFailure(

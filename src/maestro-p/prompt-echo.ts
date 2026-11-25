@@ -23,9 +23,15 @@
 // paste and log that span between `<pasted_content id="..">` and
 // `</pasted_content id="..">` markers. The markers add text and lose none, so
 // they are stripped from both sides before comparing.
+//
+// The editor also drops invisible Unicode format characters (category Cf: the
+// zero-width space U+200B, joiners, bidi marks, the soft hyphen). Marketing
+// email pulled into a Pedsidian command-bus prompt carried one U+200B, and the
+// same prompt failed as "truncated" on every retry (2026-11-22). Format
+// characters carry no content, so they are ignored like whitespace.
 
-const IGNORED_CHARS = /[\s\p{Cc}]+/gu;
-const IGNORED_CHAR = /[\s\p{Cc}]/u;
+const IGNORED_CHARS = /[\s\p{Cc}\p{Cf}]+/gu;
+const IGNORED_CHAR = /[\s\p{Cc}\p{Cf}]/u;
 const PASTE_MARKERS = /<\/?pasted_content id="[^"]*">/g;
 const MISSING_SNIPPET_CHARS = 80;
 

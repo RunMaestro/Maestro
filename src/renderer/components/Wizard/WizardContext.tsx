@@ -12,6 +12,8 @@ import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { getAgentPickerMeta } from '../../../shared/agentMetadata';
+import { findAgentWithName } from '../../utils/sessionValidation';
+import { useSessionStore } from '../../stores/sessionStore';
 import { STEP_INDEX, INDEX_TO_STEP, WIZARD_TOTAL_STEPS } from './WizardContext/constants';
 import { generateMessageId } from './WizardContext/messageIds';
 import {
@@ -95,16 +97,26 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		dispatch({ type: 'PREVIOUS_STEP' });
 	}, []);
 
+	// Selects a string, not the session list, so the wizard re-renders only
+	// when the clash itself appears or goes away.
+	const duplicateAgentName = useSessionStore(
+		(store) => findAgentWithName(state.agentName, store.sessions)?.name ?? null
+	);
+
 	const canProceedToNext = useCallback((): boolean => {
 		switch (state.currentStep) {
 			// The name is optional: the directory step fills in the folder name
 			// when the user leaves it blank, so requiring one here would only
-			// block someone who has nothing to say yet.
+			// block someone who has nothing to say yet. A name another agent
+			// already has is refused here, not at launch: launch rejects it, and
+			// by then the user has sat through the whole planning conversation
+			// (MAESTRO-199).
 			case 'agent-selection':
 				// Opening configuration can select an unavailable provider. A custom
 				// path must pass detection before this wizard starts discovery work.
 				return (
 					state.selectedAgent !== null &&
+					duplicateAgentName === null &&
 					getAgentPickerMeta(state.selectedAgent) !== null &&
 					(!state.sessionSshRemoteConfig?.enabled || !!state.sessionSshRemoteConfig.remoteId) &&
 					state.availableAgents.some(
@@ -125,6 +137,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		state.selectedAgent,
 		state.availableAgents,
 		state.sessionSshRemoteConfig,
+		duplicateAgentName,
 		state.directoryPath,
 		state.directoryError,
 		state.isReadyToProceed,
@@ -356,6 +369,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			nextStep,
 			previousStep,
 			canProceedToNext,
+			duplicateAgentName,
 			getCurrentStepNumber,
 			setSelectedAgent,
 			setAvailableAgents,
@@ -408,6 +422,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			nextStep,
 			previousStep,
 			canProceedToNext,
+			duplicateAgentName,
 			getCurrentStepNumber,
 			setSelectedAgent,
 			setAvailableAgents,

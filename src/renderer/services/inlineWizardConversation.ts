@@ -471,7 +471,7 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 		const lines = output.split('\n');
 
 		// For OpenCode: concatenate all text parts
-		if (agentType === 'opencode') {
+		if (agentType === 'opencode' || agentType === 'kilo') {
 			const textParts: string[] = [];
 			for (const line of lines) {
 				if (!line.trim()) continue;
@@ -584,7 +584,8 @@ function buildArgsForAgent(agent: any): string[] {
 			return [...(agent.args || [])];
 		}
 
-		case 'opencode': {
+		case 'opencode':
+		case 'kilo': {
 			// Return base args plus read-only restriction for wizard conversations.
 			// The IPC handler's buildAgentArgs() adds batchModePrefix, jsonOutputArgs,
 			// and workingDirArgs automatically when a prompt is present.

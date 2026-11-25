@@ -46,7 +46,7 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 
 export interface CoworkingHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
-	/** Read for the `coworking` Encore flag: installs are refused while it is off. */
+	/** Read the Coworking feature flag and the persisted typing permission. */
 	settingsStore: EncoreSettingsReader;
 }
 
@@ -225,6 +225,22 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 			if (!win || win.isDestroyed()) {
 				throw new Error('Coworking: main window is not available to drive browser tab');
 			}
+			// Check the persisted opt-in in main. The renderer also checks its own
+			// settings so a revocation can take effect before persistence catches up.
+			const typingProviders =
+				op.kind === 'type'
+					? deps.settingsStore.get('coworkingBrowserTypingWithoutConfirmation')
+					: undefined;
+			const provider = coworkingRegistry.getAgentType(sessionId);
+			const allowTyping =
+				provider !== undefined &&
+				Array.isArray(typingProviders) &&
+				typingProviders.includes(provider);
+			const needsConfirm = browserOpNeedsConfirm(
+				coworkingRegistry.getBrowserConfirmPolicy(sessionId),
+				op.kind,
+				allowTyping
+			);
 			const responseChannel = `coworking:browserOpResponse:${nextRequestId++}`;
 			const expectedSenderId = win.webContents.id;
 			const { promise, resolve, reject } = Promise.withResolvers<BrowserOpResult>();
@@ -246,21 +262,15 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					ipcMain.removeListener(responseChannel, handler);
 					reject(new Error('Coworking: timed out waiting for browser op from renderer'));
 				},
-				op.kind === 'read'
+				// A viewport op is a store write that never waits on a dialog or a page,
+				// so it gets the read cap, not the approval-sized one.
+				op.kind === 'read' || op.kind === 'viewport'
 					? BROWSER_OP_TIMEOUT_MS
 					: op.kind === 'pick'
 						? BROWSER_PICK_TIMEOUT_MS
 						: BROWSER_INTERACT_TIMEOUT_MS
 			);
 			ipcMain.on(responseChannel, handler);
-			// Main computes the per-call approval requirement from its own mirrored
-			// policy and sends it with the request, so the renderer's approval gate
-			// holds even if the renderer's local settings read is stale. The renderer
-			// ORs this with its own computation (defense in depth, never weakening).
-			const needsConfirm = browserOpNeedsConfirm(
-				coworkingRegistry.getBrowserConfirmPolicy(sessionId),
-				op.kind
-			);
 			try {
 				win.webContents.send(
 					'coworking:requestBrowserOp',

@@ -3,7 +3,8 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_group_chats,
  * start_group_chat, get_group_chat_state, send_group_chat_message,
- * steer_group_chat, stop_group_chat, archive_group_chat, add_group_chat_participant.
+ * steer_group_chat, stop_group_chat, archive_group_chat, set_group_chat_unread,
+ * add_group_chat_participant.
  */
 
 import type { StartGroupChatOptions } from '../../types';
@@ -307,6 +308,49 @@ export function handleArchiveGroupChat(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to archive group chat: ${error.message}`, {
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle set_group_chat_unread message - set (or with unread: false, clear) the
+ * Left Bar's unread dot on a group chat. The flag is renderer state, so the
+ * callback relays to the renderer and reports whether the chat existed.
+ */
+export function handleSetGroupChatUnread(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const chatId = message.chatId as string;
+
+	if (!chatId) {
+		ctx.sendError(client, 'Missing chatId', { requestId: message.requestId });
+		return;
+	}
+
+	if (!ctx.callbacks.setGroupChatUnread) {
+		ctx.sendError(client, 'Group chat not configured', { requestId: message.requestId });
+		return;
+	}
+
+	// Opt-in to clearing: only a literal false marks the chat read.
+	const unread = message.unread !== false;
+
+	ctx.callbacks
+		.setGroupChatUnread(chatId, unread)
+		.then((success) => {
+			ctx.send(client, {
+				type: 'set_group_chat_unread_result',
+				success,
+				chatId,
+				unread,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to update group chat unread state: ${error.message}`, {
 				requestId: message.requestId,
 			});
 		});

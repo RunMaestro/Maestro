@@ -50,6 +50,8 @@ export interface RemoteGroupChatState {
 	state?: GroupChatState;
 	moderatorAgentId?: string;
 	archived?: boolean;
+	/** True while the room carries the Left Bar's unread dot; absent from older builds. */
+	unread?: boolean;
 	currentTurn?: string;
 	/** Messages waiting for the room. Present on a single-chat state read. */
 	queue?: RemoteGroupChatQueueItem[];
@@ -61,7 +63,7 @@ export function toRemoteGroupChatState(
 	chat: GroupChat,
 	state: GroupChatState,
 	messages: GroupChatMessage[] = [],
-	queue?: GroupChatQueueState
+	{ queue, unread = false }: { queue?: GroupChatQueueState; unread?: boolean } = {}
 ): RemoteGroupChatState {
 	return {
 		id: chat.id,
@@ -84,6 +86,7 @@ export function toRemoteGroupChatState(
 		state,
 		moderatorAgentId: chat.moderatorAgentId,
 		archived: chat.archived,
+		unread,
 		...(queue && {
 			queue: queue.items.map((item) => ({
 				id: item.id,
