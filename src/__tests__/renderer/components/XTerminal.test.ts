@@ -263,4 +263,122 @@ describe('evaluateCustomKeyEvent', () => {
 		const e = makeKeyEvent({ key: 'ArrowLeft', altKey: true, metaKey: true, type: 'keydown' });
 		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
 	});
+
+	// macOS German layout Option-composed characters must reach xterm
+	it.each([
+		{ label: 'Option+7 -> |', key: '|', code: 'Digit7', shiftKey: false },
+		{ label: 'Option+L -> @', key: '@', code: 'KeyL', shiftKey: false },
+		{ label: 'Option+5 -> [', key: '[', code: 'Digit5', shiftKey: false },
+		{ label: 'Option+6 -> ]', key: ']', code: 'Digit6', shiftKey: false },
+		{ label: 'Option+8 -> {', key: '{', code: 'Digit8', shiftKey: false },
+		{ label: 'Option+9 -> }', key: '}', code: 'Digit9', shiftKey: false },
+		{ label: 'Option+Shift+7 -> \\', key: '\\', code: 'Digit7', shiftKey: true },
+	])('returns "handle" for macOS German $label', ({ key, code, shiftKey }) => {
+		const e = makeKeyEvent({ key, code, altKey: true, shiftKey, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	// Bound Maestro Alt/Option shortcuts still pass through on US and non-US layouts
+	it.each([
+		{ label: 'Option+Q (openCue)', key: 'œ', code: 'KeyQ' },
+		{ label: 'Option+U (filterUnreadAgents)', key: '¨', code: 'KeyU' },
+		{ label: 'Option+N (newFileTab)', key: '˜', code: 'KeyN' },
+		{ label: 'Option+[ (paneCyclePrev)', key: '“', code: 'BracketLeft' },
+		{ label: 'Option+] (paneCycleNext)', key: '‘', code: 'BracketRight' },
+	])('returns "passthrough" for bound Maestro shortcut $label', ({ key, code }) => {
+		const e = makeKeyEvent({ key, code, altKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('respects custom/rebound shortcuts list for Alt combos', () => {
+		const e = makeKeyEvent({ key: 'œ', code: 'KeyQ', altKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e, [])).toBe('handle');
+		expect(
+			evaluateCustomKeyEvent(makeKeyEvent({ key: '˚', code: 'KeyK', altKey: true }), [
+				{ id: 'custom', label: 'Custom', keys: ['Alt', 'k'] },
+			])
+		).toBe('passthrough');
+	});
+
+	// Windows / Linux AltGr composed characters must reach xterm
+	it('returns "handle" for Windows AltGr+Q (@)', () => {
+		const e = makeKeyEvent({
+			key: '@',
+			code: 'KeyQ',
+			ctrlKey: true,
+			altKey: true,
+			getModifierState: (mod: string) => mod === 'AltGraph',
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "handle" for Windows AltGr+Shift level-4 compose', () => {
+		const e = makeKeyEvent({
+			key: '°',
+			code: 'Digit7',
+			ctrlKey: true,
+			altKey: true,
+			shiftKey: true,
+			getModifierState: (mod: string) => mod === 'AltGraph',
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "handle" for Linux AltGr+Q (@)', () => {
+		const e = makeKeyEvent({
+			key: '@',
+			code: 'KeyQ',
+			ctrlKey: false,
+			altKey: false,
+			getModifierState: (mod: string) => mod === 'AltGraph',
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "passthrough" for Windows Ctrl+Alt+G (newGroupChat) without AltGraph', () => {
+		const e = makeKeyEvent({
+			key: 'g',
+			code: 'KeyG',
+			ctrlKey: true,
+			altKey: true,
+			getModifierState: () => false,
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	// FIXED_SHORTCUTS: jumpToSession (Ctrl+Alt+1..0 on Windows/Linux, Opt+Cmd+1..0 on macOS)
+	it.each([
+		{ label: 'Ctrl+Alt+1 (slot 1)', key: '1', code: 'Digit1' },
+		{ label: 'Ctrl+Alt+0 (slot 10)', key: '0', code: 'Digit0' },
+	])('returns "passthrough" for Windows/Linux $label without AltGraph', ({ key, code }) => {
+		const e = makeKeyEvent({
+			key,
+			code,
+			ctrlKey: true,
+			altKey: true,
+			getModifierState: () => false,
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('returns "handle" for AltGr+digit producing a character (e.g. AltGr+7 -> {)', () => {
+		const e = makeKeyEvent({
+			key: '{',
+			code: 'Digit7',
+			ctrlKey: true,
+			altKey: true,
+			getModifierState: (mod: string) => mod === 'AltGraph',
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "passthrough" for macOS Opt+Cmd+1 (jumpToSession)', () => {
+		const e = makeKeyEvent({
+			key: '¡',
+			code: 'Digit1',
+			metaKey: true,
+			altKey: true,
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
 });
