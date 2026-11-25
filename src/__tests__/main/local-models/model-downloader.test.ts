@@ -451,4 +451,23 @@ describe('model-downloader', () => {
 		expect(events.at(-1)?.phase).toBe('complete');
 		expect(events.at(-1)?.bytesReceived).toBe(fixture.bytes);
 	});
+
+	it('replaces a corrupt file of the expected byte length on re-download', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		const corrupt = Buffer.alloc(fixture.bytes, 0x7a);
+		expect(corrupt.length).toBe(fixture.bytes);
+		await fs.writeFile(finalPath(), corrupt);
+
+		let fetched = 0;
+		const fetchImpl: FetchLike = async () => {
+			fetched++;
+			return new Response(new Uint8Array(fixture.contents), { status: 200 });
+		};
+
+		const result = await makeDownloader(fetchImpl).download(fixture.id);
+
+		expect(result.status).toBe('complete');
+		expect(fetched).toBe(1);
+		expect(await fs.readFile(finalPath())).toEqual(fixture.contents);
+	});
 });
