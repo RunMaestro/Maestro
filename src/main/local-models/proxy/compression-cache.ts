@@ -259,9 +259,17 @@ function isStoredRecord(hash: string, value: unknown): value is StoredRecord {
  * block once and a prune by either waits for a request on the other.
  */
 const entryQueue = createKeyedWriteQueue();
+const tightenedCacheRoots = new Set<string>();
 
 export function createCompressionCache(options: CompressionCacheOptions = {}): CompressionCache {
 	const dir = options.dir ?? (() => path.join(localModelsDataDir(), TOKEN_PROXY_CACHE_DIRNAME));
+	const tightenCacheRoot = async (): Promise<void> => {
+		if (process.platform === 'win32') return;
+		const root = dir();
+		if (tightenedCacheRoots.has(root)) return;
+		tightenedCacheRoots.add(root);
+		await fs.chmod(root, 0o700).catch(() => undefined);
+	};
 	const memoryEntries = Math.max(1, options.memoryEntries ?? DEFAULT_MEMORY_ENTRIES);
 	const useEntries = Math.max(1, options.useEntries ?? DEFAULT_USE_ENTRIES);
 	// Insertion order is recency: a read moves its entry to the end.
@@ -552,6 +560,7 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 
 	return {
 		async read(hash: string): Promise<CompressionVerdict | null> {
+			await tightenCacheRoot();
 			if (!isContentHash(hash)) return null;
 			const held = memory.get(hash);
 			if (held) {
@@ -572,11 +581,10 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 				throw new Error(`Not a content hash: "${String(verdict.hash)}".`);
 			}
 			const bucketDir = path.dirname(entryPath(verdict.hash, '.json'));
-			const cacheDir = path.dirname(bucketDir);
 			await fs.mkdir(bucketDir, { recursive: true, mode: 0o700 });
+			await tightenCacheRoot();
 			if (process.platform !== 'win32') {
-				// Existing directories created before this hardening keep their old mode across mkdir.
-				await fs.chmod(cacheDir, 0o700).catch(() => undefined);
+				// Existing bucket directories created before this hardening keep their old mode across mkdir.
 				await fs.chmod(bucketDir, 0o700).catch(() => undefined);
 			}
 			const { hash, originalTokens, createdAt, modelFailure } = verdict;
@@ -604,18 +612,23 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			noteUse(hash, now, now);
 		},
 
-		readOriginal,
+		readOriginal: (async (hash: string, range?: TokenProxyOriginalLineRange) => {
+			await tightenCacheRoot();
+			return range === undefined ? readOriginal(hash) : readOriginal(hash, range);
+		}) as CompressionCache['readOriginal'],
 
 		withEntry<T>(hash: string, fn: () => Promise<T>): Promise<T> {
 			return entryQueue.enqueue(hash, fn);
 		},
 
 		async usage(): Promise<CompressionCacheUsage> {
+			await tightenCacheRoot();
 			const { entries, bytes } = await scan();
 			return usageOf(entries, bytes);
 		},
 
 		async prune(pruneOptions: CompressionCachePruneOptions = {}) {
+			await tightenCacheRoot();
 			const now = pruneOptions.now ?? Date.now();
 			const maxIdleMs = Math.max(
 				MIN_PRUNE_IDLE_MS,
