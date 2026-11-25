@@ -20,6 +20,13 @@ vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) 
 	planCrossAgentMentions: (...args: unknown[]) => planCrossAgentMentions(...args),
 }));
 
+// A hosted agent's queue actions go to its host; the test reads which one went.
+const mergeMirrorQueuedItem = vi.fn(async () => undefined);
+vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
+	mergeMirrorQueuedItem: (...args: unknown[]) => mergeMirrorQueuedItem(...(args as [])),
+}));
+
 import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
@@ -439,6 +446,7 @@ describe('mergeQueuedItemIntoAbove', () => {
 		planCrossAgentMentions.mockReset();
 		planCrossAgentMentions.mockReturnValue(null);
 	});
+	afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
 
 	it('folds the item into the message above it and returns that id', () => {
 		seed();
@@ -455,6 +463,34 @@ describe('mergeQueuedItemIntoAbove', () => {
 		expect(mergeQueuedItemIntoAbove('session-1', only.id)).toBeNull();
 		expect(currentQueue()).toHaveLength(1);
 		expect(mergeQueuedItemIntoAbove('missing-session', only.id)).toBeNull();
+	});
+
+	it("sends a hosted agent's merge to its host, by the same rule, and leaves this copy alone", () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const hostItem = (id: string, tabId: string, text: string): QueuedItem => ({
+			id,
+			timestamp: 0,
+			tabId,
+			type: 'message',
+			text,
+			hostQueued: true,
+		});
+		const queue = [
+			hostItem('h1', 'b', 'one'),
+			hostItem('h2', 'a', 'other'),
+			hostItem('h3', 'b', 'two'),
+		];
+		seed({ liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 }, executionQueue: queue });
+		mergeMirrorQueuedItem.mockClear();
+
+		expect(mergeQueuedItemIntoAbove('session-1', 'h3')).toBe('h1');
+		expect(mergeMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h3');
+		// The host's queue update redraws the cards; nothing changes here first.
+		expect(currentQueue()).toEqual(queue);
+
+		mergeMirrorQueuedItem.mockClear();
+		expect(mergeQueuedItemIntoAbove('session-1', 'h1')).toBeNull();
+		expect(mergeMirrorQueuedItem).not.toHaveBeenCalled();
 	});
 });
 

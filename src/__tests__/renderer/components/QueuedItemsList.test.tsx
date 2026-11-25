@@ -131,6 +131,30 @@ describe('QueuedItemsList merge into the message above', () => {
 		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })] });
 		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
 	});
+
+	// A local and an SSH agent's cards are this machine's queue; a hosted agent's are its host's
+	// (`hostQueued`). Merge reads the same and hands the same id up in all three: only where the
+	// merge runs differs (`mergeQueuedItemIntoAbove` routes a host item to the host).
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers Merge on the same cards', async (_mode, hostQueued) => {
+		const onMergeQueuedItem = vi.fn();
+		setup({
+			executionQueue: [
+				item({ id: 'q1', hostQueued }),
+				item({ id: 'q2', tabId: 'tab-2', hostQueued }),
+				item({ id: 'q3', hostQueued }),
+			],
+			onMergeQueuedItem,
+			activeTabId: 'tab-1',
+		});
+		expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(1);
+		fireEvent.click(screen.getByTitle(MERGE_TITLE));
+		fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+		expect(onMergeQueuedItem).toHaveBeenCalledWith('q3');
+	});
 });
 
 describe('QueuedItemsList held-for-retry badge', () => {

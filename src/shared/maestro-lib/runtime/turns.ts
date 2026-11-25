@@ -66,6 +66,7 @@ import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
 import {
 	createExecutionQueue,
+	joinMergedQueueText,
 	TurnCollisionError,
 	type ExecutionQueue,
 	type QueueEvent,
@@ -828,6 +829,18 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				}
 				const found = queues.get(agentId)?.setPaused(itemId, paused) ?? false;
 				return ok({ found, paused });
+			},
+			merge: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.merge', 'not-found', `No agent ${agentId}.`);
+				}
+				// The upper message is the turn that runs first: it keeps its own settings and hold.
+				const mergedIntoId =
+					queues.get(agentId)?.merge(itemId, (upper, lower) => ({
+						...upper,
+						text: joinMergedQueueText(upper.text, lower.text),
+					})) ?? null;
+				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
 			},
 		},
 

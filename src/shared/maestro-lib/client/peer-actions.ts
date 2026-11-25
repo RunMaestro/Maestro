@@ -5,9 +5,10 @@
 // a send is `turns.send` (`enqueue_command`), Stop is `turns.interrupt` (`process:interrupt`) per
 // tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and `tabs.update`, a settings
 // change is `agents.update`, and the queue actions on a waiting message are `turns.queue.remove`
-// (`remove_queue_item`) and `turns.queue.setPaused` (`set_queue_item_paused`). The CLI reaches the host
-// over its own short-lived forward (`withPeerAgent()`), the desktop over the mirror service's held
-// one; both run the action through `runPeerAgentAction()`, so there is one copy.
+// (`remove_queue_item`), `turns.queue.setPaused` (`set_queue_item_paused`), and `turns.queue.merge`
+// (`merge_queue_item`). The CLI reaches the host over its own short-lived forward
+// (`withPeerAgent()`), the desktop over the mirror service's held one; both run the action
+// through `runPeerAgentAction()`, so there is one copy.
 //
 // Nothing here queues or retries. A client that is not attached fails at once
 // (`host-unavailable`), so a send while disconnected is an error, never a message held for later.
@@ -57,6 +58,8 @@ export type PeerAgentAction =
 	| { kind: 'remove-queued'; itemId: string }
 	/** Hold a waiting message (it keeps its place) or release it. */
 	| { kind: 'pause-queued'; itemId: string; paused: boolean }
+	/** Fold a waiting message into the waiting message above it on its tab (the card's Merge). */
+	| { kind: 'merge-queued'; itemId: string }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -82,6 +85,8 @@ export type PeerAgentActionResult =
 	| { kind: 'remove-queued'; itemId: string; removed: boolean }
 	/** `found: false`: the message no longer waits. */
 	| { kind: 'pause-queued'; itemId: string; found: boolean; paused: boolean }
+	/** `merged: false`: nothing waits above it on its tab, or it no longer waits. */
+	| { kind: 'merge-queued'; itemId: string; merged: boolean; mergedIntoId?: string }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string };
 
@@ -97,6 +102,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'close-tab',
 	'remove-queued',
 	'pause-queued',
+	'merge-queued',
 	'update-agent',
 	'update-tab',
 ];
@@ -180,6 +186,12 @@ export async function runPeerAgentAction(
 			return set.ok
 				? { ok: true, value: { kind: 'pause-queued', itemId: action.itemId, ...set.value } }
 				: set;
+		}
+		case 'merge-queued': {
+			const merged = await client.turns.queue.merge(agent.id, action.itemId);
+			return merged.ok
+				? { ok: true, value: { kind: 'merge-queued', itemId: action.itemId, ...merged.value } }
+				: merged;
 		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
@@ -268,6 +280,9 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			if (typeof value.paused !== 'boolean') throw new Error('paused must be true or false');
 			return { kind, itemId: value.itemId, paused: value.paused };
+		case 'merge-queued':
+			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
+			return { kind, itemId: value.itemId };
 		case 'update-agent':
 			return { kind, patch: parseAgentPatch(value.patch) };
 		case 'update-tab':

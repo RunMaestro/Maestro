@@ -289,7 +289,7 @@ export function ExecutionQueueBrowser({
 	// one: the first message on a tab, a command, a leading-mention message, or a
 	// consult hold has nothing to merge with.
 	const mergeAction = (session: Session, item: QueuedItem): (() => void) | undefined =>
-		onMergeItem && !item.hostQueued && findQueuedMergeTarget(session.executionQueue ?? [], item.id)
+		onMergeItem && findQueuedMergeTarget(session.executionQueue ?? [], item.id)
 			? () => setMergeConfirm({ sessionId: session.id, itemId: item.id })
 			: undefined;
 
@@ -501,10 +501,10 @@ export function ExecutionQueueBrowser({
 								{/* Queue Items */}
 								<div className="space-y-0">
 									{session.executionQueue?.map((item, index) => {
-										// A hosted agent's host runs its own queue: its items offer Remove and
-										// Hold / Resume, which act on the host, and nothing that would only
-										// change this copy (the next host sync would undo it). Same rule as
-										// QueuedItemsList.
+										// A hosted agent's host runs its own queue: its items offer Remove,
+										// Hold / Resume, and Merge, which act on the host, and nothing that
+										// would only change this copy (the next host sync would undo it).
+										// Same rule as QueuedItemsList.
 										const hostOnly = item.hostQueued === true;
 										const forceSend =
 											onForceSendItem && !hostOnly

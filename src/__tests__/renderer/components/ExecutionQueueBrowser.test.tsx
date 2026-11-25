@@ -2505,8 +2505,8 @@ describe('ExecutionQueueBrowser', () => {
 	});
 
 	describe('host-queued items (hosted agent)', () => {
-		// A hosted agent's host runs its own queue. Its items offer only what acts on the host
-		// (Remove, Hold / Resume); edit, merge, reorder and Send Now would change this copy only.
+		// A hosted agent's host runs its own queue. Its items offer what acts on the host (Remove,
+		// Hold / Resume, Merge); edit, reorder and Send Now would change this copy only.
 		const hostSession = () =>
 			createSession({
 				id: 'active-session',
@@ -2556,16 +2556,62 @@ describe('ExecutionQueueBrowser', () => {
 			});
 		});
 
-		it('the action menu offers Remove and Hold only', () => {
+		it('the action menu offers Remove, Hold, and Merge', () => {
 			renderHost();
 			const card = screen.getByLabelText('Execution Queue');
 			fireEvent.keyDown(card, { key: 'ArrowDown' });
 			fireEvent.keyDown(card, { key: 'Enter' });
 			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
 			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-merge')).toBeInTheDocument();
 			expect(screen.queryByTestId('queue-action-edit')).toBeNull();
-			expect(screen.queryByTestId('queue-action-merge')).toBeNull();
 			expect(screen.queryByTestId('queue-action-send')).toBeNull();
 		});
+	});
+
+	describe('Merge in local, SSH, and hosted agents', () => {
+		const MERGE_TITLE = /Merge into the earlier message/i;
+		const modes = {
+			local: {},
+			ssh: { sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
+			hosted: {
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 },
+			},
+		} as const;
+
+		it.each(Object.keys(modes) as Array<keyof typeof modes>)(
+			'%s: offers Merge on the same card and hands the same ids to onMergeItem',
+			async (mode) => {
+				const hostQueued = mode === 'hosted' ? true : undefined;
+				const onMergeItem = vi.fn();
+				render(
+					<ExecutionQueueBrowser
+						isOpen={true}
+						onClose={mockOnClose}
+						sessions={[
+							createSession({
+								id: 'active-session',
+								...modes[mode],
+								executionQueue: [
+									createQueuedItem({ id: 'q1', text: 'upper', tabId: 'tab-a', hostQueued }),
+									createQueuedItem({ id: 'q2', text: 'other', tabId: 'tab-b', hostQueued }),
+									createQueuedItem({ id: 'q3', text: 'lower', tabId: 'tab-a', hostQueued }),
+								],
+							} as Partial<Session>),
+						]}
+						activeSessionId="active-session"
+						theme={theme}
+						onRemoveItem={mockOnRemoveItem}
+						onSwitchSession={mockOnSwitchSession}
+						onMergeItem={onMergeItem}
+					/>
+				);
+				expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(1);
+				fireEvent.click(screen.getByTitle(MERGE_TITLE));
+				fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+				expect(onMergeItem).toHaveBeenCalledWith('active-session', 'q3');
+			}
+		);
 	});
 });

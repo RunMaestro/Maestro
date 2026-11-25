@@ -74,6 +74,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'close-tab': 'Could not close the tab',
 	'remove-queued': 'Could not remove the queued message',
 	'pause-queued': 'Could not hold or resume the queued message',
+	'merge-queued': 'Could not merge the queued message',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 };
@@ -212,6 +213,25 @@ export async function setMirrorQueuedItemPaused(
 			color: 'yellow',
 			title: paused ? 'Message not held' : 'Message not resumed',
 			message: 'It no longer waits on the host: it may have started already.',
+		});
+	}
+}
+
+/**
+ * Fold a waiting message into the one above it on its host (the queued card's Merge). The host's
+ * queue update redraws both cards; a message that no longer waits is a notice, not a red toast.
+ */
+export async function mergeMirrorQueuedItem(
+	peerId: string,
+	agentId: string,
+	itemId: string
+): Promise<void> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'merge-queued', itemId });
+	if (result?.kind === 'merge-queued' && !result.merged) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Messages not merged',
+			message: 'They no longer both wait on the host: one may have started already.',
 		});
 	}
 }

@@ -27,6 +27,9 @@ function fakeClient() {
 				setPaused: vi.fn(async (_agentId: string, itemId: string, paused: boolean) =>
 					ok({ found: itemId !== 'gone', paused })
 				),
+				merge: vi.fn(async (_agentId: string, itemId: string) =>
+					ok(itemId === 'gone' ? { merged: false } : { merged: true, mergedIntoId: 'q0' })
+				),
 			},
 		},
 		tabs: {
@@ -256,6 +259,17 @@ describe('runPeerAgentAction', () => {
 		).toEqual(ok({ kind: 'pause-queued', itemId: 'gone', found: false, paused: false }));
 	});
 
+	it('merges a waiting message into the one above it on the host', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'merge-queued', itemId: 'q1' })
+		).toEqual(ok({ kind: 'merge-queued', itemId: 'q1', merged: true, mergedIntoId: 'q0' }));
+		expect(client.turns.queue.merge).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'merge-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'merge-queued', itemId: 'gone', merged: false }));
+	});
+
 	it('passes a failed queue call through untouched', async () => {
 		const { client, asClient } = fakeClient();
 		const failure = {
@@ -325,6 +339,10 @@ describe('parsePeerAgentAction', () => {
 			kind: 'pause-queued',
 			itemId: 'q1',
 			paused: false,
+		});
+		expect(parsePeerAgentAction({ kind: 'merge-queued', itemId: 'q1', extra: 1 })).toEqual({
+			kind: 'merge-queued',
+			itemId: 'q1',
 		});
 		expect(
 			parsePeerAgentAction({
@@ -501,6 +519,7 @@ describe('parsePeerAgentAction', () => {
 		expect(() => parsePeerAgentAction({ kind: 'pause-queued', paused: true })).toThrow(
 			'Missing queued item id'
 		);
+		expect(() => parsePeerAgentAction({ kind: 'merge-queued' })).toThrow('Missing queued item id');
 		expect(() =>
 			parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: 'yes' })
 		).toThrow('paused must be true or false');

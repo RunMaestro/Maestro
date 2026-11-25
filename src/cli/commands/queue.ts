@@ -4,7 +4,7 @@
 // verb uses, so they fail with MAESTRO_NOT_RUNNING when the app is down.
 //
 // With Federation on, `--agent <peer:agent>` names a peer's agent instead: list,
-// remove, hold, and resume act on that host's queue through the same shared
+// remove, hold, resume, and merge act on that host's queue through the same shared
 // action the desktop's mirrored queued cards run (`runPeerAgentAction`).
 
 import { withMaestroClient } from '../services/maestro-client';
@@ -190,15 +190,20 @@ async function queueListPeer(target: PeerTarget): Promise<void> {
 }
 
 /**
- * One queue action on a peer's agent. `found` reads the host's answer: false means the message no
- * longer waits there (it started, or another client took it out), the local verbs' ITEM_NOT_FOUND.
+ * One queue action on a peer's agent. `report` reads the host's answer into the fields the JSON
+ * reply adds, or null when the action did not take: by default the message no longer waits there
+ * (it started, or another client took it out), the local verbs' ITEM_NOT_FOUND. `refused` names a
+ * verb's own failure instead (merge's NOT_MERGEABLE).
  */
 async function queueActPeer(
 	target: PeerTarget,
 	itemId: string,
 	action: PeerAgentAction,
-	found: (result: PeerAgentActionResult) => boolean,
-	report: Record<string, unknown>
+	report: (result: PeerAgentActionResult) => Record<string, unknown> | null,
+	refused: (agentRef: string) => { message: string; code: string } = (agentRef) => ({
+		message: `No queued item with id ${itemId} for agent ${agentRef}`,
+		code: 'ITEM_NOT_FOUND',
+	})
 ): Promise<void> {
 	let done: { peer: string; agentId: string; result: PeerAgentActionResult };
 	try {
@@ -212,14 +217,16 @@ async function queueActPeer(
 		return;
 	}
 	const agentRef = peerAgentRef(done.peer, done.agentId);
-	if (!found(done.result)) {
-		emitError(`No queued item with id ${itemId} for agent ${agentRef}`, 'ITEM_NOT_FOUND');
+	const fields = report(done.result);
+	if (!fields) {
+		const failure = refused(agentRef);
+		emitError(failure.message, failure.code);
 		process.exit(1);
 		return;
 	}
 	console.log(
 		JSON.stringify(
-			{ success: true, agentId: agentRef, itemId, ...report, peer: done.peer },
+			{ success: true, agentId: agentRef, itemId, ...fields, peer: done.peer },
 			null,
 			2
 		)
@@ -229,7 +236,7 @@ async function queueActPeer(
 /** A queue verb the host does not serve: refused before anything reaches the peer. */
 function refusePeerVerb(verb: string, agent: string): void {
 	emitError(
-		`queue ${verb} is not available for a peer's agent: the host's queue serves list, remove, hold, and resume. Agent: ${agent}`,
+		`queue ${verb} is not available for a peer's agent: the host's queue serves list, remove, hold, resume, and merge. Agent: ${agent}`,
 		'PEER_UNSUPPORTED_VERB'
 	);
 	process.exit(1);
@@ -248,12 +255,8 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 	}
 	const peer = peerQueueTarget(options.agent);
 	if (peer) {
-		return queueActPeer(
-			peer,
-			itemId,
-			{ kind: 'remove-queued', itemId },
-			(result) => result.kind === 'remove-queued' && result.removed,
-			{ removed: true }
+		return queueActPeer(peer, itemId, { kind: 'remove-queued', itemId }, (result) =>
+			result.kind === 'remove-queued' && result.removed ? { removed: true } : null
 		);
 	}
 
@@ -312,12 +315,8 @@ async function setQueueItemPaused(
 	const peer = peerQueueTarget(options.agent);
 	if (peer) {
 		const held = verb === 'hold';
-		return queueActPeer(
-			peer,
-			itemId,
-			{ kind: 'pause-queued', itemId, paused: held },
-			(result) => result.kind === 'pause-queued' && result.found,
-			{ paused: held }
+		return queueActPeer(peer, itemId, { kind: 'pause-queued', itemId, paused: held }, (result) =>
+			result.kind === 'pause-queued' && result.found ? { paused: held } : null
 		);
 	}
 
@@ -366,6 +365,11 @@ export function queueResume(itemId: string, options: QueuePauseOptions): Promise
 	return setQueueItemPaused('resume', itemId, options);
 }
 
+/** Why `queue merge` did nothing, for a local agent and a peer's alike. */
+function notMergeableMessage(itemId: string, agent: string): string {
+	return `Queued item ${itemId} for agent ${agent} cannot be merged: it is gone, has no message above it on its tab, or one of the two is not a plain message`;
+}
+
 /**
  * `maestro-cli queue merge <item-id> --agent <id>` - fold a queued message into
  * the message above it on the same tab, like the Merge button on the queued
@@ -379,7 +383,22 @@ export async function queueMerge(itemId: string, options: QueueMergeOptions): Pr
 		process.exit(1);
 		return;
 	}
-	if (peerQueueTarget(options.agent)) return refusePeerVerb('merge', options.agent);
+	const peer = peerQueueTarget(options.agent);
+	if (peer) {
+		return queueActPeer(
+			peer,
+			itemId,
+			{ kind: 'merge-queued', itemId },
+			(result) =>
+				result.kind === 'merge-queued' && result.merged
+					? { mergedIntoId: result.mergedIntoId }
+					: null,
+			(agentRef) => ({
+				message: notMergeableMessage(itemId, agentRef),
+				code: 'NOT_MERGEABLE',
+			})
+		);
+	}
 
 	let sessionId: string;
 	try {
@@ -405,10 +424,7 @@ export async function queueMerge(itemId: string, options: QueueMergeOptions): Pr
 			return;
 		}
 		if (!result.merged) {
-			emitError(
-				`Queued item ${itemId} for agent ${sessionId} cannot be merged: it is gone, has no message above it on its tab, or one of the two is not a plain message`,
-				'NOT_MERGEABLE'
-			);
+			emitError(notMergeableMessage(itemId, sessionId), 'NOT_MERGEABLE');
 			process.exit(1);
 			return;
 		}

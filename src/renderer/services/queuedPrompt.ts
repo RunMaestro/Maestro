@@ -24,13 +24,18 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
-import { removeMirrorQueuedItem, setMirrorQueuedItemPaused } from './peerMirror';
+import {
+	mergeMirrorQueuedItem,
+	removeMirrorQueuedItem,
+	setMirrorQueuedItemPaused,
+} from './peerMirror';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import type { QueuedSlashCommand } from '../utils/executionQueue';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
+	findQueuedMergeTarget,
 	getQueueBusyContext,
 	mergeQueuedItemIntoPrevious,
 } from '../utils/executionQueue';
@@ -357,6 +362,21 @@ export function enqueuePromptForTab(
 	return item;
 }
 
+/** The host a queued item waits on, when it is a hosted agent's host queue item (`hostQueued`). */
+function hostQueuedItemTarget(
+	sessionId: string,
+	itemId: string
+): { peerId: string; agentId: string; item: QueuedItem; hostQueue: QueuedItem[] } | undefined {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const item = session?.executionQueue?.find((candidate) => candidate.id === itemId);
+	if (!item?.hostQueued) return undefined;
+	const target = hostedTargetOf(session);
+	if (!target) return undefined;
+	// The host's own items, in its order: a message can only merge into one the host holds.
+	const hostQueue = (session?.executionQueue ?? []).filter((candidate) => candidate.hostQueued);
+	return { peerId: target.peerId, agentId: target.agentId, item, hostQueue };
+}
+
 /**
  * Take one item out of an agent's queue before it runs.
  *
@@ -365,18 +385,6 @@ export function enqueuePromptForTab(
  * trust `true`: the queue did not also start it. On `false` the item already
  * ran (or someone else removed it), and sending it again would send it twice.
  */
-/** The host a queued item waits on, when it is a hosted agent's host queue item (`hostQueued`). */
-function hostQueuedItemTarget(
-	sessionId: string,
-	itemId: string
-): { peerId: string; agentId: string; item: QueuedItem } | undefined {
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	const item = session?.executionQueue?.find((candidate) => candidate.id === itemId);
-	if (!item?.hostQueued) return undefined;
-	const target = hostedTargetOf(session);
-	return target ? { peerId: target.peerId, agentId: target.agentId, item } : undefined;
-}
-
 export function removeQueuedItem(sessionId: string, itemId: string): boolean {
 	// A hosted agent's host queue: the host removes it, and its update takes the card away.
 	const hosted = hostQueuedItemTarget(sessionId, itemId);
@@ -466,6 +474,14 @@ function writeQueuedItemPaused(
  * dispatch in between.
  */
 export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): string | null {
+	// A hosted agent's host queue: the host merges by the same rule, and its update redraws both.
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		const above = findQueuedMergeTarget(hosted.hostQueue, itemId);
+		if (!above) return null;
+		void mergeMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId);
+		return above.id;
+	}
 	let targetId: string | null = null;
 	updateSessionWith(sessionId, (s) => {
 		const result = mergeQueuedItemIntoPrevious(s.executionQueue ?? [], itemId);

@@ -326,8 +326,9 @@ export const QueuedItemsList = memo(
 				<div className={`mx-6 ${QUEUE_PROSE_SCOPE}`}>
 					<style>{proseStyles}</style>
 					{filteredQueue.map((item, index) => {
-						// A hosted agent's host runs its own queue: its cards offer Remove and Hold /
-						// Resume, which act on the host, and nothing that would only change this copy.
+						// A hosted agent's host runs its own queue: its cards offer Remove, Hold /
+						// Resume, and Merge, which act on the host, and nothing that would only
+						// change this copy.
 						const hostOnly = item.hostQueued === true;
 						// Ask for eligibility whenever a handler is wired and the item is
 						// not already flagged to run in parallel. `forcedParallelEnabled` is
@@ -364,7 +365,6 @@ export const QueuedItemsList = memo(
 						// list can interleave tabs, and the merge target is always the
 						// previous item for the SAME tab.
 						const canMergeUp =
-							!hostOnly &&
 							!!onMergeQueuedItem &&
 							index > 0 &&
 							findQueuedMergeTarget(executionQueue, item.id)?.id === filteredQueue[index - 1].id;

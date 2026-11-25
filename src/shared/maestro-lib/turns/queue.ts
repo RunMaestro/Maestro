@@ -86,7 +86,7 @@ export type QueueEvent<T extends QueueItem> =
 	 */
 	| { type: 'dispatch-failed'; item: T; error: Error; held: boolean }
 	| { type: 'removed'; item: T }
-	/** A pause or resume changed the item. */
+	/** A pause, a resume, or a merge into it changed the item. */
 	| { type: 'updated'; item: T };
 
 export interface ExecutionQueueOptions<T extends QueueItem> {
@@ -162,6 +162,39 @@ export function nextRunnable<T extends QueueItem>(queue: readonly T[]): T | unde
 }
 
 /**
+ * The item a "merge into the message above" folds `itemId` into: the nearest EARLIER item for
+ * the same tab, since that is the card drawn directly above it in the tab's queue. Null when
+ * there is none, or when either side cannot merge (`isMergeable`). The desktop's queued card,
+ * its Execution Queue, and a headless host's queue all use this rule.
+ */
+export function findQueueMergeTarget<T extends Pick<QueueItem, 'id' | 'tabId'>>(
+	queue: readonly T[],
+	itemId: string,
+	isMergeable: (item: T) => boolean = () => true
+): T | null {
+	const index = queue.findIndex((candidate) => candidate.id === itemId);
+	if (index <= 0) return null;
+	const item = queue[index];
+	if (!isMergeable(item)) return null;
+	for (let i = index - 1; i >= 0; i--) {
+		if (queue[i].tabId !== item.tabId) continue;
+		return isMergeable(queue[i]) ? queue[i] : null;
+	}
+	return null;
+}
+
+/**
+ * The text of two merged messages: exactly one blank line between them, so the second reads as
+ * its own paragraph. Trailing whitespace of the first and leading blank lines of the second are
+ * dropped (the second's own indentation is kept); an empty side is left out.
+ */
+export function joinMergedQueueText(upper: string | undefined, lower: string | undefined): string {
+	return [upper?.replace(/\s+$/, ''), lower?.replace(/^(\s*\n)+/, '')]
+		.filter((text) => text && text.trim())
+		.join('\n\n');
+}
+
+/**
  * A write turn may start beside running work only when all of that work, and everything
  * waiting, is read-only: no two writers share a working directory.
  */
@@ -230,6 +263,13 @@ export interface ExecutionQueue<T extends QueueItem> {
 	setPaused(id: string, paused: boolean): boolean;
 	/** Take a waiting item out. Returns false when it is not waiting (it may already be running). */
 	remove(id: string): boolean;
+	/**
+	 * Fold a waiting item into the waiting item above it on the same tab (`findQueueMergeTarget`):
+	 * the queued card's Merge. `combine` builds the upper item that remains (it keeps its id and
+	 * place); the lower one leaves the queue. Returns the upper item's id, or null when there is
+	 * no waiting item above it to merge into.
+	 */
+	merge(id: string, combine: (upper: T, lower: T) => T): string | null;
 	/** Look at the queue again, for a hold that cleared (a retry that landed). */
 	drain(): void;
 	/** Resolves when no turn is running or starting. Items may still wait, held or blocked. */
@@ -453,6 +493,19 @@ export function createExecutionQueue<T extends QueueItem>(
 			// A removed head can unblock what is behind it.
 			drain();
 			return true;
+		},
+
+		merge(id, combine) {
+			const upper = findQueueMergeTarget(waiting(), id);
+			const lowerIndex = entries.findIndex((e) => e.state === 'queued' && e.item.id === id);
+			const upperEntry = upper && entries.find((e) => e.state === 'queued' && e.item === upper);
+			if (!upperEntry || lowerIndex === -1) return null;
+			const [lowerEntry] = entries.splice(lowerIndex, 1);
+			clearCollisions(lowerEntry.item.id);
+			upperEntry.item = { ...combine(upperEntry.item, lowerEntry.item), id: upperEntry.item.id };
+			emit({ type: 'removed', item: lowerEntry.item });
+			emit({ type: 'updated', item: upperEntry.item });
+			return upperEntry.item.id;
 		},
 
 		drain() {

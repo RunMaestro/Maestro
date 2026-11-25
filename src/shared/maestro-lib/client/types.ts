@@ -99,6 +99,7 @@ export type ClientMethod =
 	| 'turns.queue.list'
 	| 'turns.queue.remove'
 	| 'turns.queue.setPaused'
+	| 'turns.queue.merge'
 	| 'history.list'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
@@ -533,6 +534,16 @@ export interface TurnsApi {
 			itemId: string,
 			paused: boolean
 		): Promise<ClientResult<{ found: boolean; paused: boolean }>>;
+		/**
+		 * Fold a waiting message into the waiting message above it on the same tab: the queued
+		 * card's Merge. The upper message keeps its id, place, hold, and settings; the texts join
+		 * with one blank line between. `merged: false` when there is nothing above it to merge into
+		 * (or it no longer waits).
+		 */
+		merge(
+			agentId: string,
+			itemId: string
+		): Promise<ClientResult<{ merged: boolean; mergedIntoId?: string }>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;

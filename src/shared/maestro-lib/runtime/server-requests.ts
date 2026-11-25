@@ -792,6 +792,15 @@ export function createRequestHandler(
 					(value) => ({ found: value.found, paused: value.paused })
 				);
 			}
+			case 'merge_queue_item':
+				return outcome(
+					'merge_queue_item_result',
+					await client.turns.queue.merge(sessionId(message), str(message.itemId) ?? ''),
+					(value) => ({
+						merged: value.merged,
+						...(value.mergedIntoId ? { mergedIntoId: value.mergedIntoId } : {}),
+					})
+				);
 
 			// -- Auto Run ---------------------------------------------------
 			case 'configure_auto_run': {

@@ -246,6 +246,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					guarded('turns.queue.setPaused', () =>
 						deps.turns.queue.setPaused(agentId, itemId, paused)
 					),
+				merge: (agentId, itemId) =>
+					guarded('turns.queue.merge', () => deps.turns.queue.merge(agentId, itemId)),
 			},
 			subscribe: (agentId, tabId, listener): Unsubscribe =>
 				deps.turns.subscribe(agentId, tabId, listener),

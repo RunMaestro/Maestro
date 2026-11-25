@@ -758,6 +758,43 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		it('merges a waiting message into the one above it, the way the queued card does', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: QueuedTurn[][] = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') changes.push(event.items);
+				},
+				{ types: ['queue.changed'] }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const upper = value(await runtime.turns.send('a1', 't1', { text: 'upper\n' }));
+			const lower = value(await runtime.turns.send('a1', 't1', { text: 'lower' }));
+			if (upper.status !== 'queued' || lower.status !== 'queued')
+				throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.merge('a1', lower.itemId))).toEqual({
+				merged: true,
+				mergedIntoId: upper.itemId,
+			});
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: upper.itemId, text: 'upper\n\nlower' }),
+			]);
+			expect(changes[changes.length - 1]).toEqual([
+				expect.objectContaining({ itemId: upper.itemId, text: 'upper\n\nlower' }),
+			]);
+			// Nothing waits above the head.
+			expect(value(await runtime.turns.queue.merge('a1', upper.itemId))).toEqual({ merged: false });
+			expect(errorOf(await runtime.turns.queue.merge('nope', upper.itemId)).code).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', upper.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
+		});
+
 		it('says nothing was stopped when the tab is idle', async () => {
 			const runtime = await start();
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: false });

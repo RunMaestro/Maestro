@@ -11,6 +11,8 @@ import {
 	collisionBackoffMs,
 	createExecutionQueue,
 	decideSubmit,
+	findQueueMergeTarget,
+	joinMergedQueueText,
 	type QueueEvent,
 	type QueueItem,
 	type QueuedTurnHandle,
@@ -340,6 +342,33 @@ describe('createExecutionQueue ordering', () => {
 		h.turnFor('a').end();
 		await h.flush();
 		expect(h.startOrder).toEqual(['a', 'c']);
+	});
+
+	it('merges a waiting item into the waiting item above it on the same tab', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't1', { text: 'first\n' }));
+		h.queue.submit(item('x', 't2'));
+		h.queue.submit(item('c', 't1', { text: '\nsecond' }));
+		await h.flush();
+		h.events.length = 0;
+		const combine = (upper: Item, lower: Item): Item => ({
+			...upper,
+			text: joinMergedQueueText(upper.text, lower.text),
+		});
+		// `c` skips `x` (another tab) and folds into `b`, which keeps its id and place.
+		expect(h.queue.merge('c', combine)).toBe('b');
+		expect(h.queue.items().map((i) => [i.id, i.text])).toEqual([
+			['b', 'first\n\nsecond'],
+			['x', 'x'],
+		]);
+		expect(h.events.map((event) => [event.type, event.item.id])).toEqual([
+			['removed', 'c'],
+			['updated', 'b'],
+		]);
+		// `b` has nothing waiting above it: `a` is running, not waiting.
+		expect(h.queue.merge('b', combine)).toBeNull();
+		expect(h.queue.merge('nope', combine)).toBeNull();
 	});
 
 	it('holds a tab behind a retry until drain() is called after it clears', async () => {
@@ -709,5 +738,29 @@ describe('createExecutionQueue with an Auto Run holding the tree', () => {
 		expect(h.queue.submit(item('r', 't1', { readOnly: true })).queued).toBe(false);
 		await h.flush();
 		expect(h.startOrder).toEqual(['r']);
+	});
+});
+
+describe('findQueueMergeTarget', () => {
+	const queue = [item('a', 't1'), item('b', 't2'), item('c', 't1'), item('d', 't2')];
+
+	it('is the nearest earlier item for the same tab', () => {
+		expect(findQueueMergeTarget(queue, 'c')?.id).toBe('a');
+		expect(findQueueMergeTarget(queue, 'd')?.id).toBe('b');
+		expect(findQueueMergeTarget(queue, 'a')).toBeNull();
+		expect(findQueueMergeTarget(queue, 'missing')).toBeNull();
+	});
+
+	it('is null when either side cannot merge', () => {
+		expect(findQueueMergeTarget(queue, 'c', (i) => i.id !== 'a')).toBeNull();
+		expect(findQueueMergeTarget(queue, 'c', (i) => i.id !== 'c')).toBeNull();
+	});
+});
+
+describe('joinMergedQueueText', () => {
+	it('leaves exactly one blank line between the two texts', () => {
+		expect(joinMergedQueueText('one  \n\n', '\n\n  two')).toBe('one\n\n  two');
+		expect(joinMergedQueueText('one', '   ')).toBe('one');
+		expect(joinMergedQueueText(undefined, 'two')).toBe('two');
 	});
 });

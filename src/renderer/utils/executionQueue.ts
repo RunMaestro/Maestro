@@ -30,6 +30,7 @@ import {
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
+import { findQueueMergeTarget, joinMergedQueueText } from '../../shared/maestro-lib/turns/queue';
 import { isSessionRemote } from './sessionHelpers';
 import {
 	getBusyTabs,
@@ -566,18 +567,11 @@ function isMergeableQueueItem(item: QueuedItem): boolean {
  * The item a "merge into the message above" would fold `itemId` into: the
  * nearest EARLIER item for the same tab, since that is the card drawn directly
  * above it in the tab's queue. Null when there is none, or when either side is
- * not a plain message (see {@link isMergeableQueueItem}).
+ * not a plain message (see {@link isMergeableQueueItem}). The rule itself is
+ * `findQueueMergeTarget`, which a headless host's queue uses too.
  */
 export function findQueuedMergeTarget(queue: QueuedItem[], itemId: string): QueuedItem | null {
-	const index = queue.findIndex((i) => i.id === itemId);
-	if (index <= 0) return null;
-	const item = queue[index];
-	if (!isMergeableQueueItem(item)) return null;
-	for (let i = index - 1; i >= 0; i--) {
-		if (queue[i].tabId !== item.tabId) continue;
-		return isMergeableQueueItem(queue[i]) ? queue[i] : null;
-	}
-	return null;
+	return findQueueMergeTarget(queue, itemId, isMergeableQueueItem);
 }
 
 /**
@@ -596,12 +590,7 @@ export function mergeQueuedItemIntoPrevious(
 	const target = findQueuedMergeTarget(queue, itemId);
 	const item = queue.find((i) => i.id === itemId);
 	if (!target || !item) return null;
-	// Exactly one blank line between the two, so the second reads as its own
-	// paragraph: trailing whitespace of the first and leading blank lines of the
-	// second are dropped (the second's own indentation is kept).
-	const text = [target.text?.replace(/\s+$/, ''), item.text?.replace(/^(\s*\n)+/, '')]
-		.filter((t) => t && t.trim())
-		.join('\n\n');
+	const text = joinMergedQueueText(target.text, item.text);
 	const images = [...(target.images ?? []), ...(item.images ?? [])];
 	const merged: QueuedItem = {
 		...target,

@@ -913,6 +913,7 @@ describe('live tab state and the host queue', () => {
 	/** A client with one stored agent and a queue that knows item `q1`. */
 	function hostClient() {
 		const setPausedCalls: unknown[][] = [];
+		const mergeCalls: unknown[][] = [];
 		const client = {
 			agents: { list: async () => ok([stored]) },
 			tabs: { list: async () => ok(stored.aiTabs) },
@@ -923,10 +924,15 @@ describe('live tab state and the host queue', () => {
 						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 						return ok({ found: itemId === 'q1', paused });
 					},
+					merge: async (agentId: string, itemId: string) => {
+						mergeCalls.push([agentId, itemId]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok(itemId === 'q2' ? { merged: true, mergedIntoId: 'q1' } : { merged: false });
+					},
 				},
 			},
 		} as unknown as MaestroClient;
-		return { client, setPausedCalls };
+		return { client, setPausedCalls, mergeCalls };
 	}
 
 	const liveTabs = (agentId: string) =>
@@ -992,6 +998,31 @@ describe('live tab state and the host queue', () => {
 		expect(await handle({ ...base, sessionId: 'nobody', paused: true })).toMatchObject({
 			success: false,
 		});
+	});
+
+	it('merges a waiting message into the one above it with merge_queue_item', async () => {
+		const { client, mergeCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'merge_queue_item', sessionId: 'a1' };
+		expect(await handle({ ...base, itemId: 'q2' })).toEqual({
+			type: 'merge_queue_item_result',
+			success: true,
+			merged: true,
+			mergedIntoId: 'q1',
+		});
+		expect(await handle({ ...base, itemId: 'q1' })).toEqual({
+			type: 'merge_queue_item_result',
+			success: true,
+			merged: false,
+		});
+		expect(await handle({ ...base, sessionId: 'nobody', itemId: 'q2' })).toMatchObject({
+			success: false,
+		});
+		expect(mergeCalls).toEqual([
+			['a1', 'q2'],
+			['a1', 'q1'],
+			['nobody', 'q2'],
+		]);
 	});
 
 	it('refuses set_queue_item_paused without a boolean paused, and changes nothing', async () => {

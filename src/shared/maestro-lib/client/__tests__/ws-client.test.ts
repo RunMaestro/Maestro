@@ -1146,6 +1146,36 @@ describe('createWsMaestroClient', () => {
 			expect(result.ok).toBe(false);
 		});
 
+		it('merges a queued item into the one above it with merge_queue_item', async () => {
+			bridge.typed.set('merge_queue_item', (message) =>
+				message.itemId === 'q2'
+					? { type: 'merge_queue_item_result', success: true, merged: true, mergedIntoId: 'q1' }
+					: { type: 'merge_queue_item_result', success: true, merged: false }
+			);
+
+			expect(await client.turns.queue.merge(A1, 'q2')).toEqual({
+				ok: true,
+				value: { merged: true, mergedIntoId: 'q1' },
+			});
+			expect(await client.turns.queue.merge(A1, 'q1')).toEqual({
+				ok: true,
+				value: { merged: false },
+			});
+			expect(bridge.sent('merge_queue_item')).toEqual([
+				expect.objectContaining({ sessionId: A1, itemId: 'q2' }),
+				expect.objectContaining({ sessionId: A1, itemId: 'q1' }),
+			]);
+		});
+
+		it('reports a refused merge_queue_item as a failure', async () => {
+			bridge.typed.set('merge_queue_item', () => ({
+				type: 'merge_queue_item_result',
+				success: false,
+				error: 'Merge queue item not configured',
+			}));
+			expect((await client.turns.queue.merge(A1, 'q2')).ok).toBe(false);
+		});
+
 		it("reads a headless host's queue_changed into queue.changed, and drops one it cannot read", async () => {
 			await connect();
 			bridge.push({

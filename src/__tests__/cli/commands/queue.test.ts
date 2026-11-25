@@ -448,6 +448,12 @@ describe('queue command', () => {
 						setPaused: vi.fn(async (_a: string, _i: string, paused: boolean) =>
 							ok({ found: true, paused })
 						),
+						merge: vi.fn(async () =>
+							ok<{ merged: boolean; mergedIntoId?: string }>({
+								merged: true,
+								mergedIntoId: 'q0',
+							})
+						),
 					},
 				},
 			};
@@ -593,19 +599,45 @@ describe('queue command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('refuses queue merge and steer before anything reaches the peer', async () => {
-			fakePeer();
+		it('queue merge folds the item into the one above it on the host', async () => {
+			const { client } = fakePeer();
 
 			await queueMerge('q1', { agent: `${PEER}:docs` });
+
+			expect(client.turns.queue.merge).toHaveBeenCalledWith(AGENT_ID, 'q1');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				mergedIntoId: 'q0',
+				peer: PEER,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('queue merge fails with NOT_MERGEABLE when the host merged nothing', async () => {
+			const { client } = fakePeer();
+			client.turns.queue.merge.mockResolvedValue(ok({ merged: false }));
+
+			await queueMerge('q1', { agent: `${PEER}:docs` });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'NOT_MERGEABLE' });
+			expect(output.error).toContain(`${PEER}:${AGENT_ID}`);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses queue steer before anything reaches the peer', async () => {
+			fakePeer();
+
 			await queueSteer('q1', { agent: `${PEER}:docs` });
 
-			for (const call of consoleSpy.mock.calls) {
-				expect(JSON.parse(call[0])).toMatchObject({
-					success: false,
-					code: 'PEER_UNSUPPORTED_VERB',
-				});
-			}
-			expect(consoleSpy).toHaveBeenCalledTimes(2);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				code: 'PEER_UNSUPPORTED_VERB',
+			});
+			expect(consoleSpy).toHaveBeenCalledTimes(1);
 			expect(withPeerAgent).not.toHaveBeenCalled();
 			expect(withMaestroClient).not.toHaveBeenCalled();
 			expect(processExitSpy).toHaveBeenCalledWith(1);

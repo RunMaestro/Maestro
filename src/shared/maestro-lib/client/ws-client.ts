@@ -387,6 +387,7 @@ class WsMaestroClient implements MaestroClient {
 			remove: (agentId: string, itemId: string) => this.queueRemove(agentId, itemId),
 			setPaused: (agentId: string, itemId: string, paused: boolean) =>
 				this.queueSetPaused(agentId, itemId, paused),
+			merge: (agentId: string, itemId: string) => this.queueMerge(agentId, itemId),
 		},
 		subscribe: (
 			agentId: string,
@@ -2001,6 +2002,27 @@ class WsMaestroClient implements MaestroClient {
 			found: sent.value.found === true,
 			paused: typeof sent.value.paused === 'boolean' ? sent.value.paused : paused,
 		});
+	}
+
+	/** The message `maestro-cli queue merge` sends a desktop, which a headless host answers too. */
+	private async queueMerge(
+		agentId: string,
+		itemId: string
+	): Promise<ClientResult<{ merged: boolean; mergedIntoId?: string }>> {
+		const sent = await this.send(
+			'turns.queue.merge',
+			{ type: 'merge_queue_item', sessionId: agentId, itemId },
+			'merge_queue_item_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('turns.queue.merge', sent.value);
+		if (!checked.ok) return checked;
+		const mergedIntoId = sent.value.mergedIntoId;
+		return ok(
+			sent.value.merged === true && typeof mergedIntoId === 'string' && mergedIntoId
+				? { merged: true, mergedIntoId }
+				: { merged: false }
+		);
 	}
 
 	// =======================================================================
