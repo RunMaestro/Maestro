@@ -333,6 +333,24 @@ const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex', 
  * Grok keeps that model; any supplied effort evidence must belong to it and
  * its current account/host/version, never another session's menu.
  */
+/**
+ * The ladder effort {@link cheapResumeTurnSettings} would pick for a resumed
+ * turn, or `undefined` when Maestro has no unrejected ladder value to send
+ * (so the turn inherits `current.effort`). Callers that arm an effort-refusal
+ * retry use this both before spawn and after exit so the check targets the
+ * same model as the resumed turn.
+ */
+export function cheapResumeLadderEffort(
+	toolType: ToolType,
+	current: { model?: string; effort?: string } = {},
+	supportedEfforts?: readonly string[]
+): string | undefined {
+	if (RESUME_SHARES_THREAD.has(toolType)) {
+		return resolveEffortLevel(toolType, 'low', supportedEfforts, current.model);
+	}
+	return cheapTurnSettings(toolType, supportedEfforts).effort;
+}
+
 export function cheapResumeTurnSettings(
 	toolType: ToolType,
 	current: { model?: string; effort?: string } = {},
@@ -345,7 +363,7 @@ export function cheapResumeTurnSettings(
 	if (RESUME_SHARES_THREAD.has(toolType)) {
 		// The turn runs on the session's model, so the low rung is checked against
 		// that model's refusals (Antigravity keys them per model), not the cheap tier's.
-		const effort = resolveEffortLevel(toolType, 'low', supportedEfforts, current.model);
+		const effort = cheapResumeLadderEffort(toolType, current, supportedEfforts);
 		return { model: current.model, effort: effort ?? current.effort };
 	}
 	const shrinksWindow =

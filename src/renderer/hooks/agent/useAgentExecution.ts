@@ -12,6 +12,7 @@ import {
 	getBusyTabs,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
+import { applyAgentConfigOverrides } from '../../../shared/maestro-lib/launch/agent-args';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import {
 	hasRunnableQueueItem,
@@ -20,7 +21,7 @@ import {
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
-import { cheapResumeTurnSettings, cheapTurnSettings } from '../../../shared/modelTiers';
+import { cheapResumeLadderEffort, cheapResumeTurnSettings } from '../../../shared/modelTiers';
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -840,18 +841,31 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
+				// Resolve the effective model the same way the spawn handler does, so
+				// providers that share the thread and key refusals per model
+				// (Antigravity) check refusals against the model that actually runs
+				// even when it comes from agent config or default rather than the tab.
+				const agentConfigValues =
+					(await window.maestro.agents.getConfig?.(toolType).catch(() => undefined)) ?? undefined;
+				const resolvedModel =
+					applyAgentConfigOverrides(agent, [], {
+						agentConfigValues,
+						sessionCustomModel: sessionConfig?.customModel,
+						sessionCustomArgs: sessionConfig?.customArgs,
+					}).modelId ?? sessionConfig?.customModel;
+				const synopsisCurrent = {
+					model: resolvedModel,
+					effort: sessionConfig?.customEffort,
+				};
 				// Bottom of both ladders, except that the tab's model is kept when
 				// the cheap one has a smaller context window: resuming replays the
 				// whole transcript, which fit the tab's model and may not fit the
 				// cheap one. The rule lives in `cheapResumeTurnSettings` so the CLI's
 				// synopsis turn (`src/cli/services/synopsis.ts`) resolves the same way.
-				const synopsisTurn = cheapResumeTurnSettings(toolType, {
-					model: sessionConfig?.customModel,
-					effort: sessionConfig?.customEffort,
-				});
+				const synopsisTurn = cheapResumeTurnSettings(toolType, synopsisCurrent);
 				// The ladder's own effort, apart from the inherited fallback above:
 				// only a value Maestro picked arms the effort-refusal retry below.
-				const cheapEffort = cheapTurnSettings(toolType).effort;
+				const cheapEffort = cheapResumeLadderEffort(toolType, synopsisCurrent);
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -941,7 +955,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								if (
 									effortRejection &&
 									retry &&
-									cheapTurnSettings(toolType).effort !== cheapEffort
+									cheapResumeLadderEffort(toolType, synopsisCurrent) !== cheapEffort
 								) {
 									logger.warn(
 										'[spawnBackgroundSynopsis] Effort rejected by the provider; retrying at the agent default',
