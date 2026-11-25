@@ -904,6 +904,18 @@ describe('createWsMaestroClient', () => {
 			for (const message of sent.slice(1)) expect(message).not.toHaveProperty('turnOverrides');
 		});
 
+		it('sends Queue Held as held: true, and leaves the field off a plain send', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: true })
+			);
+			await client.turns.send(A1, A1_TAB, { text: 'later', held: true });
+			await client.turns.send(A1, A1_TAB, { text: 'now' });
+			const sent = bridge.sent('enqueue_command');
+			expect(sent[0]).toMatchObject({ command: 'later', held: true });
+			expect(sent[1]).not.toHaveProperty('held');
+		});
+
 		it('preserves managed unknown queue receipts and never emits a native start', async () => {
 			const dispatchId = '22222222-2222-4222-8222-222222222222';
 			const admission = { dispatchId, outcome: 'unknown' };

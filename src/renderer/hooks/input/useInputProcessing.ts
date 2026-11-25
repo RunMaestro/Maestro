@@ -119,16 +119,16 @@ const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: st
 
 /**
  * What a hosted agent's send would ask this Maestro to run locally, by name, or null for a plain
- * message. Maestro's built-ins (`/history`, `/wizard`, `/skills`, `/btw`), the inline wizard, and a
- * held send are handled here for a local agent, and each one spawns or queues on this machine,
- * which a hosted agent cannot do. Matches only what the local path would have handled.
+ * message. Maestro's built-ins (`/history`, `/wizard`, `/skills`, `/btw`) and the inline wizard are
+ * handled here for a local agent, and each one spawns on this machine, which a hosted agent cannot
+ * do. Matches only what the local path would have handled. A held send is not one: the host queues
+ * it paused (`sendHostedTurn()`'s `held`).
  */
 export function hostedLocalOnlyAction(
 	text: string,
 	opts: {
 		toolType: Session['toolType'];
 		isWizardActive: boolean;
-		hold: boolean;
 		handles: { history: boolean; wizard: boolean; skills: boolean };
 	}
 ): string | null {
@@ -142,7 +142,6 @@ export function hostedLocalOnlyAction(
 		if (command === '/skills' && opts.handles.skills) return '/skills';
 		if (parseSideQuestion(command) !== null) return '/btw';
 	}
-	if (opts.hold) return 'Queue Held';
 	return null;
 }
 
@@ -545,7 +544,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const localOnly = hostedLocalOnlyAction(text, {
 					toolType: activeSession.toolType,
 					isWizardActive: !!isWizardActive,
-					hold: options?.hold === true,
 					handles: {
 						history: !!onHistoryCommand,
 						wizard: !!onWizardCommand,
@@ -591,7 +589,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				}
 				let sent = false;
 				try {
-					sent = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages);
+					sent = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
+						held: options?.hold === true,
+					});
 				} finally {
 					if (isComposerSubmit) {
 						const remaining = (composerSubmitsInFlight.get(hostedKey) ?? []).filter(

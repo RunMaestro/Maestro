@@ -1839,6 +1839,7 @@ class WsMaestroClient implements MaestroClient {
 		if (originHost) message.originHost = originHost;
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
+		if (input.held === true) message.held = true;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)

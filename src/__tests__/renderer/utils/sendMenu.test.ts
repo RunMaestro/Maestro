@@ -129,6 +129,21 @@ describe('buildSendMenuModel', () => {
 		expect(rowFor(session, 'hold').enabled).toBe(true);
 	});
 
+	it('local, SSH, and hosted agents get the same Queue, Force Send, and Queue Held rows', () => {
+		const draft = { text: 'hi', imageCount: 0 };
+		const opts = { forcedParallelEnabled: true };
+		const local = buildSendMenuModel(workingSession(), draft, opts);
+		const ssh = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, opts);
+		const hosted = buildSendMenuModel(workingSession(), draft, { ...opts, hosted: true });
+		const rows = (model: typeof local) => model.rows.filter((row) => row.action !== 'steer');
+		expect(rows(ssh)).toEqual(rows(local));
+		expect(rows(hosted)).toEqual(rows(local));
+		expect(hosted.rows.find((row) => row.action === 'hold')).toEqual({
+			action: 'hold',
+			enabled: true,
+		});
+	});
+
 	it('reports whether any tab works, for a right-click on an idle agent', () => {
 		const opts = { forcedParallelEnabled: true };
 		const draft = { text: 'hi', imageCount: 0 };

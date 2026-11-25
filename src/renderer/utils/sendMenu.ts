@@ -139,7 +139,7 @@ export function shouldOpenSendMenu(
 	return isAgentWorking(session);
 }
 
-/** Why Steer and Queue Held are dead on a hosted agent. */
+/** Why Steer is dead on a hosted agent. */
 export const HOSTED_ROW_REASON = 'Not available on hosted agents yet.';
 
 export interface SendMenuRow {
@@ -176,8 +176,8 @@ export function buildSendMenuModel(
 	opts: {
 		forcedParallelEnabled: boolean;
 		/**
-		 * The agent is hosted: its turns run on a Federation host, which takes a plain message and
-		 * queues it behind a busy tab. A held send and a steer have no host action yet.
+		 * The agent is hosted: its turns run on a Federation host, which takes a plain message, queues
+		 * it behind a busy tab, and holds it on Queue Held. A steer has no host action yet.
 		 */
 		hosted?: boolean;
 	}
@@ -225,14 +225,7 @@ export function buildSendMenuModel(
 	}
 
 	return {
-		rows: [
-			{ action: 'queue', enabled: true },
-			force,
-			steer,
-			opts.hosted
-				? { action: 'hold', enabled: false, reason: HOSTED_ROW_REASON }
-				: { action: 'hold', enabled: true },
-		],
+		rows: [{ action: 'queue', enabled: true }, force, steer, { action: 'hold', enabled: true }],
 		steerSupport,
 		activeTabWorking,
 		agentWorking: isAgentWorking(session),

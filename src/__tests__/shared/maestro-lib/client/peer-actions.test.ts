@@ -394,6 +394,28 @@ describe('parsePeerAgentAction', () => {
 		).toThrow('Unknown tab settings field: name');
 	});
 
+	it('carries Queue Held through to turns.send, and reads it only as a strict true', async () => {
+		const { client, asClient } = fakeClient();
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: 'later',
+			held: true,
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'later', held: true });
+		expect(parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', held: true })).toEqual({
+			kind: 'send',
+			tabId: 't1',
+			text: 'hi',
+			held: true,
+		});
+		for (const notHeld of [false, 'yes', 1]) {
+			expect(
+				parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', held: notHeld })
+			).toEqual({ kind: 'send', tabId: 't1', text: 'hi' });
+		}
+	});
+
 	it('reads a send with turn overrides: checked fields kept, an empty set dropped', () => {
 		expect(
 			parsePeerAgentAction({

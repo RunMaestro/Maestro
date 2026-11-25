@@ -124,7 +124,8 @@ export async function actOnMirroredAgent(
 
 /**
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
- * one turn. True when the host took it (ran or queued).
+ * one turn. True when the host took it (ran, queued, or held). `held` is Queue Held: the host
+ * queues it paused, even on an idle tab, as a local Queue Held does.
  */
 export async function sendToMirroredTab(
 	peerId: string,
@@ -132,7 +133,8 @@ export async function sendToMirroredTab(
 	tabId: string,
 	text: string,
 	overrides?: TurnOverrides,
-	images?: readonly string[]
+	images?: readonly string[],
+	held?: boolean
 ): Promise<boolean> {
 	const clean = normalizeTurnOverrides(overrides);
 	return (
@@ -142,6 +144,7 @@ export async function sendToMirroredTab(
 			text,
 			...(images && images.length > 0 ? { images: [...images] } : {}),
 			...(clean ? { overrides: clean } : {}),
+			...(held === true ? { held: true } : {}),
 		})) !== null
 	);
 }

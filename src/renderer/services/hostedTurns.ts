@@ -128,13 +128,15 @@ export async function openHostedTab(
 /**
  * Send what the person typed to the host. A tab the host does not have (a conversation kept from
  * before the move) cannot resume there, so the message opens a new host tab. True when the host
- * took it (ran or queued); the caller clears the composer then.
+ * took it (ran, queued, or held); the caller clears the composer then. `opts.held` is Queue Held:
+ * the host queues the message paused, even on an idle tab.
  */
 export async function sendHostedTurn(
 	session: Session,
 	tabId: string | undefined,
 	text: string,
-	images: readonly string[]
+	images: readonly string[],
+	opts: { held?: boolean } = {}
 ): Promise<boolean> {
 	const target = hostedTargetOf(session);
 	if (!target) return false;
@@ -163,7 +165,8 @@ export async function sendHostedTurn(
 		hostTabId as string,
 		text,
 		hostedTurnOverrides(tab),
-		images
+		images,
+		opts.held
 	);
 }
 

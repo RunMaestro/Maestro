@@ -1777,10 +1777,34 @@ describe('useInputProcessing', () => {
 				session,
 				session.activeTabId,
 				'hello',
-				expect.any(Array)
+				expect.any(Array),
+				{ held: false }
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			expect(mockSetSessions).not.toHaveBeenCalled();
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('Queue Held sends the message held to the host, as a local Queue Held queues it paused', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue(true);
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'later' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { hold: true });
+			});
+
+			expect(sendHostedTurn).toHaveBeenCalledWith(
+				session,
+				session.activeTabId,
+				'later',
+				expect.any(Array),
+				{ held: true }
+			);
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 		});
 

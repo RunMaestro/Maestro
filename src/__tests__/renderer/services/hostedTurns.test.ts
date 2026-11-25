@@ -106,6 +106,16 @@ describe('hostedTurns', () => {
 		});
 	});
 
+	it('Queue Held sends the message held, so the host queues it paused', async () => {
+		hydrateHost();
+		expect(await sendHostedTurn(row(), 't1', 'later', [], { held: true })).toBe(true);
+		expect(act$).toHaveBeenCalledWith(
+			'box',
+			'h1',
+			expect.objectContaining({ kind: 'send', tabId: 't1', text: 'later', held: true })
+		);
+	});
+
 	it('opens a new host tab for a tab the host does not have, then sends there', async () => {
 		hydrateHost();
 		const session = row();

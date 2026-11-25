@@ -42,6 +42,8 @@ export type PeerAgentAction =
 			images?: string[];
 			dispatchId?: string;
 			overrides?: TurnOverrides;
+			/** Queue Held: the host queues it paused, even on an idle tab (`TurnInput.held`). */
+			held?: boolean;
 	  }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
@@ -123,6 +125,7 @@ export async function runPeerAgentAction(
 				...(action.dispatchId ? { dispatchId: action.dispatchId } : {}),
 				...(context.originHost ? { originHost: context.originHost } : {}),
 				...(action.overrides ? { overrides: action.overrides } : {}),
+				...(action.held === true ? { held: true } : {}),
 			});
 			return sent.ok ? { ok: true, value: { kind: 'send', receipt: sent.value } } : sent;
 		}
@@ -243,6 +246,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(images ? { images } : {}),
 				...(nonEmptyString(value.dispatchId) ? { dispatchId: value.dispatchId } : {}),
 				...(overrides ? { overrides } : {}),
+				...(value.held === true ? { held: true } : {}),
 			};
 		}
 		case 'interrupt':
