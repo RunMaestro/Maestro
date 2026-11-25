@@ -260,7 +260,7 @@ export interface MessageHandlerCallbacks {
 	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
-		queues: unknown[];
+		queues: import('../../types').QueueSessionSnapshot[];
 		error?: string;
 	}>;
 	removeQueueItem: (

@@ -512,12 +512,12 @@ export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): str
 export function editQueuedItem(sessionId: string, itemId: string, edit: QueuedTurnEdit): boolean {
 	const hosted = hostQueuedItemTarget(sessionId, itemId);
 	if (hosted) {
-		// The mirror carries no images, so an empty list means "none added": the host keeps its own.
-		const images = edit.images && edit.images.length > 0 ? edit.images : undefined;
+		// The mirror holds the host item's images, so the edit's list is the whole list, as it is
+		// for a local item: an empty one clears them, and an absent one keeps the host's own.
 		void editMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId, {
 			text: edit.text,
 			...(edit.turnSettings ? { turnSettings: edit.turnSettings } : {}),
-			...(images ? { images } : {}),
+			...(edit.images ? { images: edit.images } : {}),
 		});
 		return true;
 	}

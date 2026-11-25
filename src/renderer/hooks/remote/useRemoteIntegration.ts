@@ -1621,6 +1621,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
 							// A client's hosted queued card draws the model and effort it runs with.
 							...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+							// Store refs as held: main inlines them only for a client that asks.
+							...(item.images?.length ? { images: item.images } : {}),
 						})),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {

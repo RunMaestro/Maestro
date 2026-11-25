@@ -119,7 +119,12 @@ import type {
 	Unsubscribe,
 	WsMaestroClientOptions,
 } from './types';
-import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnSettings } from './types';
+import {
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnImages,
+	parseQueuedTurnSettings,
+} from './types';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -172,6 +177,7 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 		const command = asString(item.command);
 		const args = asString(item.commandArgs);
 		const turnSettings = parseQueuedTurnSettings(item.turnSettings);
+		const images = parseQueuedTurnImages(item.images);
 		return {
 			itemId: asString(item.id) ?? '',
 			tabId: asString(item.tabId) ?? '',
@@ -180,6 +186,7 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
 			...(turnSettings ? { turnSettings } : {}),
+			...(images ? { images } : {}),
 		};
 	});
 }
@@ -1943,7 +1950,8 @@ class WsMaestroClient implements MaestroClient {
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {
 		const sent = await this.send(
 			'turns.queue.list',
-			{ type: 'list_queue', sessionId: agentId },
+			// The images ride along as data URLs, so a hosted card draws them as a local one does.
+			{ type: 'list_queue', sessionId: agentId, inlineImages: true },
 			'list_queue_result'
 		);
 		if (!sent.ok) return sent;

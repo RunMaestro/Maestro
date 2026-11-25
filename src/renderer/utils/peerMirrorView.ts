@@ -73,8 +73,8 @@ export function mirrorTab(record: AITabRecord): AITab {
 /**
  * One message waiting in the host's queue as the queued cards draw it, in the shape a local item
  * of the same kind has: a desktop host's slash command is a command card (its command line split
- * into the command and its arguments), and the model and effort it was queued with ride along,
- * so the card and its editor show what the host will run.
+ * into the command and its arguments), and the model, effort, and images it was queued with ride
+ * along, so the card and its editor show what the host will run.
  */
 export function mirrorQueuedItem(item: QueuedTurn): QueuedItem {
 	const base = {
@@ -83,6 +83,7 @@ export function mirrorQueuedItem(item: QueuedTurn): QueuedItem {
 		tabId: item.tabId,
 		...(item.paused ? { paused: true } : {}),
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+		...(item.images?.length ? { images: [...item.images] } : {}),
 	};
 	if (item.kind === 'command') {
 		const line = item.text.trim();

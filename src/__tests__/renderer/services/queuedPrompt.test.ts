@@ -494,10 +494,16 @@ describe('editQueuedItem', () => {
 		expect(
 			editQueuedItem('session-1', 'h1', { text: 'two', images: [], turnSettings: { model: 'm' } })
 		).toBe(true);
-		// No images on the card means none added: the host keeps its own.
+		// The card holds the host item's images, so an empty list clears them, as it does locally.
 		expect(editMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h1', {
 			text: 'two',
 			turnSettings: { model: 'm' },
+			images: [],
+		});
+		// No list at all (a script that only rewrites the text): the host keeps its own.
+		editQueuedItem('session-1', 'h1', { text: 'two' });
+		expect(editMirrorQueuedItem).toHaveBeenLastCalledWith('box', 'host-agent', 'h1', {
+			text: 'two',
 		});
 		editQueuedItem('session-1', 'h1', {
 			text: 'two',

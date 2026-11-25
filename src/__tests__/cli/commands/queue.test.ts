@@ -668,6 +668,8 @@ describe('queue command', () => {
 						kind: 'message',
 						text: 'next',
 						paused: true,
+						// The local verb lists no images; the peer one leaves them out the same way.
+						images: ['data:image/png;base64,AAAA'],
 					},
 				])
 			);

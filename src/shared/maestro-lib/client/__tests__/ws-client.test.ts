@@ -1294,6 +1294,35 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it("asks for a queued item's images and keeps only the data URLs", async () => {
+			bridge.typed.set('list_queue', () => ({
+				type: 'list_queue_result',
+				success: true,
+				queues: [
+					{
+						sessionId: A1,
+						items: [
+							{
+								id: 'q1',
+								tabId: 't',
+								timestamp: 1,
+								type: 'message',
+								text: 'a',
+								images: ['data:image/png;base64,AAAA', 'maestro-image://store/x.png', 7],
+							},
+							{ id: 'q2', tabId: 't', timestamp: 2, type: 'message', text: 'b', images: [] },
+						],
+					},
+				],
+			}));
+			const listed = await client.turns.queue.list(A1);
+			expect(bridge.sent('list_queue')[0]).toMatchObject({ sessionId: A1, inlineImages: true });
+			expect(listed.ok && listed.value.map((item) => item.images)).toEqual([
+				['data:image/png;base64,AAAA'],
+				undefined,
+			]);
+		});
+
 		it('reports a refused merge_queue_item as a failure', async () => {
 			bridge.typed.set('merge_queue_item', () => ({
 				type: 'merge_queue_item_result',

@@ -71,6 +71,7 @@ export interface QueuedTurnWire {
 	text: string;
 	paused: boolean;
 	turnSettings?: QueuedTurn['turnSettings'];
+	images?: QueuedTurn['images'];
 }
 
 /**
@@ -86,6 +87,7 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 		text: item.text,
 		paused: item.paused,
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+		...(item.images?.length ? { images: item.images } : {}),
 	}));
 }
 

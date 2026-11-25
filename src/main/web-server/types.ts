@@ -678,6 +678,13 @@ export interface QueuedItemSnapshot {
 	paused?: boolean;
 	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
 	mentionRouting?: MentionRouting;
+	/** Model and effort captured when it was queued. */
+	turnSettings?: { model?: string; effort?: string };
+	/**
+	 * The images it was queued with: store refs from the renderer; data URLs on the wire when the
+	 * client asked for them (`list_queue` `inlineImages`), and left out otherwise.
+	 */
+	images?: string[];
 }
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the

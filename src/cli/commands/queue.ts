@@ -191,7 +191,8 @@ async function queueListPeer(target: PeerTarget): Promise<void> {
 					sessionId: peerAgentRef(peer, agent.id),
 					name: agent.name,
 					state: agent.state ?? 'idle',
-					items: queuedTurnsToWire(listed.value),
+					// Without the images, as the local verb lists them: data URLs are not for a terminal.
+					items: queuedTurnsToWire(listed.value.map(({ images: _images, ...turn }) => turn)),
 				},
 			};
 		});

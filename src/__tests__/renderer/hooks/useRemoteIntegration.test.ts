@@ -3169,6 +3169,7 @@ describe('useRemoteIntegration', () => {
 				text: 'queued prompt',
 				tabName: 'PR review',
 				mentionRouting: 'handoff' as const,
+				images: ['maestro-image://store/abc.png'],
 			};
 			const session = createMockSession({
 				id: 'session-1',
@@ -3199,6 +3200,8 @@ describe('useRemoteIntegration', () => {
 									id: 'q1',
 									text: 'queued prompt',
 									mentionRouting: 'handoff',
+									// As stored: main inlines them for a Federation client that asks.
+									images: ['maestro-image://store/abc.png'],
 								}),
 							],
 						}),

@@ -11,6 +11,7 @@ import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 import { renderCallbackPrompt } from '../../../main/dispatch-callbacks/dispatch-callback-prompt';
 import { getSteerEligibility } from '../../../renderer/utils/executionQueue';
+import { mirrorQueuedItem } from '../../../renderer/utils/peerMirrorView';
 import { createMockAITab, createMockSession } from '../../helpers';
 
 function item(overrides: Partial<QueuedItem> = {}): QueuedItem {
@@ -462,6 +463,42 @@ describe('QueuedItemsList edit modal', () => {
 		expect(onEditQueuedItem).toHaveBeenCalledWith(
 			'q1',
 			expect.objectContaining({ text: 'final', images: [] })
+		);
+	});
+
+	// A hosted card's images come off the host's queue (`mirrorQueuedItem`), so the card draws the
+	// same thumbnails and its editor opens with, and saves, the same images as a local card.
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: draws the same images and saves them with the edit', (_mode, hostQueued) => {
+		const images = ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'];
+		const queued = hostQueued
+			? {
+					...mirrorQueuedItem({
+						itemId: 'q1',
+						tabId: 'tab-1',
+						queuedAt: 1,
+						kind: 'message',
+						text: 'draft',
+						paused: false,
+						images,
+					}),
+					hostQueued,
+				}
+			: item({ id: 'q1', text: 'draft', images });
+		const { onEditQueuedItem, container } = renderList([queued]);
+		expect(screen.getByText('2 images attached')).toBeInTheDocument();
+		fireEvent.click(screen.getByTitle('Show thumbnails'));
+		expect(
+			Array.from(container.querySelectorAll('img')).map((img) => img.getAttribute('src'))
+		).toEqual(images);
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onEditQueuedItem).toHaveBeenCalledWith(
+			'q1',
+			expect.objectContaining({ text: 'draft', images })
 		);
 	});
 

@@ -484,6 +484,23 @@ export interface QueuedTurn {
 	 * Absent when the host did not say, so the card and the editor fall back to the tab's own.
 	 */
 	turnSettings?: QueuedTurnSettingsWire;
+	/**
+	 * The images it was queued with, as data URLs (the host resolves its own store refs before they
+	 * leave), so the card draws the thumbnails and its editor opens with them. Absent: none.
+	 */
+	images?: string[];
+}
+
+/**
+ * A waiting message's images off the wire: data URLs only, or `undefined` when there are none. A
+ * ref into another machine's image store cannot be drawn here, so anything else is dropped.
+ */
+export function parseQueuedTurnImages(raw: unknown): string[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	const images = raw.filter(
+		(image): image is string => typeof image === 'string' && image.startsWith('data:image/')
+	);
+	return images.length > 0 ? images : undefined;
 }
 
 /** A waiting message's own model and effort, as the queue wire carries them. */

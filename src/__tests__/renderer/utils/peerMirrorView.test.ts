@@ -109,6 +109,13 @@ describe('mirrorQueuedItem', () => {
 		});
 	});
 
+	it('carries the images the host queued it with, so the card draws its thumbnails', () => {
+		const images = ['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'];
+		expect(mirrorQueuedItem(queued('q5', { images })).images).toEqual(images);
+		expect(mirrorQueuedItem(queued('q6', { images: [] }))).not.toHaveProperty('images');
+		expect(mirrorQueuedItem(queued('q7'))).not.toHaveProperty('images');
+	});
+
 	it('carries the model and effort the host will run it with', () => {
 		expect(
 			mirrorQueuedItem(queued('q4', { turnSettings: { model: 'm', effort: 'high' } })).turnSettings

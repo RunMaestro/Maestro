@@ -31,6 +31,8 @@ import {
 	normalizeTurnOverrides,
 	parseQueuedTurnEdit,
 } from '../../../../shared/maestro-lib/client/types';
+import { resolveToDataUrl } from '../../../storage/session-image-store';
+import type { QueueSessionSnapshot } from '../../types';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -298,9 +300,34 @@ export function handleEnqueueCommand(
 }
 
 /**
+ * A queue snapshot's images for the client that reads it. A Federation client asks for them
+ * (`inlineImages`): each store ref becomes the data URL it names, since the client cannot read this
+ * machine's store, and a ref whose file is gone is dropped, as a spawn drops it. Any other reader
+ * (`maestro-cli queue list`) gets the items without them, as before.
+ */
+export async function withQueueImages(
+	queues: QueueSessionSnapshot[],
+	inline: boolean
+): Promise<QueueSessionSnapshot[]> {
+	return Promise.all(
+		queues.map(async (queue) => ({
+			...queue,
+			items: await Promise.all(
+				queue.items.map(async ({ images, ...item }) => {
+					if (!inline || !images?.length) return item;
+					const resolved = await Promise.all(images.map((image) => resolveToDataUrl(image)));
+					const inlined = resolved.filter((image): image is string => image !== null);
+					return inlined.length > 0 ? { ...item, images: inlined } : item;
+				})
+			),
+		}))
+	);
+}
+
+/**
  * Handle list_queue message - return a snapshot of the renderer's execution
- * queue(s). Used by `maestro-cli queue list`. When sessionId is omitted, every
- * session with queued items is returned.
+ * queue(s). Used by `maestro-cli queue list` and a Federation client's queue
+ * read. When sessionId is omitted, every session with queued items is returned.
  */
 export function handleListQueue(
 	ctx: MessageHandlerContext,
@@ -320,11 +347,12 @@ export function handleListQueue(
 	}
 	ctx.callbacks
 		.listQueue(sessionId)
-		.then((result) => {
+		.then(async (result) => {
+			const queues = await withQueueImages(result.queues, message.inlineImages === true);
 			ctx.send(client, {
 				type: 'list_queue_result',
 				success: result.success,
-				queues: result.queues,
+				queues,
 				...(result.error ? { error: result.error } : {}),
 				requestId: message.requestId,
 			});
