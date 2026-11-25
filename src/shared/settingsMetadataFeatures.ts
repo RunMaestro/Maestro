@@ -67,6 +67,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 10,
 		category: 'editor',
 	},
+	designModeCollapsePanels: {
+		description:
+			'When enabled, turning on Design Mode in a browser tab folds the Left Bar and Right Bar away so the page gets the full width, and turning it off (or leaving the tab) brings back only the bars Design Mode closed.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {

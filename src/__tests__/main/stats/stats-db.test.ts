@@ -755,6 +755,65 @@ describe('Database file creation on first launch', () => {
 				expect(prepareCalls.some((sql: string) => sql.includes(indexName))).toBe(true);
 			}
 		});
+
+		it('should close handle and refuse database access when a migration throws, then allow clean retry', async () => {
+			mockFsExistsSync.mockReturnValue(false);
+			mockDb.prepare.mockImplementation((sql: string) => {
+				if (sql.includes('CREATE TABLE IF NOT EXISTS query_events')) {
+					throw new Error('migration v1 boom');
+				}
+				return mockStatement;
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+
+			expect(() => db.initialize()).toThrow('migration v1 boom');
+			expect(mockDb.close).toHaveBeenCalledTimes(1);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+			expect(db.isReady()).toBe(false);
+			expect(() => db.database).toThrow('Database not initialized');
+
+			// A later initialize() can retry cleanly once the failure condition is cleared
+			mockDb.prepare.mockReturnValue(mockStatement);
+			expect(() => db.initialize()).not.toThrow();
+			expect(db.isReady()).toBe(true);
+			expect(() => db.database).not.toThrow();
+		});
+
+		it('should close handle and refuse database access when WAL setup or meta table creation throws', async () => {
+			mockFsExistsSync.mockReturnValue(false);
+			mockDb.pragma.mockImplementation((pragmaStr: string) => {
+				if (pragmaStr === 'journal_mode = WAL') {
+					throw new Error('wal boom');
+				}
+				return [{ user_version: 0 }];
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+
+			expect(() => db.initialize()).toThrow('wal boom');
+			expect(mockDb.close).toHaveBeenCalledTimes(1);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+			expect(db.isReady()).toBe(false);
+			expect(() => db.database).toThrow('Database not initialized');
+
+			// Meta table failure on retry also cleans up
+			mockDb.pragma.mockReturnValue([{ user_version: 0 }]);
+			mockDb.prepare.mockImplementation((sql: string) => {
+				if (sql.includes('CREATE TABLE IF NOT EXISTS _meta')) {
+					throw new Error('meta boom');
+				}
+				return mockStatement;
+			});
+
+			expect(() => db.initialize()).toThrow('meta boom');
+			expect(mockDb.close).toHaveBeenCalledTimes(2);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+			expect(db.isReady()).toBe(false);
+			expect(() => db.database).toThrow('Database not initialized');
+		});
 	});
 
 	describe('singleton pattern', () => {

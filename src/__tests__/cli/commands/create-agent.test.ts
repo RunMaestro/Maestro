@@ -209,6 +209,40 @@ describe('create-agent command', () => {
 				remoteId: 'remote-id-123',
 				workingDirOverride: '/remote/path',
 			});
+			// AI turns spawn in cwd, so it must be the remote directory too, exactly as
+			// the New Agent dialog stores it. A local --cwd here made every turn cd
+			// into a path that does not exist on the remote.
+			expect(sentPayload.cwd).toBe('/remote/path');
+		});
+
+		it('uses --cwd as the remote directory when --ssh-cwd is absent', async () => {
+			let sentPayload: Record<string, unknown> = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'id-2',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Remote Agent', {
+				cwd: '/srv/app',
+				type: 'claude-code',
+				sshRemote: 'remote-id-123',
+			});
+
+			expect(sentPayload.cwd).toBe('/srv/app');
+			expect(sentPayload.sessionSshRemoteConfig).toEqual({
+				enabled: true,
+				remoteId: 'remote-id-123',
+				workingDirOverride: '/srv/app',
+			});
 		});
 
 		it('should output JSON when --json flag is set', async () => {

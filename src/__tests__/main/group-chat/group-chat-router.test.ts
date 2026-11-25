@@ -46,6 +46,14 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+// The participant binary check stats the agent's own custom path; tests decide
+// which paths exist.
+const mockCheckCustomPath = vi.fn();
+vi.mock('../../../main/agents/path-prober', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/agents/path-prober')>()),
+	checkCustomPath: (...args: unknown[]) => mockCheckCustomPath(...args),
+}));
+
 const mockCaptureException = vi.fn();
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
@@ -2424,6 +2432,62 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	// ===========================================================================
+	// A participant runs its agent's own binary, as its tab does
+	// ===========================================================================
+	describe('participant binary', () => {
+		afterEach(() => {
+			setGetSessionsCallback(() => []);
+			mockCheckCustomPath.mockReset();
+		});
+
+		async function spawnPinnedParticipant(customPath: string) {
+			const chat = await createTestChatWithModerator(`Pinned ${customPath}`);
+			const session: GroupChatSessionInfo = {
+				id: 'ses-pinned',
+				name: 'Pinned',
+				toolType: 'claude-code',
+				cwd: '/Users/dev/project',
+				customPath,
+			};
+			setGetSessionsCallback(() => [session]);
+			await addParticipant(
+				chat.id,
+				'Pinned',
+				'claude-code',
+				mockProcessManager,
+				'/Users/dev/project',
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+			await routeModeratorResponse(
+				chat.id,
+				'@Pinned: do it',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			return mockProcessManager.spawn.mock.calls.at(-1)?.[0];
+		}
+
+		it("spawns the agent's own custom path over the provider's binary", async () => {
+			// A packaged-build smoke test caught two stub agents in a group chat
+			// running the real Claude while their tabs ran the stub.
+			mockCheckCustomPath.mockResolvedValue({ exists: true, path: '/agent/bin/claude' });
+
+			const spawned = await spawnPinnedParticipant('/agent/bin/claude');
+
+			expect(spawned?.command).toBe('/agent/bin/claude');
+		});
+
+		it("falls back to the provider's binary when the agent's own path is not executable", async () => {
+			mockCheckCustomPath.mockResolvedValue({ exists: false });
+
+			const spawned = await spawnPinnedParticipant('/agent/bin/missing');
+
+			expect(spawned?.command).toBe('/usr/local/bin/claude');
 		});
 	});
 

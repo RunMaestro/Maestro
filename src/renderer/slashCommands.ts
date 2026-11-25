@@ -25,6 +25,13 @@ export const slashCommands: SlashCommand[] = [
 		aiOnly: true,
 	},
 	{
+		command: '/btw',
+		description:
+			'Ask a side question about this conversation without adding to it (runs even while busy)',
+		aiOnly: true,
+		agentTypes: ['claude-code'],
+	},
+	{
 		command: '/skills',
 		description: 'List available Claude Code skills for this project',
 		aiOnly: true,

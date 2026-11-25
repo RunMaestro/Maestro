@@ -16,6 +16,12 @@ import type {
 	DiffReviewCommandResult,
 } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../shared/designPickCommands';
+import type { BrowserPickTarget } from '../../shared/coworkingBrowser';
+import type { BrowserViewportPreset } from '../../shared/browserViewport';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -508,6 +514,13 @@ export type ConsultAgentParams = {
 	fromTabId?: string;
 	/** Forward the caller's transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a `/btw` side question instead of consulting: the answer comes from a
+	 * throwaway fork of one of the target's tabs, which is never written to.
+	 */
+	sideQuestion?: boolean;
+	/** The target's tab a side question forks. Defaults to its active tab. */
+	targetTabId?: string;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
 	timeoutMs: number;
 };
@@ -645,18 +658,21 @@ export type OpenBrowserTabCallback = (
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 
 /**
- * Design Mode by selector (`maestro-cli browser-pick`). `tab` is either the
- * tab id `open-browser` returned or the tab's Coworking id (`browser:N`),
- * resolved against `sessionId`. The pick runs through the Coworking browser
- * resolver, so it reaches the same renderer code a click in Design Mode does.
+ * Design Mode by selector or by region (`maestro-cli browser-pick`). Names an
+ * element (`selector`) or a region in guest CSS px (`rect`), exactly one.
+ * `tab` is either the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`), resolved against `sessionId`. The pick runs through the
+ * Coworking browser resolver, so it reaches the same renderer code a click or a
+ * drag in Design Mode does.
  */
-export interface PickBrowserElementRequest {
+export type PickBrowserElementRequest = BrowserPickTarget & {
 	sessionId: string;
 	tab: string;
-	selector: string;
 	note?: string;
 	background?: boolean;
-}
+	/** True queues the pick as its own message instead of staging a chip. */
+	queue?: boolean;
+};
 export interface PickBrowserElementResult {
 	success: boolean;
 	error?: string;
@@ -664,16 +680,57 @@ export interface PickBrowserElementResult {
 	tabId?: string;
 	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
 	browserId?: string;
-	/** The text added to the composer draft. */
+	/** The block the chip (or the queued message) carries, note included. */
 	text?: string;
-	/** Whether a cropped screenshot was staged with it. */
+	/** Whether the pick carries a cropped screenshot. */
 	screenshot: boolean;
-	/** The AI tab the element was added to. */
+	/** The AI tab whose composer holds the chip, or whose queue holds the message. */
 	aiTabId?: string;
+	/** The staged chip's id, for `browser-picks --remove`. Not set when queued. */
+	pickId?: string;
+	/** The queued message's id, for `queue remove`. Only set when queued. */
+	queueItemId?: string;
 }
 export type PickBrowserElementCallback = (
 	request: PickBrowserElementRequest
 ) => Promise<PickBrowserElementResult>;
+/**
+ * Set or read a browser tab's viewport preset (`maestro-cli browser-viewport`).
+ * `tab` is either the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`), resolved against `sessionId`, as `PickBrowserElementRequest`'s
+ * is. With `preset` the tab is set to it; without, it is only read. Runs through
+ * the Coworking browser resolver as the host-only `viewport` op, so it reaches
+ * the same store write the toolbar's viewport control ends in.
+ */
+export interface BrowserViewportRequest {
+	sessionId: string;
+	tab: string;
+	preset?: BrowserViewportPreset;
+}
+export interface BrowserViewportResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The preset the tab shows after the call. */
+	preset?: BrowserViewportPreset;
+	/** The preset it showed before the call (the same, when nothing changed). */
+	previous?: BrowserViewportPreset;
+}
+export type BrowserViewportCallback = (
+	request: BrowserViewportRequest
+) => Promise<BrowserViewportResult>;
+/**
+ * One Design Mode chip verb (`maestro-cli browser-picks`), forwarded to the
+ * renderer that holds the chips staged in the agent's composer and answered
+ * with what it found or removed. Resolves rather than rejects on a miss, for
+ * the same reason `SnoozeCommandCallback` does.
+ */
+export type DesignPickCommandCallback = (
+	request: DesignPickCommandRequest
+) => Promise<DesignPickCommandResult>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;
@@ -1423,6 +1480,7 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export type SetGroupChatUnreadCallback = (chatId: string, unread: boolean) => Promise<boolean>;
 export interface AddGroupChatParticipantResult {
 	success: boolean;
 	/** The participant's name in the chat. */

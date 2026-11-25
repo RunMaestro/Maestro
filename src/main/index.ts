@@ -35,6 +35,7 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { getCueSubscriptionTriggerStats } from './cue/cue-db';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -737,6 +738,7 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
 	},
+	getCueSubscriptionTriggerStats,
 	addGroupChatParticipant: async (chatId, agentId) => {
 		if (!processManager) return { success: false, error: 'Process manager not initialized' };
 		try {

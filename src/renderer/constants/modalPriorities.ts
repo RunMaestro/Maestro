@@ -42,6 +42,9 @@ export const MODAL_PRIORITIES = {
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
 
+	/** Provider CLI install terminal - above the agent error modal it replaces */
+	PROVIDER_INSTALL: 1016,
+
 	/** Provider re-authentication terminal - above the agent error modal it replaces */
 	REAUTH: 1015,
 
@@ -438,6 +441,11 @@ export const MODAL_PRIORITIES = {
 	/** Staged-images organizer (drag-to-reorder at a readable size). Below the
 	 * lightbox and annotator, both of which open from inside it. */
 	STAGED_IMAGES_ORGANIZER: 143,
+
+	/** A Design Mode chip's popover in the composer (its block and note). Beside
+	 * the staged-images organizer, its neighbour above the composer; nothing
+	 * opens from inside it. */
+	DESIGN_PICK_POPOVER: 144,
 
 	/**
 	 * Record view for one row of a tabular preview - CSV/TSV and parquet both

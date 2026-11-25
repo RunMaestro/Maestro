@@ -430,6 +430,57 @@ describe('agentStore', () => {
 			expect(updated.aiTabs[1].agentError).toBeUndefined();
 		});
 
+		it('leaves a newer session-level error intact when clearing a different tab by tabId', () => {
+			const tab1Error = { type: 'agent_not_installed', message: 'missing' } as any;
+			const tab2Error = { type: 'rate_limited', message: 'limit' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: tab2Error,
+				agentErrorTabId: 'tab-2',
+				agentErrorPaused: true,
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						agentError: tab1Error,
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						agentError: tab2Error,
+					},
+				],
+				activeTabId: 'tab-2',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useAgentStore.getState().clearAgentError('session-1', 'tab-1');
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			expect(updated.aiTabs[1].agentError).toEqual(tab2Error);
+			expect(updated.agentError).toEqual(tab2Error);
+			expect(updated.agentErrorTabId).toBe('tab-2');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+		});
+
 		it('handles IPC clearError rejection without throwing', () => {
 			mockClearError.mockRejectedValueOnce(new Error('IPC down'));
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
@@ -1508,10 +1559,53 @@ describe('agentStore', () => {
 				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
-				undefined
+				undefined,
+				'now ask @Backend to review'
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		// A Design Mode chip's page content rides in the message, but only what the
+		// user typed may name an agent to consult.
+		it('plans the mentions without the Design Mode chip blocks', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const block = '```html\n<a>ping @Other</a>\n```';
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: `${block}\n\nask @Backend about it`,
+				crossAgentMention: true,
+				designPickPageText: [block],
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				`${block}\n\nask @Backend about it`,
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				'(Design Mode pick)\n\nask @Backend about it'
+			);
 		});
 
 		// A mention-only item (the message was addressed at the other agent) fires

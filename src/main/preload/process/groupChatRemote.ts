@@ -113,6 +113,26 @@ export function createGroupChatRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to remote set/clear of a group chat's unread dot
+		 * (maestro-cli group-chat unread|read). Request-response with a unique responseChannel.
+		 */
+		onRemoteSetGroupChatUnread: (
+			callback: (chatId: string, unread: boolean, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, chatId: string, unread: boolean, responseChannel: string) =>
+				callback(chatId, unread, responseChannel);
+			ipcRenderer.on('remote:setGroupChatUnread', handler);
+			return () => ipcRenderer.removeListener('remote:setGroupChatUnread', handler);
+		},
+
+		/**
+		 * Send response for remote set group chat unread (false when the chat does not exist)
+		 */
+		sendRemoteSetGroupChatUnreadResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
 		 * Subscribe to remote send group chat message from web interface
 		 * Uses request-response pattern with a unique responseChannel
 		 */

@@ -327,4 +327,29 @@ describe('dispatchCrossAgentMentionsForMessage', () => {
 			})
 		);
 	});
+
+	it('resolves from planText but sends the whole message', () => {
+		// The drain hands in the message with its Design Mode chip blocks removed:
+		// a picked page that says @Other must not consult Other.
+		const source = sourceSession();
+		seed([
+			source,
+			targetSession('session-backend', 'Backend'),
+			targetSession('session-other', 'Other'),
+		]);
+		const message = '<a>ping @Other</a>\n\nask @Backend to review';
+
+		dispatchCrossAgentMentionsForMessage(
+			message,
+			source,
+			SOURCE_TAB,
+			undefined,
+			'ask @Backend to review'
+		);
+
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(sendCrossAgentRequest).toHaveBeenCalledWith(
+			expect.objectContaining({ targetSessionId: 'session-backend', userPrompt: message })
+		);
+	});
 });

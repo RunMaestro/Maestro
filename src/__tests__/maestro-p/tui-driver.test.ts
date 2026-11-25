@@ -71,6 +71,7 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import {
+	ADD_DIR_SETTLE_MS,
 	chunkPromptForPty,
 	CLAUDE_PASTE_THRESHOLD_CHARS,
 	expandPromptTabs,
@@ -650,6 +651,8 @@ describe('TuiDriver', () => {
 			driver.on('ready', readyHandler);
 
 			feed(dialog('/work/a'));
+			expect(writes()).toEqual([]);
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS);
 			expect(writes()).toEqual(['\x1b[B']);
 			feed(REPAINT_ON_YES);
 			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
@@ -657,6 +660,7 @@ describe('TuiDriver', () => {
 			expect(accepted).toHaveBeenCalledTimes(1);
 
 			feed(dialog('/work/b'));
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS);
 			expect(writes()).toEqual(['\x1b[B', '\r', '\x1b[B']);
 			feed(REPAINT_ON_YES);
 			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
@@ -701,7 +705,47 @@ describe('TuiDriver', () => {
 			expect(writes()).toEqual([]);
 
 			feed("\r\n\r\nThis session hasn't worked here before.\r\n❯ No, exit\r\n  Yes, add it\r\n");
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS);
 			expect(writes()).toEqual(['\x1b[B']);
+		});
+
+		it('starts a resumed conversation that quotes the dialog, with no --add-dir', async () => {
+			// 2026-11-23: a tab whose conversation discussed this dialog failed every
+			// turn as add_dir_untrusted, because --resume repaints the conversation on
+			// the startup screen before the input editor.
+			const driver = await makeAddDirDriver(['--resume', 'abc']);
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('add-dir-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+
+			feed(
+				'⏺ Today\'s error would have read "Adding a new directory: /work/sec590 … No, exit".\r\n'
+			);
+			feed('\r\n────────\r\n❯ \r\n────────\r\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+			expect(writes()).toEqual([]);
+		});
+
+		it('starts a resumed conversation that quotes the whole dialog, editor in a later chunk', async () => {
+			const driver = await makeAddDirDriver(['--resume', 'abc']);
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('add-dir-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+
+			feed(dialog('/work/elsewhere'));
+			// The editor lands inside the settle window, so the quote is never answered.
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS - 50);
+			feed('\r\n────────\r\n❯ \r\n────────\r\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+			expect(writes()).toEqual([]);
 		});
 	});
 

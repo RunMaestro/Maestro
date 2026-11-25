@@ -9,6 +9,8 @@ import {
 } from 'react';
 import type { AdditionalDirectory, ToolType, AgentConfig } from '../../types';
 import { captureException } from '../../utils/sentry';
+import { findAgentWithName } from '../../utils/sessionValidation';
+import { useSessionStore } from '../../stores/sessionStore';
 import { STEP_INDEX, INDEX_TO_STEP, WIZARD_TOTAL_STEPS } from './WizardContext/constants';
 import { generateMessageId } from './WizardContext/messageIds';
 import {
@@ -92,13 +94,22 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		dispatch({ type: 'PREVIOUS_STEP' });
 	}, []);
 
+	// Selects a string, not the session list, so the wizard re-renders only
+	// when the clash itself appears or goes away.
+	const duplicateAgentName = useSessionStore(
+		(store) => findAgentWithName(state.agentName, store.sessions)?.name ?? null
+	);
+
 	const canProceedToNext = useCallback((): boolean => {
 		switch (state.currentStep) {
 			// The name is optional: the directory step fills in the folder name
 			// when the user leaves it blank, so requiring one here would only
-			// block someone who has nothing to say yet.
+			// block someone who has nothing to say yet. A name another agent
+			// already has is refused here, not at launch: launch rejects it, and
+			// by then the user has sat through the whole planning conversation
+			// (MAESTRO-199).
 			case 'agent-selection':
-				return state.selectedAgent !== null;
+				return state.selectedAgent !== null && duplicateAgentName === null;
 			case 'directory-selection':
 				return state.directoryPath.trim() !== '' && state.directoryError === null;
 			case 'conversation':
@@ -111,6 +122,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 	}, [
 		state.currentStep,
 		state.selectedAgent,
+		duplicateAgentName,
 		state.directoryPath,
 		state.directoryError,
 		state.isReadyToProceed,
@@ -334,6 +346,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			nextStep,
 			previousStep,
 			canProceedToNext,
+			duplicateAgentName,
 			getCurrentStepNumber,
 			setSelectedAgent,
 			setAvailableAgents,
@@ -384,6 +397,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			nextStep,
 			previousStep,
 			canProceedToNext,
+			duplicateAgentName,
 			getCurrentStepNumber,
 			setSelectedAgent,
 			setAvailableAgents,

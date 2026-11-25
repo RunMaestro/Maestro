@@ -69,6 +69,10 @@ deliberately absent from the table and must stay that way.
 `--focus` ships on every verb even where it currently just names the default,
 because a future default flip needs the escape hatch to already exist.
 
+`browser-pick --queue` is quiet by itself: it sends the pick as its own queued
+message and never touches the view, so `--background` and `--focus` have nothing
+left to decide there.
+
 ### Two verbs of one command name: `dispatch`
 
 `dispatch --new-tab` is background by default and `dispatch` (writing to an
@@ -262,6 +266,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Move Tab to First / Last                                                                                                  | `tab move <tab-id> first\|last\|<index>`                                                         |
 | Send a message, or run a shell command (incl. a code fence's Run button)                                                  | `send`, `dispatch`, `send-terminal`                                                              |
 | Consult another agent (`@mention`)                                                                                        | `ask <agent> "<question>" --from <caller>`                                                       |
+| Side question about a tab (`/btw <question>`)                                                                             | `ask <agent> "<question>" --btw [--tab <tab-id>]`                                                |
 | Open a file / URL / terminal tab                                                                                          | `open-file`, `open-browser`, `open-terminal`                                                     |
 | Click a folder link (reveal it in the Files panel)                                                                        | `open-file <folder>` (both ride `revealPathInFileTree`)                                          |
 | Open a modal or dashboard                                                                                                 | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
@@ -277,6 +282,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: screenshots, support package box                                                                                | `feedback submit --attach <png...> --support-package`                                            |
 | Feedback: Running as (account picker)                                                                                     | `feedback accounts [--use <key> \| --clear]`                                                     |
 | Feedback: Log in to GitHub / Check Again                                                                                  | `feedback login`, `feedback auth --fresh`                                                        |
+| Agent error: Install <provider> (CLI missing)                                                                             | `install-command <provider> [--platform] [--json]` (prints the line)                             |
 | Feedback: live self-diagnosis                                                                                             | `feedback diagnose`                                                                              |
 | Feedback: Submit now (early exit)                                                                                         | `feedback submit` (the caller supplies whatever fields it has)                                   |
 | Create Debug Package (support package)                                                                                    | `support-package -o <dir> [--no-logs ...]`                                                       |
@@ -289,6 +295,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Auto Run panel: Change folder                                                                                             | `auto-run-folder <path> -a <agent>`                                                              |
 | Thought Stream: Steer Auto Run (send a note, cancel one, read replies)                                                    | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
 | Git Diff review comments (add, edit, remove, discard, send, compose)                                                      | `diff-review add <path> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose`     |
+| File Preview review comments: Comment on Line(s), edit, remove, discard, send, compose                                    | `file-review add <file> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose`     |
 | Playbook Exchange: browse, README, install                                                                                | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
 | Prompt Links window and tile: create, list, revoke a `maestro://run` link (open the window: `open prompt-links`)          | `prompt-link create <agent> [prompt]`, `prompt-link list [--all]`, `prompt-link revoke <id>`     |
 | Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)                                                   | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
@@ -303,8 +310,16 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage Dashboard: Auto Run (tab's run/task rules), agent turns by hour, wizard, resilience, daily and per-shortcut presses | `stats-activity [-r <range>] [--json]`                                                           |
 | Usage Dashboard: Export button (JSON, or a zip of CSVs)                                                                   | `stats-export -o <path> [-f csv\|json] [-r <range>] [--json]`                                    |
 | Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
+| Left Bar / Cmd+Shift+U: Mark a group chat unread / read                                                                   | `group-chat unread <chat>` / `group-chat read <chat>` (read back with `group-chat list`)         |
 | Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
-| Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                    |
+| Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: `browser-picks`, its `--json` text and `pickId`    |
+| Browser Design Mode: queue a pick as its own message (pick card's Queue button, Alt+Enter)                                | `browser-pick <tab> -s <css> --queue`; id in `--json`; read: `queue list`; undo: `queue remove`  |
+| Browser Design Mode region pick: drag a box over the page, add the region to the message (region card)                    | `browser-pick <tab> --rect <x,y,w,h> [--note] [--queue]`; read: `browser-picks` or `queue list`  |
+| Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                    | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                 |
+| Browser Design Mode: edit a chip's note in the composer (the chip popover's note box)                                     | `browser-picks --edit <pickId> --note <text>`; read: the printed chip, or `browser-picks`        |
+| Browser Design Mode: remove a chip from the composer (the chip's X)                                                       | `browser-picks --remove <pickId>`; read: `browser-picks`                                         |
+| Browser tab: viewport preset (toolbar Viewport control, palette "Browser: Viewport ...")                                  | `browser-viewport <tab> [preset] [-a <agent>] [--json]` (omit the preset to read it)             |
+| Browser Design Mode: fold the side bars while it is on (a setting; `settings` covers it, no new verb)                     | `settings set designModeCollapsePanels true\|false`; read: `settings get <key>`                  |
 
 ## Open gaps
 
@@ -382,9 +397,33 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
 14. **Turn browser Design Mode on or off** (address-bar pointer button,
     Cmd+Shift+C, palette "Design Mode: Pick an Element"). The mode only arms
     a hover overlay for a person's pointer; there is nothing for a script to
-    point with once it is on. The outcome it leads to, an element added to the
-    message, is covered by `browser-pick <tab> --selector <css>`, which runs
-    the same describe, crop, and delivery code without the overlay.
+    point with once it is on. The outcome it leads to, an element or a region
+    added to the message, is covered by `browser-pick <tab> --selector <css>`
+    or `browser-pick <tab> --rect <x,y,w,h>`, which run the same capture,
+    crop, and delivery code as a click or a drag, without the overlay
+    (`--queue` sends it as its own queued message, as the card's Queue button
+    does).
+    The mode is sticky per browser tab (`BrowserTab.designMode`, saved with
+    the tab): it survives page loads, tab switches, Add to Message and
+    restarts, and only Escape and the toggle turn it off. It is still a mode
+    for a person's pointer, so the gap stays open on the same reasoning, and
+    no read reports the flag either (`session list --type browser` lists a
+    browser tab's id, title, url and visibility, not its mode). Closing it
+    means a `browser-design-mode <tab> [on|off] [--json]` verb that writes
+    the flag through `updateBrowserTab()`, as the toggle does, and reads it
+    back.
+    Holding Space to use the page and clicking a crumb in the hover label
+    need no verb: both are pointer gestures with no effect of their own, an
+    agent drives the page through Coworking (`browser_click`, `browser_type`),
+    and `browser-pick --selector` picks any ancestor directly. Dragging the
+    box is `--rect` (guest CSS px, the box a drag would draw).
+15. **Verify whether a provider CLI is detected after installing it.**
+    `install-command <provider>` prints the install command so an agent can run
+    it in its own shell, and the desktop refreshes detection on Retry via
+    `agents:reprobe`, but there is no `maestro-cli` read verb yet that queries
+    `agents:detect` or `agents:reprobe` to report detected provider binaries.
+    Agents can check `command -v <binary>` (or `where <binary>` on Windows) in
+    their own shell.
 
 ### Audit backlog (2026-09-27)
 
@@ -413,7 +452,11 @@ still missing. Grouped, highest value first:
 - **SSH remotes:** test, edit, enable/disable, set default.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing, persistent token (`live on/off/status` and the tunnel are covered).
-- **Updates:** check/download/install.
+- **Updates:** check/download/install. A CLI install verb must call
+  `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
+  same as the modal's Restart and Resume, or running Auto Runs will not resume.
+- **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`
+  before `confirmQuit()`, as `handleConfirmQuit` does.
 - **Exports:** tab as HTML.
 - **Usage Dashboard:** plan usage Refresh (re-sample every account), and the Shortcuts tab's
   keyboard mastery figure (the math lives in `src/renderer/constants/keyboardMastery.ts`, which

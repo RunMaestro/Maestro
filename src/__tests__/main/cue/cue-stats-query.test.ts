@@ -120,6 +120,16 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		vi.clearAllMocks();
 		mockEvents = [];
 		mockSummaries = new Map();
+		// 'day' starts at local midnight and most cases place events minutes before
+		// Date.now(). Pin the clock to local noon so a run just after midnight does
+		// not drop them into yesterday (seen on CI at 00:03 UTC).
+		const noon = new Date();
+		noon.setHours(12, 0, 0, 0);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(noon);
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
 	});
 
 	describe('totals', () => {

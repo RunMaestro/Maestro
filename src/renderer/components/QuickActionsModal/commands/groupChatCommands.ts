@@ -32,6 +32,7 @@ interface BuildGroupChatCommandsArgs {
 	newGroupChatShortcut?: QuickAction['shortcut'];
 	killShortcut?: QuickAction['shortcut'];
 	moderatorOnlyShortcut?: QuickAction['shortcut'];
+	toggleUnreadShortcut?: QuickAction['shortcut'];
 }
 
 export function buildGroupChatJumpCommands({
@@ -100,6 +101,7 @@ export function buildGroupChatCommands({
 	newGroupChatShortcut,
 	killShortcut,
 	moderatorOnlyShortcut,
+	toggleUnreadShortcut,
 }: BuildGroupChatCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
 
@@ -139,6 +141,22 @@ export function buildGroupChatCommands({
 			shortcut: moderatorOnlyShortcut,
 			action: () => {
 				useGroupChatStore.getState().toggleGroupChatModeratorOnly();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeGroupChatId) {
+		const unread = useGroupChatStore.getState().unreadGroupChatIds.has(activeGroupChatId);
+		commands.push({
+			id: 'toggleGroupChatUnread',
+			label: unread ? 'Group Chat: Mark as Read' : 'Group Chat: Mark as Unread',
+			subtext: unread
+				? "Clear this room's unread dot in the Left Bar"
+				: 'Flag this room in the Left Bar until you open it again',
+			shortcut: toggleUnreadShortcut,
+			action: () => {
+				useGroupChatStore.getState().toggleGroupChatUnread(activeGroupChatId);
 				setQuickActionOpen(false);
 			},
 		});

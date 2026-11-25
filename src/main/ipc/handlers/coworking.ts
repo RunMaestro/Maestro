@@ -229,7 +229,9 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					ipcMain.removeListener(responseChannel, handler);
 					reject(new Error('Coworking: timed out waiting for browser op from renderer'));
 				},
-				op.kind === 'read'
+				// A viewport op is a store write that never waits on a dialog or a page,
+				// so it gets the read cap, not the approval-sized one.
+				op.kind === 'read' || op.kind === 'viewport'
 					? BROWSER_OP_TIMEOUT_MS
 					: op.kind === 'pick'
 						? BROWSER_PICK_TIMEOUT_MS

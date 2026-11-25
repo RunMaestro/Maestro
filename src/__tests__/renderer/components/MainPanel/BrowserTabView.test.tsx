@@ -1,15 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import {
 	BrowserTabView,
 	type BrowserTabViewHandle,
 } from '../../../../renderer/components/MainPanel/BrowserTabView';
 import type { BrowserTab, Theme } from '../../../../renderer/types';
+import {
+	dismissCenterFlash,
+	useCenterFlashStore,
+} from '../../../../renderer/stores/centerFlashStore';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPersistence';
+import { normalizeBrowserTabUpdates } from '../../../../renderer/hooks/tabs/internal/browserTabHelpers';
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
+import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { resetStore } from '../../../helpers';
 
 // Default to desktop (Electron) behavior; individual tests flip this to true to
 // exercise the web-desktop browser bundle branch.
@@ -49,6 +59,32 @@ type MockWebview = HTMLElement & {
 	stopFindInPage?: ReturnType<typeof vi.fn>;
 	reload?: ReturnType<typeof vi.fn>;
 };
+
+type BrowserTabViewProps = React.ComponentProps<typeof BrowserTabView>;
+
+/**
+ * Holds the tab the way the session store does: an onUpdateTab call is merged
+ * with the store's own normalizeBrowserTabUpdates and comes back as the `tab`
+ * prop. Design Mode lives on the tab (`tab.designMode`), so a toggle only shows
+ * through this round trip. `onUpdateTab` still sees every write.
+ */
+const StatefulBrowserTabView = React.forwardRef<
+	BrowserTabViewHandle,
+	Omit<BrowserTabViewProps, 'tab' | 'onUpdateTab' | 'ref'> & {
+		initialTab: BrowserTab;
+		onUpdateTab?: BrowserTabViewProps['onUpdateTab'];
+	}
+>(function StatefulBrowserTabView({ initialTab, onUpdateTab, ...rest }, ref) {
+	const [tab, setTab] = React.useState(initialTab);
+	const handleUpdateTab = React.useCallback(
+		(tabId: string, updates: Partial<BrowserTab>) => {
+			onUpdateTab?.(tabId, updates);
+			setTab((current) => normalizeBrowserTabUpdates(current, updates));
+		},
+		[onUpdateTab]
+	);
+	return <BrowserTabView ref={ref} tab={tab} onUpdateTab={handleUpdateTab} {...rest} />;
+});
 
 describe('BrowserTabView', () => {
 	beforeEach(() => {
@@ -1439,26 +1475,44 @@ describe('BrowserTabView', () => {
 
 		async function setupReady(
 			onDesignPick?: ReturnType<typeof vi.fn>,
-			props: { isActive?: boolean; tab?: BrowserTab } = {}
+			props: {
+				isActive?: boolean;
+				isCurrent?: boolean;
+				tab?: BrowserTab;
+				onDesignQueue?: ReturnType<typeof vi.fn>;
+			} = {}
 		) {
 			const ref = React.createRef<BrowserTabViewHandle>();
-			const view = render(
-				<BrowserTabView
+			const onUpdateTab = vi.fn();
+			const element = (isActive: boolean | undefined, isCurrent = props.isCurrent) => (
+				<StatefulBrowserTabView
 					ref={ref}
-					tab={props.tab ?? mockTab}
+					initialTab={props.tab ?? mockTab}
 					theme={mockTheme}
-					onUpdateTab={vi.fn()}
+					onUpdateTab={onUpdateTab}
 					onDesignPick={onDesignPick}
-					isActive={props.isActive}
+					onDesignQueue={props.onDesignQueue}
+					isActive={isActive}
+					isCurrent={isCurrent}
 				/>
 			);
+			const view = render(element(props.isActive));
+			/**
+			 * Hide or show the tab the way MainPanelContent does: through isActive.
+			 * `isCurrent` is whether the tab is still the one on screen (a dialog
+			 * over it makes it inactive but current); it follows isActive when omitted.
+			 */
+			const setActive = (isActive: boolean, isCurrent?: boolean) =>
+				view.rerender(element(isActive, isCurrent));
 			const webview = getWebview() as MockWebview & {
 				getZoomFactor: ReturnType<typeof vi.fn>;
 				capturePage: ReturnType<typeof vi.fn>;
 			};
 			webview.canGoBack = vi.fn(() => false);
 			webview.canGoForward = vi.fn(() => false);
-			webview.getURL = vi.fn(() => 'https://example.com');
+			// The harness keeps what the webview reports, so report the tab's own
+			// page (a blank tab must stay blank after dom-ready).
+			webview.getURL = vi.fn(() => (props.tab ?? mockTab).url);
 			webview.getTitle = vi.fn(() => 'Example');
 			webview.isLoading = vi.fn(() => false);
 			webview.getWebContentsId = vi.fn(() => 99);
@@ -1481,7 +1535,7 @@ describe('BrowserTabView', () => {
 			await act(async () => {
 				webview.dispatchEvent(new Event('dom-ready'));
 			});
-			return { webview, ref, view };
+			return { webview, ref, view, onUpdateTab, setActive };
 		}
 
 		async function arm() {
@@ -1489,6 +1543,20 @@ describe('BrowserTabView', () => {
 				fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
 			});
 			return screen.getByTestId('browser-tab-design-mode-layer');
+		}
+
+		/** The Design Mode flag writes that reached onUpdateTab, in order. */
+		function designModeWrites(onUpdateTab: ReturnType<typeof vi.fn>) {
+			return onUpdateTab.mock.calls
+				.map(([, updates]) => (updates as Partial<BrowserTab>).designMode)
+				.filter((value) => value !== undefined);
+		}
+
+		/** The guest finished loading a document, as Electron reports it. */
+		async function finishLoad(webview: MockWebview) {
+			await act(async () => {
+				webview.dispatchEvent(new Event('did-finish-load'));
+			});
 		}
 
 		it('offers no toggle when nobody receives picks', async () => {
@@ -1588,7 +1656,8 @@ describe('BrowserTabView', () => {
 
 		it('Enter on a focused control runs that control, not a pick or a delivery', async () => {
 			const onDesignPick = vi.fn().mockResolvedValue(true);
-			const { webview } = await setupReady(onDesignPick);
+			const onDesignQueue = vi.fn().mockResolvedValue({ tabName: 'Fix header' });
+			const { webview } = await setupReady(onDesignPick, { onDesignQueue });
 			await arm();
 			// The banner's ESC pill: Enter must not pick.
 			fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-cancel'), { key: 'Enter' });
@@ -1601,6 +1670,7 @@ describe('BrowserTabView', () => {
 			// Card buttons: Enter belongs to the button, never Add to Message.
 			for (const id of [
 				'browser-tab-design-mode-card-close',
+				'browser-tab-design-mode-queue',
 				'browser-tab-design-mode-add-another',
 			]) {
 				await act(async () => {
@@ -1608,12 +1678,13 @@ describe('BrowserTabView', () => {
 				});
 			}
 			expect(onDesignPick).not.toHaveBeenCalled();
+			expect(onDesignQueue).not.toHaveBeenCalled();
 			expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
 		});
 
 		it('a click picks at the click point, crops the guest frame, and opens the card', async () => {
 			const onDesignPick = vi.fn().mockResolvedValue(true);
-			const { webview } = await setupReady(onDesignPick);
+			const { webview, onUpdateTab } = await setupReady(onDesignPick);
 			const layer = await arm();
 
 			await act(async () => {
@@ -1648,7 +1719,35 @@ describe('BrowserTabView', () => {
 					reveal: true,
 				})
 			);
-			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull());
+			// Add to Message reveals the chat but does not leave Design Mode: the
+			// card closes and the flag stays on (only Escape and the toggle clear
+			// it). Here nothing hides the tab, so the picker is still up.
+			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull());
+			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+			expect(designModeWrites(onUpdateTab)).toEqual([true]);
+		});
+
+		it('after Add to Message hides the tab, the picker is back when the tab is shown again', async () => {
+			const onDesignPick = vi.fn().mockResolvedValue(true);
+			const { setActive } = await setupReady(onDesignPick);
+			const layer = await arm();
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'Enter' });
+			});
+			const note = await screen.findByTestId('browser-tab-design-mode-note');
+			await act(async () => {
+				fireEvent.keyDown(note, { key: 'Enter' });
+			});
+			expect(onDesignPick).toHaveBeenCalledWith(expect.objectContaining({ reveal: true }));
+
+			// The reveal switched to the chat (MainPanelContent: isActive false).
+			await act(async () => setActive(false));
+			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			await act(async () => setActive(true));
+
+			const rearmed = screen.getByTestId('browser-tab-design-mode-layer');
+			expect(document.activeElement).toBe(rearmed);
+			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
 		});
 
 		it('Cmd+Enter adds the pick and keeps picking', async () => {
@@ -1667,8 +1766,264 @@ describe('BrowserTabView', () => {
 			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
 		});
 
-		it('Escape closes the card first, then leaves Design Mode', async () => {
-			await setupReady(vi.fn());
+		describe('Queue', () => {
+			const QUEUED_TO = { tabName: 'Fix header' };
+			type QueuedTo = typeof QUEUED_TO | null;
+
+			afterEach(() => {
+				dismissCenterFlash();
+			});
+
+			/** Arm Design Mode, pick the element under the center, and wait for its card. */
+			async function openCard(options: {
+				onDesignQueue?: ReturnType<typeof vi.fn>;
+				onDesignPick?: ReturnType<typeof vi.fn>;
+			}) {
+				const onDesignPick = options.onDesignPick ?? vi.fn().mockResolvedValue(true);
+				await setupReady(onDesignPick, { onDesignQueue: options.onDesignQueue });
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+				});
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				return { note, onDesignPick };
+			}
+
+			function queueButton() {
+				return screen.getByTestId('browser-tab-design-mode-queue') as HTMLButtonElement;
+			}
+
+			/** A queue call the test settles by hand, to hold the hand-off in flight. */
+			function pendingQueue() {
+				let finish: (value: QueuedTo) => void = () => {};
+				const onDesignQueue = vi.fn(
+					() =>
+						new Promise<QueuedTo>((resolve) => {
+							finish = resolve;
+						})
+				);
+				return { onDesignQueue, finish: (value: QueuedTo) => finish(value) };
+			}
+
+			it('puts a Queue button left of Add and Pick Another and names its shortcut', async () => {
+				await openCard({ onDesignQueue: vi.fn() });
+				const addAnother = screen.getByTestId('browser-tab-design-mode-add-another');
+
+				expect(queueButton().textContent).toBe('Queue');
+				expect(
+					queueButton().compareDocumentPosition(addAnother) & Node.DOCUMENT_POSITION_FOLLOWING
+				).toBeTruthy();
+				expect(queueButton().title).toContain(formatShortcutKeys(['Alt', 'Enter']));
+			});
+
+			it('offers no Queue where the host cannot queue, and Alt+Enter then does nothing', async () => {
+				const { note, onDesignPick } = await openCard({});
+
+				expect(screen.queryByTestId('browser-tab-design-mode-queue')).toBeNull();
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				// The chord is reserved for Queue: it must not fall through to Add.
+				expect(onDesignPick).not.toHaveBeenCalled();
+				expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+			});
+
+			it('the button queues the pick with its note and screenshot, keeps Design Mode on, and names the tab', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Make it blue' } });
+
+				await act(async () => {
+					fireEvent.click(queueButton());
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				const [capture] = onDesignQueue.mock.calls[0];
+				expect(capture).toMatchObject({
+					pick: { selector: 'button.primary' },
+					screenshot: SHOT,
+					note: 'Make it blue',
+				});
+				// A queued pick takes no `reveal`, and never goes down the add path.
+				expect(capture).not.toHaveProperty('reveal');
+				expect(onDesignPick).not.toHaveBeenCalled();
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(useCenterFlashStore.getState().active).toMatchObject({
+					message: 'Queued for Fix header',
+					color: 'green',
+				});
+			});
+
+			it('Alt+Enter from the note queues the same way', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Make it blue' } });
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledWith(
+					expect.objectContaining({ note: 'Make it blue', screenshot: SHOT })
+				);
+				expect(onDesignPick).not.toHaveBeenCalled();
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
+
+			it('leaves the other Enter chords alone: Shift+Alt+Enter is a newline, Alt+Cmd+Enter keeps picking', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true, shiftKey: true });
+				});
+				expect(onDesignQueue).not.toHaveBeenCalled();
+				expect(onDesignPick).not.toHaveBeenCalled();
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true, metaKey: true });
+				});
+				expect(onDesignPick).toHaveBeenCalledWith(expect.objectContaining({ reveal: false }));
+				expect(onDesignQueue).not.toHaveBeenCalled();
+			});
+
+			it('only the note owns Alt+Enter: on a focused card button it queues nothing', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(QUEUED_TO);
+				await openCard({ onDesignQueue });
+
+				for (const id of [
+					'browser-tab-design-mode-card-close',
+					'browser-tab-design-mode-queue',
+					'browser-tab-design-mode-add-another',
+				]) {
+					await act(async () => {
+						fireEvent.keyDown(screen.getByTestId(id), { key: 'Enter', altKey: true });
+					});
+				}
+
+				expect(onDesignQueue).not.toHaveBeenCalled();
+				expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+			});
+
+			it('keeps the card, the note and the mode when the host queued nothing', async () => {
+				const onDesignQueue = vi.fn().mockResolvedValue(null);
+				const { note } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Keep this note' } });
+
+				await act(async () => {
+					fireEvent.click(queueButton());
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(
+					(screen.getByTestId('browser-tab-design-mode-note') as HTMLTextAreaElement).value
+				).toBe('Keep this note');
+				expect(useCenterFlashStore.getState().active).toBeNull();
+				// Free again, so the user can retry.
+				expect(queueButton().disabled).toBe(false);
+			});
+
+			it('keeps the card and says so when the host rejects, with no unhandled rejection', async () => {
+				const onDesignQueue = vi.fn().mockRejectedValue(new Error('queue store gone'));
+				const { note } = await openCard({ onDesignQueue });
+				fireEvent.change(note, { target: { value: 'Keep this note' } });
+
+				await act(async () => {
+					fireEvent.click(queueButton());
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				expect(
+					(screen.getByTestId('browser-tab-design-mode-note') as HTMLTextAreaElement).value
+				).toBe('Keep this note');
+				expect(useNotificationStore.getState().toasts.at(-1)).toMatchObject({
+					title: 'Pick Not Sent',
+				});
+				expect(queueButton().disabled).toBe(false);
+			});
+
+			it('opens no new card while a queue hand-off is in flight, so its close cannot take one', async () => {
+				const { onDesignQueue, finish } = pendingQueue();
+				const { note } = await openCard({ onDesignQueue });
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				// Close the card, then try to pick again before the queue answers.
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-card'), { key: 'Escape' });
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), {
+						key: 'Enter',
+					});
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+
+				await act(async () => {
+					finish(QUEUED_TO);
+				});
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
+
+			it('hands off once: a press in the same tick, or while one is in flight, does nothing', async () => {
+				const { onDesignQueue, finish } = pendingQueue();
+				const { note, onDesignPick } = await openCard({ onDesignQueue });
+
+				// A click and Alt+Enter in one tick: the second finds the first running
+				// before React has re-rendered the disabled button.
+				await act(async () => {
+					fireEvent.click(queueButton());
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+				// Add is held back too while the queue call is pending.
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter' });
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+				expect(onDesignPick).not.toHaveBeenCalled();
+				expect(queueButton().disabled).toBe(true);
+
+				await act(async () => {
+					finish(QUEUED_TO);
+				});
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(onDesignQueue).toHaveBeenCalledTimes(1);
+			});
+
+			it('still says where the pick went when Design Mode was left while it was in flight', async () => {
+				const { onDesignQueue, finish } = pendingQueue();
+				const { note } = await openCard({ onDesignQueue });
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter', altKey: true });
+				});
+
+				// Escape closes the card, a second Escape leaves Design Mode.
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-card'), { key: 'Escape' });
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), { key: 'Escape' });
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+
+				await act(async () => {
+					finish(QUEUED_TO);
+				});
+
+				// The pick is in the queue whether or not the layer is still there.
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
+		});
+
+		it('Escape closes the card first, then turns Design Mode off on the tab', async () => {
+			const { onUpdateTab } = await setupReady(vi.fn());
 			const layer = await arm();
 			await act(async () => {
 				fireEvent.keyDown(layer, { key: 'Enter' });
@@ -1676,8 +2031,13 @@ describe('BrowserTabView', () => {
 			const card = await screen.findByTestId('browser-tab-design-mode-card');
 			fireEvent.keyDown(card, { key: 'Escape' });
 			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			expect(designModeWrites(onUpdateTab)).toEqual([true]);
 			fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), { key: 'Escape' });
 			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			expect(designModeWrites(onUpdateTab)).toEqual([true, false]);
+			expect(
+				screen.getByTestId('browser-tab-design-mode-toggle').getAttribute('aria-pressed')
+			).toBe('false');
 		});
 
 		it('Escape closes the card even when focus fell back to the layer', async () => {
@@ -1716,20 +2076,1903 @@ describe('BrowserTabView', () => {
 			expect(onDesignPick).not.toHaveBeenCalled();
 		});
 
-		it('leaves Design Mode when the tab stops being the active surface', async () => {
-			const onDesignPick = vi.fn();
-			const { view } = await setupReady(onDesignPick);
-			await arm();
-			view.rerender(
-				<BrowserTabView
-					tab={mockTab}
-					theme={mockTheme}
-					onUpdateTab={vi.fn()}
-					onDesignPick={onDesignPick}
-					isActive={false}
-				/>
-			);
-			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+		describe('sticky per tab', () => {
+			function toggleButton() {
+				return screen.getByTestId('browser-tab-design-mode-toggle') as HTMLButtonElement;
+			}
+
+			it('the toolbar toggle writes the flag on the tab, and the layer follows the tab', async () => {
+				const { onUpdateTab } = await setupReady(vi.fn());
+				await arm();
+				expect(onUpdateTab).toHaveBeenCalledWith('browser-1', { designMode: true });
+				expect(toggleButton().getAttribute('aria-pressed')).toBe('true');
+
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+				expect(onUpdateTab).toHaveBeenCalledWith('browser-1', { designMode: false });
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			});
+
+			it('a hidden or covered tab draws no picker but keeps the flag, and re-arms when shown', async () => {
+				const { webview, onUpdateTab, setActive } = await setupReady(vi.fn());
+				await arm();
+				const probesBefore = guestCalls(webview, 'probe').length;
+
+				await act(async () => setActive(false));
+				// Nothing left over the page to swallow a click, and the flag is kept.
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+				expect(toggleButton().getAttribute('aria-pressed')).toBe('true');
+
+				await act(async () => setActive(true));
+				// A fresh layer: it takes focus and probes from the center again.
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				expect(document.activeElement).toBe(layer);
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').length).toBeGreaterThan(probesBefore)
+				);
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+			});
+
+			it('a tab saved with Design Mode on comes up armed, and its first page load fills in the outline', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn(), {
+					tab: { ...mockTab, designMode: true },
+				});
+				// Armed without a toggle. The probe at mount found no guest to ask yet.
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				expect(document.activeElement).toBe(layer);
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+
+				await finishLoad(webview);
+
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+				expect(designModeWrites(onUpdateTab)).toEqual([]);
+			});
+
+			it('a finished page load re-probes at the same point, from the element itself', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn());
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+				});
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').some((req) => req?.depth === 1)).toBe(true)
+				);
+				const probesBefore = guestCalls(webview, 'probe').length;
+
+				await finishLoad(webview);
+
+				// Still in Design Mode, asking the new document at the pointer, with
+				// the walked depth reset: depth 1 meant a parent on the old page.
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').length).toBeGreaterThan(probesBefore)
+				);
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 0 });
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+			});
+
+			it('a page load takes keyboard focus back only when nothing holds it', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const layer = await arm();
+
+				// A page that focused itself on load was pushed out: focus is nowhere.
+				act(() => layer.blur());
+				expect(document.activeElement).toBe(document.body);
+				await finishLoad(webview);
+				expect(document.activeElement).toBe(layer);
+
+				// The user is typing in the address bar: a load must not take it.
+				const address = screen.getByLabelText('Browser URL');
+				act(() => address.focus());
+				await finishLoad(webview);
+				expect(document.activeElement).toBe(address);
+			});
+
+			it('the blank page hides the picker without turning it off, and the next page re-arms it', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn());
+				await arm();
+
+				webview.getURL = vi.fn(() => DEFAULT_BROWSER_TAB_URL);
+				await act(async () => {
+					webview.dispatchEvent(
+						Object.assign(new Event('did-navigate'), { url: DEFAULT_BROWSER_TAB_URL })
+					);
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(toggleButton().getAttribute('aria-pressed')).toBe('true');
+
+				webview.getURL = vi.fn(() => 'https://example.com/next');
+				await act(async () => {
+					webview.dispatchEvent(
+						Object.assign(new Event('did-navigate'), { url: 'https://example.com/next' })
+					);
+				});
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+			});
+
+			it('on the blank page the toggle can still turn a sticky Design Mode off, but not on', async () => {
+				const { ref, onUpdateTab } = await setupReady(vi.fn(), {
+					tab: { ...mockTab, url: DEFAULT_BROWSER_TAB_URL, designMode: true },
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(toggleButton().disabled).toBe(false);
+
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+				expect(designModeWrites(onUpdateTab)).toEqual([false]);
+				expect(toggleButton().disabled).toBe(true);
+
+				// The shortcut and the palette cannot turn it on here either.
+				await act(async () => {
+					ref.current!.toggleDesignMode();
+				});
+				expect(designModeWrites(onUpdateTab)).toEqual([false]);
+			});
+		});
+
+		describe('side bars', () => {
+			function bars() {
+				const { leftSidebarOpen, rightPanelOpen } = useUIStore.getState();
+				return { left: leftSidebarOpen, right: rightPanelOpen };
+			}
+
+			function toggleButton() {
+				return screen.getByTestId('browser-tab-design-mode-toggle') as HTMLButtonElement;
+			}
+
+			beforeEach(() => {
+				resetStore(useUIStore);
+				useSettingsStore.setState({ designModeCollapsePanels: true });
+			});
+
+			it('folds the Left Bar and Right Bar when Design Mode comes on and gives them back when it goes off', async () => {
+				await setupReady(vi.fn());
+				expect(bars()).toEqual({ left: true, right: true });
+
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('brings the bars back when the tab is hidden and folds them again when it is shown', async () => {
+				const { setActive } = await setupReady(vi.fn());
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				await act(async () => setActive(false));
+				expect(bars()).toEqual({ left: true, right: true });
+
+				// Design Mode stayed on for the tab, so showing it folds the bars again.
+				await act(async () => setActive(true));
+				expect(bars()).toEqual({ left: false, right: false });
+			});
+
+			it('keeps the bars folded while a dialog covers the tab', async () => {
+				const { setActive } = await setupReady(vi.fn());
+				await arm();
+
+				// A dialog over the tab makes it inactive (the overlay steps aside) but it
+				// is still the tab on screen: the page must not reflow behind the dialog.
+				await act(async () => setActive(false, true));
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				await act(async () => setActive(true, true));
+				expect(bars()).toEqual({ left: false, right: false });
+
+				// Switched to another tab: now it gives them back.
+				await act(async () => setActive(false, false));
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('folds at mount for a tab saved with Design Mode on, and unfolds when it unmounts', async () => {
+				const { view } = await setupReady(vi.fn(), { tab: { ...mockTab, designMode: true } });
+				expect(bars()).toEqual({ left: false, right: false });
+
+				view.unmount();
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('leaves a bar where the user put it while Design Mode was on', async () => {
+				await setupReady(vi.fn());
+				await arm();
+
+				// Open the Right Bar to read History, then close it again.
+				act(() => useUIStore.getState().setRightPanelOpen(true));
+				act(() => useUIStore.getState().setRightPanelOpen(false));
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+
+				// The Left Bar comes back; the Right Bar stays where the user left it.
+				expect(bars()).toEqual({ left: true, right: false });
+			});
+
+			it('never opens a bar the user had already closed', async () => {
+				act(() => useUIStore.getState().setLeftSidebarOpen(false));
+				await setupReady(vi.fn());
+
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+				await act(async () => {
+					fireEvent.click(toggleButton());
+				});
+
+				expect(bars()).toEqual({ left: false, right: true });
+			});
+
+			it('folds nothing when the setting is off', async () => {
+				useSettingsStore.setState({ designModeCollapsePanels: false });
+				await setupReady(vi.fn());
+
+				await arm();
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('follows the setting while Design Mode is on', async () => {
+				await setupReady(vi.fn());
+				await arm();
+				expect(bars()).toEqual({ left: false, right: false });
+
+				act(() => useSettingsStore.setState({ designModeCollapsePanels: false }));
+				expect(bars()).toEqual({ left: true, right: true });
+
+				act(() => useSettingsStore.setState({ designModeCollapsePanels: true }));
+				expect(bars()).toEqual({ left: false, right: false });
+			});
+
+			it('folds nothing on the blank tab, where the picker is not offered', async () => {
+				await setupReady(vi.fn(), {
+					tab: { ...mockTab, url: DEFAULT_BROWSER_TAB_URL, designMode: true },
+				});
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+
+			it('never folds a tab that is not on screen (a background browser)', async () => {
+				await setupReady(vi.fn(), {
+					isActive: false,
+					tab: { ...mockTab, designMode: true },
+				});
+
+				expect(bars()).toEqual({ left: true, right: true });
+			});
+		});
+
+		describe('a size change under the layer', () => {
+			/**
+			 * Stands in for ResizeObserver and hands the test the callback of whichever
+			 * observer watches the layer, so it can report a size change by hand. The
+			 * layer's size is whatever `size` says (jsdom has no layout).
+			 */
+			function watchLayerSize(size: { width: number; height: number }) {
+				const reports: Array<() => void> = [];
+				class CapturingResizeObserver {
+					constructor(private readonly callback: ResizeObserverCallback) {}
+					observe(target: Element) {
+						if (target.getAttribute('data-testid') === 'browser-tab-design-mode-layer') {
+							reports.push(() => this.callback([], this as unknown as ResizeObserver));
+						}
+					}
+					disconnect() {}
+				}
+				vi.stubGlobal('ResizeObserver', CapturingResizeObserver);
+				const width = vi
+					.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+					.mockImplementation(() => size.width);
+				const height = vi
+					.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+					.mockImplementation(() => size.height);
+				return {
+					/** The observer callbacks registered for the layer so far. */
+					reports,
+					restore: () => {
+						width.mockRestore();
+						height.mockRestore();
+					},
+				};
+			}
+
+			const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+			it('probes again at the pointer once the size settles, so the outline is not left on the old layout', async () => {
+				const size = { width: 1000, height: 600 };
+				const watch = watchLayerSize(size);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					const layer = await arm();
+					await act(async () => {
+						fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+					});
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual({
+							type: 'probe',
+							x: 30,
+							y: 60,
+							depth: 0,
+							frame: { width: 1000, height: 600 },
+						})
+					);
+					expect(watch.reports).toHaveLength(1);
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					// The side bars fold: the layer grows, in several steps.
+					for (const width of [1100, 1200, 1300]) {
+						size.width = width;
+						act(() => watch.reports[0]());
+					}
+					await act(async () => {
+						await settle();
+					});
+
+					// One probe for the whole change, at the pointer, with the new frame.
+					const probes = guestCalls(webview, 'probe');
+					expect(probes.length).toBe(probesBefore + 1);
+					expect(probes.at(-1)).toMatchObject({
+						x: 30,
+						y: 60,
+						frame: { width: 1300, height: 600 },
+					});
+				} finally {
+					watch.restore();
+				}
+			});
+
+			it('ignores the report an observer makes on starting, and a size that has not changed', async () => {
+				const size = { width: 1000, height: 600 };
+				const watch = watchLayerSize(size);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					await arm();
+					await waitFor(() => expect(guestCalls(webview, 'probe').length).toBeGreaterThan(0));
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					act(() => watch.reports[0]());
+					await act(async () => {
+						await settle();
+					});
+
+					expect(guestCalls(webview, 'probe').length).toBe(probesBefore);
+				} finally {
+					watch.restore();
+				}
+			});
+
+			it('stops watching when the layer goes away', async () => {
+				const size = { width: 1000, height: 600 };
+				const watch = watchLayerSize(size);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					await arm();
+					await waitFor(() => expect(guestCalls(webview, 'probe').length).toBeGreaterThan(0));
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					size.width = 1400;
+					act(() => watch.reports[0]());
+					// Design Mode goes off before the size settles.
+					await act(async () => {
+						fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+					});
+					await act(async () => {
+						await settle();
+					});
+
+					expect(guestCalls(webview, 'probe').length).toBe(probesBefore);
+				} finally {
+					watch.restore();
+				}
+			});
+		});
+
+		describe('hold Space to use the page', () => {
+			/**
+			 * Answers the page's Space watch: every `passthrough` call stays
+			 * pending until the test resolves it (the page heard the release), and
+			 * `endPassthrough` closes the open watch and returns its report, as
+			 * the guest helper does. Its reply to the first call is left to the
+			 * test, so a late one can be sent on purpose.
+			 */
+			function watchPage(webview: MockWebview) {
+				const base = webview.executeJavaScript.getMockImplementation() as (
+					code: string
+				) => Promise<unknown>;
+				const page = {
+					/** Where the page last saw the pointer, guest CSS px. */
+					pointer: null as { x: number; y: number } | null,
+					/** One resolver per watch the host started, oldest first. */
+					watches: [] as Array<(report: unknown) => void>,
+					open: false,
+					report: () => ({ point: page.pointer, viewport: pickPayload.viewport }),
+					/** The page heard Space come up: the newest watch ends. */
+					release() {
+						page.open = false;
+						page.watches.at(-1)?.(page.report());
+					},
+				};
+				webview.executeJavaScript.mockImplementation((code: string) => {
+					const req = guestRequest(code);
+					if (req?.type === 'passthrough') {
+						page.open = true;
+						return new Promise((resolve) => page.watches.push(resolve));
+					}
+					if (req?.type === 'endPassthrough') {
+						const report = page.open ? page.report() : null;
+						page.open = false;
+						return Promise.resolve(report);
+					}
+					return base(code);
+				});
+				return page;
+			}
+
+			/** Space goes down; false when the layer took it (default prevented). */
+			async function holdSpace(target: HTMLElement, init: KeyboardEventInit = {}) {
+				let passed = true;
+				await act(async () => {
+					passed = fireEvent.keyDown(target, { key: ' ', code: 'Space', ...init });
+				});
+				return passed;
+			}
+
+			async function releaseSpace(target: HTMLElement) {
+				await act(async () => {
+					fireEvent.keyUp(target, { key: ' ', code: 'Space' });
+				});
+			}
+
+			/** Keyboard focus moves into the page, the way a click into it moves it. */
+			function focusPage(webview: MockWebview) {
+				// jsdom focuses only an element with a tabindex; the pointerdown is
+				// what lets the host's focus guard leave a clicked page focused.
+				webview.tabIndex = -1;
+				fireEvent.pointerDown(webview);
+				act(() => webview.focus());
+				expect(document.activeElement).toBe(webview);
+			}
+
+			const bannerText = () => screen.getByTestId('browser-tab-design-mode-banner').textContent;
+
+			it('lets the page have the pointer while Space is down, then picks again from the same point', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+
+				// Taken by the layer, so nothing behind it scrolls.
+				expect(await holdSpace(layer)).toBe(false);
+				expect(layer.style.pointerEvents).toBe('none');
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+				// The crumbs go with the outline: nothing over the page to click.
+				expect(screen.queryByTestId('browser-tab-design-mode-crumbs')).toBeNull();
+				expect(bannerText()).toContain('Using the page - release Space to pick');
+				// The picking hints do not apply while the page is in use.
+				expect(bannerText()).not.toContain('Arrows');
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(1);
+
+				// The held key's auto-repeat changes nothing and asks the page once.
+				expect(await holdSpace(layer, { repeat: true })).toBe(false);
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(1);
+
+				await releaseSpace(layer);
+				expect(layer.style.pointerEvents).toBe('');
+				expect(bannerText()).toContain('Design Mode: click an element.');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 0 });
+				expect(document.activeElement).toBe(layer);
+			});
+
+			it('Space is an ordinary key on a focused control and in the note', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				// The banner's ESC pill keeps Space's own meaning.
+				expect(await holdSpace(screen.getByTestId('browser-tab-design-mode-cancel'))).toBe(true);
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+				});
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				expect(await holdSpace(note)).toBe(true);
+				await releaseSpace(note);
+
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(0);
+				expect(layer.style.pointerEvents).toBe('');
+				expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+			});
+
+			it('a release the page reports resumes picking where the page saw the pointer, and never picks', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				const page = watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				// The user clicked into the page (it holds the keys now) and moved over it.
+				focusPage(webview);
+				page.pointer = { x: 120, y: 80 };
+
+				await act(async () => page.release());
+
+				expect(layer.style.pointerEvents).toBe('');
+				// jsdom lays nothing out, so the overlay and the page share one scale.
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 120, y: 80, depth: 0 })
+				);
+				// The keys come back to the layer, from the page that held them.
+				expect(document.activeElement).toBe(layer);
+				// A release can only end it: no pick, no card, nothing delivered.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(onDesignPick).not.toHaveBeenCalled();
+			});
+
+			it('a release heard on the host moves to where the page saw the pointer', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const page = watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				page.pointer = { x: 200, y: 150 };
+
+				await releaseSpace(layer);
+
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 200, y: 150, depth: 0 })
+				);
+			});
+
+			it('Enter, the arrows, a click and the wheel wait while the page is in use', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				const probes = guestCalls(webview, 'probe').length;
+
+				// In the app the click and the wheel go to the page; the layer
+				// ignores them even when it hears them.
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+					fireEvent.click(layer, { clientX: 5, clientY: 5, button: 0 });
+					fireEvent.wheel(layer, { clientX: 5, clientY: 5, deltaY: 100 });
+				});
+
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(guestCalls(webview, 'scroll')).toHaveLength(0);
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			});
+
+			it('a release in a host control ends it without taking that control', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				const address = screen.getByLabelText('Browser URL');
+				act(() => address.focus());
+
+				await releaseSpace(address);
+
+				expect(layer.style.pointerEvents).toBe('');
+				expect(document.activeElement).toBe(address);
+			});
+
+			it('leaving the app while Space is down ends it; a click into the page does not', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				const windowBlur = async () => {
+					await act(async () => {
+						fireEvent.blur(window);
+						await new Promise((resolve) => setTimeout(resolve, 0));
+					});
+				};
+
+				// A click into the page may blur the host window: the page holds
+				// focus, so the release will reach its watch.
+				focusPage(webview);
+				await windowBlur();
+				expect(layer.style.pointerEvents).toBe('none');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(0);
+
+				// Focus back on the layer, then the app loses focus (Cmd+Tab): the
+				// release will land in another app.
+				act(() => layer.focus());
+				await windowBlur();
+				expect(layer.style.pointerEvents).toBe('');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+			});
+
+			it('a page load ends it and takes the keys back, so a Space still held starts it again', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				// The user clicked a link: focus is in the page, and the new page loads.
+				focusPage(webview);
+
+				await finishLoad(webview);
+
+				expect(layer.style.pointerEvents).toBe('');
+				expect(document.activeElement).toBe(layer);
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				// The key is still down: its next auto-repeat reaches the layer.
+				await holdSpace(layer, { repeat: true });
+				expect(layer.style.pointerEvents).toBe('none');
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(2);
+			});
+
+			it('falls back: once the pointer is seen outside the page, its return resumes picking', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+
+				// Over the page the layer does nothing (in the app it hears nothing).
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 40, clientY: 40 });
+				});
+				expect(layer.style.pointerEvents).toBe('none');
+
+				// Seen over the toolbar: the layer takes the pointer back, still in use.
+				await act(async () => {
+					fireEvent.mouseMove(screen.getByLabelText('Browser URL'), { clientX: 900, clientY: 5 });
+				});
+				expect(layer.style.pointerEvents).toBe('');
+				expect(bannerText()).toContain('Using the page - release Space to pick');
+
+				// Its return resumes picking at that point.
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 90, clientY: 45 });
+				});
+				expect(bannerText()).toContain('Design Mode: click an element.');
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 90, y: 45, depth: 0 })
+				);
+			});
+
+			it('falls back only with Space up: a key the layer still hears repeating keeps the page in use', async () => {
+				const { webview } = await setupReady(vi.fn());
+				watchPage(webview);
+				const layer = await arm();
+				const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+				try {
+					const leaveAndReturn = async () => {
+						await act(async () => {
+							fireEvent.mouseMove(screen.getByLabelText('Browser URL'), {
+								clientX: 900,
+								clientY: 5,
+							});
+						});
+						expect(layer.style.pointerEvents).toBe('');
+						await act(async () => {
+							fireEvent.mouseMove(layer, { clientX: 90, clientY: 45 });
+						});
+					};
+					await holdSpace(layer);
+					await holdSpace(layer, { repeat: true });
+
+					// Back within a repeat of the key: it is down, so the page gets the pointer.
+					now.mockReturnValue(10_100);
+					await leaveAndReturn();
+					expect(layer.style.pointerEvents).toBe('none');
+					expect(bannerText()).toContain('Using the page - release Space to pick');
+					expect(guestCalls(webview, 'endPassthrough')).toHaveLength(0);
+
+					// No repeat for longer than that: Space is up, so picking resumes.
+					now.mockReturnValue(10_700);
+					await leaveAndReturn();
+					expect(bannerText()).toContain('Design Mode: click an element.');
+					expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+				} finally {
+					now.mockRestore();
+				}
+			});
+
+			it('a late reply from an earlier watch cannot end a newer one', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const page = watchPage(webview);
+				const layer = await arm();
+				await holdSpace(layer);
+				await releaseSpace(layer);
+				await holdSpace(layer);
+				expect(page.watches).toHaveLength(2);
+
+				// The first watch's reply arrives only now.
+				await act(async () => page.watches[0](page.report()));
+				expect(layer.style.pointerEvents).toBe('none');
+
+				await act(async () => page.watches[1](page.report()));
+				expect(layer.style.pointerEvents).toBe('');
+			});
+
+			it('leaving the tab or Design Mode while Space is down tells the page to stop watching', async () => {
+				const { webview, setActive } = await setupReady(vi.fn());
+				watchPage(webview);
+				await holdSpace(await arm());
+
+				await act(async () => setActive(false));
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(1);
+
+				// A fresh layer starts out picking.
+				await act(async () => setActive(true));
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				expect(layer.style.pointerEvents).toBe('');
+
+				// Escape still leaves Design Mode while the page is in use.
+				await holdSpace(layer);
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Escape' });
+				});
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+				expect(guestCalls(webview, 'endPassthrough')).toHaveLength(2);
+			});
+		});
+
+		describe('ancestor crumbs', () => {
+			/** The element under the pointer, then its ancestors, as the guest walks them. */
+			const CHAIN = ['span.icon', 'button.primary', 'section.footer', 'main', 'body'];
+
+			/**
+			 * Answers every probe from CHAIN, clamped at <body> as the guest clamps
+			 * it. Each level has its own box (guest CSS px; jsdom draws them 1:1),
+			 * so a test can tell which element is outlined and where its label sits.
+			 */
+			function walkablePage(webview: MockWebview, { cut = false } = {}) {
+				const base = webview.executeJavaScript.getMockImplementation() as (
+					code: string
+				) => Promise<unknown>;
+				webview.executeJavaScript.mockImplementation((code: string) => {
+					const req = guestRequest(code);
+					if (req?.type !== 'probe') return base(code);
+					const depth = Math.min(Number(req.depth), CHAIN.length - 1);
+					return Promise.resolve({
+						rect: { x: 100 - depth * 20, y: 200 - depth * 40, width: 100, height: 40 },
+						label: CHAIN[depth],
+						depth,
+						ancestors: CHAIN.slice(depth + 1),
+						ancestorsTruncated: cut,
+						viewport: pickPayload.viewport,
+					});
+				});
+			}
+
+			const crumbRow = () => screen.getByTestId('browser-tab-design-mode-crumbs');
+			const crumbLabels = () =>
+				within(crumbRow())
+					.queryAllByRole('button')
+					.map((button) => button.textContent);
+			/** The outlined element: the crumb row's last, current entry. */
+			const outlined = () => crumbRow().querySelector('[aria-current]')?.textContent;
+			const crumb = (label: string) => within(crumbRow()).getByRole('button', { name: label });
+
+			/** Hover the element at (30, 60) and wait for its crumbs. */
+			async function hoverIcon() {
+				const layer = screen.getByTestId('browser-tab-design-mode-layer');
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				await waitFor(() => expect(outlined()).toBe('span.icon'));
+				return layer;
+			}
+
+			/** Click a crumb and wait for the ancestor it names to be outlined. */
+			async function clickCrumb(label: string) {
+				await act(async () => {
+					fireEvent.click(crumb(label));
+				});
+				await waitFor(() => expect(outlined()).toBe(label));
+			}
+
+			/**
+			 * Lays the crumb row out where the label for the hovered element sits:
+			 * a 300 x 22 box just above the element's top edge (jsdom does no
+			 * layout of its own).
+			 */
+			function layOutCrumbs() {
+				const box = { left: 100, top: 180, right: 400, bottom: 202, width: 300, height: 22 };
+				vi.spyOn(crumbRow(), 'getBoundingClientRect').mockReturnValue({
+					...box,
+					x: box.left,
+					y: box.top,
+					toJSON: () => box,
+				} as DOMRect);
+			}
+
+			it('the hover label is the path to the outlined element, farthest first', async () => {
+				const { webview } = await setupReady(vi.fn());
+				walkablePage(webview);
+				await arm();
+				await hoverIcon();
+
+				expect(crumbLabels()).toEqual(['body', 'main', 'section.footer', 'button.primary']);
+				// The outlined element closes the path, followed by its size.
+				expect(crumbRow().textContent).toBe(
+					'body>main>section.footer>button.primary>span.icon100 x 40'
+				);
+				// The banner names the gestures picking offers.
+				expect(screen.getByTestId('browser-tab-design-mode-banner').textContent).toContain(
+					'Space: use the page. Drag: region. Arrows: parent / child.'
+				);
+			});
+
+			it('a chain cut at the cap starts with an ellipsis', async () => {
+				const { webview } = await setupReady(vi.fn());
+				walkablePage(webview, { cut: true });
+				await arm();
+				await hoverIcon();
+				expect(crumbRow().textContent?.startsWith('…>body>')).toBe(true);
+			});
+
+			it('a crumb click outlines that ancestor, walked from the same point, and never picks', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+
+				// Over the crumbs the outline stays put: nothing asks about the
+				// point under them.
+				const probes = guestCalls(webview, 'probe').length;
+				await act(async () => {
+					fireEvent.mouseMove(crumb('section.footer'), { clientX: 120, clientY: 190 });
+				});
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				// Pressing a crumb leaves the keys with the layer (default prevented,
+				// so the button never takes focus), and Enter and the arrows go on working.
+				expect(fireEvent.mouseDown(crumb('section.footer'))).toBe(false);
+				expect(document.activeElement).toBe(layer);
+
+				await clickCrumb('section.footer');
+
+				// Two levels above the element under the pointer, asked at that point.
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 2 });
+				expect(crumbLabels()).toEqual(['body', 'main']);
+				expect(screen.getByTestId('browser-tab-design-mode-outline').style.left).toBe('58px');
+				// Not a pick: nothing described, no card, nothing delivered.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(onDesignPick).not.toHaveBeenCalled();
+			});
+
+			it('holds the ancestor near its crumbs: they stay put, and a click there picks it', async () => {
+				const { webview } = await setupReady(vi.fn().mockResolvedValue(true));
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+				// The label rests on the hovered element's top edge (y 200), reaching
+				// 2 px over it so the pointer can climb onto it.
+				const labelTop = () => crumbRow().parentElement!.style.top;
+				expect(labelTop()).toBe('202px');
+
+				await clickCrumb('section.footer');
+				// The outline moved up to the section; its crumbs did not move with it.
+				expect(screen.getByTestId('browser-tab-design-mode-outline').style.top).toBe('118px');
+				expect(labelTop()).toBe('202px');
+
+				// Back onto the page beside the crumbs: the outline stays on the ancestor.
+				layOutCrumbs();
+				const probes = guestCalls(webview, 'probe').length;
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 130, clientY: 230 });
+				});
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				expect(outlined()).toBe('section.footer');
+
+				// A click there picks the outlined ancestor, not the element under it.
+				await act(async () => {
+					fireEvent.click(layer, { clientX: 130, clientY: 230, button: 0 });
+				});
+				await screen.findByTestId('browser-tab-design-mode-card');
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 2 });
+				// The card's frozen outline is labeled by its tag, with no crumbs.
+				expect(screen.queryByTestId('browser-tab-design-mode-crumbs')).toBeNull();
+			});
+
+			it('Enter and the arrows go on from a held ancestor', async () => {
+				const { webview } = await setupReady(vi.fn().mockResolvedValue(true));
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+				await clickCrumb('section.footer');
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+				});
+				await waitFor(() => expect(outlined()).toBe('main'));
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 3 });
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Enter' });
+				});
+				await screen.findByTestId('browser-tab-design-mode-card');
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 3 });
+			});
+
+			it('moving away from the crumbs lets go: the outline follows the pointer again', async () => {
+				const { webview } = await setupReady(vi.fn().mockResolvedValue(true));
+				walkablePage(webview);
+				await arm();
+				const layer = await hoverIcon();
+				await clickCrumb('main');
+				layOutCrumbs();
+
+				// More than 48 px from the crumbs.
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 600, clientY: 400 });
+				});
+				await waitFor(() => expect(outlined()).toBe('span.icon'));
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 600, y: 400, depth: 0 });
+
+				// And a click picks what is under it.
+				await act(async () => {
+					fireEvent.click(layer, { clientX: 600, clientY: 400, button: 0 });
+				});
+				await screen.findByTestId('browser-tab-design-mode-card');
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 600, y: 400, depth: 0 });
+			});
+
+			it('a page load lets go of a held ancestor', async () => {
+				const { webview } = await setupReady(vi.fn());
+				walkablePage(webview);
+				await arm();
+				await hoverIcon();
+				await clickCrumb('main');
+
+				await finishLoad(webview);
+
+				await waitFor(() => expect(outlined()).toBe('span.icon'));
+				expect(guestCalls(webview, 'probe').at(-1)).toMatchObject({ x: 30, y: 60, depth: 0 });
+				// Let go: as the walk moves the outline, its label goes with it again.
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), {
+						key: 'ArrowUp',
+					});
+				});
+				await waitFor(() => expect(outlined()).toBe('button.primary'));
+				expect(crumbRow().parentElement!.style.top).toBe('162px');
+			});
+		});
+
+		describe('drag to select a region', () => {
+			afterEach(() => {
+				dismissCenterFlash();
+			});
+
+			const element = (selector: string, tagName: string, y: number) => ({
+				selector,
+				tagName,
+				rect: { x: 100, y, width: 600, height: 40 },
+				text: '',
+				html: `<${tagName}></${tagName}>`,
+				htmlTruncated: false,
+			});
+
+			/** What the page reports for the box dragged from (100, 80) to (740, 300). */
+			const REGION = {
+				url: 'https://example.com',
+				rect: { x: 100, y: 80, width: 640, height: 220 },
+				viewport: pickPayload.viewport,
+				elements: [
+					element('header.top', 'header', 80),
+					element('nav.main', 'nav', 120),
+					element('h1.title', 'h1', 160),
+					element('p.lead', 'p', 200),
+					element('button.cta', 'button', 240),
+				],
+				elementsTruncated: false,
+			};
+
+			/** The page answers every `region` request with `reply`. */
+			function regionPage(webview: MockWebview, reply: unknown = REGION) {
+				const base = webview.executeJavaScript.getMockImplementation() as (
+					code: string
+				) => Promise<unknown>;
+				webview.executeJavaScript.mockImplementation((code: string) =>
+					guestRequest(code)?.type === 'region' ? Promise.resolve(reply) : base(code)
+				);
+			}
+
+			// jsdom lays nothing out, so client pixels are overlay pixels here.
+
+			async function press(target: HTMLElement, x: number, y: number) {
+				await act(async () => {
+					fireEvent.mouseDown(target, { clientX: x, clientY: y, button: 0, buttons: 1 });
+				});
+			}
+
+			/** The pointer moves with the button down; `buttons: 0` means it came up elsewhere. */
+			async function moveTo(target: HTMLElement, x: number, y: number, buttons = 1) {
+				await act(async () => {
+					fireEvent.mouseMove(target, { clientX: x, clientY: y, buttons });
+				});
+			}
+
+			/** The button comes up, and the browser makes a click of the press, as it does. */
+			async function release(target: HTMLElement, x: number, y: number) {
+				await act(async () => {
+					fireEvent.mouseUp(target, { clientX: x, clientY: y, button: 0 });
+					fireEvent.click(target, { clientX: x, clientY: y, button: 0 });
+				});
+			}
+
+			async function drag(layer: HTMLElement, from: [number, number], to: [number, number]) {
+				await press(layer, ...from);
+				await moveTo(layer, ...to);
+				await release(layer, ...to);
+			}
+
+			const marquee = () => screen.queryByTestId('browser-tab-design-mode-marquee');
+			const boxOf = (box: HTMLElement) => [
+				box.style.left,
+				box.style.top,
+				box.style.width,
+				box.style.height,
+			];
+			const bannerText = () => screen.getByTestId('browser-tab-design-mode-banner').textContent;
+
+			it('a press that moves 4 px or less is a click: it picks the element under the release', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				await press(layer, 300, 150);
+				await moveTo(layer, 304, 150);
+				expect(marquee()).toBeNull();
+				await release(layer, 304, 150);
+
+				await screen.findByRole('dialog', { name: 'Picked element' });
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe').at(-1)).toMatchObject({ x: 304, y: 150, depth: 0 });
+			});
+
+			it('a drag past 4 px draws a dashed box from the press point, with its size, in place of the outline', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 100, clientY: 80 });
+				});
+				await screen.findByTestId('browser-tab-design-mode-crumbs');
+
+				await press(layer, 100, 80);
+				// 5 px: a drag from here on.
+				await moveTo(layer, 105, 80);
+				expect(marquee()).toBeTruthy();
+				const probes = guestCalls(webview, 'probe').length;
+				await moveTo(layer, 740, 300);
+
+				// Anchored where the button went down, not where the drag began to count.
+				expect(boxOf(marquee()!)).toEqual(['100px', '80px', '640px', '220px']);
+				expect(marquee()!.style.borderStyle).toBe('dashed');
+				expect(screen.getByTestId('browser-tab-design-mode-marquee-size').textContent).toBe(
+					'640 x 220'
+				);
+				// The box takes the outline's place, and the pointer asks the page nothing.
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+				expect(screen.queryByTestId('browser-tab-design-mode-crumbs')).toBeNull();
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				expect(bannerText()).toContain('Release to pick the region. Esc: cancel.');
+				expect(layer.style.cursor).toBe('crosshair');
+
+				// The wheel, Enter, the arrows and Space wait for the release; Space is
+				// still taken, so nothing behind the layer scrolls.
+				let spacePassed = true;
+				await act(async () => {
+					fireEvent.wheel(layer, { clientX: 740, clientY: 300, deltaY: 100 });
+					fireEvent.keyDown(layer, { key: 'Enter' });
+					fireEvent.keyDown(layer, { key: 'ArrowUp' });
+					spacePassed = fireEvent.keyDown(layer, { key: ' ', code: 'Space' });
+				});
+				expect(spacePassed).toBe(false);
+				expect(guestCalls(webview, 'scroll')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(guestCalls(webview, 'passthrough')).toHaveLength(0);
+				expect(guestCalls(webview, 'probe')).toHaveLength(probes);
+				// Nothing is asked of the page about the region until the release.
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+			});
+
+			it('the release asks the page for the region and opens its card', async () => {
+				const { webview } = await setupReady(vi.fn(), { onDesignQueue: vi.fn() });
+				regionPage(webview);
+				const layer = await arm();
+
+				await drag(layer, [100, 80], [740, 300]);
+
+				const card = await screen.findByRole('dialog', { name: 'Picked region' });
+				// The box in overlay px with the overlay's size, as a point is sent.
+				expect(guestCalls(webview, 'region')).toEqual([
+					{
+						type: 'region',
+						x: 100,
+						y: 80,
+						width: 640,
+						height: 220,
+						frame: { width: 0, height: 0 },
+					},
+				]);
+				// The click the release made picks no element.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				// The crop is the region the page reported, in guest DIPs at zoom 1.5.
+				expect(webview.capturePage).toHaveBeenCalledWith({
+					x: 150,
+					y: 120,
+					width: 960,
+					height: 330,
+				});
+
+				expect(within(card).getByTestId('browser-tab-design-mode-region-title').textContent).toBe(
+					'Region 640 x 220, 5 elements'
+				);
+				expect(
+					within(card)
+						.getByRole('img', { name: 'Screenshot of the picked region' })
+						.getAttribute('src')
+				).toBe(SHOT);
+				const listed = within(card).getByRole('list', { name: 'Elements in the region' });
+				expect(
+					within(listed)
+						.getAllByRole('listitem')
+						.map((item) => item.textContent)
+				).toEqual(['header.top', 'nav.main', 'h1.title', 'p.lead', 'button.cta']);
+				// The same note and buttons as an element's card.
+				expect(document.activeElement).toBe(
+					within(card).getByTestId('browser-tab-design-mode-note')
+				);
+				for (const id of [
+					'browser-tab-design-mode-queue',
+					'browser-tab-design-mode-add-another',
+					'browser-tab-design-mode-add',
+				]) {
+					expect(within(card).getByTestId(id)).toBeTruthy();
+				}
+				// The region stays drawn while its card is open.
+				expect(boxOf(marquee()!)).toEqual(['100px', '80px', '640px', '220px']);
+				expect(screen.queryByTestId('browser-tab-design-mode-outline')).toBeNull();
+			});
+
+			it('dragging up and to the left frames the same box', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				await drag(layer, [740, 300], [100, 80]);
+
+				await screen.findByRole('dialog', { name: 'Picked region' });
+				expect(guestCalls(webview, 'region')).toEqual([
+					expect.objectContaining({ x: 100, y: 80, width: 640, height: 220 }),
+				]);
+			});
+
+			it('the card draws what the page reported: the part of the box on screen', async () => {
+				const { webview } = await setupReady(vi.fn());
+				// Dragged past the 800 x 600 viewport; the page clips the box to it.
+				regionPage(webview, { ...REGION, rect: { x: 700, y: 500, width: 100, height: 100 } });
+				const layer = await arm();
+
+				await drag(layer, [700, 500], [900, 700]);
+
+				const card = await screen.findByRole('dialog', { name: 'Picked region' });
+				expect(within(card).getByTestId('browser-tab-design-mode-region-title').textContent).toBe(
+					'Region 100 x 100, 5 elements'
+				);
+				expect(boxOf(marquee()!)).toEqual(['700px', '500px', '100px', '100px']);
+				expect(screen.getByTestId('browser-tab-design-mode-marquee-size').textContent).toBe(
+					'100 x 100'
+				);
+			});
+
+			it('a drag that leaves the page stops at its edge, and its size reads in page pixels', async () => {
+				// The overlay is 1600 x 1000 and the page 800 x 600: 2 overlay px per CSS px.
+				const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1600);
+				const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(1000);
+				try {
+					const { webview } = await setupReady(vi.fn());
+					regionPage(webview);
+					const layer = await arm();
+					// A probe gives the scale the size is read at.
+					await act(async () => {
+						fireEvent.mouseMove(layer, { clientX: 1000, clientY: 400 });
+					});
+					await screen.findByTestId('browser-tab-design-mode-outline');
+
+					await press(layer, 1000, 400);
+					// Past the right edge and above the top one.
+					await moveTo(layer, 2400, -300);
+
+					expect(boxOf(marquee()!)).toEqual(['1000px', '0px', '600px', '400px']);
+					expect(screen.getByTestId('browser-tab-design-mode-marquee-size').textContent).toBe(
+						'300 x 200'
+					);
+					await release(layer, 2400, -300);
+					await screen.findByRole('dialog', { name: 'Picked region' });
+					expect(guestCalls(webview, 'region')).toEqual([
+						{
+							type: 'region',
+							x: 1000,
+							y: 0,
+							width: 600,
+							height: 400,
+							frame: { width: 1600, height: 1000 },
+						},
+					]);
+				} finally {
+					width.mockRestore();
+					height.mockRestore();
+				}
+			});
+
+			it('Enter in the note adds the region to the message, with its note', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				regionPage(webview);
+				const layer = await arm();
+				await drag(layer, [100, 80], [740, 300]);
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				fireEvent.change(note, { target: { value: 'Put these on one row' } });
+
+				await act(async () => {
+					fireEvent.keyDown(note, { key: 'Enter' });
+				});
+
+				expect(onDesignPick).toHaveBeenCalledWith({
+					region: expect.objectContaining({ url: 'https://example.com', rect: REGION.rect }),
+					screenshot: SHOT,
+					note: 'Put these on one row',
+					reveal: true,
+				});
+			});
+
+			it('each drag is a pick of its own: Add and Pick Another after two drags hands over two regions', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const { webview } = await setupReady(onDesignPick);
+				regionPage(webview);
+				const layer = await arm();
+
+				await drag(layer, [100, 80], [740, 300]);
+				const note = await screen.findByTestId('browser-tab-design-mode-note');
+				fireEvent.change(note, { target: { value: 'Tighten the spacing' } });
+				await act(async () => {
+					fireEvent.click(screen.getByTestId('browser-tab-design-mode-add-another'));
+				});
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				// Back to picking: the next drag starts a box of its own.
+				expect(marquee()).toBeNull();
+
+				const second = {
+					...REGION,
+					rect: { x: 0, y: 320, width: 400, height: 100 },
+					elements: REGION.elements.slice(4),
+				};
+				regionPage(webview, second);
+				await drag(layer, [0, 320], [400, 420]);
+				await screen.findByRole('dialog', { name: 'Picked region' });
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-note'), {
+						key: 'Enter',
+						metaKey: true,
+					});
+				});
+
+				expect(onDesignPick).toHaveBeenCalledTimes(2);
+				const [[first], [next]] = onDesignPick.mock.calls;
+				expect(first).toEqual({
+					region: expect.objectContaining({ rect: REGION.rect }),
+					screenshot: SHOT,
+					note: 'Tighten the spacing',
+					reveal: false,
+				});
+				expect(next).toMatchObject({
+					region: { rect: second.rect, elements: [{ selector: 'button.cta' }] },
+					note: '',
+					reveal: false,
+				});
+				await waitFor(() =>
+					expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull()
+				);
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+			});
+
+			it('Queue sends the region as its own message', async () => {
+				const onDesignPick = vi.fn().mockResolvedValue(true);
+				const onDesignQueue = vi.fn().mockResolvedValue({ tabName: 'Fix header' });
+				const { webview } = await setupReady(onDesignPick, { onDesignQueue });
+				regionPage(webview);
+				const layer = await arm();
+				await drag(layer, [100, 80], [740, 300]);
+				await screen.findByRole('dialog', { name: 'Picked region' });
+
+				await act(async () => {
+					fireEvent.click(screen.getByTestId('browser-tab-design-mode-queue'));
+				});
+
+				expect(onDesignQueue).toHaveBeenCalledWith({
+					region: expect.objectContaining({ rect: REGION.rect }),
+					screenshot: SHOT,
+					note: '',
+				});
+				expect(onDesignPick).not.toHaveBeenCalled();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Queued for Fix header');
+			});
+
+			it('the card counts what the page listed: one, none, or a list that was cut', async () => {
+				const { webview } = await setupReady(vi.fn());
+				const layer = await arm();
+
+				async function cardFor(reply: unknown) {
+					regionPage(webview, reply);
+					await drag(layer, [100, 80], [740, 300]);
+					const card = await screen.findByRole('dialog', { name: 'Picked region' });
+					const seen = {
+						title: within(card).getByTestId('browser-tab-design-mode-region-title').textContent,
+						listed: within(card).queryAllByRole('listitem').length,
+					};
+					// Back to picking for the next drag.
+					await act(async () => {
+						fireEvent.keyDown(card, { key: 'Escape' });
+					});
+					return seen;
+				}
+
+				expect(await cardFor({ ...REGION, elements: REGION.elements.slice(0, 1) })).toEqual({
+					title: 'Region 640 x 220, 1 element',
+					listed: 1,
+				});
+				expect(await cardFor({ ...REGION, elementsTruncated: true })).toEqual({
+					title: 'Region 640 x 220, 5+ elements',
+					listed: 5,
+				});
+				expect(await cardFor({ ...REGION, elements: [] })).toEqual({
+					title: 'Region 640 x 220, no elements',
+					listed: 0,
+				});
+			});
+
+			it('Escape during a drag drops it: the release picks nothing, and Design Mode stays on', async () => {
+				const { webview, onUpdateTab } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+				await press(layer, 100, 80);
+				await moveTo(layer, 400, 200);
+				expect(marquee()).toBeTruthy();
+
+				await act(async () => {
+					fireEvent.keyDown(layer, { key: 'Escape' });
+				});
+				expect(marquee()).toBeNull();
+				// The button is still down, but the drag is over.
+				await moveTo(layer, 500, 250);
+				expect(marquee()).toBeNull();
+				await release(layer, 500, 250);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				// The click the release made is not an element pick either.
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+				expect(designModeWrites(onUpdateTab)).toEqual([true]);
+				// Outlining what is under the pointer again, and the next click picks it.
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+				await act(async () => {
+					fireEvent.click(layer, { clientX: 300, clientY: 150, button: 0 });
+				});
+				await screen.findByRole('dialog', { name: 'Picked element' });
+			});
+
+			it('a drag that comes back to where it started picks nothing', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				await press(layer, 100, 80);
+				await moveTo(layer, 200, 160);
+				await moveTo(layer, 100, 80);
+				await release(layer, 100, 80);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(marquee()).toBeNull();
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			});
+
+			it('a region the page cannot report picks nothing and says so', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview, null);
+				const layer = await arm();
+
+				await drag(layer, [100, 80], [740, 300]);
+
+				await waitFor(() => expect(bannerText()).toContain('Nothing to pick there.'));
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+				expect(marquee()).toBeNull();
+				expect(await screen.findByTestId('browser-tab-design-mode-outline')).toBeTruthy();
+			});
+
+			it('drops the box when its release went elsewhere, the app went to the background, or a page loaded', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+
+				// A move with the button up: the release landed in another app.
+				await press(layer, 100, 80);
+				await moveTo(layer, 300, 200);
+				expect(marquee()).toBeTruthy();
+				await moveTo(layer, 310, 210, 0);
+				expect(marquee()).toBeNull();
+
+				await press(layer, 100, 80);
+				await moveTo(layer, 300, 200);
+				await act(async () => {
+					window.dispatchEvent(new Event('blur'));
+				});
+				expect(marquee()).toBeNull();
+
+				await press(layer, 100, 80);
+				await moveTo(layer, 300, 200);
+				await finishLoad(webview);
+				expect(marquee()).toBeNull();
+				// And the release of a dropped press picks nothing.
+				await release(layer, 300, 200);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+				expect(guestCalls(webview, 'describe')).toHaveLength(0);
+				expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			});
+
+			it('a press on the banner never starts a box', async () => {
+				const { webview } = await setupReady(vi.fn());
+				regionPage(webview);
+				const layer = await arm();
+				const banner = screen.getByTestId('browser-tab-design-mode-banner');
+
+				await press(banner, 300, 10);
+				await moveTo(layer, 600, 300);
+				expect(marquee()).toBeNull();
+				await release(banner, 600, 300);
+
+				expect(guestCalls(webview, 'region')).toHaveLength(0);
+			});
+
+			it('inspectRegion (browser-pick --rect) asks the page for the box in its own pixels and crops it', async () => {
+				// No Design Mode needed: the CLI names the box, nobody drags it.
+				const { ref, webview } = await setupReady(vi.fn());
+				regionPage(webview);
+
+				let result: Awaited<ReturnType<BrowserTabViewHandle['inspectRegion']>> = null;
+				await act(async () => {
+					result = await ref.current!.inspectRegion({
+						x: 100,
+						y: 80,
+						width: 640,
+						height: 220,
+						// Anything beyond the four numbers stays on the host side.
+						frame: { width: 1, height: 1 },
+					} as never);
+				});
+
+				// Guest CSS px: no frame, so the page does not scale the box.
+				expect(guestCalls(webview, 'region')).toEqual([
+					{ type: 'region', x: 100, y: 80, width: 640, height: 220 },
+				]);
+				// The crop is the region the page reported, in guest DIPs at zoom 1.5.
+				expect(webview.capturePage).toHaveBeenCalledWith({
+					x: 150,
+					y: 120,
+					width: 960,
+					height: 330,
+				});
+				expect(result).toMatchObject({
+					screenshot: SHOT,
+					region: { rect: REGION.rect, elements: REGION.elements },
+				});
+				// It opens no card and starts no Design Mode.
+				expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+			});
+
+			it('inspectRegion resolves null when the page reports no region', async () => {
+				const { ref, webview } = await setupReady(vi.fn());
+				regionPage(webview, null);
+
+				let result: Awaited<ReturnType<BrowserTabViewHandle['inspectRegion']>> | undefined;
+				await act(async () => {
+					result = await ref.current!.inspectRegion({ x: 5000, y: 5000, width: 10, height: 10 });
+				});
+
+				expect(result).toBeNull();
+				expect(webview.capturePage).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('viewport presets', () => {
+			const size = { width: 1000, height: 600 };
+			const hostReports: Array<() => void> = [];
+
+			/** Hands the test the callbacks of whichever observers watch the tab's host. */
+			class HostResizeObserver {
+				constructor(private readonly callback: ResizeObserverCallback) {}
+				observe(target: Element) {
+					if (target.getAttribute('data-testid') === 'browser-tab-host') {
+						hostReports.push(() => this.callback([], this as unknown as ResizeObserver));
+					}
+				}
+				disconnect() {}
+			}
+
+			/**
+			 * What jsdom cannot lay out: the tab is `size`, the stage is the width a
+			 * preset gave it (the whole tab at Fit), and the overlay fills the stage.
+			 */
+			function sizeOf(element: HTMLElement, axis: 'width' | 'height'): number {
+				const id = element.getAttribute('data-testid');
+				if (id === 'browser-tab-design-mode-layer' && element.parentElement) {
+					return sizeOf(element.parentElement, axis);
+				}
+				if (id === 'browser-tab-stage' && axis === 'width') {
+					return parseFloat(element.style.width) || size.width;
+				}
+				return id === 'browser-tab-host' || id === 'browser-tab-stage' ? size[axis] : 0;
+			}
+
+			let restoreLayout: Array<() => void> = [];
+
+			beforeEach(() => {
+				size.width = 1000;
+				size.height = 600;
+				hostReports.length = 0;
+				vi.stubGlobal('ResizeObserver', HostResizeObserver);
+				const width = vi
+					.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+					.mockImplementation(function (this: HTMLElement) {
+						return sizeOf(this, 'width');
+					});
+				const height = vi
+					.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+					.mockImplementation(function (this: HTMLElement) {
+						return sizeOf(this, 'height');
+					});
+				restoreLayout = [() => width.mockRestore(), () => height.mockRestore()];
+			});
+
+			afterEach(() => {
+				restoreLayout.forEach((restore) => restore());
+			});
+
+			const stage = () => screen.getByTestId('browser-tab-stage');
+
+			/** The tab is resized and its observers say so. */
+			function resizeTab(next: { width: number; height: number }) {
+				size.width = next.width;
+				size.height = next.height;
+				act(() => hostReports.forEach((report) => report()));
+			}
+
+			function viewportWrites(onUpdateTab: ReturnType<typeof vi.fn>) {
+				return onUpdateTab.mock.calls
+					.map(([, updates]) => (updates as Partial<BrowserTab>).viewportPreset)
+					.filter((value) => value !== undefined);
+			}
+
+			/** The probe the page answers with: a box in a viewport of the given width. */
+			function pageAt(webview: MockWebview, viewport: { width: number; height: number }) {
+				webview.executeJavaScript = vi.fn(async (code: string) => {
+					const req = guestRequest(code);
+					if (!req) return undefined;
+					if (req.type === 'probe') {
+						return {
+							rect: { x: 144, y: 80, width: 288, height: 160 },
+							label: 'section.hero',
+							depth: req.depth,
+							viewport,
+						};
+					}
+					return true;
+				});
+			}
+
+			it('offers a viewport control with Fit chosen', async () => {
+				await setupReady();
+
+				expect(screen.getByRole('radiogroup', { name: 'Viewport width' })).toBeTruthy();
+				expect(screen.getByTestId('browser-tab-viewport-fit').getAttribute('aria-checked')).toBe(
+					'true'
+				);
+				expect(stage().getAttribute('data-viewport-preset')).toBe('fit');
+			});
+
+			it('offers no viewport control where the page cannot be shown (web build)', () => {
+				vi.mocked(isWebDesktop).mockReturnValue(true);
+				render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+				expect(screen.queryByTestId('browser-tab-viewport')).toBeNull();
+				expect(screen.queryByTestId('browser-tab-stage')).toBeNull();
+			});
+
+			it('keeps the control next to the Design Mode button', async () => {
+				await setupReady(vi.fn());
+
+				const control = screen.getByTestId('browser-tab-viewport');
+				const toggle = screen.getByTestId('browser-tab-design-mode-toggle');
+				expect(control.parentElement?.nextElementSibling).toBe(toggle);
+			});
+
+			it('at Fit the page fills the tab, as it always has', async () => {
+				const { webview } = await setupReady();
+
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.right).toBe('0px');
+				expect(stage().style.width).toBe('');
+				expect(stage().style.boxShadow).toBe('');
+				expect(webview.style.width).toBe('100%');
+				expect(webview.style.height).toBe('100%');
+				expect(webview.style.transform).toBe('');
+				expect(webview.style.position).toBe('');
+			});
+
+			it('writes the chosen preset to the tab, and nothing for the one already chosen', async () => {
+				const { onUpdateTab } = await setupReady();
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-fit'));
+				expect(viewportWrites(onUpdateTab)).toEqual([]);
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-phone'));
+				expect(viewportWrites(onUpdateTab)).toEqual(['phone']);
+				expect(screen.getByTestId('browser-tab-viewport-phone').getAttribute('aria-checked')).toBe(
+					'true'
+				);
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-phone'));
+				expect(viewportWrites(onUpdateTab)).toEqual(['phone']);
+			});
+
+			it('puts a phone page in the middle of a wide tab at its own width and the tab’s height', async () => {
+				const { webview } = await setupReady();
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-phone'));
+
+				// The stage is the page's box: 390 wide, centered in 1000, full height.
+				expect(stage().getAttribute('data-viewport-preset')).toBe('phone');
+				expect(stage().style.left).toBe('305px');
+				expect(stage().style.width).toBe('390px');
+				expect(stage().style.boxShadow).not.toBe('');
+				// The page sees a 390 x 600 viewport and is not scaled.
+				expect(webview.style.position).toBe('absolute');
+				expect(webview.style.width).toBe('390px');
+				expect(webview.style.height).toBe('600px');
+				expect(webview.style.transform).toBe('');
+			});
+
+			it('shows a desktop page in a narrow tab at 1440 wide, scaled down to the tab', async () => {
+				size.width = 900;
+				size.height = 500;
+				const { webview } = await setupReady();
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-desktop'));
+
+				// Never wider than the tab: the stage is the whole 900.
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.width).toBe('900px');
+				// The page sees 1440 wide; its height is the tab's divided by the scale, so the
+				// scaled page ends at the tab's bottom edge.
+				expect(webview.style.width).toBe('1440px');
+				expect(webview.style.height).toBe('800px');
+				expect(webview.style.transform).toBe('scale(0.625)');
+				expect(webview.style.transformOrigin).toMatch(/^0(px)? 0(px)?$/);
+			});
+
+			it('goes back to filling the tab when Fit is chosen again', async () => {
+				size.width = 900;
+				size.height = 500;
+				const { webview } = await setupReady();
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-desktop'));
+
+				fireEvent.click(screen.getByTestId('browser-tab-viewport-fit'));
+
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.right).toBe('0px');
+				expect(stage().style.width).toBe('');
+				expect(webview.style.width).toBe('100%');
+				expect(webview.style.height).toBe('100%');
+				expect(webview.style.transform).toBe('');
+				expect(webview.style.position).toBe('');
+			});
+
+			it('opens a tab saved with a preset already at it', async () => {
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'tablet' },
+				});
+
+				expect(stage().style.left).toBe('116px');
+				expect(stage().style.width).toBe('768px');
+				expect(webview.style.width).toBe('768px');
+				expect(screen.getByTestId('browser-tab-viewport-tablet').getAttribute('aria-checked')).toBe(
+					'true'
+				);
+			});
+
+			it('keeps the preset when the page loads or the webview reports it is ready again', async () => {
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'phone' },
+				});
+				expect(webview.style.width).toBe('390px');
+
+				await act(async () => {
+					webview.dispatchEvent(new Event('dom-ready'));
+					webview.dispatchEvent(new Event('did-stop-loading'));
+				});
+
+				// Both events used to size the webview to the whole tab.
+				expect(webview.style.width).toBe('390px');
+				expect(webview.style.height).toBe('600px');
+			});
+
+			it('follows the tab when it is resized, so a side bar folding re-centers the page', async () => {
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'phone' },
+				});
+				expect(stage().style.left).toBe('305px');
+
+				resizeTab({ width: 1400, height: 800 });
+				expect(stage().style.left).toBe('505px');
+				expect(webview.style.height).toBe('800px');
+
+				// Narrower than the phone: the page is scaled down to fit.
+				resizeTab({ width: 300, height: 500 });
+				expect(stage().style.left).toBe('0px');
+				expect(stage().style.width).toBe('300px');
+				expect(webview.style.width).toBe('390px');
+				expect(webview.style.transform).toMatch(/^scale\(0\.76923/);
+			});
+
+			it('fills the tab until the tab has a size, rather than draw a page in a zero-wide box', async () => {
+				size.width = 0;
+				size.height = 0;
+				const { webview } = await setupReady(undefined, {
+					tab: { ...mockTab, viewportPreset: 'phone' },
+				});
+
+				expect(stage().style.width).toBe('');
+				expect(webview.style.width).toBe('100%');
+			});
+
+			it('writes the preset through the handle, and a read right after sees it', async () => {
+				const { ref, onUpdateTab } = await setupReady();
+				expect(ref.current!.getViewportPreset()).toBe('fit');
+
+				act(() => ref.current!.setViewportPreset('tablet'));
+
+				expect(ref.current!.getViewportPreset()).toBe('tablet');
+				expect(viewportWrites(onUpdateTab)).toEqual(['tablet']);
+				expect(stage().getAttribute('data-viewport-preset')).toBe('tablet');
+
+				// Setting what is already set is not a write.
+				act(() => ref.current!.setViewportPreset('tablet'));
+				expect(viewportWrites(onUpdateTab)).toEqual(['tablet']);
+			});
+
+			describe('with Design Mode on', () => {
+				it('puts the overlay in the stage, as big as the scaled page, so its points map onto the page', async () => {
+					size.width = 900;
+					size.height = 500;
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'desktop' },
+					});
+					pageAt(webview, { width: 1440, height: 800 });
+
+					const layer = await arm();
+
+					// Beside the scaled webview, never inside a transform.
+					expect(layer.parentElement).toBe(stage());
+					expect(webview.parentElement).toBe(stage());
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual({
+							type: 'probe',
+							x: 450,
+							y: 250,
+							depth: 0,
+							// The overlay is the scaled page: 900 x 500 over a 1440 x 800 viewport.
+							frame: { width: 900, height: 500 },
+						})
+					);
+					// 0.625 overlay px per page px: the page's box lands where it is drawn.
+					await waitFor(() => {
+						const outline = screen.getByTestId('browser-tab-design-mode-outline');
+						expect(outline.style.left).toBe('88px');
+						expect(outline.style.top).toBe('48px');
+						expect(outline.style.width).toBe('184px');
+						expect(outline.style.height).toBe('104px');
+					});
+				});
+
+				it('sizes the overlay to a phone page in the middle of a wide tab', async () => {
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'phone' },
+					});
+					pageAt(webview, { width: 390, height: 600 });
+
+					await arm();
+
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual({
+							type: 'probe',
+							x: 195,
+							y: 300,
+							depth: 0,
+							frame: { width: 390, height: 600 },
+						})
+					);
+				});
+
+				it('asks the page again when a preset changes its width but not the overlay’s box', async () => {
+					// Desktop and Laptop both fill a 900 px tab: the overlay stays 900 x 500
+					// while the page reflows from 1440 to 1280.
+					size.width = 900;
+					size.height = 500;
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'desktop' },
+					});
+					pageAt(webview, { width: 1440, height: 800 });
+					const layer = await arm();
+					await act(async () => {
+						fireEvent.mouseMove(layer, { clientX: 300, clientY: 120 });
+					});
+					await waitFor(() =>
+						expect(guestCalls(webview, 'probe')).toContainEqual(
+							expect.objectContaining({ x: 300, y: 120 })
+						)
+					);
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					fireEvent.click(screen.getByTestId('browser-tab-viewport-laptop'));
+					await act(async () => {
+						await new Promise((resolve) => setTimeout(resolve, 300));
+					});
+
+					const probes = guestCalls(webview, 'probe');
+					expect(probes.length).toBe(probesBefore + 1);
+					expect(probes.at(-1)).toMatchObject({
+						x: 300,
+						y: 120,
+						frame: { width: 900, height: 500 },
+					});
+				});
+
+				it('does not probe again when the preset did not change', async () => {
+					const { webview } = await setupReady(vi.fn(), {
+						tab: { ...mockTab, viewportPreset: 'desktop' },
+					});
+					await arm();
+					await waitFor(() => expect(guestCalls(webview, 'probe').length).toBeGreaterThan(0));
+					const probesBefore = guestCalls(webview, 'probe').length;
+
+					fireEvent.click(screen.getByTestId('browser-tab-viewport-desktop'));
+					await act(async () => {
+						await new Promise((resolve) => setTimeout(resolve, 300));
+					});
+
+					expect(guestCalls(webview, 'probe').length).toBe(probesBefore);
+				});
+			});
 		});
 
 		it('the imperative toggle and inspectElement reach the same path', async () => {

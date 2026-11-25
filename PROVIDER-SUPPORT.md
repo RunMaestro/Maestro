@@ -451,7 +451,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInputOnResume: false, // true if images work on resume
 		supportsSlashCommands: false,
 		supportsStreamJsonInput: false, // true if --input-format stream-json
-		supportsPromptViaStdin: false, // true ONLY if the CLI reads the prompt from stdin - verify it
+		supportsPromptViaStdin: false, // true ONLY if the CLI reads the prompt from stdin - verify it; a CLI that needs a flag or a line format there declares stdinPromptArgs / stdinPromptMessage
 		supportsSessionStorage: false, // Enable if you implement storage
 		supportsCostTracking: false, // Enable if API-based with costs
 		supportsUsageStats: true, // If token counts in output

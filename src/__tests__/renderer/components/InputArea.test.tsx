@@ -5,9 +5,11 @@ import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createMockDesignPick } from '../../helpers/mockTab';
 
 import { mockTheme } from '../../helpers/mockTheme';
 
@@ -838,6 +840,63 @@ describe('InputArea', () => {
 			const updaterFn = setStagedImages.mock.calls[0][0];
 			const result = updaterFn(stagedImages);
 			expect(result).toEqual(['data:image/png;base64,DEF456']);
+		});
+	});
+
+	describe('Design Mode chips', () => {
+		const chip = createMockDesignPick({
+			note: 'Make it blue',
+			text: 'Design Mode element from https://example.com',
+		});
+
+		/** A session whose active tab has `chip` staged, in the store and on screen. */
+		function renderWithChip(inputMode: 'ai' | 'terminal' = 'ai') {
+			const base = createMockSession({ inputMode });
+			const session = {
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({ ...tab, stagedDesignPicks: [chip] })),
+			};
+			useSessionStore.setState({ sessions: [session] } as never);
+			// The chip's popover registers with the layer stack (Escape closes it).
+			render(
+				<LayerStackProvider>
+					<InputArea {...createDefaultProps({ session })} />
+				</LayerStackProvider>
+			);
+		}
+
+		function storedChips() {
+			return useSessionStore.getState().sessions[0].aiTabs[0].stagedDesignPicks;
+		}
+
+		it("shows the active tab's chips in AI mode", () => {
+			renderWithChip();
+			expect(screen.getAllByTestId('design-pick-chip')).toHaveLength(1);
+			expect(screen.getByText('button.cta "Sign up"')).toBeInTheDocument();
+		});
+
+		it('does NOT show chips in terminal mode', () => {
+			renderWithChip('terminal');
+			expect(screen.queryByTestId('design-pick-chip')).not.toBeInTheDocument();
+		});
+
+		it('removes a chip from the tab through the store', () => {
+			renderWithChip();
+			fireEvent.click(screen.getByRole('button', { name: 'Remove pick button.cta "Sign up"' }));
+			expect(storedChips()).toEqual([]);
+		});
+
+		it('saves an edited note on the tab when the popover closes', () => {
+			renderWithChip();
+			fireEvent.click(
+				screen.getByRole('button', { name: 'Design Mode pick button.cta "Sign up"' })
+			);
+			fireEvent.change(screen.getByTestId('design-pick-popover-note'), {
+				target: { value: ' Make it red ' },
+			});
+			fireEvent.click(screen.getByTestId('design-pick-popover-done'));
+
+			expect(storedChips()).toEqual([{ ...chip, note: 'Make it red' }]);
 		});
 	});
 
@@ -2721,6 +2780,30 @@ describe('InputArea on a phone', () => {
 	it('marks a folded handle when an unsent draft is waiting behind it', () => {
 		render(<InputArea {...createDefaultProps({ inputValue: 'half a thought' })} />);
 		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+	});
+
+	describe('Design Mode chips behind the fold', () => {
+		/** A session whose active tab holds one chip and no text. */
+		function sessionWithChip(inputMode: 'ai' | 'terminal'): Session {
+			const base = createMockSession({ inputMode });
+			return {
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({
+					...tab,
+					stagedDesignPicks: [createMockDesignPick()],
+				})),
+			};
+		}
+
+		it('marks the handle when only chips wait behind it: they send on their own', () => {
+			render(<InputArea {...createDefaultProps({ session: sessionWithChip('ai') })} />);
+			expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+		});
+
+		it("does not count the AI tab's chips behind the terminal composer", () => {
+			render(<InputArea {...createDefaultProps({ session: sessionWithChip('terminal') })} />);
+			expect(screen.queryByTestId('phone-composer-handle-draft')).not.toBeInTheDocument();
+		});
 	});
 
 	it('draws no handle at all on desktop', () => {

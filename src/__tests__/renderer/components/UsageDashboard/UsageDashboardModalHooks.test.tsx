@@ -392,6 +392,33 @@ describe('UsageDashboardModal hooks', () => {
 		expect(onViewModeChanged).toHaveBeenCalled();
 	});
 
+	it('follows a deep link into a dashboard that is already open', async () => {
+		// `maestro-cli open usage-dashboard --tab tokens` sets the store while the
+		// dashboard is mounted; the smoke test caught the visible tab staying put.
+		installMaestroMock();
+		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		const onViewModeChanged = vi.fn();
+
+		const { result } = renderHook(() =>
+			useUsageDashboardTabs({
+				cueTabEnabled: true,
+				hasAnthropicUsageDetails: false,
+				hasCodexUsageDetails: false,
+				contentRef: { current: document.createElement('div') },
+				onViewModeChanged,
+			})
+		);
+		expect(result.current.viewMode).toBe('overview');
+
+		act(() => useUIStore.getState().setUsageDashboardViewMode('tokens'));
+		await waitFor(() => expect(result.current.viewMode).toBe('tokens'));
+
+		// A tab this dashboard does not offer still falls back to the overview.
+		act(() => useUIStore.getState().setUsageDashboardViewMode('codex-usage'));
+		await waitFor(() => expect(result.current.viewMode).toBe('overview'));
+		expect(useUIStore.getState().usageDashboardViewMode).toBe('overview');
+	});
+
 	it('derives responsive layout columns from ResizeObserver width', async () => {
 		installMaestroMock();
 		let observerCallback: ResizeObserverCallback | undefined;

@@ -107,6 +107,8 @@ import type {
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
 	PickBrowserElementCallback,
+	BrowserViewportCallback,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
@@ -168,6 +170,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	SetGroupChatUnreadCallback,
 	AddGroupChatParticipantCallback,
 	SendGroupChatMessageCallback,
 	GroupChatMessage,
@@ -624,6 +627,14 @@ export class WebServer {
 		this.callbackRegistry.setPickBrowserElementCallback(callback);
 	}
 
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbackRegistry.setBrowserViewportCallback(callback);
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbackRegistry.setDesignPickCommandCallback(callback);
+	}
+
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
 		this.callbackRegistry.setOpenTerminalTabCallback(callback);
 	}
@@ -849,6 +860,10 @@ export class WebServer {
 
 	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
 		this.callbackRegistry.setArchiveGroupChatCallback(callback);
+	}
+
+	setSetGroupChatUnreadCallback(callback: SetGroupChatUnreadCallback): void {
+		this.callbackRegistry.setSetGroupChatUnreadCallback(callback);
 	}
 
 	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
@@ -1236,6 +1251,8 @@ export class WebServer {
 				this.callbackRegistry.openBrowserTab(sessionId, url, options),
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
 			pickBrowserElement: async (request) => this.callbackRegistry.pickBrowserElement(request),
+			browserViewport: async (request) => this.callbackRegistry.browserViewport(request),
+			designPickCommand: async (request) => this.callbackRegistry.designPickCommand(request),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
@@ -1369,6 +1386,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			archiveGroupChat: async (chatId: string, archived: boolean) =>
 				this.callbackRegistry.archiveGroupChat(chatId, archived),
+			setGroupChatUnread: async (chatId: string, unread: boolean) =>
+				this.callbackRegistry.setGroupChatUnread(chatId, unread),
 			addGroupChatParticipant: async (chatId: string, agentId: string) =>
 				this.callbackRegistry.addGroupChatParticipant(chatId, agentId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
@@ -1691,6 +1710,18 @@ export class WebServer {
 			this.watchWebUserStore();
 
 			await this.server.listen({ port: this.port, host: bindHost });
+
+			// Fastify drops its own 'error' listener once listen() resolves, so from
+			// here a failed accept() (Windows reports `accept UNKNOWN`, any platform
+			// can report EMFILE) is an 'error' event nobody handles, and Node throws
+			// it into the uncaught-exception handler as a fatal crash (MAESTRO-19C).
+			// The server keeps listening after a failed accept; only that one
+			// connection is lost, so a log line is the whole response.
+			this.server.server.on('error', (error: NodeJS.ErrnoException) => {
+				logger.warn(`Web server connection error: ${error.message}`, LOG_CONTEXT, {
+					code: error.code,
+				});
+			});
 
 			// Get the actual port (important when using port 0 for random assignment)
 			const address = this.server.server.address();

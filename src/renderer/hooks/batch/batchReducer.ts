@@ -166,6 +166,8 @@ export interface StartBatchPayload {
 	completedTasksAcrossAllDocs?: number;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
+	/** Loop pass to start on. Absent (0) except when resuming after a restart. */
+	loopIteration?: number;
 	folderPath: string;
 	worktreeActive: boolean;
 	worktreePath?: string;
@@ -286,7 +288,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					initialCompletedTasks: payload.completedTasksAcrossAllDocs ?? 0,
 					// Loop mode
 					loopEnabled: payload.loopEnabled,
-					loopIteration: 0,
+					loopIteration: payload.loopIteration ?? 0,
 					maxLoops: payload.maxLoops,
 					// Folder path
 					folderPath: payload.folderPath,

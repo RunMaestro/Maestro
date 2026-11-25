@@ -118,7 +118,19 @@ describe('GitHubLoginModal', () => {
 		const ptySessionId = await startLogin();
 
 		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('powershell');
-		expect(mockWrite).toHaveBeenCalledWith(ptySessionId, `${LOGIN.display}; exit $LASTEXITCODE\r`);
+		expect(mockWrite).toHaveBeenCalledWith(
+			ptySessionId,
+			`${LOGIN.display}; if ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }\r`
+		);
+	});
+
+	it('uses $status for fish on Unix so the shell accepts the line', async () => {
+		useSettingsStore.setState({ defaultShell: 'fish' } as never);
+		render(<GitHubLoginModal theme={mockTheme} onClose={vi.fn()} onSignedIn={vi.fn()} />);
+		const ptySessionId = await startLogin();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('fish');
+		expect(mockWrite).toHaveBeenCalledWith(ptySessionId, `${LOGIN.display}; exit $status\r`);
 	});
 
 	it('re-checks gh past the cache and continues when the login exits 0', async () => {

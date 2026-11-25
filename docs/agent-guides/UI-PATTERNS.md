@@ -1544,6 +1544,28 @@ weight.
   the reader has to decode - unless the abbreviation is the established UI term, in which
   case pass `title` with the long form.
 
+### `<RemoveBadgeButton>` (`src/renderer/components/ui/RemoveBadgeButton.tsx`)
+
+The small red X that takes an attachment off a message before it is sent. A
+staged image's tile and a Design Mode chip both use it, so the two cannot drift
+apart in one composer. Do NOT hand-roll another `bg-red-500 text-white
+rounded-full p-1` button. Three copies are still to migrate:
+`QueuedItemEditModal`, `InlineWizard/WizardInputPanel`, `PromptComposerModal`.
+
+```tsx
+<RemoveBadgeButton
+	label="Remove image 2"
+	onRemove={remove}
+	className="absolute top-0.5 right-0.5"
+/>
+```
+
+- `className` places it: over a thumbnail's corner, or `shrink-0` at the end of a chip's row.
+- The click stops at the button, so the clickable element under it (the image lightbox,
+  the chip's popover) does not also fire. It is `draggable={false}`, because a staged
+  image tile is a drag source.
+- `label` is the tooltip and the accessible name. Name what it removes (`Remove image 2`).
+
 ### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
 
 "4 providers available locally of 11 supported", plus the toggle that switches

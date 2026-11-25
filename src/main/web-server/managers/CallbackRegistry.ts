@@ -46,6 +46,10 @@ import type {
 	PickBrowserElementCallback,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
+	BrowserViewportCallback,
+	BrowserViewportRequest,
+	BrowserViewportResult,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -124,6 +128,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	SetGroupChatUnreadCallback,
 	AddGroupChatParticipantCallback,
 	AddGroupChatParticipantResult,
 	SendGroupChatMessageCallback,
@@ -174,6 +179,10 @@ import type {
 	DiffReviewCommandResult,
 } from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../../shared/designPickCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -216,6 +225,8 @@ export interface WebServerCallbacks {
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
 	pickBrowserElement: PickBrowserElementCallback | null;
+	browserViewport: BrowserViewportCallback | null;
+	designPickCommand: DesignPickCommandCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -267,6 +278,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	archiveGroupChat: ArchiveGroupChatCallback | null;
+	setGroupChatUnread: SetGroupChatUnreadCallback | null;
 	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	mergeContext: MergeContextCallback | null;
@@ -327,6 +339,8 @@ export class CallbackRegistry {
 		openBrowserTab: null,
 		closeBrowserTab: null,
 		pickBrowserElement: null,
+		browserViewport: null,
+		designPickCommand: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -378,6 +392,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		archiveGroupChat: null,
+		setGroupChatUnread: null,
 		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		mergeContext: null,
@@ -603,6 +618,20 @@ export class CallbackRegistry {
 			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
 		}
 		return this.callbacks.pickBrowserElement(request);
+	}
+
+	async browserViewport(request: BrowserViewportRequest): Promise<BrowserViewportResult> {
+		if (!this.callbacks.browserViewport) {
+			return { success: false, error: 'Browser viewport not configured' };
+		}
+		return this.callbacks.browserViewport(request);
+	}
+
+	async designPickCommand(request: DesignPickCommandRequest): Promise<DesignPickCommandResult> {
+		if (!this.callbacks.designPickCommand) {
+			return { success: false, error: 'Browser Design Mode not configured' };
+		}
+		return this.callbacks.designPickCommand(request);
 	}
 
 	async openTerminalTab(
@@ -988,6 +1017,11 @@ export class CallbackRegistry {
 		return this.callbacks.archiveGroupChat(chatId, archived);
 	}
 
+	async setGroupChatUnread(chatId: string, unread: boolean): Promise<boolean> {
+		if (!this.callbacks.setGroupChatUnread) return false;
+		return this.callbacks.setGroupChatUnread(chatId, unread);
+	}
+
 	async addGroupChatParticipant(
 		chatId: string,
 		agentId: string
@@ -1284,6 +1318,14 @@ export class CallbackRegistry {
 		this.callbacks.pickBrowserElement = callback;
 	}
 
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbacks.browserViewport = callback;
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbacks.designPickCommand = callback;
+	}
+
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
 		this.callbacks.writeTerminalTab = callback;
 	}
@@ -1486,6 +1528,10 @@ export class CallbackRegistry {
 
 	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
 		this.callbacks.archiveGroupChat = callback;
+	}
+
+	setSetGroupChatUnreadCallback(callback: SetGroupChatUnreadCallback): void {
+		this.callbacks.setGroupChatUnread = callback;
 	}
 
 	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {

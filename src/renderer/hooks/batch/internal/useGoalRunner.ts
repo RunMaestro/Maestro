@@ -39,6 +39,7 @@ import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useBatchStore } from '../../../stores/batchStore';
+import { trackAutoRunLaunch, untrackAutoRunLaunch } from '../../../services/autoRunRestartResume';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import type { BatchAction } from '../batchReducer';
 import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchControlActions';
@@ -346,6 +347,9 @@ export function useGoalRunner({
 
 			let startPublished = false;
 			try {
+				// Report the launch so an update restart can save this run's place.
+				trackAutoRunLaunch(sessionId, config, folderPath);
+
 				// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
 				// Empty documents/lockedDocuments arrays mark this as a document-less run.
 				dispatch({
@@ -401,6 +405,7 @@ export function useGoalRunner({
 						);
 					}
 					timeTracking.stopTracking(sessionId);
+					untrackAutoRunLaunch(sessionId);
 				}
 			}
 
@@ -931,6 +936,7 @@ export function useGoalRunner({
 			timeTracking.stopTracking(sessionId);
 			delete stopRequestedRefs.current[sessionId];
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
+			untrackAutoRunLaunch(sessionId);
 		},
 		[
 			audioFeedbackCommandRef,

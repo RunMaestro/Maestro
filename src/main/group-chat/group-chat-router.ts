@@ -58,6 +58,7 @@ import {
 	wasParticipantRecentlyRemoved,
 } from './group-chat-agent';
 import { AgentDetector } from '../agents';
+import { resolveCueAgentBinary } from '../cue/cue-agent-binary';
 import { isAgentOwnWorkingDirectory } from '../agents/claudeSpawnCore';
 import { powerManager } from '../power-manager';
 import { logger } from '../utils/logger';
@@ -74,6 +75,27 @@ import { mediaSubtype, parseBase64DataUrl } from '../../shared/dataUrl';
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
 
 const LOG_CONTEXT = '[GroupChatRouter]';
+
+/**
+ * The binary a participant runs: its agent's own custom path when it has one
+ * and it is executable, else the provider's (`agent.path`, which already
+ * carries the provider override or detection). The same order its tab spawn
+ * uses. Over SSH the provider's command is kept: the agent's path names a file
+ * on the remote, which the spawn wrapper resolves by its bare binary name.
+ */
+async function participantBinary(
+	agent: { path?: string; command: string },
+	session: Pick<GroupChatSessionInfo, 'customPath' | 'sshRemoteConfig'> | undefined
+): Promise<string> {
+	const providerCommand = agent.path || agent.command;
+	const resolved = await resolveCueAgentBinary({
+		sessionCustomPath: session?.customPath,
+		sshEnabled: !!session?.sshRemoteConfig?.enabled,
+		getDetectedPath: async () => providerCommand,
+		onWarn: (message) => logger.warn(message, LOG_CONTEXT),
+	});
+	return resolved ?? providerCommand;
+}
 
 /**
  * Non-customizable protocol that connects moderator text to actual participant
@@ -111,6 +133,8 @@ export interface GroupChatSessionInfo {
 	name: string;
 	toolType: string;
 	cwd: string;
+	/** The agent's own binary (`Session.customPath`); see participantBinary(). */
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
@@ -2184,7 +2208,7 @@ export async function routeModeratorResponse(
 				logger.debug(`[GroupChat:Debug] Emitted participant state: working`);
 
 				// Log spawn details for debugging
-				const spawnCommand = agent.path || agent.command;
+				const spawnCommand = await participantBinary(agent, matchingSession);
 				const spawnArgs = configResolution.args;
 				logger.debug(`[GroupChat:Debug] Spawn command: ${spawnCommand}`);
 				logger.debug(`[GroupChat:Debug] Spawn args: ${JSON.stringify(spawnArgs)}`);
@@ -2826,13 +2850,15 @@ export async function respawnParticipantWithRecovery(
 	groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'working');
 
 	// Spawn the recovery process - with SSH wrapping if configured
-	logger.debug(`[GroupChat:Debug] Recovery spawn command: ${agent.path || agent.command}`);
+	const recoveryCommand = await participantBinary(agent, matchingSession);
+	logger.debug(`[GroupChat:Debug] Recovery spawn command: ${recoveryCommand}`);
 	logger.debug(`[GroupChat:Debug] Recovery spawn args count: ${configResolution.args.length}`);
 
 	const spawnResult = await spawnGroupChatAgent({
 		sessionId,
 		agentId: participant.agentId,
 		agent,
+		command: recoveryCommand,
 		args: configResolution.args,
 		cwd,
 		prompt: fullPrompt,

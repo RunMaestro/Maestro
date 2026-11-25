@@ -1,16 +1,19 @@
 /**
- * The review half of the Git Diff viewer (issue #1475): the comment box and the
- * saved comment drawn under the last line a comment covers, and the tray that
+ * Line review comments, as GitHub draws them: the comment box and the saved
+ * comment drawn under the last line a comment covers, and the tray that
  * collects every pending comment and sends them to the agent as one review.
  *
- * The model and the prompt it becomes live in `utils/diffReviewComments.ts`;
- * pending comments live in `stores/diffReviewStore.ts`.
+ * Shared by the Git Diff viewer (issue #1475) and the File Preview. Neither
+ * component knows what a comment is pinned to: the view hands each one the
+ * `path:lines` label to show. The models live in `utils/diffReviewComments.ts`
+ * and `utils/fileReviewComments.ts`; pending comments live in the stores made
+ * by `stores/reviewCommentStore.ts`.
  */
 import { memo, useEffect, useRef, useState } from 'react';
 import { MessageSquare, Pencil, Send, PencilLine, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
-import type { DiffComment, DiffCommentAnchor } from '../utils/diffReviewComments';
-import { formatCommentLocation } from '../utils/diffReviewComments';
+import type { ReviewCommentBase } from '../stores/reviewCommentStore';
+import { formatCommentCount } from '../utils/reviewPrompt';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { HeaderActionButton } from './ui/HeaderActionButton';
 import { MiniBadge } from './ui/MiniBadge';
@@ -19,37 +22,43 @@ import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
 
 const SAVE_KEYS = FIXED_SHORTCUTS.gitDiffSaveComment.keys;
-const SEND_KEYS = FIXED_SHORTCUTS.gitDiffSendReview.keys;
 
 /** How long the Discard button stays armed waiting for its confirming click. */
 const DISCARD_CONFIRM_MS = 3000;
 
-interface DiffCommentEditorProps {
+interface ReviewCommentEditorProps {
 	theme: Theme;
-	anchor: DiffCommentAnchor;
+	/** The `path:lines` the comment is pinned to, as the agent will be told. */
+	location: string;
 	initialBody: string;
 	isNew: boolean;
 	/** Every edit, so the viewer can restore a draft when the box remounts. */
 	onDraftChange?: (body: string) => void;
 	onSave: (body: string) => void;
 	onCancel: () => void;
+	/**
+	 * Escape cancels the box. Off where the host's own Escape handling already
+	 * peels the box first (the Git Diff viewer's modal layer); on where nothing
+	 * else would see the key (a box inside the code editor).
+	 */
+	cancelOnEscape?: boolean;
 }
 
 /** Textarea for writing or editing one comment, rendered under its last line. */
-export const DiffCommentEditor = memo(function DiffCommentEditor({
+export const ReviewCommentEditor = memo(function ReviewCommentEditor({
 	theme,
-	anchor,
+	location,
 	initialBody,
 	isNew,
 	onDraftChange,
 	onSave,
 	onCancel,
-}: DiffCommentEditorProps) {
+	cancelOnEscape = false,
+}: ReviewCommentEditorProps) {
 	const [body, setBody] = useState(initialBody);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	useFocusOnMount(textareaRef, 0);
 	const canSave = body.trim().length > 0;
-	const location = formatCommentLocation(anchor);
 
 	return (
 		<div
@@ -58,7 +67,7 @@ export const DiffCommentEditor = memo(function DiffCommentEditor({
 				backgroundColor: theme.colors.bgSidebar,
 				borderLeft: `3px solid ${theme.colors.accent}`,
 			}}
-			data-testid="diff-comment-editor"
+			data-testid="review-comment-editor"
 		>
 			<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 				{isNew ? 'Comment on' : 'Edit comment on'} {location}
@@ -71,6 +80,12 @@ export const DiffCommentEditor = memo(function DiffCommentEditor({
 					onDraftChange?.(e.target.value);
 				}}
 				onKeyDown={(e) => {
+					if (cancelOnEscape && e.key === 'Escape') {
+						e.preventDefault();
+						e.stopPropagation();
+						onCancel();
+						return;
+					}
 					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 						e.preventDefault();
 						// Stop here: the viewer's own Enter (view toggle) and
@@ -101,7 +116,7 @@ export const DiffCommentEditor = memo(function DiffCommentEditor({
 					theme={theme}
 					onClick={() => onSave(body)}
 					disabled={!canSave}
-					testId="diff-comment-save"
+					testId="review-comment-save"
 					title={`${isNew ? 'Add comment' : 'Save comment'}${shortcutSuffix(SAVE_KEYS)}`}
 				>
 					{isNew ? 'Add Comment' : 'Save'}
@@ -111,21 +126,23 @@ export const DiffCommentEditor = memo(function DiffCommentEditor({
 	);
 });
 
-interface DiffCommentCardProps {
+interface ReviewCommentCardProps {
 	theme: Theme;
-	comment: DiffComment;
+	/** The `path:lines` the comment is pinned to. */
+	location: string;
+	body: string;
 	onEdit: () => void;
 	onRemove: () => void;
 }
 
 /** A saved comment, rendered under the last line it covers. */
-export const DiffCommentCard = memo(function DiffCommentCard({
+export const ReviewCommentCard = memo(function ReviewCommentCard({
 	theme,
-	comment,
+	location,
+	body,
 	onEdit,
 	onRemove,
-}: DiffCommentCardProps) {
-	const location = formatCommentLocation(comment);
+}: ReviewCommentCardProps) {
 	return (
 		<div
 			className="px-3 py-2 flex items-start gap-2 font-sans text-sm"
@@ -133,7 +150,7 @@ export const DiffCommentCard = memo(function DiffCommentCard({
 				backgroundColor: theme.colors.bgSidebar,
 				borderLeft: `3px solid ${theme.colors.accent}`,
 			}}
-			data-testid="diff-comment-card"
+			data-testid="review-comment-card"
 		>
 			<MessageSquare
 				className="w-3.5 h-3.5 mt-0.5 shrink-0"
@@ -144,7 +161,7 @@ export const DiffCommentCard = memo(function DiffCommentCard({
 					{location}
 				</span>
 				<p className="whitespace-pre-wrap break-words" style={{ color: theme.colors.textMain }}>
-					{comment.body}
+					{body}
 				</p>
 			</div>
 			<button
@@ -171,9 +188,15 @@ export const DiffCommentCard = memo(function DiffCommentCard({
 	);
 });
 
-interface DiffReviewTrayProps {
+interface ReviewTrayProps<C extends ReviewCommentBase> {
 	theme: Theme;
-	comments: DiffComment[];
+	comments: C[];
+	/** The `path:lines` label of one comment. */
+	formatLocation: (comment: C) => string;
+	/** What the tray calls the review it collects: "Review" in the diff viewer. */
+	title?: string;
+	/** The chord that sends the review, when the view binds one. Named in the Send tooltip. */
+	sendKeys?: string[];
 	/**
 	 * Comments whose lines changed since they were written. They stay listed
 	 * (the user wrote them) but cannot be edited or sent.
@@ -181,17 +204,20 @@ interface DiffReviewTrayProps {
 	outdatedIds: ReadonlySet<string>;
 	/** Agent the review goes to, for the button labels. */
 	targetName?: string;
-	onEdit: (comment: DiffComment) => void;
+	onEdit: (comment: C) => void;
 	onRemove: (id: string) => void;
 	onDiscard: () => void;
 	onSend: () => void;
 	onEditInComposer: () => void;
 }
 
-/** Pending comments across every file in the diff, plus the ways out. */
-export const DiffReviewTray = memo(function DiffReviewTray({
+/** Every pending comment of one review, plus the ways out. */
+function ReviewTrayImpl<C extends ReviewCommentBase>({
 	theme,
 	comments,
+	formatLocation,
+	title = 'Review',
+	sendKeys,
 	outdatedIds,
 	targetName,
 	onEdit,
@@ -199,7 +225,7 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 	onDiscard,
 	onSend,
 	onEditInComposer,
-}: DiffReviewTrayProps) {
+}: ReviewTrayProps<C>) {
 	// Discard throws away work, so it takes a second click to confirm.
 	const [discardArmed, setDiscardArmed] = useState(false);
 	useEffect(() => {
@@ -208,7 +234,7 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 		return () => clearTimeout(timer);
 	}, [discardArmed]);
 
-	const count = comments.length === 1 ? '1 comment' : `${comments.length} comments`;
+	const count = formatCommentCount(comments.length);
 	const agent = targetName ?? 'the agent';
 	const outdatedCount = comments.filter((c) => outdatedIds.has(c.id)).length;
 	const nothingToSend = outdatedCount === comments.length;
@@ -217,13 +243,13 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 		<div
 			className="border-t flex flex-col"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-			data-testid="diff-review-tray"
+			data-testid="review-tray"
 			role="region"
-			aria-label="Review"
+			aria-label={title}
 		>
 			<div className="flex items-center justify-between gap-2 px-6 py-2">
 				<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
-					Review: {count}
+					{title}: {count}
 					{outdatedCount > 0 && (
 						<span className="font-normal" style={{ color: theme.colors.textDim }}>
 							{' · '}
@@ -236,7 +262,7 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 						theme={theme}
 						variant="ghost"
 						className="row-hover"
-						testId="diff-review-discard"
+						testId="review-discard"
 						onClick={() => {
 							if (!discardArmed) {
 								setDiscardArmed(true);
@@ -256,7 +282,7 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 						variant="ghost"
 						className="row-hover"
 						icon={<PencilLine />}
-						testId="diff-review-edit-in-composer"
+						testId="review-edit-in-composer"
 						onClick={onEditInComposer}
 						disabled={nothingToSend}
 						title={
@@ -270,13 +296,13 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 					<HeaderActionButton
 						theme={theme}
 						icon={<Send />}
-						testId="diff-review-send"
+						testId="review-send"
 						onClick={onSend}
 						disabled={nothingToSend}
 						title={
 							nothingToSend
 								? blockedTitle
-								: `Send every current comment to ${agent} as one prompt${shortcutSuffix(SEND_KEYS)}`
+								: `Send every current comment to ${agent} as one prompt${shortcutSuffix(sendKeys)}`
 						}
 					>
 						{targetName ? `Send Review to ${targetName}` : 'Send Review'}
@@ -285,7 +311,7 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 			</div>
 			<ul className="max-h-36 overflow-y-auto px-6 pb-2 flex flex-col gap-1">
 				{comments.map((comment) => {
-					const location = formatCommentLocation(comment);
+					const location = formatLocation(comment);
 					const outdated = outdatedIds.has(comment.id);
 					return (
 						<li key={comment.id} className="flex items-center gap-2 text-xs">
@@ -301,7 +327,7 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 										? 'Outdated: these lines changed since you commented. It will not be sent; remove it or comment on the new lines.'
 										: `Edit comment on ${location}`
 								}
-								data-testid={outdated ? 'diff-review-outdated' : undefined}
+								data-testid={outdated ? 'review-outdated' : undefined}
 							>
 								<span
 									className={`font-mono shrink-0 ${outdated ? 'line-through' : ''}`}
@@ -332,4 +358,6 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 			</ul>
 		</div>
 	);
-});
+}
+
+export const ReviewTray = memo(ReviewTrayImpl) as typeof ReviewTrayImpl;
