@@ -452,6 +452,10 @@ export interface UseSettingsReturn {
 	utilityModelId: string | null;
 	setUtilityModelId: (value: string | null) => void;
 
+	// Primary Agent (#2050): default receiver of the user's input
+	primaryAgentId: string | null;
+	setPrimaryAgentId: (value: string | null) => void;
+
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;

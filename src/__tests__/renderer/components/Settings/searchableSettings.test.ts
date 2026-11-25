@@ -177,6 +177,13 @@ describe('searchableSettings', () => {
 			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
 		});
 
+		it.each(['Primary Agent', 'right hand', 'default agent', 'None'])(
+			'finds the Primary Agent setting for %s',
+			(query) => {
+				expect(searchSettings(query).some((s) => s.id === 'general-primary-agent')).toBe(true);
+			}
+		);
+
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
 			const upper = searchSettings('FONT');

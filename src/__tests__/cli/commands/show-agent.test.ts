@@ -18,6 +18,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	readHistory: vi.fn(),
 	readGroups: vi.fn(),
+	readPrimaryAgentId: vi.fn(() => null),
 }));
 
 // Mock the formatter

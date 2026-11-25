@@ -23,6 +23,7 @@ vi.mock('../../../cli/services/storage', () => {
 		readGroups: vi.fn(),
 		getSessionsByGroup: vi.fn(),
 		resolveGroupId: vi.fn((id: string) => id),
+		readPrimaryAgentId: vi.fn(() => null),
 	};
 });
 
@@ -69,6 +70,7 @@ import {
 	readSessions,
 	readGroups,
 	getSessionsByGroup,
+	readPrimaryAgentId,
 	resolveGroupId,
 } from '../../../cli/services/storage';
 import { formatAgents, formatError } from '../../../cli/output/formatter';
@@ -226,6 +228,22 @@ describe('list-agents command', () => {
 					cwd: '/test',
 				})
 			);
+		});
+
+		it('marks only the Primary Agent with primary: true', () => {
+			vi.mocked(readSessions).mockReturnValue([
+				mockSession({ id: 'a', name: 'A' }),
+				mockSession({ id: 'b', name: 'B' }),
+			]);
+			vi.mocked(readPrimaryAgentId).mockReturnValueOnce('b');
+
+			listAgents({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.map((r: { id: string; primary: boolean }) => [r.id, r.primary])).toEqual([
+				['a', false],
+				['b', true],
+			]);
 		});
 
 		it('should expose the worktree directory as worktreeBasePath, null when unset', () => {
@@ -690,6 +708,7 @@ describe('list-agents command', () => {
 					bookmarked: false,
 					groupName: null,
 					groupHidden: false,
+					primary: false,
 					sessionSshRemoteConfig: null,
 					liftedTo: null,
 					peer: 'build-box',

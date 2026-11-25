@@ -21,6 +21,7 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
+import { PRIMARY_AGENT_SETTING_KEY } from '../../shared/primaryAgent';
 import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
 import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
@@ -178,6 +179,15 @@ function refersToDormantAgent(ref: string): boolean {
  */
 export function readActiveAgentId(): string | null {
 	const id = readSessionsStoreFile(getSyncDir()).data?.activeSessionId;
+	return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/**
+ * The Primary Agent's id (Settings > General > Primary Agent), or null when
+ * none is set. The stored id is not checked against the agent list here.
+ */
+export function readPrimaryAgentId(): string | null {
+	const id = readSettingValue(PRIMARY_AGENT_SETTING_KEY);
 	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 

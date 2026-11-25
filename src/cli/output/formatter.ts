@@ -104,6 +104,8 @@ export interface AgentDisplay {
 	groupHidden?: boolean;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
+	/** The Primary Agent (Settings > General > Primary Agent). */
+	primary?: boolean;
 	/** Set on an agent a Federation peer's host owns: the peer it lives on. */
 	peer?: string;
 	/** Set on a local agent that was lifted onto its host: `peer:agentId`, where it runs now. */
@@ -139,11 +141,12 @@ export function formatAgents(
 		const id = dim(agent.peer ? `${agent.peer}:${agent.id}` : agent.id);
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
 		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
+		const primary = agent.primary ? c('cyan', ' [Primary]') : '';
 		const peer = agent.peer ? c('magenta', ` @${agent.peer}`) : '';
 		const group = agent.groupName && !groupName ? dim(` in ${agent.groupName}`) : '';
 		const hiddenGroup = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
 
-		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}${group}${hiddenGroup}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${primary}${autoRun}${peer}${group}${hiddenGroup}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 		if (agent.liftedTo) lines.push(`      ${c('magenta', `moved to ${agent.liftedTo}`)}`);
@@ -536,6 +539,7 @@ export interface AgentDetailDisplay {
 	groupHidden?: boolean | null;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
+	primary?: boolean;
 	// Editable per-agent settings (the Edit Agent modal fields). `null` = unset.
 	nudgeMessage?: string | null;
 	newSessionMessage?: string | null;
@@ -617,6 +621,10 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 
 	if (agent.bookmarked) {
 		lines.push(`  ${c('white', 'Bookmarked:')} ${c('yellow', '\u2605 yes')}`);
+	}
+
+	if (agent.primary) {
+		lines.push(`  ${c('white', 'Primary:')}    ${c('cyan', 'yes')}`);
 	}
 
 	// Configuration (the Edit Agent modal settings). Only render the rows that
