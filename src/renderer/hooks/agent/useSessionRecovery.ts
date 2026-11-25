@@ -22,6 +22,7 @@ import type { LogEntry } from '../../types';
 import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
 import { contextGroomingService, buildContextTransferPrompt } from '../../services/contextGroomer';
 import { extractTabContext } from '../../utils/contextExtractor';
+import { refuseOnHostedAgent } from '../../services/hostedTurns';
 import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[SessionRecovery]';
@@ -74,6 +75,10 @@ export function useSessionRecovery(deps: UseSessionRecoveryDeps): UseSessionReco
 	const startRecovery = useCallback(
 		async (opts: StartRecoveryOptions): Promise<void> => {
 			const { sessionId, tabId, lastUserPrompt, groomContext } = opts;
+			// Recovery re-sends with the old conversation as pending context; a hosted send goes to
+			// the host without it, so the context would be dropped. Refuse before anything changes.
+			const owner = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (refuseOnHostedAgent(owner, 'Session recovery')) return;
 			setIsRecovering(true);
 			setRecoveryError(null);
 

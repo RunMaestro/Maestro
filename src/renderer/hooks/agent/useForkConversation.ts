@@ -14,6 +14,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
+import { refuseOnHostedAgent } from '../../services/hostedTurns';
 
 /**
  * Fork conversation at a log id into a new AI tab.
@@ -26,6 +27,9 @@ export function useForkConversation() {
 		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
 		const session = sessions.find((s) => s.id === activeSessionId);
 		if (!session) return;
+		// A fork spawns the provider here, which main refuses for a hosted agent: say so before a
+		// tab exists, instead of leaving an orphan tab that reads "Failed to spawn".
+		if (refuseOnHostedAgent(session, 'Fork')) return;
 
 		const sourceTab = getActiveTab(session);
 		if (!sourceTab) return;

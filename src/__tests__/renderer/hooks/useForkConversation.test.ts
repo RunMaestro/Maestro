@@ -42,6 +42,7 @@ vi.mock('../../../renderer/utils/spawnHelpers', () => ({
 
 import { useForkConversation } from '../../../renderer/hooks/agent/useForkConversation';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 
 // ============================================================================
@@ -492,6 +493,25 @@ describe('useForkConversation', () => {
 			expect(setSessions).not.toHaveBeenCalled();
 			expect(getSessions()[0].aiTabs).toHaveLength(1);
 			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('refuses on a hosted agent before any tab is created', () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			try {
+				const session = buildSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
+				const { fork, getSessions, setSessions } = mountHook([session], session.id);
+
+				fork('log-2');
+
+				expect(setSessions).not.toHaveBeenCalled();
+				expect(getSessions()[0].aiTabs).toHaveLength(1);
+				expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ title: 'Fork is not available on hosted agents yet' })
+				);
+			} finally {
+				useSettingsStore.setState({ federationHostedAgents: false });
+			}
 		});
 	});
 

@@ -253,6 +253,22 @@ describe('PeerMirrorService', () => {
 		expect(h.deps.acquireForward).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'off' }));
 	});
 
+	it('answers isRemoteConnected only while the peer on that remote is connected', async () => {
+		const a = fakeHost('a', { manualReady: true });
+		const h = harness([remoteOf('a')], { a });
+		expect(h.service.isRemoteConnected('a')).toBe(false);
+		h.service.start();
+		await settle();
+		expect(h.service.isRemoteConnected('a')).toBe(false);
+		a.open();
+		await settle();
+		expect(h.service.isRemoteConnected('a')).toBe(true);
+		expect(h.service.isRemoteConnected('unknown')).toBe(false);
+		h.setRemotes([]);
+		await settle();
+		expect(h.service.isRemoteConnected('a')).toBe(false);
+	});
+
 	it('records a host that is down as the peer state with the fix line, and keeps going', async () => {
 		const a = fakeHost('a', { manualReady: true });
 		const b = fakeHost('b');

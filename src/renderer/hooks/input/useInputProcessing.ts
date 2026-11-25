@@ -67,7 +67,11 @@ import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
-import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
+import {
+	hostedTargetOf,
+	refuseOnHostedAgent,
+	sendHostedTurn,
+} from '../../services/hostedTurns';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -116,6 +120,35 @@ export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
  * has to hold for the tab.
  */
 const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: string[] }>>();
+
+/**
+ * What a hosted agent's send would ask this Maestro to run locally, by name, or null for a plain
+ * message. Maestro's built-ins (`/history`, `/wizard`, `/skills`, `/btw`), the inline wizard, and a
+ * held send are handled here for a local agent, and each one spawns or queues on this machine,
+ * which a hosted agent cannot do. Matches only what the local path would have handled.
+ */
+export function hostedLocalOnlyAction(
+	text: string,
+	opts: {
+		toolType: Session['toolType'];
+		isWizardActive: boolean;
+		hold: boolean;
+		handles: { history: boolean; wizard: boolean; skills: boolean };
+	}
+): string | null {
+	const command = text.trim();
+	if (opts.isWizardActive) return 'The wizard';
+	if (command === '/history' && opts.handles.history) return '/history';
+	if ((command === '/wizard' || command.startsWith('/wizard ')) && opts.handles.wizard) {
+		return '/wizard';
+	}
+	if (opts.toolType === 'claude-code') {
+		if (command === '/skills' && opts.handles.skills) return '/skills';
+		if (parseSideQuestion(command) !== null) return '/btw';
+	}
+	if (opts.hold) return 'Queue Held';
+	return null;
+}
 
 /**
  * Dependencies for the useInputProcessing hook.
@@ -510,10 +543,70 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// is down leaves it in place.
 			if (activeSession.inputMode === 'ai' && hostedTargetOf(activeSession)) {
 				const text = stripShellCommandEscape(effectiveInputValue);
-				const sent = await sendHostedTurn(activeSession, targetTabId, text, effectiveImages);
+				// Maestro's own built-ins and the inline wizard spawn here, which main refuses for a
+				// hosted agent. Say so and keep the draft, rather than sending the literal command
+				// text to the host's provider as a message.
+				const localOnly = hostedLocalOnlyAction(text, {
+					toolType: activeSession.toolType,
+					isWizardActive: !!isWizardActive,
+					hold: options?.hold === true,
+					handles: {
+						history: !!onHistoryCommand,
+						wizard: !!onWizardCommand,
+						skills: !!onSkillsCommand,
+					},
+				});
+				if (localOnly && refuseOnHostedAgent(activeSession, localOnly)) return;
+
+				// Design Mode chips expand into the message exactly as a local send expands them:
+				// each chip's block ahead of the typed text, its screenshot after the staged images.
+				let hostedText = text;
+				let hostedImages = effectiveImages;
+				if (designPicks.length > 0) {
+					const expanded = expandDesignPicks(designPicks, text);
+					hostedText = expanded.text;
+					if (expanded.images.length > 0) hostedImages = [...effectiveImages, ...expanded.images];
+				}
+
+				// The host round trip is the window a second Enter lands in (key repeat, the send
+				// button). Same content guard the local path uses, so it is not sent twice.
+				const hostedKey = `${activeSession.id}:${targetTabId ?? ''}`;
+				const hostedSubmit = { text, images: effectiveImages };
+				if (
+					isComposerSubmit &&
+					designPicks.length === 0 &&
+					(composerSubmitsInFlight.get(hostedKey) ?? []).some(
+						(prior) =>
+							(!text.trim() || text === prior.text) &&
+							(effectiveImages === prior.images ||
+								(effectiveImages.length === 0 && prior.images.length === 0))
+					)
+				) {
+					logger.info('[processInput] Ignoring a repeat hosted submit while the first is in flight');
+					return;
+				}
+				if (isComposerSubmit) {
+					composerSubmitsInFlight.set(hostedKey, [
+						...(composerSubmitsInFlight.get(hostedKey) ?? []),
+						hostedSubmit,
+					]);
+				}
+				let sent = false;
+				try {
+					sent = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages);
+				} finally {
+					if (isComposerSubmit) {
+						const remaining = (composerSubmitsInFlight.get(hostedKey) ?? []).filter(
+							(entry) => entry !== hostedSubmit
+						);
+						if (remaining.length > 0) composerSubmitsInFlight.set(hostedKey, remaining);
+						else composerSubmitsInFlight.delete(hostedKey);
+					}
+				}
 				if (sent && isComposerSubmit) {
 					setInputValue('');
 					if (!usingOverrideImages) setStagedImages([]);
+					clearSentDesignPicks();
 					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 				}

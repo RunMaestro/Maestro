@@ -12,6 +12,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import type { MergeOptions } from '../../../renderer/components/MergeSessionModal';
 import * as contextGroomer from '../../../renderer/services/contextGroomer';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { SetStateAction } from 'react';
 import type { MergeRequest } from '../../../renderer/types/contextMerge';
 
@@ -775,6 +776,31 @@ describe('useMergeSessionWithSessions: Grok carry-over', () => {
 		sessions = all;
 		useSessionStore.setState({ sessions: all });
 	}
+
+	it('refuses to merge into an existing tab of a hosted agent and leaves the tab alone', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		try {
+			const source = grokSource([
+				{ id: 's-1', timestamp: 1, source: 'user', text: 'SOURCE_QUESTION' },
+			]);
+			seed(source, target('claude-code', {}, { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }));
+			const { result } = render();
+			let merge;
+			await act(async () => {
+				merge = await result.current.executeMerge(
+					source,
+					'grok-tab',
+					'target',
+					'target-tab',
+					intoTab
+				);
+			});
+			expect(merge).toMatchObject({ success: false });
+			expect(injectedTab().pendingMergedContext).toBeUndefined();
+		} finally {
+			useSettingsStore.setState({ federationHostedAgents: false });
+		}
+	});
 
 	it('injects only the ordered Grok source, labelled by provider and cwd, without account identity', async () => {
 		const source = grokSource([

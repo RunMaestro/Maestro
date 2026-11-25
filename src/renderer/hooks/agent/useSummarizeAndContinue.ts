@@ -27,6 +27,7 @@ import type { SummarizeState, TabSummarizeState } from '../../stores/operationSt
 import { logger } from '../../utils/logger';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type { TabContextOpResult } from '../../../shared/tabContextOps';
+import { refuseOnHostedAgent } from '../../services/hostedTurns';
 
 // Re-export types from the canonical store location
 export type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
@@ -186,6 +187,9 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			if (!session) {
 				return null;
 			}
+			// The compacted context continues in a new local tab the host does not have, and a hosted
+			// send carries no pending context. Refuse rather than drop the summary.
+			if (refuseOnHostedAgent(session, 'Summarize & Continue')) return null;
 
 			const sourceTab = session.aiTabs.find((t) => t.id === sourceTabId);
 			if (!sourceTab) {
@@ -377,6 +381,14 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			if (!session) return { success: false, error: `Agent not found: ${sessionId}` };
 			const targetTab = session.aiTabs.find((t) => t.id === targetTabId);
 			const subject = { sessionId, tabId: targetTabId };
+			// Refused here, ahead of startSummarize, so the user gets one toast that says why.
+			if (refuseOnHostedAgent(session, 'Summarize & Continue')) {
+				return {
+					success: false,
+					error: 'Summarize & Continue is not available on hosted agents yet',
+					...subject,
+				};
+			}
 
 			if (!targetTab || !canSummarize(session.contextUsage, targetTab.logs)) {
 				const message = `Context too small. Need at least ${contextSummarizationService.getMinContextUsagePercent()}% usage, ~2k tokens, or 8+ messages to compact.`;

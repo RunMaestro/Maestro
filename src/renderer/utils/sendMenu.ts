@@ -139,6 +139,9 @@ export function shouldOpenSendMenu(
 	return isAgentWorking(session);
 }
 
+/** Why Steer and Queue Held are dead on a hosted agent. */
+export const HOSTED_ROW_REASON = 'Not available on hosted agents yet.';
+
 export interface SendMenuRow {
 	action: SendMenuAction;
 	enabled: boolean;
@@ -170,7 +173,14 @@ export interface SendMenuModel {
 export function buildSendMenuModel(
 	session: Session,
 	draft: { text: string; imageCount: number },
-	opts: { forcedParallelEnabled: boolean }
+	opts: {
+		forcedParallelEnabled: boolean;
+		/**
+		 * The agent is hosted: its turns run on a Federation host, which takes a plain message and
+		 * queues it behind a busy tab. A held send and a steer have no host action yet.
+		 */
+		hosted?: boolean;
+	}
 ): SendMenuModel {
 	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId);
 	const activeTabWorking = activeTab?.state === 'busy';
@@ -192,7 +202,9 @@ export function buildSendMenuModel(
 			: { action: 'force', enabled: true };
 
 	let steer: SendMenuRow;
-	if (steerSupport.kind !== 'supported') {
+	if (opts.hosted) {
+		steer = { action: 'steer', enabled: false, reason: HOSTED_ROW_REASON };
+	} else if (steerSupport.kind !== 'supported') {
 		steer = { action: 'steer', enabled: false, reason: describeSteerBlocked(steerSupport.reason) };
 	} else {
 		// The draft as the queued item it would become, judged by the same predicate
@@ -213,7 +225,14 @@ export function buildSendMenuModel(
 	}
 
 	return {
-		rows: [{ action: 'queue', enabled: true }, force, steer, { action: 'hold', enabled: true }],
+		rows: [
+			{ action: 'queue', enabled: true },
+			force,
+			steer,
+			opts.hosted
+				? { action: 'hold', enabled: false, reason: HOSTED_ROW_REASON }
+				: { action: 'hold', enabled: true },
+		],
 		steerSupport,
 		activeTabWorking,
 		agentWorking: isAgentWorking(session),

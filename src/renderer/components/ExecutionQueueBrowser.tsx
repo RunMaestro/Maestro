@@ -289,7 +289,7 @@ export function ExecutionQueueBrowser({
 	// one: the first message on a tab, a command, a leading-mention message, or a
 	// consult hold has nothing to merge with.
 	const mergeAction = (session: Session, item: QueuedItem): (() => void) | undefined =>
-		onMergeItem && findQueuedMergeTarget(session.executionQueue ?? [], item.id)
+		onMergeItem && !item.hostQueued && findQueuedMergeTarget(session.executionQueue ?? [], item.id)
 			? () => setMergeConfirm({ sessionId: session.id, itemId: item.id })
 			: undefined;
 
@@ -312,9 +312,10 @@ export function ExecutionQueueBrowser({
 	const menuActions: QueueItemAction[] = [];
 	if (actionMenuOpen && selectedEntry) {
 		const { session, item } = selectedEntry;
-		const eligibility = onForceSendItem
-			? getForceSendEligibility(session, item, { forcedParallelEnabled })
-			: null;
+		const eligibility =
+			onForceSendItem && !item.hostQueued
+				? getForceSendEligibility(session, item, { forcedParallelEnabled })
+				: null;
 		const sendNow = forceSendAction(session, item, eligibility);
 		if (sendNow) {
 			menuActions.push({
@@ -334,7 +335,7 @@ export function ExecutionQueueBrowser({
 				run: merge,
 			});
 		}
-		if (onEditItem && item.type !== 'command') {
+		if (onEditItem && item.type !== 'command' && !item.hostQueued) {
 			menuActions.push({
 				id: 'edit',
 				label: 'Edit',
@@ -500,9 +501,15 @@ export function ExecutionQueueBrowser({
 								{/* Queue Items */}
 								<div className="space-y-0">
 									{session.executionQueue?.map((item, index) => {
-										const forceSend = onForceSendItem
-											? getForceSendEligibility(session, item, { forcedParallelEnabled })
-											: null;
+										// A hosted agent's host runs its own queue: its items offer Remove and
+										// Hold / Resume, which act on the host, and nothing that would only
+										// change this copy (the next host sync would undo it). Same rule as
+										// QueuedItemsList.
+										const hostOnly = item.hostQueued === true;
+										const forceSend =
+											onForceSendItem && !hostOnly
+												? getForceSendEligibility(session, item, { forcedParallelEnabled })
+												: null;
 										const flatIndex = flatIndexById.get(item.id) ?? -1;
 										return (
 											<React.Fragment key={item.id}>
@@ -532,7 +539,7 @@ export function ExecutionQueueBrowser({
 															: undefined
 													}
 													onEdit={
-														onEditItem && item.type !== 'command'
+														onEditItem && item.type !== 'command' && !hostOnly
 															? () => setEditing({ sessionId: session.id, item })
 															: undefined
 													}
@@ -543,7 +550,11 @@ export function ExecutionQueueBrowser({
 													isDragging={
 														dragState?.key === session.id && dragState?.fromIndex === index
 													}
-													canDrag={!!onReorderItems && (session.executionQueue?.length || 0) > 1}
+													canDrag={
+														!!onReorderItems &&
+														!hostOnly &&
+														(session.executionQueue?.length || 0) > 1
+													}
 													isAnyDragging={isAnyDragging}
 													onDragStart={() => startDrag(session.id, index)}
 													onDragEnd={endDrag}

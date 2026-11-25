@@ -64,6 +64,7 @@ import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createTabAtPosition } from '../../../renderer/utils/tabHelpers';
 import { useOperationStore } from '../../../renderer/stores/operationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -186,6 +187,32 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 				title: 'Cannot Compact',
 			})
 		);
+	});
+
+	it('refuses on a hosted agent before any summarization', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		try {
+			const session = createMockSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
+			seedActiveSession(session);
+			const { result } = renderHook(() => useSummarizeAndContinue());
+
+			let outcome;
+			await act(async () => {
+				outcome = await result.current.summarizeTab(session.id, 'tab-1');
+			});
+
+			expect(outcome).toMatchObject({
+				success: false,
+				error: 'Summarize & Continue is not available on hosted agents yet',
+			});
+			expect(contextSummarizationService.summarizeContext).not.toHaveBeenCalled();
+			// The refusal comes ahead of the size check and startSummarize, so neither of their toasts follows.
+			expect(notifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Cannot Compact' })
+			);
+		} finally {
+			useSettingsStore.setState({ federationHostedAgents: false });
+		}
 	});
 
 	it('calls startSummarize with the active tab id', async () => {

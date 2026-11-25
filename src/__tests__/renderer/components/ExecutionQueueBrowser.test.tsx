@@ -2503,4 +2503,69 @@ describe('ExecutionQueueBrowser', () => {
 			fireEvent.keyDown(document.activeElement ?? card, { key: 'Escape' });
 		});
 	});
+
+	describe('host-queued items (hosted agent)', () => {
+		// A hosted agent's host runs its own queue. Its items offer only what acts on the host
+		// (Remove, Hold / Resume); edit, merge, reorder and Send Now would change this copy only.
+		const hostSession = () =>
+			createSession({
+				id: 'active-session',
+				aiTabs: [
+					{ id: 'tab-1', name: 'tab-1', agentSessionId: null, logs: [], state: 'idle' },
+				] as any,
+				activeTabId: 'tab-1',
+				executionQueue: [
+					createQueuedItem({ id: 'host-1', text: 'first', hostQueued: true }),
+					createQueuedItem({ id: 'host-2', text: 'second', hostQueued: true }),
+				],
+			});
+
+		const renderHost = () =>
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[hostSession()]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={vi.fn()}
+					onForceSendItem={vi.fn()}
+					onMergeItem={vi.fn()}
+					onEditItem={vi.fn()}
+					onToggleItemPause={vi.fn()}
+				/>
+			);
+
+		beforeEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+		});
+
+		it('offers no Send Now on a host item', () => {
+			renderHost();
+			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
+		});
+
+		it('is not draggable', () => {
+			const { container } = renderHost();
+			const hostRows = container.querySelectorAll('.group.select-none');
+			expect(hostRows.length).toBe(2);
+			hostRows.forEach((row) => {
+				expect(row).not.toHaveStyle({ cursor: 'grab' });
+			});
+		});
+
+		it('the action menu offers Remove and Hold only', () => {
+			renderHost();
+			const card = screen.getByLabelText('Execution Queue');
+			fireEvent.keyDown(card, { key: 'ArrowDown' });
+			fireEvent.keyDown(card, { key: 'Enter' });
+			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
+			expect(screen.queryByTestId('queue-action-edit')).toBeNull();
+			expect(screen.queryByTestId('queue-action-merge')).toBeNull();
+			expect(screen.queryByTestId('queue-action-send')).toBeNull();
+		});
+	});
 });

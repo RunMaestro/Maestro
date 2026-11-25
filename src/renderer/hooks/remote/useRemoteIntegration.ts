@@ -29,6 +29,7 @@ import {
 import { logger } from '../../utils/logger';
 import {
 	buildQueuedMessageItem,
+	matchQueuedSlashCommand,
 	enqueuePromptForTab,
 	sendQueuedItemNow,
 	setQueuedItemPaused,
@@ -1476,6 +1477,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const lineForTab = (session.executionQueue ?? []).some(
 						(item) => item.tabId === resolvedTabId
 					);
+					// One of the user's own slash commands (custom AI, speckit, openspec, bmad) is queued
+					// as a command, so the drain expands it, as the composer and the plain remote-command
+					// path do. A provider's own `/compact` stays a message, as typed.
+					const isUserSlashCommand = matchQueuedSlashCommand(session, command) !== null;
 					// The plain remote-command path spawns on the live tab's settings, so a message
 					// carrying the sender's own chips goes through the queue instead and is sent at
 					// once from there (Force Send): the queued item is what carries them.
@@ -1487,6 +1492,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								text: command,
 								images,
 								mentionRouting,
+								slashCommand: isUserSlashCommand,
 							}),
 							turnOverrides
 						);
@@ -1548,6 +1554,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								text: command,
 								images,
 								mentionRouting,
+								slashCommand: isUserSlashCommand,
 							}),
 							turnOverrides
 						),

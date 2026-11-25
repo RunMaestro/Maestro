@@ -942,6 +942,44 @@ describe('useBatchProcessor hook', () => {
 			useSettingsStore.setState({ autoRunDisabled: false });
 		});
 
+		it('should not start on a hosted agent, and says why', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			try {
+				const sessions = [createMockSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } })];
+				const groups = [createMockGroup()];
+
+				useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+				const { result } = renderHook(() =>
+					useBatchProcessor({
+						groups,
+						onUpdateSession: mockOnUpdateSession,
+						onSpawnAgent: mockOnSpawnAgent,
+						onAddHistoryEntry: mockOnAddHistoryEntry,
+					})
+				);
+
+				await act(async () => {
+					await result.current.startBatchRun(
+						sessions[0].id,
+						{
+							documents: [{ filename: 'test', resetOnCompletion: false }],
+							prompt: 'Test prompt',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					);
+				});
+
+				expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ title: 'Auto Run is not available on hosted agents yet' })
+				);
+				expect(result.current.batchRunStates[sessions[0].id]?.isRunning ?? false).toBe(false);
+			} finally {
+				useSettingsStore.setState({ federationHostedAgents: false });
+			}
+		});
+
 		it('should not start if session is not found', async () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];

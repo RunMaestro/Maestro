@@ -235,6 +235,16 @@ export class PeerMirrorService {
 		}
 	}
 
+	/**
+	 * Whether this service holds a live connection to the peer on `remoteId` right now. The SSH
+	 * reachability tracker reads it: a held connection proves the remote is up, so a failed dial
+	 * beside it is a transport hiccup, not an outage.
+	 */
+	isRemoteConnected(remoteId: string): boolean {
+		const entry = this.entries.get(remoteId);
+		return !!entry && !entry.dropped && entry.state.connection === 'connected';
+	}
+
 	/** Every mirrored peer, in stored order. The same answer the CLI's `federation peers` prints. */
 	peers(): MirrorPeerSummary[] {
 		return [...this.entries.values()].map((entry) => summarizePeer(entry.state));

@@ -8,13 +8,15 @@
  *   read-only, and save to History as the sender's `TurnOverrides`. A busy tab queues on the host.
  * - `interruptHostedTurn()`: Stop (the pill, the shortcut, `maestro-cli interrupt`).
  * - `openHostedTab()`, `closeHostedTab()`, `renameHostedTab()`, `starHostedTab()`: the strip.
+ * - `updateHostedTab()`: a tab setting the host must hold before a turn starts (thinking).
+ * - `refuseOnHostedAgent()`: an action that would spawn here, refused with a toast.
  *
  * Every call goes through `services/peerMirror.ts` (`actOnMirroredAgent()`), which toasts a
  * failure and never queues here: a host that is down refuses at once.
  */
 
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
-import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
+import type { TabPatch, TurnOverrides } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -58,6 +60,25 @@ export function hostedTargetOf(
 		.getState()
 		.peers[pointer.peer]?.agents.find((candidate) => candidate.id === pointer.agentId);
 	return { peerId: pointer.peer, agentId: pointer.agentId, ...(agent ? { agent } : {}) };
+}
+
+/**
+ * Refuse an action that spawns a provider here, for a hosted agent. Main refuses every local spawn
+ * of a lifted record (`process:spawn`), so without this the user gets a raw spawn error or an
+ * orphan tab. Toasts which action and why, and answers true when the caller must stop.
+ */
+export function refuseOnHostedAgent(
+	session: Pick<Session, 'name' | 'liftedTo'> | null | undefined,
+	action: string
+): boolean {
+	const target = hostedTargetOf(session);
+	if (!target || !session) return false;
+	notifyToast({
+		color: 'yellow',
+		title: `${action} is not available on hosted agents yet`,
+		message: `${session.name} runs on ${target.peerId}. Move it back from the host to use ${action}.`,
+	});
+	return true;
 }
 
 /** Whether `tabId` is one of the host's tabs (a lift keeps tab ids, so most local tabs are). */
@@ -169,6 +190,22 @@ export function renameHostedTab(
 	const target = hostedTargetOf(session);
 	if (target && isHostTab(target, tabId)) {
 		void renameMirrorTab(target.peerId, target.agentId, tabId, name);
+	}
+}
+
+/**
+ * Push one tab's composer setting to the host too. Model, effort, read-only, and save to History
+ * travel with each turn (`hostedTurnOverrides()`); a setting that decides what the host's process
+ * streams, such as thinking, has to be on the host's tab before the turn starts.
+ */
+export function updateHostedTab(
+	session: Pick<Session, 'liftedTo'>,
+	tabId: string,
+	patch: TabPatch
+): void {
+	const target = hostedTargetOf(session);
+	if (target && isHostTab(target, tabId)) {
+		void actOnMirroredAgent(target.peerId, target.agentId, { kind: 'update-tab', tabId, patch });
 	}
 }
 
