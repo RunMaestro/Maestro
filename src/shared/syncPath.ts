@@ -146,11 +146,16 @@ export function isInsideInstallDir(customPath: string, installDir: string): bool
  * `src/main/stores/utils.ts`) and falls back to `userDataDir` in every case the
  * app does: no bootstrap file, an unparseable one (the app quarantines it and
  * starts from defaults), no path configured, or a path that fails
- * `isValidSyncPath`. A missing directory falls back too rather than being
- * created: the app creates it at startup, so its absence means the app is not
- * using it, and a reader has no business making one.
+ * `isValidSyncPath`.
+ *
+ * A configured directory that does not exist yet is where the app diverges
+ * from a plain reader: the app CREATES it at startup and uses it, falling back
+ * only when it cannot be created. A reader falls back without creating it, so
+ * a read never leaves a folder behind. A caller that is about to WRITE a synced
+ * store passes `{ create: true }` to make the same decision the app makes;
+ * otherwise the write lands in a file the app will not read (issue #2082).
  */
-export function resolveSyncDir(userDataDir: string): string {
+export function resolveSyncDir(userDataDir: string, options: { create?: boolean } = {}): string {
 	let raw: string;
 	try {
 		raw = fs.readFileSync(path.join(userDataDir, BOOTSTRAP_STORE_FILE), 'utf-8');
@@ -171,8 +176,20 @@ export function resolveSyncDir(userDataDir: string): string {
 	if (typeof customPath !== 'string' || customPath.length === 0) {
 		return userDataDir;
 	}
-	if (!isValidSyncPath(customPath) || !fs.existsSync(customPath)) {
+	if (!isValidSyncPath(customPath)) {
 		return userDataDir;
+	}
+	if (!fs.existsSync(customPath)) {
+		if (!options.create) {
+			return userDataDir;
+		}
+		try {
+			fs.mkdirSync(customPath, { recursive: true });
+		} catch {
+			// Same fallback as the app's `getCustomSyncPath()` when it cannot
+			// create the folder (an unmounted volume, a read-only parent).
+			return userDataDir;
+		}
 	}
 	return customPath;
 }
