@@ -630,6 +630,11 @@ export type EnqueueCommandResult = {
 	queueLength?: number;
 	/** Id of the queued item, for later tracking or removal. */
 	itemId?: string;
+	/**
+	 * True when the text was one of Maestro's own commands (`/history`, `/skills`) and the renderer
+	 * ran it for the tab, as the composer does, instead of starting a turn.
+	 */
+	ran?: boolean;
 	error?: string;
 	/**
 	 * Machine-readable cause of a failure, so callers can react to a specific

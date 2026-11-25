@@ -104,6 +104,7 @@ export function registerQueueCallbacks(
 							queuePosition: typeof r.queuePosition === 'number' ? r.queuePosition : undefined,
 							queueLength: typeof r.queueLength === 'number' ? r.queueLength : undefined,
 							itemId: typeof r.itemId === 'string' ? r.itemId : undefined,
+							...(r.ran === true ? { ran: true } : {}),
 							error: typeof r.error === 'string' ? r.error : undefined,
 							reason: parseEnqueueFailureReason(r.reason),
 						});

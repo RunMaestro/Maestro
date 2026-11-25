@@ -459,6 +459,12 @@ export function normalizeOriginHost(value: unknown): string | undefined {
 export type TurnSendReceipt =
 	/** The agent was idle; the turn is running now. */
 	| { status: 'started' }
+	/**
+	 * The text was one of Maestro's own commands (`/history`, `/skills`,
+	 * `parseMaestroBuiltinCommand()`), and the host ran it for the tab as its composer would. No
+	 * turn started: what it writes reaches the tab's transcript.
+	 */
+	| { status: 'ran' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
 	| {
 			status: 'queued';

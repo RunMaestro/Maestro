@@ -25,6 +25,7 @@ import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMen
 import { runCrossAgentAsk } from '../../../renderer/services/crossAgentAsk';
 import { steerQueuedItem } from '../../../renderer/services/chatSteering';
 import { sendQueuedItemNow } from '../../../renderer/services/queuedPrompt';
+import { registerMaestroBuiltinCommandHandlers } from '../../../renderer/services/maestroBuiltinCommands';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -2664,6 +2665,85 @@ describe('useRemoteIntegration', () => {
 			expect(queue).toHaveLength(2);
 			expect(queue?.[0].dispatchCallback).toBe(true);
 			expect(queue?.[1].dispatchCallback).toBeUndefined();
+		});
+
+		// A hosted agent's `/history` and `/skills` arrive here as the typed text: the host runs the
+		// same handler for the named tab that its composer runs for the active one.
+		it.each([
+			['/history', 'history', 'claude-code'],
+			['/skills', 'skills', 'claude-code'],
+			['/history', 'history', 'codex'],
+		] as const)(
+			'runs %s for the named tab, busy or not, and replies that it ran (%s, %s)',
+			(command, handler, toolType) => {
+				const history = vi.fn().mockResolvedValue(undefined);
+				const skills = vi.fn().mockResolvedValue(undefined);
+				registerMaestroBuiltinCommandHandlers({ history, skills });
+				const tab = createMockTab({ id: 'tab-2', state: 'busy' });
+				const session = createMockSession({
+					id: 'session-1',
+					toolType,
+					aiTabs: [createMockTab({ id: 'tab-1' }), tab],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				act(() => {
+					onRemoteEnqueueCommandHandler?.('session-1', command, 'chan-b', 'ai', 'tab-2');
+				});
+
+				const ran = handler === 'history' ? history : skills;
+				expect(ran).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-1', tabId: 'tab-2' });
+				expect(dispatchEventSpy).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith('chan-b', {
+					success: true,
+					tabId: 'tab-2',
+					queued: false,
+					ran: true,
+				});
+				dispatchEventSpy.mockRestore();
+				registerMaestroBuiltinCommandHandlers(null);
+			}
+		);
+
+		it('sends /skills to a non-Claude provider as typed, and queues a held /history as a message', () => {
+			const history = vi.fn().mockResolvedValue(undefined);
+			const skills = vi.fn().mockResolvedValue(undefined);
+			registerMaestroBuiltinCommandHandlers({ history, skills });
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex',
+				aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.('session-1', '/skills', 'chan-s', 'ai', 'tab-1');
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'/history',
+					'chan-h',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					true
+				);
+			});
+
+			expect(history).not.toHaveBeenCalled();
+			expect(skills).not.toHaveBeenCalled();
+			const queue = useSessionStore.getState().sessions[0].executionQueue;
+			expect(queue.map((item) => item.text)).toEqual(['/skills', '/history']);
+			expect(queue[1].paused).toBe(true);
+			registerMaestroBuiltinCommandHandlers(null);
 		});
 
 		it('queues a held send paused even when the agent is idle (dispatch --held)', () => {

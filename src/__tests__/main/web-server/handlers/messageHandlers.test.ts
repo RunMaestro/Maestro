@@ -3886,6 +3886,33 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('replies ran when the renderer ran one of its own commands, so no turn is awaited', async () => {
+			vi.mocked(callbacks.enqueueCommand).mockResolvedValueOnce({
+				success: true,
+				tabId: 'tab-1',
+				queued: false,
+				ran: true,
+			});
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: '/history',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response).toMatchObject({
+					type: 'enqueue_command_result',
+					success: true,
+					queued: false,
+					ran: true,
+					tabId: 'tab-1',
+				});
+			});
+		});
+
 		it('forwards a dispatch --queue --routing to the callback', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',

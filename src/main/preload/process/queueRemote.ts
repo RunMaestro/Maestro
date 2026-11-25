@@ -87,6 +87,8 @@ export function createQueueRemoteApi() {
 				queuePosition?: number;
 				queueLength?: number;
 				itemId?: string;
+				/** The text was one of Maestro's own commands, run for the tab: no turn started. */
+				ran?: boolean;
 				error?: string;
 			}
 		): void => {

@@ -180,6 +180,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { registerMaestroBuiltinCommandHandlers } from './services/maestroBuiltinCommands';
 import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
 import {
 	mergeQueuedItemIntoAbove,
@@ -1938,6 +1939,16 @@ function MaestroConsoleInner() {
 		setInputValueRef,
 		inputRef,
 	});
+
+	// A send that names its own tab (a Federation client's hosted agent, `dispatch --queue`) runs
+	// `/history` and `/skills` there, as the composer runs them on the active tab.
+	useEffect(() => {
+		registerMaestroBuiltinCommandHandlers({
+			history: handleHistoryCommand,
+			skills: handleSkillsCommand,
+		});
+		return () => registerMaestroBuiltinCommandHandlers(null);
+	}, [handleHistoryCommand, handleSkillsCommand]);
 
 	// Combine built-in slash commands with custom AI commands, bundled methodology
 	// commands, and agent-specific commands for autocomplete.

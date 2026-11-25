@@ -41,6 +41,8 @@ import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
+import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
+import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
@@ -1406,6 +1408,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queuePosition?: number;
 					queueLength?: number;
 					itemId?: string;
+					ran?: boolean;
 					error?: string;
 					reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
@@ -1468,6 +1471,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							queuePosition: updated.executionQueue.length,
 						});
 						return;
+					}
+
+					// One of Maestro's own commands (`/history`, `/skills`) runs now for the named tab, as
+					// the composer runs it on the active tab, busy or not. This is how a hosted agent's
+					// user gets a local agent's `/history`: the client sends the text here, and what the
+					// command writes reaches the tab's transcript and mirrors back. A held send stays a
+					// message, as Queue Held keeps it.
+					if (!held) {
+						const builtin = parseMaestroBuiltinCommand(command, session.toolType);
+						if (builtin && runMaestroBuiltinCommand(builtin, { sessionId, tabId: resolvedTabId })) {
+							reply({ success: true, tabId: resolvedTabId, queued: false, ran: true });
+							return;
+						}
 					}
 
 					// Idle target TAB with nothing queued for it: no line to wait in,

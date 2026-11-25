@@ -1913,6 +1913,8 @@ class WsMaestroClient implements MaestroClient {
 				queueLength,
 			});
 		}
+		// One of Maestro's own commands: the host ran it, and no turn will end, so none begins here.
+		if (reply.ran === true) return ok({ status: 'ran' });
 		this.beginTurn(agentId, asString(reply.tabId) ?? tabId);
 		return ok({ status: 'started' });
 	}

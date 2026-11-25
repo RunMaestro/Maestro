@@ -44,6 +44,7 @@ import {
 	type TabSessionUpdate,
 } from '../agents/rules';
 import { liftedSendRefusal } from '../agents/lift-pointer';
+import { parseMaestroBuiltinCommand } from '../../maestroBuiltinCommands';
 import type { EventBus } from '../client/event-bus';
 import type {
 	ClientError,
@@ -757,6 +758,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
+		// Maestro's own commands run in a desktop's composer (or for a send it receives). This host
+		// has nothing to run one, and the provider would get the literal text as a message.
+		const builtin = parseMaestroBuiltinCommand(input.text, record.toolType);
+		if (builtin) {
+			return fail(
+				method,
+				'unsupported',
+				`${builtin.name} runs on a desktop host. This host is headless, so it cannot run it.`
+			);
+		}
 		const tabRecord = repository.getTab(agentId, tabId);
 		if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
 		const agent = toTurnAgent(record);

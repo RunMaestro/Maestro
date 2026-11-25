@@ -278,6 +278,7 @@ export function handleEnqueueCommand(
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 				...(result.queueLength !== undefined ? { queueLength: result.queueLength } : {}),
 				...(result.itemId ? { itemId: result.itemId } : {}),
+				...(result.ran ? { ran: true } : {}),
 				...(result.error ? { error: result.error } : {}),
 				requestId: message.requestId,
 			});

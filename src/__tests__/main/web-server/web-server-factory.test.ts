@@ -1433,6 +1433,17 @@ describe('web-server/web-server-factory', () => {
 			);
 		});
 
+		it('carries ran: true when the renderer ran one of its own commands (/history)', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: true, tabId: 'tab-1', queued: false, ran: true });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({ success: true, queued: false, ran: true })
+			);
+		});
+
 		it('drops an unrecognised reason instead of passing it through', async () => {
 			const server = createWebServerFactory(deps)();
 			const resultPromise = invokeEnqueue(server);

@@ -38,6 +38,7 @@ import {
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { askSideQuestion } from '../../services/sideQuestion';
 import { parseSideQuestion } from '../../../shared/sideQuestion';
+import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { gitService } from '../../services/git';
 import {
 	queuedMentionFields,
@@ -118,30 +119,25 @@ export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
 const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: string[] }>>();
 
 /**
- * What a hosted agent's send would ask this Maestro to run locally, by name, or null for a plain
- * message. Maestro's built-ins (`/history`, `/wizard`, `/skills`, `/btw`) and the inline wizard are
- * handled here for a local agent, and each one spawns on this machine, which a hosted agent cannot
- * do. Matches only what the local path would have handled. A held send is not one: the host queues
- * it paused (`sendHostedTurn()`'s `held`).
+ * What a hosted agent's send would ask this Maestro to run locally, by name, or null when the host
+ * can take it. `/history` and `/skills` go to the host as the typed text, and the host runs them
+ * for the tab (`parseMaestroBuiltinCommand()`). `/wizard`, `/btw`, and the inline wizard draw in
+ * this window's composer (the wizard panel, the side-question card), and each spawns here, which a
+ * hosted agent cannot do. A held send is not one: the host queues it paused
+ * (`sendHostedTurn()`'s `held`).
  */
 export function hostedLocalOnlyAction(
 	text: string,
 	opts: {
 		toolType: Session['toolType'];
 		isWizardActive: boolean;
-		handles: { history: boolean; wizard: boolean; skills: boolean };
+		handles: { wizard: boolean };
 	}
 ): string | null {
-	const command = text.trim();
 	if (opts.isWizardActive) return 'The wizard';
-	if (command === '/history' && opts.handles.history) return '/history';
-	if ((command === '/wizard' || command.startsWith('/wizard ')) && opts.handles.wizard) {
-		return '/wizard';
-	}
-	if (opts.toolType === 'claude-code') {
-		if (command === '/skills' && opts.handles.skills) return '/skills';
-		if (parseSideQuestion(command) !== null) return '/btw';
-	}
+	const builtin = parseMaestroBuiltinCommand(text, opts.toolType);
+	if (builtin?.name === '/wizard' && opts.handles.wizard) return '/wizard';
+	if (builtin?.name === '/btw') return '/btw';
 	return null;
 }
 
@@ -538,17 +534,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// is down leaves it in place.
 			if (activeSession.inputMode === 'ai' && hostedTargetOf(activeSession)) {
 				const text = stripShellCommandEscape(effectiveInputValue);
-				// Maestro's own built-ins and the inline wizard spawn here, which main refuses for a
-				// hosted agent. Say so and keep the draft, rather than sending the literal command
-				// text to the host's provider as a message.
+				// `/wizard`, `/btw`, and the inline wizard draw in this composer and spawn here, which
+				// main refuses for a hosted agent. Say so and keep the draft, rather than sending the
+				// literal command text to the host's provider as a message. `/history` and `/skills`
+				// go to the host, which runs them for the tab.
 				const localOnly = hostedLocalOnlyAction(text, {
 					toolType: activeSession.toolType,
 					isWizardActive: !!isWizardActive,
-					handles: {
-						history: !!onHistoryCommand,
-						wizard: !!onWizardCommand,
-						skills: !!onSkillsCommand,
-					},
+					handles: { wizard: !!onWizardCommand },
 				});
 				if (localOnly && refuseOnHostedAgent(activeSession, localOnly)) return;
 

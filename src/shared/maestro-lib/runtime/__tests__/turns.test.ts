@@ -449,6 +449,24 @@ describe('runtime turns', () => {
 			expect(argvFiles).toEqual([]);
 		});
 
+		// A Federation client sends a hosted agent's `/history` as the typed text; only a desktop host
+		// runs it. Here it would reach the provider as a message, so it is refused and nothing runs.
+		it.each(['/history', '/skills', '/wizard plan it', '/btw why?'])(
+			'refuses Maestro command %s, which only a desktop host runs, and starts nothing',
+			async (command) => {
+				const runtime = await start([seedAgent({ toolType: 'claude-code' })]);
+				const turn = watch(runtime);
+				const error = errorOf(await runtime.turns.send('a1', 't1', { text: command }));
+				expect(error).toMatchObject({
+					code: 'unsupported',
+					message: `${command.split(' ')[0]} runs on a desktop host. This host is headless, so it cannot run it.`,
+				});
+				expect(argvFiles).toEqual([]);
+				expect(turn.events).toEqual([]);
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			}
+		);
+
 		it('answers host-unavailable once the runtime is closed', async () => {
 			const runtime = await start();
 			await runtime.connection.close();

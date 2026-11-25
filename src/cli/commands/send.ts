@@ -838,6 +838,22 @@ async function sendToPeer(
 					throw hostCallError(peer, sent.error);
 				}
 				const receipt = (sent.value as Extract<PeerAgentActionResult, { kind: 'send' }>).receipt;
+				if (receipt.status === 'ran') {
+					// One of Maestro's own commands (`/history`, `/skills`): the host ran it for the tab,
+					// as its composer would. No turn runs, so there is no turn to wait for.
+					const result: SendAgentResult = {
+						success: true,
+						response: `The host on peer "${peer}" ran ${message.trim().split(/\s/, 1)[0]} for tab ${tabId}. What it wrote is in that tab's transcript: maestro-cli show agent ${ref}`,
+					};
+					return {
+						response: {
+							...buildResponse(agent.id, agent.name, result, agent.toolType as ToolType),
+							peer,
+							tabId,
+						},
+						ok: true,
+					};
+				}
 				if (receipt.status === 'queued') {
 					throw new PeerSendFailure(
 						'QUEUED_ON_PEER',

@@ -867,6 +867,17 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual(['started']);
 		});
 
+		it('reports ran, and begins no turn, when the host ran one of its own commands', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false, ran: true })
+			);
+			const result = await client.turns.send(A1, A1_TAB, { text: '/history' });
+			expect(result).toEqual({ ok: true, value: { status: 'ran' } });
+			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ command: '/history' });
+			expect(turnKinds()).toEqual([]);
+		});
+
 		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {
 			bridge.typed.set(
 				'enqueue_command',

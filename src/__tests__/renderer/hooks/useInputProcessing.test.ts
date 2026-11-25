@@ -1859,6 +1859,79 @@ describe('useInputProcessing', () => {
 			expect(steerHostedSentMessage).not.toHaveBeenCalled();
 		});
 
+		// The SSH remote a hosted record keeps, so all three modes differ only in transport.
+		const ssh = { enabled: true, remoteId: 'build-box' };
+		const modes = [
+			['local', {}],
+			['SSH', { sessionSshRemoteConfig: ssh }],
+			['hosted', { sessionSshRemoteConfig: ssh, liftedTo }],
+		] as const;
+
+		it.each(['/history', '/skills'])(
+			'local, SSH, and hosted agents all run %s for the tab, and no mode refuses it',
+			async (command) => {
+				const onSkillsCommand = vi.fn().mockResolvedValue(undefined);
+				for (const [mode, fields] of modes) {
+					vi.mocked(sendHostedTurn).mockClear();
+					vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'ran' });
+					mockOnHistoryCommand.mockClear();
+					onSkillsCommand.mockClear();
+					mockSetInputValue.mockClear();
+					const session = createMockSession({ toolType: 'claude-code', ...fields });
+					const deps = createDeps({ activeSession: session, inputValue: command, onSkillsCommand });
+					const { result, unmount } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					unmount();
+
+					const handler = command === '/history' ? mockOnHistoryCommand : onSkillsCommand;
+					if (mode === 'hosted') {
+						// The host runs the same handler for this tab (useRemoteIntegration.test.ts).
+						expect(sendHostedTurn, mode).toHaveBeenCalledWith(
+							session,
+							session.activeTabId,
+							command,
+							expect.any(Array),
+							{ held: false }
+						);
+						expect(handler, mode).not.toHaveBeenCalled();
+					} else {
+						expect(handler, mode).toHaveBeenCalledTimes(1);
+						expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+					}
+					expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+					expect(mockSetInputValue, mode).toHaveBeenCalledWith('');
+					expect(window.maestro.process.spawn, mode).not.toHaveBeenCalled();
+				}
+			}
+		);
+
+		it.each(['/btw what changed?', '/wizard plan it'])(
+			'still refuses %s on a hosted agent: it draws in this composer and spawns here',
+			async (command) => {
+				vi.mocked(sendHostedTurn).mockClear();
+				const session = createMockSession({ toolType: 'claude-code', liftedTo });
+				const deps = createDeps({
+					activeSession: session,
+					inputValue: command,
+					onWizardCommand: vi.fn(),
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(sendHostedTurn).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts).toEqual([
+					expect.objectContaining({
+						title: `${command.split(' ')[0]} is not available on hosted agents yet`,
+					}),
+				]);
+				expect(mockSetInputValue).not.toHaveBeenCalled();
+			}
+		);
+
 		it('keeps the draft when the host refuses the message', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
 			vi.mocked(sendHostedTurn).mockResolvedValue(null);

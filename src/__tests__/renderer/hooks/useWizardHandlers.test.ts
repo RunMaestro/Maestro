@@ -1646,6 +1646,46 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
+		// A send that names its own tab (a hosted agent's `/history`, run by its host) synopsizes that
+		// tab, never the active one.
+		it('runs for the named tab, and writes its progress there', async () => {
+			const active = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
+			const named = createMockTab({ id: 'tab-2', agentSessionId: 'agent-session-2', logs: [] });
+			const session = createMockSession({ aiTabs: [active, named], activeTabId: 'tab-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleHistoryCommand({ sessionId: 'session-1', tabId: 'tab-2' });
+			});
+
+			expect((deps.spawnBackgroundSynopsis as any).mock.calls[0][2]).toBe('agent-session-2');
+			expect(deps.addHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({ agentSessionId: 'agent-session-2' })
+			);
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs[1].logs.map((l) => l.text)).toEqual(['Synopsis saved to history: Short summary']);
+			expect(tabs[0].logs.some((l) => l.text.includes('ynopsis'))).toBe(false);
+		});
+
+		it('writes nothing for a named tab that is gone', async () => {
+			const session = createMockSession();
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			const before = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleHistoryCommand({ sessionId: 'session-1', tabId: 'gone' });
+			});
+
+			expect(deps.spawnBackgroundSynopsis).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toBe(before);
+		});
+
 		it('shows error log when no agent session exists', async () => {
 			const tab = createMockTab({ agentSessionId: null });
 			const session = createMockSession({ aiTabs: [tab] });
@@ -1838,6 +1878,30 @@ describe('useWizardHandlers', () => {
 			expect(skillsLog!.text).toContain('test-gen');
 			expect(skillsLog!.text).toContain('Project Skills');
 			expect(skillsLog!.text).toContain('User Skills');
+		});
+
+		it('lists the skills in the named tab, not the active one', async () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'tab-1', logs: [] }),
+					createMockTab({ id: 'tab-2', logs: [] }),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			(window as any).maestro.claude.getSkills.mockResolvedValue([]);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleSkillsCommand({ sessionId: 'session-1', tabId: 'tab-2' });
+			});
+
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs[0].logs).toEqual([]);
+			expect(tabs[1].logs.map((l) => l.source)).toEqual(['user', 'system']);
+			expect(tabs[1].logs[0].text).toBe('/skills');
 		});
 
 		it('displays "no skills found" message when empty', async () => {

@@ -1101,6 +1101,8 @@ interface MaestroAPI {
 				queuePosition?: number;
 				queueLength?: number;
 				itemId?: string;
+				/** The text was one of Maestro's own commands, run for the tab: no turn started. */
+				ran?: boolean;
 				error?: string;
 				/** Machine-readable failure cause, so main can react to a specific one
 				 *  (dispatch callbacks retry agent-level on `tab-not-found`). */
