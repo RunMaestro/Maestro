@@ -571,7 +571,14 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			if (!isContentHash(verdict.hash)) {
 				throw new Error(`Not a content hash: "${String(verdict.hash)}".`);
 			}
-			await fs.mkdir(path.dirname(entryPath(verdict.hash, '.json')), { recursive: true });
+			const bucketDir = path.dirname(entryPath(verdict.hash, '.json'));
+			const cacheDir = path.dirname(bucketDir);
+			await fs.mkdir(bucketDir, { recursive: true, mode: 0o700 });
+			if (process.platform !== 'win32') {
+				// Existing directories created before this hardening keep their old mode across mkdir.
+				await fs.chmod(cacheDir, 0o700).catch(() => undefined);
+				await fs.chmod(bucketDir, 0o700).catch(() => undefined);
+			}
 			const { hash, originalTokens, createdAt, modelFailure } = verdict;
 			const record: Record<string, unknown> = {
 				version: COMPRESSION_RECORD_VERSION,
@@ -584,13 +591,13 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			if (verdict.outcome === 'compressed') {
 				// The record is the commit: it is written after both texts, so a
 				// crash in between leaves no verdict rather than one with no text.
-				await atomicWriteFile(entryPath(hash, '.original.txt'), original);
-				await atomicWriteFile(entryPath(hash, '.compressed.txt'), verdict.text);
+				await atomicWriteFile(entryPath(hash, '.original.txt'), original, { mode: 0o600 });
+				await atomicWriteFile(entryPath(hash, '.compressed.txt'), verdict.text, { mode: 0o600 });
 				record.compressedTokens = verdict.compressedTokens;
 				record.compressors = verdict.compressors;
 				if (verdict.recoveryScope !== undefined) record.recoveryScope = verdict.recoveryScope;
 			}
-			await atomicWriteJson(entryPath(hash, '.json'), record);
+			await atomicWriteJson(entryPath(hash, '.json'), record, { mode: 0o600 });
 			remember(verdict);
 			// The write itself stamped the record; the next use need not.
 			const now = Date.now();

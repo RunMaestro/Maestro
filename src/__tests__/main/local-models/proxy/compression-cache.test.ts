@@ -734,4 +734,26 @@ describe('createCompressionCache: usage and pruning', () => {
 		});
 		expect((await cache.prune({ now })).removedEntries).toBe(0);
 	});
+
+	it('writes cache files and directories with private permissions on POSIX', async () => {
+		if (process.platform === 'win32') return;
+		const bucketDir = path.dirname(entryFile(tempRoot.dir, HASH, '.json'));
+		await fs.chmod(tempRoot.dir, 0o755);
+		await fs.mkdir(bucketDir, { recursive: true, mode: 0o755 });
+		await fs.chmod(bucketDir, 0o755);
+
+		await cacheIn(tempRoot.dir).write(compressedVerdict(), ORIGINAL);
+
+		const dirMode = (await fs.stat(tempRoot.dir)).mode & 0o777;
+		const bucketMode = (await fs.stat(bucketDir)).mode & 0o777;
+		const origMode = (await fs.stat(entryFile(tempRoot.dir, HASH, '.original.txt'))).mode & 0o777;
+		const compMode = (await fs.stat(entryFile(tempRoot.dir, HASH, '.compressed.txt'))).mode & 0o777;
+		const jsonMode = (await fs.stat(entryFile(tempRoot.dir, HASH, '.json'))).mode & 0o777;
+
+		expect(dirMode & 0o077).toBe(0);
+		expect(bucketMode & 0o077).toBe(0);
+		expect(origMode & 0o077).toBe(0);
+		expect(compMode & 0o077).toBe(0);
+		expect(jsonMode & 0o077).toBe(0);
+	});
 });
