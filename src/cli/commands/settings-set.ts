@@ -9,6 +9,7 @@ import {
 	SETTINGS_METADATA,
 	isNestedTextSetting,
 	nestedSettingProblem,
+	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
 import { resolveMediaModelDirectory } from '../../main/plugins/plugin-media-tools';
 import { failCommand } from '../services/session-command';
@@ -142,15 +143,18 @@ export async function settingsSet(
 		}
 		if (!writeSettingValue(key, parsedValue)) throw new Error('Could not persist setting');
 
+		const displayOldValue = redactNestedSettingSecrets(key, oldValue);
+		const displayNewValue = redactNestedSettingSecrets(key, parsedValue);
+
 		if (options.json) {
 			emitJsonl({
 				type: 'setting_set',
 				key,
-				oldValue,
-				newValue: parsedValue,
+				oldValue: displayOldValue,
+				newValue: displayNewValue,
 			});
 		} else {
-			console.log(formatSuccess(`${key} = ${JSON.stringify(parsedValue)}`));
+			console.log(formatSuccess(`${key} = ${JSON.stringify(displayNewValue)}`));
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';

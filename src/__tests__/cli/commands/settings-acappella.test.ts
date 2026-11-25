@@ -166,9 +166,13 @@ describe('settings commands on the A Cappella blob', () => {
 		expect(errors()).toContain('voice devices turn-credential set');
 	});
 
-	it('preserves an existing legacy TURN credential when updating acappella.ice.turn via --raw', async () => {
+	it('preserves an existing legacy TURN credential when updating acappella.ice.turn via --raw without printing it', async () => {
 		vi.mocked(readSettingValue).mockImplementation((key: string) =>
-			key === 'acappella.ice.turn.credential' ? 'legacy-secret' : undefined
+			key === 'acappella.ice.turn.credential'
+				? 'legacy-secret'
+				: key === 'acappella.ice.turn'
+					? { enabled: true, url: 'turns:old.example.com:5349', credential: 'legacy-secret' }
+					: undefined
 		);
 
 		await settingsSet('acappella.ice.turn', '', {
@@ -180,6 +184,16 @@ describe('settings commands on the A Cappella blob', () => {
 			url: 'turns:new.example.com:5349',
 			credential: 'legacy-secret',
 		});
+		expect(printed()).not.toContain('legacy-secret');
+		expect(printed()).toContain('***');
+
+		logSpy.mockClear();
+		await settingsSet('acappella.ice.turn', '', {
+			raw: '{"enabled":true,"url":"turns:new2.example.com:5349"}',
+			json: true,
+		});
+		expect(printed()).not.toContain('legacy-secret');
+		expect(printed()).toContain('***');
 	});
 
 	it('masks a legacy TURN credential in the list, unless secrets are asked for', () => {
