@@ -10,7 +10,7 @@
  */
 
 import type { SettingsStore } from '../../stores/settingsStore';
-import { ALL_SEARCHABLE_SETTINGS, type SearchableSetting } from './searchableSettings';
+import { findSearchableSetting, type SearchableSetting } from './searchableSettings';
 import { findSettingsSection, type SettingsSectionDef } from './settingsSections';
 
 /** A matched section, shown open with only its matched controls. */
@@ -35,8 +35,6 @@ export interface SettingsSearchJump {
 }
 
 export type SettingsSearchGroup = SettingsSearchPanel | SettingsSearchJump;
-
-const SETTING_BY_ID = new Map(ALL_SEARCHABLE_SETTINGS.map((s) => [s.id, s] as const));
 
 /** The section to show for `setting`, when there is one and it is available now. */
 export function inlineSectionFor(
@@ -69,7 +67,7 @@ export function groupSearchResults(
 			existing.matches.push(setting);
 			continue;
 		}
-		const lead = SETTING_BY_ID.get(section.settingIds[0]) ?? setting;
+		const lead = findSearchableSetting(section.settingIds[0]) ?? setting;
 		const panel: SettingsSearchPanel = {
 			kind: 'panel',
 			key: section.key,
@@ -159,4 +157,28 @@ export function applySettingFilter(root: HTMLElement, matched: ReadonlySet<strin
 	};
 	for (const child of Array.from(root.children)) visit(child);
 	return shown.size;
+}
+
+/**
+ * The control a "Go to setting" jump from `from` should land on: the nearest
+ * `data-setting-id` wrapper around `from`, inside `root`, that is not hidden by
+ * the filter and that `canJump` accepts. A refused wrapper is skipped in
+ * favour of the one that encloses it, so in a filtered section an unmatched
+ * control shown inside a matched one jumps to the match.
+ */
+export function findJumpAnchor(
+	root: HTMLElement,
+	from: Element | null,
+	canJump: (settingId: string) => boolean
+): HTMLElement | null {
+	if (!from || !root.contains(from)) return null;
+	if (from.closest(`[${SEARCH_HIDDEN_ATTR}]`)) return null;
+	for (
+		let wrapper = from.closest<HTMLElement>(SETTING_SELECTOR);
+		wrapper && wrapper !== root && root.contains(wrapper);
+		wrapper = wrapper.parentElement?.closest<HTMLElement>(SETTING_SELECTOR) ?? null
+	) {
+		if (canJump(wrapper.dataset.settingId ?? '')) return wrapper;
+	}
+	return null;
 }

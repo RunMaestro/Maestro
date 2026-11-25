@@ -14,6 +14,10 @@
  * Sections mount as they near the viewport: a broad query can match most of
  * Settings, and some sections ask the main process for state when they mount.
  *
+ * Every control shown in a section can be jumped to on its tab: hovering it, or
+ * focusing inside it, shows a "Go to setting" button in the card's left gutter,
+ * and Cmd/Ctrl+Enter inside it does the same. The header opens the section.
+ *
  * Keyboard: Cmd+F focuses the input; Escape clears or blurs it. Enter in the
  * input opens the top result's tab. ArrowDown moves into the results, where
  * Tab walks the controls. Escape on a tab row returns to the input; inside a
@@ -34,18 +38,22 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { SkeletonBox } from '../ui/SkeletonBox';
 import type { Theme } from '../../types';
 import {
+	findSearchableSetting,
 	searchSettings,
 	MIN_SUBSTRING_QUERY_LENGTH,
 	type SearchableSetting,
 } from './searchableSettings';
 import {
 	applySettingFilter,
+	findJumpAnchor,
 	groupNavigationTarget,
+	SEARCH_HIDDEN_ATTR,
 	groupSearchResults,
 	type SettingsSearchGroup,
 	type SettingsSearchPanel,
 } from './settingsSearchView';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { shortcutSuffix } from '../ui/ShortcutHint';
 import { isImeComposing } from '../../utils/ime';
 import { splitOnMatches } from '../../utils/highlightMatches';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -61,6 +69,8 @@ export interface SettingsSearchProps {
 const EAGER_PANEL_COUNT = 6;
 /** How far below the visible results a section starts mounting. */
 const PANEL_MOUNT_MARGIN = '400px';
+/** Jumps from inside a section's control to that setting on its tab. */
+const GO_TO_SETTING_KEYS = ['Meta', 'Enter'];
 /** Focusable controls, for ArrowDown from the input. */
 const NO_ADDITIONAL_SETTINGS: SearchableSetting[] = [];
 const FOCUSABLE =
@@ -398,19 +408,90 @@ function SearchResultPanel({
 	const partial = matches.length < total;
 	const matchedKey = matches.map((m) => m.id).join('\n');
 	const SectionComponent = section.Component;
+	// Hovering moves the jump button; keep that from re-rendering the section.
+	const sectionNode = useMemo(
+		() => <SectionComponent theme={theme} isOpen={isOpen} />,
+		[SectionComponent, theme, isOpen]
+	);
+
+	// "Go to setting": the control under the pointer, else the one holding focus.
+	// A filtered section jumps only to its matches; "Show all" opens every
+	// control that has a searchable entry. The tab comes from that entry.
+	const restricted = filtered && partial;
+	const matchedIds = useMemo(() => new Set(matchedKey.split('\n')), [matchedKey]);
+	const settingFor = useCallback(
+		(id: string) => matches.find((m) => m.id === id) ?? findSearchableSetting(id),
+		[matches]
+	);
+	const canJump = useCallback(
+		(id: string) => (!restricted || matchedIds.has(id)) && settingFor(id) !== undefined,
+		[restricted, matchedIds, settingFor]
+	);
+	const anchorFrom = (from: EventTarget | null) =>
+		bodyRef.current && from instanceof Element
+			? findJumpAnchor(bodyRef.current, from, canJump)
+			: null;
+	const [hoveredAnchor, setHoveredAnchor] = useState<HTMLElement | null>(null);
+	const [focusedAnchor, setFocusedAnchor] = useState<HTMLElement | null>(null);
+	const anchor = hoveredAnchor ?? focusedAnchor;
+	const [anchorTop, setAnchorTop] = useState<number | null>(null);
+
+	// The button's offset from the card top, or null when the anchor is gone,
+	// filtered out, or no longer a jump target.
+	const measureAnchor = useCallback(() => {
+		const card = cardRef.current;
+		const id = anchor?.dataset.settingId;
+		if (
+			!anchor ||
+			!card ||
+			!id ||
+			!anchor.isConnected ||
+			anchor.closest(`[${SEARCH_HIDDEN_ATTR}]`) ||
+			!canJump(id)
+		) {
+			setAnchorTop(null);
+			return;
+		}
+		const top = Math.round(anchor.getBoundingClientRect().top - card.getBoundingClientRect().top);
+		setAnchorTop((prev) => (prev === top ? prev : top));
+	}, [anchor, canJump]);
+	const measureAnchorRef = useRef(measureAnchor);
+	measureAnchorRef.current = measureAnchor;
 
 	// Filter before paint, and again whenever the section re-renders its DOM
 	// (a control that appears only in some states, a list that loads later).
+	// A re-render can move the control the jump button points at, so re-measure.
 	useLayoutEffect(() => {
 		const body = bodyRef.current;
 		if (!mounted || !body) return;
 		const matched = filtered && partial ? new Set(matchedKey.split('\n')) : null;
 		applySettingFilter(body, matched);
 		if (typeof MutationObserver === 'undefined') return;
-		const observer = new MutationObserver(() => applySettingFilter(body, matched));
+		const observer = new MutationObserver(() => {
+			applySettingFilter(body, matched);
+			measureAnchorRef.current();
+		});
 		observer.observe(body, { childList: true, subtree: true });
 		return () => observer.disconnect();
 	}, [mounted, filtered, partial, matchedKey]);
+
+	useLayoutEffect(measureAnchor, [measureAnchor]);
+
+	const jumpSetting =
+		anchor?.dataset.settingId && anchorTop !== null
+			? settingFor(anchor.dataset.settingId)
+			: undefined;
+
+	const handleBodyKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.defaultPrevented) return;
+		if (isImeComposing(e)) return;
+		const id = anchorFrom(e.target)?.dataset.settingId;
+		const setting = id ? settingFor(id) : undefined;
+		if (!setting) return;
+		e.preventDefault();
+		e.stopPropagation();
+		onNavigate(setting);
+	};
 
 	const target = matches[0];
 	const [headerHovered, setHeaderHovered] = useState(false);
@@ -420,8 +501,9 @@ function SearchResultPanel({
 		<div
 			ref={cardRef}
 			data-settings-search-panel={panel.key}
-			className="rounded border"
+			className="relative rounded border"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+			onMouseLeave={() => setHoveredAnchor(null)}
 		>
 			{/* The whole header opens the section on its tab; the icon is only the cue. */}
 			<div
@@ -459,20 +541,47 @@ function SearchResultPanel({
 					style={{ color: headerFocused ? theme.colors.accent : theme.colors.textDim }}
 				/>
 			</div>
+			{/* Body is a delegation root: the section's own DOM is never touched. The
+			    left gutter holds the jump button, clear of every control. */}
 			<div
 				ref={bodyRef}
 				data-settings-search-section=""
-				className="px-3 pb-3 select-text"
+				className="pl-7 pr-3 pb-3 select-text"
 				style={{ backgroundColor: theme.colors.bgSidebar }}
+				onMouseOver={(e) => {
+					// The gutter is the body itself: keep the button while the pointer
+					// crosses it on the way to the button.
+					if (e.target !== e.currentTarget) setHoveredAnchor(anchorFrom(e.target));
+				}}
+				onFocus={(e) => setFocusedAnchor(anchorFrom(e.target))}
+				onBlur={(e) => {
+					if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusedAnchor(null);
+				}}
+				onKeyDown={handleBodyKeyDown}
 			>
 				{mounted ? (
-					<SectionComponent theme={theme} isOpen={isOpen} />
+					sectionNode
 				) : (
 					<div className="pt-3">
 						<SkeletonBox theme={theme} className="h-10 w-full" />
 					</div>
 				)}
 			</div>
+			{jumpSetting && (
+				<GhostIconButton
+					onClick={() => onNavigate(jumpSetting)}
+					tabIndex={-1}
+					padding="p-0.5"
+					ariaLabel={`Go to ${jumpSetting.label}`}
+					title={`Go to ${jumpSetting.label} in ${jumpSetting.tabLabel}${shortcutSuffix(GO_TO_SETTING_KEYS)}`}
+					color={theme.colors.accent}
+					className="absolute left-1"
+					style={{ top: (anchorTop ?? 0) + 2 }}
+					testId="settings-search-go-to-setting"
+				>
+					<CornerDownLeft className="w-3.5 h-3.5" />
+				</GhostIconButton>
+			)}
 			{partial && (
 				<button
 					type="button"
