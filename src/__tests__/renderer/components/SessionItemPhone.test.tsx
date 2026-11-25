@@ -2,7 +2,7 @@
  * @fileoverview Tests for the SessionItem phone layout.
  *
  * On a phone the Left Bar is a full-screen drawer and each row is the agent's
- * name plus its status dot. The provider line, location pills, git count,
+ * name plus its status dot. The provider line, mode and GIT pills, git count,
  * bookmark toggle, and Cue / startup-command glyphs that crowd a 390px row all
  * come off; state that needs attention (AUTO, ERR) stays.
  */
@@ -28,7 +28,6 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	Bot: () => <span data-testid="icon-bot" />,
 	Bookmark: () => <span data-testid="icon-bookmark" />,
 	AlertCircle: () => <span data-testid="icon-alert-circle" />,
-	Server: () => <span data-testid="icon-server" />,
 }));
 
 const session = () =>
@@ -96,7 +95,7 @@ describe('SessionItem on a phone', () => {
 		expect(screen.getByText('Interplay Companion')).toBeInTheDocument();
 		expect(screen.getByTestId('icon-activity')).toBeInTheDocument();
 		expect(screen.getByTestId('icon-bookmark')).toBeInTheDocument();
-		expect(screen.getByTestId('icon-server')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
 		expect(screen.getByText('GIT')).toBeInTheDocument();
 		expect(screen.getByTestId('icon-git-branch')).toBeInTheDocument();
 	});
@@ -105,10 +104,10 @@ describe('SessionItem on a phone', () => {
 		mockedUsePhoneLayout.mockReturnValue(true);
 		render(<SessionItem {...defaultProps} session={session()} />);
 		expect(screen.getByText('Interplay Companion')).toBeInTheDocument();
-		// Provider line, bookmark, SSH / GIT pills, git dirty count: all gone.
+		// Provider line, bookmark, mode / GIT pills, git dirty count: all gone.
 		expect(screen.queryByTestId('icon-activity')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('icon-bookmark')).not.toBeInTheDocument();
-		expect(screen.queryByTestId('icon-server')).not.toBeInTheDocument();
+		expect(screen.queryByTestId(/^federation-badge-/)).not.toBeInTheDocument();
 		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('icon-git-branch')).not.toBeInTheDocument();
 		// The two-line grid goes with the meta line it existed for.

@@ -834,28 +834,11 @@ describe('MainPanel', () => {
 			expect(screen.getByText('My Test Session')).toBeInTheDocument();
 		});
 
-		it('should display LOCAL badge for non-git repos', () => {
+		it('should display the LOCAL mode pill for a local agent', () => {
 			const session = createSession({ isGitRepo: false });
 			renderMainPanel({ activeSession: session });
 
-			expect(screen.getByText('LOCAL')).toBeInTheDocument();
-		});
-
-		it('should tag the LOCAL badge with the phone-layout hook class', () => {
-			const session = createSession({ isGitRepo: false });
-			renderMainPanel({ activeSession: session });
-
-			// The phone stylesheet retires the inert LOCAL badge by this class.
-			expect(screen.getByText('LOCAL')).toHaveClass('header-local-badge');
-		});
-
-		it('should not tag the git branch pill with the phone-layout hook class', async () => {
-			const session = createSession({ isGitRepo: true });
-			renderMainPanel({ activeSession: session });
-
-			// The git pill opens a menu, so it survives on a phone.
-			const branch = await screen.findByText(/GIT|main/);
-			expect(branch.closest('button')).not.toHaveClass('header-local-badge');
+			expect(screen.getByTestId('federation-badge-local')).toHaveTextContent('LOCAL');
 		});
 
 		it('should display GIT badge with branch name for git repos', async () => {
@@ -2064,12 +2047,11 @@ describe('MainPanel', () => {
 
 			renderMainPanel({ activeSession: session, setGitLogOpen: setGitLogOpen });
 
-			await waitFor(() => {
-				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
-			});
-
-			// The pill now opens the git dropdown; the log is one entry in it.
-			fireEvent.click(screen.getByText('my-ssh-remote'));
+			// The SSH agent gets the same branch pill a local one does; the remote's name is in the
+			// REMOTE mode pill's hover card, not a pill of its own.
+			expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
+			expect(screen.queryByText('my-ssh-remote')).not.toBeInTheDocument();
+			fireEvent.click(await screen.findByText(/main|GIT/));
 			expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
 
 			fireEvent.click(screen.getByTestId('git-pill-menu-log'));
@@ -2687,7 +2669,7 @@ describe('MainPanel', () => {
 
 			renderMainPanel({ activeSession: session });
 
-			// Should show LOCAL badge instead of git branch
+			// No branch pill: only the mode pill marks the agent
 			expect(screen.getByText('LOCAL')).toBeInTheDocument();
 			expect(screen.queryByText('main')).not.toBeInTheDocument();
 		});

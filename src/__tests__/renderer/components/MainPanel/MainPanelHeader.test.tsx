@@ -157,7 +157,6 @@ const defaultProps = {
 		behind: 0,
 		uncommittedChanges: 0,
 	},
-	sshRemoteName: null,
 	activeTabContextWindow: 200000,
 	activeTabContextTokens: 50000,
 	activeTabContextUsage: 25,
@@ -235,7 +234,7 @@ describe('MainPanelHeader', () => {
 		expect(screen.getByText('main')).toBeInTheDocument();
 	});
 
-	it('renders LOCAL badge for non-git repo', () => {
+	it('renders the LOCAL mode pill and no branch pill for a non-git local agent', () => {
 		render(
 			<MainPanelHeader
 				{...defaultProps}
@@ -243,26 +242,13 @@ describe('MainPanelHeader', () => {
 				gitInfo={null}
 			/>
 		);
-		expect(screen.getByText('LOCAL')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-local')).toHaveTextContent('LOCAL');
+		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
 	});
 
-	it('renders SSH remote pill when SSH is configured', () => {
-		render(
-			<MainPanelHeader
-				{...defaultProps}
-				activeSession={makeSession({
-					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
-				} as any)}
-				sshRemoteName="prod-server"
-			/>
-		);
-		expect(screen.getByText('prod-server')).toBeInTheDocument();
-	});
-
-	it('shows the branch name alongside the SSH pill for remote/container git agents', () => {
-		// Regression for #1124: the SSH host pill replaced the branch badge, so
-		// agents running in a container over SSH lost the branch name that local
-		// agents show. Both the remote name and the branch must be visible.
+	it('draws an SSH git agent the same branch pill a local one gets, and no remote-name pill', () => {
+		// #1124 guarded the branch name next to a remote-name pill; the remote name is now only in
+		// the mode pill's hover card, so the branch pill is the one every mode draws.
 		render(
 			<MainPanelHeader
 				{...defaultProps}
@@ -270,7 +256,6 @@ describe('MainPanelHeader', () => {
 					isGitRepo: true,
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 				} as any)}
-				sshRemoteName="harness-sandbox"
 				gitInfo={{
 					branch: 'feature/login',
 					remote: '',
@@ -280,8 +265,9 @@ describe('MainPanelHeader', () => {
 				}}
 			/>
 		);
-		expect(screen.getByText('harness-sandbox')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
 		expect(screen.getByText('feature/login')).toBeInTheDocument();
+		expect(screen.queryByText('remote-1')).not.toBeInTheDocument();
 	});
 
 	it('does not render a branch badge for a non-git SSH agent', () => {
@@ -292,11 +278,10 @@ describe('MainPanelHeader', () => {
 					isGitRepo: false,
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 				} as any)}
-				sshRemoteName="prod-server"
 				gitInfo={null}
 			/>
 		);
-		expect(screen.getByText('prod-server')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-ssh')).toBeInTheDocument();
 		// No GIT fallback badge when the remote dir isn't a repo.
 		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
 	});
@@ -894,7 +879,7 @@ describe('MainPanelHeader', () => {
 						/>
 					);
 
-					fireEvent.mouseEnter(screen.getByText('LOCAL').closest('div')!);
+					fireEvent.mouseEnter(document.querySelector('.header-git-pill')!);
 					act(() => {
 						vi.advanceTimersByTime(500);
 					});
@@ -975,7 +960,7 @@ describe('MainPanelHeader', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByText('LOCAL'));
+			fireEvent.click(document.querySelector('.header-git-pill')!);
 
 			expect(screen.queryByTestId('git-pill-menu')).not.toBeInTheDocument();
 		});
@@ -1009,50 +994,46 @@ describe('MainPanelHeader: local, SSH, and hosted agents draw the same header', 
 		settingsMocks.hostingOn = false;
 	});
 
-	/** The header's markup with the transport label (badge and location pill) taken out. */
-	function drawWithoutTransportLabel(session: Session, remoteName: string | null): string {
+	/** The header's markup with the mode pill taken out. */
+	function drawWithoutModePill(session: Session): string {
 		const { container, unmount } = render(
-			<MainPanelHeader {...defaultProps} activeSession={session} sshRemoteName={remoteName} />
+			<MainPanelHeader {...defaultProps} activeSession={session} />
 		);
 		const clone = container.cloneNode(true) as HTMLElement;
 		clone
 			.querySelectorAll('[data-testid^="federation-badge-"]')
 			.forEach((badge) => badge.parentElement?.remove());
-		clone.querySelectorAll('.header-git-pill').forEach((pill) => pill.replaceChildren());
 		unmount();
 		return clone.innerHTML;
 	}
 
-	it('labels the transport with the Left Bar badge: none, SSH, Hosted', () => {
+	it('labels the mode with the Left Bar pill: LOCAL, REMOTE, HOSTED', () => {
 		settingsMocks.hostingOn = true;
-		const { unmount } = render(<MainPanelHeader {...defaultProps} activeSession={modes.local} />);
-		expect(screen.queryByTestId(/^federation-badge-/)).toBeNull();
-		unmount();
-		const sshView = render(
-			<MainPanelHeader {...defaultProps} activeSession={modes.ssh} sshRemoteName="build-box" />
-		);
-		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('SSH');
+		const localView = render(<MainPanelHeader {...defaultProps} activeSession={modes.local} />);
+		expect(screen.getByTestId('federation-badge-local')).toHaveTextContent('LOCAL');
+		localView.unmount();
+		const sshView = render(<MainPanelHeader {...defaultProps} activeSession={modes.ssh} />);
+		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
 		sshView.unmount();
-		render(
-			<MainPanelHeader {...defaultProps} activeSession={modes.hosted} sshRemoteName="build-box" />
-		);
-		expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('Hosted');
+		render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);
+		expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('HOSTED');
+		// One pill per header, whatever the mode.
+		expect(screen.getAllByTestId(/^federation-badge-(local|ssh|hosted)$/)).toHaveLength(1);
 	});
 
-	it('draws everything else identically', () => {
+	it('draws everything else identically, the branch pill included', () => {
 		settingsMocks.hostingOn = true;
-		const local = drawWithoutTransportLabel(modes.local, null);
-		const sshHeader = drawWithoutTransportLabel(modes.ssh, 'build-box');
-		const hosted = drawWithoutTransportLabel(modes.hosted, 'build-box');
+		const local = drawWithoutModePill(modes.local);
+		const sshHeader = drawWithoutModePill(modes.ssh);
+		const hosted = drawWithoutModePill(modes.hosted);
+		expect(local).toContain('header-git-branch-text');
 		expect(sshHeader).toBe(local);
 		expect(hosted).toBe(local);
 	});
 
 	it('draws a hosted agent as the SSH agent it was while hosted agents are off', () => {
 		settingsMocks.hostingOn = false;
-		render(
-			<MainPanelHeader {...defaultProps} activeSession={modes.hosted} sshRemoteName="build-box" />
-		);
+		render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);
 		expect(screen.getByTestId('federation-badge-ssh')).toBeInTheDocument();
 		expect(screen.queryByTestId('federation-badge-hosted')).toBeNull();
 	});

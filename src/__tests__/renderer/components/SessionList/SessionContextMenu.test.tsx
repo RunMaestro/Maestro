@@ -578,6 +578,42 @@ describe('SessionContextMenu', () => {
 			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
 		});
 
+		it('local, SSH, and hosted agents get the same rows, but for the one transport toggle', () => {
+			mirror();
+			const transportToggles = new Set([
+				'session-menu-move-to-host',
+				'session-menu-move-back-from-host',
+			]);
+			const rowsFor = (session: Session) => {
+				renderMenu({
+					session: { ...session, worktreeConfig: { basePath: '/test/wt', watchEnabled: false } },
+					onExport: vi.fn(),
+					onQuickCreateWorktree: vi.fn(),
+					onConfigureWorktrees: vi.fn(),
+					onConfigureCue: vi.fn(),
+				});
+				const menu = screen.getByTestId('session-context-menu');
+				const rows = Array.from(menu.querySelectorAll('button'))
+					.filter((button) => !transportToggles.has(button.getAttribute('data-testid') ?? ''))
+					.map((button) => button.textContent?.trim());
+				const toggles = Array.from(menu.querySelectorAll('button')).filter((button) =>
+					transportToggles.has(button.getAttribute('data-testid') ?? '')
+				);
+				cleanup();
+				return { rows, toggles: toggles.length };
+			};
+			const local = rowsFor(makeSession());
+			const ssh = rowsFor(sshSession());
+			const hosted = rowsFor(sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }));
+			expect(local.rows).toContain('Rename');
+			expect(local.rows).toContain('Create Worktree');
+			expect(local.rows).toContain('Configure Maestro Cue');
+			expect(ssh.rows).toEqual(local.rows);
+			expect(hosted.rows).toEqual(local.rows);
+			// The toggle is the transport switch itself: none for local, one for SSH and hosted.
+			expect([local.toggles, ssh.toggles, hosted.toggles]).toEqual([0, 1, 1]);
+		});
+
 		it("gives a hosted agent a local agent's menu: no address, Reconnect, or Start Host rows", () => {
 			for (const connection of [undefined, 'lost'] as const) {
 				mirror(connection);
