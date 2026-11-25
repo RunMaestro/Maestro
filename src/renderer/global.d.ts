@@ -253,6 +253,43 @@ import type {
 	ParquetSortSpec,
 } from '../shared/parquet/types';
 import type {
+	SqliteBlobRequest,
+	SqliteBlobSaved,
+	SqliteCellUpdateRequest,
+	SqliteCellUpdateResult,
+	SqliteColumnCatalog,
+	SqliteCountRequest,
+	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteEditingGrant,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
+	SqliteObjectKind,
+	SqliteObjectList,
+	SqliteObjectSchema,
+	SqliteObjectStats,
+	SqliteQueryExported,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
+	SqliteQueryRequest,
+	SqliteQueryResult,
+	SqliteRowCount,
+	SqliteRowDeleteRequest,
+	SqliteRowDeleteResult,
+	SqliteRowInsertRequest,
+	SqliteRowInsertResult,
+	SqliteRowsPage,
+	SqliteRowsRequest,
+	SqliteStatementLog,
+	SqliteTransactionEnd,
+	SqliteTransactionEndRequest,
+	SqliteTransactionRequest,
+	SqliteTransactionState,
+	SqliteTransactionStatus,
+	SqliteUndoRequest,
+	SqliteUndoResult,
+} from '../shared/sqlite/types';
+import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
 	GitWorktreeRunSetupResult,
@@ -2027,6 +2064,45 @@ interface MaestroAPI {
 		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
 		close: (handle: string) => Promise<void>;
 		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void) => () => void;
+	};
+	/**
+	 * SQLite preview. The database stays open read-only in the main process
+	 * and only names and numbers cross this bridge - see
+	 * src/shared/sqlite/preview.ts for why a SQLite read returns a marker.
+	 */
+	sqlite: {
+		open: (filePath: string) => Promise<SqliteDatabaseInfo>;
+		readSummary: (handle: string) => Promise<SqliteDatabaseSummary>;
+		checkIntegrity: (handle: string, mode: SqliteIntegrityMode) => Promise<SqliteIntegrityResult>;
+		listObjects: (handle: string) => Promise<SqliteObjectList>;
+		readObjectStats: (handle: string, names: string[]) => Promise<SqliteObjectStats[]>;
+		readSchema: (
+			handle: string,
+			name: string,
+			kind?: SqliteObjectKind
+		) => Promise<SqliteObjectSchema>;
+		readColumns: (handle: string) => Promise<SqliteColumnCatalog>;
+		readRows: (request: SqliteRowsRequest) => Promise<SqliteRowsPage>;
+		countRows: (request: SqliteCountRequest) => Promise<SqliteRowCount>;
+		runQuery: (request: SqliteQueryRequest) => Promise<SqliteQueryResult>;
+		cancelQuery: (queryId: string) => Promise<boolean>;
+		exportQuery: (request: SqliteQueryExportRequest) => Promise<SqliteQueryExported>;
+		readQueryHistory: (handle: string) => Promise<SqliteQueryHistory>;
+		forgetQueryHistory: (handle: string, entryId: string | null) => Promise<SqliteQueryHistory>;
+		readStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		clearStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		onStatementLogged: (callback: (databasePath: string) => void) => () => void;
+		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
+		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
+		disableEditing: (handle: string, editToken: string) => Promise<boolean>;
+		updateCell: (request: SqliteCellUpdateRequest) => Promise<SqliteCellUpdateResult>;
+		insertRow: (request: SqliteRowInsertRequest) => Promise<SqliteRowInsertResult>;
+		deleteRow: (request: SqliteRowDeleteRequest) => Promise<SqliteRowDeleteResult>;
+		undoEdit: (request: SqliteUndoRequest) => Promise<SqliteUndoResult>;
+		beginTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionState>;
+		readTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionStatus>;
+		endTransaction: (request: SqliteTransactionEndRequest) => Promise<SqliteTransactionEnd>;
+		close: (handle: string) => Promise<void>;
 	};
 	fs: {
 		homeDir: () => Promise<string>;

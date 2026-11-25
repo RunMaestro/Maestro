@@ -857,7 +857,7 @@ Three parts, and all three are required:
 
 `HistoryPanel` and `UnifiedHistoryTab` were the first two to do this, for entry cards whose height depends on how much text is in them. `FileSearchModal` is the newest: its rows stack a file name over a directory, and under a proportional UI font two lines do not fit the 44px estimate, so the text crammed together. A fixed-pitch font, meanwhile, wants the tighter box and should not be padded out to match. One number cannot serve both; measurement serves both.
 
-A fixed `estimateSize` with no `measureElement` is still right for a list whose rows genuinely are one uniform line (`TextPreviewFast`, `ParquetGrid`), and it is cheaper. Reach for measurement when the height is not yours to decide.
+A fixed `estimateSize` with no `measureElement` is still right for a list whose rows genuinely are one uniform line (`TextPreviewFast`, `DataGrid`), and it is cheaper. Reach for measurement when the height is not yours to decide.
 
 Testing this in jsdom cannot assert a height - there is no layout engine, and every element reports zero. Assert the wiring instead: the row carries `data-index`, the ref is `measureElement` itself, and no inline `height` is set. `FileSearchModal.render.test.tsx` does exactly that, and all three assertions fail if any part of the pattern is reverted.
 
@@ -2675,7 +2675,7 @@ Three rules for editing it:
 - **`matchedRows` is a lower bound until `complete` is true.** Render it as `1,204+`, never as an exact total. A filtered scan stops as soon as it has filled the requested window; a background pass with `countAll: true` converges the number, and that pass is also what warms the scan for the next page.
 - **Hiding a column changes the projection.** It is a real optimization (the engine stops decoding that column), not a CSS toggle, which is why it invalidates the loaded window.
 
-The grid virtualizes with `@tanstack/react-virtual`. **Its "load the next page" effect must not fire for an unmeasured grid**: with no layout, the virtualizer renders a default window and the last rendered index looks like the end of the data, so the viewer pages the entire match set into memory without the user ever scrolling. `ParquetGrid` guards on `scrollRef.current?.clientHeight` and treats "no rendered rows" as `-1` rather than `0` for exactly this reason. jsdom has no layout engine, so this is the failure mode a render test will catch and a manual pass never will.
+The grid virtualizes with `@tanstack/react-virtual`. **Its "load the next page" effect must not fire for an unmeasured grid**: with no layout, the virtualizer renders a default window and the last rendered index looks like the end of the data, so the viewer pages the entire match set into memory without the user ever scrolling. The shared `<DataGrid>` (`src/renderer/components/ui/DataGrid.tsx`, also behind the SQLite viewer) guards on `scrollRef.current?.clientHeight` and treats "no rendered rows" as `-1` rather than `0` for exactly this reason. jsdom has no layout engine, so this is the failure mode a render test will catch and a manual pass never will.
 
 Column widths are explicit state seeded from each column's type, not measured. Measuring needs cells, cells arrive one page at a time, and a width that jumps when page two lands is worse than one that is merely approximate.
 

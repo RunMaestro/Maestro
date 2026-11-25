@@ -71,8 +71,10 @@ import { openFileForUser, openFileForUserLabel } from '../../services/hostShell'
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { isSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
 import { isBinaryContent, isBinaryExtension } from '../../../shared/fileKinds';
+import { SqliteViewer, type SqliteViewerHandle } from '../SqliteViewer';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
 import {
@@ -469,6 +471,12 @@ export const FilePreview = React.memo(
 		// handed to a viewer that would ignore it.
 		const isParquet = file ? isParquetPreviewMarker(file.content) : false;
 		const parquetRef = useRef<ParquetViewerHandle>(null);
+		// A SQLite database arrives as a marker the same way (shared/sqlite/preview.ts),
+		// read off the marker for the same reason. `isDataViewer` covers both: every
+		// text-only guard below must exclude a tab whose content is a marker.
+		const isSqlite = file ? isSqlitePreviewMarker(file.content) : false;
+		const sqliteRef = useRef<SqliteViewerHandle>(null);
+		const isDataViewer = isParquet || isSqlite;
 
 		// Playable audio/video never reaches this component: the open path diverts
 		// it to the floating player before a tab can be created. This flag is the
@@ -500,11 +508,16 @@ export const FilePreview = React.memo(
 			// line is what makes that edit safe. See the matching assertion in
 			// filePreviewUtils.test.ts.
 			if (isParquetPreviewMarker(file.content)) return false;
+			// Same for a SQLite marker, and here it IS load-bearing: `db`, `sqlite`,
+			// and `sqlite3` are binary extensions (a `.db` that fails the header
+			// sniff still belongs on the binary card), so without this line every
+			// real database would land there instead of in the viewer.
+			if (isSqlitePreviewMarker(file.content)) return false;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
 		}, [isImage, isMedia, file]);
 
 		// Any non-binary, non-image file can be edited as text
-		const isEditableText = !isImage && !isBinary && !isParquet;
+		const isEditableText = !isImage && !isBinary && !isDataViewer;
 
 		// A gist body is plain text. Same predicate the file tab's overlay menu
 		// uses, so the toolbar button and the menu entry appear on the same files.
@@ -563,7 +576,7 @@ export const FilePreview = React.memo(
 				isBinary,
 				isMermaid,
 				isCsv,
-				isParquet,
+				isDataViewer,
 				isJsonlView: isJsonl || (isJson && searchMode === 'jq'),
 				isRenderedHtml: isHtml && htmlRenderMode,
 			});
@@ -593,8 +606,9 @@ export const FilePreview = React.memo(
 		//   Giant any kind → GiantPreview handle (CM6 owns the search panel)
 		const searchAdapter = useMemo<FilePreviewSearchAdapter | undefined>(() => {
 			// The parquet grid owns its own filtering, so Cmd+F must not be
-			// handed a text adapter that would search a 50-character marker.
-			if (isParquet) return undefined;
+			// handed a text adapter that would search a 50-character marker. The
+			// SQLite viewer's content is a marker too.
+			if (isDataViewer) return undefined;
 			if (previewTier === 'fast' && isMarkdown) {
 				return {
 					findHits: (q) => markdownFastRef.current?.findInContent(q) ?? [],
@@ -614,7 +628,7 @@ export const FilePreview = React.memo(
 				};
 			}
 			return undefined;
-		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary, isParquet]);
+		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary, isDataViewer]);
 
 		// The CSV and JSONL tables scroll themselves (see PREVIEW_SCROLLER_ATTR):
 		// the content column stops scrolling and hands them its full height.
@@ -629,7 +643,7 @@ export const FilePreview = React.memo(
 		// code/text preview tiers; false for rendered markdown, CSV, JSON-jq, HTML
 		// render, and images.
 		const viewHasLineNumbers = useMemo(() => {
-			if (isImage || isBinary || isParquet) return false;
+			if (isImage || isBinary || isDataViewer) return false;
 			if (isEditableText && markdownEditMode) return true; // CM6 editor
 			if (markdownEditMode) return false;
 			if (isMarkdown || isCsv || isJsonl) return false;
@@ -644,7 +658,7 @@ export const FilePreview = React.memo(
 		}, [
 			isImage,
 			isBinary,
-			isParquet,
+			isDataViewer,
 			isEditableText,
 			markdownEditMode,
 			isMarkdown,
@@ -1182,10 +1196,10 @@ export const FilePreview = React.memo(
 		// Count tokens when file content changes (skip for images, binary files, and large files)
 		// Large files would freeze the UI during token encoding
 		useEffect(() => {
-			// Parquet is excluded alongside images and binaries: the tab holds a
+			// Parquet and SQLite are excluded alongside images and binaries: the tab holds a
 			// handoff marker rather than the file, so tokenizing it would report
 			// "15 tokens" for a two-gigabyte table.
-			if (!file?.content || isImage || isBinary || isParquet || isLargeFile) {
+			if (!file?.content || isImage || isBinary || isDataViewer || isLargeFile) {
 				setTokenCount(null);
 				return;
 			}
@@ -1202,7 +1216,7 @@ export const FilePreview = React.memo(
 			return () => {
 				isActive = false;
 			};
-		}, [file?.content, isImage, isBinary, isParquet, isLargeFile]);
+		}, [file?.content, isImage, isBinary, isDataViewer, isLargeFile]);
 
 		// Sync internal edit content when file changes (only when NOT using external content)
 		// When externalEditContent is provided (file tab mode), the parent manages the state
@@ -1220,7 +1234,7 @@ export const FilePreview = React.memo(
 			if (isHtml && htmlRenderMode) return null;
 			if (isMermaid) return null;
 			if (isCsv) return null;
-			if (isParquet) return null;
+			if (isDataViewer) return null;
 			if (isJsonl || (isJson && searchMode === 'jq')) return null;
 			if (previewTier === 'giant') return 'giant';
 			// Fast-tier markdown scrolls inside its own virtuoso container, which
@@ -1860,9 +1874,9 @@ export const FilePreview = React.memo(
 				} else {
 					failClipboardToast('Failed to Copy Image');
 				}
-			} else if (isMedia || isParquet) {
+			} else if (isMedia || isDataViewer) {
 				// The "content" of a media tab is an internal stream URL and a
-				// parquet tab's is a handoff marker. Neither is useful on the
+				// parquet or SQLite tab's is a handoff marker. Neither is useful on the
 				// clipboard, so copy the file path instead. (Copying parquet ROWS
 				// is what the viewer's own Export does, with the filter applied.)
 				const ok = await safeClipboardWrite(file.path);
@@ -1949,6 +1963,12 @@ export const FilePreview = React.memo(
 				// zero matches.
 				if (isParquet) {
 					parquetRef.current?.focusFilter();
+					return;
+				}
+				// The SQLite viewer has no text to find either: its table view's
+				// filter box is the find affordance, the same as parquet's.
+				if (isSqlite) {
+					sqliteRef.current?.focusFilter();
 					return;
 				}
 				// All three tiers (Rich / Fast / Giant) now share the same search
@@ -2098,7 +2118,7 @@ export const FilePreview = React.memo(
 				// the find bar (Cmd+F), the fast/plain text editor, and any other input
 				// rendered inside the preview all need it to stay a caret move. The old
 				// guard tested `isEditableText && markdownEditMode`, and `isEditableText`
-				// is a FILE-TYPE property (`!isImage && !isBinary && !isParquet`), not a
+				// is a FILE-TYPE property (`!isImage && !isBinary && !isDataViewer`), not a
 				// focus check - so typing in the find bar and reaching for Cmd+Left
 				// navigated to the previous file instead of jumping to the line start.
 				// Same rule the browser back/forward path already applies in
@@ -2302,7 +2322,7 @@ export const FilePreview = React.memo(
 					// button is ~56px tall from the edge), so they never sit on
 					// top of the text.
 					className={
-						isParquet
+						isDataViewer
 							? 'flex-1 min-h-0 overflow-hidden'
 							: isTablePane
 								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
@@ -2692,6 +2712,11 @@ export const FilePreview = React.memo(
 							sshRemoteId={sshRemoteId}
 							theme={theme}
 						/>
+					) : isSqlite ? (
+						// Ahead of the text branches for the same reason as parquet.
+						// `fs:readFile` only hands back a SQLite marker for a local
+						// file, so there is no SSH remote to pass.
+						<SqliteViewer ref={sqliteRef} filePath={file.path} fileName={file.name} theme={theme} />
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />

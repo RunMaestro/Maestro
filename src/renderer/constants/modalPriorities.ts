@@ -511,9 +511,9 @@ export const MODAL_PRIORITIES = {
 	STAGED_IMAGES_ORGANIZER: 143,
 
 	/**
-	 * Record view for one row of a tabular preview - CSV/TSV and parquet both
-	 * open `<RecordDetailModal>` from the file preview beneath them. One
-	 * constant rather than one per format: they are the same surface at the
+	 * Record view for one row of a tabular preview - CSV/TSV, parquet, and
+	 * SQLite all open `<RecordDetailModal>` from the file preview beneath them.
+	 * One constant rather than one per format: they are the same surface at the
 	 * same tier, and two names at the same number is a distinction the layer
 	 * stack cannot act on.
 	 */

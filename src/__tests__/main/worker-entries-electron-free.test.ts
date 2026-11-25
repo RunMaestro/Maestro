@@ -27,6 +27,8 @@ const WORKER_ENTRIES = [
 	'main/plugins/plugin-scan-worker.ts',
 	'main/plugins/relay-ledger-worker.ts',
 	'main/dataview/dataview-query-worker.ts',
+	// A child process run as Node, not a thread, but just as electron-free.
+	'main/sqlite/sqlite-worker.ts',
 ];
 
 /** Packages that load `electron` the moment they are required. */

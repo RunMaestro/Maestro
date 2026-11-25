@@ -6521,9 +6521,104 @@ List the vault roots whose DataviewJS blocks run without asking
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli sqlite`
+
 ```bash
 maestro-cli dataview trusted --json
 ```
+
+Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing
+
+## `maestro-cli sqlite transaction <path> <sql...>`
+
+Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing
+
+## `maestro-cli sqlite undo <path>`
+
+Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first
+
+## `maestro-cli sqlite delete <path> <table>`
+
+Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+## `maestro-cli sqlite insert <path> <table>`
+
+Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+## `maestro-cli sqlite set <path> <table> <column>`
+
+List every write made to a database through Maestro, newest first, as the viewer's Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"
+
+## `maestro-cli sqlite log <path>`
+
+List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)
+
+## `maestro-cli sqlite history <path>`
+
+Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about
+
+## `maestro-cli sqlite query <path> <sql>`
+
+Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)
+
+## `maestro-cli sqlite blob <path> <object> <column>`
+
+Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them
+
+## `maestro-cli sqlite count <path> <object>`
+
+Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite
+
+## `maestro-cli sqlite rows <path> <object>`
+
+Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL
+
+## `maestro-cli sqlite schema <path> <object>`
+
+List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes
+
+## `maestro-cli sqlite tables <path>`
+
+| Option                          | Description                                                                                                                                                                                                                                                   | Default |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--commit`                      | Commit at the end, when every statement ran                                                                                                                                                                                                                   | -       |
+| `--rollback`                    | Roll back at the end: see what the statements do, keep nothing                                                                                                                                                                                                | -       |
+| `--step <json>`                 | The undo step as JSON, or @file holding it                                                                                                                                                                                                                    | -       |
+| `--value <column=value>`        | A column value, bound as TEXT (repeatable; the column affinity must keep it as text)                                                                                                                                                                          | `[]`    |
+| `--value-number <column=value>` | A column value, bound as a number (repeatable)                                                                                                                                                                                                                | `[]`    |
+| `--null <column>`               | Set a column to NULL (repeatable); a NULL rowid column takes the next rowid                                                                                                                                                                                   | `[]`    |
+| `--forget <id>`                 | Forget one entry, by its id or the start of it the listing shows                                                                                                                                                                                              | -       |
+| `--clear`                       | Forget the database's whole statement log                                                                                                                                                                                                                     | -       |
+| `--param <name=value>`          | Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL                                                                                                                                                    | `[]`    |
+| `--param-number <name=value>`   | Bind a parameter as a number (repeatable)                                                                                                                                                                                                                     | `[]`    |
+| `--param-null <name>`           | Bind a parameter as NULL (repeatable)                                                                                                                                                                                                                         | `[]`    |
+| `--plan`                        | Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables                                                                                                          | -       |
+| `--rowid <id>`                  | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                                                                                                               | -       |
+| `--key <column=value>`          | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                                                                                                              | `[]`    |
+| `--key-number <column=value>`   | A primary-key value given as a number (repeatable)                                                                                                                                                                                                            | `[]`    |
+| `--value <text>`                | The new value, bound as TEXT (the column affinity converts it)                                                                                                                                                                                                | -       |
+| `--value-number <n>`            | The new value, bound as a number                                                                                                                                                                                                                              | -       |
+| `--null`                        | Set the cell to NULL                                                                                                                                                                                                                                          | -       |
+| `--if-version <version>`        | Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed                                                                                               | -       |
+| `--offset <n>`                  | Result rows to skip (not with --plan or --output)                                                                                                                                                                                                             | `0`     |
+| `--limit <n>`                   | Rows to show per statement that returns rows (at most 1000)                                                                                                                                                                                                   | `50`    |
+| `--sort <column>`               | Order used to place --offset (as for `sqlite rows`)                                                                                                                                                                                                           | -       |
+| `--desc`                        | Sort descending (needs --sort)                                                                                                                                                                                                                                | -       |
+| `--filter <expr>`               | Filter used to place --offset (as for `sqlite rows`)                                                                                                                                                                                                          | -       |
+| `--output <file>`               | Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it                                                                                                                          | -       |
+| `--format <format>`             | Export format: csv or jsonl (default: from the --output name)                                                                                                                                                                                                 | -       |
+| `--enable-editing`              | Unlock editing for this one call (the tab's "Enable editing"); the session's first change backs the file up beside itself first                                                                                                                               | -       |
+| `--dry-run`                     | With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried | -       |
+| `--kind <kind>`                 | Pick table, view, index, or trigger when a trigger shares a name with another object                                                                                                                                                                          | -       |
+| `--internal`                    | Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables)                                                                                                                                                                                  | -       |
+| `--check <mode>`                | Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found                                                                                                                                    | -       |
+| `--json`                        | Output as JSON (for scripting)                                                                                                                                                                                                                                | -       |
+
+Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity
+
+## `maestro-cli sqlite info <path>`
+
+SQLite: inspect a database the way the file preview shows it (read-only)
 
 ## `maestro-cli quick-chat`
 

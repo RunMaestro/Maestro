@@ -6,6 +6,7 @@ import { DictationButton } from '../../ui/DictationButton';
 import { editorViewDictationTarget } from '../../../utils/dictationTargets';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions, mainSelectionDetails } from './extensions';
+import { problemMarkExtension, setProblemRangeEffect } from './problemMark';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
 import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
 
@@ -69,6 +70,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			value,
 			onChange,
 			language,
+			languageExtension,
 			theme,
 			spellCheck = false,
 			readOnly = false,
@@ -86,6 +88,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			vimMode = false,
 			onShortcutUsed,
 			onSelectionContextMenu,
+			problemRange = null,
 			className,
 		},
 		ref
@@ -182,6 +185,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
+					problemMarkExtension(),
 					updateListener,
 				],
 			});
@@ -189,9 +193,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const view = new EditorView({ state, parent: host });
 			viewRef.current = view;
 
-			// Async language load.
+			// Async language load. A host-built grammar (`languageExtension`)
+			// arrives through the language effect below instead.
 			let cancelled = false;
-			if (hasLanguageSupport(language)) {
+			if (!languageExtension && hasLanguageSupport(language)) {
 				void loadLanguageExtension(language).then((langExt) => {
 					if (cancelled || !langExt || !viewRef.current) return;
 					viewRef.current.dispatch({
@@ -240,10 +245,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		}, [theme, fontScale, fontFamily, baseFontPx, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
-		// an empty extension so the previously loaded grammar is cleared.
+		// an empty extension so the previously loaded grammar is cleared. A
+		// host-built grammar replaces the loader outright.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
+			if (languageExtension) {
+				view.dispatch({ effects: compartments.language.reconfigure(languageExtension) });
+				return;
+			}
 			let cancelled = false;
 			if (!hasLanguageSupport(language)) {
 				view.dispatch({ effects: compartments.language.reconfigure([]) });
@@ -258,7 +268,24 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			return () => {
 				cancelled = true;
 			};
-		}, [language, compartments.language]);
+		}, [language, languageExtension, compartments.language]);
+
+		// Host-flagged problem span → repaint it. Keyed on the span's numbers so
+		// a host that rebuilds an equal object every render dispatches nothing.
+		const problemFrom = problemRange?.from ?? null;
+		const problemTo = problemRange?.to ?? null;
+		const problemMessage = problemRange?.message;
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			view.dispatch({
+				effects: setProblemRangeEffect.of(
+					problemFrom === null || problemTo === null
+						? null
+						: { from: problemFrom, to: problemTo, message: problemMessage }
+				),
+			});
+		}, [problemFrom, problemTo, problemMessage]);
 
 		// Toggle-able base options → reconfigure the base compartment.
 		useEffect(() => {

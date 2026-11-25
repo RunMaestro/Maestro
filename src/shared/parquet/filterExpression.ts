@@ -1,5 +1,5 @@
 /**
- * Parquet Filter Expression Language
+ * Filter Expression Language (Parquet and SQLite viewers)
  *
  * One text box, three levels of power, no mode switch:
  *
@@ -18,17 +18,40 @@
  * operator is a predicate, so the box does the obvious thing at every level of
  * user sophistication.
  *
- * The parser produces an AST rather than a closure because the AST has two
- * consumers: {@link evaluateFilterNode} runs it per row, and
- * `compileFilterPushdown` (./pushdown.ts) translates the parts it safely can
- * into parquet-level row-group / bloom / page pruning. A closure could only do
- * the first, and the pruning is what makes filtering a multi-GB file instant.
+ * The parser produces an AST rather than a closure because the AST has three
+ * consumers: {@link evaluateFilterNode} runs it per row, `compileFilterPushdown`
+ * (./pushdown.ts) translates the parts it safely can into parquet-level
+ * row-group / bloom / page pruning, and `compileSqliteFilter`
+ * (../sqlite/filter.ts) turns it into a parameterised SQLite `WHERE`. A closure
+ * could only do the first.
  *
  * Null semantics follow SQL: a comparison against null is unknown, and an
  * unknown predicate excludes the row. Only `is null` matches a null.
  */
 
-import type { ParquetColumnInfo, ParquetFilterProblem, ParquetValueKind } from './types';
+import type { ParquetFilterProblem, ParquetValueKind } from './types';
+
+/**
+ * What the binder needs to know about a column: its name, and the domain a
+ * literal compared against it is coerced into. `ParquetColumnInfo` satisfies
+ * it; the SQLite viewer binds every column as `string` and leaves comparison
+ * to SQLite's own affinity rules.
+ */
+export interface FilterColumn {
+	name: string;
+	kind: ParquetValueKind;
+}
+
+/** Characters that force a column name into `[brackets]` in filter text. */
+const BARE_COLUMN_NAME_RE = /^[^\s()=,!<>~^$&|'"`[\]]+$/;
+
+/**
+ * A column name as filter text: bare when the tokenizer reads it back as one
+ * word, `[bracketed]` otherwise (spaces, operators, quotes).
+ */
+export function quoteFilterColumnName(name: string): string {
+	return BARE_COLUMN_NAME_RE.test(name) ? name : `[${name}]`;
+}
 
 // ─── AST ──────────────────────────────────────────────────────────────────────
 
@@ -781,20 +804,20 @@ export function suggestColumn(name: string, columns: string[]): string | undefin
  */
 export function bindFilterExpression(
 	source: string,
-	columns: ParquetColumnInfo[],
+	columns: readonly FilterColumn[],
 	now: number = Date.now()
 ): BoundFilter {
 	const trimmed = source.trim();
 	if (!trimmed) return { node: null, columns: [], scansAllColumns: false };
 
-	const byLowerName = new Map<string, ParquetColumnInfo>();
+	const byLowerName = new Map<string, FilterColumn>();
 	for (const column of columns) byLowerName.set(column.name.toLowerCase(), column);
 	const names = columns.map((column) => column.name);
 
 	const used = new Set<string>();
 	let scansAllColumns = false;
 
-	const resolveColumn = (token: Token): ParquetColumnInfo => {
+	const resolveColumn = (token: Token): FilterColumn => {
 		const exact = columns.find((column) => column.name === token.text);
 		const column = exact ?? byLowerName.get(token.text.toLowerCase());
 		if (!column) {

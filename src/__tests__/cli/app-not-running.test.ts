@@ -159,6 +159,14 @@ import {
 	dataviewUntrust,
 } from '../../cli/commands/dataview';
 import {
+	sqliteCount,
+	sqliteInfo,
+	sqliteQuery,
+	sqliteRows,
+	sqliteSchema,
+	sqliteTables,
+} from '../../cli/commands/sqlite';
+import {
 	tabClose,
 	tabClosed,
 	tabCompact,
@@ -351,6 +359,12 @@ const rows: Row[] = [
 	{ name: 'dataview trust', run: (json) => dataviewTrust('/vault', j(json)) },
 	{ name: 'dataview untrust', run: (json) => dataviewUntrust('/vault', j(json)) },
 	{ name: 'dataview trusted', run: (json) => dataviewTrusted(j(json)) },
+	{ name: 'sqlite info', run: (json) => sqliteInfo('/data/app.db', j(json)) },
+	{ name: 'sqlite tables', run: (json) => sqliteTables('/data/app.db', j(json)) },
+	{ name: 'sqlite schema', run: (json) => sqliteSchema('/data/app.db', 'users', j(json)) },
+	{ name: 'sqlite rows', run: (json) => sqliteRows('/data/app.db', 'users', j(json)) },
+	{ name: 'sqlite count', run: (json) => sqliteCount('/data/app.db', 'users', j(json)) },
+	{ name: 'sqlite query', run: (json) => sqliteQuery('/data/app.db', 'SELECT 1', j(json)) },
 	// special cases
 	{
 		name: 'goal-run --visible',
