@@ -3,6 +3,10 @@ import { Folder, FileText, Play, CheckSquare } from 'lucide-react';
 import type { Theme } from '../../types';
 import { Modal, ModalFooter, FormInput } from '../ui';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import {
+	REMOTE_FOLDER_PICKER_UNAVAILABLE,
+	remotePathPlaceholder,
+} from '../../constants/remotePath';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { isImeComposing } from '../../utils/ime';
 
@@ -239,7 +243,7 @@ export function AutoRunSetupModal({
 						onChange={setSelectedFolder}
 						placeholder={
 							sshRemoteId
-								? 'Enter remote path (e.g., /home/user/docs)'
+								? remotePathPlaceholder('/home/user/docs')
 								: sessionName
 									? `Select Auto Run folder for ${sessionName}`
 									: 'Select Auto Run folder'
@@ -254,7 +258,7 @@ export function AutoRunSetupModal({
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								title={
 									sshRemoteId
-										? 'Folder picker unavailable for a remote agent. Enter the remote path manually.'
+										? REMOTE_FOLDER_PICKER_UNAVAILABLE
 										: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 								}
 							>

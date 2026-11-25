@@ -28,6 +28,10 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import {
+	REMOTE_FOLDER_PICKER_UNAVAILABLE,
+	remotePathPlaceholder,
+} from '../../constants/remotePath';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
@@ -1144,9 +1148,7 @@ export function EditAgentModal({
 						value={workingDir}
 						onChange={setWorkingDir}
 						placeholder={
-							isSshEnabled
-								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-								: 'Select directory...'
+							isSshEnabled ? remotePathPlaceholder('/home/user/project') : 'Select directory...'
 						}
 						error={workingDirError}
 						helperText={
@@ -1165,11 +1167,7 @@ export function EditAgentModal({
 								disabled={isSshEnabled || !!workingDirBlocker}
 								className={`p-2 rounded border transition-colors ${isSshEnabled || workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={
-									isSshEnabled
-										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-										: 'Browse folders'
-								}
+								title={isSshEnabled ? REMOTE_FOLDER_PICKER_UNAVAILABLE : 'Browse folders'}
 								aria-label="Browse folders"
 							>
 								<Folder className="w-5 h-5" />
@@ -1181,7 +1179,7 @@ export function EditAgentModal({
 						<RemotePathStatus
 							theme={theme}
 							validation={remotePathValidation}
-							remoteHost={sshRemoteHost || 'remote'}
+							remoteHost={sshRemoteHost}
 						/>
 					)}
 				</div>

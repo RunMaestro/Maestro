@@ -17,6 +17,11 @@ import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/def
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { AgentDiscoveryResult } from '../../../../shared/types';
 import { resetStore } from '../../../helpers/resetStores';
+import { AGENT_MODES, createModeSession, type AgentMode } from '../../../helpers';
+import {
+	REMOTE_FOLDER_PICKER_UNAVAILABLE,
+	remotePathPlaceholder,
+} from '../../../../renderer/constants/remotePath';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -2591,6 +2596,88 @@ describe('EditAgentModal', () => {
 			await sectionReady();
 
 			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Mode parity (local, SSH, hosted)', () => {
+		// A hosted agent keeps its SSH remote config for the files, so the modal reads the same
+		// persisted `sessionSshRemoteConfig` for an SSH and a hosted agent and draws the same form.
+		const renderMode = async (mode: AgentMode) => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'r1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			const session = createModeSession(mode, {
+				id: 'session-123',
+				name: 'My Agent',
+				projectRoot: '/home/user/project',
+				cwd: '/home/user/project',
+			});
+			const view = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			if (mode !== 'local') {
+				await screen.findByText('Directory found on dev.example.com');
+			}
+			const input = view.container.ownerDocument.getElementById(
+				'edit-agent-working-dir-input'
+			) as HTMLInputElement;
+			const picker = screen.getByRole('button', { name: 'Browse folders' }) as HTMLButtonElement;
+			const drawn = {
+				placeholder: input.placeholder,
+				pickerTitle: picker.title,
+				pickerDisabled: picker.disabled,
+				text: view.container.ownerDocument.body.textContent,
+			};
+			fireEvent.click(screen.getByText('Save Changes'));
+			const saved = onSave.mock.calls.at(-1);
+			view.unmount();
+			onSave.mockClear();
+			resetStore(useSessionStore);
+			return { drawn, saved };
+		};
+
+		it('draws and saves the same form for SSH and hosted agents', async () => {
+			const results = Object.fromEntries(
+				await AGENT_MODES.reduce<Promise<[AgentMode, Awaited<ReturnType<typeof renderMode>>][]>>(
+					async (acc, mode) => [...(await acc), [mode, await renderMode(mode)]],
+					Promise.resolve([])
+				)
+			) as Record<AgentMode, Awaited<ReturnType<typeof renderMode>>>;
+
+			expect(results.hosted).toEqual(results.ssh);
+			expect(results.ssh.drawn.placeholder).toBe(remotePathPlaceholder('/home/user/project'));
+			expect(results.ssh.drawn.pickerTitle).toBe(REMOTE_FOLDER_PICKER_UNAVAILABLE);
+			expect(results.ssh.drawn.pickerDisabled).toBe(true);
+			// Nothing in the modal names the hosted mode: the mode pill is the only mark.
+			expect(results.hosted.drawn.text).not.toMatch(/hosted/i);
+		});
+
+		it('differs for a local agent only where the folder is on this disk', async () => {
+			const local = await renderMode('local');
+
+			expect(local.drawn.pickerDisabled).toBe(false);
+			expect(local.drawn.pickerTitle).toBe('Browse folders');
+			expect(local.drawn.text).not.toMatch(/hosted/i);
+			expect(local.saved).toBeDefined();
 		});
 	});
 });

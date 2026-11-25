@@ -7,6 +7,10 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import {
+	REMOTE_FOLDER_PICKER_UNAVAILABLE,
+	remotePathPlaceholder,
+} from '../../constants/remotePath';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
@@ -1306,9 +1310,7 @@ export function NewInstanceModal({
 					value={workingDir}
 					onChange={handleWorkingDirChange}
 					placeholder={
-						isSshEnabled
-							? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-							: 'Select directory...'
+						isSshEnabled ? remotePathPlaceholder('/home/user/project') : 'Select directory...'
 					}
 					error={validation.errorField === 'directory' ? validation.error : undefined}
 					monospace
@@ -1321,7 +1323,7 @@ export function NewInstanceModal({
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							title={
 								isSshEnabled
-									? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
+									? REMOTE_FOLDER_PICKER_UNAVAILABLE
 									: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 							}
 						>
