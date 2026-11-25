@@ -15,6 +15,7 @@ import {
 	getBusyTabs,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
+import { resolveModelEffort } from './useAgentModelEffortOptions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import {
 	hasRunnableQueueItem,
@@ -23,7 +24,11 @@ import {
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
-import { cheapResumeTurnSettings, cheapTurnSettings } from '../../../shared/modelTiers';
+import {
+	cheapResumeLadderEffort,
+	cheapResumeTurnSettings,
+	resumeSharesThread,
+} from '../../../shared/modelTiers';
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -227,6 +232,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	// Track active synopsis session IDs for cancellation
 	// Map: maestroSessionId -> Set of active synopsis process session IDs
 	const activeSynopsisSessionsRef = useRef<Map<string, Set<string>>>(new Map());
+	const synopsisCancelGenerationRef = useRef<Map<string, number>>(new Map());
 	const accumulateUsageStats = useCallback(
 		(current: UsageStats | undefined, usageStats: UsageStats): UsageStats => ({
 			...usageStats,
@@ -859,6 +865,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			},
 			options?: BackgroundTurnOptions
 		): Promise<AgentSpawnResult> => {
+			const cancelGeneration = synopsisCancelGenerationRef.current.get(sessionId) ?? 0;
 			try {
 				const agent = await window.maestro.agents.get(toolType);
 				if (!agent) {
@@ -876,18 +883,44 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// purpose: the synopsis RESUMES the agent's own provider session,
 				// which a local model cannot open, and it is what history and
 				// hand-offs record as the turn's outcome. It stays on the agent.
+
+				// For shared-thread providers (Codex, Antigravity), resolve the
+				// effective model the same way the spawn handler does (tab > agent
+				// config > provider default, without relying on stripped argBuilder),
+				// so per-model effort refusals are checked against the model that
+				// actually runs even when it comes from agent config or default.
+				// Non-shared providers keep their existing tab-only input.
+				let resolvedModel = sessionConfig?.customModel;
+				if (resumeSharesThread(toolType)) {
+					const agentConfigValues =
+						(await window.maestro.agents.getConfig?.(toolType).catch(() => undefined)) ?? undefined;
+					const configModel =
+						typeof agentConfigValues?.model === 'string' ? agentConfigValues.model : '';
+					const optionDefault = agent.configOptions?.find((opt) => opt.key === 'model')?.default;
+					const defaultModel =
+						configModel || (typeof optionDefault === 'string' ? optionDefault : '');
+					resolvedModel =
+						resolveModelEffort(sessionConfig, undefined, {
+							defaultModel,
+							defaultEffort: '',
+						}).model || undefined;
+				}
+				if ((synopsisCancelGenerationRef.current.get(sessionId) ?? 0) !== cancelGeneration) {
+					return { success: false };
+				}
+				const synopsisCurrent = {
+					model: resolvedModel,
+					effort: sessionConfig?.customEffort,
+				};
 				// Bottom of both ladders, except that the tab's model is kept when
 				// the cheap one has a smaller context window: resuming replays the
 				// whole transcript, which fit the tab's model and may not fit the
 				// cheap one. The rule lives in `cheapResumeTurnSettings` so the CLI's
 				// synopsis turn (`src/cli/services/synopsis.ts`) resolves the same way.
-				const synopsisTurn = cheapResumeTurnSettings(toolType, {
-					model: sessionConfig?.customModel,
-					effort: sessionConfig?.customEffort,
-				});
+				const synopsisTurn = cheapResumeTurnSettings(toolType, synopsisCurrent);
 				// The ladder's own effort, apart from the inherited fallback above:
 				// only a value Maestro picked arms the effort-refusal retry below.
-				const cheapEffort = cheapTurnSettings(toolType).effort;
+				const cheapEffort = cheapResumeLadderEffort(toolType, synopsisCurrent);
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -977,7 +1010,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								if (
 									effortRejection &&
 									retry &&
-									cheapTurnSettings(toolType).effort !== cheapEffort
+									cheapResumeLadderEffort(toolType, synopsisCurrent) !== cheapEffort
 								) {
 									logger.warn(
 										'[spawnBackgroundSynopsis] Effort rejected by the provider; retrying at the agent default',
@@ -1112,6 +1145,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * Called when user clicks Stop to prevent synopsis from running after interruption.
 	 */
 	const cancelPendingSynopsis = useCallback(async (maestroSessionId: string): Promise<void> => {
+		synopsisCancelGenerationRef.current.set(
+			maestroSessionId,
+			(synopsisCancelGenerationRef.current.get(maestroSessionId) ?? 0) + 1
+		);
 		const synopsisSessions = activeSynopsisSessionsRef.current.get(maestroSessionId);
 		if (!synopsisSessions || synopsisSessions.size === 0) {
 			return;
