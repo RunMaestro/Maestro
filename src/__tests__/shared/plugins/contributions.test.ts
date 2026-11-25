@@ -354,6 +354,64 @@ describe('collectContributions', () => {
 		expect(c.themes[0].colors).toEqual({ bg: '#fff' });
 		expect(c.themes.map((t) => t.localId)).toEqual(['t1']);
 	});
+
+	it('drops a theme color that is not a plain CSS color with an error, and keeps the theme', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				themes: [
+					{
+						id: 'midnight',
+						name: 'Midnight',
+						mode: 'dark',
+						colors: {
+							accent: '#36f9c5',
+							bgMain: 'red;} * { background: url(https://x/?a',
+							textMain: 'url(https://x/a.png)',
+							border: 'rgb(68 71 90 / 50%)',
+						},
+					},
+				],
+			})
+		);
+		expect(c.themes.map((t) => t.localId)).toEqual(['midnight']);
+		expect(c.themes[0].colors).toEqual({ accent: '#36f9c5', border: 'rgb(68 71 90 / 50%)' });
+		expect(c.errors).toEqual([
+			'[com.acme] theme "midnight" color "bgMain" must be a hex, rgb(), hsl() or named CSS color; it was dropped',
+			'[com.acme] theme "midnight" color "textMain" must be a hex, rgb(), hsl() or named CSS color; it was dropped',
+		]);
+	});
+
+	it.each([
+		['a semicolon', 'red;'],
+		['a closing brace', '#fff}'],
+		['expression()', 'expression(alert(1))'],
+		['a backslash', '\\72 ed'],
+		['a newline', '#fff\n'],
+	])('drops a theme color with %s', (_label, value) => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				themes: [{ id: 't', name: 'T', mode: 'dark', colors: { accent: value, bgMain: '#000' } }],
+			})
+		);
+		expect(c.themes[0].colors).toEqual({ bgMain: '#000' });
+		expect(c.errors).toHaveLength(1);
+		expect(c.errors[0]).toMatch(/color "accent" must be a hex/);
+	});
+
+	it('drops a theme when none of its colors is valid', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				themes: [
+					{ id: 'bad', name: 'Bad', mode: 'dark', colors: { accent: 'expression(alert(1))' } },
+				],
+			})
+		);
+		expect(c.themes).toEqual([]);
+		expect(c.errors).toEqual([
+			'[com.acme] theme "bad" color "accent" must be a hex, rgb(), hsl() or named CSS color; it was dropped',
+			'[com.acme] theme "bad" has no valid colors',
+		]);
+	});
 });
 
 describe('aggregateContributions', () => {
@@ -373,6 +431,25 @@ describe('aggregateContributions', () => {
 		expect(agg.prompts).toHaveLength(1);
 		expect(agg.errorsByPlugin['com.b']).toBeDefined();
 		expect(agg.errorsByPlugin['com.a']).toBeUndefined();
+	});
+
+	it('reports a dropped theme color under its plugin and ships the theme without it', () => {
+		const agg = aggregateContributions([
+			manifest('com.a', {
+				themes: [
+					{
+						id: 'x',
+						name: 'X',
+						mode: 'dark',
+						colors: { bgMain: '#000', accent: 'red} * { background: url(https://x/?a' },
+					},
+				],
+			}),
+		]);
+		expect(agg.themes.map((t) => t.colors)).toEqual([{ bgMain: '#000' }]);
+		expect(agg.errorsByPlugin['com.a']).toEqual([
+			'[com.a] theme "x" color "accent" must be a hex, rgb(), hsl() or named CSS color; it was dropped',
+		]);
 	});
 
 	it('does not collide same-localId contributions from different plugins', () => {

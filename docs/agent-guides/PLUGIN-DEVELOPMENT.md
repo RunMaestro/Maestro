@@ -217,6 +217,14 @@ Every contributed `id` is the bare LOCAL id you author; the loader namespaces it
 }
 ```
 
+Each color value must be a plain CSS color: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`,
+`rgb()` / `rgba()` / `hsl()` / `hsla()` with numbers or percentages (`rgb(54, 249, 197)`,
+`rgb(54 249 197 / 80%)`, `hsl(165deg 94% 60%)`), a named color, `transparent`, or
+`currentColor`, with no spaces around it. The host writes theme colors into stylesheets, so it
+drops any other value (`var()`, `color-mix()`, `oklch()`, anything with `;`, `{`, `}`, quotes,
+a backslash, or a line break) with an error, and that key keeps the base palette's color. The
+rest of the theme still applies.
+
 ### iconPacks (tier 0)
 
 `{ id, label, icons?: [{ id, label, path, viewBox? }], colors?: [{ id, label, value }] }`
