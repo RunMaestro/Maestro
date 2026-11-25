@@ -14,6 +14,10 @@ import {
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { isolatedLaunchEnv } from './isolation';
+
+// A spec that launches the app itself takes its isolation from here too.
+export { isolatedLaunchEnv, FIRST_RUN_SEEN_SETTINGS } from './isolation';
 
 // Interface for our extended test fixtures
 interface ElectronTestFixtures {
@@ -98,16 +102,7 @@ export const test = base.extend<ElectronTestFixtures>({
 			args: [appPath],
 			env: {
 				...process.env,
-				// Use the app's real demo-mode redirect so every persisted store,
-				// including Group Chats, resolves inside this test directory.
-				MAESTRO_DEMO_DIR: testDataDir,
-				MAESTRO_DATA_DIR: testDataDir,
-				// Disable hardware acceleration for CI
-				ELECTRON_DISABLE_GPU: '1',
-				// Set NODE_ENV to test
-				NODE_ENV: 'test',
-				// Ensure we're in a testing context
-				MAESTRO_E2E_TEST: 'true',
+				...isolatedLaunchEnv(testDataDir),
 				...electronLaunchEnv,
 			},
 			// Increase timeout for slow CI environments

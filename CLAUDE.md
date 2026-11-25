@@ -170,6 +170,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
 - **Filing GitHub feedback (check gh, search, +1, submit):** `submitFeedbackConversation()`, `searchFeedbackIssues()` in `src/main/feedback/index.ts`
 - **Writing lifetime counters that must never go down:** `mergeUsagePeaks()` in `src/shared/usagePeaks.ts`, `mergeAutoRunStats()` in `src/shared/autoRunStatsMerge.ts`, enforced by `settings:set` in `src/main/ipc/handlers/persistence.ts`
+- **Launching Maestro from a Playwright spec on a throwaway data directory:** `isolatedLaunchEnv(dataDir)`, `FIRST_RUN_SEEN_SETTINGS` in `e2e/fixtures/isolation.ts` (also exported by `e2e/fixtures/electron-app.ts`; never redirect only `HOME`)
 
 #### Spawning and stopping agents (process, SSH, env, prompts)
 
