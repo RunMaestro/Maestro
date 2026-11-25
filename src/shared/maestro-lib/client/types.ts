@@ -25,6 +25,7 @@ import type {
 	UsageStats,
 } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
+import type { QueueSteerResult } from '../../chatSteering';
 import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
@@ -100,6 +101,7 @@ export type ClientMethod =
 	| 'turns.queue.remove'
 	| 'turns.queue.setPaused'
 	| 'turns.queue.merge'
+	| 'turns.queue.steer'
 	| 'history.list'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
@@ -544,6 +546,13 @@ export interface TurnsApi {
 			agentId: string,
 			itemId: string
 		): Promise<ClientResult<{ merged: boolean; mergedIntoId?: string }>>;
+		/**
+		 * Hand a waiting message to the turn already running on its tab: the queued card's Steer.
+		 * The host runs its own steer (the same `steerQueuedItem()` its Steer button runs), so the
+		 * message leaves its queue only once the agent has it, and comes back if it never takes it.
+		 * `outcome` says what happened; a headless host answers `unsupported`.
+		 */
+		steer(agentId: string, itemId: string): Promise<ClientResult<QueueSteerResult>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;

@@ -4,7 +4,7 @@
 // verb uses, so they fail with MAESTRO_NOT_RUNNING when the app is down.
 //
 // With Federation on, `--agent <peer:agent>` names a peer's agent instead: list,
-// remove, hold, resume, and merge act on that host's queue through the same shared
+// remove, hold, resume, merge, and steer act on that host's queue through the same shared
 // action the desktop's mirrored queued cards run (`runPeerAgentAction`).
 
 import { withMaestroClient } from '../services/maestro-client';
@@ -233,15 +233,6 @@ async function queueActPeer(
 	);
 }
 
-/** A queue verb the host does not serve: refused before anything reaches the peer. */
-function refusePeerVerb(verb: string, agent: string): void {
-	emitError(
-		`queue ${verb} is not available for a peer's agent: the host's queue serves list, remove, hold, resume, and merge. Agent: ${agent}`,
-		'PEER_UNSUPPORTED_VERB'
-	);
-	process.exit(1);
-}
-
 /**
  * `maestro-cli queue remove <item-id> --agent <id>` - drop a queued item by id
  * from the desktop execution queue. Fails with ITEM_NOT_FOUND when no item with
@@ -454,6 +445,52 @@ const STEER_FAILURE_CODES: Record<Exclude<QueueSteerOutcome, 'delivered' | 'sett
 	unavailable: 'STEER_UNAVAILABLE',
 };
 
+/** A steer's outcome in the verb's JSON shape; exits 1 with its code unless it delivered or settled. */
+function reportSteerResult(
+	agentId: string,
+	itemId: string,
+	result: QueueSteerResult,
+	extra: Record<string, unknown> = {}
+): void {
+	const ok = result.outcome === 'delivered' || result.outcome === 'settled';
+	const payload = {
+		success: ok,
+		agentId,
+		itemId,
+		...result,
+		...(ok
+			? {}
+			: { code: STEER_FAILURE_CODES[result.outcome as keyof typeof STEER_FAILURE_CODES] }),
+		...extra,
+	};
+	console.log(JSON.stringify(payload, null, 2));
+	if (!ok) process.exit(1);
+}
+
+/**
+ * `queue steer --agent <peer:agent>`: the host runs its own steer on its queue (a desktop host's
+ * renderer runs the same steerQueuedItem() its Steer button does) and answers with the outcome.
+ */
+async function queueSteerPeer(target: PeerTarget, itemId: string): Promise<void> {
+	let done: { peer: string; agentId: string; result: QueueSteerResult };
+	try {
+		done = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const ran = await runPeerAgentAction(client, agent, { kind: 'steer-queued', itemId });
+			if (!ran.ok) throw hostCallError(peer, ran.error);
+			if (ran.value.kind !== 'steer-queued') {
+				throw new Error(`The host answered the steer with ${ran.value.kind}.`);
+			}
+			return { peer, agentId: agent.id, result: ran.value.result };
+		});
+	} catch (error) {
+		failPeer(error);
+		return;
+	}
+	reportSteerResult(peerAgentRef(done.peer, done.agentId), itemId, done.result, {
+		peer: done.peer,
+	});
+}
+
 /**
  * `maestro-cli queue steer <item-id> --agent <id>` - hand a queued message to the
  * turn already running on its tab, exactly like the Steer button on the queued
@@ -469,7 +506,8 @@ export async function queueSteer(itemId: string, options: QueueSteerOptions): Pr
 		process.exit(1);
 		return;
 	}
-	if (peerQueueTarget(options.agent)) return refusePeerVerb('steer', options.agent);
+	const peer = peerQueueTarget(options.agent);
+	if (peer) return queueSteerPeer(peer, itemId);
 
 	let sessionId: string;
 	try {
@@ -494,18 +532,7 @@ export async function queueSteer(itemId: string, options: QueueSteerOptions): Pr
 			process.exit(1);
 			return;
 		}
-		const ok = result.outcome === 'delivered' || result.outcome === 'settled';
-		const payload = {
-			success: ok,
-			agentId: sessionId,
-			itemId,
-			...result,
-			...(ok
-				? {}
-				: { code: STEER_FAILURE_CODES[result.outcome as keyof typeof STEER_FAILURE_CODES] }),
-		};
-		console.log(JSON.stringify(payload, null, 2));
-		if (!ok) process.exit(1);
+		reportSteerResult(sessionId, itemId, result);
 	} catch (error) {
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);

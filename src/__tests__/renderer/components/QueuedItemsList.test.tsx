@@ -10,6 +10,8 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 import { renderCallbackPrompt } from '../../../main/dispatch-callbacks/dispatch-callback-prompt';
+import { getSteerEligibility } from '../../../renderer/utils/executionQueue';
+import { createMockAITab, createMockSession } from '../../helpers';
 
 function item(overrides: Partial<QueuedItem> = {}): QueuedItem {
 	return {
@@ -285,6 +287,32 @@ describe('QueuedItemsList steer button', () => {
 			getSteerContext: () => ({ canSteer: false, blockedReason: 'tab-not-working' }),
 		});
 		expect(screen.queryByText('Steer')).toBeNull();
+	});
+
+	// The real eligibility, not a stub: a hosted agent's record keeps its SSH remote, but its host
+	// runs the turn on its own machine, so its card steers exactly as a local agent's does. Only
+	// where the steer runs differs (`steerQueuedItem` routes a host item to the host).
+	it.each([
+		['local', undefined, undefined],
+		['hosted', 'remote-1', true],
+	] as const)('%s: a busy tab offers the same live Steer', (_mode, sshRemoteId, hostQueued) => {
+		const session = createMockSession({
+			state: 'busy',
+			activeTabId: 'tab-1',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+			...(sshRemoteId ? { sshRemoteId } : {}),
+		});
+		const onSteerQueuedItem = vi.fn();
+		setup({
+			executionQueue: [item({ hostQueued })],
+			onSteerQueuedItem,
+			getSteerContext: (queued: QueuedItem) => getSteerEligibility(session, queued),
+		});
+		const button = screen.getByText('Steer').closest('button')!;
+		expect(button).toHaveAttribute('aria-disabled', 'false');
+		fireEvent.click(button);
+		expect(onSteerQueuedItem).toHaveBeenCalledWith('q1');
 	});
 });
 

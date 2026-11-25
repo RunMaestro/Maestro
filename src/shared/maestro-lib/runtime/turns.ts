@@ -842,6 +842,18 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					})) ?? null;
 				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
 			},
+			// A headless host runs `claude --print` and `codex exec`, which take no input once a turn
+			// starts. Refused, so the message stays queued and sends when the turn ends.
+			steer: async (agentId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.steer', 'not-found', `No agent ${agentId}.`);
+				}
+				return fail(
+					'turns.queue.steer',
+					'unsupported',
+					'This host cannot steer a running turn. The message stays queued and sends when the turn ends.'
+				);
+			},
 		},
 
 		subscribe: (agentId, tabId, listener): Unsubscribe =>

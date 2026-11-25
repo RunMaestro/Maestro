@@ -1167,6 +1167,45 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it("steers a queued item with steer_queue_item and reads the host's outcome", async () => {
+			bridge.typed.set('steer_queue_item', (message) =>
+				message.itemId === 'q2'
+					? {
+							type: 'steer_queue_item_result',
+							success: true,
+							result: { outcome: 'delivered', verdict: 'delivered' },
+						}
+					: {
+							type: 'steer_queue_item_result',
+							success: true,
+							result: { outcome: 'not-steerable', blockedReason: 'paused' },
+						}
+			);
+
+			expect(await client.turns.queue.steer(A1, 'q2')).toEqual({
+				ok: true,
+				value: { outcome: 'delivered', verdict: 'delivered' },
+			});
+			expect(await client.turns.queue.steer(A1, 'q1')).toEqual({
+				ok: true,
+				value: { outcome: 'not-steerable', blockedReason: 'paused' },
+			});
+			expect(bridge.sent('steer_queue_item')).toEqual([
+				expect.objectContaining({ sessionId: A1, itemId: 'q2' }),
+				expect.objectContaining({ sessionId: A1, itemId: 'q1' }),
+			]);
+		});
+
+		it('fails a steer the host refused or answered with no outcome', async () => {
+			bridge.typed.set('steer_queue_item', (message) =>
+				message.itemId === 'q2'
+					? { type: 'steer_queue_item_result', success: false, error: 'Renderer did not respond' }
+					: { type: 'steer_queue_item_result', success: true }
+			);
+			expect((await client.turns.queue.steer(A1, 'q2')).ok).toBe(false);
+			expect((await client.turns.queue.steer(A1, 'q1')).ok).toBe(false);
+		});
+
 		it('reports a refused merge_queue_item as a failure', async () => {
 			bridge.typed.set('merge_queue_item', () => ({
 				type: 'merge_queue_item_result',

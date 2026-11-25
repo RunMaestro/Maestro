@@ -134,6 +134,19 @@ function projectTab(
 	return { ...local, name, agentSessionId, starred, state, thinkingStartTime, logs };
 }
 
+/**
+ * The agent as its host runs it. The record keeps its SSH remote for the files, terminal, and git
+ * that run from this machine, but the host spawns each AI turn on its own machine: no SSH hop. A
+ * check about the turn itself (can it be steered) reads this view, so a hosted agent answers as a
+ * local agent on the host would, never as an SSH agent.
+ */
+export function hostRunView<T extends Pick<Session, 'sshRemoteId' | 'sessionSshRemoteConfig'>>(
+	session: T
+): T {
+	if (!session.sshRemoteId && !session.sessionSshRemoteConfig) return session;
+	return { ...session, sshRemoteId: undefined, sessionSshRemoteConfig: undefined };
+}
+
 /** `session` with the host's tabs, transcripts, busy state, and queue folded in. */
 export function projectHostedSession(session: Session, input: HostedProjectionInput): Session {
 	const { agent } = input;

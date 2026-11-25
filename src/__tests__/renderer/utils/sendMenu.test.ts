@@ -144,6 +144,21 @@ describe('buildSendMenuModel', () => {
 		});
 	});
 
+	it('a hosted agent steers as a local agent does, though its record keeps its SSH remote', () => {
+		const draft = { text: 'also check the retry path', imageCount: 0 };
+		const opts = { forcedParallelEnabled: true };
+		const local = buildSendMenuModel(workingSession(), draft, opts);
+		// The host runs the turn on its own machine: the record's SSH remote is not the turn's hop.
+		const hosted = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, {
+			...opts,
+			hosted: true,
+		});
+		const ssh = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, opts);
+		expect(hosted.rows).toEqual(local.rows);
+		expect(hosted.steerSupport).toEqual({ kind: 'supported' });
+		expect(ssh.rows.find((row) => row.action === 'steer')).toMatchObject({ enabled: false });
+	});
+
 	it('reports whether any tab works, for a right-click on an idle agent', () => {
 		const opts = { forcedParallelEnabled: true };
 		const draft = { text: 'hi', imageCount: 0 };

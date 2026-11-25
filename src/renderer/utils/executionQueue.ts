@@ -32,6 +32,7 @@ import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
 import { findQueueMergeTarget, joinMergedQueueText } from '../../shared/maestro-lib/turns/queue';
 import { isSessionRemote } from './sessionHelpers';
+import { hostRunView } from './hostedSession';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -876,7 +877,7 @@ function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
  * declines with a reason; being wrong the other way hides a working feature.
  */
 export function getSteerEligibility(
-	session: Session,
+	agent: Session,
 	item: Pick<
 		QueuedItem,
 		| 'tabId'
@@ -890,8 +891,12 @@ export function getSteerEligibility(
 		| 'pendingAdmissionId'
 		| 'readOnlyMode'
 		| 'dispatchCallback'
+		| 'hostQueued'
 	>
 ): SteerEligibility {
+	// A hosted agent's message waits on its host, which runs the turn on its own machine: it is
+	// judged as the host judges it, not as an SSH agent's.
+	const session = item.hostQueued ? hostRunView(agent) : agent;
 	if (item.pendingAdmissionId) return { canSteer: false, blockedReason: 'pending-admission' };
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) {

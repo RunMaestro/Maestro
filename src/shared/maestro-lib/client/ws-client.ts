@@ -55,6 +55,11 @@ import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
+	parseQueueSteerResult,
+	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
+	type QueueSteerResult,
+} from '../../chatSteering';
+import {
 	BridgeConnection,
 	CommandTimeoutError,
 	ConnectionClosedError,
@@ -388,6 +393,7 @@ class WsMaestroClient implements MaestroClient {
 			setPaused: (agentId: string, itemId: string, paused: boolean) =>
 				this.queueSetPaused(agentId, itemId, paused),
 			merge: (agentId: string, itemId: string) => this.queueMerge(agentId, itemId),
+			steer: (agentId: string, itemId: string) => this.queueSteer(agentId, itemId),
 		},
 		subscribe: (
 			agentId: string,
@@ -2023,6 +2029,30 @@ class WsMaestroClient implements MaestroClient {
 				? { merged: true, mergedIntoId }
 				: { merged: false }
 		);
+	}
+
+	/**
+	 * The message `maestro-cli queue steer` sends a desktop: its renderer runs the steer and answers
+	 * with the outcome. Waits as long as the CLI does, because the host waits on the agent's socket.
+	 */
+	private async queueSteer(
+		agentId: string,
+		itemId: string
+	): Promise<ClientResult<QueueSteerResult>> {
+		const method: ClientMethod = 'turns.queue.steer';
+		const sent = await this.send(
+			method,
+			{ type: 'steer_queue_item', sessionId: agentId, itemId },
+			'steer_queue_item_result',
+			{ timeoutMs: QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS }
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const result = parseQueueSteerResult(sent.value.result);
+		return result
+			? ok(result)
+			: this.fail(method, 'invalid', 'The host answered the steer with no outcome.');
 	}
 
 	// =======================================================================

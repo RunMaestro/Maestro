@@ -327,8 +327,8 @@ export const QueuedItemsList = memo(
 					<style>{proseStyles}</style>
 					{filteredQueue.map((item, index) => {
 						// A hosted agent's host runs its own queue: its cards offer Remove, Hold /
-						// Resume, and Merge, which act on the host, and nothing that would only
-						// change this copy.
+						// Resume, Merge, and Steer, which act on the host, and nothing that would
+						// only change this copy.
 						const hostOnly = item.hostQueued === true;
 						// Ask for eligibility whenever a handler is wired and the item is
 						// not already flagged to run in parallel. `forcedParallelEnabled` is
@@ -354,7 +354,7 @@ export const QueuedItemsList = memo(
 						// executionQueue.test.ts). Commands are excluded - a shell command is
 						// not something an agent can be steered with.
 						const steerContext =
-							onSteerQueuedItem && getSteerContext && item.type !== 'command' && !hostOnly
+							onSteerQueuedItem && getSteerContext && item.type !== 'command'
 								? getSteerContext(item)
 								: null;
 						const showSteerButton = shouldOfferSteer(steerContext);

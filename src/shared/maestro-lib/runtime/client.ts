@@ -248,6 +248,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					),
 				merge: (agentId, itemId) =>
 					guarded('turns.queue.merge', () => deps.turns.queue.merge(agentId, itemId)),
+				steer: (agentId, itemId) =>
+					guarded('turns.queue.steer', () => deps.turns.queue.steer(agentId, itemId)),
 			},
 			subscribe: (agentId, tabId, listener): Unsubscribe =>
 				deps.turns.subscribe(agentId, tabId, listener),

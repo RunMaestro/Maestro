@@ -792,6 +792,12 @@ export function createRequestHandler(
 					(value) => ({ found: value.found, paused: value.paused })
 				);
 			}
+			case 'steer_queue_item':
+				return outcome(
+					'steer_queue_item_result',
+					await client.turns.queue.steer(sessionId(message), str(message.itemId) ?? ''),
+					(result) => ({ result })
+				);
 			case 'merge_queue_item':
 				return outcome(
 					'merge_queue_item_result',

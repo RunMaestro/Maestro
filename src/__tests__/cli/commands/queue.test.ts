@@ -38,7 +38,10 @@ import {
 	queueResume,
 	queueSteer,
 } from '../../../cli/commands/queue';
-import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../../shared/chatSteering';
+import {
+	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
+	type QueueSteerResult,
+} from '../../../shared/chatSteering';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
 import {
@@ -454,6 +457,9 @@ describe('queue command', () => {
 								mergedIntoId: 'q0',
 							})
 						),
+						steer: vi.fn(async () =>
+							ok<QueueSteerResult>({ outcome: 'delivered', verdict: 'delivered' })
+						),
 					},
 				},
 			};
@@ -628,18 +634,38 @@ describe('queue command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('refuses queue steer before anything reaches the peer', async () => {
-			fakePeer();
+		it('queue steer hands the item to the running turn on the host, in the local shape', async () => {
+			const { client } = fakePeer();
+
+			await queueSteer('q1', { agent: `${PEER}:docs` });
+
+			expect(client.turns.queue.steer).toHaveBeenCalledWith(AGENT_ID, 'q1');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				outcome: 'delivered',
+				verdict: 'delivered',
+				peer: PEER,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it("queue steer exits with the local code for the host's refusal", async () => {
+			const { client } = fakePeer();
+			client.turns.queue.steer.mockResolvedValue(
+				ok<QueueSteerResult>({ outcome: 'not-steerable', blockedReason: 'paused' })
+			);
 
 			await queueSteer('q1', { agent: `${PEER}:docs` });
 
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
 				success: false,
-				code: 'PEER_UNSUPPORTED_VERB',
+				outcome: 'not-steerable',
+				code: 'NOT_STEERABLE',
+				peer: PEER,
 			});
-			expect(consoleSpy).toHaveBeenCalledTimes(1);
-			expect(withPeerAgent).not.toHaveBeenCalled();
-			expect(withMaestroClient).not.toHaveBeenCalled();
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});

@@ -16,7 +16,11 @@
  */
 
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
-import type { TabPatch, TurnOverrides } from '../../shared/maestro-lib/client/types';
+import type {
+	TabPatch,
+	TurnOverrides,
+	TurnSendReceipt,
+} from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -127,9 +131,10 @@ export async function openHostedTab(
 
 /**
  * Send what the person typed to the host. A tab the host does not have (a conversation kept from
- * before the move) cannot resume there, so the message opens a new host tab. True when the host
- * took it (ran, queued, or held); the caller clears the composer then. `opts.held` is Queue Held:
- * the host queues the message paused, even on an idle tab.
+ * before the move) cannot resume there, so the message opens a new host tab. The host's receipt
+ * when it took the message (ran, queued, or held), null when it did not; the caller clears the
+ * composer on a receipt. A `queued` receipt names the host's queue item (what a steer acts on).
+ * `opts.held` is Queue Held: the host queues the message paused, even on an idle tab.
  */
 export async function sendHostedTurn(
 	session: Session,
@@ -137,22 +142,22 @@ export async function sendHostedTurn(
 	text: string,
 	images: readonly string[],
 	opts: { held?: boolean } = {}
-): Promise<boolean> {
+): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
-	if (!target) return false;
+	if (!target) return null;
 	if (!target.agent) {
 		notifyToast({
 			color: 'red',
 			title: 'Message not sent',
 			message: `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`,
 		});
-		return false;
+		return null;
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
 	let hostTabId = tabId;
 	if (!isHostTab(target, tabId)) {
 		hostTabId = (await openHostedTab(session)) ?? undefined;
-		if (!hostTabId) return false;
+		if (!hostTabId) return null;
 		notifyToast({
 			color: 'theme',
 			title: 'Sent in a new tab',

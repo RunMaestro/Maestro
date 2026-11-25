@@ -28,7 +28,19 @@ vi.mock('../../../renderer/services/shellCommand', () => ({
 // A hosted agent's send goes to its host through this service; its own suite covers the wire.
 vi.mock('../../../renderer/services/hostedTurns', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/services/hostedTurns')>();
-	return { ...actual, sendHostedTurn: vi.fn(async () => true) };
+	return {
+		...actual,
+		sendHostedTurn: vi.fn(async () => ({ status: 'started' as const })),
+	};
+});
+
+// Steer Running Turn on a hosted agent steers the item the host queued; its own suite covers it.
+vi.mock('../../../renderer/services/chatSteering', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/services/chatSteering')>();
+	return {
+		...actual,
+		steerHostedSentMessage: vi.fn(async () => ({ outcome: 'delivered' as const })),
+	};
 });
 
 vi.mock('../../../renderer/services/aiCommand', () => ({
@@ -46,6 +58,7 @@ import { useInputProcessing } from '../../../renderer/hooks/input/useInputProces
 import { askSideQuestion } from '../../../renderer/services/sideQuestion';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
+import { steerHostedSentMessage } from '../../../renderer/services/chatSteering';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
@@ -1764,7 +1777,7 @@ describe('useInputProcessing', () => {
 
 		it('sends an AI message to the host, spawns nothing here, and clears the draft once taken', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
-			vi.mocked(sendHostedTurn).mockResolvedValue(true);
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
 			const session = createMockSession({ liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1787,7 +1800,7 @@ describe('useInputProcessing', () => {
 
 		it('Queue Held sends the message held to the host, as a local Queue Held queues it paused', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
-			vi.mocked(sendHostedTurn).mockResolvedValue(true);
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
 			const session = createMockSession({ liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'later' });
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1808,9 +1821,47 @@ describe('useInputProcessing', () => {
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 		});
 
+		it('Steer sends the draft to the host, then steers the item the host queued', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(steerHostedSentMessage).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue({
+				status: 'queued',
+				itemId: 'host-q1',
+				position: 1,
+				queueLength: 1,
+			});
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'check the retry path' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { steer: true });
+			});
+
+			expect(steerHostedSentMessage).toHaveBeenCalledWith(session, session.activeTabId, 'host-q1');
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('Steer does not steer a message the host started at once (the turn had ended)', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(steerHostedSentMessage).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'check the retry path' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { steer: true });
+			});
+
+			expect(sendHostedTurn).toHaveBeenCalledTimes(1);
+			expect(steerHostedSentMessage).not.toHaveBeenCalled();
+		});
+
 		it('keeps the draft when the host refuses the message', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
-			vi.mocked(sendHostedTurn).mockResolvedValue(false);
+			vi.mocked(sendHostedTurn).mockResolvedValue(null);
 			const session = createMockSession({ liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
 			const { result } = renderHook(() => useInputProcessing(deps));

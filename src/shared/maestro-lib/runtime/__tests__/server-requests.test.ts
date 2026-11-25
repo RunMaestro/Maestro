@@ -929,6 +929,10 @@ describe('live tab state and the host queue', () => {
 						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 						return ok(itemId === 'q2' ? { merged: true, mergedIntoId: 'q1' } : { merged: false });
 					},
+					steer: async (agentId: string) =>
+						agentId === 'a1'
+							? ok({ outcome: 'delivered', verdict: 'delivered' })
+							: fail('unsupported', 'This host cannot steer a running turn.'),
 				},
 			},
 		} as unknown as MaestroClient;
@@ -1023,6 +1027,23 @@ describe('live tab state and the host queue', () => {
 			['a1', 'q1'],
 			['nobody', 'q2'],
 		]);
+	});
+
+	it("answers steer_queue_item with the client's outcome, or its refusal", async () => {
+		const { client } = hostClient();
+		const handle = createRequestHandler(client);
+		expect(await handle({ type: 'steer_queue_item', sessionId: 'a1', itemId: 'q1' })).toEqual({
+			type: 'steer_queue_item_result',
+			success: true,
+			result: { outcome: 'delivered', verdict: 'delivered' },
+		});
+		expect(
+			await handle({ type: 'steer_queue_item', sessionId: 'other', itemId: 'q1' })
+		).toMatchObject({
+			type: 'steer_queue_item_result',
+			success: false,
+			error: expect.stringContaining('cannot steer'),
+		});
 	});
 
 	it('refuses set_queue_item_paused without a boolean paused, and changes nothing', async () => {

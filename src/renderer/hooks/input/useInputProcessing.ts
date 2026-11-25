@@ -63,7 +63,7 @@ import {
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
-import { steerQueuedItemOrExplain } from '../../services/chatSteering';
+import { steerHostedSentMessage, steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
@@ -587,9 +587,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						hostedSubmit,
 					]);
 				}
-				let sent = false;
+				let receipt: Awaited<ReturnType<typeof sendHostedTurn>> = null;
 				try {
-					sent = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
+					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
 						held: options?.hold === true,
 					});
 				} finally {
@@ -601,7 +601,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						else composerSubmitsInFlight.delete(hostedKey);
 					}
 				}
-				if (sent && isComposerSubmit) {
+				// Steer Running Turn: the host queued the draft behind its running turn, which is
+				// what a steer starts from, as the local path above queues it first.
+				if (options?.steer && receipt?.status === 'queued' && targetTabId) {
+					void steerHostedSentMessage(activeSession, targetTabId, receipt.itemId);
+				}
+				if (receipt && isComposerSubmit) {
 					setInputValue('');
 					if (!usingOverrideImages) setStagedImages([]);
 					clearSentDesignPicks();

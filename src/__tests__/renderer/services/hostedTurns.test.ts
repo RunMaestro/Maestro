@@ -96,7 +96,9 @@ describe('hostedTurns', () => {
 	it('sends text and images to the host tab with the tab overrides', async () => {
 		hydrateHost();
 		const session = row();
-		expect(await sendHostedTurn(session, 't1', 'hi', ['data:image/png;base64,AA'])).toBe(true);
+		expect(await sendHostedTurn(session, 't1', 'hi', ['data:image/png;base64,AA'])).toEqual({
+			status: 'started',
+		});
 		expect(act$).toHaveBeenCalledWith('box', 'h1', {
 			kind: 'send',
 			tabId: 't1',
@@ -108,7 +110,10 @@ describe('hostedTurns', () => {
 
 	it('Queue Held sends the message held, so the host queues it paused', async () => {
 		hydrateHost();
-		expect(await sendHostedTurn(row(), 't1', 'later', [], { held: true })).toBe(true);
+		const queued = { status: 'queued', itemId: 'q1', position: 1, queueLength: 1 };
+		act$.mockResolvedValueOnce({ ok: true, result: { kind: 'send', receipt: queued } });
+		// The receipt names the host's queue item: what a Steer acts on next.
+		expect(await sendHostedTurn(row(), 't1', 'later', [], { held: true })).toEqual(queued);
 		expect(act$).toHaveBeenCalledWith(
 			'box',
 			'h1',
@@ -126,7 +131,7 @@ describe('hostedTurns', () => {
 				ok: true,
 				result: { kind: 'send', receipt: { status: 'started' } },
 			});
-		expect(await sendHostedTurn(session, 'kept', 'carry on', [])).toBe(true);
+		expect(await sendHostedTurn(session, 'kept', 'carry on', [])).toEqual({ status: 'started' });
 		expect(act$).toHaveBeenNthCalledWith(1, 'box', 'h1', { kind: 'new-tab' });
 		expect(act$).toHaveBeenNthCalledWith(
 			2,
@@ -139,7 +144,7 @@ describe('hostedTurns', () => {
 	});
 
 	it('refuses at once while the host is not in the mirror, sending nothing', async () => {
-		expect(await sendHostedTurn(row(), 't1', 'hi', [])).toBe(false);
+		expect(await sendHostedTurn(row(), 't1', 'hi', [])).toBeNull();
 		expect(act$).not.toHaveBeenCalled();
 	});
 

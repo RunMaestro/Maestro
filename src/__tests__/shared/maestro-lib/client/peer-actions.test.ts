@@ -30,6 +30,13 @@ function fakeClient() {
 				merge: vi.fn(async (_agentId: string, itemId: string) =>
 					ok(itemId === 'gone' ? { merged: false } : { merged: true, mergedIntoId: 'q0' })
 				),
+				steer: vi.fn(async (_agentId: string, itemId: string) =>
+					ok(
+						itemId === 'gone'
+							? { outcome: 'not-found' as const }
+							: { outcome: 'delivered' as const, verdict: 'delivered' as const }
+					)
+				),
 			},
 		},
 		tabs: {
@@ -270,6 +277,23 @@ describe('runPeerAgentAction', () => {
 		).toEqual(ok({ kind: 'merge-queued', itemId: 'gone', merged: false }));
 	});
 
+	it("steers a waiting message on the host and hands back the host's outcome", async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'steer-queued', itemId: 'q1' })
+		).toEqual(
+			ok({
+				kind: 'steer-queued',
+				itemId: 'q1',
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			})
+		);
+		expect(client.turns.queue.steer).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'steer-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'steer-queued', itemId: 'gone', result: { outcome: 'not-found' } }));
+	});
+
 	it('passes a failed queue call through untouched', async () => {
 		const { client, asClient } = fakeClient();
 		const failure = {
@@ -342,6 +366,10 @@ describe('parsePeerAgentAction', () => {
 		});
 		expect(parsePeerAgentAction({ kind: 'merge-queued', itemId: 'q1', extra: 1 })).toEqual({
 			kind: 'merge-queued',
+			itemId: 'q1',
+		});
+		expect(parsePeerAgentAction({ kind: 'steer-queued', itemId: 'q1', extra: 1 })).toEqual({
+			kind: 'steer-queued',
 			itemId: 'q1',
 		});
 		expect(
@@ -520,6 +548,7 @@ describe('parsePeerAgentAction', () => {
 			'Missing queued item id'
 		);
 		expect(() => parsePeerAgentAction({ kind: 'merge-queued' })).toThrow('Missing queued item id');
+		expect(() => parsePeerAgentAction({ kind: 'steer-queued' })).toThrow('Missing queued item id');
 		expect(() =>
 			parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: 'yes' })
 		).toThrow('paused must be true or false');

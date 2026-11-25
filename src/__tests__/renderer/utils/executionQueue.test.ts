@@ -1160,6 +1160,18 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
 	});
 
+	it("steers a hosted agent's host item as a local one: its host runs the TUI, not SSH", () => {
+		const hosted = steerableSession({
+			sshRemoteId: 'r1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>);
+		const local = steerableSession();
+		expect(getSteerEligibility(hosted, { ...item, hostQueued: true })).toEqual(
+			getSteerEligibility(local, item)
+		);
+		expect(getSteerEligibility(hosted, { ...item, hostQueued: true }).canSteer).toBe(true);
+	});
+
 	it('steers an SSH Codex agent on app-server, and names the transport for one on exec', () => {
 		const remote = {
 			toolType: 'codex',

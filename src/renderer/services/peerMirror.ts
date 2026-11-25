@@ -10,12 +10,17 @@
  * answers an error at once, shown as a toast.
  */
 
-import { normalizeTurnOverrides, type TurnOverrides } from '../../shared/maestro-lib/client/types';
+import {
+	normalizeTurnOverrides,
+	type TurnOverrides,
+	type TurnSendReceipt,
+} from '../../shared/maestro-lib/client/types';
 import type {
 	PeerAgentAction,
 	PeerAgentActionKind,
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
+import type { QueueSteerResult } from '../../shared/chatSteering';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -75,6 +80,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'remove-queued': 'Could not remove the queued message',
 	'pause-queued': 'Could not hold or resume the queued message',
 	'merge-queued': 'Could not merge the queued message',
+	'steer-queued': 'Could not steer this turn',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 };
@@ -125,8 +131,8 @@ export async function actOnMirroredAgent(
 
 /**
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
- * one turn. True when the host took it (ran, queued, or held). `held` is Queue Held: the host
- * queues it paused, even on an idle tab, as a local Queue Held does.
+ * one turn. The host's receipt when it took it (ran, queued, or held), null when it did not.
+ * `held` is Queue Held: the host queues it paused, even on an idle tab, as a local Queue Held does.
  */
 export async function sendToMirroredTab(
 	peerId: string,
@@ -136,18 +142,17 @@ export async function sendToMirroredTab(
 	overrides?: TurnOverrides,
 	images?: readonly string[],
 	held?: boolean
-): Promise<boolean> {
+): Promise<TurnSendReceipt | null> {
 	const clean = normalizeTurnOverrides(overrides);
-	return (
-		(await actOnMirroredAgent(peerId, agentId, {
-			kind: 'send',
-			tabId,
-			text,
-			...(images && images.length > 0 ? { images: [...images] } : {}),
-			...(clean ? { overrides: clean } : {}),
-			...(held === true ? { held: true } : {}),
-		})) !== null
-	);
+	const result = await actOnMirroredAgent(peerId, agentId, {
+		kind: 'send',
+		tabId,
+		text,
+		...(images && images.length > 0 ? { images: [...images] } : {}),
+		...(clean ? { overrides: clean } : {}),
+		...(held === true ? { held: true } : {}),
+	});
+	return result?.kind === 'send' ? result.receipt : null;
 }
 
 /** Stop a mirrored tab's turn, or every busy tab of the agent without `tabId` (the Stop pill). */
@@ -234,6 +239,20 @@ export async function mergeMirrorQueuedItem(
 			message: 'They no longer both wait on the host: one may have started already.',
 		});
 	}
+}
+
+/**
+ * Hand a waiting message to the turn running on its host tab (the queued card's Steer). The host
+ * runs its own steer and answers with the outcome; the caller reports it. Null when the host could
+ * not be reached (already a red toast): the message still waits there.
+ */
+export async function steerMirrorQueuedItem(
+	peerId: string,
+	agentId: string,
+	itemId: string
+): Promise<QueueSteerResult | null> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'steer-queued', itemId });
+	return result?.kind === 'steer-queued' ? result.result : null;
 }
 
 /** Close a mirrored tab on its host: it moves to the host's closed-tab history. */

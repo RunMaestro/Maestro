@@ -25,10 +25,17 @@ import {
 	requestSteerSend,
 	settlePendingSteersOnExit,
 	STEER_SEND_EVENT,
+	steerHostedSentMessage,
 	steerNewestQueuedMessage,
 	steerQueuedItem,
 	steerQueuedItemOrExplain,
 } from '../../../renderer/services/chatSteering';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
@@ -734,5 +741,116 @@ describe('returnPendingSteersToQueue', () => {
 	it('is a no-op for ids that are not parked', () => {
 		const session = steerableSession([]);
 		expect(returnPendingSteersToQueue(session, new Set(['nope']), true)).toBe(session);
+	});
+});
+
+// A hosted agent's queued message waits on its host. The host runs this same steer on its own
+// queue; this side checks the same eligibility, sends `steer-queued`, and shows the same toasts.
+describe('steering a hosted agent', () => {
+	const maestro = window.maestro as unknown as Record<string, unknown>;
+	const act$ = vi.fn();
+
+	function hostedSession(queued: QueuedItem[]): Session {
+		return {
+			...steerableSession(queued),
+			// The record keeps its SSH remote; the host runs the turn on its own machine.
+			sshRemoteId: 'remote-1',
+			liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+		} as Session;
+	}
+
+	beforeEach(() => {
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		useSettingsStore.setState({ federationHostedAgents: true });
+		maestro.federation = { act: act$ };
+		act$.mockReset();
+	});
+	afterEach(() => {
+		delete maestro.federation;
+		useSettingsStore.setState({ federationHostedAgents: false });
+	});
+
+	it('steers a host queue card on the host and toasts as a local steer does', async () => {
+		useSessionStore.setState({ sessions: [hostedSession([item({ hostQueued: true })])] });
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'steer-queued',
+				itemId: 'item-a',
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			},
+		});
+
+		const result = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(result).toEqual({ outcome: 'delivered', verdict: 'delivered' });
+		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'steer-queued', itemId: 'item-a' });
+		// Nothing types here, and nothing is parked here: the host owns the queue.
+		expect(steer).not.toHaveBeenCalled();
+		expect(pendingSteerCount()).toBe(0);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'green', title: 'Sent to the running turn' })
+		);
+	});
+
+	it("reports the host's refusal with the local refusal toast", async () => {
+		useSessionStore.setState({ sessions: [hostedSession([item({ hostQueued: true })])] });
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'steer-queued',
+				itemId: 'item-a',
+				result: { outcome: 'refused', verdict: 'refused', detail: 'The turn just ended.' },
+			},
+		});
+
+		const result = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(result.outcome).toBe('refused');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message: 'The turn just ended. It stays queued.',
+			})
+		);
+	});
+
+	it('asks nothing of the host for a message that cannot be steered', async () => {
+		useSessionStore.setState({
+			sessions: [hostedSession([item({ hostQueued: true, paused: true })])],
+		});
+
+		const result = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'paused' });
+		expect(act$).not.toHaveBeenCalled();
+	});
+
+	it('steers the draft the host just queued, by its host item id', async () => {
+		const session = hostedSession([]);
+		useSessionStore.setState({ sessions: [session] });
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'steer-queued',
+				itemId: 'host-q1',
+				result: { outcome: 'not-steerable', blockedReason: 'tui-command-prefix' },
+			},
+		});
+
+		const result = await steerHostedSentMessage(session, 'tab-1', 'host-q1');
+
+		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'steer-queued', itemId: 'host-q1' });
+		expect(result.outcome).toBe('not-steerable');
+		// Explained, as steerQueuedItemOrExplain explains a local one.
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Could not steer this turn' })
+		);
 	});
 });

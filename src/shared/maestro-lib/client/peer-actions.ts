@@ -5,8 +5,8 @@
 // a send is `turns.send` (`enqueue_command`), Stop is `turns.interrupt` (`process:interrupt`) per
 // tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and `tabs.update`, a settings
 // change is `agents.update`, and the queue actions on a waiting message are `turns.queue.remove`
-// (`remove_queue_item`), `turns.queue.setPaused` (`set_queue_item_paused`), and `turns.queue.merge`
-// (`merge_queue_item`). The CLI reaches the host over its own short-lived forward
+// (`remove_queue_item`), `turns.queue.setPaused` (`set_queue_item_paused`), `turns.queue.merge`
+// (`merge_queue_item`), and `turns.queue.steer` (`steer_queue_item`). The CLI reaches the host over its own short-lived forward
 // (`withPeerAgent()`), the desktop over the mirror service's held one; both run the action
 // through `runPeerAgentAction()`, so there is one copy.
 //
@@ -14,6 +14,7 @@
 // (`host-unavailable`), so a send while disconnected is an error, never a message held for later.
 // A send to a busy tab waits in the HOST's execution queue, as it would for a local agent.
 
+import type { QueueSteerResult } from '../../chatSteering';
 import { isCodexTransport } from '../../codexTransport';
 import { asThinkingMode } from '../../types';
 import { isHarnessControlMode } from '../providers/native-control';
@@ -60,6 +61,8 @@ export type PeerAgentAction =
 	| { kind: 'pause-queued'; itemId: string; paused: boolean }
 	/** Fold a waiting message into the waiting message above it on its tab (the card's Merge). */
 	| { kind: 'merge-queued'; itemId: string }
+	/** Hand a waiting message to the turn running on its tab (the card's Steer). */
+	| { kind: 'steer-queued'; itemId: string }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -87,6 +90,8 @@ export type PeerAgentActionResult =
 	| { kind: 'pause-queued'; itemId: string; found: boolean; paused: boolean }
 	/** `merged: false`: nothing waits above it on its tab, or it no longer waits. */
 	| { kind: 'merge-queued'; itemId: string; merged: boolean; mergedIntoId?: string }
+	/** What the host's steer did: `outcome` is the same one a local steer reports. */
+	| { kind: 'steer-queued'; itemId: string; result: QueueSteerResult }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string };
 
@@ -103,6 +108,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'remove-queued',
 	'pause-queued',
 	'merge-queued',
+	'steer-queued',
 	'update-agent',
 	'update-tab',
 ];
@@ -193,6 +199,15 @@ export async function runPeerAgentAction(
 				? { ok: true, value: { kind: 'merge-queued', itemId: action.itemId, ...merged.value } }
 				: merged;
 		}
+		case 'steer-queued': {
+			const steered = await client.turns.queue.steer(agent.id, action.itemId);
+			return steered.ok
+				? {
+						ok: true,
+						value: { kind: 'steer-queued', itemId: action.itemId, result: steered.value },
+					}
+				: steered;
+		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
 			return updated.ok
@@ -281,6 +296,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (typeof value.paused !== 'boolean') throw new Error('paused must be true or false');
 			return { kind, itemId: value.itemId, paused: value.paused };
 		case 'merge-queued':
+		case 'steer-queued':
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			return { kind, itemId: value.itemId };
 		case 'update-agent':

@@ -795,6 +795,14 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		it('refuses a steer: a headless turn takes no input once it starts, so the message waits', async () => {
+			const runtime = await start();
+			const refused = errorOf(await runtime.turns.queue.steer('a1', 'q1'));
+			expect(refused.code).toBe('unsupported');
+			expect(refused.message).toContain('stays queued');
+			expect(errorOf(await runtime.turns.queue.steer('nope', 'q1')).code).toBe('not-found');
+		});
+
 		it('says nothing was stopped when the tab is idle', async () => {
 			const runtime = await start();
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: false });
