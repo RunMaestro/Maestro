@@ -21,7 +21,11 @@ import {
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
-import { cheapResumeLadderEffort, cheapResumeTurnSettings } from '../../../shared/modelTiers';
+import {
+	cheapResumeLadderEffort,
+	cheapResumeTurnSettings,
+	resumeSharesThread,
+} from '../../../shared/modelTiers';
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -841,18 +845,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
-				// Resolve the effective model the same way the spawn handler does, so
-				// providers that share the thread and key refusals per model
-				// (Antigravity) check refusals against the model that actually runs
+				// For shared-thread providers (Codex, Antigravity), resolve the
+				// effective model the same way the spawn handler does, so per-model
+				// effort refusals are checked against the model that actually runs
 				// even when it comes from agent config or default rather than the tab.
-				const agentConfigValues =
-					(await window.maestro.agents.getConfig?.(toolType).catch(() => undefined)) ?? undefined;
-				const resolvedModel =
-					applyAgentConfigOverrides(agent, [], {
-						agentConfigValues,
-						sessionCustomModel: sessionConfig?.customModel,
-						sessionCustomArgs: sessionConfig?.customArgs,
-					}).modelId ?? sessionConfig?.customModel;
+				// Non-shared providers keep their existing tab-only input.
+				let resolvedModel = sessionConfig?.customModel;
+				if (resumeSharesThread(toolType)) {
+					const agentConfigValues =
+						(await window.maestro.agents.getConfig?.(toolType).catch(() => undefined)) ?? undefined;
+					resolvedModel =
+						applyAgentConfigOverrides(agent, [], {
+							agentConfigValues,
+							sessionCustomModel: sessionConfig?.customModel,
+							sessionCustomArgs: sessionConfig?.customArgs,
+						}).modelId ?? sessionConfig?.customModel;
+				}
 				const synopsisCurrent = {
 					model: resolvedModel,
 					effort: sessionConfig?.customEffort,

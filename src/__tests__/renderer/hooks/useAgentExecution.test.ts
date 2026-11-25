@@ -782,6 +782,62 @@ describe('useAgentExecution', () => {
 		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
 	});
 
+	it('keeps non-shared provider synopsis settings unchanged when agent config sets a model', async () => {
+		const session = createMockSession({ toolType: 'claude-code' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'claude-code',
+			command: 'claude',
+			args: [],
+			configOptions: [
+				{
+					key: 'model',
+					type: 'select',
+					label: 'Model',
+					default: '',
+					argBuilder: (value: unknown) =>
+						typeof value === 'string' && value ? ['--model', value] : [],
+				},
+			],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+			model: 'opus[1m]',
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-claude-agent-cfg',
+			'Summarize session',
+			'claude-code'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionCustomModel).toBe('haiku');
+		expect(spawned.sessionCustomEffort).toBe('low');
+
+		act(() => {
+			onDataHandler?.(spawned.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(spawned.sessionId as string, 0);
+		});
+
+		expect((await spawnPromise).success).toBe(true);
+	});
+
 	it('includes appendSystemPrompt in batch spawns', async () => {
 		const session = createMockSession({
 			state: 'busy',
