@@ -1456,7 +1456,11 @@ app
 		// the user having to toggle Live Mode to coax it back.
 		startCliDiscoveryWatchdog(cliServerDeps);
 
-		// Initialize core prompts from disk (must happen before features that use them)
+		// Initialize core prompts from disk (must happen before features that use them).
+		// A customizations file that is not valid JSON never reaches the catch below: the prompt
+		// manager moves it aside and starts from the bundled prompts. What does reach it is a
+		// missing BUNDLED prompt (a broken install, which a reinstall fixes) or a customizations
+		// file that cannot be read at all (permissions, disk).
 		try {
 			await initializePrompts();
 		} catch (error) {

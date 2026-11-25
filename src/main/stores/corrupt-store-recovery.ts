@@ -52,9 +52,12 @@ export { corruptStorePath };
  * memory. Only if BOTH fail is the document actually at risk, and that is
  * logged as an error rather than swallowed.
  *
+ * Exported for a plain JSON file that is not an `electron-store` (the prompt
+ * manager's `core-prompts-customizations.json`) and so has no `deserialize` hook.
+ *
  * @returns the sidecar path when the document was preserved, otherwise null
  */
-function quarantineCorruptStore(storePath: string, contents: string): string | null {
+export function quarantineCorruptStore(storePath: string, contents: string): string | null {
 	const sidecarPath = corruptStorePath(storePath);
 
 	try {
