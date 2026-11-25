@@ -1,6 +1,7 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFilePreviewTabHandlers } from '../../../../../renderer/hooks/tabs/internal/useFilePreviewTabHandlers';
+import type { FilePreviewTab } from '../../../../../renderer/types';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../../../renderer/stores/mediaPlaybackStore';
@@ -701,6 +702,261 @@ describe('useFilePreviewTabHandlers', () => {
 
 			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
 			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(2);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Unsaved edits belong to ONE file
+	// -----------------------------------------------------------------------
+	// A draft rode along when the tab moved to another file, so Back followed by
+	// Cmd+S wrote the first file's text over the second. A move to a different file
+	// now asks first, as closing the tab does, and drops the draft once agreed.
+	describe('navigation with unsaved edits', () => {
+		const history = [
+			{ path: '/repo/a.ts', name: 'a', scrollTop: 3 },
+			{ path: '/repo/b.ts', name: 'b', scrollTop: 0 },
+		];
+
+		/** A tab on b.ts holding a draft typed for b.ts, one step ahead of a.ts in its history. */
+		const draftOnB = (overrides: Partial<FilePreviewTab> = {}) =>
+			createMockFileTab({
+				id: 'file-1',
+				path: '/repo/b.ts',
+				name: 'b',
+				extension: '.ts',
+				content: 'b on disk',
+				editContent: 'b edited',
+				editContentPath: '/repo/b.ts',
+				navigationHistory: history,
+				navigationIndex: 1,
+				...overrides,
+			});
+
+		const setupDraftOnB = (overrides: Partial<FilePreviewTab> = {}) => {
+			setupSession({ filePreviewTabs: [draftOnB(overrides)], activeFileTabId: 'file-1' });
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('a on disk');
+		};
+
+		const confirmOpen = () => useModalStore.getState().isOpen('confirm');
+		const confirmData = () => useModalStore.getState().getData('confirm');
+
+		/** Answer the open prompt with "yes", then let the move (it reads the file first) settle. */
+		const confirmAndSettle = async () => {
+			const prompt = confirmData();
+			await act(async () => {
+				prompt?.onConfirm();
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		};
+
+		it('asks before moving to another file and changes nothing until the user answers', async () => {
+			setupDraftOnB();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+
+			expect(confirmData()?.message).toBe(
+				'"b.ts" has unsaved changes. Are you sure you want to open "a.ts" here? The changes will be discarded.'
+			);
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				content: 'b on disk',
+				editContent: 'b edited',
+				editContentPath: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+		});
+
+		it('leaves the tab and its edits alone when the user declines', async () => {
+			setupDraftOnB();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+
+			// Cancel closes the prompt without ever calling its onConfirm.
+			act(() => {
+				useModalStore.getState().closeModal('confirm');
+			});
+
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				editContent: 'b edited',
+				navigationIndex: 1,
+			});
+		});
+
+		it('moves to the other file and drops the edits once the user agrees', async () => {
+			setupDraftOnB();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+
+			await confirmAndSettle();
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/repo/a.ts', undefined);
+			const tab = getSession().filePreviewTabs[0];
+			expect(tab).toMatchObject({
+				path: '/repo/a.ts',
+				name: 'a',
+				content: 'a on disk',
+				scrollTop: 3,
+				navigationIndex: 0,
+			});
+			// The draft stays behind: nothing is left to be saved over a.ts.
+			expect(tab.editContent).toBeUndefined();
+			expect(tab.editContentPath).toBeUndefined();
+		});
+
+		it('shows the file as it is on disk when going forward after agreeing, with nothing to ask', async () => {
+			setupDraftOnB();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+			await confirmAndSettle();
+			act(() => {
+				useModalStore.getState().closeModal('confirm');
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('b on disk, as saved');
+
+			// Forward to b.ts: the edits were dropped, so there is nothing to ask about
+			// and b.ts comes from disk, not from the draft.
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward();
+			});
+
+			expect(confirmOpen()).toBe(false);
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				content: 'b on disk, as saved',
+				navigationIndex: 1,
+			});
+			expect(getSession().filePreviewTabs[0].editContent).toBeUndefined();
+		});
+
+		it('asks on Forward and on a breadcrumb jump as well', async () => {
+			const three = [
+				{ path: '/repo/a.ts', name: 'a' },
+				{ path: '/repo/b.ts', name: 'b' },
+				{ path: '/repo/c.ts', name: 'c' },
+			];
+			setupDraftOnB({ navigationHistory: three, navigationIndex: 1 });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward();
+			});
+			expect(confirmData()?.message).toContain('open "c.ts" here');
+
+			act(() => {
+				useModalStore.getState().closeModal('confirm');
+			});
+			await act(async () => {
+				await result.current.handleFileTabNavigateToIndex(0);
+			});
+			expect(confirmData()?.message).toContain('open "a.ts" here');
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('moves straight away when the tab holds no unsaved edits', async () => {
+			setupDraftOnB({ editContent: undefined, editContentPath: undefined });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+
+			expect(confirmOpen()).toBe(false);
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/a.ts',
+				content: 'a on disk',
+				navigationIndex: 0,
+			});
+		});
+
+		it('keeps the edits when the history entry is the file already on screen', async () => {
+			// b.ts, then a.ts, then b.ts again: stepping back to the first b.ts leaves
+			// no file behind, so the edits are still typed for the file on screen.
+			setupDraftOnB({
+				navigationHistory: [
+					{ path: '/repo/b.ts', name: 'b' },
+					{ path: '/repo/a.ts', name: 'a' },
+					{ path: '/repo/b.ts', name: 'b' },
+				],
+				navigationIndex: 2,
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('b on disk');
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateToIndex(0);
+			});
+
+			expect(confirmOpen()).toBe(false);
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				editContent: 'b edited',
+				editContentPath: '/repo/b.ts',
+				navigationIndex: 0,
+			});
+		});
+
+		it('keeps the edits when the other file cannot be read', async () => {
+			setupDraftOnB();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue(null);
+
+			await confirmAndSettle();
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/repo/a.ts', undefined);
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				editContent: 'b edited',
+				editContentPath: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+		});
+
+		it('asks about the addressed tiled pane, not the active tab, and moves only that pane', async () => {
+			setupSession({
+				filePreviewTabs: [
+					createMockFileTab({
+						id: 'active-tab',
+						path: '/repo/b.ts',
+						name: 'b',
+						extension: '.ts',
+						navigationHistory: history,
+						navigationIndex: 1,
+					}),
+					draftOnB({ id: 'pane-tab', name: 'pane', extension: '.md' }),
+				],
+				activeFileTabId: 'active-tab',
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('a on disk');
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack('pane-tab');
+			});
+			expect(confirmData()?.message).toContain('"pane.md" has unsaved changes');
+
+			await confirmAndSettle();
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({ path: '/repo/a.ts' });
+			expect(getSession().filePreviewTabs[1].editContent).toBeUndefined();
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				navigationIndex: 1,
+			});
 		});
 	});
 

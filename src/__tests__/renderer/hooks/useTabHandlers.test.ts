@@ -420,6 +420,57 @@ describe('useTabHandlers', () => {
 			expect(session.filePreviewTabs[0].editContent).toBe('edited text');
 		});
 
+		it('handleFileTabEditContentChange records the file the draft was typed for', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1', path: '/repo/a.ts' });
+			setupSessionWithTabs([aiTab], [fileTab]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleFileTabEditContentChange('file-1', 'edited text');
+			});
+
+			expect(getSession().filePreviewTabs[0].editContentPath).toBe('/repo/a.ts');
+		});
+
+		it('handleFileTabEditContentChange keeps that file on later edits, whatever the tab shows now', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({
+				id: 'file-1',
+				path: '/repo/b.ts',
+				editContent: 'draft',
+				editContentPath: '/repo/a.ts',
+			});
+			setupSessionWithTabs([aiTab], [fileTab]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleFileTabEditContentChange('file-1', 'draft, more');
+			});
+
+			expect(getSession().filePreviewTabs[0].editContent).toBe('draft, more');
+			expect(getSession().filePreviewTabs[0].editContentPath).toBe('/repo/a.ts');
+		});
+
+		it('handleFileTabEditContentChange forgets the draft file once the draft is saved or cleared', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({
+				id: 'file-1',
+				path: '/repo/a.ts',
+				editContent: 'draft',
+				editContentPath: '/repo/a.ts',
+			});
+			setupSessionWithTabs([aiTab], [fileTab]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleFileTabEditContentChange('file-1', undefined, 'saved content');
+			});
+
+			expect(getSession().filePreviewTabs[0].editContent).toBeUndefined();
+			expect(getSession().filePreviewTabs[0].editContentPath).toBeUndefined();
+		});
+
 		it('handleFileTabEditContentChange updates saved content when provided', () => {
 			const aiTab = createMockAITab({ id: 'ai-1' });
 			const fileTab = createMockFileTab({ id: 'file-1', content: 'old' });

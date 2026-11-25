@@ -21,13 +21,30 @@ import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
 import { useUIStore } from '../../../stores/uiStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
 import { recordJourney } from '../../../services/userJourney';
+import { getBasename } from '../../../../shared/formatters';
 import {
 	buildReplacementNavigationHistory,
 	createUntitledFileTab,
 	getFileNameParts,
+	nextEditContentPath,
 	readFilePreviewContent,
 } from './filePreviewTabHelpers';
 import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
+
+/**
+ * Ask before a file tab throws its unsaved edits away. Closing the tab and moving
+ * it to another file both do, so both ask here, in the same words.
+ */
+function confirmDiscardEdits(
+	tab: Pick<FilePreviewTab, 'name' | 'extension'>,
+	question: string,
+	onConfirm: () => void
+): void {
+	useModalStore.getState().openModal('confirm', {
+		message: `"${tab.name}${tab.extension}" has unsaved changes. ${question}`,
+		onConfirm,
+	});
+}
 
 export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 	const handleOpenFileTab = useCallback(
@@ -290,11 +307,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			}
 
 			if (tabToClose.editContent !== undefined) {
-				useModalStore.getState().openModal('confirm', {
-					message: `"${tabToClose.name}${tabToClose.extension}" has unsaved changes. Are you sure you want to close it?`,
-					onConfirm: () => {
-						forceCloseFileTab(tabId);
-					},
+				confirmDiscardEdits(tabToClose, 'Are you sure you want to close it?', () => {
+					forceCloseFileTab(tabId);
 				});
 			} else {
 				forceCloseFileTab(tabId);
@@ -312,6 +326,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 	// the mtime of the bytes it is holding. Leave it out on a save and the tab
 	// keeps its pre-save timestamp, so the next mount of FilePreview compares the
 	// disk against a stale value and raises a false "File changed on disk".
+	//
+	// The draft is stamped with the file it is typed for (`editContentPath`), so a
+	// draft that outlives its file can be told apart at Save.
 	const handleFileTabEditContentChange = useCallback(
 		(
 			tabId: string,
@@ -320,16 +337,18 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			savedMtime?: number
 		) => {
 			const { activeSessionId } = useSessionStore.getState();
-			updateFileTab(activeSessionId, tabId, (tab) =>
-				savedContent !== undefined
+			updateFileTab(activeSessionId, tabId, (tab) => {
+				const editContentPath = nextEditContentPath(tab, editContent);
+				return savedContent !== undefined
 					? {
 							...tab,
 							editContent,
+							editContentPath,
 							content: savedContent,
 							lastModified: savedMtime ?? tab.lastModified,
 						}
-					: { ...tab, editContent }
-			);
+					: { ...tab, editContent, editContentPath };
+			});
 		},
 		[]
 	);
@@ -467,6 +486,11 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 	 * `tabId` addresses the tab explicitly. It defaults to the active file tab (the
 	 * single view), but a TILED file pane must pass its own id: focusing a file pane
 	 * does not set `activeFileTabId`, so the default would navigate a different file.
+	 *
+	 * Unsaved edits are typed for ONE file and cannot follow the tab to another: Save
+	 * would write them over it (Back, then Cmd+S, overwrote the file just opened). So
+	 * a move to a different file asks first, exactly as closing the tab does, and drops
+	 * the edits once the user agrees. Nothing changes until they answer.
 	 */
 	const handleFileTabNavigateToIndex = useCallback(async (index: number, tabId?: string) => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
@@ -480,21 +504,37 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 		if (index < 0 || index >= history.length) return;
 		const historyEntry = history[index];
 
-		try {
-			const content = await window.maestro.fs.readFile(historyEntry.path, currentTab.sshRemoteId);
-			if (content === null) return;
+		const leavesEdits =
+			currentTab.editContent !== undefined && historyEntry.path !== currentTab.path;
 
-			updateFileTab(currentSession.id, currentTab.id, (tab) => ({
-				...tab,
-				path: historyEntry.path,
-				name: historyEntry.name,
-				content,
-				scrollTop: historyEntry.scrollTop ?? 0,
-				navigationIndex: index,
-			}));
-		} catch (error) {
-			logger.error('Failed to navigate file tab history:', undefined, error);
+		const moveToEntry = async () => {
+			try {
+				const content = await window.maestro.fs.readFile(historyEntry.path, currentTab.sshRemoteId);
+				if (content === null) return;
+
+				updateFileTab(currentSession.id, currentTab.id, (tab) => ({
+					...tab,
+					path: historyEntry.path,
+					name: historyEntry.name,
+					content,
+					scrollTop: historyEntry.scrollTop ?? 0,
+					navigationIndex: index,
+					...(leavesEdits ? { editContent: undefined, editContentPath: undefined } : {}),
+				}));
+			} catch (error) {
+				logger.error('Failed to navigate file tab history:', undefined, error);
+			}
+		};
+
+		if (leavesEdits) {
+			confirmDiscardEdits(
+				currentTab,
+				`Are you sure you want to open "${getBasename(historyEntry.path)}" here? The changes will be discarded.`,
+				() => void moveToEntry()
+			);
+			return;
 		}
+		await moveToEntry();
 	}, []);
 
 	/** Current position in a file tab's history, or -1 when it has none. */

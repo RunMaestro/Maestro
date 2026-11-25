@@ -260,6 +260,17 @@ export const FilePreview = React.memo(
 		// Initialize from file.content so hasChanges isn't a false positive on first render
 		// (effect below keeps it in sync when the file changes).
 		const [internalEditContent, setInternalEditContent] = useState(file?.content ?? '');
+		// The file that text was typed for. `file` changes under a mounted preview
+		// (Back, Forward, another tab), and a draft typed for one file must never be
+		// read as the text of the next: Save would write it over that file. Reset
+		// during render, before paint, so no frame shows the old file's text as this
+		// one's. The content effect below cannot do this alone: it skips an EMPTY file,
+		// which left the previous file's text in place as unsaved changes.
+		const [internalEditPath, setInternalEditPath] = useState(file?.path);
+		if (file?.path !== internalEditPath) {
+			setInternalEditPath(file?.path);
+			setInternalEditContent(file?.content ?? '');
+		}
 		// Computed edit content - prefer external if provided
 		const editContent = externalEditContent ?? internalEditContent;
 		// Wrapper to update both internal state and notify parent

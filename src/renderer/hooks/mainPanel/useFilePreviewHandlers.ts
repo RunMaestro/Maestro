@@ -5,6 +5,11 @@ import { getFileTabFileName } from '../../utils/tabHelpers';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { recordJourney } from '../../services/userJourney';
 import { countLineChanges } from '../../../shared/lineChanges';
+import { getBasename } from '../../../shared/formatters';
+import { draftWrittenElsewhere } from '../tabs/internal/filePreviewTabHelpers';
+
+/** How a save names a file in its refusal: the folder is noise, an untitled tab has no name. */
+const fileLabel = (path: string): string => (path ? `"${getBasename(path)}"` : 'an untitled file');
 
 interface UseFilePreviewHandlersParams {
 	activeSession: Session | null;
@@ -83,6 +88,25 @@ export function useFilePreviewHandlers({
 
 	const handleFilePreviewSave = useCallback(
 		async (path: string, content: string): Promise<boolean> => {
+			// The tab as the store holds it right now. Read here, not a dep, so this
+			// callback is not rebuilt on every keystroke.
+			const readStoreTab = () =>
+				activeSession?.id
+					? selectSessionById(activeSession.id)(useSessionStore.getState())?.filePreviewTabs.find(
+							(tab) => tab.id === activeFileTabId
+						)
+					: undefined;
+
+			// Unsaved edits are typed for ONE file. If the tab shows another by now
+			// (Back, then Cmd+S, once wrote the draft over the file just opened),
+			// refuse before any dialog or write: the caller's catch raises the toast.
+			const draftFile = draftWrittenElsewhere(readStoreTab(), path);
+			if (draftFile !== undefined) {
+				throw new Error(
+					`These edits were made in ${fileLabel(draftFile)}, not in ${fileLabel(path)}. Nothing was saved.`
+				);
+			}
+
 			let savePath = path;
 
 			// Untitled file - prompt for save location
@@ -116,14 +140,10 @@ export function useFilePreviewHandlers({
 			await window.maestro.fs.writeFile(savePath, content, filePreviewSshRemoteId);
 
 			// The tab still holds the bytes it loaded or last saved, which is what
-			// this save replaced on disk. Read from the store, not a dep, so this
-			// callback is not rebuilt on every keystroke. Counts only: the journey
-			// never stores content.
+			// this save replaced on disk. Counts only: the journey never stores
+			// content.
 			if (activeSession?.id) {
-				const previousContent =
-					selectSessionById(activeSession.id)(useSessionStore.getState())?.filePreviewTabs.find(
-						(tab) => tab.id === activeFileTabId
-					)?.content ?? '';
+				const previousContent = readStoreTab()?.content ?? '';
 				recordJourney(activeSession.id, {
 					kind: 'file.save',
 					target: savePath,

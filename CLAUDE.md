@@ -313,6 +313,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Closing a tab while the unread filter is on:** `closeTab()`'s third argument is an OVERRIDE; omit it and `src/renderer/utils/tabHelpers/index.ts` reads `uiStore.showUnreadOnly`
 - **Ending a turn with no process exit:** `settleTabThinkingState(session, tabId)` in `src/renderer/utils/tabHelpers/index.ts`
 - **Never leaving an agent with an empty tab strip:** `ensureAgentHasVisibleTab()`, `agentHasVisibleTab()`, `createBlankAiTab()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
+- **Which file a file tab's unsaved edits belong to:** `nextEditContentPath()`, `draftWrittenElsewhere()` in `src/renderer/hooks/tabs/internal/filePreviewTabHelpers.ts`, over `FilePreviewTab.editContentPath`
 - **Handing the agent back when a shell command or a CLI playbook ends:** `settleAgentStateFromTabs(session)` in `src/renderer/utils/tabHelpers` (never gate on `aiPid`, which per-tab agents leave at 0 or -1)
 - **Agent state from tab states another client reported:** `syncAgentStateToTabs(session)` in `src/renderer/utils/tabHelpers` (the web-desktop inventory sync)
 - **A tab's own process produced output:** `markTabBusyFromOutput(session, tabId)` in `src/renderer/utils/tabHelpers`, via `noteLiveTabOutput()` in `src/renderer/hooks/agent/internal/helpers/liveTabOutput.ts` (check the tab first; write only when it is not already busy)

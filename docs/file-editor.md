@@ -4,7 +4,7 @@ description: The File Preview has a built-in code editor - completion, auto-clos
 icon: code
 ---
 
-Any text file you open in the File Preview can be edited in place. Press `Cmd+E` / `Ctrl+E` (or the edit button in the toolbar) to switch from the preview to the editor, and `Cmd+S` / `Ctrl+S` to save. `Esc` or `Cmd+E` takes you back to the preview. If you try to leave a file with unsaved changes, Maestro asks first.
+Any text file you open in the File Preview can be edited in place. Press `Cmd+E` / `Ctrl+E` (or the edit button in the toolbar) to switch from the preview to the editor, and `Cmd+S` / `Ctrl+S` to save. `Esc` or `Cmd+E` takes you back to the preview. If you try to leave a file with unsaved changes, Maestro asks first: closing its tab, or moving the tab to another file with Back, Forward, or a breadcrumb. Your changes are dropped only if you agree.
 
 The editor is built on CodeMirror 6. It edits source code, markdown, config files, and plain text, and it follows your theme and your **File Editor** font settings.
 
