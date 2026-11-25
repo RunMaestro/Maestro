@@ -1,7 +1,14 @@
 import React from 'react';
+import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: vi.fn() };
+});
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
@@ -249,6 +256,36 @@ const defaultProps = {
 };
 
 describe('FilePreview', () => {
+	it('shows the complete handler context when a real Save caller rejects', async () => {
+		const filePath = path.join(process.cwd(), 'save-fixture.md');
+		const onSave = vi
+			.fn()
+			.mockRejectedValue(
+				new Error(
+					"Error invoking remote method 'fs:writeFile': TypeError: Save failed: Error: remote rejected"
+				)
+			);
+		render(
+			<FilePreview
+				{...defaultProps}
+				file={{ name: 'save-fixture.md', path: filePath, content: '# Original' }}
+				markdownEditMode={true}
+				externalEditContent="# Edited"
+				onSave={onSave}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Save Failed',
+					message: 'Save failed: Error: remote rejected',
+				})
+			)
+		);
+		expect(onSave).toHaveBeenCalledExactlyOnceWith(filePath, '# Edited');
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Default every test to the Electron desktop build; the web-desktop tests

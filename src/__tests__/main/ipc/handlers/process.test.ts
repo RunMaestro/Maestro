@@ -78,6 +78,7 @@ import type { SshRemoteConfig } from '../../../../shared/types';
 import type { ProviderSwitchTab } from '../../../../shared/maestro-lib/agents/providerSwap';
 import type { SpawnResult } from '../../../../main/process-manager/types';
 import * as path from 'path';
+import { resolveSshPath } from '../../../../main/utils/cliDetection';
 import { describe, it, expect, assert, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import {
@@ -3417,6 +3418,114 @@ describe('process IPC handlers', () => {
 			enabled: true,
 		};
 
+		describe('owned SSH terminal exit observers', () => {
+			let events: EventEmitter;
+			let processes: Map<string, { pid: number; ptyProcess: { pid: number } }>;
+			const sessionId = 'observer-terminal';
+			const start = (remoteId = 'remote-1') =>
+				handlers.get('process:spawnTerminalTab')!({} as any, {
+					sessionId,
+					cwd: path.join(process.cwd(), 'terminal-fixture'),
+					sessionSshRemoteConfig: { enabled: true, remoteId },
+				});
+			beforeEach(() => {
+				events = new EventEmitter();
+				processes = new Map();
+				vi.mocked(resolveSshPath).mockResolvedValue('ssh');
+				mockSettingsStore.get.mockImplementation((key: string, fallback: unknown) =>
+					key === 'sshRemotes'
+						? [
+								mockSshRemoteForTerminal,
+								{ ...mockSshRemoteForTerminal, id: 'remote-2', host: 'other.invalid' },
+							]
+						: fallback
+				);
+				mockProcessManager.on.mockImplementation((name, fn) => events.on(name, fn));
+				mockProcessManager.off.mockImplementation((name, fn) => events.off(name, fn));
+				mockProcessManager.get.mockImplementation((id) => processes.get(id));
+				mockProcessManager.spawn.mockImplementation((config) => {
+					const existing = processes.get(config.sessionId);
+					if (existing && config.reuseTerminal)
+						return { success: true, pid: existing.pid, attached: true };
+					const proc = { pid: 5001, ptyProcess: { pid: 5001 } };
+					processes.set(config.sessionId, proc);
+					return { success: true, pid: proc.pid };
+				});
+			});
+			it.each(['path', 'spawn'] as const)(
+				'detaches observers when %s resolution throws',
+				async (stage) => {
+					if (stage === 'path')
+						vi.mocked(resolveSshPath).mockRejectedValueOnce(new Error('path unavailable'));
+					else
+						mockProcessManager.spawn.mockImplementationOnce(() => {
+							throw new Error('spawn unavailable');
+						});
+					await expect(start()).rejects.toThrow('unavailable');
+					expect(events.listenerCount('exit')).toBe(0);
+					expect(mockNoteSshExit).not.toHaveBeenCalled();
+				}
+			);
+			it('detaches after an unsuccessful PTY spawn without an exit event', async () => {
+				mockProcessManager.spawn.mockReturnValueOnce({ success: false, pid: 0 });
+				expect(await start()).toEqual({ success: false, pid: 0 });
+				expect(events.listenerCount('exit')).toBe(0);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+			});
+			it('detaches when the owned PTY disappears before PID settlement', async () => {
+				mockProcessManager.spawn.mockImplementationOnce(() => {
+					processes.set(sessionId, { pid: 0, ptyProcess: { pid: 0 } });
+					setTimeout(() => processes.delete(sessionId), 0);
+					return { success: true, pid: 0 };
+				});
+				expect(await start()).toEqual({ success: false, pid: 0 });
+				expect(events.listenerCount('exit')).toBe(0);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+			});
+			it('reuses one observer and reports exactly one genuine own exit', async () => {
+				await start();
+				await start();
+				await start('remote-2');
+				expect(events.listenerCount('exit')).toBe(1);
+				events.emit('exit', 'another-session', 255);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+				processes.delete(sessionId);
+				events.emit('exit', sessionId, 255);
+				events.emit('exit', sessionId, 255);
+				expect(mockNoteSshExit.mock.calls).toEqual([['remote-1', 255]]);
+				expect(events.listenerCount('exit')).toBe(0);
+			});
+			it('retires the old process observer without attributing its late callback to a successor', async () => {
+				await start();
+				const oldExit = events.listeners('exit')[0];
+				processes.delete(sessionId);
+				await start('remote-2');
+				expect(events.listenerCount('exit')).toBe(1);
+				oldExit(sessionId, 255);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+				processes.delete(sessionId);
+				events.emit('exit', sessionId, 255);
+				expect(mockNoteSshExit.mock.calls).toEqual([['remote-2', 255]]);
+				expect(events.listenerCount('exit')).toBe(0);
+			});
+			it('does not bind a late path resolution to the host of an already reused terminal', async () => {
+				let resolvePath!: (value: string) => void;
+				vi.mocked(resolveSshPath).mockReturnValueOnce(
+					new Promise<string>((resolve) => {
+						resolvePath = resolve;
+					})
+				);
+				const first = start();
+				await start('remote-2');
+				resolvePath('ssh');
+				await first;
+				expect(events.listenerCount('exit')).toBe(1);
+				processes.delete(sessionId);
+				events.emit('exit', sessionId, 255);
+				expect(mockNoteSshExit.mock.calls).toEqual([['remote-2', 255]]);
+			});
+		});
+
 		it('should spawn local terminal when no SSH config is provided', async () => {
 			mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 5000, success: true });
 
@@ -3575,6 +3684,8 @@ describe('process IPC handlers', () => {
 				return defaultValue;
 			});
 			mockProcessManager.spawn.mockReturnValue({ pid: 5001, success: true });
+			// A successful real spawn is registered in ProcessManager before it returns.
+			mockProcessManager.get.mockReturnValue({ pid: 5001, ptyProcess: { pid: 5001 } });
 
 			const handler = handlers.get('process:spawnTerminalTab');
 			await handler!({} as any, {
