@@ -108,6 +108,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Whether text content looks binary (a NUL, or many control characters):** `isBinaryContent()` in `src/shared/fileKinds.ts`, beside `isBinaryExtension()`
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
 - **How many bytes a directory occupies:** `directoryBytes(target)` in `src/main/utils/directory-size.ts`
@@ -140,6 +141,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Main process: stores, persistence, platform
 
 - **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
+- **Whether a Coworking browser op skips the interaction gate and per-call approval:** `isUngatedBrowserOp(kind)`, `UNGATED_BROWSER_OP_KINDS` in `src/shared/coworkingBrowser.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)
@@ -322,7 +324,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
-- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
+- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
@@ -354,6 +356,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rebasing unsaved session changes during recovery:** `rebasePendingSessionChanges()`, `SESSION_PERSISTENCE_BASELINE_EVENT`, `SessionPersistenceBaseline` in `src/renderer/hooks/utils/useDebouncedPersistence.ts`
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
+- **The Primary Agent (app-level default receiver of the user's input):** `PRIMARY_AGENT_SETTING_KEY`, `pickPrimaryAgentSeed()` in `src/shared/primaryAgent.ts`; `readPrimaryAgentId()` in `src/cli/services/storage.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith()`, `updateAiTab()`, `updateFileTab()`, `updateBrowserTab()` in `src/renderer/stores/sessionStore.ts` (never `setSessions(prev => prev.map(...))` for one agent or tab)
 - **Which agent this client is looking at:** `persistActiveSessionId()`, `readPersistedActiveSessionId()` in `src/renderer/utils/activeSessionPersistence.ts` (never `sessions.getActiveSessionId()` directly)
@@ -425,7 +428,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
 - **The A Cappella microphone under a composer's Send:** `<ComposerVoiceSessionButton>` in `src/renderer/components/ChatComposer/ComposerVoiceSessionButton.tsx`, passed as `sendColumnExtras` (`belowSend` on `<ComposerSendColumn>`)
 - **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
-- **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
+- **Line review comments (pin comments to lines, send them as one review):** `createReviewCommentStore()` in `src/renderer/stores/reviewCommentStore.ts`, `formatReviewPrompt()` in `src/renderer/utils/reviewPrompt.ts`, `sendReviewPrompt()` in `src/renderer/services/reviewDelivery.ts`
+- **Picking an element or a region in a browser tab (Design Mode):** `captureDesignPick()`, `captureDesignRegion()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`; `readBrowserPickTarget()` in `src/shared/coworkingBrowser.ts`
+- **A Design Mode pick as a composer chip (stage, queue, edit, expand at send, CLI):** `stageDesignPickOnAgent()` in `src/renderer/services/quoteIntoComposer.ts`, `queueDesignPick()` in `src/renderer/services/designModePick.ts`, `getStagedDesignPicks()` in `src/renderer/services/stagedDesignPicks.ts`
+- **Showing a browser tab's page at a set width (Fit / Desktop / Laptop / Tablet / Phone):** `BROWSER_VIEWPORT_PRESETS`, `parseBrowserViewportPreset()`, `browserViewportWidth()` in `src/shared/browserViewport.ts`; `computeBrowserViewportBox()` in `src/renderer/utils/browserViewport.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Whether a composer paste carries an image (text pastes are never rewritten):** `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
@@ -437,7 +443,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
 - **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`, bound by `useTemplateAutocomplete()` (textarea) or `useEditorTemplateAutocomplete()` (CodeMirror)
-- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it)
+- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it; `planMentions: false` for text the user did not write)
 - **Running or withdrawing one queued item now:** `sendQueuedItemNow()`, `removeQueuedItem()` in `src/renderer/services/queuedPrompt.ts`
 - **The tab a queued item is going to:** `resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` (label), `resolveQueuedItemTarget()` in `src/renderer/utils/tabHelpers` (tab); never render `item.tabName`
 - **Whether a queued item's tab is still mid-turn:** `isQueuedItemTargetBusy(session, item)` in `src/renderer/utils/tabHelpers` (every queue drain path asks it before dequeuing)
@@ -496,6 +502,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()` in `src/shared/effortRejection.ts`; `rejectedEffortForLevel()` in `src/shared/modelTiers.ts`; `armEffortFallback()` in `src/renderer/services/effortRejection.ts`
 - **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
+- **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Turning an Auto Run prompt template into a task prompt:** `resolveAutoRunPromptTemplate()`, `namesAutoRunDocument()` in `src/shared/autorunPromptTemplate.ts`; desktop `buildDesktopAutoRunPrompt()` / `prepareDesktopAutoRunPrompt()` in `src/renderer/hooks/batch/batchUtils.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
@@ -560,7 +567,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
 - **Pan and zoom a diagram or image:** `usePanZoom()` in `src/renderer/hooks/ui/usePanZoom.ts`; full-window viewer via `openZoomViewer(element)` in `src/renderer/components/ZoomViewer/zoomViewerStore.ts`
 - **Diagram content clipped at the SVG edge:** `expandSvgViewBoxToContent(svg, padding?)` in `src/renderer/utils/svgViewBox.ts`
-- **The message of a rejected IPC call:** `ipcErrorMessage(error)` in `src/renderer/utils/ipcErrorMessage.ts` (never show `error.message` raw)
+- **The message of a rejected IPC call:** `ipcErrorMessage(error, fallback?)` in `src/shared/serializeError.ts` (renderer compatibility export in `src/renderer/utils/ipcErrorMessage.ts`)
 
 #### Keyboard and shortcuts
 
@@ -579,6 +586,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### UI components and widgets
 
+- **The red X that removes a staged attachment (image tile, Design Mode chip):** `<RemoveBadgeButton>` in `src/renderer/components/ui/RemoveBadgeButton.tsx`
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
 - **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
@@ -760,13 +768,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Layout, scroll, sizing, and hook utilities
 
+- **Folding the Left Bar and Right Bar while a surface needs the room, then giving back only what it closed:** `collapseSidePanels()` in `src/renderer/utils/sidePanelCollapse.ts`, `useDesignModePanelCollapse(shown)` in `src/renderer/hooks/ui/useDesignModePanelCollapse.ts`
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
 - **Pausing looping animations while the window is unfocused:** `installMotionPause()`, `MOTION_PAUSED_CLASS` in `src/renderer/utils/motionPause.ts`
 - **Keeping a scrolling strip's active item on screen:** `useRevealActiveItem()`, `revealActiveProps()`, `computeRevealScroll()` in `src/renderer/hooks/ui/useRevealActiveItem.ts`
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect, never a `ref` on the row; a plain list uses `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Sizing a virtualized row the user's font decides:** `virtualizer.measureElement` + `data-index` and NO inline `height` (see `HistoryPanel`, `FileSearchModal`)
-- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
+- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)`, `useElementSize(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
 - **Keeping a floating menu on screen:** `useContextMenuPosition(menuRef, x, y)` in `src/renderer/hooks/ui/useContextMenuPosition.ts` (apply BOTH `maxHeight` and `overflowY: 'auto'`)
 - **How a floating surface looks (popover, menu, hover card, tooltip):** `elevatedSurfaceStyle(theme)`, `getElevatedSurfaceColors(colors)` in `src/renderer/utils/elevatedSurface.ts`
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`
@@ -950,6 +959,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `factory-droid` | Factory Droid   | **Beta**   |
 | `grok`          | Grok CLI        | **Beta**   |
 | `hermes`        | Hermes          | **Beta**   |
+| `kilo`          | Kilo            | **Beta**   |
 | `omp`           | Oh My Pi        | **Beta**   |
 | `opencode`      | OpenCode        | **Beta**   |
 | `pi`            | Pi              | **Beta**   |

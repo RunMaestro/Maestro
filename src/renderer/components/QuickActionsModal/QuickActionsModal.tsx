@@ -1091,6 +1091,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newGroupChatShortcut: shortcuts.newGroupChat,
 			killShortcut: shortcuts.killInstance,
 			moderatorOnlyShortcut: shortcuts.toggleGroupChatModeratorOnly,
+			toggleUnreadShortcut: tabShortcuts?.toggleTabUnread,
 		}),
 		...buildDebugCommands({
 			activeSession,

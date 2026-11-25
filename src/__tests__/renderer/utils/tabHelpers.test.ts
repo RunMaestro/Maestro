@@ -23,6 +23,7 @@
  * - navigateToPrevUnifiedTab
  * - createMergedSession
  * - hasActiveWizard
+ * - hasStagedAttachments, hasDraft, hasWizardInteraction
  * - extractQuickTabName
  */
 
@@ -58,6 +59,9 @@ import {
 	navigateToClosestTerminalTab,
 	createMergedSession,
 	hasActiveWizard,
+	hasStagedAttachments,
+	hasDraft,
+	hasWizardInteraction,
 	flattenWizardIntoTab,
 	extractQuickTabName,
 	buildUnifiedTabs,
@@ -100,8 +104,13 @@ import type {
 	TerminalTab,
 	QueuedItem,
 } from '../../../renderer/types';
-import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
+import {
+	createMockAITab as createMockTab,
+	createMockDesignPick,
+	createMockFileTab,
+} from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
+import { clearLiveDraft, setLiveDraft } from '../../../renderer/utils/liveDraftStore';
 
 // Mock the generateId function to return predictable IDs
 vi.mock('../../../renderer/utils/ids', () => ({
@@ -3354,6 +3363,61 @@ describe('tabHelpers', () => {
 				},
 			});
 			expect(hasActiveWizard(tab)).toBe(true);
+		});
+	});
+
+	describe('staged attachments and drafts', () => {
+		const chip = createMockDesignPick();
+		const activeWizard = {
+			isActive: true,
+			mode: 'new' as const,
+			confidence: 0,
+			conversationHistory: [],
+			previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' as const },
+		};
+
+		afterEach(() => {
+			clearLiveDraft('tab-1');
+		});
+
+		it('hasStagedAttachments counts staged images and Design Mode chips', () => {
+			expect(hasStagedAttachments(createMockTab({ id: 'tab-1', stagedImages: [] }))).toBe(false);
+			expect(
+				hasStagedAttachments(
+					createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [] })
+				)
+			).toBe(false);
+			expect(
+				hasStagedAttachments(
+					createMockTab({ id: 'tab-1', stagedImages: ['data:image/png;base64,A'] })
+				)
+			).toBe(true);
+			expect(
+				hasStagedAttachments(
+					createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [chip] })
+				)
+			).toBe(true);
+		});
+
+		it('hasDraft counts a tab holding only chips, with no text', () => {
+			setLiveDraft('tab-1', '   ');
+			expect(hasDraft(createMockTab({ id: 'tab-1', stagedImages: [] }))).toBe(false);
+			expect(
+				hasDraft(createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [chip] }))
+			).toBe(true);
+		});
+
+		it('hasWizardInteraction counts chips staged on an active wizard tab', () => {
+			const wizardTab = (overrides: Partial<AITab> = {}) =>
+				createMockTab({ id: 'tab-1', stagedImages: [], wizardState: activeWizard, ...overrides });
+			expect(hasWizardInteraction(wizardTab())).toBe(false);
+			expect(hasWizardInteraction(wizardTab({ stagedDesignPicks: [chip] }))).toBe(true);
+			// An inactive wizard has nothing to confirm, chips or not.
+			expect(
+				hasWizardInteraction(
+					createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [chip] })
+				)
+			).toBe(false);
 		});
 	});
 

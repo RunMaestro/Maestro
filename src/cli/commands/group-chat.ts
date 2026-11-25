@@ -338,6 +338,7 @@ export async function groupChatStatus(chatRef: string, options: StatusOptions): 
 		}
 		console.log(`${chat.topic}  (${chat.id})`);
 		console.log(`  State: ${stateLabel(chat)}`);
+		if (chat.unread !== undefined) console.log(`  Unread: ${chat.unread ? 'yes' : 'no'}`);
 		console.log(`  Participants: ${chat.participants.map((p) => p.name).join(', ') || '(none)'}`);
 		console.log(`  Messages: ${chat.messages.length}`);
 		if (chat.queue && chat.queue.length > 0) {
@@ -377,10 +378,11 @@ export async function groupChatList(options: ListOptions): Promise<void> {
 		// One chat per line: state | id | name | participants.
 		for (const chat of chats) {
 			const archived = chat.archived ? '  [archived]' : '';
+			const unread = chat.unread ? '  [unread]' : '';
 			console.log(
 				`${stateLabel(chat).padEnd(18)} ${chat.id}  ${chat.topic}  (${chat.participants
 					.map((p) => p.name)
-					.join(', ')})${archived}`
+					.join(', ')})${unread}${archived}`
 			);
 		}
 	} catch (error) {
@@ -432,6 +434,40 @@ export async function groupChatArchive(chatRef: string, options: ArchiveOptions)
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId, archived }));
 		else console.log(`${archived ? 'Archived' : 'Restored'} group chat ${chatId}`);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+}
+
+/**
+ * Mark a group chat unread (or read): the red dot on its Left Bar row, the same
+ * flag the row's right-click menu and Cmd+Shift+U toggle. Read it back with
+ * `group-chat list` (`[unread]`, or `unread` in --json).
+ */
+export async function groupChatUnread(
+	chatRef: string,
+	unread: boolean,
+	options: JsonOption
+): Promise<void> {
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<BridgeReply>(
+				{ type: 'set_group_chat_unread', chatId: id, unread },
+				'set_group_chat_unread_result'
+			);
+			return { chatId: id, reply: res };
+		});
+		const error =
+			bridgeError(reply) ??
+			(reply.success ? undefined : `Failed to mark group chat ${unread ? 'unread' : 'read'}`);
+		if (error) {
+			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		if (options.json) console.log(JSON.stringify({ success: true, chatId, unread }));
+		else console.log(`Marked group chat ${chatId} as ${unread ? 'unread' : 'read'}`);
 	} catch (error) {
 		failFromError(error, options.json);
 	}

@@ -21,6 +21,7 @@ import {
 	LogLevelSection,
 	MaestroCliSection,
 	PowerSection,
+	PrimaryAgentSection,
 	PrivacySection,
 	RenderingSection,
 	ShellSettingsSection,
@@ -246,6 +247,16 @@ function TabBehavior({ theme }: SettingsSectionProps) {
 	);
 }
 
+function PrimaryAgent({ theme }: SettingsSectionProps) {
+	const settings = useSettingsValues();
+	return (
+		<PrimaryAgentSection
+			theme={theme}
+			primaryAgentId={settings.primaryAgentId}
+			setPrimaryAgentId={settings.setPrimaryAgentId}
+		/>
+	);
+}
 function SpellCheck({ theme }: SettingsSectionProps) {
 	const settings = useSettingsValues();
 	return (
@@ -324,6 +335,8 @@ function Browser({ theme }: SettingsSectionProps) {
 			setBrowserTabKeepAlive={settings.setBrowserTabKeepAlive}
 			browserTabKeepAliveLimit={settings.browserTabKeepAliveLimit}
 			setBrowserTabKeepAliveLimit={settings.setBrowserTabKeepAliveLimit}
+			designModeCollapsePanels={settings.designModeCollapsePanels}
+			setDesignModeCollapsePanels={settings.setDesignModeCollapsePanels}
 		/>
 	);
 }
@@ -396,6 +409,7 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 		settingIds: ['general-tab-behavior', 'general-shorten-tab-names'],
 		Component: TabBehavior,
 	},
+	{ key: 'primaryAgent', settingIds: ['general-primary-agent'], Component: PrimaryAgent },
 	{ key: 'spellCheck', settingIds: ['general-spell-check'], Component: SpellCheck },
 	{ key: 'power', settingIds: ['general-power', 'general-display-sleep'], Component: Power },
 	{ key: 'rendering', settingIds: ['general-rendering'], Component: Rendering },
@@ -407,7 +421,12 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 	},
 	{
 		key: 'browser',
-		settingIds: ['general-browser', 'general-html-double-click', 'general-browser-keepalive'],
+		settingIds: [
+			'general-browser',
+			'general-html-double-click',
+			'general-browser-keepalive',
+			'general-design-mode-collapse-panels',
+		],
 		Component: Browser,
 	},
 	{ key: 'storageLocation', settingIds: ['general-storage'], Component: StorageLocation },

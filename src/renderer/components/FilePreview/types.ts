@@ -66,6 +66,12 @@ export interface FilePreviewProps {
 	onSendSelectionToAgent?: (text: string, sourceName: string) => void;
 	/** "Quote in Message" on an editor selection: quotes it into the agent's composer. */
 	onQuoteSelection?: (text: string) => void;
+	/**
+	 * The agent this file tab belongs to. Turns on line review comments
+	 * ("Comment on line" on the right-click menu, the Review tray): the review
+	 * is sent to this agent. Omit to leave the preview without them.
+	 */
+	reviewSessionId?: string;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
 	/**

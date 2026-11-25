@@ -153,6 +153,9 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	),
 	antigravity: unknownVariable('antigravity'),
 	'gemini-cli': unknownVariable('gemini-cli'),
+	// Kilo is an OpenCode fork, but no `kilo` binary has been run against a
+	// closed port, so OpenCode's config-document route is not assumed for it.
+	kilo: unknownVariable('kilo'),
 	// Not verified (G03.3, 2026-11-11): no `qwen` binary was installed where the
 	// closed-port test runs. Qwen Code documents `OPENAI_BASE_URL` (and a
 	// higher-priority `--openai-base-url` flag) for its OpenAI-compatible auth;

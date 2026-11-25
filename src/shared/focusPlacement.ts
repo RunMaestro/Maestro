@@ -73,7 +73,9 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	/**
 	 * maestro-cli browser-pick - focuses like a click in Design Mode: the element
 	 * lands in the agent's composer and the view switches to that AI tab.
-	 * `--background` stages it without moving the user.
+	 * `--background` stages it without moving the user. `--queue` sends it as its
+	 * own queued message and never moves the user, so it leaves the flag nothing
+	 * to decide.
 	 */
 	'browser-pick': false,
 	/** maestro-cli tab new [--prompt] - focuses today. */
@@ -181,6 +183,8 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * moving the view; `--focus` asks for the button's behaviour.
 	 */
 	'diff-review-send': true,
+	/** maestro-cli file-review send - same verb, same reasoning, for a file's review. */
+	'file-review-send': true,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */
@@ -271,12 +275,18 @@ export const ALREADY_QUIET_VERBS = [
 	'live-on',
 	'live-off',
 	// Pending review comments live in renderer memory; an open Git Diff viewer
-	// redraws its tray, but nothing is selected or announced.
+	// or file tab redraws its tray, but nothing is selected or announced.
 	'diff-review-list',
 	'diff-review-add',
 	'diff-review-edit',
 	'diff-review-remove',
 	'diff-review-clear',
+	// The same, for the File Preview's line comments.
+	'file-review-list',
+	'file-review-add',
+	'file-review-edit',
+	'file-review-remove',
+	'file-review-clear',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */

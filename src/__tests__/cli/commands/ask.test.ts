@@ -31,6 +31,18 @@ vi.mock('../../../cli/services/storage', () => ({
 vi.mock('../../../cli/services/consult-budget-guard', () => ({
 	admitCliConsult: vi.fn(),
 }));
+// Routes one test's target to a peer without dialing anything; null leaves routing alone.
+const peerRoute = vi.hoisted(() => ({ value: null as { peer: string; agent: string } | null }));
+vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../cli/services/peer-resolver')>();
+	return {
+		...actual,
+		routeAgentTarget: (...args: Parameters<typeof actual.routeAgentTarget>) =>
+			peerRoute.value
+				? { kind: 'peer' as const, target: peerRoute.value }
+				: actual.routeAgentTarget(...args),
+	};
+});
 
 import { ask } from '../../../cli/commands/ask';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -218,6 +230,64 @@ describe('ask command', () => {
 			agentId: 'resolved-pedtome',
 			agentName: 'PedTome',
 			tabId: 'consult-1',
+		});
+	});
+
+	describe('--btw side questions', () => {
+		it('asks a side question of the named tab instead of consulting', async () => {
+			const sendCommand = mockClient({
+				type: 'cross_agent_ask_result',
+				success: true,
+				answer: 'teal',
+			});
+
+			await ask('pedtome', 'favourite colour?', { btw: true, tab: 'tab-7' });
+
+			const [message] = sendCommand.mock.calls[0];
+			expect(message).toMatchObject({
+				type: 'cross_agent_ask',
+				sessionId: 'resolved-pedtome',
+				sideQuestion: true,
+				targetTabId: 'tab-7',
+			});
+			expect(logSpy).toHaveBeenCalledWith('teal');
+		});
+
+		it('lets an agent ask a side question about its own conversation', async () => {
+			const sendCommand = mockClient({
+				type: 'cross_agent_ask_result',
+				success: true,
+				answer: 'x',
+			});
+
+			await ask('kensho', 'what did I just do?', { btw: true, from: 'kensho' });
+
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('refuses --tab without --btw and --with-context with it', async () => {
+			const sendCommand = mockClient({});
+
+			await ask('pedtome', 'q', { tab: 'tab-7' });
+			await ask('pedtome', 'q', { btw: true, withContext: true });
+
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(exitSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('refuses --btw for a peer agent, whose host has no desktop tab to fork', async () => {
+			const sendCommand = mockClient({});
+			peerRoute.value = { peer: 'build-box', agent: 'pedtome' };
+			try {
+				await ask('build-box:pedtome', 'q', { btw: true });
+			} finally {
+				peerRoute.value = null;
+			}
+
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--btw forks a tab'));
+			expect(exitSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 

@@ -5,6 +5,7 @@ import * as path from 'path';
 vi.mock('fs', () => ({
 	readFileSync: vi.fn(),
 	existsSync: vi.fn(),
+	mkdirSync: vi.fn(),
 }));
 
 import {
@@ -102,6 +103,33 @@ describe('shared/syncPath', () => {
 
 			expect(resolveSyncDir(USER_DATA)).toBe(USER_DATA);
 			expect(fs.existsSync).toHaveBeenCalledWith(SYNC_DIR);
+			expect(fs.mkdirSync).not.toHaveBeenCalled();
+		});
+
+		it('creates and selects a missing directory for a write, as the app does at startup', () => {
+			mockBootstrap(JSON.stringify({ customSyncPath: SYNC_DIR }));
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			expect(resolveSyncDir(USER_DATA, { create: true })).toBe(SYNC_DIR);
+			expect(fs.mkdirSync).toHaveBeenCalledWith(SYNC_DIR, { recursive: true });
+		});
+
+		it('falls back for a write when the missing directory cannot be created', () => {
+			mockBootstrap(JSON.stringify({ customSyncPath: SYNC_DIR }));
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.mkdirSync).mockImplementationOnce(() => {
+				throw new Error('EACCES: permission denied');
+			});
+
+			expect(resolveSyncDir(USER_DATA, { create: true })).toBe(USER_DATA);
+		});
+
+		it('never creates a directory the app would reject', () => {
+			mockBootstrap(JSON.stringify({ customSyncPath: 'relative/path' }));
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			expect(resolveSyncDir(USER_DATA, { create: true })).toBe(USER_DATA);
+			expect(fs.mkdirSync).not.toHaveBeenCalled();
 		});
 
 		it('rethrows a read failure that is not a missing file', () => {

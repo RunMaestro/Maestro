@@ -7,6 +7,9 @@
 import { memo, useState, useRef, useMemo, useCallback } from 'react';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useGroupChatStore } from '../stores/groupChatStore';
+import { ShortcutHint } from './ui/ShortcutHint';
 import {
 	MessageSquare,
 	ChevronDown,
@@ -18,6 +21,8 @@ import {
 	ArchiveRestore,
 	Clock,
 	ArrowDownAZ,
+	Mail,
+	MailOpen,
 } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
 import { useClickOutside, useContextMenuPosition } from '../hooks';
@@ -38,7 +43,9 @@ interface GroupChatContextMenuProps {
 	y: number;
 	theme: Theme;
 	isArchived: boolean;
+	isUnread: boolean;
 	onEdit: () => void;
+	onToggleUnread: () => void;
 	onRename: () => void;
 	onArchive?: () => void;
 	onDelete: () => void;
@@ -50,13 +57,17 @@ function GroupChatContextMenu({
 	y,
 	theme,
 	isArchived,
+	isUnread,
 	onEdit,
+	onToggleUnread,
 	onRename,
 	onArchive,
 	onDelete,
 	onClose,
 }: GroupChatContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	// Same chord as Toggle Tab Unread: inside a room it flips the room's dot.
+	const toggleUnreadKeys = useSettingsStore((s) => s.tabShortcuts.toggleTabUnread?.keys);
 
 	// Close on click outside
 	useClickOutside(menuRef, onClose);
@@ -115,6 +126,18 @@ function GroupChatContextMenu({
 			>
 				<Edit3 className="w-3.5 h-3.5" style={iconStyle} />
 				Rename
+			</button>
+			<button
+				onClick={() => {
+					onToggleUnread();
+					onClose();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				{isUnread ? <MailOpen className="w-3.5 h-3.5" /> : <Mail className="w-3.5 h-3.5" />}
+				{isUnread ? 'Mark as Read' : 'Mark as Unread'}
+				{toggleUnreadKeys && <ShortcutHint keys={toggleUnreadKeys} theme={theme} />}
 			</button>
 			{onArchive && (
 				<button
@@ -586,7 +609,11 @@ function GroupChatListInner({
 					y={contextMenu.y}
 					theme={theme}
 					isArchived={!!groupChats.find((c) => c.id === contextMenu.chatId)?.archived}
+					isUnread={isChatUnread(contextMenu.chatId)}
 					onEdit={() => onEditGroupChat(contextMenu.chatId)}
+					onToggleUnread={() =>
+						useGroupChatStore.getState().toggleGroupChatUnread(contextMenu.chatId)
+					}
 					onRename={() => onRenameGroupChat(contextMenu.chatId)}
 					onArchive={
 						onArchiveGroupChat

@@ -1,7 +1,8 @@
 // Set a single setting value
 // Supports dot-notation, auto type coercion, --raw for explicit JSON
 
-import { readSettingValue, writeSettingValue } from '../services/storage';
+import { readSettingValue, resolveAgentId, writeSettingValue } from '../services/storage';
+import { PRIMARY_AGENT_SETTING_KEY } from '../../shared/primaryAgent';
 import { formatSuccess, formatWarning } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import {
@@ -85,6 +86,16 @@ export async function settingsSet(
 		if (topKey === 'mediaModelDirectory') {
 			if (key !== topKey) throw new Error('mediaModelDirectory does not accept nested keys');
 			parsedValue = await resolveMediaModelDirectory(parsedValue);
+		}
+		if (topKey === PRIMARY_AGENT_SETTING_KEY) {
+			if (key !== topKey) throw new Error(`${topKey} does not accept nested keys`);
+			// An agent name or a partial id is accepted, as everywhere else an agent
+			// is named on the CLI; `null` or '' clears the Primary Agent.
+			if (parsedValue !== null && parsedValue !== '') {
+				parsedValue = resolveAgentId(String(parsedValue));
+			} else {
+				parsedValue = null;
+			}
 		}
 		if (!writeSettingValue(key, parsedValue)) throw new Error('Could not persist setting');
 

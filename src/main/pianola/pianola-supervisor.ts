@@ -26,6 +26,7 @@ import { PluginAuthorityError } from '../plugins/plugin-authority';
 import * as path from 'path';
 import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
 import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
+import { watchLimitErrorCode } from '../cue/cue-file-watcher';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
 import {
@@ -53,6 +54,9 @@ import { PIANOLA_PROGRAMS_FILENAME, PIANOLA_PLANS_FILENAME } from '../../shared/
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
 
 const LOG_CONTEXT = '[PianolaSupervisor]';
+
+/** Stat-poll interval for the store file when the OS refuses a native watch. */
+const STORE_POLL_INTERVAL_MS = 2000;
 
 /** Bounded per-target ring buffer of stdout/stderr lines. */
 const MAX_LOG_LINES = 200;
@@ -158,6 +162,8 @@ export class PianolaSupervisor {
 	private readonly deps: PianolaSupervisorDeps;
 	private readonly children = new Map<string, SupervisedChild>();
 	private watcher: fs.FSWatcher | null = null;
+	/** Set while the store file is stat-polled because the native watch was refused. */
+	private polledFile: { path: string; listener: () => void } | null = null;
 	private reconcileTimer: ReturnType<typeof setTimeout> | undefined;
 	private started = false;
 	private readonly spawnChild: PianolaChildSpawner;
@@ -381,6 +387,10 @@ export class PianolaSupervisor {
 			this.watcher.close();
 			this.watcher = null;
 		}
+		if (this.polledFile) {
+			fs.unwatchFile(this.polledFile.path, this.polledFile.listener);
+			this.polledFile = null;
+		}
 		if (this.reconcileTimer) {
 			clearTimeout(this.reconcileTimer);
 			this.reconcileTimer = undefined;
@@ -428,8 +438,24 @@ export class PianolaSupervisor {
 				logger.error(`Supervisor watcher error: ${error.message}`, LOG_CONTEXT);
 			});
 		} catch (error) {
-			// A watch failure is unexpected (permissions etc.). Report it but do not
-			// crash startup; reconcile still runs on app start, IPC, and quit.
+			const limitCode = watchLimitErrorCode(error);
+			if (limitCode) {
+				// The OS refused a native watch because its file-watch limit is used up
+				// (on Linux: EMFILE is the per-user inotify instance cap, ENOSPC the watch
+				// cap, both shared with every other app of that user). That is the
+				// host's state, not a fault, so stat-poll the store file instead of
+				// reporting it. fs.watchFile takes no inotify resources.
+				logger.warn(
+					`Supervisor could not get a native file watch (${limitCode}: the OS file-watch limit is used up); polling the store file every ${STORE_POLL_INTERVAL_MS / 1000}s instead. On Linux, raise fs.inotify.max_user_instances (EMFILE) or fs.inotify.max_user_watches (ENOSPC).`,
+					LOG_CONTEXT
+				);
+				const listener = () => this.scheduleReconcile();
+				fs.watchFile(filePath, { interval: STORE_POLL_INTERVAL_MS, persistent: false }, listener);
+				this.polledFile = { path: filePath, listener };
+				return;
+			}
+			// Any other watch failure is unexpected (permissions etc.). Report it but do
+			// not crash startup; reconcile still runs on app start, IPC, and quit.
 			void captureException(error, { operation: 'pianola:supervisor:watch', dir });
 		}
 	}

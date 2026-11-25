@@ -177,6 +177,9 @@ export interface MaestroSettings {
 	// `utilitySource` / `utilityAgentId` / `utilityModelId` keys, which nothing
 	// writes any more.
 	modelMap: ModelMap | null;
+	// The Primary Agent (#2050): default receiver of the user's input when a
+	// feature has no agent of its own. Null = none. See src/shared/primaryAgent.ts.
+	primaryAgentId: string | null;
 	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's
 	// prune pass at startup; declared explicitly (rather than left to the index
 	// signature) so main-process readers get `number` instead of `any`.

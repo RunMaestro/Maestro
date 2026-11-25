@@ -188,4 +188,26 @@ describe('TerminalSelectionContextMenu', () => {
 		expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 		spies.restore();
 	});
+
+	it('offers a review comment on the selected lines when asked, and dismisses after', () => {
+		const onComment = vi.fn();
+		const onDismiss = vi.fn();
+		render(
+			<TerminalSelectionContextMenu
+				menu={menu}
+				theme={baseTheme}
+				onDismiss={onDismiss}
+				onComment={onComment}
+				commentLabel="Comment on Lines 3-5"
+			/>
+		);
+		fireEvent.click(screen.getByText('Comment on Lines 3-5'));
+		expect(onComment).toHaveBeenCalledTimes(1);
+		expect(onDismiss).toHaveBeenCalledTimes(1);
+	});
+
+	it('has no comment item without a handler', () => {
+		render(<TerminalSelectionContextMenu menu={menu} theme={baseTheme} onDismiss={vi.fn()} />);
+		expect(screen.queryByTestId('selection-menu-comment')).toBeNull();
+	});
 });

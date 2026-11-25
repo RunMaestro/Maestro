@@ -2,6 +2,7 @@ import type { ToolType } from '../../types';
 import type { UseAgentSessionManagementReturn } from '../../hooks/agent/useAgentSessionManagement';
 import type React from 'react';
 import type { BrowserTab } from '../../../shared/browserPage';
+import type { BrowserViewportPreset } from '../../../shared/browserViewport';
 import type {
 	Theme,
 	BatchRunState,
@@ -42,6 +43,8 @@ export interface MainPanelHandle {
 	openBrowserFind: () => void;
 	/** Turn Design Mode on or off in the active browser tab */
 	toggleBrowserDesignMode: () => void;
+	/** Show the active browser tab's page at a viewport preset ('fit' fills the tab) */
+	setBrowserViewportPreset: (preset: BrowserViewportPreset) => void;
 	/** Navigate back in the active browser tab's history */
 	browserBack: () => void;
 	/** Navigate forward in the active browser tab's history */

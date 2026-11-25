@@ -33,6 +33,7 @@ import type {
 	AchievementData,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
+	BrowserViewportCallback,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
@@ -55,6 +56,7 @@ import type {
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
 	DiffReviewCommandCallback,
+	DesignPickCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
@@ -204,8 +206,12 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
-	/** Design Mode by selector (`browser-pick`). See `PickBrowserElementCallback`. */
+	/** Design Mode by selector or region (`browser-pick`). See `PickBrowserElementCallback`. */
 	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
+	/** `maestro-cli browser-viewport` - set or read a browser tab's viewport preset. */
+	browserViewport?: BrowserViewportCallback;
+	/** `maestro-cli browser-picks` - list the Design Mode chips in a composer, or remove one. */
+	designPickCommand?: DesignPickCommandCallback;
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab and sub-tab id. */
 	openModal: (params: OpenUiSurfaceRequest) => Promise<boolean>;
@@ -444,6 +450,7 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	setGroupChatUnread: (chatId: string, unread: boolean) => Promise<boolean>;
 	addGroupChatParticipant: (
 		chatId: string,
 		agentId: string

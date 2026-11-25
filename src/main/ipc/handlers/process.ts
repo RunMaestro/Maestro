@@ -196,6 +196,14 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
+	// One observer per actual SSH terminal, rather than per attach request.
+	const sshTerminalExits = new Map<
+		string,
+		{
+			process: NonNullable<ReturnType<ProcessManager['get']>>;
+			dispose: () => void;
+		}
+	>();
 	ipcMain.handle('process:getHeadlessActivity', () => getHeadlessAgentActivity());
 	const {
 		getProcessManager,
@@ -802,27 +810,60 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// tracker, so a host that dropped raises the same dialog as an agent.
 						const terminalSessionId = config.sessionId;
 						const remoteId = sshResult.config.id;
-						const onTerminalExit = (exitedId: string, exitCode: number) => {
-							if (exitedId !== terminalSessionId) return;
-							processManager.off('exit', onTerminalExit);
-							noteSshExit(remoteId, exitCode);
-						};
-						processManager.on('exit', onTerminalExit);
-						return settleTerminalPid(
-							processManager,
-							config.sessionId,
-							processManager.spawn({
+						let dispose: (() => void) | undefined;
+						let settledSuccessfully = false;
+						try {
+							const command = await resolveSshPath();
+							const result = processManager.spawn({
 								sessionId: config.sessionId,
 								reuseTerminal: true,
 								toolType: 'terminal',
 								cwd: os.homedir(),
-								command: await resolveSshPath(),
+								command,
 								args: sshArgs,
 								shellEnvVars: mergedEnvVars,
 								cols: config.cols || 80,
 								rows: config.rows || 24,
-							})
-						);
+							});
+							const ownedProcess = processManager.get(terminalSessionId);
+							const previous = sshTerminalExits.get(terminalSessionId);
+							if (previous && previous.process !== ownedProcess) previous.dispose();
+							// A reused process keeps its original host's observer. A new
+							// process must actually exist before we can observe its exit.
+							if (result.success && !result.attached && ownedProcess) {
+								let active = true;
+								const release = () => {
+									if (!active) return;
+									active = false;
+									processManager.off('exit', onTerminalExit);
+									if (sshTerminalExits.get(terminalSessionId)?.dispose === release) {
+										sshTerminalExits.delete(terminalSessionId);
+									}
+								};
+								const onTerminalExit = (exitedId: string, exitCode: number) => {
+									if (exitedId !== terminalSessionId || !active) return;
+									const current = processManager.get(terminalSessionId);
+									release();
+									// ExitHandler removes an exited process before emitting.
+									// A successor with this ID is not the captured terminal.
+									if (!current || current === ownedProcess) noteSshExit(remoteId, exitCode);
+								};
+								dispose = release;
+								sshTerminalExits.set(terminalSessionId, {
+									process: ownedProcess,
+									dispose: release,
+								});
+								processManager.on('exit', onTerminalExit);
+							}
+							const settled = await settleTerminalPid(processManager, terminalSessionId, result);
+							settledSuccessfully = settled.success;
+							return settled;
+						} finally {
+							if (!settledSuccessfully) dispose?.();
+							const current = sshTerminalExits.get(terminalSessionId);
+							if (current && current.process !== processManager.get(terminalSessionId))
+								current.dispose();
+						}
 					}
 					// SSH is enabled but the remote config was not found (deleted or disabled).
 					// Fail explicitly rather than silently falling through to a local terminal,

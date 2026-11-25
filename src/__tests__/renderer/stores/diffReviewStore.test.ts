@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-	diffReviewKey,
-	useDiffReviewStore,
-	selectRepoComments,
-} from '../../../renderer/stores/diffReviewStore';
+import { diffReviewKey, useDiffReviewStore } from '../../../renderer/stores/diffReviewStore';
+import { selectReviewComments } from '../../../renderer/stores/reviewCommentStore';
 import type { DiffComment } from '../../../renderer/utils/diffReviewComments';
 
 function comment(id: string, body = 'note'): DiffComment {
@@ -20,7 +17,7 @@ function comment(id: string, body = 'note'): DiffComment {
 }
 
 describe('diffReviewStore', () => {
-	beforeEach(() => useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} }));
+	beforeEach(() => useDiffReviewStore.setState({ commentsByKey: {}, draftsByKey: {} }));
 
 	it('keeps comments per repo through add, update, and remove', () => {
 		const store = useDiffReviewStore.getState();
@@ -31,10 +28,10 @@ describe('diffReviewStore', () => {
 		store.removeComment('/repo', '2');
 
 		const state = useDiffReviewStore.getState();
-		expect(selectRepoComments('/repo')(state).map((c) => [c.id, c.body])).toEqual([
+		expect(selectReviewComments('/repo')(state).map((c) => [c.id, c.body])).toEqual([
 			['1', 'edited'],
 		]);
-		expect(selectRepoComments('/other')(state)).toHaveLength(1);
+		expect(selectReviewComments('/other')(state)).toHaveLength(1);
 	});
 
 	it('forgets a repo once its last comment is gone, and returns a stable empty list', () => {
@@ -42,8 +39,8 @@ describe('diffReviewStore', () => {
 		store.addComment('/repo', comment('1'));
 		store.clearComments('/repo');
 		const state = useDiffReviewStore.getState();
-		expect(state.commentsByRepo).toEqual({});
-		expect(selectRepoComments('/repo')(state)).toBe(selectRepoComments('/nope')(state));
+		expect(state.commentsByKey).toEqual({});
+		expect(selectReviewComments('/repo')(state)).toBe(selectReviewComments('/nope')(state));
 	});
 
 	it('removeComments drops only the named ones (what a send delivered)', () => {
@@ -51,7 +48,7 @@ describe('diffReviewStore', () => {
 		store.addComment('/repo', comment('1'));
 		store.addComment('/repo', comment('2'));
 		store.removeComments('/repo', ['1']);
-		expect(selectRepoComments('/repo')(useDiffReviewStore.getState()).map((c) => c.id)).toEqual([
+		expect(selectReviewComments('/repo')(useDiffReviewStore.getState()).map((c) => c.id)).toEqual([
 			'2',
 		]);
 	});
@@ -74,6 +71,6 @@ describe('diffReviewStore', () => {
 		const store = useDiffReviewStore.getState();
 		store.parkDraft('/repo', { anchor: comment('x'), initialBody: '', body: 'half' });
 		store.clearComments('/repo');
-		expect(useDiffReviewStore.getState().draftsByRepo).toEqual({});
+		expect(useDiffReviewStore.getState().draftsByKey).toEqual({});
 	});
 });

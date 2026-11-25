@@ -1,7 +1,7 @@
 // Create SSH remote command - add a new SSH remote configuration
 
 import * as crypto from 'crypto';
-import { readSshRemotes, writeSshRemotes, writeSettingValue } from '../services/storage';
+import { readSshRemotesForEdit, writeSshRemotes, writeSettingValueIn } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import type { SshRemoteConfig } from '../../shared/types';
 import { parseSshOptionAssignments } from '../../shared/sshOptions';
@@ -136,13 +136,13 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 	}
 
 	// Read, append, write
-	const remotes = readSshRemotes();
+	const { remotes, dir } = readSshRemotesForEdit();
 	remotes.push(config);
-	writeSshRemotes(remotes);
+	writeSshRemotes(remotes, dir);
 
 	// Set as default if requested
 	if (options.setDefault) {
-		writeSettingValue('defaultSshRemoteId', config.id);
+		writeSettingValueIn(dir, 'defaultSshRemoteId', config.id);
 	}
 
 	if (options.json) {

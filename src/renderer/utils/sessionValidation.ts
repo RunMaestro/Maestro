@@ -9,6 +9,9 @@ import {
 /** What the new-agent and edit-agent validators report. The rules live in the library, shared with the TUI. */
 export type SessionValidationResult = AgentValidationResult;
 
+/** The agent already using `name` (trimmed, case-insensitive). The rule lives in the library. */
+export { findAgentWithName } from '../../shared/maestro-lib/agents/rules';
+
 /**
  * Validates that a new session can be created with the given parameters.
  *

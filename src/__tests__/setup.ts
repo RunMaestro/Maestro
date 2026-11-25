@@ -529,6 +529,8 @@ const mockMaestro = {
 		unwatchFolder: vi.fn(),
 		readFolder: vi.fn().mockResolvedValue({ success: true, files: [] }),
 		listDocs: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		saveRestartResume: vi.fn().mockResolvedValue(0),
+		takeRestartResume: vi.fn().mockResolvedValue([]),
 	},
 	playbooks: {
 		list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),

@@ -135,7 +135,11 @@ beforeEach(() => {
 	resetQuickChatEngineForTests();
 	useSessionStore.setState({ sessions: [agent('a'), agent('b')], activeSessionId: 'b' });
 	setQuickChatSettings({});
-	useSettingsStore.setState({ defaultSaveToHistory: true, automaticTabNamingEnabled: true });
+	useSettingsStore.setState({
+		defaultSaveToHistory: true,
+		automaticTabNamingEnabled: true,
+		primaryAgentId: null,
+	});
 	// The queue's last step is the spawn. Everything before it (the dequeue, the
 	// card in the tab, the busy state) is the real code.
 	registerDispatchDepsProvider(() => ({
@@ -205,6 +209,18 @@ describe('agent resolution', () => {
 	it('falls back to the active agent when none is configured or it is gone', () => {
 		expect(buildQuickChatSnapshot().agentId).toBe('b');
 		setQuickChatSettings({ agentId: 'deleted' });
+		expect(buildQuickChatSnapshot().agentId).toBe('b');
+	});
+
+	it('uses the Primary Agent when none is configured, and its own agent over it', () => {
+		useSettingsStore.setState({ primaryAgentId: 'a' });
+		expect(buildQuickChatSnapshot().agentId).toBe('a');
+		setQuickChatSettings({ agentId: 'b' });
+		expect(buildQuickChatSnapshot().agentId).toBe('b');
+	});
+
+	it('falls back to the active agent when the Primary Agent is gone', () => {
+		useSettingsStore.setState({ primaryAgentId: 'deleted' });
 		expect(buildQuickChatSnapshot().agentId).toBe('b');
 	});
 

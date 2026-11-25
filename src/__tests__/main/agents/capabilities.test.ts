@@ -296,6 +296,10 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('claude-code', 'supportsPromptViaStdin')).toBe(true);
 			expect(hasCapability('codex', 'supportsPromptViaStdin')).toBe(true);
 			expect(hasCapability('opencode', 'supportsPromptViaStdin')).toBe(true);
+			// Antigravity reads its own stream-json line on stdin (MAESTRO-NM), which
+			// is not Claude's image-carrying stream-json, so that capability stays off.
+			expect(hasCapability('antigravity', 'supportsPromptViaStdin')).toBe(true);
+			expect(hasCapability('antigravity', 'supportsStreamJsonInput')).toBe(false);
 			// Unknown agents fall back to argv delivery (loud failure over silent).
 			expect(hasCapability('unknown-agent', 'supportsPromptViaStdin')).toBe(false);
 		});

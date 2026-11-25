@@ -156,6 +156,8 @@ export interface ChatComposerFrameProps {
 	imageReportComponent?: string;
 	/** Optional visible warning badge beside the staged images strip. */
 	stagedImagesWarning?: string;
+	/** Directly under the staged images strip: other staged attachments (Design Mode chips). */
+	belowStagedImages?: React.ReactNode;
 
 	// Toolbar
 	enterToSend?: boolean;
@@ -214,6 +216,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	imageInputId,
 	imageReportComponent,
 	stagedImagesWarning,
+	belowStagedImages,
 	enterToSend = false,
 	setEnterToSend,
 	voice,
@@ -349,6 +352,8 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 					warning={stagedImagesWarning}
 				/>
 			)}
+
+			{belowStagedImages}
 
 			<div className={raised ? 'flex min-w-0 gap-3' : 'flex gap-3'}>
 				{raised ? (

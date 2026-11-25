@@ -19,4 +19,5 @@ export { StorageLocationSection } from './StorageLocationSection';
 export { TabBehaviorSection } from './TabBehaviorSection';
 export { ThinkingModeSection } from './ThinkingModeSection';
 export { UpdatesSection } from './UpdatesSection';
+export { PrimaryAgentSection } from './PrimaryAgentSection';
 export { WebInterfaceSection } from './WebInterfaceSection';

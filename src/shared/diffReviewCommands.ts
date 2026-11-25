@@ -1,6 +1,9 @@
 /**
  * Wire shape for the `diff_review_command` message - the CLI half of the Git
- * Diff viewer's review comments (`maestro-cli diff-review`).
+ * Diff viewer's review comments (`maestro-cli diff-review`) and of the File
+ * Preview's line comments (`maestro-cli file-review`). The two are the same
+ * review with a different target: a request that names a `file` is about that
+ * file's review, one that does not is about the agent's git diff.
  *
  * In the viewer a user pins comments to diff lines, lists them in the Review
  * tray, edits or removes one, discards them all, and sends them (or puts them
@@ -30,9 +33,15 @@ export type DiffReviewSide = 'old' | 'new';
 /** One diff review command, already validated. */
 export interface DiffReviewCommandRequest {
 	action: DiffReviewCommandAction;
-	/** Agent whose diff is being reviewed. Every verb names one. */
+	/** Agent whose diff (or file) is being reviewed. Every verb names one. */
 	sessionId: string;
-	/** `add`: repo-relative path, as the diff names it. */
+	/**
+	 * File review only: the file whose line comments every verb acts on
+	 * (absolute, or relative to the agent's working directory). Absent for a
+	 * diff review.
+	 */
+	file?: string;
+	/** Diff review `add`: repo-relative path, as the diff names it. */
 	path?: string;
 	/** `add`: first line, 1-based. */
 	startLine?: number;
@@ -69,8 +78,10 @@ export interface DiffReviewCommentSummary {
 export interface DiffReviewCommandResult {
 	success: boolean;
 	error?: string;
-	/** The repository the review belongs to (the agent's git working directory). */
+	/** Diff review: the repository it belongs to (the agent's git working directory). */
 	cwd?: string;
+	/** File review: the file it belongs to, absolute. */
+	file?: string;
 	/** `list`: every pending comment, in the order it was written. */
 	comments?: DiffReviewCommentSummary[];
 	/** `add`: the comment created. `edit`: as updated. `remove`: the comment dropped. */
@@ -119,23 +130,26 @@ export function parseLineSpan(text: string): { startLine: number; endLine: numbe
 export function parseDiffReviewCommandRequest(
 	message: Record<string, unknown>
 ): { ok: true; request: DiffReviewCommandRequest } | { ok: false; error: string } {
+	const file = typeof message.file === 'string' ? message.file.trim() : '';
+	const verb = file ? 'file-review' : 'diff-review';
 	const action = message.action;
 	if (!isAction(action)) {
 		return {
 			ok: false,
-			error: `Invalid or missing diff review action. Must be one of: ${DIFF_REVIEW_COMMAND_ACTIONS.join(', ')}`,
+			error: `Invalid or missing ${file ? 'file' : 'diff'} review action. Must be one of: ${DIFF_REVIEW_COMMAND_ACTIONS.join(', ')}`,
 		};
 	}
 	const sessionId = typeof message.sessionId === 'string' ? message.sessionId.trim() : '';
-	if (!sessionId) return { ok: false, error: `diff-review ${action} requires an agent` };
+	if (!sessionId) return { ok: false, error: `${verb} ${action} requires an agent` };
+	const target = file ? { file } : {};
 
 	if (action === 'add') {
 		const path = typeof message.path === 'string' ? message.path.trim() : '';
-		if (!path) return { ok: false, error: 'diff-review add requires a file path' };
+		if (!file && !path) return { ok: false, error: 'diff-review add requires a file path' };
 		const startLine = positiveInt(message.startLine);
-		if (!startLine) return { ok: false, error: 'diff-review add requires a line number' };
+		if (!startLine) return { ok: false, error: `${verb} add requires a line number` };
 		const endLine = message.endLine === undefined ? startLine : positiveInt(message.endLine);
-		if (!endLine) return { ok: false, error: 'diff-review add: invalid end line' };
+		if (!endLine) return { ok: false, error: `${verb} add: invalid end line` };
 		const side = message.side === undefined ? 'new' : message.side;
 		if (side !== 'old' && side !== 'new') {
 			return { ok: false, error: 'diff-review add: side must be old or new' };
@@ -147,10 +161,11 @@ export function parseDiffReviewCommandRequest(
 			request: {
 				action,
 				sessionId,
-				path,
+				...target,
+				// A file review names its file once, in `file`; lines have one version.
+				...(file ? {} : { path, side }),
 				startLine: Math.min(startLine, endLine),
 				endLine: Math.max(startLine, endLine),
-				side,
 				body,
 			},
 		};
@@ -158,11 +173,13 @@ export function parseDiffReviewCommandRequest(
 
 	if (action === 'remove' || action === 'edit') {
 		const commentId = typeof message.commentId === 'string' ? message.commentId.trim() : '';
-		if (!commentId) return { ok: false, error: `diff-review ${action} requires a comment id` };
-		if (action === 'remove') return { ok: true, request: { action, sessionId, commentId } };
+		if (!commentId) return { ok: false, error: `${verb} ${action} requires a comment id` };
+		if (action === 'remove') {
+			return { ok: true, request: { action, sessionId, ...target, commentId } };
+		}
 		const body = typeof message.body === 'string' ? message.body.trim() : '';
 		if (!body) return { ok: false, error: 'A review comment needs some text' };
-		return { ok: true, request: { action, sessionId, commentId, body } };
+		return { ok: true, request: { action, sessionId, ...target, commentId, body } };
 	}
 
 	if (action === 'send') {
@@ -171,6 +188,7 @@ export function parseDiffReviewCommandRequest(
 			request: {
 				action,
 				sessionId,
+				...target,
 				...(message.compose === true ? { compose: true } : {}),
 				// Opt-in only: a literal `true`. See `readBackgroundField`.
 				...(message.background === true ? { background: true } : {}),
@@ -178,7 +196,7 @@ export function parseDiffReviewCommandRequest(
 		};
 	}
 
-	return { ok: true, request: { action, sessionId } };
+	return { ok: true, request: { action, sessionId, ...target } };
 }
 
 /**
@@ -201,6 +219,7 @@ export function normalizeDiffReviewCommandResult(raw: unknown): DiffReviewComman
 	return {
 		success: true,
 		...(typeof candidate.cwd === 'string' ? { cwd: candidate.cwd } : {}),
+		...(typeof candidate.file === 'string' ? { file: candidate.file } : {}),
 		...(Array.isArray(candidate.comments) ? { comments: candidate.comments } : {}),
 		...(candidate.comment ? { comment: candidate.comment } : {}),
 		...(typeof candidate.cleared === 'number' ? { cleared: candidate.cleared } : {}),

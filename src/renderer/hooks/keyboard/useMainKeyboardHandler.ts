@@ -1388,6 +1388,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut('toggleReadOnlyMode');
 					return;
 				}
+				// The room is the "tab" here, so Toggle Tab Unread flips the room's
+				// Left Bar dot. Marking it stays put until the room is opened again.
+				if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
+					e.preventDefault();
+					useGroupChatStore.getState().toggleGroupChatUnread(ctx.activeGroupChatId);
+					trackShortcut('toggleTabUnread');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).

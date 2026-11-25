@@ -27,6 +27,7 @@ import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { AgentDiscoveryResult } from '../../../../shared/types';
+import { resetStore } from '../../../helpers/resetStores';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -148,6 +149,9 @@ describe('EditAgentModal', () => {
 		theme = createTheme();
 		onClose = vi.fn();
 		onSave = vi.fn();
+		// The modal seeds its form from the store's copy of the agent, so a
+		// session left in the store by one case must not feed the next.
+		resetStore(useSessionStore);
 
 		mockRegisterLayer.mockClear().mockReturnValue('layer-edit-agent-123');
 		// The form remembers its last tab per app session; start every case on General.
@@ -1912,6 +1916,41 @@ describe('EditAgentModal', () => {
 			);
 			expect(textarea).toHaveValue('Test nudge');
 		});
+	});
+
+	// #2068: the Left Bar hands over a copy that skips updates to fields it does
+	// not draw, so after a save it still holds the old directories and messages.
+	it("seeds the form from the store's copy, not a stale opener copy (#2068)", async () => {
+		const saved = createSession({
+			nudgeMessage: 'Saved nudge',
+			newSessionMessage: 'Saved init',
+			additionalDirectories: [{ path: '/srv/shared', read: true, write: true }],
+		});
+		useSessionStore.setState({ sessions: [saved] } as never);
+		const stale = createSession({
+			nudgeMessage: 'Old nudge',
+			newSessionMessage: undefined,
+			additionalDirectories: undefined,
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={stale}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(
+				screen.getByPlaceholderText('Instructions appended to every message you send...')
+			).toHaveValue('Saved nudge');
+		});
+		expect(screen.getByDisplayValue('Saved init')).toBeInTheDocument();
+		expect(screen.getByDisplayValue('/srv/shared')).toBeInTheDocument();
 	});
 
 	it('should show NewSessionMessageField with session new session message', async () => {

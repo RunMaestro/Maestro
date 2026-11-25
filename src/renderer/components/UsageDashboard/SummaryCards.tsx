@@ -239,6 +239,45 @@ export const AnimatedNumber = memo(function AnimatedNumber({
 	return <>{display}</>;
 });
 
+/** One figure on a metric tile, with an optional caption over it. */
+function MetricValue({
+	caption,
+	value,
+	color,
+	captionColor,
+}: {
+	caption?: string;
+	value: string;
+	color: string;
+	captionColor: string;
+}) {
+	return (
+		<div className="min-w-0">
+			{caption && (
+				<div className="text-2xs uppercase tracking-wide" style={{ color: captionColor }}>
+					{caption}
+				</div>
+			)}
+			<div
+				className="font-bold"
+				style={{
+					color,
+					fontSize: 'clamp(18px, 3vw, 28px)',
+					// A formatted figure carries no spaces, so without this a
+					// value too wide for its column (`~$39,605.06` in a 176px
+					// card on a phone) had nowhere to break and painted
+					// straight out past the card's own edge. Wrapping rather
+					// than truncating: the whole number is the point.
+					overflowWrap: 'anywhere',
+				}}
+				title={value}
+			>
+				<AnimatedNumber value={value} />
+			</div>
+		</div>
+	);
+}
+
 /**
  * The dashboard's metric tile: icon, label, headline value, optional detail.
  */
@@ -253,6 +292,15 @@ export interface MetricCardProps {
 	 * of the range the grid around it answers for.
 	 */
 	labelHint?: string;
+	/** Unit beside the label, in normal case ("tok/s"), so the values stay bare numbers. */
+	unit?: string;
+	/** Caption over the headline value. Shown only when `secondary` is set ("Avg"). */
+	valueLabel?: string;
+	/**
+	 * A second figure beside the headline, split by a rule ("Avg 75.8 | Peak 472"),
+	 * for a measure whose two readings are compared side by side.
+	 */
+	secondary?: { label: string; value: string };
 	/** Animation delay index for staggered entrance (0-based) */
 	animationIndex?: number;
 	/** Optional content rendered below the value (e.g. status breakdown) */
@@ -277,6 +325,9 @@ export const MetricCard = memo(function MetricCard({
 	value,
 	theme,
 	labelHint,
+	unit,
+	valueLabel,
+	secondary,
 	animationIndex = 0,
 	extra,
 	subValue,
@@ -299,9 +350,11 @@ export const MetricCard = memo(function MetricCard({
 			}}
 			data-testid={testId}
 			role="group"
-			aria-label={`${label}${labelHint ? ` (${labelHint})` : ''}: ${value}${
-				subValue ? `, ${subValue}` : ''
-			}`}
+			aria-label={`${label}${labelHint ? ` (${labelHint})` : ''}${unit ? ` ${unit}` : ''}: ${
+				secondary
+					? `${valueLabel ?? ''} ${value}, ${secondary.label} ${secondary.value}`.trim()
+					: value
+			}${subValue ? `, ${subValue}` : ''}`}
 			onMouseEnter={() => setHovered(true)}
 			onMouseLeave={() => setHovered(false)}
 		>
@@ -320,6 +373,11 @@ export const MetricCard = memo(function MetricCard({
 					style={{ color: theme.colors.textDim }}
 				>
 					<span>{label}</span>
+					{unit && (
+						<span className="normal-case tracking-normal" data-testid="metric-card-unit">
+							{unit}
+						</span>
+					)}
 					{labelHint && (
 						<span
 							className="text-3xs normal-case tracking-normal px-1 rounded"
@@ -330,22 +388,29 @@ export const MetricCard = memo(function MetricCard({
 						</span>
 					)}
 				</div>
-				<div
-					className="font-bold"
-					style={{
-						color: theme.colors.textMain,
-						fontSize: 'clamp(18px, 3vw, 28px)',
-						// A formatted figure carries no spaces, so without this a
-						// value too wide for its column (`~$39,605.06` in a 176px
-						// card on a phone) had nowhere to break and painted
-						// straight out past the card's own edge. Wrapping rather
-						// than truncating: the whole number is the point.
-						overflowWrap: 'anywhere',
-					}}
-					title={value}
-				>
-					<AnimatedNumber value={value} />
-				</div>
+				{secondary ? (
+					<div className="flex items-stretch gap-4" data-testid="metric-card-split">
+						<MetricValue
+							caption={valueLabel}
+							value={value}
+							color={theme.colors.textMain}
+							captionColor={theme.colors.textDim}
+						/>
+						<div className="w-px flex-shrink-0" style={{ backgroundColor: theme.colors.border }} />
+						<MetricValue
+							caption={secondary.label}
+							value={secondary.value}
+							color={theme.colors.accent}
+							captionColor={theme.colors.textDim}
+						/>
+					</div>
+				) : (
+					<MetricValue
+						value={value}
+						color={theme.colors.textMain}
+						captionColor={theme.colors.textDim}
+					/>
+				)}
 				{subValue && (
 					<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
 						{subValue}

@@ -231,16 +231,18 @@ export interface AgentDisplay {
 	toolType: string;
 	cwd: string;
 	groupId?: string;
+	/** The agent's group name; printed on the row unless the whole list is one group. */
+	groupName?: string;
+	/** The agent's group (or its parent) is hidden from the Left Bar. */
+	groupHidden?: boolean;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
+	/** The Primary Agent (Settings > General > Primary Agent). */
+	primary?: boolean;
 	/** Set on an agent a Federation peer's host owns: the peer it lives on. */
 	peer?: string;
 	/** Set on a local agent that was lifted onto its host: `peer:agentId`, where it runs now. */
 	liftedTo?: string;
-	/** The name of the agent's group, when it has one. */
-	groupName?: string;
-	/** The agent's group is parked out of the Left Bar (hidden, or under a hidden parent). */
-	groupHidden?: boolean;
 	/** The agent's own advertised specialty (Edit Agent > Peers > "How peers see this agent"). */
 	peerDescription?: string;
 	/** Set by `--reachable`: what the caller may do with this agent (`peerAccessLabel`). */
@@ -260,7 +262,9 @@ export interface FormatAgentsScope {
 /**
  * The agent list. `scope.peer` titles a list read from one Federation peer. A row with `peer`
  * set is tagged with it, and its id line reads `peer:id`, the target the other verbs take. A
- * lifted local agent gets one more line naming the `peer:agentId` it was moved to.
+ * lifted local agent gets one more line naming the `peer:agentId` it was moved to. A row names its
+ * group (unless `groupName` titles the whole list) and is tagged `[hidden group]` when that group
+ * is hidden from the Left Bar.
  */
 export function formatAgents(
 	agents: AgentDisplay[],
@@ -286,13 +290,14 @@ export function formatAgents(
 		const id = dim(agent.peer ? `${agent.peer}:${agent.id}` : agent.id);
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
 		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
+		const primary = agent.primary ? c('cyan', ' [Primary]') : '';
 		const peer = agent.peer ? c('magenta', ` @${agent.peer}`) : '';
 		// The group is named on every row, unless the whole list is one group's.
 		const group = agent.groupName && !groupName ? dim(` [${agent.groupName}]`) : '';
 		const hidden = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
 		const access = agent.access ? c('cyan', ` (${agent.access})`) : '';
 
-		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}${group}${hidden}${access}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${primary}${autoRun}${peer}${group}${hidden}${access}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 		if (agent.liftedTo) lines.push(`      ${c('magenta', `moved to ${agent.liftedTo}`)}`);
@@ -684,9 +689,13 @@ export interface AgentDetailDisplay {
 	cwd: string;
 	projectRoot: string;
 	groupId?: string;
-	groupName?: string;
+	/** Null when a peer could not list its groups; omitted for an ungrouped agent. */
+	groupName?: string | null;
+	/** The group (or its parent) is hidden from the Left Bar; null when a peer could not say. */
+	groupHidden?: boolean | null;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
+	primary?: boolean;
 	// Editable per-agent settings (the Edit Agent modal fields). `null` = unset.
 	nudgeMessage?: string | null;
 	peerDescription?: string | null;
@@ -786,7 +795,8 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	}
 
 	if (agent.groupName) {
-		lines.push(`  ${c('white', 'Group:')}      ${agent.groupName}`);
+		const hiddenGroup = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
+		lines.push(`  ${c('white', 'Group:')}      ${agent.groupName}${hiddenGroup}`);
 	}
 
 	if (agent.autoRunFolderPath) {
@@ -795,6 +805,10 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 
 	if (agent.bookmarked) {
 		lines.push(`  ${c('white', 'Bookmarked:')} ${c('yellow', '\u2605 yes')}`);
+	}
+
+	if (agent.primary) {
+		lines.push(`  ${c('white', 'Primary:')}    ${c('cyan', 'yes')}`);
 	}
 
 	// Configuration (the Edit Agent modal settings). Only render the rows that

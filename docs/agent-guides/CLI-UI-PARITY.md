@@ -85,6 +85,10 @@ deliberately absent from the table and must stay that way.
 `--focus` ships on every verb even where it currently just names the default,
 because a future default flip needs the escape hatch to already exist.
 
+`browser-pick --queue` is quiet by itself: it sends the pick as its own queued
+message and never touches the view, so `--background` and `--focus` have nothing
+left to decide there.
+
 ### Two verbs of one command name: `dispatch`
 
 `dispatch --new-tab` is background by default and `dispatch` (writing to an
@@ -434,6 +438,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Prompt Links window and tile: create, list, revoke a `maestro://run` link (open the window: `open prompt-links`)                                                                                                                                                                                                                                                                                                                                                                                    | `prompt-link create <agent> [prompt]`, `prompt-link list [--all]`, `prompt-link revoke <id>`                                                                                                                                                                                                                                                                                                                                                                                                |
 | User Journey (read-only agent surface; the desktop records it as the user works, so there is no UI write counterpart)                                                                                                                                                                                                                                                                                                                                                                               | `journey [--agent <id>] [--since <time>] [--tail <n>] [--kind <kinds>] [--json]`                                                                                                                                                                                                                                                                                                                                                                                                            |
 | User Journey switch (Settings > General > User Journey)                                                                                                                                                                                                                                                                                                                                                                                                                                             | `settings set userJourneyEnabled false` / `true`, read back with `settings get userJourneyEnabled`                                                                                                                                                                                                                                                                                                                                                                                          |
+| Primary Agent (Settings > General > Primary Agent, crown in the Left Bar)                                                                                                                                                                                                                                                                                                                                                                                                                           | `settings set primaryAgentId <name\|id>` (`null` clears), read back with `settings get primaryAgentId` or `primary` in `list agents --json` / `show agent --json`                                                                                                                                                                                                                                                                                                                           |
 | Timeline (read-only agent surface: the merged history, User Journey, and commits; no UI counterpart)                                                                                                                                                                                                                                                                                                                                                                                                | `timeline [--agent <id>] [--since <time>] [--until <time>] [--sources <list>] [--tail <n>] [--per-source <n>] [--grep <text>] [--json]`, `timeline show <entry> [--agent <id>] [--json]`                                                                                                                                                                                                                                                                                                    |
 | Context footprint audit (read-only agent surface: what could be adding to an agent's prompt, as estimates with delivery and activation unknown; no UI counterpart yet)                                                                                                                                                                                                                                                                                                                              | `agent footprint [<agent-id>] [--json]`                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Create, edit, pause, enable or remove a whole-agent/group Pianola watch scope                                                                                                                                                                                                                                                                                                                                                                                                                       | `pianola supervise scope --manager <id> --label <label> [--id <id>] [--agents <ids>] [--groups <ids>] [--exclude <ids>] [--json]` (comma-separated IDs; new scopes paused, edits retain enabled state); `pianola supervise list`, `enable <id>`, `disable <id>`, `remove <id>`; `pianola watch-scope <scope-id> [--once] [--dry-run] [--json]`.                                                                                                                                             |
@@ -590,7 +595,14 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage-data scan progress (modal / corner card)                                                                                                  | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)                                                                               |
 | Left Bar: Archive / Unarchive a group chat                                                                                                      | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)                                                                                 |
 | Group chat: add an agent by @mention in a message                                                                                               | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)                                                                        |
-| Browser Design Mode: add a picked element to the message (pick card)                                                                            | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                                                                                      |
+| Browser Design Mode: add a picked element to the message (pick card)                                                                            | `browser-pick <tab> -s <css> [--note]`; read: `browser-picks`, its `--json` text and `pickId`                                                                      |
+| Browser Design Mode: queue a pick as its own message (pick card's Queue button, Alt+Enter)                                                      | `browser-pick <tab> -s <css> --queue`; id in `--json`; read: `queue list`; undo: `queue remove`                                                                    |
+| Browser Design Mode region pick: drag a box over the page, add the region to the message (region card)                                          | `browser-pick <tab> --rect <x,y,w,h> [--note] [--queue]`; read: `browser-picks` or `queue list`                                                                    |
+| Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                                          | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                                                                                   |
+| Browser Design Mode: edit a chip's note in the composer (the chip popover's note box)                                                           | `browser-picks --edit <pickId> --note <text>`; read: the printed chip, or `browser-picks`                                                                          |
+| Browser Design Mode: remove a chip from the composer (the chip's X)                                                                             | `browser-picks --remove <pickId>`; read: `browser-picks`                                                                                                           |
+| Browser tab: viewport preset (toolbar Viewport control, palette "Browser: Viewport ...")                                                        | `browser-viewport <tab> [preset] [-a <agent>] [--json]` (omit the preset to read it)                                                                               |
+| Browser Design Mode: fold the side bars while it is on (a setting; `settings` covers it, no new verb)                                           | `settings set designModeCollapsePanels true\|false`; read: `settings get <key>`                                                                                    |
 
 `maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
 server (the third case in [CLI-HEADLESS.md](CLI-HEADLESS.md#need-a-running-lite-client):
@@ -670,6 +682,9 @@ result, or `NeedsConfiguration`, `Denied` or `Unknown`; failures exit nonzero.
 No real host dialog is exercised by the fixture composition tests.
 | SSH outage dialog: which remotes are down, "Check Now" | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state) |
 | File editor Vim keybindings (Settings -> Display -> File Edit & Preview) | `settings set fileEditVimMode true` |
+| Side question about a tab (`/btw <question>`) | `ask <agent> "<question>" --btw [--tab <tab-id>]` |
+| File Preview review comments: Comment on Line(s), edit, remove, discard, send, compose | `file-review add <file> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose` |
+| Left Bar / Cmd+Shift+U: Mark a group chat unread / read | `group-chat unread <chat>` / `group-chat read <chat>` (read back with `group-chat list`) |
 
 ## Open gaps
 
@@ -895,7 +910,11 @@ still missing. Grouped, highest value first:
   state, restart agent, retry.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing (the web interface and tunnel URLs are `live status`).
-- **Updates:** check/download/install.
+- **Updates:** check/download/install. A CLI install verb must call
+  `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
+  same as the modal's Restart and Resume, or running Auto Runs will not resume.
+- **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`
+  before `confirmQuit()`, as `handleConfirmQuit` does.
 - **Exports:** tab as HTML.
 - **Usage Dashboard:** plan usage Refresh (re-sample every account), and the Shortcuts tab's
   keyboard mastery figure (the math lives in `src/renderer/constants/keyboardMastery.ts`, which
@@ -969,9 +988,26 @@ entry needs a stated reason, the same way a Covered row needs a verb.
 - **Turn browser Design Mode on or off** (address-bar pointer button,
   Cmd+Shift+C, palette "Design Mode: Pick an Element"). The mode only arms
   a hover overlay for a person's pointer; there is nothing for a script to
-  point with once it is on. The outcome it leads to, an element added to the
-  message, is covered by `browser-pick <tab> --selector <css>`, which runs
-  the same describe, crop, and delivery code without the overlay.
+  point with once it is on. The outcome it leads to, an element or a region
+  added to the message, is covered by `browser-pick <tab> --selector <css>`
+  or `browser-pick <tab> --rect <x,y,w,h>`, which run the same capture,
+  crop, and delivery code as a click or a drag, without the overlay
+  (`--queue` sends it as its own queued message, as the card's Queue button
+  does).
+  The mode is sticky per browser tab (`BrowserTab.designMode`, saved with
+  the tab): it survives page loads, tab switches, Add to Message and
+  restarts, and only Escape and the toggle turn it off. It is still a mode
+  for a person's pointer, so the gap stays open on the same reasoning, and
+  no read reports the flag either (`session list --type browser` lists a
+  browser tab's id, title, url and visibility, not its mode). Closing it
+  means a `browser-design-mode <tab> [on|off] [--json]` verb that writes
+  the flag through `updateBrowserTab()`, as the toggle does, and reads it
+  back.
+  Holding Space to use the page and clicking a crumb in the hover label
+  need no verb: both are pointer gestures with no effect of their own, an
+  agent drives the page through Coworking (`browser_click`, `browser_type`),
+  and `browser-pick --selector` picks any ancestor directly. Dragging the
+  box is `--rect` (guest CSS px, the box a drag would draw).
 - **Log in to a provider account** (Usage Dashboard quota row "Log in",
   palette "Reauthenticate Provider"). The login is an interactive OAuth or
   device-code flow in a PTY, so there is nothing a non-interactive verb could

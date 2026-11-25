@@ -24,7 +24,7 @@ import type { SystemOnePromptVariables } from './local-models/system-one-prompt'
  *   {{AGENT_JOURNEY_PATH}} - Path to agent's User Journey JSONL file (what the user did in Maestro)
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
- *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
+ *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, kilo, factory-droid)
  *
  * Path Variables:
  *   {{CWD}}               - Current working directory

@@ -387,6 +387,7 @@ describe('GeneralTab section components', () => {
 		const setHtmlDoubleClickOpensInBrowser = vi.fn();
 		const setBrowserTabKeepAlive = vi.fn();
 		const setBrowserTabKeepAliveLimit = vi.fn();
+		const setDesignModeCollapsePanels = vi.fn();
 
 		render(
 			<BrowserSection
@@ -401,6 +402,8 @@ describe('GeneralTab section components', () => {
 				setBrowserTabKeepAlive={setBrowserTabKeepAlive}
 				browserTabKeepAliveLimit={10}
 				setBrowserTabKeepAliveLimit={setBrowserTabKeepAliveLimit}
+				designModeCollapsePanels={true}
+				setDesignModeCollapsePanels={setDesignModeCollapsePanels}
 			/>
 		);
 
@@ -411,6 +414,9 @@ describe('GeneralTab section components', () => {
 			screen.getByRole('switch', { name: 'Open HTML files in Maestro Browser on double-click' })
 		);
 		expect(setHtmlDoubleClickOpensInBrowser).toHaveBeenCalledWith(false);
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Collapse side bars in Design Mode' }));
+		expect(setDesignModeCollapsePanels).toHaveBeenCalledWith(false);
 
 		fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
 		expect(setBrowserHomeUrl).toHaveBeenCalledWith(DEFAULT_BROWSER_HOME_URL);
@@ -440,11 +446,16 @@ describe('GeneralTab section components', () => {
 				setBrowserTabKeepAlive={vi.fn()}
 				browserTabKeepAliveLimit={10}
 				setBrowserTabKeepAliveLimit={vi.fn()}
+				designModeCollapsePanels={false}
+				setDesignModeCollapsePanels={vi.fn()}
 			/>
 		);
 
 		expect(screen.queryByText('Keep this many recent tabs alive')).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument();
+		expect(
+			screen.getByRole('switch', { name: 'Collapse side bars in Design Mode' })
+		).toHaveAttribute('aria-checked', 'false');
 	});
 
 	it('renders Maestro CLI status and wires actions', () => {

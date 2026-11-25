@@ -64,6 +64,11 @@ import {
 } from '../../../../main/web-server/handlers/bridgeDenyList';
 import { createWebApi } from '../../../../main/preload/web';
 import type { LocalModelTaskReadiness } from '../../../../shared/local-models/task-readiness';
+import { setRemoteSpawnSessionsProvider } from '../../../../main/web-server/handlers/remoteSpawnEnv';
+import type { StoredSession } from '../../../../main/stores/types';
+
+const storedSessions: StoredSession[] = [];
+setRemoteSpawnSessionsProvider(() => storedSessions);
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -103,6 +108,40 @@ describe('handleBridgeInvoke', () => {
 				querySource: 'auto',
 			});
 			expect(config.querySource).toBe(querySource);
+		}
+	});
+
+	it("restores the agent's saved env vars on a browser spawn (#2088)", async () => {
+		const handler = vi.fn().mockResolvedValue({ success: true });
+		invokeHandlers.set('process:spawn', handler);
+		storedSessions.splice(0, storedSessions.length, {
+			id: 'agent',
+			name: 'agent',
+			toolType: 'codex',
+			cwd: '/w',
+			projectRoot: '/w',
+			customEnvVars: { CODEX_HOME: '/profiles/a', SHARED: 'saved' },
+		});
+		try {
+			// The browser's copy of the agent has no customEnvVars (stripped from
+			// every reply), so its spawn arrives without the agent's profile.
+			await handleBridgeInvoke(
+				makeClient(),
+				{
+					type: 'bridge.invoke',
+					requestId: 'spawn',
+					channel: 'process:spawn',
+					args: [{ sessionId: 'agent-ai-tab', sessionCustomEnvVars: { SHARED: 'sent' } }],
+				},
+				vi.fn()
+			);
+			expect(handler).toHaveBeenLastCalledWith(expect.anything(), {
+				sessionId: 'agent-ai-tab',
+				sessionCustomEnvVars: { CODEX_HOME: '/profiles/a', SHARED: 'sent' },
+				querySource: 'auto',
+			});
+		} finally {
+			storedSessions.length = 0;
 		}
 	});
 

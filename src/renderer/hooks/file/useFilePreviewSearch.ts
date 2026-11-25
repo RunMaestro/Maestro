@@ -281,6 +281,15 @@ export function useFilePreviewSearch({
 		return compileSearchRegex(searchQuery, { regex: true }).regex ? searchQuery : null;
 	}, [searchQuery, useRegex, isLineMode]);
 
+	// CM's default document stores each CRLF/CR line break as one LF. Search,
+	// decoration, selection and replacement offsets must all use that space.
+	// This is only a search view: keep the source/edit value and raw snapshots
+	// untouched until a real editor transaction emits its existing onChange.
+	const editorSearchContent = useMemo(
+		() => (markdownEditMode ? editContent.replace(/\r\n?/g, '\n') : editContent),
+		[editContent, markdownEditMode]
+	);
+
 	const regexError = useMemo<string | null>(() => {
 		if (!useRegex || !searchQuery) return null;
 		return compileSearchRegex(searchQuery, { regex: true }).error;
@@ -592,7 +601,7 @@ export function useFilePreviewSearch({
 			return;
 		}
 
-		const matches = findMatchRanges(editContent, searchPattern);
+		const matches = findMatchRanges(editorSearchContent, searchPattern);
 
 		setTotalMatches(matches.length);
 		if (matches.length === 0) {
@@ -648,7 +657,7 @@ export function useFilePreviewSearch({
 		currentMatchIndex,
 		isEditableText,
 		markdownEditMode,
-		editContent,
+		editorSearchContent,
 		editorRef,
 	]);
 
@@ -745,8 +754,8 @@ export function useFilePreviewSearch({
 		setCurrentMatchIndex(count > 0 ? 0 : -1);
 	}, []);
 
-	// Replace reads the editor's live text through the same pattern the match
-	// decorations use, so what gets replaced is exactly what is highlighted.
+	// Replace uses the same CM-coordinate text and pattern as the decorations,
+	// so what gets replaced is exactly what is highlighted.
 	const canReplace =
 		isEditableText && markdownEditMode && !isLineMode && searchMode === 'text' && !!searchPattern;
 
@@ -754,7 +763,7 @@ export function useFilePreviewSearch({
 		(replacement: string): boolean => {
 			const editor = editorRef.current;
 			if (!canReplace || !searchPattern || !editor || currentMatchIndex < 0) return false;
-			const edits = buildReplacements(editContent, searchPattern, replacement, {
+			const edits = buildReplacements(editorSearchContent, searchPattern, replacement, {
 				regex: useRegex,
 				onlyIndex: currentMatchIndex,
 			});
@@ -763,20 +772,20 @@ export function useFilePreviewSearch({
 			editor.replaceRanges(edits);
 			return true;
 		},
-		[canReplace, searchPattern, editorRef, currentMatchIndex, editContent, useRegex]
+		[canReplace, searchPattern, editorRef, currentMatchIndex, editorSearchContent, useRegex]
 	);
 
 	const replaceAll = useCallback(
 		(replacement: string): number => {
 			const editor = editorRef.current;
 			if (!canReplace || !searchPattern || !editor) return 0;
-			const edits = buildReplacements(editContent, searchPattern, replacement, {
+			const edits = buildReplacements(editorSearchContent, searchPattern, replacement, {
 				regex: useRegex,
 			});
 			if (edits.length > 0) editor.replaceRanges(edits);
 			return edits.length;
 		},
-		[canReplace, searchPattern, editorRef, editContent, useRegex]
+		[canReplace, searchPattern, editorRef, editorSearchContent, useRegex]
 	);
 
 	return {

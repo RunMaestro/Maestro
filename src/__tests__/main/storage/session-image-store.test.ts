@@ -286,5 +286,67 @@ describe('session-image-store', () => {
 			expect(result.relocated).toBe(0);
 			expect(result.sessions[0]).toBe(clean);
 		});
+
+		it('relocates inline Design Mode chip screenshots and keeps the rest of each chip', async () => {
+			const storedRef = await storeInlineImage(IMG_B);
+			const inlineChip = {
+				id: 'p1',
+				kind: 'element',
+				label: 'button.cta "Sign up"',
+				url: 'https://example.com/',
+				note: 'make it bigger',
+				text: 'selector + styles + html',
+				screenshot: IMG_A,
+				createdAt: 1,
+			};
+			const noShotChip = { ...inlineChip, id: 'p2', kind: 'region', screenshot: null };
+			const refChip = { ...inlineChip, id: 'p3', screenshot: storedRef };
+			const sessions = [
+				{
+					id: 's1',
+					aiTabs: [
+						{
+							id: 't1',
+							logs: [],
+							stagedImages: [IMG_A],
+							stagedDesignPicks: [inlineChip, noShotChip, refChip],
+						},
+					],
+				},
+			];
+
+			const first = await relocateSessionImages(sessions);
+			// The staged image and the chip screenshot are swaps; null and a ref are not.
+			expect(first.relocated).toBe(2);
+			const tab = (first.sessions[0] as any).aiTabs[0];
+			const picks = tab.stagedDesignPicks;
+			expect(isImageRef(picks[0].screenshot)).toBe(true);
+			expect(picks[0]).toEqual({ ...inlineChip, screenshot: picks[0].screenshot });
+			// Same bytes as the staged image, so both point at one content-addressed file.
+			expect(picks[0].screenshot).toBe(tab.stagedImages[0]);
+			expect(fs.readdirSync(getImageDir())).toHaveLength(2);
+			expect(await resolveToDataUrl(picks[0].screenshot)).toBe(IMG_A);
+			// Chips with nothing to move come back by reference, in their order.
+			expect(picks[1]).toBe(noShotChip);
+			expect(picks[2]).toBe(refChip);
+			// The input tree is never mutated.
+			expect(inlineChip.screenshot).toBe(IMG_A);
+
+			const second = await relocateSessionImages(first.sessions);
+			expect(second.relocated).toBe(0);
+			expect(second.sessions[0]).toBe(first.sessions[0]);
+		});
+
+		it('leaves a session untouched (same reference) when its chips hold no inline screenshot', async () => {
+			const storedRef = await storeInlineImage(IMG_A);
+			const picks = [null, { id: 'p1', screenshot: null }, { id: 'p2', screenshot: storedRef }];
+			const session = {
+				id: 's',
+				aiTabs: [{ id: 't', logs: [], stagedImages: [], stagedDesignPicks: picks }],
+			};
+			const result = await relocateSessionImages([session]);
+			expect(result.relocated).toBe(0);
+			expect(result.sessions[0]).toBe(session);
+		});
 	});
 });

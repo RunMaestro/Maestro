@@ -185,6 +185,29 @@ function comparableDirectory(dir: string): string {
 }
 
 /**
+ * The agent already using `name`, compared trimmed (both sides: a stored name
+ * can keep surrounding spaces) and case-insensitively, the same way both
+ * validators below reject a duplicate. A blank name matches nothing.
+ * `excludeAgentId` skips the agent being renamed.
+ *
+ * Exported so a form can flag the clash while the user is still typing,
+ * instead of only at submit (MAESTRO-199: the onboarding wizard took a
+ * duplicate name on step 1 and refused it only at launch, after the whole
+ * planning conversation).
+ */
+export function findAgentWithName<T extends Pick<ValidatedAgent, 'id' | 'name'>>(
+	name: string,
+	existing: readonly T[],
+	excludeAgentId?: string
+): T | undefined {
+	const wanted = name.trim().toLowerCase();
+	if (!wanted) return undefined;
+	return existing.find(
+		(agent) => agent.id !== excludeAgentId && agent.name.trim().toLowerCase() === wanted
+	);
+}
+
+/**
  * Whether a new agent can be created with this name and directory.
  *
  * 1. Names are unique across agents, ignoring case (a hard error).
@@ -199,10 +222,7 @@ export function validateNewAgent(
 	existing: readonly ValidatedAgent[],
 	sshRemoteId?: string | null
 ): AgentValidationResult {
-	const trimmedName = name.trim();
-	const duplicate = existing.find(
-		(agent) => agent.name.toLowerCase() === trimmedName.toLowerCase()
-	);
+	const duplicate = findAgentWithName(name, existing);
 	if (duplicate) {
 		return {
 			valid: false,
@@ -237,10 +257,7 @@ export function validateAgentRename(
 	agentId: string,
 	existing: readonly ValidatedAgent[]
 ): AgentValidationResult {
-	const trimmedName = name.trim();
-	const duplicate = existing.find(
-		(agent) => agent.id !== agentId && agent.name.toLowerCase() === trimmedName.toLowerCase()
-	);
+	const duplicate = findAgentWithName(name, existing, agentId);
 	if (duplicate) {
 		return {
 			valid: false,

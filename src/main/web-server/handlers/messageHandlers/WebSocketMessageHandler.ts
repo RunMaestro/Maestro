@@ -223,6 +223,8 @@ import {
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
 	handlePickBrowserElement,
+	handleBrowserViewport,
+	handleDesignPickCommand,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -251,6 +253,7 @@ import {
 	handleSteerGroupChat,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleSetGroupChatUnread,
 	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
@@ -640,6 +643,14 @@ export class WebSocketMessageHandler {
 				handlePickBrowserElement(this.ctx, client, message);
 				break;
 
+			case 'browser_viewport':
+				handleBrowserViewport(this.ctx, client, message);
+				break;
+
+			case 'design_pick_command':
+				handleDesignPickCommand(this.ctx, client, message);
+				break;
+
 			case 'open_terminal_tab':
 				handleOpenTerminalTab(this.ctx, client, message);
 				break;
@@ -866,6 +877,10 @@ export class WebSocketMessageHandler {
 
 			case 'archive_group_chat':
 				handleArchiveGroupChat(this.ctx, client, message);
+				break;
+
+			case 'set_group_chat_unread':
+				handleSetGroupChatUnread(this.ctx, client, message);
 				break;
 
 			case 'add_group_chat_participant':

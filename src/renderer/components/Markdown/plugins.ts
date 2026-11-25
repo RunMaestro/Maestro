@@ -25,6 +25,7 @@ import { svgSanitizeSchema } from './sanitizeSchema';
 import { remarkAlert } from './remarkAlert';
 import { remarkMaestroMarkers } from './remarkMaestroMarkers';
 import { remarkCodexDirectives } from './remarkCodexDirectives';
+import { remarkWindowsImagePaths } from './remarkWindowsImagePaths';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
@@ -119,7 +120,9 @@ export function buildMarkdownPlugins(
 		extraRehypePlugins,
 	} = options;
 
-	const remarkPlugins: PluggableList = [...REMARK_GFM_PLUGINS];
+	// Windows drive-path images (`![x](D:/a.png)`) become `file:///` URLs so the
+	// URL sanitizers do not blank them as an unknown `D:` scheme (#2067).
+	const remarkPlugins: PluggableList = [...REMARK_GFM_PLUGINS, remarkWindowsImagePaths];
 
 	// GitHub alert callouts run right after GFM (before remark-breaks) so the
 	// `[!TYPE]` marker and its body are still in a single text node, which is the

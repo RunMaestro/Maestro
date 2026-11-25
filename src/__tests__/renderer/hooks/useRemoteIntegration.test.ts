@@ -7,7 +7,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import type {} from '../../../renderer/global';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockAITab } from '../../helpers/mockTab';
+import { createMockAITab, createMockDesignPick } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -170,6 +170,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteDiffReviewCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteDesignPickCommandHandler:
+		| ((request: Record<string, unknown>) => Record<string, unknown>)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
@@ -330,6 +333,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteDiffReviewCommandResponse: vi.fn(),
+		onRemoteDesignPickCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteDesignPickCommandHandler = handler;
+			return () => {};
+		}),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -518,6 +525,8 @@ describe('useRemoteIntegration', () => {
 		sendRemoteStopGroupChatResponse: vi.fn(),
 		onRemoteArchiveGroupChat: vi.fn().mockReturnValue(() => {}),
 		sendRemoteArchiveGroupChatResponse: vi.fn(),
+		onRemoteSetGroupChatUnread: vi.fn().mockReturnValue(() => {}),
+		sendRemoteSetGroupChatUnreadResponse: vi.fn(),
 		onRemoteSendGroupChatMessage: vi.fn().mockReturnValue(() => {}),
 		sendRemoteSendGroupChatMessageResponse: vi.fn(),
 		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
@@ -4095,6 +4104,27 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	describe('remote Design Mode chip command', () => {
+		// The preload answers the CLI with whatever the subscribed callback
+		// returns, so the hook must subscribe the service that reads the live store.
+		it('answers browser-picks from the chips staged in the composer', () => {
+			const tab = createMockTab({ stagedDesignPicks: [createMockDesignPick({ id: 'pick-1' })] });
+			const deps = createDeps({
+				sessions: [createMockSession({ id: 'session-1', aiTabs: [tab], activeTabId: tab.id })],
+			});
+			renderHook(() => useRemoteIntegration(deps));
+
+			expect(window.maestro.process.onRemoteDesignPickCommand).toHaveBeenCalledTimes(1);
+			expect(
+				onRemoteDesignPickCommandHandler?.({ action: 'list', sessionId: 'session-1' })
+			).toEqual({
+				success: true,
+				aiTabId: tab.id,
+				picks: [expect.objectContaining({ id: 'pick-1', screenshot: false })],
+			});
+		});
+	});
+
 	describe('remote Auto Run steering command', () => {
 		// The CLI process on the far end blocks on this reply, so the listener has
 		// to answer on the response channel for every outcome.
@@ -5883,7 +5913,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('group chat bridge', () => {
-		it('subscribes to all six group chat requests and unsubscribes on unmount', () => {
+		it('subscribes to all seven group chat requests and unsubscribes on unmount', () => {
 			const unsubscribe = vi.fn();
 			const listeners = [
 				mockProcess.onRemoteGetGroupChats,
@@ -5892,6 +5922,7 @@ describe('useRemoteIntegration', () => {
 				mockProcess.onRemoteStopGroupChat,
 				mockProcess.onRemoteSendGroupChatMessage,
 				mockProcess.onRemoteArchiveGroupChat,
+				mockProcess.onRemoteSetGroupChatUnread,
 			];
 			for (const listener of listeners) listener.mockReturnValue(unsubscribe);
 
@@ -5899,7 +5930,7 @@ describe('useRemoteIntegration', () => {
 			for (const listener of listeners) expect(listener).toHaveBeenCalledTimes(1);
 
 			unmount();
-			expect(unsubscribe).toHaveBeenCalledTimes(6);
+			expect(unsubscribe).toHaveBeenCalledTimes(7);
 		});
 	});
 

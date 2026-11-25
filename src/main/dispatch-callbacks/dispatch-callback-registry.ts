@@ -18,6 +18,7 @@ import type {
 	DispatchCallbackRegistration,
 	DispatchCallbackStatus,
 } from './types';
+import { DISPATCH_OUTPUT_MAX_CHARS } from './dispatch-callback-prompt';
 
 /** Cap on simultaneously armed callbacks - a cheap runaway guard. */
 export const MAX_ARMED_CALLBACKS = 200;
@@ -44,6 +45,19 @@ export const AUTORUN_GRACE_MS = 3000;
  * and only ever fire on timeout.
  */
 export const SPAWN_LOOKBACK_MS = 60_000;
+
+/**
+ * How much of a dispatched turn's output to keep. Twice the rendered cap so
+ * `truncateDispatchOutput` can still tell the caller the text was cut.
+ */
+export const CAPTURED_OUTPUT_MAX_CHARS = DISPATCH_OUTPUT_MAX_CHARS * 2;
+
+function appendCapped(existing: string | undefined, text: string): string {
+	const combined = (existing ?? '') + text;
+	return combined.length > CAPTURED_OUTPUT_MAX_CHARS
+		? combined.slice(-CAPTURED_OUTPUT_MAX_CHARS)
+		: combined;
+}
 
 export interface DispatchCallbackRegistryDeps {
 	now?: () => number;
@@ -93,6 +107,12 @@ export class DispatchCallbackRegistry {
 	private recentSpawns = new Map<string, number>();
 	/** processSessionId -> last observed exit (see SPAWN_LOOKBACK_MS). */
 	private recentExits = new Map<string, { at: number; exitCode: number | null }>();
+	/**
+	 * processSessionId -> output since its last spawn, kept only while that spawn
+	 * is inside SPAWN_LOOKBACK_MS. Lets a late `--new-tab` registration adopt
+	 * output its process already emitted.
+	 */
+	private recentOutput = new Map<string, string>();
 	private readonly now: () => number;
 	private readonly generateId: () => string;
 	private readonly graceMs: number;
@@ -148,6 +168,8 @@ export class DispatchCallbackRegistry {
 			if (spawnedAt !== undefined && now - spawnedAt <= SPAWN_LOOKBACK_MS) {
 				entry.state = 'armed';
 				entry.startedAt = spawnedAt;
+				const earlyOutput = this.recentOutput.get(entry.processSessionId);
+				if (earlyOutput) entry.output = earlyOutput;
 				// A short turn can spawn AND exit before the new-tab ack round-trips
 				// back here. Adopting only the spawn would leave the entry armed
 				// forever, reporting a bogus `timeout` instead of the real result.
@@ -193,6 +215,7 @@ export class DispatchCallbackRegistry {
 	noteSpawn(processSessionId: string): void {
 		const now = this.now();
 		this.recentSpawns.set(processSessionId, now);
+		this.recentOutput.delete(processSessionId);
 		this.prunePendingSpawns(now);
 		for (const entry of this.entries.values()) {
 			if (entry.processSessionId !== processSessionId) continue;
@@ -209,10 +232,33 @@ export class DispatchCallbackRegistry {
 		}
 	}
 
+	/**
+	 * A process emitted display text. Captured for {{DISPATCH_OUTPUT}} on armed
+	 * entries only: a `pending` entry's tab is still running a predecessor turn
+	 * whose text is not ours.
+	 */
+	noteData(processSessionId: string, text: string): void {
+		if (!text) return;
+		if (this.recentSpawns.has(processSessionId)) {
+			this.recentOutput.set(
+				processSessionId,
+				appendCapped(this.recentOutput.get(processSessionId), text)
+			);
+		}
+		for (const entry of this.entries.values()) {
+			if (entry.processSessionId !== processSessionId) continue;
+			if (entry.state !== 'armed') continue;
+			entry.output = appendCapped(entry.output, text);
+		}
+	}
+
 	/** Keep the spawn/exit lookback maps from growing without bound. */
 	private prunePendingSpawns(now: number): void {
 		for (const [key, at] of this.recentSpawns) {
-			if (now - at > SPAWN_LOOKBACK_MS) this.recentSpawns.delete(key);
+			if (now - at > SPAWN_LOOKBACK_MS) {
+				this.recentSpawns.delete(key);
+				this.recentOutput.delete(key);
+			}
 		}
 		for (const [key, exit] of this.recentExits) {
 			if (now - exit.at > SPAWN_LOOKBACK_MS) this.recentExits.delete(key);
@@ -288,7 +334,7 @@ export class DispatchCallbackRegistry {
 		for (const entry of [...this.entries.values()]) {
 			if (entry.targetAgentId !== agentId) continue;
 			if (entry.state !== 'awaiting-autorun') continue;
-			this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed', progress);
+			this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed', progress, true);
 		}
 	}
 
@@ -401,6 +447,7 @@ export class DispatchCallbackRegistry {
 		this.entries.clear();
 		this.recentSpawns.clear();
 		this.recentExits.clear();
+		this.recentOutput.clear();
 	}
 
 	private countActive(): number {
@@ -420,7 +467,8 @@ export class DispatchCallbackRegistry {
 	private fire(
 		entry: DispatchCallbackEntry,
 		status: DispatchCallbackStatus,
-		progress?: { tasksCompleted?: number; tasksTotal?: number }
+		progress?: { tasksCompleted?: number; tasksTotal?: number },
+		awaitedAutoRun = false
 	): void {
 		if (this.isTerminal(entry)) return;
 		this.clearGraceTimer(entry.callbackId);
@@ -431,6 +479,8 @@ export class DispatchCallbackRegistry {
 			status,
 			exitCode: entry.exitCode ?? null,
 			durationMs: entry.durationMs ?? this.now() - entry.createdAt,
+			...(entry.output ? { output: entry.output } : {}),
+			...(awaitedAutoRun ? { awaitedAutoRun: true } : {}),
 			...(progress?.tasksCompleted !== undefined
 				? { tasksCompleted: progress.tasksCompleted }
 				: {}),

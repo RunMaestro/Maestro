@@ -40,7 +40,10 @@ import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
 import { isValidAgentId } from '../../../../shared/agentIds';
-import { classifyMissingBinary, missingRuntimeLabel } from '../../../../shared/agentInstall';
+import {
+	classifyAgentErrorMissingBinary,
+	missingRuntimeLabel,
+} from '../../../../shared/agentInstall';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
@@ -526,13 +529,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 					if (ownsSideEffects && deps.addHistoryEntryRef.current && session) {
 						const errorTitle = getErrorTitleForType(agentError.type);
-						const missingBinaryReason =
-							agentError.type === 'agent_not_installed'
-								? classifyMissingBinary({
-										exitCode: agentError.raw?.exitCode,
-										stderr: agentError.raw?.stderr,
-									})
-								: null;
+						const missingBinaryReason = classifyAgentErrorMissingBinary(agentError);
 						const errorExplanation = [
 							`**Auto Run Error: ${errorTitle}**`,
 							'',

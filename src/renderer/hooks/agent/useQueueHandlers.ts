@@ -133,7 +133,7 @@ export function useQueueHandlers({
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, patch, itemId);
+					const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
 					return {
 						...s,
 						executionQueue: applyQueuedItemEdit(

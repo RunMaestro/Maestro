@@ -13,6 +13,10 @@ vi.mock('../../../renderer/hooks/agent/useAgentErrorRecovery', () => ({
 	useAgentErrorRecovery: vi.fn().mockReturnValue({ recoveryActions: [] }),
 }));
 
+vi.mock('../../../renderer/services/autoRunRestartResume', () => ({
+	saveAutoRunsForRestart: vi.fn().mockResolvedValue(0),
+}));
+
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
 		getDiff: vi.fn().mockResolvedValue({ diff: '' }),
@@ -38,6 +42,7 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
 import { gitService } from '../../../renderer/services/git';
+import { saveAutoRunsForRestart } from '../../../renderer/services/autoRunRestartResume';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab as createBaseMockAITab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -373,18 +378,62 @@ describe('useModalHandlers', () => {
 	// ======================================================================
 
 	describe('Group C: Quit Handlers', () => {
-		it('handleConfirmQuit closes quit modal and calls confirmQuit', () => {
+		it('handleConfirmQuit closes quit modal and calls confirmQuit', async () => {
 			getModalActions().setQuitConfirmModalOpen(true);
 			expect(useModalStore.getState().isOpen('quitConfirm')).toBe(true);
 
 			const { result } = renderHook(() =>
 				useModalHandlers(createInputRef(), createTerminalOutputRef())
 			);
-			act(() => {
-				result.current.handleConfirmQuit();
+			await act(async () => {
+				await result.current.handleConfirmQuit();
 			});
 
 			expect(useModalStore.getState().isOpen('quitConfirm')).toBe(false);
+			expect(window.maestro.app.confirmQuit).toHaveBeenCalledOnce();
+		});
+
+		it('handleConfirmQuit saves running Auto Runs before quitting', async () => {
+			const order: string[] = [];
+			vi.mocked(saveAutoRunsForRestart).mockImplementationOnce(async () => {
+				order.push('save');
+				return 1;
+			});
+			vi.mocked(window.maestro.app.confirmQuit).mockImplementationOnce(() => {
+				order.push('quit');
+			});
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			await act(async () => {
+				await result.current.handleConfirmQuit();
+			});
+
+			expect(saveAutoRunsForRestart).toHaveBeenCalledWith('quit');
+			expect(order).toEqual(['save', 'quit']);
+		});
+
+		it('handleConfirmQuit saves nothing when the user turned resume off', async () => {
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			await act(async () => {
+				await result.current.handleConfirmQuit({ resumeAutoRuns: false });
+			});
+
+			expect(saveAutoRunsForRestart).not.toHaveBeenCalled();
+			expect(window.maestro.app.confirmQuit).toHaveBeenCalledOnce();
+		});
+
+		it('handleConfirmQuit still quits when the Auto Run save fails', async () => {
+			vi.mocked(saveAutoRunsForRestart).mockRejectedValueOnce(new Error('disk full'));
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			await act(async () => {
+				await result.current.handleConfirmQuit();
+			});
+
 			expect(window.maestro.app.confirmQuit).toHaveBeenCalledOnce();
 		});
 

@@ -40,6 +40,9 @@ import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
 import { resumeSelectionKey } from '../../services/resumableSession';
+import { saveAutoRunsForRestart } from '../../services/autoRunRestartResume';
+import type { QuitConfirmOptions } from '../../components/QuitConfirmModal';
+import { logger } from '../../utils/logger';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 
@@ -81,7 +84,7 @@ export interface ModalHandlersReturn {
 	handleCloseRenameTabModal: () => void;
 
 	// Quit handlers
-	handleConfirmQuit: () => void;
+	handleConfirmQuit: (options?: QuitConfirmOptions) => Promise<void>;
 	handleCancelQuit: () => void;
 	handleQuitWhenIdle: () => void;
 
@@ -297,8 +300,21 @@ export function useModalHandlers(
 	// Group C: Quit Handlers
 	// ====================================================================
 
-	const handleConfirmQuit = useCallback(() => {
+	const handleConfirmQuit = useCallback(async (options?: QuitConfirmOptions) => {
 		getModalActions().setQuitConfirmModalOpen(false);
+		// Save each running Auto Run's place so the next launch continues it,
+		// unless the user unchecked the option: then the quit is an emergency
+		// stop and nothing is saved. The user already chose to quit, so a failed
+		// save is logged and the quit still goes ahead.
+		if (options?.resumeAutoRuns ?? true) {
+			try {
+				await saveAutoRunsForRestart('quit');
+			} catch (error) {
+				logger.error('[Quit] Could not save Auto Runs to resume', undefined, {
+					error: String(error),
+				});
+			}
+		}
 		window.maestro.app.confirmQuit();
 	}, []);
 

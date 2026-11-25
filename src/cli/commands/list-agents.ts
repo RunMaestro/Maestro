@@ -9,7 +9,7 @@
 // table and the Delegation Graph read. Listing an agent never grants access to it.
 
 import { readCallerIdentity } from '../../shared/agentDelegation';
-import { collectHiddenGroupIds, type HiddenGroupInput } from '../../shared/hiddenGroups';
+import { agentGroupLookup, type AgentGroupInfo } from '../../shared/groupHierarchy';
 import {
 	liftedAgentRef,
 	readLiftedTo,
@@ -23,6 +23,7 @@ import {
 	readLiveSessions,
 	readGroups,
 	getSessionsByGroup,
+	readPrimaryAgentId,
 	resolveAgentId,
 	resolveGroupId,
 } from '../services/storage';
@@ -46,6 +47,8 @@ interface ListAgentsOptions {
 	descriptions?: boolean;
 	/** Leave out agents whose group is hidden (or sits under a hidden parent). */
 	visibleOnly?: boolean;
+	/** Only agents in a hidden group (or under a hidden parent group). */
+	hiddenOnly?: boolean;
 	/** Keep only the agents the caller may reach, each with its access. Local agents only. */
 	reachable?: boolean;
 	/** The caller `--reachable` resolves for; defaults to `MAESTRO_CALLER_AGENT_ID`. */
@@ -73,13 +76,18 @@ interface AgentJsonRow {
 	groupId?: string;
 	/** The group's name; null when the agent has no group or the group is gone. */
 	groupName: string | null;
-	/** True when the group is hidden, or sits under a hidden parent. Hiding never blocks access. */
-	groupHidden: boolean;
+	/**
+	 * True when the group is hidden, or sits under a hidden parent. Hiding never blocks access.
+	 * Null only on a peer's agent whose host could not list its groups.
+	 */
+	groupHidden: boolean | null;
 	/** What the agent is for, as its owner wrote it for peers; null when unset. */
 	peerDescription: string | null;
 	autoRunFolderPath?: string;
 	worktreeBasePath: string | null;
 	bookmarked: boolean;
+	/** Whether this is the Primary Agent (Settings > General). Always false for a peer's agent. */
+	primary: boolean;
 	sessionSshRemoteConfig: unknown;
 	/** Where a lifted local agent runs now (`peer`, `agentId`, `at`); null when it was not lifted. */
 	liftedTo: LiftedToPointer | null;
@@ -88,31 +96,8 @@ interface AgentJsonRow {
 	access?: AgentAccess;
 }
 
-/** Group names and the hidden set of one store (local, or one peer's host). */
-interface GroupLabels {
-	names: ReadonlyMap<string, string>;
-	hidden: ReadonlySet<string>;
-}
-
-const NO_GROUP_LABELS: GroupLabels = { names: new Map(), hidden: new Set() };
-
-function groupLabels(groups: ReadonlyArray<HiddenGroupInput & { name: string }>): GroupLabels {
-	return {
-		names: new Map(groups.map((g) => [g.id, g.name])),
-		hidden: collectHiddenGroupIds(groups),
-	};
-}
-
-/** The group fields of a row. */
-function groupFields(
-	groupId: string | undefined,
-	labels: GroupLabels
-): Pick<AgentJsonRow, 'groupName' | 'groupHidden'> {
-	return {
-		groupName: (groupId && labels.names.get(groupId)) || null,
-		groupHidden: !!groupId && labels.hidden.has(groupId),
-	};
-}
+/** A store's group name and hidden state, by `groupId`. */
+type GroupLookup = (groupId: string | undefined) => AgentGroupInfo;
 
 /** A stored description, trimmed; null when unset or blank. */
 function readPeerDescription(value: unknown): string | null {
@@ -120,27 +105,32 @@ function readPeerDescription(value: unknown): string | null {
 }
 
 /** A local agent as a JSON row. */
-function localJsonRow(s: SessionInfo, labels: GroupLabels): AgentJsonRow {
+function localJsonRow(
+	s: SessionInfo,
+	groupOf: GroupLookup,
+	primaryAgentId: string | null
+): AgentJsonRow {
 	return {
 		id: s.id,
 		name: s.name,
 		toolType: s.toolType,
 		cwd: s.cwd,
 		groupId: s.groupId,
-		...groupFields(s.groupId, labels),
+		...groupOf(s.groupId),
 		peerDescription: readPeerDescription(s.peerDescription),
 		autoRunFolderPath: s.autoRunFolderPath,
 		// Where this agent's worktrees go, so a caller can honor it instead of
 		// inventing a location the desktop never sees. Null when unset.
 		worktreeBasePath: s.worktreeConfig?.basePath ?? null,
 		bookmarked: !!s.bookmarked,
+		primary: s.id === primaryAgentId,
 		sessionSshRemoteConfig: s.sessionSshRemoteConfig ?? null,
 		liftedTo: readLiftedTo(s.liftedTo) ?? null,
 	};
 }
 
 /** A host's agent as a JSON row, in the same shape as a local one. */
-function hostJsonRow(record: AgentRecord, peer: string, labels: GroupLabels): AgentJsonRow {
+function hostJsonRow(record: AgentRecord, peer: string, groupOf: GroupLookup | null): AgentJsonRow {
 	const worktree = record.worktreeConfig as { basePath?: string } | undefined;
 	return {
 		id: record.id,
@@ -148,11 +138,13 @@ function hostJsonRow(record: AgentRecord, peer: string, labels: GroupLabels): Ag
 		toolType: record.toolType,
 		cwd: record.cwd ?? '',
 		groupId: record.groupId,
-		...groupFields(record.groupId, labels),
+		...(groupOf ? groupOf(record.groupId) : { groupName: null, groupHidden: null }),
 		peerDescription: readPeerDescription(record.peerDescription),
 		autoRunFolderPath: record.autoRunFolderPath,
 		worktreeBasePath: worktree?.basePath ?? null,
 		bookmarked: !!record.bookmarked,
+		// The Primary Agent is a setting of THIS machine; a peer's agent is never it.
+		primary: false,
 		sessionSshRemoteConfig: record.sessionSshRemoteConfig ?? null,
 		liftedTo: readLiftedTo(record.liftedTo) ?? null,
 		peer,
@@ -168,6 +160,7 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
 		groupId: row.groupId,
 		autoRunFolderPath: row.autoRunFolderPath,
 		bookmarked: row.bookmarked,
+		primary: row.primary,
 		...(row.groupName ? { groupName: row.groupName } : {}),
 		...(row.groupHidden ? { groupHidden: true } : {}),
 		...(row.peerDescription ? { peerDescription: row.peerDescription } : {}),
@@ -177,9 +170,15 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
 	};
 }
 
-/** `--visible-only`: drop the rows whose group is hidden. */
+/**
+ * Apply `--visible-only` / `--hidden-only`. A row whose hidden state is unknown (a peer that could
+ * not list its groups) passes neither filter: a caller asking for visible agents only is asking
+ * NOT to touch what the user put away, so an unknown is left out.
+ */
 function applyVisibility(rows: AgentJsonRow[], options: ListAgentsOptions): AgentJsonRow[] {
-	return options.visibleOnly ? rows.filter((row) => !row.groupHidden) : rows;
+	if (options.visibleOnly) return rows.filter((row) => row.groupHidden === false);
+	if (options.hiddenOnly) return rows.filter((row) => row.groupHidden === true);
+	return rows;
 }
 
 /** A usage error, reported in the caller's format, then exit. */
@@ -235,6 +234,9 @@ function resolveReachableCaller(options: ListAgentsOptions): string {
 }
 
 export function listAgents(options: ListAgentsOptions): void | Promise<void> {
+	if (options.visibleOnly && options.hiddenOnly) {
+		usageError('Pass --visible-only or --hidden-only, not both.', options.json);
+	}
 	if (options.from !== undefined && !options.reachable) {
 		usageError('--from names the caller for --reachable; pass --reachable too.', options.json);
 	}
@@ -243,21 +245,21 @@ export function listAgents(options: ListAgentsOptions): void | Promise<void> {
 	try {
 		let sessions;
 		let groupName: string | undefined;
-		const groups = readGroups();
+		const groupOf = agentGroupLookup(readGroups());
 
 		if (options.group) {
 			// Resolve partial group ID
 			const groupId = resolveGroupId(options.group);
 			sessions = getSessionsByGroup(groupId);
 			// Get the group name for display
-			groupName = groups.find((g) => g.id === groupId)?.name;
+			groupName = groupOf(groupId).groupName ?? undefined;
 		} else {
 			sessions = readLiveSessions();
 		}
 
-		const labels = groupLabels(groups);
+		const primaryAgentId = readPrimaryAgentId();
 		let rows = applyVisibility(
-			sessions.map((s) => localJsonRow(s, labels)),
+			sessions.map((s) => localJsonRow(s, groupOf, primaryAgentId)),
 			options
 		);
 		let reachableFrom: string | undefined;
@@ -331,21 +333,13 @@ async function readPeerRows(peerRef: string): Promise<{ peer: string; rows: Agen
 	const connection = await connectPeer(peerRef);
 	try {
 		const agents = await listHostAgents(connection);
-		// Group names are labels only: a host that cannot list its groups still lists its agents.
+		// Group names and hidden state are labels: a host that cannot list its groups still lists
+		// its agents, with `groupName` and `groupHidden` null.
 		const groups = await connection.client.groups.list();
-		const labels = groups.ok
-			? groupLabels(
-					groups.value.map((g) => ({
-						id: g.id,
-						name: g.name,
-						parentGroupId: g.parentGroupId,
-						hidden: g.hidden === true,
-					}))
-				)
-			: NO_GROUP_LABELS;
+		const groupOf = groups.ok ? agentGroupLookup(groups.value) : null;
 		return {
 			peer: connection.peer,
-			rows: agents.map((record) => hostJsonRow(record, connection.peer, labels)),
+			rows: agents.map((record) => hostJsonRow(record, connection.peer, groupOf)),
 		};
 	} finally {
 		await connection.release();
@@ -399,8 +393,12 @@ async function listAgentsWithPeers(options: ListAgentsOptions): Promise<void> {
 	// not hide the others; it is reported after the list, and the exit code is its exit code.
 	let rows: AgentJsonRow[];
 	try {
-		const labels = groupLabels(readGroups());
-		rows = readLiveSessions().map((s) => ({ ...localJsonRow(s, labels), peer: null }));
+		const groupOf = agentGroupLookup(readGroups());
+		const primaryAgentId = readPrimaryAgentId();
+		rows = readLiveSessions().map((s) => ({
+			...localJsonRow(s, groupOf, primaryAgentId),
+			peer: null,
+		}));
 	} catch (error) {
 		const failure = toFailure(error);
 		reportFailure(

@@ -73,13 +73,13 @@ describe('layoutGroupSections', () => {
 		...overrides,
 	});
 
-	it('marks a collapsed group as not expanded, but forces it open under the unread filter', () => {
+	it('keeps a collapsed group collapsed with the unread filter on or off', () => {
 		const g = group('g', { collapsed: true });
 		const sessionsByGroupId = new Map([['g', [session('a')]]]);
 		expect(layoutGroupSections([g], ctx({ sessionsByGroupId }))[0].expanded).toBe(false);
 		expect(
 			layoutGroupSections([g], ctx({ sessionsByGroupId, showUnreadAgentsOnly: true }))[0].expanded
-		).toBe(true);
+		).toBe(false);
 	});
 
 	it('drops a group the unread filter emptied', () => {
@@ -87,22 +87,27 @@ describe('layoutGroupSections', () => {
 		expect(layouts).toEqual([]);
 	});
 
-	it('drops a Groups+ subgroup while its parent is collapsed', () => {
-		const parent = group('parent', { collapsed: true });
-		const child = group('child', { parentGroupId: 'parent' });
-		const layouts = layoutGroupSections(
-			[parent, child],
-			ctx({
-				groupsPlusEnabled: true,
-				groupById: new Map([
-					['parent', parent],
-					['child', child],
-				]),
-				childrenByParentId: new Map([['parent', [child]]]),
-			})
-		);
-		expect(layouts.map((l) => l.group.id)).toEqual(['parent']);
-	});
+	it.each([false, true])(
+		'drops a Groups+ subgroup while its parent is collapsed (unread filter %s)',
+		(showUnreadAgentsOnly) => {
+			const parent = group('parent', { collapsed: true });
+			const child = group('child', { parentGroupId: 'parent' });
+			const layouts = layoutGroupSections(
+				[parent, child],
+				ctx({
+					groupsPlusEnabled: true,
+					showUnreadAgentsOnly,
+					sessionsByGroupId: new Map([['child', [session('a')]]]),
+					groupById: new Map([
+						['parent', parent],
+						['child', child],
+					]),
+					childrenByParentId: new Map([['parent', [child]]]),
+				})
+			);
+			expect(layouts.map((l) => [l.group.id, l.expanded])).toEqual([['parent', false]]);
+		}
+	);
 });
 
 describe('layoutVirtualGroupSections', () => {

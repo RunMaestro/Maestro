@@ -132,11 +132,12 @@ agent is still busy after 15 minutes, the chat says so and the turn moves on wit
 
 Right-click on a group chat in the sidebar to access the context menu:
 
-| Action     | Description                                                                                    |
-| ---------- | ---------------------------------------------------------------------------------------------- |
-| **Edit**   | Change the moderator agent or its settings (CLI args, path, environment variables, SSH remote) |
-| **Rename** | Change the group chat name                                                                     |
-| **Delete** | Remove the group chat and its conversation history                                             |
+| Action             | Description                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| **Edit**           | Change the moderator agent or its settings (CLI args, path, environment variables, SSH remote) |
+| **Rename**         | Change the group chat name                                                                     |
+| **Mark as Unread** | Put the red unread dot on the chat until you open it again (**Mark as Read** clears it)        |
+| **Delete**         | Remove the group chat and its conversation history                                             |
 
 ## Input Features
 

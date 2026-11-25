@@ -164,6 +164,8 @@ export function createCommandRemoteApi() {
 					fromTabId?: string;
 					withContext?: boolean;
 					consultChain?: ConsultChain;
+					sideQuestion?: boolean;
+					targetTabId?: string;
 				},
 				responseChannel: string
 			) => void
@@ -178,6 +180,8 @@ export function createCommandRemoteApi() {
 					fromTabId?: string;
 					withContext?: boolean;
 					consultChain?: ConsultChain;
+					sideQuestion?: boolean;
+					targetTabId?: string;
 				},
 				responseChannel: string
 			) => {

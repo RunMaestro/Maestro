@@ -7,10 +7,22 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Hourglass } from 'lucide-react';
+import { AlertTriangle, Hourglass, Play } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { useBatchStore } from '../stores/batchStore';
+import { selectResumableAutoRunIds } from '../services/autoRunRestartResume';
+
+/** What the user chose in the quit dialog. */
+export interface QuitConfirmOptions {
+	/**
+	 * Save running Auto Runs so the next launch continues them. On by default;
+	 * unchecking it makes the quit an emergency stop for every run.
+	 */
+	resumeAutoRuns: boolean;
+}
 
 interface QuitConfirmModalProps {
 	theme: Theme;
@@ -25,7 +37,7 @@ interface QuitConfirmModalProps {
 	/** Number of active (non-idle) group chats */
 	activeGroupChatCount?: number;
 	/** Callback when user confirms quit */
-	onConfirmQuit: () => void;
+	onConfirmQuit: (options: QuitConfirmOptions) => void;
 	/** Callback when user chooses to quit once all operations finish */
 	onQuitWhenIdle?: () => void;
 	/** Callback when user cancels (stays in app) */
@@ -52,6 +64,9 @@ export function QuitConfirmModal({
 	const cancelButtonRef = useRef<HTMLButtonElement>(null);
 	// When checked, the app stays open and quits itself once everything is idle.
 	const [quitWhenIdle, setQuitWhenIdle] = useState(false);
+	// Opted in by default. Unchecking it is the emergency stop: quit kills every
+	// Auto Run and none of them comes back on the next launch.
+	const [resumeAutoRuns, setResumeAutoRuns] = useState(true);
 
 	useModalLayer(MODAL_PRIORITIES.QUIT_CONFIRM, 'Confirm Quit Application', onCancel);
 
@@ -80,6 +95,12 @@ export function QuitConfirmModal({
 	const remainingTerminalCount = activeTerminalTasks.length - 3;
 
 	const hasActiveOperations = busyAgentCount > 0 || hasTerminalTasks || hasCueRuns || hasGroupChats;
+
+	// Auto Runs are saved when the quit is confirmed and continue on the next
+	// launch (services/autoRunRestartResume.ts), so they are not lost work.
+	const resumableCount = useBatchStore(
+		useShallow((s) => selectResumableAutoRunIds(s.batchRunStates))
+	).length;
 
 	return (
 		<div
@@ -303,10 +324,44 @@ export function QuitConfirmModal({
 						</label>
 					)}
 
+					{/* Resume Auto Runs on the next launch. Hidden under Quit when idle,
+					    because then the runs finish before the app quits. */}
+					{resumableCount > 0 && !quitWhenIdle && (
+						<label
+							className="mt-3 flex items-start gap-2 cursor-pointer select-none"
+							style={{ color: theme.colors.textMain }}
+							data-testid="quit-autorun-resume-option"
+						>
+							<input
+								type="checkbox"
+								checked={resumeAutoRuns}
+								onChange={(e) => setResumeAutoRuns(e.target.checked)}
+								className="mt-0.5 cursor-pointer"
+								style={{ accentColor: theme.colors.accent }}
+							/>
+							<span className="text-xs leading-relaxed">
+								<span className="font-medium inline-flex items-center gap-1">
+									<Play className="w-3 h-3" style={{ color: theme.colors.success }} />
+									Resume {resumableCount === 1 ? 'Auto Run' : `${resumableCount} Auto Runs`} on next
+									launch
+								</span>
+								<span className="block" style={{ color: theme.colors.textDim }}>
+									{resumeAutoRuns
+										? `${resumableCount === 1 ? 'It picks' : 'Each picks'} up where it left off. The task in progress starts over.`
+										: `${resumableCount === 1 ? 'The Auto Run stops' : 'Every Auto Run stops'} now and does not come back.`}
+								</span>
+							</span>
+						</label>
+					)}
+
 					{/* Actions */}
 					<div className="mt-5 flex items-center justify-center gap-2 flex-nowrap">
 						<button
-							onClick={quitWhenIdle && onQuitWhenIdle ? onQuitWhenIdle : onConfirmQuit}
+							onClick={
+								quitWhenIdle && onQuitWhenIdle
+									? onQuitWhenIdle
+									: () => onConfirmQuit({ resumeAutoRuns: resumableCount > 0 && resumeAutoRuns })
+							}
 							className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hover:opacity-90 whitespace-nowrap"
 							style={{
 								backgroundColor: quitWhenIdle ? theme.colors.accent : theme.colors.error,

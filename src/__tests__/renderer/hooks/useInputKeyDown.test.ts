@@ -63,6 +63,7 @@ import { useVoiceUiStore } from '../../../renderer/stores/voiceUiStore';
 import type { InputKeyDownDeps } from '../../../renderer/hooks/input/useInputKeyDown';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../../renderer/services/aiCommand';
+import { createMockAITab, createMockDesignPick } from '../../helpers/mockTab';
 
 import {
 	STEER_SEND_EVENT,
@@ -1222,6 +1223,32 @@ describe('Forced parallel send shortcut', () => {
 		expect(queued).toHaveBeenCalledTimes(1);
 		expect(deps.processInput).not.toHaveBeenCalled();
 	});
+
+	it.each([
+		['Design Mode chips', { stagedDesignPicks: [createMockDesignPick()] }],
+		['staged images', { stagedImages: ['data:image/png;base64,AAAA'] }],
+	])(
+		'sends a draft of only %s in parallel instead of force-sending the queue',
+		(_label, staged) => {
+			// No text, but the tab still holds a draft Enter would send, so the chord
+			// sends that draft rather than reaching past it into the queue.
+			const tab = createMockAITab({ id: 'tab-1', ...staged });
+			setActiveSession({ inputMode: 'ai', aiTabs: [tab], activeTabId: tab.id });
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+			const deps = createMockDeps({ inputValue: '' });
+			renderHook(() => useInputKeyDown(deps));
+
+			const queued = vi.fn();
+			window.addEventListener('maestro:triggerForceSendQueued', queued);
+			act(() => {
+				window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+			});
+			window.removeEventListener('maestro:triggerForceSendQueued', queued);
+
+			expect(queued).not.toHaveBeenCalled();
+			expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
+		}
+	);
 
 	it('ignores the window event when the feature is disabled or not in AI mode', () => {
 		// Same gates as the keydown path - one runner, so they cannot drift.

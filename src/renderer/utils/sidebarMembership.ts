@@ -18,8 +18,8 @@
  * there, not here.
  */
 
-import { collectHiddenGroupIds } from '../../shared/hiddenGroups';
 import type { Group, Session } from '../types';
+import { collectHiddenGroupIds } from '../../shared/groupHierarchy';
 import { sessionOrChildrenNeedAttention, type AttentionContext } from './sessionAttention';
 // Imported from the leaf module rather than `tabHelpers` so a Left Bar predicate
 // doesn't drag the whole tab-management surface (and its import cycle) with it.
@@ -90,8 +90,9 @@ export function passesUnreadFilter(session: Session, ctx: UnreadFilterContext): 
 	return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 }
 
-// Which groups are flagged hidden (inherited down a parent's children). It lives
-// in `src/shared` so `maestro-cli list agents` reads the flag the same way.
+// The hidden-group rule lives in shared so `maestro-cli list agents` / `show agent`
+// report the same `groupHidden` the Left Bar acts on. Re-exported for the
+// renderer callers that already import it from here.
 export { collectHiddenGroupIds };
 
 /**

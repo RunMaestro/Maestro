@@ -194,7 +194,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 						title="A maestro://run link that opens a new tab in this agent and sends a prompt"
 					>
 						<Link2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						Create Prompt Link...
+						Create Prompt Link
 						{shortcuts.openPromptLinks && (
 							<ShortcutHint keys={shortcuts.openPromptLinks.keys} theme={theme} />
 						)}
@@ -247,18 +247,6 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					</button>
 				)}
 
-				{/* Export as HTML - only show if tab has logs */}
-				{(tab.logs?.length ?? 0) >= 1 && onExportHtml && (
-					<button
-						onClick={onExportHtmlClick}
-						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-					>
-						<Download className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						Export as HTML
-					</button>
-				)}
-
 				{/* Snooze - hide the tab until a chosen moment, then bring it back */}
 				{onSnooze && (
 					<button
@@ -271,6 +259,19 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 						{tabShortcuts.snoozeTab && (
 							<ShortcutHint keys={tabShortcuts.snoozeTab.keys} theme={theme} />
 						)}
+					</button>
+				)}
+
+				{/* Export as HTML - only show if tab has logs. Last in the group: it is
+				    the one item with no shortcut, so the chords stay one block. */}
+				{(tab.logs?.length ?? 0) >= 1 && onExportHtml && (
+					<button
+						onClick={onExportHtmlClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Download className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Export as HTML
 					</button>
 				)}
 

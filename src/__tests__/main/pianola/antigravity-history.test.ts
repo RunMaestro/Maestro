@@ -142,7 +142,9 @@ describe.skipIf(!canLoadNodeSqlite())('Antigravity history', () => {
 	const scanned = () => path.join(dir, 'scanned');
 
 	beforeEach(() => {
-		dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-history-')));
+		// `.native`, as the scanner's `fs.promises.realpath` is: on Windows the
+		// JS `realpathSync` keeps an 8.3 temp path (`RUNNER~1`) the scanner expands.
+		dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-history-')));
 		account = path.join(dir, 'agy-account');
 		fs.mkdirSync(path.join(account, 'conversations'), { recursive: true });
 		fs.mkdirSync(path.join(account, 'cache'), { recursive: true });

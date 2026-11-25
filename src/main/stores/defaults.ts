@@ -168,10 +168,13 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	throughputGaugeSettings: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
 	// Model Map; null reads the old Utility source into the Housekeeping slot (readModelMap)
 	modelMap: null,
+	// Primary Agent (#2050): null until the user picks one (or the seed migration does)
+	primaryAgentId: null,
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)
 	coworkingBrowserInteractionConfirm: {},
+	coworkingBrowserTypingWithoutConfirmation: [],
 	// Coworking: opt-in background webview host for cross-session browser access + LRU cap
 	coworkingBackgroundBrowsers: false,
 	coworkingBackgroundBrowsersLimit: 2,

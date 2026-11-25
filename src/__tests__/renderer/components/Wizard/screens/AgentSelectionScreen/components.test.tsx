@@ -272,6 +272,29 @@ describe('AgentSelectionScreen components', () => {
 		expect(input).toHaveClass('max-w-full');
 	});
 
+	it('flags a name another agent already has (MAESTRO-199)', () => {
+		const props = {
+			theme: mockTheme,
+			agentName: 'Intranet',
+			isNameFieldFocused: false,
+			nameInputRef: { current: null },
+			sshRemotes: [],
+			sshRemoteConfig: undefined,
+			onAgentNameChange: vi.fn(),
+			onNameFocus: vi.fn(),
+			onNameBlur: vi.fn(),
+			onSshRemoteChange: vi.fn(),
+		};
+		const { rerender } = render(<AgentSelectionHeader {...props} duplicateAgentName="intranet" />);
+
+		expect(screen.getByRole('alert')).toHaveTextContent('An agent named "intranet" already exists');
+		expect(screen.getByLabelText('Agent name')).toHaveAttribute('aria-invalid', 'true');
+
+		rerender(<AgentSelectionHeader {...props} duplicateAgentName={null} />);
+		expect(screen.queryByRole('alert')).toBeNull();
+		expect(screen.getByLabelText('Agent name')).not.toHaveAttribute('aria-invalid');
+	});
+
 	it('renders footer disabled and enabled states', () => {
 		const onContinue = vi.fn();
 		const { rerender } = render(

@@ -16,12 +16,19 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuitConfirmModal } from '../../../renderer/components/QuitConfirmModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import {
+	resetAutoRunRestartTrackingForTests,
+	trackAutoRunLaunch,
+} from '../../../renderer/services/autoRunRestartResume';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
 	MessageSquare: () => <svg data-testid="message-square-icon" />,
 	Hourglass: () => <svg data-testid="hourglass-icon" />,
+	Play: () => <svg data-testid="play-icon" />,
 }));
 
 // Create a test theme
@@ -162,6 +169,78 @@ describe('QuitConfirmModal', () => {
 			);
 
 			expect(screen.getByText(/currently active/)).toBeInTheDocument();
+		});
+	});
+
+	describe('Auto Run resume option', () => {
+		const startResumableRun = () => {
+			trackAutoRunLaunch('agent-a', { documents: [], prompt: '', loopEnabled: false }, '/f');
+			useBatchStore.setState({
+				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+		};
+
+		const renderModal = (onConfirmQuit = vi.fn()) =>
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['My Session (Auto Run)']}
+					onConfirmQuit={onConfirmQuit}
+					onQuitWhenIdle={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+
+		afterEach(() => {
+			resetAutoRunRestartTrackingForTests();
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		it('is checked by default and quits with resume on', () => {
+			startResumableRun();
+			const onConfirmQuit = vi.fn();
+			renderModal(onConfirmQuit);
+
+			const option = screen.getByTestId('quit-autorun-resume-option');
+			expect(option).toHaveTextContent('Resume Auto Run on next launch');
+			expect(option.querySelector('input')).toBeChecked();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Quit Anyway' }));
+			expect(onConfirmQuit).toHaveBeenCalledWith({ resumeAutoRuns: true });
+		});
+
+		it('unchecked, quits as an emergency stop that resumes nothing', () => {
+			startResumableRun();
+			const onConfirmQuit = vi.fn();
+			renderModal(onConfirmQuit);
+
+			const option = screen.getByTestId('quit-autorun-resume-option');
+			fireEvent.click(option.querySelector('input')!);
+			expect(option).toHaveTextContent('The Auto Run stops now and does not come back');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Quit Anyway' }));
+			expect(onConfirmQuit).toHaveBeenCalledWith({ resumeAutoRuns: false });
+		});
+
+		it('hides the option under Quit when idle, because the runs finish first', () => {
+			startResumableRun();
+			renderModal();
+			fireEvent.click(screen.getByRole('checkbox', { name: /Quit when idle/ }));
+			expect(screen.queryByTestId('quit-autorun-resume-option')).not.toBeInTheDocument();
+		});
+
+		it('shows no option when no Auto Run can resume', () => {
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['Agent A']}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+			expect(screen.queryByTestId('quit-autorun-resume-option')).not.toBeInTheDocument();
 		});
 	});
 

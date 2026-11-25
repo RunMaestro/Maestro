@@ -204,6 +204,8 @@ export function registerCommandCallbacks(
 					fromTabId: params.fromTabId,
 					withContext: params.withContext,
 					...(params.consultChain ? { consultChain: params.consultChain } : {}),
+					sideQuestion: params.sideQuestion,
+					targetTabId: params.targetTabId,
 				},
 			],
 		});

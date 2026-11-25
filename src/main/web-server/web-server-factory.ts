@@ -20,6 +20,7 @@ import type {
 	CueInjectionScreenSetting,
 	CueInjectionScreenWriteResult,
 } from '../../shared/cue/injection-screen';
+import type { CueSubscriptionTriggerStat } from '../cue/cue-db';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { AddGroupChatParticipantCallback } from './types';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
@@ -121,6 +122,10 @@ export interface WebServerFactoryDependencies {
 	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
 	 *  Same dead-bridge fix as `getCueGraphData`. */
 	getCueActivityLog?: () => CueRunResult[];
+	/** Per-subscription trigger counts and last-trigger times from `cue.db`.
+	 *  Fills the `lastTriggered` / `triggerCount` fields of `cue list`.
+	 *  Absent = every subscription reports "never triggered". */
+	getCueSubscriptionTriggerStats?: () => CueSubscriptionTriggerStat[];
 	/** Collectors for a support package (`maestro-cli support-package`,
 	 *  `feedback submit --support-package`). Absent = the CLI reports the
 	 *  feature as unconfigured instead of shipping a hollow zip. */

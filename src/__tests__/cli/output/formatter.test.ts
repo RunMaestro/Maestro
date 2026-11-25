@@ -222,6 +222,35 @@ describe('formatter', () => {
 			expect(result).toContain('agent-abc123');
 		});
 
+		it("should name each row's group and tag a hidden one", () => {
+			const result = formatAgents([
+				{ id: 'a1', name: 'Shown', toolType: 'codex', cwd: '/a', groupName: 'Active' },
+				{
+					id: 'a2',
+					name: 'Parked',
+					toolType: 'codex',
+					cwd: '/b',
+					groupName: 'Retired',
+					groupHidden: true,
+				},
+			]);
+			const lines = result.split('\n');
+			const shown = lines.find((line) => line.includes('Shown'))!;
+			const parked = lines.find((line) => line.includes('Parked'))!;
+			expect(shown).toContain('[Active]');
+			expect(shown).not.toContain('[hidden group]');
+			expect(parked).toContain('[Retired]');
+			expect(parked).toContain('[hidden group]');
+		});
+
+		it('should not repeat the group on each row when the list is one group', () => {
+			const result = formatAgents(
+				[{ id: 'a1', name: 'Shown', toolType: 'codex', cwd: '/a', groupName: 'Active' }],
+				'Active'
+			);
+			expect(result.split('\n').find((line) => line.includes('Shown'))).not.toContain('in Active');
+		});
+
 		it('should format multiple agents', () => {
 			const agents: AgentDisplay[] = [
 				{
@@ -1165,6 +1194,15 @@ describe('formatter', () => {
 		it("shows the agent's advertised specialty", () => {
 			expect(formatAgentDetail({ ...baseAgent, peerDescription: 'Builds labs' })).toContain(
 				'Builds labs'
+			);
+		});
+
+		it('should tag a hidden group', () => {
+			expect(
+				formatAgentDetail({ ...baseAgent, groupName: 'Retired', groupHidden: true })
+			).toContain('[hidden group]');
+			expect(formatAgentDetail({ ...baseAgent, groupName: 'Live' })).not.toContain(
+				'[hidden group]'
 			);
 		});
 

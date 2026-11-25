@@ -50,7 +50,10 @@ export interface SegmentedOption<T extends string> {
 	shortLabel?: string;
 	/** Tooltip text. Useful when the label is abbreviated to fit the bar. */
 	title?: string;
-	/** Drawn before the label. Decorative: the label stays the accessible name. */
+	/**
+	 * Drawn before the label (or alone, with `iconOnly`). Decorative: the label
+	 * stays the accessible name.
+	 */
 	icon?: LucideIcon;
 }
 
@@ -79,6 +82,12 @@ export interface SegmentedControlProps<T extends string> {
 	 * depends on the user's font.
 	 */
 	stretch?: boolean;
+	/**
+	 * Draw each option's icon and no text, for a bar that has to stay narrow. The
+	 * label still names the segment to assistive tech and is its tooltip unless
+	 * the option sets a `title`. Every option needs an `icon` then.
+	 */
+	iconOnly?: boolean;
 }
 
 export function SegmentedControl<T extends string>({
@@ -90,6 +99,7 @@ export function SegmentedControl<T extends string>({
 	testId,
 	appearance = 'bar',
 	stretch = false,
+	iconOnly = false,
 }: SegmentedControlProps<T>) {
 	const pills = appearance === 'pills';
 	// The active pill is a solid accent fill, so its text is checked against the
@@ -178,12 +188,13 @@ export function SegmentedControl<T extends string>({
 						role="radio"
 						aria-checked={isActive}
 						aria-pressed={isActive}
-						title={opt.title}
+						title={opt.title ?? (iconOnly ? opt.label : undefined)}
+						aria-label={iconOnly ? opt.label : undefined}
 						tabIndex={isActive || (noneActive && i === 0) ? 0 : -1}
 						data-testid={testId ? `${testId}-${opt.value}` : undefined}
 					>
 						{Icon && <Icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
-						{opt.shortLabel ? (
+						{iconOnly ? null : opt.shortLabel ? (
 							<>
 								<span className="segmented-label-full">{opt.label}</span>
 								<span className="segmented-label-short hidden">{opt.shortLabel}</span>

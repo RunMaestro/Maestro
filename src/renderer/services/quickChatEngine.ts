@@ -226,7 +226,8 @@ function canChat(session: Session): boolean {
 
 /**
  * The agent the chat runs on: the one a started chat is on, else the configured
- * agent, else the agent active in the main window, else the first that can chat.
+ * agent, else the Primary Agent, else the agent active in the main window, else
+ * the first that can chat.
  */
 function resolveAgent(): Session | null {
 	const { sessions, activeSessionId } = useSessionStore.getState();
@@ -236,6 +237,7 @@ function resolveAgent(): Session | null {
 		// A chat in progress stays on its agent even if the setting changes.
 		byId(chat.turns.length > 0 ? chat.sessionId : null) ??
 		byId(quickChatSettings().agentId) ??
+		byId(useSettingsStore.getState().primaryAgentId) ??
 		byId(activeSessionId) ??
 		sessions.find(canChat) ??
 		null

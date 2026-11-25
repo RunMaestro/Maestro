@@ -199,7 +199,7 @@ export class StatsDB {
 	 * Replaces the repeated `if (!this.db) throw` guard clauses.
 	 */
 	get database(): Database.Database {
-		if (!this.db) throw new Error('Database not initialized');
+		if (!this.initialized || !this.db) throw new Error('Database not initialized');
 		return this.db;
 	}
 
@@ -256,9 +256,36 @@ export class StatsDB {
 			// Schedule VACUUM to run weekly instead of on every startup
 			this.vacuumIfNeededWeekly();
 		} catch (error) {
+			// Close directly without flushing: the schema may be missing or half-migrated.
+			if (this.db) {
+				try {
+					this.db.close();
+				} catch {
+					// Ignore close errors so the original initialization failure propagates
+				}
+				this.db = null;
+			}
+			this.initialized = false;
+			this.clearStatementCaches();
 			logger.error(`Failed to initialize stats database: ${error}`, LOG_CONTEXT);
 			throw error;
 		}
+	}
+
+	private clearStatementCaches(): void {
+		clearQueryEventCache();
+		clearAutoRunCache();
+		clearSessionLifecycleCache();
+		clearResilienceCache();
+		clearWizardRunsCache();
+		clearLocalModelRunsCache();
+		clearProxyRequestsCache();
+		clearSystemOneDecisionsCache();
+		clearImageAnnotationCache();
+		clearShortcutUsageCache();
+		clearTokenSpeedCache();
+		clearMultiWindowUsageCache();
+		clearAggregationCache();
 	}
 
 	/**
@@ -284,20 +311,7 @@ export class StatsDB {
 			this.db = null;
 			this.initialized = false;
 
-			// Clear all statement caches
-			clearQueryEventCache();
-			clearAutoRunCache();
-			clearSessionLifecycleCache();
-			clearResilienceCache();
-			clearWizardRunsCache();
-			clearLocalModelRunsCache();
-			clearProxyRequestsCache();
-			clearSystemOneDecisionsCache();
-			clearImageAnnotationCache();
-			clearShortcutUsageCache();
-			clearTokenSpeedCache();
-			clearMultiWindowUsageCache();
-			clearAggregationCache();
+			this.clearStatementCaches();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}

@@ -43,6 +43,7 @@ export const DOCUMENTED_SESSION_IDS: Record<string, string> = {
 	'documented-copilot-cli-normal': '8654632e-5527-4b25-8994-66b1be2c6cc8',
 	'documented-factory-droid-normal': 'droid-session-7f3a2c',
 	'documented-grok-normal': '0197c3a2-5b7e-7d10-9a41-3f2c8e6b1d04',
+	'documented-kilo-normal': 'ses_kilo4e2a91c07d3f',
 	'documented-omp-normal': 'omp-session-2b91',
 	'documented-pi-normal': 'pi-session-5c07',
 	'documented-qwen3-coder-normal': 'qwen-session-a41e',
@@ -55,6 +56,61 @@ export const DOCUMENTED_ANSWER = ANSWER;
 const id = (name: string): string => DOCUMENTED_SESSION_IDS[name];
 
 export const DOCUMENTED_RECORDINGS: Record<string, TurnRecording> = {
+	// Shapes: Kilo is a fork of OpenCode and prints the same `run --format json`
+	// stream, so this is captured/opencode-normal.json with Kilo's session id:
+	// step_start, text, step_finish(reason "stop") with tokens and cost.
+	'documented-kilo-normal': documented(
+		'documented-kilo-normal',
+		'kilo',
+		'Documented Kilo `run --format json` turn (the OpenCode wire format): step_start, one text part, step_finish with reason stop and token usage. Exit 0.',
+		[
+			line({
+				type: 'step_start',
+				timestamp: 1790624499442,
+				sessionID: id('documented-kilo-normal'),
+				part: {
+					id: 'prt_kilo_step_start',
+					messageID: 'msg_kilo_1',
+					sessionID: id('documented-kilo-normal'),
+					type: 'step-start',
+				},
+			}),
+			line({
+				type: 'text',
+				timestamp: 1790624499463,
+				sessionID: id('documented-kilo-normal'),
+				part: {
+					id: 'prt_kilo_text',
+					messageID: 'msg_kilo_1',
+					sessionID: id('documented-kilo-normal'),
+					type: 'text',
+					text: ANSWER,
+					time: { start: 1790624499440, end: 1790624499447 },
+				},
+			}),
+			line({
+				type: 'step_finish',
+				timestamp: 1790624499463,
+				sessionID: id('documented-kilo-normal'),
+				part: {
+					id: 'prt_kilo_step_finish',
+					reason: 'stop',
+					messageID: 'msg_kilo_1',
+					sessionID: id('documented-kilo-normal'),
+					type: 'step-finish',
+					tokens: {
+						total: 9903,
+						input: 7956,
+						output: 8,
+						reasoning: 0,
+						cache: { write: 0, read: 1939 },
+					},
+					cost: 0,
+				},
+			}),
+		]
+	),
+
 	// Shapes: codex-output-parser.ts ("Legacy stdout format"), which is what
 	// `codex exec --json` prints: thread.started, turn.started, item.completed,
 	// turn.completed.

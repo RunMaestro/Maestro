@@ -9,7 +9,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { Mic } from 'lucide-react';
+import type { SVGProps } from 'react';
+import { Mic, type LucideIcon } from 'lucide-react';
 import { SegmentedControl } from '../../../../renderer/components/ui/SegmentedControl';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -193,6 +194,78 @@ describe('SegmentedControl', () => {
 		renderControl('name');
 
 		expect(screen.getByTestId('sort-name').querySelector('.segmented-label-full')).toBeNull();
+	});
+
+	describe('icons', () => {
+		// An option's icon is a component the control draws at its own size.
+		const testIcon = (testId: string) =>
+			((props: SVGProps<SVGSVGElement>) => (
+				<svg data-testid={testId} {...props} />
+			)) as unknown as LucideIcon;
+		const ICON_OPTIONS = [
+			{ value: 'wide', label: 'Wide', icon: testIcon('icon-wide') },
+			{
+				value: 'narrow',
+				label: 'Narrow',
+				title: 'A narrow page',
+				icon: testIcon('icon-narrow'),
+			},
+		];
+
+		const renderIcons = (iconOnly: boolean, onChange = vi.fn()) => {
+			render(
+				<SegmentedControl
+					value="wide"
+					onChange={onChange}
+					options={ICON_OPTIONS}
+					theme={mockTheme}
+					ariaLabel="Width"
+					testId="width"
+					iconOnly={iconOnly}
+				/>
+			);
+			return onChange;
+		};
+
+		it('draws an option icon before its label', () => {
+			renderIcons(false);
+
+			const segment = screen.getByTestId('width-wide');
+			expect(segment).toHaveTextContent('Wide');
+			expect(segment.firstElementChild).toBe(screen.getByTestId('icon-wide'));
+			expect(segment).not.toHaveAttribute('aria-label');
+		});
+
+		it('with iconOnly draws the icon and no text, and still names the segment', () => {
+			renderIcons(true);
+
+			const segment = screen.getByTestId('width-wide');
+			expect(segment).toHaveTextContent('');
+			expect(screen.getByTestId('icon-wide')).toBeInTheDocument();
+			expect(screen.getByRole('radio', { name: 'Wide' })).toBe(segment);
+		});
+
+		it('with iconOnly shows the label as the tooltip, unless the option sets its own title', () => {
+			renderIcons(true);
+
+			expect(screen.getByTestId('width-wide')).toHaveAttribute('title', 'Wide');
+			expect(screen.getByTestId('width-narrow')).toHaveAttribute('title', 'A narrow page');
+		});
+
+		it('keeps the radio behavior of a text bar', () => {
+			const onChange = renderIcons(true);
+
+			fireEvent.click(screen.getByTestId('width-narrow'));
+			expect(onChange).toHaveBeenCalledWith('narrow');
+			expect(screen.getByTestId('width-wide')).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getByTestId('width-wide')).toHaveAttribute('tabindex', '0');
+		});
+
+		it('leaves a segment without an icon laid out as before', () => {
+			renderControl('name');
+
+			expect(screen.getByTestId('sort-name')).not.toHaveClass('inline-flex');
+		});
 	});
 });
 

@@ -1526,6 +1526,8 @@ maestro-cli list groups
 maestro-cli list agents
 maestro-cli list agents -g <group-id>
 maestro-cli list agents --group <group-id>
+maestro-cli list agents --visible-only   # skip agents in a hidden group
+maestro-cli list agents --hidden-only    # only agents in a hidden group
 
 # What each agent is for (its peer description), printed under it
 maestro-cli list agents -d
@@ -2190,6 +2192,7 @@ maestro-cli list groups --json
 
 # Note: list agents outputs a JSON array (not JSONL)
 maestro-cli list agents --json
+# Each row carries groupName and groupHidden (true when the group, or its parent, is hidden)
 [{"id":"agent-abc123","name":"My Agent","toolType":"claude-code","cwd":"/path/to/project","groupId":"group-abc123","groupName":"Frontend","groupHidden":false,"peerDescription":"Owns the design system and the docs site",...}]
 
 # Running a playbook with JSON streams events
@@ -2874,6 +2877,30 @@ maestro-cli diff-review send -a <agent-id> --compose   # put it in the agent's m
 ```
 
 The lines must be ones the diff shows, inside one hunk, as in the viewer. A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it rather than point the agent at the wrong code. `send` is quiet by default (no agent or tab switch, no flash), since an agent calling it is not the person looking at the screen; `--focus` takes the user to the agent the way the button does.
+
+### Reviewing a File
+
+Pin review comments to lines of any file, then send them to an agent as one review. These are the CLI half of the [File Preview's review comments](file-review.md): the comments are the same ones the file tab's **Review** tray shows, and `send` runs the same code as its **Send Review** button. Each verb names the file first; a relative path is resolved against your shell's directory, and the lines are quoted from the file on disk.
+
+```bash
+# Comment on line 3, or lines 4-5
+maestro-cli file-review add docs/plan.md 3 "Say which parser" -a <agent-id>
+maestro-cli file-review add docs/plan.md 4-5 "Merge these into one step" -a <agent-id>
+
+# Read the pending comments; outdated ones are flagged
+maestro-cli file-review list docs/plan.md -a <agent-id>
+
+# Reword one in place, or drop one (both accept a unique id prefix), or all of them
+maestro-cli file-review edit docs/plan.md <comment-id> "Name the YAML parser" -a <agent-id>
+maestro-cli file-review remove docs/plan.md <comment-id> -a <agent-id>
+maestro-cli file-review clear docs/plan.md -a <agent-id>
+
+# Send every current comment as one queued prompt
+maestro-cli file-review send docs/plan.md -a <agent-id>
+maestro-cli file-review send docs/plan.md -a <agent-id> --compose   # put it in the agent's message box instead
+```
+
+A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it. As with `diff-review send`, `send` is quiet by default; `--focus` takes the user to the agent the way the button does.
 
 ### Checking Status
 

@@ -707,6 +707,9 @@ export function handleCrossAgentAsk(
 	// The consulted agent's place in a consult chain, admitted and paid for by
 	// `maestro-cli ask`. Anything that is not a chain reads as none.
 	const consultChain = parseConsultChain(message.consultChain);
+	// `ask --btw`: answer from a throwaway fork of the target's tab instead.
+	const sideQuestion = message.sideQuestion === true;
+	const targetTabId = typeof message.targetTabId === 'string' ? message.targetTabId : undefined;
 	const timeoutMs =
 		typeof message.timeoutMs === 'number' && Number.isFinite(message.timeoutMs)
 			? Math.min(Math.max(message.timeoutMs, MIN_CONSULT_TIMEOUT_MS), MAX_CONSULT_TIMEOUT_MS)
@@ -737,7 +740,7 @@ export function handleCrossAgentAsk(
 	// Metadata only at info level: a consult question can carry proprietary code
 	// or secrets, exactly like a dispatched prompt.
 	logger.info(
-		`[Web Ask] Consult | Target: ${targetSessionId} | From: ${fromSessionId ?? 'unattributed'} | Context: ${withContext ? 'yes' : 'no'} | Timeout: ${timeoutMs}ms | QuestionLength: ${question.length}`,
+		`[Web Ask] ${sideQuestion ? 'Side question' : 'Consult'} | Target: ${targetSessionId} | From: ${fromSessionId ?? 'unattributed'} | Context: ${withContext ? 'yes' : 'no'} | Timeout: ${timeoutMs}ms | QuestionLength: ${question.length}`,
 		LOG_CONTEXT
 	);
 
@@ -748,6 +751,8 @@ export function handleCrossAgentAsk(
 			fromSessionId,
 			...(fromTabId ? { fromTabId } : {}),
 			withContext,
+			...(sideQuestion ? { sideQuestion } : {}),
+			...(targetTabId ? { targetTabId } : {}),
 			timeoutMs,
 			...(consultChain ? { consultChain } : {}),
 		})

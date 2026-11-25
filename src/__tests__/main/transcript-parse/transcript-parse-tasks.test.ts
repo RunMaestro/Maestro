@@ -157,6 +157,94 @@ describe('transcript parse tasks', () => {
 		expect(result.sizeBytes).toBe(7);
 	});
 
+	it('streams Codex session info for listSessions without reading the rollout whole (#2084)', async () => {
+		const rollout = path.join(dir, 'rollout-2026-11-20T10-00-00-abc.jsonl');
+		await fs.writeFile(
+			rollout,
+			[
+				JSON.stringify({
+					type: 'session_meta',
+					timestamp: at(0),
+					payload: { id: 'sess-1', cwd: '/project', timestamp: at(0) },
+				}),
+				'',
+				JSON.stringify({ type: 'turn_context', timestamp: at(1), payload: { model: 'gpt-5.2' } }),
+				JSON.stringify({
+					type: 'response_item',
+					timestamp: at(2),
+					payload: {
+						type: 'message',
+						role: 'user',
+						content: [{ type: 'input_text', text: '<environment_context>x</environment_context>' }],
+					},
+				}),
+				JSON.stringify({
+					type: 'response_item',
+					timestamp: at(3),
+					payload: {
+						type: 'message',
+						role: 'user',
+						content: [{ type: 'input_text', text: 'Run task 1' }],
+					},
+				}),
+				'not json',
+				JSON.stringify({
+					type: 'response_item',
+					timestamp: at(30),
+					payload: {
+						type: 'message',
+						role: 'assistant',
+						content: [{ type: 'output_text', text: 'Task 1 done.' }],
+					},
+				}),
+				JSON.stringify({
+					type: 'event_msg',
+					timestamp: at(31),
+					payload: {
+						type: 'token_count',
+						info: {
+							total_token_usage: { input_tokens: 900, cached_input_tokens: 100, output_tokens: 50 },
+							last_token_usage: { input_tokens: 900, cached_input_tokens: 100, output_tokens: 50 },
+						},
+					},
+				}),
+			].join('\r\n')
+		);
+
+		const info = await runTranscriptParseTask({
+			kind: 'codex-session-info',
+			filePath: rollout,
+			sessionId: 'abc',
+			sizeBytes: 99,
+			mtimeMs: BASE + 3_600_000,
+		});
+
+		expect(info).not.toBeNull();
+		expect(info!.sessionId).toBe('sess-1');
+		expect(info!.projectPath).toBe(path.resolve('/project'));
+		expect(info!.timestamp).toBe(at(0));
+		expect(info!.durationSeconds).toBe(31);
+		expect(info!.messageCount).toBe(3);
+		expect(info!.firstMessage).toBe('Task 1 done.');
+		expect(info!.sizeBytes).toBe(99);
+		expect(info!.inputTokens).toBeGreaterThan(0);
+		expect(info!.byModel?.map((m) => m.model)).toEqual(['gpt-5.2']);
+	});
+
+	it('returns null Codex session info for a rollout with no lines', async () => {
+		const rollout = path.join(dir, 'empty.jsonl');
+		await fs.writeFile(rollout, '\n\n');
+		expect(
+			await runTranscriptParseTask({
+				kind: 'codex-session-info',
+				filePath: rollout,
+				sessionId: 'empty',
+				sizeBytes: 2,
+				mtimeMs: BASE,
+			})
+		).toBeNull();
+	});
+
 	it('rejects for a missing transcript, as the whole-file read did', async () => {
 		await expect(
 			runTranscriptParseTask({

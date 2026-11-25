@@ -406,6 +406,7 @@ List all agents, with each one's group and what it is for
 | `-g, --group <id>`   | Filter by group ID                                                                   | -       |
 | `-d, --descriptions` | Print each agent's peer description under it (JSON always has it)                    | -       |
 | `--visible-only`     | Leave out agents in hidden groups                                                    | -       |
+| `--hidden-only`      | Only agents in a hidden group                                                        | -       |
 | `--reachable`        | Only the agents the caller may reach right now, with the access (Consult / Delegate) | -       |
 | `--from <agent>`     | The caller for --reachable (default: this shell's agent, MAESTRO_CALLER_AGENT_ID)    | -       |
 | `--peer <name>`      | List the agents on one Federation peer (an SSH remote's name)                        | -       |
@@ -668,7 +669,7 @@ Ask another agent a question and print its answer (background consult - never to
 maestro-cli ask <agent-id> "Which module owns retries?" --from <your-agent-id>
 ```
 
-`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history. Pass `--btw` to ask a side question (`/btw`) instead: it is answered from a throwaway fork of the agent's tab conversation (`--tab <tab-id>` picks the tab, default its active tab), runs even while that tab is busy, and is never written to it. Claude Code agents only.
 
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
@@ -1178,6 +1179,22 @@ maestro-cli group-chat archive <chat>
 maestro-cli group-chat archive <chat> --restore
 ```
 
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -1294,16 +1311,39 @@ maestro-cli close-browser <tab-id>
 
 ## `maestro-cli browser-pick <tab>`
 
-Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
 
-| Option                 | Description                                             | Default |
-| ---------------------- | ------------------------------------------------------- | ------- |
-| `-s, --selector <css>` | CSS selector of the element (the first match is used)   | -       |
-| `--note <text>`        | Note added under the element, as typed in the pick card | -       |
-| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)            | -       |
-| `--background`         | Add it without switching the view to the AI tab         | -       |
-| `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
-| `--json`               | Output as JSON (for scripting)                          | -       |
+| Option                 | Description                                           | Default |
+| ---------------------- | ----------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used) | -       |
+| `--rect <x,y,w,h>`     | Pick a region: x,y,width,height in viewport CSS px    | -       |
+| `--note <text>`        | Note added under the pick, as typed in the pick card  | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)          | -       |
+| `--background`         | Add it without switching the view to the AI tab       | -       |
+| `--focus`              | Switch to the AI tab the pick lands in (default)      | -       |
+| `--queue`              | Queue it as its own message instead of a chip         | -       |
+| `--json`               | Output as JSON (for scripting)                        | -       |
+
+## `maestro-cli browser-picks`
+
+List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one
+
+| Option              | Description                                               | Default |
+| ------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Agent whose composer holds the chips (defaults to active) | -       |
+| `--edit <pickId>`   | Replace this chip's note (with --note)                    | -       |
+| `--note <text>`     | The new note for --edit (an empty string clears it)       | -       |
+| `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
+| `--json`            | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli browser-viewport <tab> [preset]`
+
+Set or read the width a browser tab shows its page at (preset: fit, desktop, laptop, tablet, phone; omit to read). tab: id from open-browser, or browser:N
+
+| Option             | Description                                  | Default |
+| ------------------ | -------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (defaults to active) | -       |
+| `--json`           | Output as JSON (for scripting)               | -       |
 
 ## `maestro-cli open-terminal`
 
@@ -1631,6 +1671,77 @@ Discard every pending comment
 ## `maestro-cli diff-review send`
 
 Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
 
 | Option             | Description                                                        | Default |
 | ------------------ | ------------------------------------------------------------------ | ------- |

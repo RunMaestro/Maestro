@@ -147,6 +147,8 @@ export interface GroupRecord extends UnknownFields {
 	kind?: 'user' | 'worktree';
 	parentGroupId?: string;
 	collapsed?: boolean;
+	/** Parked out of the Left Bar; absent on a visible group. */
+	hidden?: boolean;
 }
 
 /** `maestro-sessions.json`. */

@@ -1,10 +1,10 @@
 // Update SSH remote command - edit an existing SSH remote configuration
 
 import {
-	readSshRemotes,
+	readSshRemotesForEdit,
 	writeSshRemotes,
 	resolveSshRemoteId,
-	writeSettingValue,
+	writeSettingValueIn,
 } from '../services/storage';
 import { formatSuccess } from '../output/formatter';
 import { parseCliBool } from '../utils/parse';
@@ -92,7 +92,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		failFromError(error, options.json);
 	}
 
-	const remotes = readSshRemotes();
+	const { remotes, dir } = readSshRemotesForEdit();
 	const index = remotes.findIndex((r) => r.id === resolvedId);
 	if (index === -1) {
 		failCommand(`SSH remote not found: ${resolvedId}`, options.json);
@@ -192,10 +192,10 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	);
 
 	remotes[index] = updated;
-	writeSshRemotes(remotes);
+	writeSshRemotes(remotes, dir);
 
 	if (options.setDefault) {
-		writeSettingValue('defaultSshRemoteId', updated.id);
+		writeSettingValueIn(dir, 'defaultSshRemoteId', updated.id);
 	}
 
 	if (options.json) {

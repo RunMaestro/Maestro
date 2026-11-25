@@ -1,18 +1,27 @@
-// Diff review commands - the CLI half of the Git Diff viewer's review comments.
-// A comment is pinned to lines of the agent's current `git diff`; `send` hands
-// every current comment to the agent as one prompt, each with its path:lines
-// and the hunk it was left on, through the same code the viewer's Send Review
-// button runs.
+// Review commands - the CLI half of the line review comments the desktop app
+// collects in two places:
 //
-// Every verb rides the one `diff_review_command` message. The pending comments
-// are held by the desktop renderer (the viewer draws them), so these fail with
-// the usual "not running" error when the app is down.
+//  - `diff-review`: comments pinned to lines of the agent's current `git diff`
+//    (the Git Diff viewer's Review tray).
+//  - `file-review`: comments pinned to lines of one file (the File Preview's
+//    Review tray, opened from "Comment on line" on its right-click menu).
+//
+// `send` hands every current comment to the agent as one prompt, each with its
+// path:lines and the text it was left on, through the same code the tray's
+// Send Review button runs. The two families are the same verbs with a
+// different target, so each verb below is written once and takes the target.
+//
+// Every verb rides the one `diff_review_command` message (a file review names
+// its `file`). The pending comments are held by the desktop renderer (the
+// views draw them), so these fail with the usual "not running" error when the
+// app is down.
 
 import { failCommand, resolveAgentOrFail } from '../services/session-command';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatSuccess } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { resolveAgentCwdArg } from '../utils/parse';
 import {
 	parseLineSpan,
 	type DiffReviewCommandRequest,
@@ -36,12 +45,38 @@ export interface DiffReviewSendOptions extends DiffReviewOptions {
 }
 
 /**
- * `add`, `list` and `send` run `git diff` on the desktop side (over SSH for a
- * remote agent) before answering, so allow more than the 10s default.
+ * `add`, `list` and `send` run `git diff` (or read the file) on the desktop
+ * side, over SSH for a remote agent, before answering, so allow more than the
+ * 10s default.
  */
 const DIFF_REVIEW_TIMEOUT_MS = 35_000;
 
-/** Send one diff review verb and hand back the desktop's answer. */
+/**
+ * Which review a verb acts on: the agent's git diff (no `file`), or the line
+ * comments of one file.
+ */
+interface ReviewTarget {
+	file?: string;
+}
+
+const DIFF_TARGET: ReviewTarget = {};
+
+/**
+ * A file the user named, made absolute against the shell's directory. A POSIX
+ * absolute path is kept as typed, because it may name a file on an SSH remote.
+ */
+function fileTarget(file: string, json?: boolean): ReviewTarget {
+	const trimmed = (file ?? '').trim();
+	if (!trimmed) failCommand('A file path is required', json);
+	return { file: resolveAgentCwdArg(trimmed) };
+}
+
+/** What a target is called in output: the file, else the repository. */
+function targetLabel(target: ReviewTarget, result: DiffReviewCommandResult, sessionId: string) {
+	return target.file ? (result.file ?? target.file) : (result.cwd ?? sessionId);
+}
+
+/** Send one review verb and hand back the desktop's answer. */
 async function sendDiffReview(
 	request: DiffReviewCommandRequest,
 	json?: boolean
@@ -58,7 +93,7 @@ async function sendDiffReview(
 	} catch (error) {
 		return failCommand(error instanceof Error ? error.message : String(error), json);
 	}
-	if (!result.success) failCommand(result.error || 'Diff review command failed', json);
+	if (!result.success) failCommand(result.error || 'Review command failed', json);
 	return result;
 }
 
@@ -71,21 +106,32 @@ function describe(comment: DiffReviewCommentSummary): string {
 	return `  ${comment.id}  ${comment.location}${flag}\n      ${oneLine(comment.body)}`;
 }
 
-/** `maestro-cli diff-review list -a <agent>` - the comments waiting to be sent. */
-export async function diffReviewList(options: DiffReviewOptions): Promise<void> {
+async function listReview(target: ReviewTarget, options: DiffReviewOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
-	const result = await sendDiffReview({ action: 'list', sessionId }, options.json);
+	const result = await sendDiffReview({ action: 'list', sessionId, ...target }, options.json);
 	const comments = result.comments ?? [];
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, sessionId, cwd: result.cwd, comments }, null, 2));
+		const where = target.file ? { file: result.file } : { cwd: result.cwd };
+		console.log(JSON.stringify({ success: true, sessionId, ...where, comments }, null, 2));
 		return;
 	}
+	const label = targetLabel(target, result, sessionId);
 	if (comments.length === 0) {
-		console.log(`No pending review comments for ${result.cwd ?? sessionId}.`);
+		console.log(`No pending review comments for ${label}.`);
 		return;
 	}
-	console.log(`Pending review comments for ${result.cwd ?? sessionId} (${comments.length}):`);
+	console.log(`Pending review comments for ${label} (${comments.length}):`);
 	for (const comment of comments) console.log(describe(comment));
+}
+
+/** `maestro-cli diff-review list -a <agent>` - the comments waiting to be sent. */
+export async function diffReviewList(options: DiffReviewOptions): Promise<void> {
+	return listReview(DIFF_TARGET, options);
+}
+
+/** `maestro-cli file-review list <file> -a <agent>` - the comments waiting to be sent. */
+export async function fileReviewList(file: string, options: DiffReviewOptions): Promise<void> {
+	return listReview(fileTarget(file, options.json), options);
 }
 
 /**
@@ -107,18 +153,40 @@ export async function diffReviewAdd(
 	}
 	const body = (comment ?? '').trim();
 	if (!body) failCommand('A review comment needs some text', options.json);
-	const sessionId = resolveAgentOrFail(options.agent, options.json);
+	await addComment(
+		DIFF_TARGET,
+		{ path: path.trim(), side, startLine: span!.startLine, endLine: span!.endLine, body },
+		options
+	);
+}
 
+/**
+ * `maestro-cli file-review add <file> <lines> <comment> -a <agent>` - pin a
+ * comment to lines of a file, as "Comment on line" in the File Preview does.
+ * `lines` is `12` or `12-14`; the lines are quoted from the file on disk.
+ */
+export async function fileReviewAdd(
+	file: string,
+	lines: string,
+	comment: string,
+	options: DiffReviewOptions
+): Promise<void> {
+	const span = parseLineSpan(lines ?? '');
+	if (!span) failCommand(`Invalid line span '${lines}': use 12 or 12-14`, options.json);
+	const body = (comment ?? '').trim();
+	if (!body) failCommand('A review comment needs some text', options.json);
+	const target = fileTarget(file, options.json);
+	await addComment(target, { startLine: span!.startLine, endLine: span!.endLine, body }, options);
+}
+
+async function addComment(
+	target: ReviewTarget,
+	fields: Pick<DiffReviewCommandRequest, 'path' | 'side' | 'startLine' | 'endLine' | 'body'>,
+	options: DiffReviewOptions
+): Promise<void> {
+	const sessionId = resolveAgentOrFail(options.agent, options.json);
 	const result = await sendDiffReview(
-		{
-			action: 'add',
-			sessionId,
-			path: path.trim(),
-			startLine: span!.startLine,
-			endLine: span!.endLine,
-			side,
-			body,
-		},
+		{ action: 'add', sessionId, ...target, ...fields },
 		options.json
 	);
 	if (options.json) {
@@ -126,17 +194,20 @@ export async function diffReviewAdd(
 		return;
 	}
 	if (isQuiet()) return;
-	console.log(formatSuccess(`Comment added on ${result.comment?.location ?? path}`));
+	console.log(
+		formatSuccess(`Comment added on ${result.comment?.location ?? fields.path ?? target.file}`)
+	);
 	if (result.comment) console.log(`  Comment: ${result.comment.id}`);
 }
 
 /** Resolve a comment id or unique prefix against the pending list. */
 async function resolveCommentId(
 	sessionId: string,
+	target: ReviewTarget,
 	wanted: string,
 	json?: boolean
 ): Promise<string> {
-	const listed = await sendDiffReview({ action: 'list', sessionId }, json);
+	const listed = await sendDiffReview({ action: 'list', sessionId, ...target }, json);
 	const comments = listed.comments ?? [];
 	const exact = comments.find((c) => c.id === wanted);
 	const matches = exact ? [exact] : comments.filter((c) => c.id.startsWith(wanted));
@@ -157,14 +228,33 @@ export async function diffReviewEdit(
 	comment: string,
 	options: DiffReviewOptions
 ): Promise<void> {
+	return editComment(DIFF_TARGET, commentId, comment, options);
+}
+
+/** `maestro-cli file-review edit <file> <comment-id> <comment> -a <agent>`. */
+export async function fileReviewEdit(
+	file: string,
+	commentId: string,
+	comment: string,
+	options: DiffReviewOptions
+): Promise<void> {
+	return editComment(fileTarget(file, options.json), commentId, comment, options);
+}
+
+async function editComment(
+	target: ReviewTarget,
+	commentId: string,
+	comment: string,
+	options: DiffReviewOptions
+): Promise<void> {
 	const wanted = (commentId ?? '').trim();
 	if (!wanted) failCommand('A comment id is required', options.json);
 	const body = (comment ?? '').trim();
 	if (!body) failCommand('A review comment needs some text', options.json);
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
-	const id = await resolveCommentId(sessionId, wanted, options.json);
+	const id = await resolveCommentId(sessionId, target, wanted, options.json);
 	const result = await sendDiffReview(
-		{ action: 'edit', sessionId, commentId: id, body },
+		{ action: 'edit', sessionId, ...target, commentId: id, body },
 		options.json
 	);
 	if (options.json) {
@@ -180,11 +270,31 @@ export async function diffReviewRemove(
 	commentId: string,
 	options: DiffReviewOptions
 ): Promise<void> {
+	return removeComment(DIFF_TARGET, commentId, options);
+}
+
+/** `maestro-cli file-review remove <file> <comment-id> -a <agent>`. Accepts a unique id prefix. */
+export async function fileReviewRemove(
+	file: string,
+	commentId: string,
+	options: DiffReviewOptions
+): Promise<void> {
+	return removeComment(fileTarget(file, options.json), commentId, options);
+}
+
+async function removeComment(
+	target: ReviewTarget,
+	commentId: string,
+	options: DiffReviewOptions
+): Promise<void> {
 	const wanted = (commentId ?? '').trim();
 	if (!wanted) failCommand('A comment id is required', options.json);
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
-	const id = await resolveCommentId(sessionId, wanted, options.json);
-	const result = await sendDiffReview({ action: 'remove', sessionId, commentId: id }, options.json);
+	const id = await resolveCommentId(sessionId, target, wanted, options.json);
+	const result = await sendDiffReview(
+		{ action: 'remove', sessionId, ...target, commentId: id },
+		options.json
+	);
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, sessionId, comment: result.comment }, null, 2));
 		return;
@@ -195,8 +305,17 @@ export async function diffReviewRemove(
 
 /** `maestro-cli diff-review clear -a <agent>` - discard the whole pending review. */
 export async function diffReviewClear(options: DiffReviewOptions): Promise<void> {
+	return clearReview(DIFF_TARGET, options);
+}
+
+/** `maestro-cli file-review clear <file> -a <agent>` - discard the file's pending review. */
+export async function fileReviewClear(file: string, options: DiffReviewOptions): Promise<void> {
+	return clearReview(fileTarget(file, options.json), options);
+}
+
+async function clearReview(target: ReviewTarget, options: DiffReviewOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
-	const result = await sendDiffReview({ action: 'clear', sessionId }, options.json);
+	const result = await sendDiffReview({ action: 'clear', sessionId, ...target }, options.json);
 	const cleared = result.cleared ?? 0;
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, sessionId, cleared }, null, 2));
@@ -215,13 +334,29 @@ export async function diffReviewClear(options: DiffReviewOptions): Promise<void>
  * the screen; `--focus` takes the user to the agent the way the button does.
  */
 export async function diffReviewSend(options: DiffReviewSendOptions): Promise<void> {
+	return sendReview(DIFF_TARGET, options);
+}
+
+/**
+ * `maestro-cli file-review send <file> -a <agent>` - send the file's current
+ * comments as one prompt. Same delivery and placement rules as `diff-review send`.
+ */
+export async function fileReviewSend(file: string, options: DiffReviewSendOptions): Promise<void> {
+	return sendReview(fileTarget(file, options.json), options);
+}
+
+async function sendReview(target: ReviewTarget, options: DiffReviewSendOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
 	const result = await sendDiffReview(
 		{
 			action: 'send',
 			sessionId,
+			...target,
 			...(options.compose ? { compose: true } : {}),
-			background: resolveBackgroundFlag(options, 'diff-review-send'),
+			background: resolveBackgroundFlag(
+				options,
+				target.file ? 'file-review-send' : 'diff-review-send'
+			),
 		},
 		options.json
 	);

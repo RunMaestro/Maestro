@@ -1025,6 +1025,12 @@ export interface BatchRunConfig {
 	maxAutoResumes?: number;
 	/** Presence selects goal-driven rather than document/task-driven mode. */
 	goalConfig?: import('./goalDriven/types').GoalRunConfig;
+	/**
+	 * Set only when this launch CONTINUES a run the app quit in the middle of
+	 * (an update restart): the first pass starts at this document and loop pass
+	 * instead of the top. Never set by a launch modal. See autorunRestartResume.ts.
+	 */
+	resumeFrom?: import('./autorunRestartResume').AutoRunResumePoint;
 }
 
 // ============================================================================

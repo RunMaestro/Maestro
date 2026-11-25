@@ -109,6 +109,8 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli group-chat archive <chat>',
 		'maestro-cli group-chat archive <chat> --restore',
 	],
+	'group-chat unread': ['maestro-cli group-chat unread <chat>'],
+	'group-chat read': ['maestro-cli group-chat read <chat> --json'],
 	'quick-chat history': ['maestro-cli quick-chat history'],
 	'quick-chat recall': ['maestro-cli quick-chat recall <chat>'],
 	'notify inbox list': ['maestro-cli notify inbox list'],
@@ -760,6 +762,27 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'browser-pick': [
 		'maestro-cli browser-pick browser:1 --selector "main h1" --note "Make this larger"',
 	],
+	'browser-picks': [
+		'maestro-cli browser-picks --agent <agent-id> --json',
+		'maestro-cli browser-picks --agent <agent-id> --edit <pick-id> --note "Make this larger"',
+		'maestro-cli browser-picks --agent <agent-id> --remove <pick-id>',
+	],
+	'browser-viewport': [
+		'maestro-cli browser-viewport browser:1 phone --agent <agent-id>',
+		'maestro-cli browser-viewport browser:1 --json',
+	],
+	'file-review list': ['maestro-cli file-review list src/app.ts --agent <agent-id> --json'],
+	'file-review add': [
+		'maestro-cli file-review add src/app.ts 12-14 "Handle the empty case" --agent <agent-id>',
+	],
+	'file-review edit': [
+		'maestro-cli file-review edit src/app.ts <comment-id> "Handle the empty list too" --agent <agent-id>',
+	],
+	'file-review remove': [
+		'maestro-cli file-review remove src/app.ts <comment-id> --agent <agent-id>',
+	],
+	'file-review clear': ['maestro-cli file-review clear src/app.ts --agent <agent-id>'],
+	'file-review send': ['maestro-cli file-review send src/app.ts --agent <agent-id>'],
 	'diff-review list': ['maestro-cli diff-review list --agent <agent-id> --json'],
 	'diff-review add': [
 		'maestro-cli diff-review add src/app.ts 12-18 "Handle the empty case" --agent <agent-id>',

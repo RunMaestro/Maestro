@@ -18,6 +18,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	readHistory: vi.fn(),
 	readGroups: vi.fn(),
+	readPrimaryAgentId: vi.fn(() => null),
 	// The agent list a peer roster is resolved against.
 	readSessions: vi.fn(() => []),
 	// The harness tier defaults a tier is resolved against, below the agent's own.
@@ -178,6 +179,30 @@ describe('show-agent command', () => {
 					groupName: 'Frontend',
 				})
 			);
+		});
+
+		it('should report groupHidden, inherited from a hidden parent group', () => {
+			const groups: Group[] = [
+				{ id: 'parent', name: 'Retired', emoji: '', collapsed: false, hidden: true },
+				{ id: 'child', name: 'Old', emoji: '', collapsed: false, parentGroupId: 'parent' },
+				{ id: 'live', name: 'Live', emoji: '', collapsed: false },
+			];
+			vi.mocked(readGroups).mockReturnValue(groups);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ groupId: 'child' }));
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				groupName: 'Old',
+				groupHidden: true,
+			});
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ groupId: 'live' }));
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toMatchObject({
+				groupName: 'Live',
+				groupHidden: false,
+			});
 		});
 
 		it('should handle agent without group', () => {

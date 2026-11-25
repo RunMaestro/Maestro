@@ -397,6 +397,12 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 		reason: `${getAgentDisplayName('pi')} takes another model server only from its models file or an extension file, and Maestro does not write one for a launch, so it runs on its provider's model only.`,
 	},
 	omp: documentedNotRun('omp', 'LM_STUDIO_BASE_URL'),
+	// An OpenCode fork, but OpenCode's provider document has not been run
+	// against the real `kilo` CLI, so it is not assumed to carry over.
+	kilo: {
+		supported: false,
+		reason: `Maestro has not checked how ${getAgentDisplayName('kilo')} takes another model server, so it runs on its provider's model only.`,
+	},
 	// `GROK_MODELS_BASE_URL` moves its requests, but a key for that address can
 	// only be set per model in its config file. Its documented credential order
 	// then falls to the signed-in session, which must not go to a source.
