@@ -784,6 +784,7 @@ describe('createWsMaestroClient', () => {
 				thinking: 'sticky',
 				model: null,
 				enterToSend: false,
+				agentSessionId: 'wizard-session',
 			});
 			expect(result).toEqual({ ok: true, value: undefined });
 			expect(bridge.sent('update_session_config')[0]).toMatchObject({
@@ -794,6 +795,7 @@ describe('createWsMaestroClient', () => {
 					showThinking: 'sticky',
 					customModel: null,
 					enterToSend: false,
+					agentSessionId: 'wizard-session',
 				},
 			});
 			expect(await client.tabs.update(A1, 'a1-t1', {})).toEqual({ ok: true, value: undefined });

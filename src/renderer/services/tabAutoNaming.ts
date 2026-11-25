@@ -17,6 +17,7 @@
 
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 import { useSessionStore, selectSessionById, updateAiTab } from '../stores/sessionStore';
+import { renameHostedTab } from './hostedTurns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { extractQuickTabName } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
@@ -163,6 +164,8 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 		}
 		const name = `${prefix}${generatedName}`;
 		updateAiTab(sessionId, tabId, (t) => ({ ...t, name, isGeneratingName: false }));
+		// A hosted tab's name lives on its host (a wizard that runs here names it here).
+		renameHostedTab(selectSessionById(sessionId)(useSessionStore.getState()), tabId, name);
 		window.maestro.logger.log('info', `Tab named (${how}): "${name}"`, 'TabNaming', {
 			tabId,
 			sessionId,

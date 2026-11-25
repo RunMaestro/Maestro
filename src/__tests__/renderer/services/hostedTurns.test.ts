@@ -14,6 +14,7 @@ import {
 	interruptHostedTurn,
 	openHostedTab,
 	sendHostedTurn,
+	settleHostedWizardTab,
 	starHostedTab,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -168,5 +169,50 @@ describe('hostedTurns', () => {
 			{ kind: 'star-tab', tabId: 't1', starred: true },
 			{ kind: 'interrupt', tabId: 't1' },
 		]);
+	});
+
+	it("hands the host tab a finished wizard's name and provider session, as a local tab keeps them", async () => {
+		hydrateHost();
+		const finished = createMockSession({
+			...row(),
+			aiTabs: [createMockAITab({ id: 't1', name: 'auth-plan', agentSessionId: 'wizard-session' })],
+		});
+		const plain = createMockSession({ ...finished, id: 'plain', liftedTo: undefined });
+		useSessionStore.setState({ sessions: [finished, plain], activeSessionId: finished.id });
+		act$.mockResolvedValue({ ok: true, result: { kind: 'update-tab', tabId: 't1' } });
+
+		settleHostedWizardTab('plain', 't1');
+		expect(act$).not.toHaveBeenCalled();
+
+		settleHostedWizardTab('row', 't1');
+		await act(async () => {});
+		expect(act$.mock.calls.map((call) => call[2])).toEqual([
+			expect.objectContaining({ kind: 'rename-tab', tabId: 't1', name: 'auth-plan' }),
+			{ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: 'wizard-session' } },
+		]);
+	});
+
+	it('sends nothing when the host tab already holds the name and session', () => {
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[
+				{
+					id: 'h1',
+					name: 'Docs',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 't1', name: 'auth-plan', agentSessionId: 'same' }],
+				},
+			],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		const session = createMockSession({
+			...row(),
+			aiTabs: [createMockAITab({ id: 't1', name: 'auth-plan', agentSessionId: 'same' })],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		settleHostedWizardTab('row', 't1');
+		expect(act$).not.toHaveBeenCalled();
 	});
 });

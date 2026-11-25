@@ -68,7 +68,7 @@ import { steerHostedSentMessage, steerQueuedItemOrExplain } from '../../services
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
-import { hostedTargetOf, refuseOnHostedAgent, sendHostedTurn } from '../../services/hostedTurns';
+import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -119,25 +119,25 @@ export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
 const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: string[] }>>();
 
 /**
- * What a hosted agent's send would ask this Maestro to run locally, by name, or null when the host
- * can take it. `/history` and `/skills` go to the host as the typed text, and the host runs them
- * for the tab (`parseMaestroBuiltinCommand()`); `/btw` is asked of the host before this
- * (`askSideQuestion()`). `/wizard` and the inline wizard draw in this window's composer (the
- * wizard panel) and spawn here, which a hosted agent cannot do. A held send is not one: the host
- * queues it paused (`sendHostedTurn()`'s `held`).
+ * Whether a hosted agent's send runs on this machine, as it does for a local or SSH agent, instead
+ * of going to the host. `/wizard` and a message to a running wizard do: the wizard panel draws in
+ * this window's composer and its own conversation spawns over the SSH remote the hosted record
+ * keeps, so it runs on the host's machine; its tab name and provider session go to the host tab
+ * when it ends (`settleHostedWizardTab()`). `/history` and `/skills` go to the host as the typed
+ * text, and the host runs them for the tab (`parseMaestroBuiltinCommand()`); `/btw` is asked of the
+ * host before this (`askSideQuestion()`). A held send goes too: the host queues it paused.
  */
-export function hostedLocalOnlyAction(
+export function hostedSendRunsHere(
 	text: string,
 	opts: {
 		toolType: Session['toolType'];
 		isWizardActive: boolean;
 		handles: { wizard: boolean };
 	}
-): string | null {
-	if (opts.isWizardActive) return 'The wizard';
+): boolean {
+	if (opts.isWizardActive) return true;
 	const builtin = parseMaestroBuiltinCommand(text, opts.toolType);
-	if (builtin?.name === '/wizard' && opts.handles.wizard) return '/wizard';
-	return null;
+	return builtin?.name === '/wizard' && opts.handles.wizard;
 }
 
 /**
@@ -555,19 +555,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// A hosted agent's turns run on its Federation host: the message, its images, and this
 			// tab's own settings go there (`sendHostedTurn()`), and the host queues it when the tab is
 			// busy. Nothing spawns here. The draft clears only once the host took it, so a host that
-			// is down leaves it in place.
-			if (activeSession.inputMode === 'ai' && hostedTargetOf(activeSession)) {
-				const text = stripShellCommandEscape(effectiveInputValue);
-				// `/wizard` and the inline wizard draw in this composer and spawn here, which main
-				// refuses for a hosted agent. Say so and keep the draft, rather than sending the
-				// literal command text to the host's provider as a message. `/history` and `/skills`
-				// go to the host, which runs them for the tab; `/btw` was asked of the host above.
-				const localOnly = hostedLocalOnlyAction(text, {
+			// is down leaves it in place. `/wizard` and a running wizard take the path below, as
+			// they do for every agent (`hostedSendRunsHere()`).
+			if (
+				activeSession.inputMode === 'ai' &&
+				hostedTargetOf(activeSession) &&
+				!hostedSendRunsHere(stripShellCommandEscape(effectiveInputValue), {
 					toolType: activeSession.toolType,
 					isWizardActive: !!isWizardActive,
 					handles: { wizard: !!onWizardCommand },
-				});
-				if (localOnly && refuseOnHostedAgent(activeSession, localOnly)) return;
+				})
+			) {
+				const text = stripShellCommandEscape(effectiveInputValue);
 
 				// Design Mode chips expand into the message exactly as a local send expands them:
 				// each chip's block ahead of the typed text, its screenshot after the staged images.

@@ -121,6 +121,15 @@ describe('update_session_config', () => {
 		}
 	});
 
+	it('hands a tab the provider session a wizard that ran elsewhere started', async () => {
+		expect(await update({ tabId: 't1', agentSessionId: 'wizard-session' })).toMatchObject({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		const tabs = (await stored()).aiTabs as Array<{ id: string; agentSessionId: string | null }>;
+		expect(tabs.find((tab) => tab.id === 't1')?.agentSessionId).toBe('wizard-session');
+	});
+
 	it('clears every allowlisted key on null', async () => {
 		for (const key of AGENT_EDITABLE_KEYS) {
 			expect(await update({ [key]: SAMPLE[key] }), key).toMatchObject({ success: true });

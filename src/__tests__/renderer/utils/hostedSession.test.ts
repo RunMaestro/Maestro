@@ -58,6 +58,25 @@ describe('mergeHostedLogs', () => {
 		expect(merged.map((entry) => entry.id)).toEqual(['a', 'b', 'c']);
 	});
 
+	it('places an entry written here where it happened, as a local tab holds it', () => {
+		// A wizard that ran here flattens its turns into the tab after the host's earlier ones.
+		const merged = mergeHostedLogs(
+			[
+				local('h1', { timestamp: 10 }),
+				local('h2', { timestamp: 20 }),
+				local('wizard-q', { timestamp: 30 }),
+				local('wizard-a', { timestamp: 40 }),
+			],
+			[
+				{ ...record('h1'), timestamp: 10 },
+				{ ...record('h2'), timestamp: 20 },
+				{ ...record('h3'), timestamp: 50 },
+			],
+			undefined
+		);
+		expect(merged.map((entry) => entry.id)).toEqual(['h1', 'h2', 'wizard-q', 'wizard-a', 'h3']);
+	});
+
 	it('keeps local entries untouched while the host transcript was never read', () => {
 		const logs = [local('a')];
 		expect(mergeHostedLogs(logs, undefined, undefined)).toBe(logs);

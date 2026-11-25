@@ -9,6 +9,7 @@
  * - `interruptHostedTurn()`: Stop (the pill, the shortcut, `maestro-cli interrupt`).
  * - `openHostedTab()`, `closeHostedTab()`, `renameHostedTab()`, `starHostedTab()`: the strip.
  * - `updateHostedTab()`: a tab setting the host must hold before a turn starts (thinking).
+ * - `settleHostedWizardTab()`: a wizard that ran here hands its tab name and session to the host.
  * - `refuseOnHostedAgent()`: an action that would spawn here, refused with a toast.
  *
  * Every call goes through `services/peerMirror.ts` (`actOnMirroredAgent()`), which toasts a
@@ -25,7 +26,7 @@ import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { updateSessionWith } from '../stores/sessionStore';
+import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import type { AITab, Session } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
 import { setActiveTab } from '../utils/tabHelpers';
@@ -192,7 +193,7 @@ export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string
 
 /** Rename a host tab too. An empty name clears it. */
 export function renameHostedTab(
-	session: Pick<Session, 'liftedTo'>,
+	session: Pick<Session, 'liftedTo'> | null | undefined,
 	tabId: string,
 	name: string
 ): void {
@@ -215,6 +216,32 @@ export function updateHostedTab(
 	const target = hostedTargetOf(session);
 	if (target && isHostTab(target, tabId)) {
 		void actOnMirroredAgent(target.peerId, target.agentId, { kind: 'update-tab', tabId, patch });
+	}
+}
+
+/**
+ * A wizard that ran here for a hosted tab ends as a local one does: the tab keeps the name the
+ * wizard gave it and resumes the wizard's provider session (`flattenWizardIntoTab()`). Both live
+ * on the host's tab, which runs the next turn, so push whichever differs there. Reads the tab as
+ * the flatten left it in the store; the host's name and session come back on the next sync. A
+ * no-op for an agent that is not hosted.
+ */
+export function settleHostedWizardTab(sessionId: string, tabId: string): void {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const target = hostedTargetOf(session);
+	if (!session || !target) return;
+	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
+	const hostTab = target.agent?.aiTabs?.find((candidate) => candidate.id === tabId);
+	if (!tab || !hostTab) return;
+	if (tab.name && tab.name !== hostTab.name) {
+		void renameMirrorTab(target.peerId, target.agentId, tabId, tab.name);
+	}
+	if (tab.agentSessionId && tab.agentSessionId !== hostTab.agentSessionId) {
+		void actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'update-tab',
+			tabId,
+			patch: { agentSessionId: tab.agentSessionId },
+		});
 	}
 }
 

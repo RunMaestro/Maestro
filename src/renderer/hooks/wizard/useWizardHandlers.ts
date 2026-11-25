@@ -57,6 +57,7 @@ import {
 	requestWizardTabAutoName,
 	WIZARD_TAB_PLACEHOLDER_NAME,
 } from '../../services/tabAutoNaming';
+import { renameHostedTab, settleHostedWizardTab } from '../../services/hostedTurns';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -574,6 +575,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					}
 				: undefined;
 			updateAiTab(activeSession.id, tabId, (tab) => flattenWizardIntoTab(tab, { summary }));
+			settleHostedWizardTab(activeSession.id, tabId);
 			return;
 		}
 
@@ -1054,6 +1056,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				...tab,
 				name: WIZARD_TAB_PLACEHOLDER_NAME,
 			}));
+			// A hosted tab's name lives on its host; the host's name comes back with it.
+			renameHostedTab(currentSession, activeTab.id, WIZARD_TAB_PLACEHOLDER_NAME);
 
 			// `/wizard <input>` already says what we are working on, so the placeholder
 			// can be replaced right away instead of waiting for the first chat message.
@@ -1254,6 +1258,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				};
 			});
 
+			settleHostedWizardTab(currentSession.id, activeTabId);
+
 			// Pass the tab explicitly. The hook's internal currentTabId only tracks the
 			// last-touched wizard, and completion clears `tab.wizardState` here regardless -
 			// so ending the wrong tab strands a registered wizard on a tab that no longer
@@ -1313,6 +1319,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					};
 				})
 			);
+			settleHostedWizardTab(currentSession.id, tabId);
 
 			endInlineWizard(tabId);
 			setInputValueRef.current?.('');

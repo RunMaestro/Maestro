@@ -1933,30 +1933,54 @@ describe('useInputProcessing', () => {
 			}
 		});
 
-		it.each(['/wizard plan it'])(
-			'still refuses %s on a hosted agent: it draws in this composer and spawns here',
-			async (command) => {
+		it('local, SSH, and hosted agents all start the wizard in this composer for /wizard', async () => {
+			for (const [mode, fields] of modes) {
 				vi.mocked(sendHostedTurn).mockClear();
-				const session = createMockSession({ toolType: 'claude-code', liftedTo });
+				mockSetInputValue.mockClear();
+				const onWizardCommand = vi.fn();
+				const session = createMockSession({ toolType: 'claude-code', ...fields });
 				const deps = createDeps({
 					activeSession: session,
-					inputValue: command,
-					onWizardCommand: vi.fn(),
+					inputValue: '/wizard plan it',
+					onWizardCommand,
 				});
-				const { result } = renderHook(() => useInputProcessing(deps));
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
 				await act(async () => {
 					await result.current.processInput();
 				});
+				unmount();
 
-				expect(sendHostedTurn).not.toHaveBeenCalled();
-				expect(useNotificationStore.getState().toasts).toEqual([
-					expect.objectContaining({
-						title: `${command.split(' ')[0]} is not available on hosted agents yet`,
-					}),
-				]);
-				expect(mockSetInputValue).not.toHaveBeenCalled();
+				// The wizard's own turns spawn over the SSH remote a hosted record keeps; when it ends
+				// its tab name and session go to the host tab (hostedTurns.test.ts).
+				expect(onWizardCommand, mode).toHaveBeenCalledWith('plan it');
+				expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+				expect(mockSetInputValue, mode).toHaveBeenCalledWith('');
 			}
-		);
+		});
+
+		it('local, SSH, and hosted agents all send a message to the running wizard', async () => {
+			for (const [mode, fields] of modes) {
+				vi.mocked(sendHostedTurn).mockClear();
+				const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+				const session = createMockSession({ toolType: 'claude-code', ...fields });
+				const deps = createDeps({
+					activeSession: session,
+					inputValue: 'add a login page',
+					isWizardActive: true,
+					onWizardSendMessage,
+				});
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				unmount();
+
+				expect(onWizardSendMessage, mode).toHaveBeenCalledWith('add a login page', undefined);
+				expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+			}
+		});
 
 		it('keeps the draft when the host refuses the message', async () => {
 			vi.mocked(sendHostedTurn).mockClear();

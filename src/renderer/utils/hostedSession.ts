@@ -12,8 +12,9 @@
  * Rules, so nothing is lost and nothing runs twice:
  * - Tabs match by id (a lift keeps tab ids). A host tab this record lacks is appended. A local tab
  *   the host does not have stays (a conversation kept from before the move), idle.
- * - A transcript is merged, never replaced: local entries outside the host's read window stay,
- *   ahead of the host's. Live entries carry `hostLive` and are rebuilt on every sync.
+ * - A transcript is merged, never replaced: local entries the host's read window does not hold
+ *   stay, in time order among the host's. Live entries carry `hostLive` and are rebuilt on every
+ *   sync.
  * - Host queue items carry `hostQueued`: drawn as queued cards, never run by a local drain.
  *
  * Pure. Returns the same `session` reference when nothing changed.
@@ -63,6 +64,27 @@ function sameIds(a: readonly { id: string }[], b: readonly { id: string }[]): bo
 }
 
 /**
+ * Two transcripts as one, in time order; each keeps its own order and a tie goes to `local`. A
+ * local entry older than the host's read window lands ahead of it, and one written here during
+ * the conversation (a wizard's flattened turns, a system note) lands where it happened, as it
+ * does in a local agent's tab.
+ */
+function byTime(local: readonly LogEntry[], host: readonly LogEntry[]): LogEntry[] {
+	if (local.length === 0) return [...host];
+	if (host.length === 0) return [...local];
+	const out: LogEntry[] = [];
+	let i = 0;
+	let j = 0;
+	while (i < local.length && j < host.length) {
+		if (local[i].timestamp <= host[j].timestamp) out.push(local[i++]);
+		else out.push(host[j++]);
+	}
+	while (i < local.length) out.push(local[i++]);
+	while (j < host.length) out.push(host[j++]);
+	return out;
+}
+
+/**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
  * entries; the live tail still shows. Returns `local` itself when nothing changed.
  */
@@ -82,7 +104,7 @@ export function mergeHostedLogs(
 		seen.add(record.id);
 		live.push({ ...mirrorLogEntry(record), hostLive: true });
 	}
-	const next = [...older, ...hostEntries, ...live];
+	const next = [...byTime(older, hostEntries), ...live];
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on.
 		const liveChanged = live.some((entry, i) => {

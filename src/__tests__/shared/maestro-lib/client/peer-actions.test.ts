@@ -499,6 +499,14 @@ describe('parsePeerAgentAction', () => {
 			tabId: 't1',
 			patch: { thinking: 'sticky', enterToSend: null, saveToHistory: false },
 		});
+		// A wizard that ran on the laptop hands the host tab its provider session.
+		expect(
+			parsePeerAgentAction({
+				kind: 'update-tab',
+				tabId: 't1',
+				patch: { agentSessionId: 'wizard-session' },
+			})
+		).toEqual({ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: 'wizard-session' } });
 	});
 
 	it('refuses a settings patch with an unknown field, a bad value, or nothing in it', () => {
@@ -530,6 +538,9 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { name: 'x' } })
 		).toThrow('Unknown tab settings field: name');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: '' } })
+		).toThrow("Invalid value for tab settings field 'agentSessionId'");
 	});
 
 	it('carries Queue Held through to turns.send, and reads it only as a strict true', async () => {

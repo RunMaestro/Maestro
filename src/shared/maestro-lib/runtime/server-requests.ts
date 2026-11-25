@@ -122,6 +122,7 @@ export function tabPatchFromConfig(config: Record<string, unknown>): TabPatch {
 	take('customEffort', 'effort');
 	take('saveToHistory', 'saveToHistory');
 	take('enterToSend', 'enterToSend');
+	take('agentSessionId', 'agentSessionId');
 	return patch as TabPatch;
 }
 

@@ -363,6 +363,12 @@ export interface TabPatch {
 	effort?: string | null;
 	saveToHistory?: boolean;
 	enterToSend?: boolean | null;
+	/**
+	 * The provider session the tab's next turn resumes. Set when a conversation that ran elsewhere
+	 * for this tab (an inline wizard, over the SSH remote) hands its session to the tab, as a local
+	 * wizard promotes its session into its tab when it ends.
+	 */
+	agentSessionId?: string;
 }
 
 export interface TranscriptOptions {

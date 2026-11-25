@@ -666,6 +666,7 @@ export const TAB_EDITABLE_KEYS: Readonly<Record<string, 'boolean' | 'string' | '
 	showThinking: 'thinking',
 	customModel: 'string',
 	customEffort: 'string',
+	agentSessionId: 'string',
 };
 
 /** The record-keyed form of a `TabPatch`: the keys the tab stores, with `null` still meaning "clear". */
@@ -677,6 +678,7 @@ export function buildTabConfigPatch(patch: TabPatch): Record<string, unknown> {
 	if (patch.effort !== undefined) out.customEffort = patch.effort;
 	if (patch.saveToHistory !== undefined) out.saveToHistory = patch.saveToHistory;
 	if (patch.enterToSend !== undefined) out.enterToSend = patch.enterToSend;
+	if (patch.agentSessionId !== undefined) out.agentSessionId = patch.agentSessionId;
 	return out;
 }
 
@@ -709,6 +711,8 @@ export function applyTabPatch(
 					? typeof value === 'string'
 					: asThinkingMode(value) !== undefined;
 		if (!valid) return invalid(`Invalid value for tab field '${key}'.`);
+		// The binding proves where the old session came from; it says nothing about a new one.
+		if (key === 'agentSessionId' && value !== tab.agentSessionId) delete next.nativeSessionBinding;
 		next[key] = value;
 	}
 	if (touched === 0) return invalid('No editable tab fields in the patch.');
