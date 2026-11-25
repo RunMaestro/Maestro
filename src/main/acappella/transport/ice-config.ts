@@ -32,6 +32,7 @@ import type { DeviceCandidateType } from '../../../shared/acappella/device-proto
 import { DEFAULT_STUN_URLS, type IceServerConfig } from '../../../shared/acappella/webrtc-host';
 import {
 	getTurnCredential,
+	hasTurnCredential,
 	isTurnKeyringAvailable,
 	setTurnCredential,
 } from '../providers/credentials';
@@ -199,26 +200,45 @@ export function clearLegacyTurnCredential(settingsStore: IceSettingsStoreLike): 
 	return true;
 }
 
+let warnedLegacyFallback = false;
+
+/** Test helper to reset the one-shot no-keyring migration warning between tests. */
+export function __resetLegacyTurnWarningForTests(): void {
+	warnedLegacyFallback = false;
+}
+
 /**
  * Move a legacy plaintext `ice.turn.credential` from `settings.json` into the OS
- * keychain. If no keyring is available, keep the plaintext in settings so a
- * working TURN setup is not broken, and return `true` so callers can report it.
+ * keychain. If the keychain already holds a credential, remove only the stale
+ * plaintext copy without overwriting it. If no keyring is available, keep the
+ * plaintext in settings so a working TURN setup is not broken, warn once, and
+ * return `true` so callers can report it.
  */
 export function migrateLegacyTurnCredential(settingsStore: IceSettingsStoreLike): boolean {
 	const blob = settingsStore.get('acappella', {});
 	const legacy = readLegacyTurnCredential(blob);
 	if (!legacy) return false;
 
-	const result = setTurnCredential(legacy);
-	if (result.ok) {
+	if (hasTurnCredential()) {
 		clearLegacyTurnCredential(settingsStore);
+		warnedLegacyFallback = false;
 		return false;
 	}
 
-	logger.warn(
-		'Could not migrate legacy TURN relay credential to the OS keychain; keeping existing setting until a keyring is available.',
-		'ACappella'
-	);
+	const result = setTurnCredential(legacy);
+	if (result.ok) {
+		clearLegacyTurnCredential(settingsStore);
+		warnedLegacyFallback = false;
+		return false;
+	}
+
+	if (!warnedLegacyFallback) {
+		warnedLegacyFallback = true;
+		logger.warn(
+			'Could not migrate legacy TURN relay credential to the OS keychain; keeping existing setting until a keyring is available.',
+			'ACappella'
+		);
+	}
 	return true;
 }
 

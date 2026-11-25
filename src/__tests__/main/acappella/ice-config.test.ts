@@ -32,6 +32,7 @@ import {
 	DEFAULT_ICE_SETTINGS,
 	DEFAULT_STUN_URLS,
 	TUNNEL_MEDIA_NOTE,
+	__resetLegacyTurnWarningForTests,
 	buildIceServers,
 	classifyCandidatePair,
 	classifyCandidateType,
@@ -200,6 +201,7 @@ describe('TURN credential migration and fallback', () => {
 
 	beforeEach(() => {
 		logLines.length = 0;
+		__resetLegacyTurnWarningForTests();
 		entries = {};
 		__setCredentialEntryFactory((account) => {
 			entries[account] ??= fakeKeyringEntry();
@@ -292,5 +294,50 @@ describe('TURN credential migration and fallback', () => {
 		expect(clearLegacyTurnCredential(store)).toBe(true);
 		expect(getTurnCredential()).toBeNull();
 		expect(JSON.stringify(store.data)).not.toContain('legacy-secret');
+	});
+
+	it('does not overwrite an existing keychain credential when a stale plaintext value reappears', () => {
+		setTurnCredential('new');
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:relay.example.com:5349',
+						username: 'user1',
+						credential: 'old',
+					},
+				},
+			},
+		});
+
+		const { settings } = readAndMigrateIceSettings(store);
+
+		expect(getTurnCredential()).toBe('new');
+		expect(settings.turn.credential).toBe('new');
+		expect(JSON.stringify(store.data)).not.toContain('old');
+	});
+
+	it('logs the no-keyring fallback warning only once across repeated reads', () => {
+		__setCredentialEntryFactory(() => null);
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:relay.example.com:5349',
+						username: 'user1',
+						credential: 'legacy-secret',
+					},
+				},
+			},
+		});
+
+		const first = readAndMigrateIceSettings(store);
+		const second = readAndMigrateIceSettings(store);
+
+		expect(first.view.turn.legacyPlaintextFallback).toBe(true);
+		expect(second.view.turn.legacyPlaintextFallback).toBe(true);
+		expect(logLines).toHaveLength(1);
 	});
 });

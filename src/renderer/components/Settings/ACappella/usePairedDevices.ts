@@ -18,9 +18,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { IceProbeResult } from '../../../../shared/acappella/webrtc-host';
 
-/** Settings key holding everything A Cappella persists. Mirrors the main-side constant. */
-const ACAPPELLA_SETTINGS_KEY = 'acappella';
-
 type DeviceApi = NonNullable<Window['maestro']>['voice']['devices'];
 export type DeviceStatus = Awaited<ReturnType<DeviceApi['list']>>[number];
 export type PairingPayload = NonNullable<Awaited<ReturnType<DeviceApi['startPairing']>>>;
@@ -65,11 +62,6 @@ export interface PairedDevices {
 	setTurnCredential: (credential: string) => Promise<boolean>;
 	clearTurnCredential: () => Promise<boolean>;
 	testConnection: () => Promise<void>;
-}
-
-interface StoredBlob {
-	ice?: unknown;
-	[key: string]: unknown;
 }
 
 export function usePairedDevices(enabled: boolean): PairedDevices {
@@ -155,13 +147,8 @@ export function usePairedDevices(enabled: boolean): PairedDevices {
 
 	const persistIce = useCallback(
 		async (next: IceSettings) => {
-			if (api?.updateIceSettings) {
-				await api.updateIceSettings(next);
-				return;
-			}
-			const stored = ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ??
-				{}) as StoredBlob;
-			await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, { ...stored, ice: next });
+			if (!api) return;
+			await api.updateIceSettings(next);
 		},
 		[api]
 	);
