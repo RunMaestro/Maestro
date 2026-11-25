@@ -5,7 +5,7 @@
  * dropdown but acts on the right-clicked agent rather than the active one.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
@@ -22,6 +22,7 @@ import {
 	requestMoveToHost,
 } from '../../../../renderer/services/agentLift';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -496,6 +497,19 @@ describe('SessionContextMenu', () => {
 
 		beforeEach(() => {
 			resetStores(usePeerMirrorStore);
+			// Hosting is opt-in: these cases run with it switched on.
+			useSettingsStore.setState({ federationHostedAgents: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: false });
+		});
+
+		it('offers no Move Back for a hosted agent while hosting was never switched on', () => {
+			mirror();
+			useSettingsStore.setState({ federationHostedAgents: undefined as unknown as boolean });
+			renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
 		});
 
 		it('offers nothing before the mirror knows the remote (opted out, or not loaded yet)', () => {

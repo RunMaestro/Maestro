@@ -2611,12 +2611,12 @@ To keep the host running across reboots, have your service manager run `maestro-
 
 ### Automatic Federation from the CLI
 
-The desktop app keeps Federation hosts running and, with **Move SSH agents to their host automatically** on, installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
+The desktop app keeps Federation hosts running and, with **Run hosted agents on their host** and **Move SSH agents to their host automatically** on (both off by default), installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
 
 ```bash
 maestro-cli federation auto            # every remote and SSH agent, its state, and what needs you
 maestro-cli federation auto run        # run a pass now (Run Now in Settings > SSH Hosts)
-maestro-cli settings set federationAutoMove false   # turn automatic moves off
+maestro-cli settings set federationAutoMove true    # turn automatic moves on (off by default)
 ```
 
 Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.

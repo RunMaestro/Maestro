@@ -73,6 +73,6 @@ export interface AutoFederationSnapshot {
 	agents: AutoFederationAgentStatus[];
 }
 
-export function emptyAutoFederationSnapshot(autoMove = true): AutoFederationSnapshot {
+export function emptyAutoFederationSnapshot(autoMove = false): AutoFederationSnapshot {
 	return { autoMove, running: false, remotes: [], agents: [] };
 }

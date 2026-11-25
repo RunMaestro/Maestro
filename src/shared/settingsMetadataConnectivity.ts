@@ -212,14 +212,14 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			'Federation: run hosted agents on their Maestro host. Off: every hosted agent works as the SSH agent it was, from this machine (its turns run over SSH; nothing is sent to its host, and nothing on the host or in the agent changes), and nothing moves onto a host automatically. On again restores hosting.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'ssh',
 	},
 	federationAutoMove: {
 		description:
 			'Federation: move SSH agents onto a Maestro host on their remote automatically (installing and starting the host when needed), once every sanity check passes. Off: Move to Host stays manual; hosts are still kept running.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'ssh',
 	},
 };
