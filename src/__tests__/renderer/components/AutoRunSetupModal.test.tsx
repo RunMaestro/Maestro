@@ -17,6 +17,8 @@ import { AutoRunSetupModal } from '../../../renderer/components/AutoRun/AutoRunS
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
+import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers';
 
 // Mock lucide-react
 vi.mock('lucide-react', async (importOriginal) => ({
@@ -1538,6 +1540,70 @@ describe('AutoRunSetupModal', () => {
 				'title',
 				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 			);
+		});
+	});
+
+	describe('Mode parity (local, SSH, hosted)', () => {
+		// The caller hands the modal getSessionSshRemoteId(activeSession), so an SSH and a
+		// hosted agent (which keeps its SSH remote for the files) get the same remote id.
+		const renderMode = async (mode: AgentMode) => {
+			const sshRemoteId = getSessionSshRemoteId(createModeSession(mode));
+			const view = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sessionName="Agent"
+					sshRemoteId={sshRemoteId}
+				/>
+			);
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			const input = screen.getByRole('textbox') as HTMLInputElement;
+			const picker = screen.getByTestId('folder-icon').closest('button') as HTMLButtonElement;
+			const drawn = {
+				placeholder: input.placeholder,
+				pickerTitle: picker.title,
+				pickerDisabled: picker.disabled,
+				text: view.container.ownerDocument.body.textContent,
+			};
+			fireEvent.change(input, { target: { value: '/home/user/docs' } });
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			const listDocsRemote = vi.mocked(window.maestro.autorun.listDocs).mock.calls.at(-1)?.[1];
+			view.unmount();
+			vi.mocked(window.maestro.autorun.listDocs).mockClear();
+			return { drawn, listDocsRemote };
+		};
+
+		it('draws the same modal for SSH and hosted agents and checks the folder on the remote', async () => {
+			const results = Object.fromEntries(
+				await AGENT_MODES.reduce<Promise<[AgentMode, Awaited<ReturnType<typeof renderMode>>][]>>(
+					async (acc, mode) => [...(await acc), [mode, await renderMode(mode)]],
+					Promise.resolve([])
+				)
+			) as Record<AgentMode, Awaited<ReturnType<typeof renderMode>>>;
+
+			expect(results.hosted).toEqual(results.ssh);
+			expect(results.ssh.drawn.placeholder).toBe('Enter remote path (e.g., /home/user/docs)');
+			expect(results.ssh.drawn.pickerTitle).toBe(
+				'Folder picker unavailable for a remote agent. Enter the remote path manually.'
+			);
+			expect(results.ssh.listDocsRemote).toBe('r1');
+			// No host name in the copy: the mode pill is the only mark that names the mode.
+			expect(results.ssh.drawn.text).not.toMatch(/SSH/);
+		});
+
+		it('differs for a local agent only in the folder picker (the folder is on this disk)', async () => {
+			const local = await renderMode('local');
+			const ssh = await renderMode('ssh');
+
+			expect(local.drawn.pickerDisabled).toBe(false);
+			expect(ssh.drawn.pickerDisabled).toBe(true);
+			expect(local.drawn.text).toBe(ssh.drawn.text);
+			expect(local.listDocsRemote).toBeUndefined();
 		});
 	});
 });

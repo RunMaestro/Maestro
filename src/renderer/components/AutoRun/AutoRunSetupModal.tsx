@@ -12,8 +12,11 @@ interface AutoRunSetupModalProps {
 	onFolderSelected: (folderPath: string) => void;
 	currentFolder?: string; // Current folder path (for changing existing folder)
 	sessionName?: string; // Name of the agent session
-	sshRemoteId?: string; // SSH remote ID if agent uses remote execution
-	sshRemoteHost?: string; // SSH remote host for tooltip display
+	/**
+	 * The agent's SSH remote (`getSessionSshRemoteId()`), set for an SSH and a hosted agent
+	 * alike: the folder lives on the remote in both, so both get the same copy and no picker.
+	 */
+	sshRemoteId?: string;
 }
 
 export function AutoRunSetupModal({
@@ -23,7 +26,6 @@ export function AutoRunSetupModal({
 	currentFolder,
 	sessionName,
 	sshRemoteId,
-	sshRemoteHost,
 }: AutoRunSetupModalProps) {
 	const [selectedFolder, setSelectedFolder] = useState(currentFolder || '');
 	const [homeDir, setHomeDir] = useState<string>('');
@@ -237,7 +239,7 @@ export function AutoRunSetupModal({
 						onChange={setSelectedFolder}
 						placeholder={
 							sshRemoteId
-								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/docs)`
+								? 'Enter remote path (e.g., /home/user/docs)'
 								: sessionName
 									? `Select Auto Run folder for ${sessionName}`
 									: 'Select Auto Run folder'
@@ -252,7 +254,7 @@ export function AutoRunSetupModal({
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								title={
 									sshRemoteId
-										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
+										? 'Folder picker unavailable for a remote agent. Enter the remote path manually.'
 										: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 								}
 							>
