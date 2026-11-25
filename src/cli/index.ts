@@ -610,6 +610,7 @@ clean
 	.command('playbooks')
 	.description('Remove playbooks for deleted sessions')
 	.option('--dry-run', 'Show what would be removed without actually removing')
+	.option('--force', 'Remove even when the agent list is empty')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cleanPlaybooks);
 

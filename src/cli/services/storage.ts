@@ -21,6 +21,7 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
+import { resolveMaestroPaths } from '../../shared/maestro-lib/paths/resolve';
 import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
 import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
@@ -47,6 +48,21 @@ export function getConfigDir(): string {
  */
 export function getSyncDir(): string {
 	return resolveSyncDir(getConfigDir());
+}
+
+/**
+ * Why `getSyncDir()` is NOT the Storage Location the settings name, as a
+ * sentence ready to print, or undefined when it is (or no location is set).
+ *
+ * `resolveSyncDir()` answers the config directory, without a word, when the
+ * named folder is missing (an unmounted drive, a renamed folder) or is one the
+ * desktop refuses. Every agent, group and setting this module reads then comes
+ * from the config directory's own copy, which is empty or out of date. A
+ * command that DELETES on the strength of that list must check this first.
+ * Read-only: it creates nothing.
+ */
+export function getSyncDirFallbackReason(): string | undefined {
+	return resolveMaestroPaths().customSyncPathRejection;
 }
 
 /**

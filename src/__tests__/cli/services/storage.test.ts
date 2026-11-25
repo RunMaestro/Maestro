@@ -58,6 +58,7 @@ import {
 	getSessionsByGroup,
 	getConfigDirectory,
 	getSyncDir,
+	getSyncDirFallbackReason,
 	addHistoryEntry,
 	readSshRemotes,
 	writeSshRemotes,
@@ -277,6 +278,55 @@ describe('storage service', () => {
 
 			expect(getSyncDir()).toBe(configDir);
 			expect(readSessions().map((s) => s.id)).toEqual(['local']);
+		});
+
+		// A command that deletes on the agent list asks this before it trusts the list.
+		describe('getSyncDirFallbackReason', () => {
+			it('is undefined while the Storage Location is in use', () => {
+				mockFiles(bootstrap);
+
+				expect(getSyncDir()).toBe(syncDir);
+				expect(getSyncDirFallbackReason()).toBeUndefined();
+			});
+
+			it('is undefined when no Storage Location is set', () => {
+				mockFiles({});
+
+				expect(getSyncDirFallbackReason()).toBeUndefined();
+			});
+
+			it('is undefined for a bootstrap file that names no location', () => {
+				mockFiles({ [path.join(configDir, 'maestro-bootstrap.json')]: {} });
+
+				expect(getSyncDirFallbackReason()).toBeUndefined();
+			});
+
+			it('says the folder does not exist when the Storage Location is missing', () => {
+				vi.mocked(fs.existsSync).mockReturnValue(false);
+				mockFiles(bootstrap);
+
+				expect(getSyncDir()).toBe(configDir);
+				expect(getSyncDirFallbackReason()).toBe(`Custom sync path does not exist: ${syncDir}`);
+			});
+
+			it('says why when the desktop would refuse the path', () => {
+				mockFiles({
+					[path.join(configDir, 'maestro-bootstrap.json')]: { customSyncPath: 'relative/sync' },
+				});
+
+				expect(getSyncDir()).toBe(configDir);
+				expect(getSyncDirFallbackReason()).toBe('Custom sync path must be absolute: relative/sync');
+			});
+
+			it('creates nothing', () => {
+				vi.mocked(fs.existsSync).mockReturnValue(false);
+				mockFiles(bootstrap);
+
+				getSyncDirFallbackReason();
+
+				expect(fs.mkdirSync).not.toHaveBeenCalled();
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
 		});
 	});
 
