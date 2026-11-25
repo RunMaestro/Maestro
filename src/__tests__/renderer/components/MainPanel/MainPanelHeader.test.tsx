@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { hasCapability } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
@@ -1029,6 +1030,38 @@ describe('MainPanelHeader: local, SSH, and hosted agents draw the same header', 
 		expect(local).toContain('header-git-branch-text');
 		expect(sshHeader).toBe(local);
 		expect(hosted).toBe(local);
+	});
+
+	it("draws the same header when a hosted agent's host is out of reach (no banner)", () => {
+		settingsMocks.hostingOn = true;
+		const initial = usePeerMirrorStore.getState();
+		usePeerMirrorStore.setState({
+			order: ['build-box'],
+			peers: {
+				'build-box': {
+					peerId: 'build-box',
+					remoteId: 'remote-1',
+					name: 'build-box',
+					connection: 'lost',
+					error: 'ssh timed out',
+					agents: [],
+					groups: [],
+					liveTurns: {},
+					queues: {},
+					autoRuns: {},
+					staleTabs: {},
+				},
+			},
+		});
+		try {
+			const local = drawWithoutModePill(modes.local);
+			expect(drawWithoutModePill(modes.hosted)).toBe(local);
+			// The host's state rides the one pill: its hover card says how to reconnect.
+			render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);
+			expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('HOSTED');
+		} finally {
+			usePeerMirrorStore.setState(initial, true);
+		}
 	});
 
 	it('draws a hosted agent as the SSH agent it was while hosted agents are off', () => {

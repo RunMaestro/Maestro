@@ -86,7 +86,7 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 				: tone === 'pending'
 					? [`Connecting to ${mode.peerName}.`]
 					: [
-							`Not connected to ${mode.peerName}. Showing the last known state. Reconnect from the banner in its view.`,
+							`Not connected to ${mode.peerName}. Showing the last known state. To reconnect, run Reconnect Federation Peer from Quick Actions.`,
 							...(mode.error ? [mode.error] : []),
 						];
 		return {

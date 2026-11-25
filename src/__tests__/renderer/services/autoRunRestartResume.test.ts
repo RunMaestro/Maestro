@@ -16,7 +16,7 @@ import {
 	untrackAutoRunLaunch,
 } from '../../../renderer/services/autoRunRestartResume';
 import { AUTO_RUN_RESTART_RESUME_TTL_MS } from '../../../shared/autorunRestartResume';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
 
 const docConfig: BatchRunConfig = {
 	documents: [
@@ -210,5 +210,44 @@ describe('resumeAutoRunsAfterRestart', () => {
 		expect(startBatchRun).not.toHaveBeenCalled();
 		const titles = useNotificationStore.getState().toasts.map((t) => t.title);
 		expect(titles).toContain('Auto Run Not Resumed');
+	});
+});
+
+/**
+ * docs/parity/agent-ux-parity.md, "Restore prompts on launch": a run saved before a
+ * restart comes back with the same entry, the same start, and the same toast whether
+ * its agent is local, SSH, or hosted.
+ */
+describe('restart resume: mode parity (local, SSH, hosted)', () => {
+	async function restartIn(mode: (typeof AGENT_MODES)[number]) {
+		resetAutoRunRestartTrackingForTests();
+		useNotificationStore.setState({ toasts: [] });
+		useSessionStore.setState({
+			sessions: [createModeSession(mode, { id: 'agent-a', name: 'Alpha' })],
+		});
+		trackAutoRunLaunch('agent-a', docConfig, '/folder');
+		setRuns({ 'agent-a': runState({ currentDocumentIndex: 1 }) });
+		const entries = buildRestartEntries('update', 5_000);
+
+		setRuns({});
+		vi.mocked(window.maestro.autorun.takeRestartResume).mockResolvedValue(entries);
+		const startBatchRun = vi.fn().mockResolvedValue(undefined);
+		const resumed = await resumeAutoRunsAfterRestart(startBatchRun, 5_000);
+		const toasts = useNotificationStore
+			.getState()
+			.toasts.map(({ type, title, message }) => ({ type, title, message }));
+		return { entries, resumed, starts: startBatchRun.mock.calls, toasts };
+	}
+
+	it('saves, restarts, and announces the run the same way in every mode', async () => {
+		const [local, ssh, hosted] = [
+			await restartIn('local'),
+			await restartIn('ssh'),
+			await restartIn('hosted'),
+		];
+		expect(local.resumed).toBe(1);
+		expect(local.toasts.map((t) => t.title)).toEqual(['Auto Run Resumed']);
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
 	});
 });

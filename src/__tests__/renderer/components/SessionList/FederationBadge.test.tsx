@@ -55,7 +55,7 @@ describe('federationBadgeCopy', () => {
 			error: 'ssh timed out',
 		});
 		expect(down.lines.slice(2)).toEqual([
-			'Not connected to build. Showing the last known state. Reconnect from the banner in its view.',
+			'Not connected to build. Showing the last known state. To reconnect, run Reconnect Federation Peer from Quick Actions.',
 			'ssh timed out',
 		]);
 		const pending = federationBadgeCopy({
