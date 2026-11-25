@@ -40,7 +40,7 @@ import type { CredentialState, CredentialValidation } from '../acappella/provide
 import type { VoiceCredentialService } from '../../shared/acappella/provider-catalog';
 import type { TurnBreakdown } from '../acappella/telemetry/turn-metrics';
 import type { DeviceStatus, PairingPayload } from '../acappella/transport';
-import type { IceTransportSettings } from '../acappella/transport/ice-config';
+import type { IceTransportSettingsView } from '../acappella/transport/ice-config';
 import type { DiscoveryStatus } from '../acappella/pairing/discovery';
 import type { PairingRequest } from '../acappella/pairing/pairing-service';
 import type { IceProbeResult } from '../../shared/acappella/webrtc-host';
@@ -263,11 +263,25 @@ function createVoiceDevicesApi() {
 
 		/** ICE configuration, what it can reach, and the Cloudflare tunnel caveat. */
 		iceSettings: (): Promise<{
-			settings: IceTransportSettings;
+			settings: IceTransportSettingsView;
 			reach: string;
 			tunnelNote: string;
 			discovery: DiscoveryStatus | null;
 		}> => ipcRenderer.invoke('acappella:ice-settings'),
+
+		/** Update non-secret ICE settings, preserving any legacy fallback credential. */
+		updateIceSettings: (
+			patch: Partial<IceTransportSettingsView>
+		): Promise<IceTransportSettingsView> =>
+			ipcRenderer.invoke('acappella:update-ice-settings', patch),
+
+		/** Store the TURN relay credential in the OS keychain. */
+		setTurnCredential: (credential: string): Promise<{ ok: boolean; error?: string }> =>
+			ipcRenderer.invoke('acappella:set-turn-credential', credential),
+
+		/** Remove the TURN relay credential from the OS keychain and any legacy setting. */
+		clearTurnCredential: (): Promise<{ ok: boolean; error?: string }> =>
+			ipcRenderer.invoke('acappella:clear-turn-credential'),
 
 		/**
 		 * Gather ICE candidates against the configured servers and report which

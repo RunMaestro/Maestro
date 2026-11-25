@@ -33,10 +33,18 @@ import type { DeviceStatus, PairingPayload } from '../../acappella/transport';
 import type { DiscoveryStatus } from '../../acappella/pairing/discovery';
 import type { PairingRequest } from '../../acappella/pairing/pairing-service';
 import {
+	clearTurnCredential,
+	setTurnCredential,
+	type SetCredentialResult,
+} from '../../acappella/providers/credentials';
+import {
+	clearLegacyTurnCredential,
 	describeIceReach,
-	readIceSettings,
+	readAndMigrateIceSettings,
 	TUNNEL_MEDIA_NOTE,
+	updateStoredIceSettings,
 	type IceTransportSettings,
+	type IceTransportSettingsView,
 } from '../../acappella/transport/ice-config';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 
@@ -67,8 +75,7 @@ const requireEnabled = requireACappellaEnabled;
 export function readStoredIceSettings(
 	store: ACappellaDeviceHandlerDependencies['settingsStore']
 ): IceTransportSettings {
-	const blob = (store.get('acappella', {}) ?? {}) as { ice?: unknown };
-	return readIceSettings(blob.ice);
+	return readAndMigrateIceSettings(store).settings;
 }
 
 /**
@@ -243,18 +250,64 @@ export function registerACappellaDeviceHandlers(deps: ACappellaDeviceHandlerDepe
 		withIpcErrorLogging(
 			handlerOpts('iceSettings'),
 			async (): Promise<{
-				settings: IceTransportSettings;
+				settings: IceTransportSettingsView;
 				reach: string;
 				tunnelNote: string;
 				discovery: DiscoveryStatus | null;
 			}> => {
-				const settings = readStoredIceSettings(settingsStore);
+				const { settings, view } = readAndMigrateIceSettings(settingsStore);
 				return {
-					settings,
+					settings: view,
 					reach: describeIceReach(settings),
 					tunnelNote: TUNNEL_MEDIA_NOTE,
 					discovery: transport()?.discoveryStatus() ?? null,
 				};
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'acappella:update-ice-settings',
+		withIpcErrorLogging(
+			handlerOpts('updateIceSettings'),
+			async (_event, patch: unknown): Promise<IceTransportSettingsView> => {
+				if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+					throw new Error('InvalidIceSettingsPatch');
+				}
+				updateStoredIceSettings(
+					settingsStore,
+					patch as Parameters<typeof updateStoredIceSettings>[1]
+				);
+				return readAndMigrateIceSettings(settingsStore).view;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'acappella:set-turn-credential',
+		withIpcErrorLogging(
+			handlerOpts('setTurnCredential'),
+			async (_event, credential: unknown): Promise<SetCredentialResult> => {
+				if (typeof credential !== 'string') throw new Error('InvalidTurnCredential');
+				const result = setTurnCredential(credential);
+				if (result.ok && !credential.trim()) {
+					clearLegacyTurnCredential(settingsStore);
+				}
+				return result;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'acappella:clear-turn-credential',
+		withIpcErrorLogging(
+			handlerOpts('clearTurnCredential'),
+			async (): Promise<SetCredentialResult> => {
+				const result = clearTurnCredential();
+				if (result.ok) {
+					clearLegacyTurnCredential(settingsStore);
+				}
+				return result;
 			}
 		)
 	);
