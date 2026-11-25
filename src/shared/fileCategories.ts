@@ -14,6 +14,9 @@
  * makes both failures impossible: every previewable file has exactly one
  * category, and every categorized file is previewable.
  *
+ * A separate table answers a third question, "would the OS run this if asked
+ * to open it?" (`isLaunchableFile`), for the open path's launch guard.
+ *
  * Audio and video are NOT listed here - they come from `mediaTypes.ts`, which
  * is the single source of truth for what Chromium can actually decode. A second
  * copy would eventually list a container the player cannot open.
@@ -23,6 +26,7 @@
  */
 
 import { getMediaKind } from './mediaTypes';
+import { isWindows } from './platformDetection';
 
 /** Buckets a file can fall into, in the order their filter pills are drawn. */
 export const FILE_CATEGORIES = ['code', 'docs', 'data', 'media', 'other'] as const;
@@ -251,4 +255,111 @@ export function isPreviewableFile(filePath: string): boolean {
 export function matchesFileCategory(filePath: string, filter: FileCategoryFilter): boolean {
 	if (filter === 'all') return true;
 	return getFileCategory(filePath) === filter;
+}
+
+/**
+ * Extensions the OS runs, installs, or mounts when it "opens" the file: app
+ * bundles, scripts, installers, disk images, and shortcuts (which open
+ * whatever they point at, so they can launch any of the others).
+ *
+ * This is a different question from `getFileCategory()`, and the two tables
+ * overlap on purpose: a `.sh` is `code` (Maestro previews it) AND launchable
+ * (the OS runs it).
+ */
+export const LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+	// macOS: apps, Terminal scripts and profiles, AppleScript, Automator,
+	// installers, disk images
+	'app',
+	'command',
+	'tool',
+	'terminal',
+	'scpt',
+	'applescript',
+	'workflow',
+	'action',
+	'prefpane',
+	'pkg',
+	'mpkg',
+	'dmg',
+	// macOS location files (shortcuts)
+	'fileloc',
+	'inetloc',
+	'webloc',
+	// POSIX shell scripts
+	'sh',
+	'zsh',
+	'bash',
+	// Windows: programs, control panel applets and snap-ins, installers, disk
+	// images, scripts, registry files, shortcuts
+	'exe',
+	'com',
+	'scr',
+	'pif',
+	'cpl',
+	'msc',
+	'msi',
+	'msp',
+	'msix',
+	'appx',
+	'iso',
+	'img',
+	'vhd',
+	'vhdx',
+	'bat',
+	'cmd',
+	'ps1',
+	'vbs',
+	'vbe',
+	'wsf',
+	'hta',
+	'reg',
+	'lnk',
+	'url',
+	// Linux: launchers, portable apps, packages
+	'desktop',
+	'appimage',
+	'deb',
+	'rpm',
+	// Java archives, which an installed runtime runs on open
+	'jar',
+]);
+
+/**
+ * Scripts Windows Script Host runs on open. Launchable only on Windows: other
+ * systems open a `.js` in an editor.
+ */
+const WINDOWS_LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set(['js', 'jse']);
+
+/**
+ * Whether the OS would run, install, or mount this file (or folder: an `.app`
+ * is a directory) if asked to open it. A click on a link must never do that,
+ * so the open path reveals such a file in the file manager instead
+ * (`openLocalPath()` in `src/main/utils/open-local-path.ts`).
+ *
+ * Judges the name only. The executable bit of a POSIX file needs the
+ * filesystem, so `isLaunchableLocalPath()` adds that check in main.
+ *
+ * `windows` adds the Windows rules: `.js` / `.jse`, and the name Windows
+ * actually opens (`setup.exe.`, `setup.exe ` and `setup.exe::$DATA` all run
+ * `setup.exe`). It defaults to the platform this code runs on, which is the
+ * one that would open the file.
+ */
+export function isLaunchableFile(
+	filePath: string,
+	{ windows = isWindows() }: { windows?: boolean } = {}
+): boolean {
+	const name = filePath.replace(/[\\/]+$/, '');
+	if (hasLaunchableExtension(name, windows)) return true;
+	if (!windows) return false;
+	// Windows drops a `:stream` suffix, then trailing dots and spaces.
+	const opened = name.replace(/:[^\\/]*$/, '').replace(/[. ]+$/, '');
+	return hasLaunchableExtension(opened, windows);
+}
+
+function hasLaunchableExtension(name: string, windows: boolean): boolean {
+	const ext = getFileExtension(name);
+	if (!ext) return false;
+	return (
+		LAUNCHABLE_FILE_EXTENSIONS.has(ext) || (windows && WINDOWS_LAUNCHABLE_FILE_EXTENSIONS.has(ext))
+	);
 }

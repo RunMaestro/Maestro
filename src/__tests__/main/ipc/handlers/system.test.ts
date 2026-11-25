@@ -140,6 +140,10 @@ vi.mock('fs', () => ({
 	mkdirSync: vi.fn(),
 	readFileSync: vi.fn(),
 	copyFileSync: vi.fn(),
+	// The launch guard (openLocalPath) resolves the target and reads its mode.
+	// Default: the path is itself, a regular file with no executable bit.
+	realpathSync: vi.fn((target: string) => target),
+	statSync: vi.fn(() => ({ isFile: () => true, mode: 0o100644 })),
 }));
 
 // shell.openPath never settles on Linux (MAESTRO-QH), so the handlers branch on
@@ -1072,6 +1076,114 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:openExternal');
 			await expect(handler!({} as any, 'file:///tmp/report.pdf')).resolves.toBeUndefined();
 			expect(shell.openPath).toHaveBeenCalledWith('/tmp/report.pdf');
+		});
+	});
+
+	// RC-F05: a link click must never launch a program. Every route that ends in
+	// shell.openPath for a caller's path reveals an app, script or installer in the
+	// file manager instead.
+	describe('launch guard (apps, scripts and installers are revealed, never opened)', () => {
+		beforeEach(() => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockResolvedValue('');
+		});
+
+		it.each([
+			'/Applications/Calculator.app',
+			'/Users/test/Downloads/run.command',
+			'/Users/test/Downloads/install.sh',
+			'/Volumes/Installer/Setup.pkg',
+			'/Users/test/Downloads/Disk.dmg',
+			'/Users/test/Downloads/setup.exe',
+		])('shell:openPath reveals %s', async (target) => {
+			const handler = handlers.get('shell:openPath');
+			await expect(handler!({} as any, target)).resolves.toBeUndefined();
+
+			expect(shell.showItemInFolder).toHaveBeenCalledWith(path.resolve(target));
+			expect(shell.openPath).not.toHaveBeenCalled();
+		});
+
+		it('shell:openExternal reveals a file:// URL to an installer', async () => {
+			const handler = handlers.get('shell:openExternal');
+			await expect(
+				handler!({} as any, 'file:///Volumes/Installer/Setup.pkg')
+			).resolves.toBeUndefined();
+
+			expect(shell.showItemInFolder).toHaveBeenCalledWith('/Volumes/Installer/Setup.pkg');
+			expect(shell.openPath).not.toHaveBeenCalled();
+			expect(shell.openExternal).not.toHaveBeenCalled();
+		});
+
+		it('shell:openExternal reveals an absolute path to an app (an Open PR url that is a path)', async () => {
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, '/Applications/Calculator.app')).resolves.toBeUndefined();
+
+			expect(shell.showItemInFolder).toHaveBeenCalledWith('/Applications/Calculator.app');
+			expect(shell.openPath).not.toHaveBeenCalled();
+			expect(shell.openExternal).not.toHaveBeenCalled();
+		});
+
+		it('judges the resolved target: a document name that is a symlink to an app', async () => {
+			vi.mocked(fsSync.realpathSync).mockReturnValueOnce('/Applications/Calculator.app');
+
+			const handler = handlers.get('shell:openExternal');
+			await handler!({} as any, 'file:///Users/test/Downloads/report.pdf');
+
+			expect(shell.showItemInFolder).toHaveBeenCalledWith('/Users/test/Downloads/report.pdf');
+			expect(shell.openPath).not.toHaveBeenCalled();
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'reveals a regular file with an executable bit (POSIX)',
+			async () => {
+				vi.mocked(fsSync.statSync).mockReturnValueOnce({
+					isFile: () => true,
+					mode: 0o100755,
+				} as unknown as fsSync.Stats);
+
+				const handler = handlers.get('shell:openPath');
+				await handler!({} as any, '/Users/test/repo/scripts/build');
+
+				expect(shell.showItemInFolder).toHaveBeenCalledWith(
+					path.resolve('/Users/test/repo/scripts/build')
+				);
+				expect(shell.openPath).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still opens a folder, whose search bit is not an executable bit', async () => {
+			vi.mocked(fsSync.statSync).mockReturnValueOnce({
+				isFile: () => false,
+				mode: 0o40755,
+			} as unknown as fsSync.Stats);
+
+			const handler = handlers.get('shell:openPath');
+			await handler!({} as any, '/Users/test/repo');
+
+			expect(shell.openPath).toHaveBeenCalledWith(path.resolve('/Users/test/repo'));
+			expect(shell.showItemInFolder).not.toHaveBeenCalled();
+		});
+
+		it('still opens a document', async () => {
+			const handler = handlers.get('shell:openExternal');
+			await handler!({} as any, 'file:///Users/test/report.pdf');
+
+			expect(shell.openPath).toHaveBeenCalledWith('/Users/test/report.pdf');
+			expect(shell.showItemInFolder).not.toHaveBeenCalled();
+		});
+
+		it('reveals a target it cannot inspect', async () => {
+			vi.mocked(fsSync.realpathSync).mockImplementationOnce(() => {
+				throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			});
+
+			const handler = handlers.get('shell:openPath');
+			await handler!({} as any, '/Users/test/locked/report.pdf');
+
+			expect(shell.showItemInFolder).toHaveBeenCalledWith(
+				path.resolve('/Users/test/locked/report.pdf')
+			);
+			expect(shell.openPath).not.toHaveBeenCalled();
 		});
 	});
 

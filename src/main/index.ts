@@ -34,7 +34,6 @@ import {
 	powerMonitor,
 	protocol,
 	safeStorage,
-	shell,
 	ipcMain,
 	dialog,
 	type OpenExternalOptions,
@@ -187,6 +186,7 @@ import {
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { logger } from './utils/logger';
+import { openExternalUrl } from './utils/open-local-path';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
@@ -3116,7 +3116,9 @@ app
 						logger.info(`shell.openExternal by plugin -> ${url} (demo no-op)`, '[PluginAudit]');
 						return;
 					}
-					await shell.openExternal(url, opts as OpenExternalOptions);
+					// A `file:` URL (the broker passes one only under a `file:` scope)
+					// opens like a clicked link: an app, script or installer is revealed.
+					await openExternalUrl(url, opts as OpenExternalOptions);
 				},
 				powerPreventSleep: (reason) => powerManager.addBlockReason(reason),
 				powerReleaseSleep: (reason) => powerManager.removeBlockReason(reason),

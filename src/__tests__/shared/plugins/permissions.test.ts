@@ -301,6 +301,73 @@ describe('P0 contract capabilities', () => {
 	});
 });
 
+// RC-F05: shell.openExternal on a `file:` URL used to ride the broad grant, so a
+// plugin could launch any app, script or installer on disk. A `file:` target is
+// covered only by a grant whose scope is a `file:` URL that contains it.
+describe('shell:openExternal on a local file', () => {
+	const grant = (scope?: string): PermissionGrant => ({
+		capability: 'shell:openExternal',
+		...(scope ? { scope } : {}),
+		grantedAt: 1,
+	});
+	const allows = (grants: PermissionGrant[], target: string) =>
+		isPermitted(grants, 'shell:openExternal', target);
+
+	it('is not covered by the unscoped grant, which still covers web hosts', () => {
+		expect(allows([grant()], 'docs.example.com')).toBe(true);
+		expect(allows([grant()], 'file:///Applications/Calculator.app')).toBe(false);
+		expect(allows([grant()], 'FILE:///Applications/Calculator.app')).toBe(false);
+	});
+
+	it('is not covered by a host scope, even for the same host', () => {
+		expect(allows([grant('fileserver')], 'file://fileserver/share/setup.exe')).toBe(false);
+		expect(allows([grant('example.com')], 'file:///Users/me/report.pdf')).toBe(false);
+	});
+
+	it('is covered by a file: scope that contains it', () => {
+		const reports = [grant('file:///Users/me/Reports')];
+		expect(allows(reports, 'file:///Users/me/Reports/q3.pdf')).toBe(true);
+		expect(allows(reports, 'file:///Users/me/Reports')).toBe(true);
+		expect(allows([grant('file:///Users/me/Reports/')], 'file:///Users/me/Reports/q3.pdf')).toBe(
+			true
+		);
+		expect(allows([grant('FILE://localhost/Users/me')], 'file:///Users/me/q3.pdf')).toBe(true);
+	});
+
+	it('treats a bare file: scope as every local file', () => {
+		expect(allows([grant('file:')], 'file:///Applications/Calculator.app')).toBe(true);
+		expect(allows([grant('file:///')], 'file:///Users/me/report.pdf')).toBe(true);
+	});
+
+	it('is not covered outside the file: scope, on a separator boundary', () => {
+		const reports = [grant('file:///Users/me/Reports')];
+		expect(allows(reports, 'file:///Applications/Calculator.app')).toBe(false);
+		expect(allows(reports, 'file:///Users/me/Reports2/q3.pdf')).toBe(false);
+		expect(allows(reports, 'file:///Users/me/Reports/..%2F..%2F..%2FApplications/x.app')).toBe(
+			false
+		);
+	});
+
+	it('is never covered on another host, even by a file: scope naming that host', () => {
+		expect(allows([grant('file:')], 'file://fileserver/share/setup.exe')).toBe(false);
+		expect(allows([grant('file://fileserver/share')], 'file://fileserver/share/setup.exe')).toBe(
+			false
+		);
+	});
+
+	it('is not covered by a file: scope with a malformed escape', () => {
+		expect(allows([grant('file:///Users/%E0%A4%A')], 'file:///Users/me/q3.pdf')).toBe(false);
+		expect(allows([grant('file:///Users/me')], 'file:///Users/me/%E0%A4%A.pdf')).toBe(false);
+	});
+
+	it('leaves web hosts to host scopes: a file: scope covers no host', () => {
+		expect(allows([grant('file:///Users/me')], 'example.com')).toBe(false);
+		expect(allows([grant('file:///Users/me'), grant('example.com')], 'docs.example.com')).toBe(
+			true
+		);
+	});
+});
+
 describe('UI customization capabilities', () => {
 	it('recognizes the new UI capabilities', () => {
 		for (const cap of ['ui:contribute', 'ui:panel', 'ui:hostView', 'ui:render-unsafe'] as const) {

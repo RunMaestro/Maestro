@@ -4,6 +4,25 @@ import { formatTime, statusTone, summarize } from './dashboardHelpers';
 import { DetailBox, DetailLine, JsonBox, Pill } from './dashboardPrimitives';
 import { EventTimeline } from './EventTimeline';
 import { openInSystemBrowser } from '../../utils/openUrl';
+import { notifyToast } from '../../stores/notificationStore';
+import { isWebUrl } from '../../../shared/urlRoutingHint';
+
+/**
+ * Open a run's pull request in the system browser. The URL is whatever the run
+ * reported, so anything but an http(s) link is refused: a local path or a
+ * `file:` URL here goes on to `shell.openPath`, which can launch a program.
+ */
+function openPullRequest(url: string): void {
+	if (!isWebUrl(url)) {
+		notifyToast({
+			color: 'red',
+			title: 'Cannot open the pull request',
+			message: `Open PR opens only http and https links. This run reported: ${url}`,
+		});
+		return;
+	}
+	openInSystemBrowser(url);
+}
 
 export function RunDetail({
 	theme,
@@ -112,7 +131,7 @@ export function RunDetail({
 					theme={theme}
 					label="Open PR"
 					disabled={!run.pullRequest?.url}
-					onClick={() => run.pullRequest?.url && openInSystemBrowser(run.pullRequest.url)}
+					onClick={() => run.pullRequest?.url && openPullRequest(run.pullRequest.url)}
 				/>
 			</section>
 
