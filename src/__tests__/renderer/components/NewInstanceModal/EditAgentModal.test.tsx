@@ -3703,17 +3703,46 @@ describe('EditAgentModal', () => {
 			openTab('Models');
 		}
 
-		it('sits on the Models tab, on for an agent that was never switched off', () => {
+		it('hides the System One section when no Local Models endpoints are configured and System One is off', async () => {
 			renderOnModels(createSession());
 
-			expect(screen.getByTestId('edit-agent-system-one')).toBeInTheDocument();
+			await waitFor(() =>
+				expect(window.maestro.localModels.systemOne.agentAccess).toHaveBeenCalled()
+			);
+			expect(screen.queryByTestId('edit-agent-system-one')).toBeNull();
+		});
+
+		it('sits on the Models tab, on for an agent that was never switched off', async () => {
+			vi.mocked(window.maestro.localModels.systemOne.agentAccess).mockResolvedValueOnce({
+				allowed: true,
+				gate: null,
+				message: null,
+				reason: null,
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				calibrated: true,
+				budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0, remainingTodayUsd: 1 },
+			});
+			renderOnModels(createSession());
+
+			expect(await screen.findByTestId('edit-agent-system-one')).toBeInTheDocument();
 			expect(toggle()).toHaveAttribute('aria-checked', 'true');
 		});
 
 		it('applies at once and flushes to main, without Save', async () => {
+			vi.mocked(window.maestro.localModels.systemOne.agentAccess).mockResolvedValueOnce({
+				allowed: true,
+				gate: null,
+				message: null,
+				reason: null,
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				calibrated: true,
+				budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0, remainingTodayUsd: 1 },
+			});
 			renderOnModels(createSession());
 
-			fireEvent.click(toggle());
+			fireEvent.click(await screen.findByRole('switch', { name: /Let .* use System One/i }));
 
 			await waitFor(() =>
 				expect(useSessionStore.getState().sessions[0].systemOneOptOut).toBe(true)

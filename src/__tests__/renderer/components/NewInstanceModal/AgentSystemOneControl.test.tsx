@@ -10,6 +10,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { AgentSystemOneControl } from '../../../../renderer/components/NewInstanceModal/AgentSystemOneControl';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { Session, Theme } from '../../../../renderer/types';
 import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../../../shared/local-models/system-one-agent';
 import { refusedSystemOneAccess, systemOneAccess } from '../../../helpers/systemOneAccess';
@@ -66,6 +67,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	useSessionStore.setState({ sessions: [] } as never);
+	useSettingsStore.setState({ localModelEndpoints: [] } as never);
 });
 
 describe('AgentSystemOneControl', () => {
@@ -73,7 +75,9 @@ describe('AgentSystemOneControl', () => {
 		seed();
 		render(<Mounted />);
 
-		expect(toggle()).toHaveAttribute('aria-checked', 'true');
+		expect(
+			await screen.findByRole('switch', { name: 'Let Backend use System One' })
+		).toHaveAttribute('aria-checked', 'true');
 		expect(screen.getByTestId('edit-agent-system-one')).toHaveTextContent(
 			SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS.on
 		);
@@ -187,5 +191,47 @@ describe('AgentSystemOneControl', () => {
 		expect(await screen.findByTestId('edit-agent-system-one-error')).toHaveTextContent(
 			'Agent not found'
 		);
+	});
+
+	it('hides when no Local Models endpoints are configured and System One is off', async () => {
+		seed();
+		useSettingsStore.setState({ localModelEndpoints: [] } as never);
+		vi.mocked(api().agentAccess).mockResolvedValue(refusedSystemOneAccess('engine-off'));
+		render(<Mounted />);
+
+		await waitFor(() => expect(api().agentAccess).toHaveBeenCalledWith('agent-1'));
+		expect(screen.queryByTestId('edit-agent-system-one')).toBeNull();
+	});
+
+	it('shows when Local Models endpoints are configured even if System One is off', async () => {
+		seed();
+		useSettingsStore.setState({
+			localModelEndpoints: [
+				{
+					id: 'ep-ollama',
+					name: 'Ollama',
+					kind: 'ollama',
+					baseUrl: 'http://127.0.0.1:11434',
+					enabled: true,
+				},
+			],
+		} as never);
+		vi.mocked(api().agentAccess).mockResolvedValue(refusedSystemOneAccess('engine-off'));
+		render(<Mounted />);
+
+		expect(screen.getByTestId('edit-agent-system-one')).toBeInTheDocument();
+		expect(await screen.findByTestId('edit-agent-system-one-status')).toHaveTextContent(
+			'System One is off'
+		);
+	});
+
+	it('shows when an agent already opted out so it can opt back in', async () => {
+		seed({ systemOneOptOut: true });
+		useSettingsStore.setState({ localModelEndpoints: [] } as never);
+		vi.mocked(api().agentAccess).mockResolvedValue(refusedSystemOneAccess('engine-off'));
+		render(<Mounted />);
+
+		expect(screen.getByTestId('edit-agent-system-one')).toBeInTheDocument();
+		expect(toggle()).toHaveAttribute('aria-checked', 'false');
 	});
 });
