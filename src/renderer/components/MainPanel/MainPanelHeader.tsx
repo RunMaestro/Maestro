@@ -136,7 +136,6 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
-	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 	const showAgentName = useSettingsStore((s) => s.showAgentName);
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
@@ -406,11 +405,10 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							data-testid="bookmark-icon"
 						/>
 					)}
-					{/* The one mark of a hosted agent: its turns run on the Federation host, everything
-					    else is the same agent. Hover it for what that means and how the host stands. */}
-					{activeSession.liftedTo && hostingOn && (
-						<SessionFederationBadge theme={theme} session={activeSession} />
-					)}
+					{/* The transport label, the same badge the Left Bar row draws: `SSH` for an SSH agent,
+					    `Hosted` for one its Federation host runs, nothing for a local agent. It is the
+					    only mark that differs between the three; hover it for what that means. */}
+					<SessionFederationBadge theme={theme} session={activeSession} />
 					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the
 					    header runs out of room. A hard cap truncates a name that had space to
 					    spare; letting flex do the clamping means the text is only ever cut when

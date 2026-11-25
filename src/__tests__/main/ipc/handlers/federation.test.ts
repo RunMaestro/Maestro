@@ -32,7 +32,11 @@ vi.mock('../../../../main/utils/agent-busy', () => ({
 	isAgentBusy: () => false,
 }));
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { registerFederationHandlers } from '../../../../main/ipc/handlers/federation';
+import { configureImageStore } from '../../../../main/storage/session-image-store';
 import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../../shared/federationCommands';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
@@ -216,6 +220,35 @@ describe('federation IPC handlers', () => {
 				tabId: 't1',
 				name: 'Plan',
 			});
+		});
+
+		it('sends a stored image ref as the data URL a local spawn would read', async () => {
+			// A staged image the store relocated (after a restart) is a ref into this machine's
+			// store. The host cannot read it, so it leaves as bytes; a ref whose file is gone is
+			// dropped, as the local spawn drops it.
+			const dir = mkdtempSync(join(tmpdir(), 'fed-act-images-'));
+			configureImageStore(dir);
+			const sha = 'a'.repeat(64);
+			mkdirSync(join(dir, 'session-images'), { recursive: true });
+			writeFileSync(join(dir, 'session-images', `${sha}.png`), Buffer.from('png-bytes'));
+			const fresh = 'data:image/png;base64,ZnJlc2g=';
+			await call('federation:act', 'a', 'x', {
+				kind: 'send',
+				tabId: 't1',
+				text: 'look',
+				images: [
+					fresh,
+					`maestro-image://store/${sha}.png`,
+					`maestro-image://store/${'b'.repeat(64)}.png`,
+				],
+			});
+			expect(service.act).toHaveBeenLastCalledWith('a', 'x', {
+				kind: 'send',
+				tabId: 't1',
+				text: 'look',
+				images: [fresh, `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`],
+			});
+			rmSync(dir, { recursive: true, force: true });
 		});
 
 		it('refuses a bad action before the service is touched', async () => {

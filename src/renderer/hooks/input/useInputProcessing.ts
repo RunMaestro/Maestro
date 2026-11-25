@@ -67,11 +67,7 @@ import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
-import {
-	hostedTargetOf,
-	refuseOnHostedAgent,
-	sendHostedTurn,
-} from '../../services/hostedTurns';
+import { hostedTargetOf, refuseOnHostedAgent, sendHostedTurn } from '../../services/hostedTurns';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -582,7 +578,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								(effectiveImages.length === 0 && prior.images.length === 0))
 					)
 				) {
-					logger.info('[processInput] Ignoring a repeat hosted submit while the first is in flight');
+					logger.info(
+						'[processInput] Ignoring a repeat hosted submit while the first is in flight'
+					);
 					return;
 				}
 				if (isComposerSubmit) {

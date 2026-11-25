@@ -40,6 +40,7 @@ import {
 } from '../../federation/setup-host';
 import { resolveBundledCliPathSync } from '../../maestro-cli-manager';
 import { parsePeerAgentAction } from '../../../shared/maestro-lib/client/peer-actions';
+import { resolveToDataUrl } from '../../storage/session-image-store';
 import type {
 	PeerActionAnswer,
 	PeerMirrorSnapshot,
@@ -78,6 +79,29 @@ export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 };
 
 const LOG_CONTEXT = '[Federation]';
+
+/**
+ * A send's images as the bytes a local spawn would hand the provider. A staged image the store
+ * already relocated (after a restart, or replayed from a transcript) is a `maestro-image://` ref
+ * into THIS machine's store, which the host cannot read. A local or SSH turn resolves it at spawn
+ * (`parseDataUrl()`), so a hosted turn resolves it here, before the action leaves. A ref whose file
+ * is gone is dropped, as the local spawn drops it.
+ */
+export async function inlineSendImageRefs(action: unknown): Promise<unknown> {
+	if (!action || typeof action !== 'object') return action;
+	const raw = action as Record<string, unknown>;
+	if (raw.kind !== 'send' || !Array.isArray(raw.images)) return action;
+	const images: unknown[] = [];
+	for (const image of raw.images) {
+		if (typeof image !== 'string') {
+			images.push(image);
+			continue;
+		}
+		const inline = await resolveToDataUrl(image);
+		if (inline) images.push(inline);
+	}
+	return { ...raw, images };
+}
 
 function opts(operation: string) {
 	return { context: LOG_CONTEXT, operation };
@@ -268,7 +292,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				return service.act(
 					requireId(peerId, 'peer id'),
 					requireId(agentId, 'agent id'),
-					parsePeerAgentAction(action)
+					parsePeerAgentAction(await inlineSendImageRefs(action))
 				);
 			}
 		)

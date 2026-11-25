@@ -9,9 +9,12 @@ import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
+// `federationHostedAgents` is mutable so the parity test can draw a hosted agent.
+const settingsMocks = vi.hoisted(() => ({ hostingOn: false }));
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: vi.fn((selector) =>
 		selector({
+			federationHostedAgents: settingsMocks.hostingOn,
 			shortcuts: {
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
@@ -988,5 +991,69 @@ describe('MainPanelHeader', () => {
 		// The ahead/behind counts are only visible in the tooltip, which requires hover
 		// Just verify the header renders without errors
 		expect(screen.getByText('main')).toBeInTheDocument();
+	});
+});
+
+describe('MainPanelHeader: local, SSH, and hosted agents draw the same header', () => {
+	const ssh = { enabled: true, remoteId: 'remote-1' };
+	const modes = {
+		local: makeSession(),
+		ssh: makeSession({ sessionSshRemoteConfig: ssh } as Partial<Session>),
+		hosted: makeSession({
+			sessionSshRemoteConfig: ssh,
+			liftedTo: { peer: 'build-box', agentId: 'host-agent-1', at: 1 },
+		} as Partial<Session>),
+	};
+
+	afterEach(() => {
+		settingsMocks.hostingOn = false;
+	});
+
+	/** The header's markup with the transport label (badge and location pill) taken out. */
+	function drawWithoutTransportLabel(session: Session, remoteName: string | null): string {
+		const { container, unmount } = render(
+			<MainPanelHeader {...defaultProps} activeSession={session} sshRemoteName={remoteName} />
+		);
+		const clone = container.cloneNode(true) as HTMLElement;
+		clone
+			.querySelectorAll('[data-testid^="federation-badge-"]')
+			.forEach((badge) => badge.parentElement?.remove());
+		clone.querySelectorAll('.header-git-pill').forEach((pill) => pill.replaceChildren());
+		unmount();
+		return clone.innerHTML;
+	}
+
+	it('labels the transport with the Left Bar badge: none, SSH, Hosted', () => {
+		settingsMocks.hostingOn = true;
+		const { unmount } = render(<MainPanelHeader {...defaultProps} activeSession={modes.local} />);
+		expect(screen.queryByTestId(/^federation-badge-/)).toBeNull();
+		unmount();
+		const sshView = render(
+			<MainPanelHeader {...defaultProps} activeSession={modes.ssh} sshRemoteName="build-box" />
+		);
+		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('SSH');
+		sshView.unmount();
+		render(
+			<MainPanelHeader {...defaultProps} activeSession={modes.hosted} sshRemoteName="build-box" />
+		);
+		expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('Hosted');
+	});
+
+	it('draws everything else identically', () => {
+		settingsMocks.hostingOn = true;
+		const local = drawWithoutTransportLabel(modes.local, null);
+		const sshHeader = drawWithoutTransportLabel(modes.ssh, 'build-box');
+		const hosted = drawWithoutTransportLabel(modes.hosted, 'build-box');
+		expect(sshHeader).toBe(local);
+		expect(hosted).toBe(local);
+	});
+
+	it('draws a hosted agent as the SSH agent it was while hosted agents are off', () => {
+		settingsMocks.hostingOn = false;
+		render(
+			<MainPanelHeader {...defaultProps} activeSession={modes.hosted} sshRemoteName="build-box" />
+		);
+		expect(screen.getByTestId('federation-badge-ssh')).toBeInTheDocument();
+		expect(screen.queryByTestId('federation-badge-hosted')).toBeNull();
 	});
 });
