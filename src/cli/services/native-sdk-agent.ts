@@ -115,7 +115,7 @@ function prepareNativeLaunch(
 		querySource: options.querySource,
 		requiredSecrets: options.requiredSecrets,
 	});
-	if (effort && !NATIVE_SDK_EFFORTS.has(effort)) {
+	if (!supportsAcpNativeControl(toolType) && effort && !NATIVE_SDK_EFFORTS.has(effort)) {
 		return { error: `Native SDK does not support effort '${effort}'` };
 	}
 	if (!result.ok) return { error: result.error };

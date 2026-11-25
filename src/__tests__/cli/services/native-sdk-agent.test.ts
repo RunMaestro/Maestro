@@ -240,6 +240,29 @@ describe('CLI native SDK ownership', () => {
 		);
 	});
 
+	it('allows Grok agent-level minimal effort through ACP without rejecting on NATIVE_SDK_EFFORTS', async () => {
+		const { startTurn } = await import('../../../shared/maestro-lib/run/start-turn');
+		await expect(
+			spawnNativeSdkAgent(
+				'grok',
+				process.cwd(),
+				'test',
+				undefined,
+				{
+					harnessControlMode: 'native',
+					agentConfigValues: { effort: 'minimal' },
+				},
+				'grok'
+			)
+		).rejects.toThrow('ACP child requires piped stdin and stdout');
+
+		expect(vi.mocked(startTurn).mock.calls.at(-1)?.[0].args).toEqual([
+			'agent',
+			'--always-approve',
+			'stdio',
+		]);
+	});
+
 	it('finishes a CLI Pi turn when agent_end reports an idle state', async () => {
 		rpcRequestMock.mockClear();
 		rpcRequestMock.mockImplementation(async (method: string) => {
