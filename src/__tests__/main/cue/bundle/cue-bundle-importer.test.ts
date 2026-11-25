@@ -946,7 +946,6 @@ describe('importCueBundle against a fixture bundle', () => {
 		it.each([
 			['an ordinary file', 'workspaces/proj/sub/notes.md', 'workspaces/other/notes.md'],
 			['.mcp.json', 'workspaces/proj/sub/.mcp.json', 'workspaces/other/.mcp.json'],
-			['cue.yaml', 'workspaces/proj/sub/.maestro/cue.yaml', undefined],
 		])(
 			'refuses two entries that resolve to one target in nested folders (%s)',
 			async (_label, first, second) => {
@@ -955,7 +954,7 @@ describe('importCueBundle against a fixture bundle', () => {
 				const extra: Record<string, string> = {
 					[first]: first.endsWith('.mcp.json') ? mcp : 'x',
 				};
-				if (second) extra[second] = second.endsWith('.mcp.json') ? mcp : 'y';
+				extra[second] = second.endsWith('.mcp.json') ? mcp : 'y';
 				const error = await refusedAll(
 					options(withOther(extra), {
 						workspaces: { proj: projRoot, other: path.join(projRoot, 'sub') },
@@ -963,10 +962,21 @@ describe('importCueBundle against a fixture bundle', () => {
 				);
 				expect(error.code).toBe('INVALID_OPTIONS');
 				expect(error.message).toContain(first);
-				expect(error.message).toContain(second ?? OTHER_CUE);
+				expect(error.message).toContain(second);
 				expect([...(error.details.workspaces as string[])].sort()).toEqual(['other', 'proj']);
 			}
 		);
+
+		it('refuses a cue.yaml entry that the manifest does not declare, even one that would land on another workspace cue.yaml', async () => {
+			fs.mkdirSync(path.join(projRoot, 'sub'));
+			const error = await refusedAll(
+				options(withOther({ 'workspaces/proj/sub/.maestro/cue.yaml': 'x' }), {
+					workspaces: { proj: projRoot, other: path.join(projRoot, 'sub') },
+				})
+			);
+			expect(error.code).toBe('BUNDLE_INVALID');
+			expect(error.message).toContain('workspaces/proj/sub/.maestro/cue.yaml');
+		});
 
 		it('refuses two workspaces whose Claude memory lands in the same folder', async () => {
 			// Claude encodes every non-alphanumeric character as "-", so these share a memory folder.

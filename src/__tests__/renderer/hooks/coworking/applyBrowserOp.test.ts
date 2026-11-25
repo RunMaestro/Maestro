@@ -27,10 +27,7 @@ import {
 	activePinnedTabIds,
 } from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
 
-import type { BrowserOp } from '../../../../shared/coworkingBrowser';
 import type { CoworkingApi } from '../../../../main/preload/coworking';
-import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { useCoworkingApprovalStore } from '../../../../renderer/stores/coworkingApprovalStore';
 
 vi.mock('../../../../renderer/services/designModePick', () => ({
 	deliverDesignPick: vi.fn(async () => ({
