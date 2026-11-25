@@ -22,6 +22,7 @@ import {
 	Trash2,
 	Bot,
 	Star,
+	Link2,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
@@ -90,6 +91,9 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useHeaderTextDelta } from '../../hooks/ui/useHeaderTextDelta';
 import { Wordmark } from '../ui/Wordmark';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
@@ -1875,15 +1879,14 @@ function SessionListInner(props: SessionListProps) {
 										const isStarredKeyboardSelected =
 											sidebarExtraSelection?.kind === 'starred' &&
 											sidebarExtraSelection.key === item.key;
+										// Open rows carry a tab, so they get the same deep link and unread
+										// dot as the tab itself. A closed row has no tab for a link to open.
+										const showUnread = item.kind === 'open' && item.hasUnread;
 										return (
-											<button
+											<div
 												key={item.key}
-												type="button"
-												data-nav-key={`starred:${item.key}`}
-												onClick={() => void activateStarredItem(item)}
-												className="px-3 py-1.5 flex flex-col text-left hover:bg-white/5 transition-colors"
+												className="group flex items-center hover:bg-white/5 transition-colors"
 												style={{
-													color: theme.colors.textMain,
 													backgroundColor: isStarredKeyboardSelected
 														? theme.colors.bgActivity + '40'
 														: undefined,
@@ -1891,23 +1894,57 @@ function SessionListInner(props: SessionListProps) {
 														? `inset 2px 0 0 0 ${theme.colors.accent}`
 														: undefined,
 												}}
-												title={`${item.displayName} - ${item.agentName}`}
 											>
-												<span className="flex items-center gap-1.5 text-sm truncate">
-													<Star
-														className="w-3 h-3 flex-shrink-0"
-														fill={theme.colors.accent}
-														stroke={theme.colors.accent}
-													/>
-													<span className="truncate">{item.displayName}</span>
-												</span>
-												<span
-													className="text-xs opacity-60 truncate ml-[1.125rem]"
-													style={{ color: theme.colors.textDim }}
+												<button
+													type="button"
+													data-nav-key={`starred:${item.key}`}
+													onClick={() => void activateStarredItem(item)}
+													className="flex-1 min-w-0 px-3 py-1.5 flex flex-col text-left"
+													style={{ color: theme.colors.textMain }}
+													title={`${item.displayName} - ${item.agentName}${showUnread ? ' (unread)' : ''}`}
 												>
-													{item.agentName}
-												</span>
-											</button>
+													<span className="flex items-center gap-1.5 text-sm min-w-0 w-full">
+														<Star
+															className="w-3 h-3 flex-shrink-0"
+															fill={theme.colors.accent}
+															stroke={theme.colors.accent}
+														/>
+														<span className="truncate">{item.displayName}</span>
+														{showUnread && (
+															<span
+																className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+																style={{ backgroundColor: theme.colors.error }}
+																title="Unread messages"
+																data-testid="starred-unread-dot"
+															/>
+														)}
+													</span>
+													<span
+														className="text-xs opacity-60 truncate ml-[1.125rem]"
+														style={{ color: theme.colors.textDim }}
+													>
+														{item.agentName}
+													</span>
+												</button>
+												{item.kind === 'open' && (
+													<GhostIconButton
+														onClick={() => {
+															const link = buildSessionDeepLink(item.parentSessionId, item.tabId);
+															void safeClipboardWrite(link).then((ok) => {
+																if (ok) flashCopiedToClipboard(link);
+															});
+														}}
+														stopPropagation
+														title="Copy Deep Link"
+														ariaLabel={`Copy deep link to ${item.displayName}`}
+														color={theme.colors.textDim}
+														className="mr-2 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+														testId="starred-copy-link"
+													>
+														<Link2 className="w-3.5 h-3.5" />
+													</GhostIconButton>
+												)}
+											</div>
 										);
 									})}
 								</div>
