@@ -21,6 +21,7 @@ import type {
 import { isAllowedBrowserTabPartition } from '../../shared/browserTabPartition';
 import {
 	attachBrowserPageSecurity,
+	hardenBrowserTabSession,
 	isAllowedBrowserTabUrl,
 } from '../app-lifecycle/guest-webview-security';
 const browserPageWindows = new WeakSet<BrowserWindow>();
@@ -247,10 +248,9 @@ export class HostBrowserPages {
 			this.pages.set(id, page);
 			if (window) {
 				guest.setFrameRate(8);
-				guest.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-					callback(false)
-				);
-				guest.session.setPermissionCheckHandler(() => false);
+				// The tab's own session: the same installer as the webview attach gate, so
+				// neither replaces the other's handler. It denies this offscreen page every kind.
+				hardenBrowserTabSession(guest.session);
 				attachBrowserPageSecurity(guest, resolved.owner, () => page.owner);
 				guest.on('paint', (_event, _dirty, image) => {
 					// Offscreen startup can emit an empty image before the first usable frame.

@@ -123,6 +123,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Main process: stores, persistence, platform
 
 - **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
+- **Web permissions on a browser-tab session:** `hardenBrowserTabSession()`, `isBrowserTabPermissionGranted()` in `src/main/app-lifecycle/guest-webview-security.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)
