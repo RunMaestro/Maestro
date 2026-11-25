@@ -455,40 +455,72 @@ describe('TerminalView - auto-close on shell exit', () => {
 		vi.useRealTimers();
 	});
 
-	it('does NOT close a tab under an SSH session on exit (kept for restart)', () => {
-		vi.useFakeTimers();
-		// A remote tab's PTY can exit when the SSH transport drops - that must not
-		// silently discard the tab. This is the root cause of vanishing terminals.
+	// The three modes: a remote tab's PTY runs `ssh`, and a hosted record keeps its SSH remote.
+	const inMode = (mode: 'local' | 'ssh' | 'hosted', tabs: TerminalTab[]): Session =>
+		({
+			...makeSession(tabs),
+			...(mode === 'local' ? {} : { sshRemoteId: 'remote-1' }),
+			...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+		}) as unknown as Session;
+	const exitIn = (mode: 'local' | 'ssh' | 'hosted', exitCode: number) => {
 		const tab = makeTab({ pid: 1234, state: 'busy', createdAt: Date.now() - 5000 });
-		const remoteSession = {
-			...makeSession([tab]),
-			sshRemoteId: 'remote-1',
-		} as unknown as Session;
-
-		const { rerender } = render(
-			<TerminalView {...defaultProps} session={remoteSession} isVisible={true} />
+		const { rerender, unmount } = render(
+			<TerminalView {...defaultProps} session={inMode(mode, [tab])} isVisible={true} />
 		);
-
 		const exitedTab = makeTab({
 			pid: 1234,
 			state: 'exited',
-			exitCode: 255,
+			exitCode,
 			createdAt: Date.now() - 5000,
 		});
-		const exitedRemoteSession = {
-			...makeSession([exitedTab]),
-			sshRemoteId: 'remote-1',
-		} as unknown as Session;
 		act(() => {
-			rerender(<TerminalView {...defaultProps} session={exitedRemoteSession} isVisible={true} />);
+			rerender(
+				<TerminalView {...defaultProps} session={inMode(mode, [exitedTab])} isVisible={true} />
+			);
 		});
 		act(() => {
 			vi.advanceTimersByTime(1);
 		});
+		unmount();
+	};
 
-		expect(mockCloseTerminalTab).not.toHaveBeenCalled();
-		vi.useRealTimers();
+	it('draws the same terminal for local, SSH, and hosted agents', () => {
+		const tab = makeTab({ pid: 1234, state: 'busy', createdAt: 1 });
+		const htmlIn = (mode: 'local' | 'ssh' | 'hosted') => {
+			const { container, unmount } = render(
+				<TerminalView {...defaultProps} session={inMode(mode, [tab])} isVisible={true} />
+			);
+			const html = container.innerHTML;
+			unmount();
+			return html;
+		};
+		const local = htmlIn('local');
+		expect(htmlIn('ssh')).toBe(local);
+		expect(htmlIn('hosted')).toBe(local);
 	});
+
+	it.each(['local', 'ssh', 'hosted'] as const)(
+		'closes the tab when the shell exits on its own in a %s agent',
+		(mode) => {
+			vi.useFakeTimers();
+			// `false; exit` returns 1 and is still the user leaving the shell.
+			exitIn(mode, 1);
+			expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
+			vi.useRealTimers();
+		}
+	);
+
+	it.each(['ssh', 'hosted'] as const)(
+		'keeps the tab for restart when the SSH connection drops in a %s agent',
+		(mode) => {
+			vi.useFakeTimers();
+			// ssh exits 255 when the connection fails: the user never asked to leave, and a
+			// dropped transport must not silently discard the tab (the vanishing terminals).
+			exitIn(mode, 255);
+			expect(mockCloseTerminalTab).not.toHaveBeenCalled();
+			vi.useRealTimers();
+		}
+	);
 });
 
 // ---------------------------------------------------------------------------

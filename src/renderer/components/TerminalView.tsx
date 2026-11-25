@@ -26,6 +26,7 @@ import { isCoarsePointer } from '../utils/touch';
 import type { PaneRect, Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
 import { logger } from '../utils/logger';
+import { isSshConnectionFailure } from '../../shared/sshConnection';
 
 // ============================================================================
 // Types
@@ -386,8 +387,11 @@ export const TerminalView = memo(
 		//     crashing parent) - the user never asked for this and losing the tab
 		//     silently discards their scrollback,
 		//   - the tab carries a startup command (its config is durable), or
-		//   - the tab is under an SSH/remote session whose transport can drop for
-		//     reasons unrelated to the user (sleep, network blip, server timeout).
+		//   - the SSH connection under a remote tab dropped for reasons unrelated to
+		//     the user (sleep, network blip, server timeout). A remote tab's PTY runs
+		//     `ssh` itself, which exits 255 when the connection fails and with the
+		//     remote shell's own code otherwise, so a remote `exit` closes the tab
+		//     exactly as a local one does: local, SSH, and hosted agents act alike.
 		//
 		// Distinguishing the first case is why we need `signal` and not just the exit
 		// code: node-pty reports a signalled death (WIFSIGNALED) as exitCode 0 with a
@@ -414,8 +418,10 @@ export const TerminalView = memo(
 					const signal = exitSignalsRef.current.get(tabId);
 					exitSignalsRef.current.delete(tabId);
 					const wasKilled = signal != null && signal !== 0;
-					const isPersistent = !!tab.startupCommand || isRemoteSession;
-					const keepTab = isPersistent || wasKilled;
+					const transportDropped =
+						isRemoteSession && tab.exitCode != null && isSshConnectionFailure(tab.exitCode);
+					const isPersistent = !!tab.startupCommand;
+					const keepTab = isPersistent || wasKilled || transportDropped;
 					// Diagnostic: every PTY exit logs why the tab was kept or closed. This
 					// is the signal for the "terminal tabs vanish" reports - e.g. an SSH
 					// transport dropping logs exitCode here with isRemote:true / kept.
@@ -427,6 +433,7 @@ export const TerminalView = memo(
 						ageMs: age,
 						hasStartupCommand: !!tab.startupCommand,
 						isRemote: isRemoteSession,
+						transportDropped,
 						wasKilled,
 						decision: keepTab ? 'keep-for-restart' : 'close',
 					});

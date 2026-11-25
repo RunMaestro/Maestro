@@ -51,7 +51,22 @@ describe('mirrorLogEntry', () => {
 		).toEqual(recoveryAction);
 	});
 
-	it('does not carry cross-agent jumps, malformed recovery actions, or agent errors', () => {
+	it("carries the host's error, so the error card draws the same details", () => {
+		const agentError = {
+			type: 'auth_expired',
+			message: 'Login expired',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 7,
+			parsedJson: { error: 'expired' },
+		};
+		expect(
+			mirrorLogEntry(entry('e5', 'Login expired', { source: 'error', agentError } as never))
+				.agentError
+		).toEqual(agentError);
+	});
+
+	it('does not carry cross-agent jumps, malformed recovery actions, or malformed agent errors', () => {
 		const mapped = mirrorLogEntry(
 			entry('e3', 'x', {
 				metadata: { crossAgent: { requestId: 'r', fromSessionId: 'host-agent' } },

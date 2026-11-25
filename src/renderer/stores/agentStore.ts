@@ -60,6 +60,7 @@ import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { hostedTargetOf, openHostedTab } from '../services/hostedTurns';
 import {
 	dispatchCrossAgentMentionsForMessage,
 	dispatchCrossAgentMentions,
@@ -370,6 +371,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		// Clear the error state
 		get().clearAgentError(sessionId);
+
+		// A hosted agent's tabs live on its host: the host opens the new tab, as New Tab does.
+		if (hostedTargetOf(session)) {
+			void openHostedTab(session);
+			return;
+		}
 
 		// Create a new tab in the session
 		updateSession(sessionId, (s) => {

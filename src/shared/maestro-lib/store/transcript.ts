@@ -17,6 +17,7 @@
  * Pure: no file access. Safe to import from the renderer.
  */
 
+import type { AgentError } from '../../types';
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
 
@@ -69,6 +70,11 @@ export interface LogEntryRecord extends UnknownFields {
 	 * tab to re-send it on, with the prior conversation as context.
 	 */
 	recoveryAction?: { lastUserPrompt: string; tabId: string };
+	/**
+	 * An error entry's structured error, as a local error entry carries it: the error card's
+	 * details, and on a hosted record the error banner (`projectHostedSession()`).
+	 */
+	agentError?: AgentError;
 }
 
 function isLogEntryRecord(value: unknown): value is LogEntryRecord {

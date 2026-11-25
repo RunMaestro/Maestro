@@ -685,6 +685,8 @@ describe('turn records', () => {
 			['user', 'fix the login bug'],
 			['error', 'Authentication failed. Sign in again.'],
 		]);
+		// The structured error is kept on the entry, as a local error entry keeps it.
+		expect(entries[1].agentError).toMatchObject({ type: 'auth_expired', recoverable: true });
 		// No usage reported: the columns stay NULL rather than becoming 0.
 		expect(statsEvents[0]).not.toHaveProperty('inputTokens');
 	});

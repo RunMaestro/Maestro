@@ -188,6 +188,76 @@ describe('projectHostedSession', () => {
 		const first = projectHostedSession(hostedRow(), { agent: host() });
 		expect(projectHostedSession(first, { agent: host() })).toBe(first);
 	});
+
+	describe('the error banner', () => {
+		const key = liveTurnKey('h1', 't1');
+		const error = {
+			type: 'auth_expired' as const,
+			message: 'Login expired',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 7,
+		};
+		const errorEntry: LogEntryRecord = {
+			id: 'err',
+			timestamp: 7,
+			source: 'error',
+			text: 'Login expired',
+			agentError: error,
+		};
+		const failed = (session = hostedRow()) =>
+			projectHostedSession(session, {
+				agent: host(),
+				liveTurns: { [key]: { startedAt: 1, busy: false, entries: [errorEntry] } },
+			});
+
+		it("raises the tab's and the agent's error when the host's turn reports one, as a local error does", () => {
+			const next = failed();
+			expect(next.aiTabs[0].agentError).toEqual(error);
+			expect(next.agentError).toEqual(error);
+			expect(next.agentErrorTabId).toBe('t1');
+			expect(next.state).toBe('error');
+			// The host runs the queue, so the queue pause a local error adds is not taken here.
+			expect(next.agentErrorPaused).toBeFalsy();
+			// The error card draws with its details, as a local one does.
+			expect(next.aiTabs[0].logs.at(-1)?.agentError).toEqual(error);
+		});
+
+		it('stays dismissed once the user dismisses it', () => {
+			const raised = failed();
+			const dismissed = {
+				...raised,
+				agentError: undefined,
+				agentErrorTabId: undefined,
+				state: 'idle' as const,
+				aiTabs: raised.aiTabs.map((tab) => ({ ...tab, agentError: undefined })),
+			};
+			const next = failed(dismissed);
+			expect(next.aiTabs[0].agentError).toBeUndefined();
+			expect(next.agentError).toBeUndefined();
+			expect(next.state).toBe('idle');
+		});
+
+		it('clears when the next turn starts, as a local send clears it', () => {
+			const raised = failed();
+			const next = projectHostedSession(raised, {
+				agent: host({ aiTabs: [{ id: 't1', agentSessionId: 's1', state: 'busy' }] }),
+			});
+			expect(next.aiTabs[0].agentError).toBeUndefined();
+			expect(next.agentError).toBeUndefined();
+			expect(next.state).toBe('busy');
+		});
+
+		it('raises nothing for an old error in a transcript that loads later', () => {
+			const next = projectHostedSession(hostedRow(), {
+				agent: host(),
+				transcripts: { [key]: { entries: [errorEntry], loaded: true } },
+			});
+			expect(next.aiTabs[0].agentError).toBeUndefined();
+			expect(next.agentError).toBeUndefined();
+			expect(next.state).toBe('idle');
+		});
+	});
 });
 
 describe('releaseHostedSession', () => {

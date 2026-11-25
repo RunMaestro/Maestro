@@ -185,6 +185,7 @@ export function buildTurnTranscript(turn: RecordedTurn, ctx: RuleContext): LogEn
 			timestamp: turn.endedAt,
 			source: 'error',
 			text: turn.completed.error?.message ?? describeCrash(turn.completed.exit),
+			...(turn.completed.error ? { agentError: turn.completed.error } : {}),
 		});
 	}
 	return entries;

@@ -13,9 +13,30 @@ import {
 	type LogEntryRecord,
 	type LogEntrySource,
 } from '../../shared/maestro-lib/store/transcript';
+import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem } from '../types';
 
 const KNOWN_SOURCES = new Set<string>(LOG_ENTRY_SOURCES);
+
+/**
+ * A host entry's structured error, read off the wire: the fields the error card and the error
+ * banner draw. Anything else (a malformed value from a newer or older host) is dropped, and the
+ * entry draws as plain error text.
+ */
+function mirrorAgentError(value: unknown): AgentError | undefined {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+	const error = value as Record<string, unknown>;
+	if (
+		typeof error.type !== 'string' ||
+		typeof error.message !== 'string' ||
+		typeof error.recoverable !== 'boolean' ||
+		typeof error.agentId !== 'string' ||
+		typeof error.timestamp !== 'number'
+	) {
+		return undefined;
+	}
+	return value as AgentError;
+}
 const TOOL_STATUSES = new Set(['running', 'completed', 'error', 'failed']);
 
 /** One host transcript entry as the renderer draws it. An unknown kind shows as a system line. */
@@ -43,6 +64,10 @@ export function mirrorLogEntry(record: LogEntryRecord): LogEntry {
 	) {
 		entry.recoveryAction = { lastUserPrompt: recovery.lastUserPrompt, tabId: recovery.tabId };
 	}
+	// The host's error card draws as a local one: its message, and View Details when the error
+	// carries the provider's raw output.
+	const agentError = mirrorAgentError(record.agentError);
+	if (agentError) entry.agentError = agentError;
 	const toolState = record.metadata?.toolState;
 	const parentToolUseId = record.metadata?.parentToolUseId;
 	if (toolState || parentToolUseId) {

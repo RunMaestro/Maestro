@@ -25,6 +25,7 @@ import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
+import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab } from './peerMirrorView';
 
@@ -129,6 +130,29 @@ function sameQueue(a: readonly QueuedItem[], b: readonly QueuedItem[]): boolean 
 	);
 }
 
+/**
+ * The tab's error banner, raised and cleared as a local tab's is: an error the host's running turn
+ * reports while this tab watches (a live entry not drawn here before) raises it, and the start of
+ * the next turn clears it, as a local send does. A dismissed banner stays dismissed, because an
+ * error already drawn never raises it again, and an old error in a transcript that loads later is
+ * not live, so it raises nothing.
+ */
+function hostedTabError(
+	local: AITab,
+	busy: boolean,
+	logs: readonly LogEntry[]
+): AgentError | undefined {
+	let error = busy && local.state !== 'busy' ? undefined : local.agentError;
+	if (logs === local.logs) return error;
+	const drawn = new Set((local.logs ?? []).map((entry) => entry.id));
+	for (const entry of logs) {
+		if (entry.hostLive && entry.source === 'error' && entry.agentError && !drawn.has(entry.id)) {
+			error = entry.agentError;
+		}
+	}
+	return error;
+}
+
 function projectTab(
 	local: AITab,
 	host: AITabRecord,
@@ -143,17 +167,19 @@ function projectTab(
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;
 	const starred = host.starred === true;
 	const state = busy ? 'busy' : 'idle';
+	const agentError = hostedTabError(local, busy, logs);
 	if (
 		local.name === name &&
 		local.agentSessionId === agentSessionId &&
 		local.starred === starred &&
 		local.state === state &&
 		local.thinkingStartTime === thinkingStartTime &&
-		local.logs === logs
+		local.logs === logs &&
+		local.agentError === agentError
 	) {
 		return local;
 	}
-	return { ...local, name, agentSessionId, starred, state, thinkingStartTime, logs };
+	return { ...local, name, agentSessionId, starred, state, thinkingStartTime, logs, agentError };
 }
 
 /**
@@ -264,7 +290,27 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 	// A terminal command owns the agent's busy state while it runs; it is local, not the host's.
 	const terminalBusy = session.state === 'busy' && session.busySource === 'terminal';
 	const anyBusy = aiTabs.some((tab) => tab.state === 'busy');
-	const state = terminalBusy ? session.state : anyBusy ? 'busy' : 'idle';
+
+	// The agent's error, as a local error sets it: the tab that last raised a banner names it (the
+	// error modal reads it there), and it clears with that tab's banner. The queue pause a local
+	// error adds is the host's to keep: it runs the queue.
+	const priorById = new Map(session.aiTabs.map((tab) => [tab.id, tab]));
+	const raised = aiTabs.find(
+		(tab) => tab.agentError && tab.agentError !== priorById.get(tab.id)?.agentError
+	);
+	const errorTab =
+		raised ??
+		(session.agentErrorTabId
+			? aiTabs.find((tab) => tab.id === session.agentErrorTabId)
+			: undefined);
+	// An error no tab owns (one raised here, not by the host) stays until it is cleared here.
+	const agentError = raised || session.agentErrorTabId ? errorTab?.agentError : session.agentError;
+	const agentErrorTabId = errorTab?.agentError ? errorTab.id : undefined;
+	if (agentError !== session.agentError || agentErrorTabId !== session.agentErrorTabId) {
+		changed = true;
+	}
+
+	const state = terminalBusy ? session.state : anyBusy ? 'busy' : agentError ? 'error' : 'idle';
 	const busySource = terminalBusy ? session.busySource : anyBusy ? 'ai' : undefined;
 	if (state !== session.state || busySource !== session.busySource) changed = true;
 
@@ -277,6 +323,8 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 		executionQueue: queueChanged ? executionQueue : localQueue,
 		state,
 		busySource,
+		agentError,
+		agentErrorTabId,
 	};
 }
 
