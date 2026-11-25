@@ -470,4 +470,45 @@ describe('model-downloader', () => {
 		expect(fetched).toBe(1);
 		expect(await fs.readFile(finalPath())).toEqual(fixture.contents);
 	});
+
+	it('skips fetching when an existing file matches both byte length and SHA-256', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		await fs.writeFile(finalPath(), fixture.contents);
+
+		const fetchImpl = vi.fn<FetchLike>();
+		const result = await makeDownloader(fetchImpl).download(fixture.id);
+
+		expect(result.status).toBe('complete');
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it('ends cancelled when cancelled during existing-file hash verification', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		await fs.writeFile(finalPath(), fixture.contents);
+
+		const fetchImpl = vi.fn<FetchLike>();
+		const downloader = makeDownloader(fetchImpl);
+		const downloadPromise = downloader.download(fixture.id);
+		await Promise.resolve();
+		downloader.cancel(fixture.id);
+		const result = await downloadPromise;
+
+		expect(result.status).toBe('cancelled');
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it('ends paused when paused during existing-file hash verification', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		await fs.writeFile(finalPath(), fixture.contents);
+
+		const fetchImpl = vi.fn<FetchLike>();
+		const downloader = makeDownloader(fetchImpl);
+		const downloadPromise = downloader.download(fixture.id);
+		await Promise.resolve();
+		downloader.pause(fixture.id);
+		const result = await downloadPromise;
+
+		expect(result.status).toBe('paused');
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
 });
