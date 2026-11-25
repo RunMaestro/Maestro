@@ -3680,6 +3680,47 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
 			xtermInput.remove();
 		});
+
+		it('should not fire paneCyclePrev on German Option+5 ([ on Digit5) when xterm has focus', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockCyclePane = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				activeFocus: 'main',
+				tilingShortcuts: {
+					hasActiveGroup: true,
+					cyclePane: mockCyclePane,
+				},
+			});
+
+			const xtermInput = document.createElement('textarea');
+			xtermInput.className = 'xterm-helper-textarea';
+			document.body.appendChild(xtermInput);
+			xtermInput.focus();
+
+			act(() => {
+				xtermInput.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '[',
+						code: 'Digit5',
+						altKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockCyclePane).not.toHaveBeenCalled();
+			xtermInput.remove();
+		});
 	});
 
 	describe('terminal focus recovery does not intercept group chat input', () => {
