@@ -1124,6 +1124,238 @@ describe('agents IPC handlers', () => {
 		});
 	});
 
+	// The System Log Viewer shows these lines, and file logging (on by default on Windows) writes
+	// them to disk, so they must carry the NAMES of the env vars an agent or an SSH remote is
+	// configured with and never their values (RC-F07).
+	describe('env var values in log lines', () => {
+		// Names no keyword list knows (NPM_TOKEN, HF_TOKEN, MY_API) and one that is harmless
+		// (EDITOR): the log masks all four, because it cannot tell them apart by name.
+		const customEnvVars = {
+			NPM_TOKEN: 'npm_synthetic0123456789abcdefghijklmnopqrst',
+			HF_TOKEN: 'hf_synthetic0123456789abcdefghijklmnopqrstuv',
+			MY_API: 'https://internal.synthetic.invalid/v2?key=synthetic-query-secret',
+			EDITOR: 'vim',
+		};
+		const customEnvVarsDisabled = { PARKED_SECRET: 'parked-synthetic-secret-value' };
+		const maskedEnvVars = {
+			NPM_TOKEN: `[redacted, ${customEnvVars.NPM_TOKEN.length} chars]`,
+			HF_TOKEN: `[redacted, ${customEnvVars.HF_TOKEN.length} chars]`,
+			MY_API: `[redacted, ${customEnvVars.MY_API.length} chars]`,
+			EDITOR: '[redacted, 3 chars]',
+		};
+		const everyValue = [...Object.values(customEnvVars), ...Object.values(customEnvVarsDisabled)];
+
+		const invoke = (channel: string, ...args: unknown[]) =>
+			(handlers.get(channel) as unknown as (...a: unknown[]) => Promise<unknown>)({}, ...args);
+
+		const everythingLogged = () =>
+			JSON.stringify([
+				...vi.mocked(logger.error).mock.calls,
+				...vi.mocked(logger.warn).mock.calls,
+				...vi.mocked(logger.info).mock.calls,
+				...vi.mocked(logger.debug).mock.calls,
+			]);
+
+		describe('agents:setConfig', () => {
+			const message = 'Updated config for agent: claude-code';
+
+			it('logs every customEnvVars value masked and keeps the names', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfig', 'claude-code', {
+					model: 'gpt-4',
+					customEnvVars,
+					customEnvVarsDisabled,
+				});
+
+				expect(logger.info).toHaveBeenCalledWith(message, '[AgentConfig]', {
+					model: 'gpt-4',
+					customEnvVars: maskedEnvVars,
+					customEnvVarsDisabled: { PARKED_SECRET: '[redacted, 29 chars]' },
+				});
+			});
+
+			it('puts no env value into any log call', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfig', 'claude-code', { customEnvVars, customEnvVarsDisabled });
+
+				const logged = everythingLogged();
+				for (const value of everyValue) expect(logged).not.toContain(value);
+			});
+
+			it('stores the real values, and logs a copy instead of the stored object', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+				const config = {
+					model: 'gpt-4',
+					customEnvVars: { ...customEnvVars },
+					customEnvVarsDisabled,
+				};
+
+				await invoke('agents:setConfig', 'claude-code', config);
+
+				// The store gets the caller's own object, real values and all.
+				const [key, stored] = mockAgentConfigsStore.set.mock.calls[0];
+				expect(key).toBe('configs');
+				expect(stored['claude-code']).toBe(config);
+				expect(stored['claude-code'].customEnvVars).toEqual(customEnvVars);
+				// A logger keeps its argument by reference, so the log must not be handed that object.
+				const [, , logged] = vi.mocked(logger.info).mock.calls.find(([text]) => text === message)!;
+				expect(logged).not.toBe(config);
+				expect(config.customEnvVars).toEqual(customEnvVars);
+			});
+
+			it('masks an env record nested anywhere in the config, not only at the top', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfig', 'claude-code', {
+					profiles: [{ name: 'work', customEnvVars: { NPM_TOKEN: 'nested-synthetic-token' } }],
+				});
+
+				expect(everythingLogged()).not.toContain('nested-synthetic-token');
+				expect(logger.info).toHaveBeenCalledWith(message, '[AgentConfig]', {
+					profiles: [{ name: 'work', customEnvVars: { NPM_TOKEN: '[redacted, 22 chars]' } }],
+				});
+			});
+
+			it('logs a config with no env vars as it is', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfig', 'claude-code', { model: 'gpt-4', theme: 'dark' });
+
+				expect(logger.info).toHaveBeenCalledWith(message, '[AgentConfig]', {
+					model: 'gpt-4',
+					theme: 'dark',
+				});
+			});
+		});
+
+		describe('agents:setConfigValue', () => {
+			const messageFor = (key: string) => `Updated config ${key} for agent claude-code`;
+
+			it.each([
+				['customEnvVars', customEnvVars, maskedEnvVars],
+				['customEnvVarsDisabled', customEnvVarsDisabled, { PARKED_SECRET: '[redacted, 29 chars]' }],
+			])(
+				'logs the %s record with every value masked and keeps the names',
+				async (key, record, masked) => {
+					mockAgentConfigsStore.get.mockReturnValue({});
+
+					await invoke('agents:setConfigValue', 'claude-code', key, record);
+
+					expect(logger.debug).toHaveBeenCalledWith(messageFor(key), '[AgentConfig]', {
+						value: masked,
+					});
+					const logged = everythingLogged();
+					for (const value of everyValue) expect(logged).not.toContain(value);
+				}
+			);
+
+			it('stores the real values', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfigValue', 'claude-code', 'customEnvVars', customEnvVars);
+
+				expect(mockAgentConfigsStore.set).toHaveBeenCalledWith('configs', {
+					'claude-code': { customEnvVars },
+				});
+			});
+
+			it('masks an env record inside a value stored under another key', async () => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfigValue', 'claude-code', 'profile', {
+					customEnvVars: { NPM_TOKEN: 'nested-synthetic-token' },
+				});
+
+				expect(everythingLogged()).not.toContain('nested-synthetic-token');
+				expect(logger.debug).toHaveBeenCalledWith(messageFor('profile'), '[AgentConfig]', {
+					value: { customEnvVars: { NPM_TOKEN: '[redacted, 22 chars]' } },
+				});
+			});
+
+			it.each([
+				['model', 'gpt-4'],
+				['customPath', '/custom/bin/claude'],
+				['theme', { mode: 'dark' }],
+				['env', 'production'],
+			])('logs %s as it is', async (key, value) => {
+				mockAgentConfigsStore.get.mockReturnValue({});
+
+				await invoke('agents:setConfigValue', 'claude-code', key, value);
+
+				expect(logger.debug).toHaveBeenCalledWith(messageFor(key), '[AgentConfig]', { value });
+			});
+		});
+
+		describe('agents:get over SSH', () => {
+			// `buildSshCommand()` merges the remote's `remoteEnv` into the command it builds, as
+			// `NAME='value'` ahead of the invocation, and its last argument is that whole line.
+			const remoteEnv = {
+				NPM_TOKEN: 'npm_synthetic0123456789abcdefghijklmnopqrst',
+				MY_API: 'https://internal.synthetic.invalid/v2?key=synthetic-query-secret',
+			};
+			const connectionArgs = ['-o', 'BatchMode=yes', 'dev@dev.example.com'];
+			const remoteLine = `/bin/bash -c "NPM_TOKEN='${remoteEnv.NPM_TOKEN}' MY_API='${remoteEnv.MY_API}' command -v claude"`;
+
+			// One-shot mocks, so nothing set here outlives the test that asked for it.
+			beforeEach(() => {
+				const settingsStore = {
+					get: vi.fn().mockReturnValue([
+						{
+							id: 'remote-1',
+							host: 'dev.example.com',
+							username: 'dev',
+							port: 22,
+							enabled: true,
+							remoteEnv,
+						},
+					]),
+					set: vi.fn(),
+				};
+				handlers.clear();
+				registerAgentsHandlers({ ...deps, settingsStore: settingsStore as any });
+				vi.mocked(buildSshCommand).mockResolvedValueOnce({
+					command: 'ssh',
+					args: [...connectionArgs, remoteLine],
+					remoteCommandLine: "'command' '-v' 'claude'",
+				});
+				vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+					exitCode: 0,
+					stdout: '/home/dev/.local/bin/claude\n',
+					stderr: '',
+				});
+			});
+
+			it('logs the connection arguments and the bare invocation, not the remote env', async () => {
+				await invoke('agents:get', 'claude-code', 'remote-1');
+
+				expect(logger.info).toHaveBeenCalledWith(
+					"Executing SSH detection command for 'claude'",
+					'[AgentDetector]',
+					{
+						command: 'ssh',
+						args: connectionArgs,
+						remoteCommandLine: "'command' '-v' 'claude'",
+					}
+				);
+			});
+
+			it('puts no remote env value into any log call', async () => {
+				await invoke('agents:get', 'claude-code', 'remote-1');
+
+				const logged = everythingLogged();
+				for (const value of Object.values(remoteEnv)) expect(logged).not.toContain(value);
+			});
+
+			it('still runs the command it built, env and all', async () => {
+				await invoke('agents:get', 'claude-code', 'remote-1');
+
+				expect(execFileNoThrow).toHaveBeenCalledWith('ssh', [...connectionArgs, remoteLine]);
+			});
+		});
+	});
+
 	describe('agents:setCustomPath', () => {
 		it('should set custom path for agent', async () => {
 			mockAgentConfigsStore.get.mockReturnValue({});

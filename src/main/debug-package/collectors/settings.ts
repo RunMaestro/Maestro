@@ -11,7 +11,7 @@
  */
 
 import Store from 'electron-store';
-import { maskEnvVarValues } from '../../../shared/agentEnvironment';
+import { isEnvRecord, maskEnvVarValues } from '../../../shared/agentEnvironment';
 import { redactAndTruncate, redactPath } from './sanitize';
 
 // Keys that contain sensitive data (case-insensitive substring matching)
@@ -68,12 +68,6 @@ const IDENTITY_KEYS = [
 	'workspacename',
 ];
 
-// Keys whose value is an env var record: `shellEnvVars`, `shellEnvVarsDisabled`,
-// `customEnvVars`, an SSH remote's `remoteEnv` / `remoteEnvDisabled`, a plugin's
-// `env`. Variable names are user-chosen (`NPM_TOKEN`, `HF_TOKEN`, `MY_API`), so no
-// keyword list can tell a secret from `EDITOR`: every value in the record is masked.
-const ENV_RECORD_KEY = /env(vars|ironment)?(disabled)?$/i;
-
 // Keys that contain paths, which are replaced with opaque descriptors
 const PATH_KEYS = [
 	'customsyncpath',
@@ -100,17 +94,6 @@ function isSensitiveKey(key: string): boolean {
 	return (
 		SENSITIVE_KEYS.some((sensitiveKey) => lowerKey.includes(sensitiveKey)) ||
 		IDENTITY_KEYS.includes(lowerKey)
-	);
-}
-
-/**
- * Check if a key holds an env var record (a plain object of name -> value).
- * A string, array, or null under such a name is not a record and takes the
- * ordinary path, so `env: 'production'` is swept like any other string.
- */
-function isEnvRecord(key: string, value: unknown): value is Record<string, unknown> {
-	return (
-		ENV_RECORD_KEY.test(key) && typeof value === 'object' && value !== null && !Array.isArray(value)
 	);
 }
 

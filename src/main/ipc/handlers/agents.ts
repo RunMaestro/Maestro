@@ -103,6 +103,7 @@ import {
 import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
 import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
+import { maskEnvRecords } from '../../../shared/agentEnvironment';
 import { customPathsFromAgentConfigs } from '../../agents/agent-config-lookup';
 
 const LOG_CONTEXT = '[AgentDetector]';
@@ -1031,9 +1032,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 				try {
 					const sshCommand = await buildSshCommand(sshConfig, remoteOptions);
+					// The last argument is the remote command line, and `buildSshCommand()` merges this
+					// remote's `remoteEnv` into it as `NAME='value'`. Log the connection arguments and the
+					// bare invocation instead (`remoteCommandLine` carries no env).
 					logger.info(`Executing SSH detection command for '${agentDef.binaryName}'`, LOG_CONTEXT, {
 						command: sshCommand.command,
-						args: sshCommand.args,
+						args: sshCommand.args.slice(0, -1),
+						remoteCommandLine: sshCommand.remoteCommandLine,
 					});
 
 					// Execute with timeout
@@ -1207,7 +1212,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				allConfigs[agentId] = config;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.info(`Updated config for agent: ${agentId}`, CONFIG_LOG_CONTEXT, config);
+				// The log shows in the System Log Viewer and goes to disk with file logging on, so
+				// log a masked copy: `config` itself is what the store holds.
+				logger.info(
+					`Updated config for agent: ${agentId}`,
+					CONFIG_LOG_CONTEXT,
+					maskEnvRecords(config)
+				);
 				return true;
 			}
 		)
@@ -1248,7 +1259,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 				allConfigs[agentId][key] = value;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.debug(`Updated config ${key} for agent ${agentId}`, CONFIG_LOG_CONTEXT, { value });
+				// `key` may be `customEnvVars`: mask by the key the value was stored under.
+				logger.debug(`Updated config ${key} for agent ${agentId}`, CONFIG_LOG_CONTEXT, {
+					value: maskEnvRecords(value, key),
+				});
 				return true;
 			}
 		)

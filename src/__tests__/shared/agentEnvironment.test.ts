@@ -6,7 +6,9 @@
 import { describe, it, expect } from 'vitest';
 import {
 	envSourceLabel,
+	isEnvRecord,
 	isSecretEnvKey,
+	maskEnvRecords,
 	maskEnvValue,
 	maskEnvVarValues,
 	resolveAgentEnvironment,
@@ -249,6 +251,180 @@ describe('maskEnvVarValues', () => {
 
 	it('returns an empty record for an empty record', () => {
 		expect(maskEnvVarValues({})).toEqual({});
+	});
+});
+
+describe('isEnvRecord', () => {
+	const record = { NPM_TOKEN: 'npm_synthetic' };
+
+	it.each([
+		'shellEnvVars',
+		'shellEnvVarsDisabled',
+		'customEnvVars',
+		'customEnvVarsDisabled',
+		'remoteEnv',
+		'remoteEnvDisabled',
+		'env',
+		'environment',
+		'CUSTOMENVVARS',
+		'CustomEnvVarsDisabled',
+	])('is true for a plain object under %s', (key) => {
+		expect(isEnvRecord(key, record)).toBe(true);
+	});
+
+	it('is true for an empty record and for an object with no prototype', () => {
+		expect(isEnvRecord('customEnvVars', {})).toBe(true);
+		expect(isEnvRecord('customEnvVars', Object.assign(Object.create(null), record))).toBe(true);
+	});
+
+	it.each(['model', 'customPath', 'customArgs', 'envelope', 'environmentName', 'envName', ''])(
+		'is false for a plain object under %j: the name does not say env',
+		(key) => {
+			expect(isEnvRecord(key, record)).toBe(false);
+		}
+	);
+
+	it.each([
+		['a string', 'production'],
+		['an array', ['A=1']],
+		['null', null],
+		['undefined', undefined],
+		['a number', 8080],
+		['a boolean', true],
+	])('is false for %s under a name that says env', (_label, value) => {
+		expect(isEnvRecord('env', value)).toBe(false);
+		expect(isEnvRecord('customEnvVars', value)).toBe(false);
+	});
+});
+
+describe('maskEnvRecords', () => {
+	const customEnvVars = {
+		NPM_TOKEN: 'npm_synthetic0123456789abcdefghijklmnopqrst',
+		HF_TOKEN: 'hf_synthetic0123456789abcdefghijklmnopqrstuv',
+		MY_API: 'https://internal.synthetic.invalid/v2?key=synthetic-query-secret',
+		EDITOR: 'vim',
+	};
+	const masked = {
+		NPM_TOKEN: `[redacted, ${customEnvVars.NPM_TOKEN.length} chars]`,
+		HF_TOKEN: `[redacted, ${customEnvVars.HF_TOKEN.length} chars]`,
+		MY_API: `[redacted, ${customEnvVars.MY_API.length} chars]`,
+		EDITOR: '[redacted, 3 chars]',
+	};
+
+	it('masks an env record in an agent config and leaves every other field as it is', () => {
+		const config = {
+			model: 'gpt-4',
+			customPath: '/usr/local/bin/claude',
+			customEnvVars,
+			customEnvVarsDisabled: { PARKED: 'parked-synthetic' },
+		};
+
+		expect(maskEnvRecords(config)).toEqual({
+			model: 'gpt-4',
+			customPath: '/usr/local/bin/claude',
+			customEnvVars: masked,
+			customEnvVarsDisabled: { PARKED: '[redacted, 16 chars]' },
+		});
+	});
+
+	it('masks env records nested in objects and arrays, whatever holds them', () => {
+		const settings = {
+			shellEnvVars: customEnvVars,
+			sshRemotes: [
+				{ name: 'box', port: 22, remoteEnv: { DB_URL: 'postgres://u:p@h/db' } },
+				{ name: 'other', remoteEnvDisabled: { OLD: 'old-synthetic' } },
+			],
+			deep: { a: { b: { env: { X: 'deep-synthetic' } } } },
+		};
+
+		expect(maskEnvRecords(settings)).toEqual({
+			shellEnvVars: masked,
+			sshRemotes: [
+				{ name: 'box', port: 22, remoteEnv: { DB_URL: '[redacted, 19 chars]' } },
+				{ name: 'other', remoteEnvDisabled: { OLD: '[redacted, 13 chars]' } },
+			],
+			deep: { a: { b: { env: { X: '[redacted, 14 chars]' } } } },
+		});
+	});
+
+	it('leaves no value, and no tail of one, anywhere in the result', () => {
+		const text = JSON.stringify(maskEnvRecords({ customEnvVars, nested: { env: customEnvVars } }));
+
+		for (const value of Object.values(customEnvVars)) {
+			expect(text).not.toContain(value);
+			expect(text).not.toContain(value.slice(-4));
+		}
+		// The names are the point: support can see what is set.
+		for (const name of Object.keys(customEnvVars)) expect(text).toContain(name);
+	});
+
+	it('masks a bare value by the key it is stored under', () => {
+		expect(maskEnvRecords(customEnvVars, 'customEnvVars')).toEqual(masked);
+		expect(maskEnvRecords(customEnvVars, 'customEnvVarsDisabled')).toEqual(masked);
+		// A name that does not say env is not a record, and a record is not guessed from its shape.
+		expect(maskEnvRecords(customEnvVars, 'model')).toEqual(customEnvVars);
+		expect(maskEnvRecords(customEnvVars)).toEqual(customEnvVars);
+	});
+
+	it('does not mask a string, array or null that merely sits under an env name', () => {
+		expect(maskEnvRecords({ env: 'production', customEnvVars: null, envVars: ['A=1'] })).toEqual({
+			env: 'production',
+			customEnvVars: null,
+			envVars: ['A=1'],
+		});
+	});
+
+	it('returns a copy and leaves the input, nested records included, untouched', () => {
+		const config = {
+			model: 'gpt-4',
+			customEnvVars: { ...customEnvVars },
+			list: [{ env: { A: 'a' } }],
+		};
+		const before = JSON.stringify(config);
+
+		const result = maskEnvRecords(config) as typeof config;
+
+		expect(result).not.toBe(config);
+		expect(result.customEnvVars).not.toBe(config.customEnvVars);
+		expect(JSON.stringify(config)).toBe(before);
+	});
+
+	it('copies a config with nothing to mask, without sharing its nested objects', () => {
+		const config = { model: 'gpt-4', options: { theme: 'dark' }, tags: ['a', 'b'] };
+
+		const result = maskEnvRecords(config) as typeof config;
+
+		expect(result).toEqual(config);
+		expect(result).not.toBe(config);
+		expect(result.options).not.toBe(config.options);
+		expect(result.tags).not.toBe(config.tags);
+	});
+
+	it('works on a frozen input', () => {
+		const config = Object.freeze({ customEnvVars: Object.freeze({ ...customEnvVars }) });
+
+		expect(maskEnvRecords(config)).toEqual({ customEnvVars: masked });
+	});
+
+	it('masks a record with no prototype', () => {
+		const bare = Object.assign(Object.create(null), { NPM_TOKEN: 'npm_synthetic' });
+
+		expect(maskEnvRecords({ customEnvVars: bare })).toEqual({
+			customEnvVars: { NPM_TOKEN: '[redacted, 13 chars]' },
+		});
+	});
+
+	it('passes primitives and objects that are not plain through as they are', () => {
+		const when = new Date(0);
+		const map = new Map([['A', 'a']]);
+
+		expect(maskEnvRecords('text')).toBe('text');
+		expect(maskEnvRecords(42)).toBe(42);
+		expect(maskEnvRecords(null)).toBeNull();
+		expect(maskEnvRecords(undefined)).toBeUndefined();
+		const result = maskEnvRecords({ when, map }) as { when: Date; map: Map<string, string> };
+		expect(result.when).toBe(when);
+		expect(result.map).toBe(map);
 	});
 });
 

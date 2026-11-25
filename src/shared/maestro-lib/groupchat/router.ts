@@ -71,6 +71,7 @@ import {
 import { extractFirstSentence, type GroupChatStore } from './storage';
 import { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './turn-metrics';
 import type { GroupChatTurnMetrics } from './turn-metrics';
+import { maskEnvVarValues } from '../../agentEnvironment';
 import { mediaSubtype, parseBase64DataUrl } from '../../dataUrl';
 import type {
 	GroupChatAgentDirectory,
@@ -2416,7 +2417,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					);
 					logger.debug(`[GroupChat:Debug] Prompt length: ${participantPrompt.length}`);
 					logger.debug(
-						`[GroupChat:Debug] CustomEnvVars: ${JSON.stringify(configResolution.effectiveCustomEnvVars || {})}`
+						`[GroupChat:Debug] CustomEnvVars: ${JSON.stringify(maskEnvVarValues(configResolution.effectiveCustomEnvVars || {}))}`
 					);
 
 					const spawnResult = await launcher.runner.start({
