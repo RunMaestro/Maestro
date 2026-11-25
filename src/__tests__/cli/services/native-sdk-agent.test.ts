@@ -137,6 +137,132 @@ describe('CLI native SDK ownership', () => {
 		expect(rpcRequestMock).toHaveBeenCalledWith('set_thinking_level', { level: 'max' });
 	});
 
+	it('sends the resolved Antigravity effort when customArgs overrides session effort', async () => {
+		rpcRequestMock.mockClear();
+		rpcRequestMock.mockImplementation(async (method: string) => {
+			if (method === 'start') {
+				rpcNotification.current({ method: 'text', params: { text: 'AGY_DONE' } });
+				rpcNotification.current({ method: 'complete', params: { code: 0 } });
+			}
+			return {};
+		});
+
+		const result = await spawnNativeSdkAgent(
+			'antigravity',
+			process.cwd(),
+			'test',
+			undefined,
+			{
+				harnessControlMode: 'native',
+				customModel: 'gemini-4-neon',
+				customEffort: 'low',
+				customArgs: '--effort high',
+				agentConfigValues: {},
+			},
+			'agy'
+		);
+
+		expect(result.success).toBe(true);
+		expect(rpcRequestMock).toHaveBeenCalledWith(
+			'start',
+			expect.objectContaining({
+				model: 'gemini-4-neon',
+				effort: 'high',
+			})
+		);
+	});
+
+	it('resolves Claude model and effort identically when session customArgs are present', async () => {
+		queryMock.mockImplementation((params) => claudeQuery(params, () => undefined));
+
+		await spawnNativeSdkAgent('claude-code', process.cwd(), 'test', undefined, {
+			harnessControlMode: 'native',
+			customModel: 'sonnet',
+			customEffort: 'medium',
+			customArgs: '--verbose',
+			agentConfigValues: { model: 'haiku', effort: 'low' },
+		});
+
+		expect(queryMock.mock.calls.at(-1)?.[0].options).toMatchObject({
+			model: 'sonnet',
+			effort: 'medium',
+		});
+	});
+
+	it('validates the final resolved effort rather than the raw session effort', async () => {
+		rpcRequestMock.mockClear();
+		rpcRequestMock.mockImplementation(async (method: string) => {
+			if (method === 'start') {
+				rpcNotification.current({ method: 'text', params: { text: 'AGY_DONE' } });
+				rpcNotification.current({ method: 'complete', params: { code: 0 } });
+			}
+			return {};
+		});
+
+		const invalidResolved = await spawnNativeSdkAgent(
+			'antigravity',
+			process.cwd(),
+			'test',
+			undefined,
+			{
+				harnessControlMode: 'native',
+				customModel: 'gemini-4-neon',
+				customEffort: 'low',
+				customArgs: '--effort turbo',
+				agentConfigValues: {},
+			},
+			'agy'
+		);
+		expect(invalidResolved.success).toBe(false);
+		expect(invalidResolved.error).toContain("Native SDK does not support effort 'turbo'");
+
+		const validResolved = await spawnNativeSdkAgent(
+			'antigravity',
+			process.cwd(),
+			'test',
+			undefined,
+			{
+				harnessControlMode: 'native',
+				customModel: 'gemini-4-neon',
+				customEffort: 'turbo',
+				customArgs: '--effort high',
+				agentConfigValues: {},
+			},
+			'agy'
+		);
+		expect(validResolved.success).toBe(true);
+		expect(rpcRequestMock).toHaveBeenCalledWith(
+			'start',
+			expect.objectContaining({
+				model: 'gemini-4-neon',
+				effort: 'high',
+			})
+		);
+	});
+
+	it('allows Grok agent-level minimal effort through ACP without rejecting on NATIVE_SDK_EFFORTS', async () => {
+		const { startTurn } = await import('../../../shared/maestro-lib/run/start-turn');
+		await expect(
+			spawnNativeSdkAgent(
+				'grok',
+				process.cwd(),
+				'test',
+				undefined,
+				{
+					harnessControlMode: 'native',
+					agentConfigValues: { effort: 'minimal' },
+				},
+				'grok'
+			)
+		).rejects.toThrow('ACP child requires piped stdin and stdout');
+
+		expect(vi.mocked(startTurn).mock.calls.at(-1)?.[0].args).toEqual([
+			'agent',
+			'--always-approve',
+			'stdio',
+		]);
+	});
+
 	it('finishes a CLI Pi turn when agent_end reports an idle state', async () => {
 		rpcRequestMock.mockClear();
 		rpcRequestMock.mockImplementation(async (method: string) => {
