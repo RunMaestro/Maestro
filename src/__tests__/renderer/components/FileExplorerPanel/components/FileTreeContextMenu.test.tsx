@@ -168,16 +168,18 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.queryByText('New Agent Here')).toBeNull();
 	});
 
-	it('hides New Agent Here over SSH, where the folder path is remote', () => {
+	it('shows New Agent Here over SSH too: the new agent starts on that remote', () => {
+		const onNewAgentHere = vi.fn();
 		render(
 			<FileTreeContextMenu
 				{...defaultProps}
 				sshRemoteId="remote-1"
+				onNewAgentHere={onNewAgentHere}
 				contextMenu={makeContextMenu(folderNode)}
 			/>
 		);
-		expect(screen.queryByText('New Agent Here')).toBeNull();
-		// The rest of the folder menu is unaffected.
+		fireEvent.click(screen.getByText('New Agent Here'));
+		expect(onNewAgentHere).toHaveBeenCalledTimes(1);
 		expect(screen.getByText('New Folder')).toBeTruthy();
 	});
 

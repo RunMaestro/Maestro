@@ -86,6 +86,8 @@ export interface NewInstanceModalData {
 	presetGroupId?: string | null;
 	/** When set, seeds the working directory (and a default name from its basename). Ignored if duplicatingSessionId is set - duplicates inherit the source's cwd. */
 	presetWorkingDir?: string | null;
+	/** The SSH remote `presetWorkingDir` is on, so a folder of an SSH or hosted agent seeds an agent on that remote. Ignored when duplicating. */
+	presetSshRemoteId?: string | null;
 }
 
 /** Edit agent modal data */
@@ -1440,6 +1442,7 @@ export function useModalActions() {
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
 		newInstancePresetGroupId: newInstanceData?.presetGroupId ?? null,
 		newInstancePresetWorkingDir: newInstanceData?.presetWorkingDir ?? null,
+		newInstancePresetSshRemoteId: newInstanceData?.presetSshRemoteId ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,

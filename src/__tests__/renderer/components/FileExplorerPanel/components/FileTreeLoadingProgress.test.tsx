@@ -12,44 +12,40 @@ const theme = {
 } as any;
 
 describe('FileTreeLoadingProgress', () => {
-	it('shows local loading text when not remote', () => {
-		render(<FileTreeLoadingProgress theme={theme} isRemote={false} />);
+	it('shows the same loading text in every mode', () => {
+		render(<FileTreeLoadingProgress theme={theme} />);
 		expect(screen.getByText('Loading files...')).toBeTruthy();
-	});
-
-	it('shows remote loading text when isRemote is true', () => {
-		render(<FileTreeLoadingProgress theme={theme} isRemote={true} />);
-		expect(screen.getByText('Loading remote files...')).toBeTruthy();
+		expect(screen.queryByText(/remote/i)).toBeNull();
 	});
 
 	it('displays progress counters when progress data is provided', () => {
 		const progress = { directoriesScanned: 12, filesFound: 45, currentDirectory: '/src/foo' };
-		render(<FileTreeLoadingProgress theme={theme} isRemote={false} progress={progress} />);
+		render(<FileTreeLoadingProgress theme={theme} progress={progress} />);
 		expect(screen.getByText('45')).toBeTruthy();
 		expect(screen.getByText('12')).toBeTruthy();
 	});
 
 	it('shows the current folder being scanned', () => {
 		const progress = { directoriesScanned: 1, filesFound: 5, currentDirectory: '/src/components' };
-		render(<FileTreeLoadingProgress theme={theme} isRemote={false} progress={progress} />);
+		render(<FileTreeLoadingProgress theme={theme} progress={progress} />);
 		expect(screen.getByText(/scanning: components\//)).toBeTruthy();
 	});
 
 	it('renders a cancel button when onCancel is provided', () => {
 		const onCancel = vi.fn();
-		render(<FileTreeLoadingProgress theme={theme} isRemote={false} onCancel={onCancel} />);
+		render(<FileTreeLoadingProgress theme={theme} onCancel={onCancel} />);
 		expect(screen.getByText('Stop loading')).toBeTruthy();
 	});
 
 	it('calls onCancel when the cancel button is clicked', () => {
 		const onCancel = vi.fn();
-		render(<FileTreeLoadingProgress theme={theme} isRemote={false} onCancel={onCancel} />);
+		render(<FileTreeLoadingProgress theme={theme} onCancel={onCancel} />);
 		fireEvent.click(screen.getByText('Stop loading'));
 		expect(onCancel).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not render a cancel button when onCancel is absent', () => {
-		render(<FileTreeLoadingProgress theme={theme} isRemote={false} />);
+		render(<FileTreeLoadingProgress theme={theme} />);
 		expect(screen.queryByText('Stop loading')).toBeNull();
 	});
 });

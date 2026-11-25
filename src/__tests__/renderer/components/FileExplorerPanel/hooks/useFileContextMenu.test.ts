@@ -454,8 +454,35 @@ describe('useFileContextMenu', () => {
 		expect(openModal).toHaveBeenCalledWith('newInstance', {
 			duplicatingSessionId: null,
 			presetWorkingDir: '/project/docs',
+			presetSshRemoteId: null,
 		});
 		expect(result.current.contextMenu).toBeNull();
+	});
+
+	it('handleNewAgentHere seeds the SSH remote for an SSH or hosted agent', () => {
+		const openModal = vi.fn();
+		vi.mocked(modalStore.useModalStore.getState).mockReturnValueOnce({ openModal } as any);
+
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, sshRemoteId: 'remote-1' })
+		);
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, folderNode, 'docs', 0);
+		});
+		act(() => {
+			result.current.handleNewAgentHere();
+		});
+		expect(openModal).toHaveBeenCalledWith('newInstance', {
+			duplicatingSessionId: null,
+			presetWorkingDir: '/project/docs',
+			presetSshRemoteId: 'remote-1',
+		});
 	});
 
 	it('handleNewAgentHere joins nested folder paths with the base separator', () => {
@@ -481,6 +508,7 @@ describe('useFileContextMenu', () => {
 		expect(openModal).toHaveBeenCalledWith('newInstance', {
 			duplicatingSessionId: null,
 			presetWorkingDir: 'C:\\Users\\Test\\src\\renderer',
+			presetSshRemoteId: null,
 		});
 	});
 

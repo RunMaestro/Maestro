@@ -4590,5 +4590,76 @@ describe('NewInstanceModal', () => {
 			});
 			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
 		});
+
+		it('seeds the SSH remote with presetSshRemoteId, so a remote folder makes a remote agent', async () => {
+			// "New Agent Here" on a folder in an SSH or hosted agent's Files panel: the
+			// folder is on the remote, so the new agent must start there, as a local
+			// folder starts a local agent.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/home/devuser/my-project/docs"
+					presetSshRemoteId="remote-1"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1');
+			});
+			const agentOption = await screen.findByRole('option', { name: /Claude Code/i });
+			await act(async () => {
+				fireEvent.click(agentOption);
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('docs');
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			expect(onCreate.mock.calls[0][1]).toBe('/home/devuser/my-project/docs');
+			expect(onCreate.mock.calls[0][11]).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/devuser/my-project/docs',
+				})
+			);
+		});
 	});
 });

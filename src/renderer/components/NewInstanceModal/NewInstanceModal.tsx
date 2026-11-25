@@ -49,6 +49,7 @@ export function NewInstanceModal({
 	sourceSession,
 	presetGroupId,
 	presetWorkingDir,
+	presetSshRemoteId,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [detectedSshRemoteId, setDetectedSshRemoteId] = useState<string | null>();
@@ -247,9 +248,9 @@ export function NewInstanceModal({
 
 			// Per-agent config (path, args, env vars) starts empty - each agent gets its own config
 			// No provider-level loading - config is set per-agent during creation
-			// Only reset if NOT duplicating (source session will provide values)
-			// Also preserve SSH configs when re-detecting (sshRemoteId is provided during re-detection)
-			if (!source && !selectedSshRemoteId) {
+			// Only reset if NOT duplicating (source session will provide values).
+			// A remote seeded at open (presetSshRemoteId) keeps its SSH config.
+			if (!source) {
 				setCustomAgentPaths({});
 				setCustomAgentArgs({});
 				setCustomAgentEnvVars({});
@@ -258,7 +259,7 @@ export function NewInstanceModal({
 				setMaestroPPathByAgent({});
 				setRetryAvailabilityByAgent({});
 				setRetryTokenByAgent({});
-				setAgentSshRemoteConfigs({});
+				if (!selectedSshRemoteId) setAgentSshRemoteConfigs({});
 			}
 
 			// Load configurations for all agents (model, contextWindow - these are provider-level)
@@ -956,9 +957,16 @@ export function NewInstanceModal({
 	// user has typed (issue #827).
 	useEffect(() => {
 		if (isOpen) {
+			// A folder on an SSH remote ("New Agent Here" in an SSH or hosted agent's
+			// Files panel) seeds an agent on that remote, as a local folder seeds a
+			// local one. Set before detection so the providers are probed there.
+			const seedSshRemoteId = !sourceSession && presetSshRemoteId ? presetSshRemoteId : undefined;
+			if (seedSshRemoteId) {
+				setAgentSshRemoteConfigs({ _pending_: { enabled: true, remoteId: seedSshRemoteId } });
+			}
 			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
 			// This prevents the race condition where loadAgents would overwrite pre-filled values
-			loadAgents(sourceSession);
+			loadAgents(sourceSession, seedSshRemoteId);
 			// Keep all agents collapsed by default, or expand when duplicating to show custom config
 			if (sourceSession) {
 				setExpandedAgent(sourceSession.toolType);
@@ -984,7 +992,14 @@ export function NewInstanceModal({
 		return () => {
 			agentLoadSequence.current++;
 		};
-	}, [isOpen, sourceSession?.id, presetGroupId, presetWorkingDir, handleWorkingDirChange]);
+	}, [
+		isOpen,
+		sourceSession?.id,
+		presetGroupId,
+		presetWorkingDir,
+		presetSshRemoteId,
+		handleWorkingDirChange,
+	]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails

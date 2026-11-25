@@ -9,7 +9,6 @@ import {
 	EyeOff,
 	Search,
 	FolderOpen,
-	Server,
 	Copy,
 	FolderInput,
 	FolderUp,
@@ -716,15 +715,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							: undefined
 					}
 				>
-					{session.sshRemote && (
-						<span
-							className="flex-shrink-0"
-							title={`SSH: ${session.sshRemote.name} (${session.sshRemote.host})`}
-							style={{ color: theme.colors.accent }}
-						>
-							<Server className="w-3.5 h-3.5" />
-						</span>
-					)}
 					{showTruncationWarning && truncationCollapsed && (
 						<button
 							type="button"
@@ -756,11 +746,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							textOverflow: 'ellipsis',
 							textAlign: 'center',
 						}}
-						title={
-							session.sshRemote
-								? `${session.sshRemote.host}:${session.projectRoot}`
-								: session.projectRoot
-						}
+						title={session.projectRoot}
 						onDoubleClick={async () => {
 							if (await safeClipboardWrite(session.projectRoot)) {
 								flashCopiedToClipboard(session.projectRoot, 'Path Copied');
@@ -816,22 +802,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			) : (
 				<>
-					{session.fileTreeLoading &&
-						(() => {
-							const isRemote = !!sshRemoteId;
-							return (
-								<FileTreeLoadingProgress
-									theme={theme}
-									progress={session.fileTreeLoadingProgress}
-									isRemote={isRemote}
-									onCancel={
-										isRemote && cancelFileTreeLoad
-											? () => cancelFileTreeLoad(session.id)
-											: undefined
-									}
-								/>
-							);
-						})()}
+					{session.fileTreeLoading && (
+						<FileTreeLoadingProgress
+							theme={theme}
+							progress={session.fileTreeLoadingProgress}
+							onCancel={cancelFileTreeLoad ? () => cancelFileTreeLoad(session.id) : undefined}
+						/>
+					)}
 					{showTruncationWarning && !truncationCollapsed && (
 						<FileTreeTruncatedBanner
 							theme={theme}

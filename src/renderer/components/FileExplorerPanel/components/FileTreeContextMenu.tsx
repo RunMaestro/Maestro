@@ -280,16 +280,14 @@ export function FileTreeContextMenu({
 								    path is remote, and a fresh agent starts out local, so
 								    seeding it would point the new agent at a local path that
 								    doesn't exist. */}
-								{!sshRemoteId && (
-									<button
-										onClick={onNewAgentHere}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-										<span>New Agent Here</span>
-									</button>
-								)}
+								<button
+									onClick={onNewAgentHere}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>New Agent Here</span>
+								</button>
 								{showDocumentGraph && onGraphFolder && (
 									<button
 										onClick={onGraphFolder}

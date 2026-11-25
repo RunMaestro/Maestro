@@ -714,11 +714,14 @@ export function useFileContextMenu({
 		const menu = contextMenu;
 		setContextMenu(null);
 		if (!menu || !menu.node || menu.node.type !== 'folder') return;
+		// The folder is on the agent's SSH remote for an SSH or hosted agent, so
+		// the new agent starts on that remote.
 		useModalStore.getState().openModal('newInstance', {
 			duplicatingSessionId: null,
 			presetWorkingDir: joinPath(session.fullPath, menu.path),
+			presetSshRemoteId: sshRemoteId ?? null,
 		});
-	}, [contextMenu, session.fullPath]);
+	}, [contextMenu, session.fullPath, sshRemoteId]);
 
 	// Resolve the folder that a "New File"/"New Folder" action should target from
 	// the current menu context. A folder row creates inside that folder; a file

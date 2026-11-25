@@ -8,14 +8,13 @@ interface FileTreeLoadingProgressProps {
 		filesFound: number;
 		currentDirectory: string;
 	};
-	isRemote: boolean;
+	/** Stops the walk. Offered in every mode: a large local tree is as slow to scan as a remote one. */
 	onCancel?: () => void;
 }
 
 export function FileTreeLoadingProgress({
 	theme,
 	progress,
-	isRemote,
 	onCancel,
 }: FileTreeLoadingProgressProps) {
 	const currentFolder = progress?.currentDirectory
@@ -28,7 +27,7 @@ export function FileTreeLoadingProgress({
 
 			<div className="text-center">
 				<div className="text-xs" style={{ color: theme.colors.textMain }}>
-					{isRemote ? 'Loading remote files...' : 'Loading files...'}
+					Loading files...
 				</div>
 
 				{progress && (progress.directoriesScanned > 0 || progress.filesFound > 0) && (

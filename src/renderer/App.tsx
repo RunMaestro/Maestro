@@ -292,6 +292,7 @@ function MaestroConsoleInner() {
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		newInstancePresetWorkingDir,
+		newInstancePresetSshRemoteId,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -3601,6 +3602,7 @@ function MaestroConsoleInner() {
 						duplicatingSessionId={duplicatingSessionId}
 						newInstancePresetGroupId={newInstancePresetGroupId}
 						newInstancePresetWorkingDir={newInstancePresetWorkingDir}
+						newInstancePresetSshRemoteId={newInstancePresetSshRemoteId}
 						onCloseEditAgentModal={handleCloseEditAgentModal}
 						onSaveEditAgent={handleSaveEditAgent}
 						editAgentSession={editAgentSession}
