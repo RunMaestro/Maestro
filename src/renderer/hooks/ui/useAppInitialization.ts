@@ -24,7 +24,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpecKitCommand, OpenSpecCommand, BmadCommand } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { getModalActions } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { useWizard } from '../../components/Wizard/WizardContext';
 import { useTabStore } from '../../stores/tabStore';
 import { useNotificationStore, notifyToast } from '../../stores/notificationStore';
 import { getSpeckitCommands } from '../../services/speckit';
@@ -36,6 +37,7 @@ import type { GistInfo } from '../../components/GistPublishModal';
 import {
 	exposeOnboardingSeriesDebug,
 	startOnboardingSeries,
+	useOnboardingSeriesStore,
 } from '../../stores/onboardingSeriesStore';
 import {
 	flushLeaderboardOutbox,
@@ -178,6 +180,50 @@ export function useAppInitialization(): AppInitializationReturn {
 				logger.error('[App] Failed to detect platform for Windows warning:', undefined, error);
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
+
+	// --- Did You Know launch tip ---
+	const onboardingSeriesActive = useOnboardingSeriesStore((s) => s.queue.length > 0);
+	const didYouKnowEnabled = useSettingsStore((s) => s.didYouKnowEnabled);
+	// The wizard owns its visibility in context; the other surfaces use modalStore.
+	const { state: wizardState } = useWizard();
+	const didYouKnowBlocked = useModalStore(
+		(s) =>
+			s.isOpen('wizardResume') ||
+			s.isOpen('tour') ||
+			s.isOpen('quitConfirm') ||
+			s.isOpen('agentError') ||
+			s.isOpen('reauth') ||
+			s.isOpen('updateCheck')
+	);
+	// Only the desktop lifecycle owner shows the automatic tip once per launch.
+	const didYouKnowShownRef = useRef(false);
+	useEffect(() => {
+		if (!settingsLoaded || !sessionsLoaded || !initialFileTreeReady) return;
+		if (!isLifecycleOwner || !didYouKnowEnabled || didYouKnowShownRef.current) return;
+		if (wizardState.isOpen || onboardingSeriesActive || didYouKnowBlocked) return;
+
+		didYouKnowShownRef.current = true;
+		let opened = false;
+		const timeout = setTimeout(() => {
+			opened = true;
+			useModalStore.getState().openModal('didYouKnow');
+		}, 1200);
+
+		return () => {
+			clearTimeout(timeout);
+			// Defer if interrupted during the delay, including StrictMode's effect replay.
+			if (!opened) didYouKnowShownRef.current = false;
+		};
+	}, [
+		settingsLoaded,
+		sessionsLoaded,
+		initialFileTreeReady,
+		isLifecycleOwner,
+		didYouKnowEnabled,
+		wizardState.isOpen,
+		onboardingSeriesActive,
+		didYouKnowBlocked,
+	]);
 
 	// --- First-run modal series (typography -> theme -> updates -> agent powers) ---
 	// Each step carries its own seen flag, so this fires whenever ANY of them is

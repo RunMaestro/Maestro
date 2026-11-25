@@ -15,6 +15,7 @@ interface BuildSupportCommandsArgs {
 	setSettingsTab: (tab: SettingsTab) => void;
 	setShortcutsHelpOpen: (open: boolean) => void;
 	setAboutModalOpen: (open: boolean) => void;
+	onOpenDidYouKnow: () => void;
 	onOpenLeaderboardRegistration: () => void;
 	isLeaderboardRegistered: boolean;
 	setFeedbackModalOpen: (open: boolean) => void;
@@ -35,6 +36,7 @@ interface BuildSupportCommandsArgs {
 		processMonitor?: QuickAction['shortcut'];
 		openThemeSettings?: QuickAction['shortcut'];
 		openLeaderboard?: QuickAction['shortcut'];
+		didYouKnow?: QuickAction['shortcut'];
 	};
 }
 
@@ -44,6 +46,7 @@ export function buildSupportCommands({
 	setSettingsTab,
 	setShortcutsHelpOpen,
 	setAboutModalOpen,
+	onOpenDidYouKnow,
 	onOpenLeaderboardRegistration,
 	isLeaderboardRegistered,
 	setFeedbackModalOpen,
@@ -128,6 +131,16 @@ export function buildSupportCommands({
 			label: 'About Maestro',
 			action: () => {
 				setAboutModalOpen(true);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'didYouKnow',
+			label: 'Did You Know?',
+			subtext: 'Show a Maestro feature tip',
+			shortcut: shortcuts.didYouKnow,
+			action: () => {
+				onOpenDidYouKnow();
 				setQuickActionOpen(false);
 			},
 		},

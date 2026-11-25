@@ -9,6 +9,7 @@
  */
 
 import { loadGroupChat, deleteGroupChat } from '../../main/group-chat/group-chat-storage';
+import { shuffle } from '../../shared/shuffle';
 import { readLog } from '../../main/group-chat/group-chat-log';
 import { killModerator } from '../../main/group-chat/group-chat-moderator';
 
@@ -48,7 +49,7 @@ export function selectTestAgents(available: string[]): TestAgentSelection {
 		throw new Error('No agents available for testing');
 	}
 
-	const shuffled = [...available].sort(() => Math.random() - 0.5);
+	const shuffled = shuffle(available);
 	return {
 		moderator: shuffled[0],
 		agentA: shuffled[Math.min(1, shuffled.length - 1)],

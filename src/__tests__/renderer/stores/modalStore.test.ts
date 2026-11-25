@@ -29,6 +29,31 @@ describe('modalStore', () => {
 		useModalStore.setState({ modals: new Map(), promptComposerFullscreen: false });
 	});
 
+	describe('Did You Know', () => {
+		it('exposes the requested tip through selectors and clears it before a default reopen', () => {
+			const { openModal, closeModal } = useModalStore.getState();
+
+			openModal('didYouKnow', { startTipId: 'maestro-cue' });
+			expect(selectModalOpen('didYouKnow')(useModalStore.getState())).toBe(true);
+			expect(selectModalData('didYouKnow')(useModalStore.getState())?.startTipId).toBe(
+				'maestro-cue'
+			);
+
+			closeModal('didYouKnow');
+			expect(selectModalOpen('didYouKnow')(useModalStore.getState())).toBe(false);
+			expect(selectModalData('didYouKnow')(useModalStore.getState())).toBeUndefined();
+
+			openModal('didYouKnow');
+			expect(selectModalOpen('didYouKnow')(useModalStore.getState())).toBe(true);
+			expect(selectModalData('didYouKnow')(useModalStore.getState())).toBeUndefined();
+		});
+
+		it('accepts a payload without a starting tip', () => {
+			useModalStore.getState().openModal('didYouKnow', {});
+			expect(useModalStore.getState().getData('didYouKnow')).toEqual({});
+		});
+	});
+
 	describe('initial state', () => {
 		it('has an empty modals map', () => {
 			const state = useModalStore.getState();

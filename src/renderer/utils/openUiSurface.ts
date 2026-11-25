@@ -9,6 +9,7 @@
  */
 
 import { useHostedAgentSettingsStore } from '../stores/hostedAgentSettingsStore';
+import { openRandomDidYouKnowTip } from '../services/didYouKnow';
 import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -50,6 +51,9 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 	const actions = getModalActions();
 
 	switch (surface.id) {
+		case 'did-you-know':
+			openRandomDidYouKnowTip();
+			return { ok: true };
 		case 'notification-center': {
 			// Switched off, there is no inbox to open. Say so rather than opening
 			// nothing, and never flip the setting on the user's behalf.
