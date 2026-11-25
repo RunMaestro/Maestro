@@ -345,4 +345,40 @@ describe('evaluateCustomKeyEvent', () => {
 		});
 		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
 	});
+
+	// FIXED_SHORTCUTS: jumpToSession (Ctrl+Alt+1..0 on Windows/Linux, Opt+Cmd+1..0 on macOS)
+	it.each([
+		{ label: 'Ctrl+Alt+1 (slot 1)', key: '1', code: 'Digit1' },
+		{ label: 'Ctrl+Alt+0 (slot 10)', key: '0', code: 'Digit0' },
+	])('returns "passthrough" for Windows/Linux $label without AltGraph', ({ key, code }) => {
+		const e = makeKeyEvent({
+			key,
+			code,
+			ctrlKey: true,
+			altKey: true,
+			getModifierState: () => false,
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('returns "handle" for AltGr+digit producing a character (e.g. AltGr+7 -> {)', () => {
+		const e = makeKeyEvent({
+			key: '{',
+			code: 'Digit7',
+			ctrlKey: true,
+			altKey: true,
+			getModifierState: (mod: string) => mod === 'AltGraph',
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "passthrough" for macOS Opt+Cmd+1 (jumpToSession)', () => {
+		const e = makeKeyEvent({
+			key: '¡',
+			code: 'Digit1',
+			metaKey: true,
+			altKey: true,
+		});
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
 });

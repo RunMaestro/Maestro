@@ -24,6 +24,11 @@ import { logger } from '../utils/logger';
 import { URL_ROUTING_HINT_PREFIX_SOURCE, isWebUrl } from '../../shared/urlRoutingHint';
 import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
+import {
+	SESSION_JUMP_SLOT_COUNT,
+	sessionJumpShortcut,
+	sessionJumpSlotDigit,
+} from '../utils/sessionJumpSlots';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { Shortcut } from '../../shared/shortcut-types';
 import {
@@ -78,9 +83,15 @@ function getTerminalNavSequence(e: KeyboardEvent): string | null {
 	return null;
 }
 
+const SESSION_JUMP_SHORTCUTS: readonly Shortcut[] = Array.from(
+	{ length: SESSION_JUMP_SLOT_COUNT },
+	(_, index) => sessionJumpShortcut(sessionJumpSlotDigit(index)!)
+);
+
 const DEFAULT_BOUND_SHORTCUTS: readonly Shortcut[] = [
 	...Object.values(DEFAULT_SHORTCUTS),
 	...Object.values(TAB_SHORTCUTS),
+	...SESSION_JUMP_SHORTCUTS,
 ];
 
 const OPTION_NAV_AND_SCROLL_KEYS = new Set([
@@ -731,6 +742,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			const action = evaluateCustomKeyEvent(e, [
 				...Object.values(shortcuts),
 				...Object.values(tabShortcuts),
+				...SESSION_JUMP_SHORTCUTS,
 			]);
 			if (typeof action === 'object' && action.action === 'write') {
 				window.maestro.process.write(sessionId, action.data);
