@@ -40,7 +40,7 @@ vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
 
 import { ask } from '../../../cli/commands/ask';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { getSessionById, resolveAgentId } from '../../../cli/services/storage';
+import { getSessionById, readSettings, resolveAgentId } from '../../../cli/services/storage';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
@@ -107,6 +107,7 @@ describe('ask command', () => {
 	});
 
 	it('refuses a lifted agent with AGENT_LIFTED before touching the desktop', async () => {
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
 		const sendCommand = mockClient({ type: 'cross_agent_ask_result', success: true });
 		vi.mocked(getSessionById).mockReturnValueOnce({
 			id: 'resolved-builder',

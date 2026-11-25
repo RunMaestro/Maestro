@@ -43,11 +43,12 @@ export interface HostedTarget {
 
 /** Where a record's AI work runs, or undefined for an agent that is not hosted. */
 /**
- * Whether hosted agents are on (`federationHostedAgents`, Settings > SSH Hosts). Off, every lifted
- * record works as its SSH agent: nothing here routes to a host, and the host sync stops.
+ * Whether hosted agents are on (`federationHostedAgents`, Settings > SSH Hosts). Off unless the
+ * setting is exactly `true` (opt-in). Off, every lifted record works as its SSH agent: nothing
+ * here routes to a host, and the host sync stops.
  */
 export function hostingEnabled(): boolean {
-	return useSettingsStore.getState().federationHostedAgents !== false;
+	return useSettingsStore.getState().federationHostedAgents === true;
 }
 
 export function hostedTargetOf(

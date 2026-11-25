@@ -207,7 +207,7 @@ export function startLiftedAgentSettingsSync(): () => void {
 		// Before the registry is read, an empty list is not "no lifted agents".
 		if (disposed || !sessionsReadOk) return;
 		// Hosted agents switched off: each works as its SSH agent, so nothing is sent to a host.
-		if (useSettingsStore.getState().federationHostedAgents === false) return;
+		if (useSettingsStore.getState().federationHostedAgents !== true) return;
 		const peers = usePeerMirrorStore.getState().peers;
 		const hosted = useHostedAgentSettingsStore.getState();
 		const targets = new Set<string>();

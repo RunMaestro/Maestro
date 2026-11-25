@@ -20,6 +20,7 @@ import {
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useHostedAgentSettingsStore } from '../../../renderer/stores/hostedAgentSettingsStore';
 import {
 	createMirroredPeer,
@@ -104,6 +105,8 @@ describe('services/liftedAgentSettingsSync', () => {
 		act$.mockResolvedValue({ ok: true, result: { kind: 'update-agent', applied: [] } });
 		maestro.federation = { act: act$ };
 		vi.mocked(notifyToast).mockClear();
+		// Hosting is opt-in: these cases run with it switched on.
+		useSettingsStore.setState({ federationHostedAgents: true });
 	});
 
 	afterEach(() => {
@@ -111,6 +114,7 @@ describe('services/liftedAgentSettingsSync', () => {
 		stop = undefined;
 		delete maestro.federation;
 		vi.useRealTimers();
+		useSettingsStore.setState({ federationHostedAgents: false });
 	});
 
 	describe('the lifted pointer', () => {
@@ -130,6 +134,17 @@ describe('services/liftedAgentSettingsSync', () => {
 			expect(localStorage.getItem('maestro:federation:lifted-settings-baseline:v1')).toContain(
 				'new nudge'
 			);
+		});
+
+		it('sends nothing to the host while hosting was never switched on (undefined is off)', async () => {
+			useSettingsStore.setState({ federationHostedAgents: undefined as unknown as boolean });
+			showPeer(hostAgent());
+			showPointer();
+			stop = startLiftedAgentSettingsSync();
+			await pass();
+			editPointer({ nudgeMessage: 'new nudge' });
+			await pass();
+			expect(act$).not.toHaveBeenCalled();
 		});
 
 		it('writes a change another conductor made on the host onto the pointer', async () => {

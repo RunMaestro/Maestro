@@ -213,7 +213,7 @@ export const HistoryPanel = React.memo(
 		// The source is rebuilt only when what it reads changes, so `loadPage`
 		// keeps its identity across unrelated session field updates.
 		// With hosted agents switched off, a hosted agent reads its own History, as an SSH agent.
-		const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+		const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 		const historySource = useMemo(() => {
 			if (source) return source;
 			const hosted = hostingOn ? readLiftedTo(session.liftedTo) : undefined;
