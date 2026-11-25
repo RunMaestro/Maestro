@@ -472,13 +472,55 @@ index 1234567..abcdefg 100644
 
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'git',
-				['diff', 'specific.txt'],
+				['diff', '--', 'specific.txt'],
 				'/test/repo'
 			);
 			expect(result).toEqual({
 				stdout: fileDiff,
 				stderr: '',
 			});
+		});
+
+		// #19: the path is bridge-reachable. Before `--`, a path of
+		// `--output=<file>` made git write the diff to that file.
+		it.each(['--output=/tmp/x', '-notes.txt'])(
+			'passes a path that starts with "-" after "--" so git reads it as a path: %s',
+			async (file) => {
+				vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+
+				const handler = handlers.get('git:diff');
+				await handler!({} as any, '/test/repo', file);
+
+				expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+					'git',
+					['diff', '--', file],
+					'/test/repo'
+				);
+			}
+		);
+
+		it('passes the path after "--" over SSH too', async () => {
+			const sshRemote = { id: 'ssh-remote-123', enabled: true, host: 'example.com' };
+			mockSettingsStore.get.mockReturnValue([sshRemote]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockResolvedValue({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:diff');
+			await handler!({} as any, '/test/repo', '--output=/tmp/x', 'ssh-remote-123');
+
+			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(['diff', '--', '--output=/tmp/x'], {
+				sshRemote,
+				remoteCwd: '/test/repo',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
 		});
 
 		it('should return empty diff when no changes exist', async () => {
@@ -1652,7 +1694,78 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 		});
 	});
 
+	describe('git:switch', () => {
+		it('switches to a normal branch', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: "Switched to branch 'feature/x'\n",
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:switch');
+			const result = await handler!({} as any, '/test/repo', 'feature/x');
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['switch', 'feature/x'],
+				'/test/repo'
+			);
+			expect(result).toEqual({
+				success: true,
+				stdout: '',
+				stderr: "Switched to branch 'feature/x'\n",
+			});
+		});
+
+		it.each(['--output=/tmp/x', '-c', '-'])(
+			'refuses %s, which git would read as an option, without running git',
+			async (branchName) => {
+				const handler = handlers.get('git:switch');
+				const result = await handler!({} as any, '/test/repo', branchName);
+
+				expect(result).toEqual({
+					success: false,
+					stdout: '',
+					stderr: `Invalid branch name: ${branchName} (it starts with "-", so git would read it as an option)`,
+				});
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			}
+		);
+
+		it('refuses a missing branch name without running git', async () => {
+			const handler = handlers.get('git:switch');
+			const result = await handler!({} as any, '/test/repo', undefined);
+
+			expect(result).toEqual({
+				success: false,
+				stdout: '',
+				stderr: 'Invalid branch name: expected a non-empty string',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('git:checkoutBranch', () => {
+		// #19: `git checkout -f` throws away local changes.
+		it.each([
+			['-f', false],
+			['--output=/tmp/x', false],
+			['-f', true],
+		] as const)(
+			'refuses %s (createTracking: %s) without running git or the switch guard',
+			async (branch, createTracking) => {
+				const handler = handlers.get('git:checkoutBranch');
+				const result = await handler!({} as any, '/test/repo', branch, createTracking);
+
+				expect(result).toEqual({
+					success: false,
+					error: `Invalid branch name: ${branch} (it starts with "-", so git would read it as an option)`,
+				});
+				expect(mockBranchSwitchBlocker).not.toHaveBeenCalled();
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			}
+		);
+
 		it('refuses without running git while the guard reports a blocker', async () => {
 			mockBranchSwitchBlocker.mockResolvedValue('A git push is running in this working tree.');
 
@@ -2045,6 +2158,39 @@ Date:   Wed Jan 17 09:00:00 2024 +0000
 				stderr: '',
 			});
 		});
+
+		// #19: `git show --output=<file>` writes the commit to that file.
+		it.each([undefined, 'ssh-remote-123'])(
+			'refuses a revision that starts with "-" without running git (sshRemoteId: %s)',
+			async (sshRemoteId) => {
+				mockSettingsStore.get.mockReturnValue([
+					{ id: 'ssh-remote-123', enabled: true, host: 'example.com' },
+				]);
+				const remoteGit = await import('../../../../main/utils/remote-git');
+
+				const handler = handlers.get('git:show');
+				const result = await handler!({} as any, '/test/repo', '--output=/tmp/x', sshRemoteId);
+
+				expect(result).toEqual({
+					stdout: '',
+					stderr:
+						'Invalid revision: --output=/tmp/x (it starts with "-", so git would read it as an option)',
+				});
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				expect(remoteGit.execGitRemote).not.toHaveBeenCalled();
+			}
+		);
+
+		it('refuses a missing revision without running git', async () => {
+			const handler = handlers.get('git:show');
+			const result = await handler!({} as any, '/test/repo', undefined);
+
+			expect(result).toEqual({
+				stdout: '',
+				stderr: 'Invalid revision: expected a non-empty string',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('git:showFile', () => {
@@ -2239,6 +2385,49 @@ export function Component() {
 				['show', 'HEAD:path with spaces/file (1).txt'],
 				'/test/repo'
 			);
+		});
+
+		// #19: the ref leads `<ref>:<path>`, so `--output=/tmp/x` as the ref made
+		// the whole argument `--output=/tmp/x:<path>` and git wrote a file there.
+		it.each(['notes.txt', 'logo.png'])(
+			'refuses a ref that starts with "-" without running git (%s)',
+			async (filePath) => {
+				const handler = handlers.get('git:showFile');
+				const result = await handler!({} as any, '/test/repo', '--output=/tmp/x', filePath);
+
+				expect(result).toEqual({
+					error:
+						'Invalid ref: --output=/tmp/x (it starts with "-", so git would read it as an option)',
+				});
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				expect(execFile.execFileBufferNoThrow).not.toHaveBeenCalled();
+			}
+		);
+
+		it('refuses an empty ref without running git', async () => {
+			const handler = handlers.get('git:showFile');
+			const result = await handler!({} as any, '/test/repo', '', 'notes.txt');
+
+			expect(result).toEqual({ error: 'Invalid ref: expected a non-empty string' });
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('reads a path that starts with "-" at a normal ref', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: 'notes',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:showFile');
+			const result = await handler!({} as any, '/test/repo', 'HEAD', '-notes.txt');
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['show', 'HEAD:-notes.txt'],
+				'/test/repo'
+			);
+			expect(result).toEqual({ content: 'notes' });
 		});
 	});
 
