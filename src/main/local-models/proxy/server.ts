@@ -205,6 +205,8 @@ export type TokenProxyRequestOutcome =
 	| 'upstream-failed'
 	/** The request named no route; nothing was forwarded. */
 	| 'unknown-route'
+	/** The request carried a Host header other than this proxy's loopback address; answered 403. */
+	| 'host-rejected'
 	/**
 	 * The client asked to switch protocols (a WebSocket). The proxy carries HTTP
 	 * only, said so with a 426, and forwarded nothing. Not a failure: the client
@@ -480,6 +482,15 @@ async function readyBackgroundTarget(
 	}
 }
 
+function isAllowedProxyHost(
+	hostHeader: string | string[] | undefined,
+	boundPort: number | null
+): boolean {
+	if (typeof hostHeader !== 'string' || boundPort === null) return false;
+	const normalized = hostHeader.trim().toLowerCase();
+	return normalized === `127.0.0.1:${boundPort}` || normalized === `localhost:${boundPort}`;
+}
+
 export function createTokenProxyServer(options: TokenProxyServerOptions = {}): TokenProxyServer {
 	const upstreams = options.upstreams ?? defaultTokenProxyUpstreams();
 	// Keep-alive to the upstream, so a turn's requests do not each pay a TLS
@@ -586,6 +597,19 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			});
 			res.end(body);
 		};
+
+		const boundAddress = server.address();
+		const boundPort = boundAddress && typeof boundAddress === 'object' ? boundAddress.port : null;
+		if (!isAllowedProxyHost(req.headers.host, boundPort)) {
+			req.resume();
+			answerAsProxy(
+				403,
+				'forbidden-host',
+				'host-rejected',
+				`${TOKEN_PROXY_NAME} rejected a request with an unexpected Host header.`
+			);
+			return;
+		}
 
 		if (!target.ok) {
 			// Drain what the client is still sending so the 404 is delivered.
