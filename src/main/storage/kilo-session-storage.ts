@@ -14,6 +14,7 @@ import { OpenCodeSessionStorage, type OpenCodeStorageBrand } from './opencode-se
 const KILO_BRAND: OpenCodeStorageBrand = {
 	dirName: 'kilo',
 	dbFileName: 'kilo.db',
+	dbPathEnvVar: 'KILO_DB',
 };
 
 export class KiloSessionStorage extends OpenCodeSessionStorage {

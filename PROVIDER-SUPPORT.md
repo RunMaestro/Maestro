@@ -1276,9 +1276,10 @@ SSH history limit applies too.
 - No custom slash-command discovery from `.kilo/commands/` (the built-in
   command set is wired up).
 - No Coworking MCP installer and no `MCP_CONFIG_BY_AGENT` entry.
-- History ignores `KILO_DB` and the per-channel `kilo-<channel>.db` files.
-  Maestro reads only the default `~/.local/share/kilo/kilo.db` (or the
-  `XDG_DATA_HOME` equivalent). OpenCode's storage has the same limit.
+- History honors `KILO_DB` only when Maestro's own process inherits it. A
+  `KILO_DB` set in the agent's custom env vars, and the per-channel
+  `kilo-<channel>.db` files, are not seen: Maestro then reads the default
+  `~/.local/share/kilo/kilo.db` (or the `XDG_DATA_HOME` equivalent).
 - SSH remote history reads only the JSON layout, as for OpenCode. A remote
   install that keeps its sessions only in `kilo.db` lists no sessions.
 - A read-only turn replaces `KILO_CONFIG_CONTENT` with the permission-only

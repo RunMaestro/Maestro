@@ -56,6 +56,12 @@ export interface OpenCodeStorageBrand {
 	readonly dirName: string;
 	/** SQLite file name inside the data directory, e.g. `opencode.db`. */
 	readonly dbFileName: string;
+	/**
+	 * Env var the CLI reads to override its database path, e.g. `KILO_DB`.
+	 * An absolute value is used as is; a relative one sits in the data directory.
+	 * Only the value Maestro's own process inherits is honored here.
+	 */
+	readonly dbPathEnvVar?: string;
 }
 
 export const OPENCODE_BRAND: OpenCodeStorageBrand = {
@@ -119,6 +125,11 @@ function resolveStorageDir(brand: OpenCodeStorageBrand): string {
  * still get a deterministic value (existence is re-checked at use).
  */
 function resolveDbPath(brand: OpenCodeStorageBrand): string {
+	const override = brand.dbPathEnvVar ? process.env[brand.dbPathEnvVar]?.trim() : undefined;
+	// `:memory:` keeps no file on disk, so the default path is the only history left.
+	if (override && override !== ':memory:') {
+		return path.isAbsolute(override) ? override : path.join(getDataDir(brand), override);
+	}
 	const candidates = getDataDirCandidates(brand);
 	for (const candidate of candidates) {
 		const dbPath = path.join(candidate, brand.dbFileName);

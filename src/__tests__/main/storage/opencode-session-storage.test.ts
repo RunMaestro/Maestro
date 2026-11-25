@@ -399,6 +399,60 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 		});
 	});
 
+	describe('locating kilo.db (KILO_DB override)', () => {
+		const savedKiloDb = process.env.KILO_DB;
+		const kiloDataDir = () => path.join(homeRef.current, '.local', 'share', 'kilo');
+
+		afterEach(() => {
+			if (savedKiloDb === undefined) delete process.env.KILO_DB;
+			else process.env.KILO_DB = savedKiloDb;
+		});
+
+		function writeKiloDb(dbPath: string, sessionId: string): void {
+			const db = createDb(dbPath);
+			addProject(db, 'proj1', PROJECT);
+			addSession(db, {
+				id: sessionId,
+				projectId: 'proj1',
+				directory: PROJECT,
+				created: 1,
+				updated: 2,
+			});
+			db.close();
+		}
+
+		async function listKiloSessionIds(): Promise<string[]> {
+			vi.resetModules();
+			const mod = await import('../../../main/storage/kilo-session-storage');
+			const sessions = await new mod.KiloSessionStorage().listSessions(PROJECT);
+			return sessions.map((s) => s.sessionId);
+		}
+
+		it('reads the absolute path KILO_DB names instead of the default kilo.db', async () => {
+			writeKiloDb(path.join(kiloDataDir(), 'kilo.db'), 'ses_default');
+			const custom = path.join(root, 'elsewhere', 'custom.db');
+			writeKiloDb(custom, 'ses_custom');
+			process.env.KILO_DB = custom;
+
+			expect(await listKiloSessionIds()).toEqual(['ses_custom']);
+		});
+
+		it('resolves a relative KILO_DB inside the Kilo data directory', async () => {
+			writeKiloDb(path.join(kiloDataDir(), 'kilo.db'), 'ses_default');
+			writeKiloDb(path.join(kiloDataDir(), 'team.db'), 'ses_team');
+			process.env.KILO_DB = 'team.db';
+
+			expect(await listKiloSessionIds()).toEqual(['ses_team']);
+		});
+
+		it('falls back to the default kilo.db when KILO_DB is :memory:', async () => {
+			writeKiloDb(path.join(kiloDataDir(), 'kilo.db'), 'ses_default');
+			process.env.KILO_DB = ':memory:';
+
+			expect(await listKiloSessionIds()).toEqual(['ses_default']);
+		});
+	});
+
 	describe('turn continuation', () => {
 		it('reads back every turn a resumed session accumulated, in order', async () => {
 			const db = createDb(path.join(dataDir, 'opencode.db'));
