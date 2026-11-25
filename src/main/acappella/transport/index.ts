@@ -43,7 +43,7 @@ import {
 import {
 	buildIceServers,
 	listHostCandidates,
-	readIceSettings,
+	readAndMigrateIceSettings,
 	type IceTransportSettings,
 } from './ice-config';
 import { RemoteSessionCoordinator, type RemoteFloor } from './remote-session';
@@ -76,6 +76,7 @@ export interface PairingPayload {
 export interface ACappellaTransportDeps {
 	settingsStore: {
 		get: (key: string, defaultValue?: unknown) => unknown;
+		set?: (key: string, value: unknown) => void;
 		onDidChange?: (key: string, callback: (value: unknown) => void) => void;
 	};
 	/** Where `devices.json` lives. Usually `app.getPath('userData')`. */
@@ -407,10 +408,7 @@ export class ACappellaTransport {
 	// -- Internals ------------------------------------------------------------
 
 	private iceSettings(): IceTransportSettings {
-		const blob = (this.deps.settingsStore.get(ACAPPELLA_SETTINGS_KEY, {}) ?? {}) as {
-			ice?: unknown;
-		};
-		return readIceSettings(blob.ice);
+		return readAndMigrateIceSettings(this.deps.settingsStore).settings;
 	}
 
 	private audioConfig(): RemoteAudioConfig {

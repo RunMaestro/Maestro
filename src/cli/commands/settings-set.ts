@@ -9,6 +9,7 @@ import {
 	SETTINGS_METADATA,
 	isNestedTextSetting,
 	nestedSettingProblem,
+	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
 import { resolveMediaModelDirectory } from '../../main/plugins/plugin-media-tools';
 import { failCommand } from '../services/session-command';
@@ -83,6 +84,49 @@ export async function settingsSet(
 		const problem = nestedSettingProblem(key, parsedValue);
 		if (problem) throw new Error(problem);
 
+		// Preserve an existing legacy plaintext TURN credential if the user is
+		// updating acappella.ice / acappella.ice.turn without a keyring available.
+		if (
+			(key === 'acappella.ice.turn' || key === 'acappella.ice' || key === 'acappella') &&
+			typeof parsedValue === 'object' &&
+			parsedValue !== null &&
+			!Array.isArray(parsedValue)
+		) {
+			const legacyCred = readSettingValue('acappella.ice.turn.credential');
+			if (typeof legacyCred === 'string' && legacyCred.trim()) {
+				const obj = parsedValue as Record<string, unknown>;
+				if (key === 'acappella.ice.turn') {
+					parsedValue = { ...obj, credential: legacyCred };
+				} else if (
+					key === 'acappella.ice' &&
+					typeof obj.turn === 'object' &&
+					obj.turn !== null &&
+					!Array.isArray(obj.turn)
+				) {
+					parsedValue = {
+						...obj,
+						turn: { ...(obj.turn as Record<string, unknown>), credential: legacyCred },
+					};
+				} else if (
+					key === 'acappella' &&
+					typeof obj.ice === 'object' &&
+					obj.ice !== null &&
+					!Array.isArray(obj.ice)
+				) {
+					const ice = obj.ice as Record<string, unknown>;
+					if (typeof ice.turn === 'object' && ice.turn !== null && !Array.isArray(ice.turn)) {
+						parsedValue = {
+							...obj,
+							ice: {
+								...ice,
+								turn: { ...(ice.turn as Record<string, unknown>), credential: legacyCred },
+							},
+						};
+					}
+				}
+			}
+		}
+
 		if (topKey === 'mediaModelDirectory') {
 			if (key !== topKey) throw new Error('mediaModelDirectory does not accept nested keys');
 			parsedValue = await resolveMediaModelDirectory(parsedValue);
@@ -99,15 +143,18 @@ export async function settingsSet(
 		}
 		if (!writeSettingValue(key, parsedValue)) throw new Error('Could not persist setting');
 
+		const displayOldValue = redactNestedSettingSecrets(key, oldValue);
+		const displayNewValue = redactNestedSettingSecrets(key, parsedValue);
+
 		if (options.json) {
 			emitJsonl({
 				type: 'setting_set',
 				key,
-				oldValue,
-				newValue: parsedValue,
+				oldValue: displayOldValue,
+				newValue: displayNewValue,
 			});
 		} else {
-			console.log(formatSuccess(`${key} = ${JSON.stringify(parsedValue)}`));
+			console.log(formatSuccess(`${key} = ${JSON.stringify(displayNewValue)}`));
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';

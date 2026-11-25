@@ -53,6 +53,8 @@ const CAPABILITY_STATEMENT =
 export function PairedDevicesPanel({ theme, enabled }: PairedDevicesPanelProps) {
 	const devices = usePairedDevices(enabled);
 	const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+	const [turnCredDraft, setTurnCredDraft] = useState('');
+	const [turnCredSaving, setTurnCredSaving] = useState(false);
 
 	const commitRename = useCallback(async () => {
 		if (!renaming) return;
@@ -369,41 +371,90 @@ export function PairedDevicesPanel({ theme, enabled }: PairedDevicesPanelProps) 
 									color: theme.colors.textMain,
 								}}
 							/>
-							<div className="flex gap-2">
-								<input
-									type="text"
-									aria-label="TURN username"
-									placeholder="username"
-									value={ice.turn.username}
-									disabled={!enabled}
-									onChange={(event) =>
-										void devices.updateIce({ turn: { ...ice.turn, username: event.target.value } })
-									}
-									className="flex-1 px-2 py-1.5 rounded border text-xs disabled:opacity-50"
-									style={{
-										borderColor: theme.colors.border,
-										backgroundColor: theme.colors.bgMain,
-										color: theme.colors.textMain,
-									}}
-								/>
-								<input
-									type="password"
-									aria-label="TURN credential"
-									placeholder="credential"
-									value={ice.turn.credential}
-									disabled={!enabled}
-									onChange={(event) =>
-										void devices.updateIce({
-											turn: { ...ice.turn, credential: event.target.value },
-										})
-									}
-									className="flex-1 px-2 py-1.5 rounded border text-xs disabled:opacity-50"
-									style={{
-										borderColor: theme.colors.border,
-										backgroundColor: theme.colors.bgMain,
-										color: theme.colors.textMain,
-									}}
-								/>
+							<div className="space-y-1.5">
+								<div className="flex gap-2">
+									<input
+										type="text"
+										aria-label="TURN username"
+										placeholder="username"
+										value={ice.turn.username}
+										disabled={!enabled}
+										onChange={(event) =>
+											void devices.updateIce({
+												turn: { ...ice.turn, username: event.target.value },
+											})
+										}
+										className="flex-1 px-2 py-1.5 rounded border text-xs disabled:opacity-50"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgMain,
+											color: theme.colors.textMain,
+										}}
+									/>
+									<input
+										type="password"
+										aria-label="TURN credential"
+										placeholder={
+											ice.turn.credentialConfigured
+												? 'Enter new credential to replace'
+												: 'credential'
+										}
+										value={turnCredDraft}
+										disabled={!enabled || turnCredSaving}
+										onChange={(event) => setTurnCredDraft(event.target.value)}
+										className="flex-1 px-2 py-1.5 rounded border text-xs disabled:opacity-50"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgMain,
+											color: theme.colors.textMain,
+										}}
+									/>
+									<button
+										type="button"
+										disabled={!enabled || turnCredSaving || !turnCredDraft.trim()}
+										onClick={() => {
+											setTurnCredSaving(true);
+											void devices
+												.setTurnCredential(turnCredDraft)
+												.then((saved) => {
+													if (saved) setTurnCredDraft('');
+												})
+												.finally(() => setTurnCredSaving(false));
+										}}
+										className="px-2 py-1 rounded border text-xs disabled:opacity-50"
+										style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+									>
+										{ice.turn.credentialConfigured ? 'Replace' : 'Save'}
+									</button>
+									{ice.turn.credentialConfigured && (
+										<button
+											type="button"
+											disabled={!enabled || turnCredSaving}
+											onClick={() => {
+												setTurnCredSaving(true);
+												void devices.clearTurnCredential().finally(() => setTurnCredSaving(false));
+											}}
+											className="px-2 py-1 rounded border text-xs disabled:opacity-50"
+											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+										>
+											Clear
+										</button>
+									)}
+								</div>
+								<p className="text-xs opacity-70">
+									{ice.turn.legacyPlaintextFallback
+										? 'No OS credential store is available; keeping existing credential in settings until a keyring is available.'
+										: !ice.turn.keyringAvailable
+											? 'No OS credential store is available on this machine.'
+											: ice.turn.credentialConfigured
+												? 'Credential stored in the OS keychain.'
+												: 'No credential set.'}
+								</p>
+								{devices.credentialError && (
+									<p className="text-xs" style={{ color: theme.colors.error }}>
+										{devices.credentialError}
+									</p>
+								)}
 							</div>
 
 							<div className="flex items-center gap-2">

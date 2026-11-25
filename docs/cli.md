@@ -2648,7 +2648,7 @@ Both commands support `--json` for scripting. Toasts respect the user's notifica
 | Choose the microphone                          | `voice input list`, `voice input set <device-id>\|default`                                                                                          |
 | Choose providers and the voice                 | `voice providers list\|set <slot> <id>`, `voice voices list\|set <id>\|preview [<id>]`                                                              |
 | Store a cloud key                              | `voice credentials list\|set\|test\|clear <service>` (`openai`, `elevenlabs`, `anthropic`)                                                          |
-| Manage paired devices                          | `voice devices list\|rename\|revoke\|forget\|revoke-all\|disconnect\|discovery\|test-connection`                                                    |
+| Manage paired devices                          | `voice devices list\|rename\|revoke\|forget\|revoke-all\|disconnect\|discovery\|test-connection\|turn-credential`                                   |
 | Set the models local voice needs               | `voice setup [--download]`, or `open voice-setup` for the **Set up voice** dialog                                                                   |
 | See where the time went, or self-test          | `voice latency`, `voice self-test`                                                                                                                  |
 | Give one agent its own wake phrase             | `voice wake-phrase list\|set <agent> <phrase>\|clear <agent>`                                                                                       |

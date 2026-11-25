@@ -2337,3 +2337,66 @@ describe('forwardableHeaders', () => {
 		expect(forwardableHeaders(headers)).toEqual(headers);
 	});
 });
+
+describe('Host header check (DNS rebinding defense)', () => {
+	async function sendWithHost(
+		port: number,
+		hostHeader: string | undefined
+	): Promise<{ status: number; body: string }> {
+		return new Promise((resolve, reject) => {
+			const headers: Record<string, string> = {};
+			if (hostHeader !== undefined) headers.host = hostHeader;
+			const req = http.request(
+				{
+					host: '127.0.0.1',
+					port,
+					method: 'GET',
+					path: '/anthropic/v1/messages',
+					headers,
+				},
+				(res) => {
+					const chunks: Buffer[] = [];
+					res.on('data', (chunk: Buffer) => chunks.push(chunk));
+					res.on('end', () =>
+						resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf-8') })
+					);
+				}
+			);
+			req.on('error', reject);
+			req.end();
+		});
+	}
+
+	it('rejects foreign or wrong-port Host headers with 403 and accepts loopback on the bound port', async () => {
+		const upstream = await startUpstream((_req, res) => {
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end('{"ok":true}');
+		});
+		const logged: TokenProxyRequestLog[] = [];
+		const proxy = createTokenProxyServer({
+			upstreams: { anthropic: upstream.origin, openai: upstream.origin },
+			onRequest: (entry) => logged.push(entry),
+		});
+		cleanups.push(() => proxy.close({ force: true }));
+		const port = await proxy.listen(0);
+
+		const foreign = await sendWithHost(port, `evil.example:${port}`);
+		expect(foreign.status).toBe(403);
+		expect(JSON.parse(foreign.body)).toMatchObject({
+			type: 'error',
+			error: { code: 'forbidden-host' },
+		});
+
+		const wrongPort = await sendWithHost(port, `127.0.0.1:${port + 1}`);
+		expect(wrongPort.status).toBe(403);
+
+		expect(upstream.seen).toHaveLength(0);
+
+		const okIp = await sendWithHost(port, `127.0.0.1:${port}`);
+		expect(okIp.status).toBe(200);
+		const okLocalhost = await sendWithHost(port, `localhost:${port}`);
+		expect(okLocalhost.status).toBe(200);
+		expect(upstream.seen).toHaveLength(2);
+		expect(logged.some((entry) => entry.outcome === 'host-rejected')).toBe(true);
+	});
+});

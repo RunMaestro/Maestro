@@ -8,21 +8,74 @@
  * saying "direct" would describe a path the audio is not taking.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const logLines: string[] = [];
+vi.mock('../../../main/utils/logger', () => ({
+	logger: {
+		info: (message: string) => logLines.push(message),
+		warn: (message: string) => logLines.push(message),
+		error: (message: string) => logLines.push(message),
+		debug: (message: string) => logLines.push(message),
+	},
+}));
+
+import {
+	__setCredentialEntryFactory,
+	clearTurnCredential,
+	getTurnCredential,
+	setTurnCredential,
+} from '../../../main/acappella/providers/credentials';
+import type { KeyringEntry } from '../../../main/utils/keyring';
 import {
 	CANDIDATE_TYPE_LABELS,
 	DEFAULT_ICE_SETTINGS,
 	DEFAULT_STUN_URLS,
 	TUNNEL_MEDIA_NOTE,
+	__resetLegacyTurnWarningForTests,
 	buildIceServers,
 	classifyCandidatePair,
 	classifyCandidateType,
+	clearLegacyTurnCredential,
 	describeIceReach,
 	iceTransportPolicy,
 	isOverlayAddress,
+	migrateLegacyTurnCredential,
+	readAndMigrateIceSettings,
 	readIceSettings,
+	updateStoredIceSettings,
+	type IceSettingsStoreLike,
 } from '../../../main/acappella/transport/ice-config';
+
+function makeMemoryStore(initial: Record<string, unknown> = {}): IceSettingsStoreLike & {
+	data: Record<string, unknown>;
+} {
+	const data = structuredClone(initial);
+	return {
+		data,
+		get: (key: string, defaultValue?: unknown) => (key in data ? data[key] : defaultValue),
+		set: (key: string, value: unknown) => {
+			data[key] = structuredClone(value);
+		},
+	};
+}
+
+function fakeKeyringEntry(): KeyringEntry & { value: string | null } {
+	return {
+		value: null,
+		getPassword() {
+			return this.value;
+		},
+		setPassword(password: string) {
+			this.value = password;
+		},
+		deletePassword() {
+			const had = this.value !== null;
+			this.value = null;
+			return had;
+		},
+	};
+}
 
 describe('readIceSettings', () => {
 	it('fills in the defaults for an empty store', () => {
@@ -140,5 +193,151 @@ describe('the tunnel note', () => {
 		expect(TUNNEL_MEDIA_NOTE).toMatch(/cloudflare/i);
 		expect(TUNNEL_MEDIA_NOTE).toMatch(/cannot carry/i);
 		expect(TUNNEL_MEDIA_NOTE).toMatch(/turn relay/i);
+	});
+});
+
+describe('TURN credential migration and fallback', () => {
+	let entries: Record<string, ReturnType<typeof fakeKeyringEntry>>;
+
+	beforeEach(() => {
+		logLines.length = 0;
+		__resetLegacyTurnWarningForTests();
+		entries = {};
+		__setCredentialEntryFactory((account) => {
+			entries[account] ??= fakeKeyringEntry();
+			return entries[account];
+		});
+	});
+
+	afterEach(() => {
+		__setCredentialEntryFactory(null);
+	});
+
+	it('migrates a legacy plaintext credential into the keychain and removes it from settings', () => {
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:relay.example.com:5349',
+						username: 'user1',
+						credential: 'legacy-secret',
+					},
+				},
+			},
+		});
+
+		const { settings, view } = readAndMigrateIceSettings(store);
+
+		expect(getTurnCredential()).toBe('legacy-secret');
+		expect(settings.turn.credential).toBe('legacy-secret');
+		expect(buildIceServers(settings)[1]).toMatchObject({ credential: 'legacy-secret' });
+		expect(view.turn).toMatchObject({
+			credentialConfigured: true,
+			keyringAvailable: true,
+			legacyPlaintextFallback: false,
+		});
+		expect(JSON.stringify(view)).not.toContain('legacy-secret');
+		expect(JSON.stringify(store.data)).not.toContain('legacy-secret');
+	});
+
+	it('keeps legacy plaintext when no keyring is available and preserves it across panel ICE edits', () => {
+		__setCredentialEntryFactory(() => null);
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:old.example.com:5349',
+						username: 'user1',
+						credential: 'legacy-secret',
+					},
+				},
+			},
+		});
+
+		expect(migrateLegacyTurnCredential(store)).toBe(true);
+		expect(setTurnCredential('new-secret').ok).toBe(false);
+
+		updateStoredIceSettings(store, {
+			turn: { enabled: true, url: 'turns:new.example.com:5349', username: 'user1' },
+		});
+
+		const { settings, view } = readAndMigrateIceSettings(store);
+		expect(settings.turn.url).toBe('turns:new.example.com:5349');
+		expect(settings.turn.credential).toBe('legacy-secret');
+		expect(buildIceServers(settings)[1]).toMatchObject({
+			urls: 'turns:new.example.com:5349',
+			credential: 'legacy-secret',
+		});
+		expect(view.turn.legacyPlaintextFallback).toBe(true);
+		expect(view.turn.keyringAvailable).toBe(false);
+		expect(logLines.join('\n')).not.toContain('legacy-secret');
+	});
+
+	it('clears both the keychain entry and any legacy plaintext in settings', () => {
+		setTurnCredential('keychain-secret');
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:relay.example.com:5349',
+						username: 'user1',
+						credential: 'legacy-secret',
+					},
+				},
+			},
+		});
+
+		expect(clearTurnCredential()).toEqual({ ok: true });
+		expect(clearLegacyTurnCredential(store)).toBe(true);
+		expect(getTurnCredential()).toBeNull();
+		expect(JSON.stringify(store.data)).not.toContain('legacy-secret');
+	});
+
+	it('does not overwrite an existing keychain credential when a stale plaintext value reappears', () => {
+		setTurnCredential('new');
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:relay.example.com:5349',
+						username: 'user1',
+						credential: 'old',
+					},
+				},
+			},
+		});
+
+		const { settings } = readAndMigrateIceSettings(store);
+
+		expect(getTurnCredential()).toBe('new');
+		expect(settings.turn.credential).toBe('new');
+		expect(JSON.stringify(store.data)).not.toContain('old');
+	});
+
+	it('logs the no-keyring fallback warning only once across repeated reads', () => {
+		__setCredentialEntryFactory(() => null);
+		const store = makeMemoryStore({
+			acappella: {
+				ice: {
+					turn: {
+						enabled: true,
+						url: 'turns:relay.example.com:5349',
+						username: 'user1',
+						credential: 'legacy-secret',
+					},
+				},
+			},
+		});
+
+		const first = readAndMigrateIceSettings(store);
+		const second = readAndMigrateIceSettings(store);
+
+		expect(first.view.turn.legacyPlaintextFallback).toBe(true);
+		expect(second.view.turn.legacyPlaintextFallback).toBe(true);
+		expect(logLines).toHaveLength(1);
 	});
 });

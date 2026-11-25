@@ -1234,6 +1234,8 @@ export interface TokenProxyCachePruneResult {
 export type TokenProxyErrorCode =
 	/** The request named no route the proxy knows. */
 	| 'unknown-route'
+	/** The request carried a Host header that does not match this proxy's loopback address. */
+	| 'forbidden-host'
 	/** The upstream could not be reached, or dropped before answering. */
 	| 'upstream-unreachable'
 	/** The client asked to switch protocols (a WebSocket), which the proxy does not carry. */

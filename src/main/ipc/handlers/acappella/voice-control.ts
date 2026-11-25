@@ -30,10 +30,16 @@ import type { VoiceHotkeyInstallation } from '../../../acappella/hotkeys';
 import { readVoiceProviderSettings } from '../../../acappella/providers/provider-registry';
 import {
 	clearCredential,
+	clearTurnCredential,
 	listCredentialStates,
 	setCredential,
+	setTurnCredential,
 	validateCredential,
 } from '../../../acappella/providers/credentials';
+import {
+	clearLegacyTurnCredential,
+	readAndMigrateIceSettings,
+} from '../../../acappella/transport/ice-config';
 import { formatTurnBreakdown, lastTurn } from '../../../acappella/telemetry/turn-metrics';
 import { formatVoiceSelfTestReport, runVoiceSelfTest } from '../../../acappella/voice-self-test';
 import {
@@ -280,6 +286,23 @@ export function registerVoiceControl(
 		},
 		discovery: async ({ enabled }) => ({ discovery: await setVoiceDiscovery(enabled) }),
 		'test-connection': async () => testVoiceConnection(),
+		'turn-credential-status': async () => {
+			const { view } = readAndMigrateIceSettings(deps.settingsStore);
+			return {
+				configured: view.turn.credentialConfigured,
+				keyringAvailable: view.turn.keyringAvailable,
+				legacyPlaintextFallback: view.turn.legacyPlaintextFallback,
+			};
+		},
+		'set-turn-credential': async ({ credential }) => {
+			requireKeySaved(setTurnCredential(credential));
+			return { configured: true };
+		},
+		'clear-turn-credential': async () => {
+			requireKeySaved(clearTurnCredential());
+			clearLegacyTurnCredential(deps.settingsStore);
+			return { configured: false };
+		},
 		latency: async () => {
 			const turn = lastTurn();
 			return {

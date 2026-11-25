@@ -44,6 +44,9 @@ const LOG_CONTEXT = 'ACappella';
 /** The keychain service every A Cappella key is filed under. */
 export const CREDENTIAL_KEYRING_SERVICE = 'com.maestro.acappella';
 
+/** Keychain account name for the A Cappella TURN relay credential. */
+export const TURN_CREDENTIAL_ACCOUNT = 'turn-relay';
+
 /** Per-request ceiling for a validation call. A key check must not hang a panel. */
 const VALIDATE_TIMEOUT_MS = 10_000;
 
@@ -86,27 +89,72 @@ export type CredentialFetch = (url: string, init?: RequestInit) => Promise<Respo
  * `undefined` means "not tried yet"; `null` means "this machine has no keyring",
  * which is a real, cacheable answer.
  */
-const entries = new Map<VoiceCredentialService, KeyringEntry | null>();
+const entries = new Map<string, KeyringEntry | null>();
 
 /** Test seam. Replaces the entry factory; pass null to restore the real keyring. */
-let entryFactory: ((service: VoiceCredentialService) => KeyringEntry | null) | null = null;
+let entryFactory: ((account: string) => KeyringEntry | null) | null = null;
 
 export function __setCredentialEntryFactory(
-	factory: ((service: VoiceCredentialService) => KeyringEntry | null) | null
+	factory: ((account: string) => KeyringEntry | null) | null
 ): void {
 	entryFactory = factory;
 	entries.clear();
 }
 
-function entryFor(service: VoiceCredentialService): KeyringEntry | null {
-	const cached = entries.get(service);
+function entryFor(account: string): KeyringEntry | null {
+	const cached = entries.get(account);
 	if (cached !== undefined) return cached;
 
 	const entry = entryFactory
-		? entryFactory(service)
-		: createKeyringEntry(CREDENTIAL_KEYRING_SERVICE, service);
-	entries.set(service, entry);
+		? entryFactory(account)
+		: createKeyringEntry(CREDENTIAL_KEYRING_SERVICE, account);
+	entries.set(account, entry);
 	return entry;
+}
+
+function readKeyringPassword(account: string, label: string): string | null {
+	const entry = entryFor(account);
+	if (!entry) return null;
+	try {
+		const value = entry.getPassword();
+		return value && value.trim() ? value.trim() : null;
+	} catch (error) {
+		// A locked keychain throws here. Report the shape of the failure, never the
+		// entry contents.
+		logger.warn(`Could not read the ${label}: ${describe(error)}`, LOG_CONTEXT);
+		return null;
+	}
+}
+
+function writeKeyringPassword(account: string, label: string, secret: string): SetCredentialResult {
+	const trimmed = secret.trim();
+	if (!trimmed) return clearKeyringPassword(account);
+
+	const entry = entryFor(account);
+	if (!entry) {
+		return {
+			ok: false,
+			error: `This machine has no credential store Maestro can use, so the ${label} cannot be saved. Keys are never written to disk in plain text.`,
+		};
+	}
+
+	try {
+		entry.setPassword(trimmed);
+		return { ok: true };
+	} catch (error) {
+		return { ok: false, error: `Could not save the ${label}: ${describe(error)}` };
+	}
+}
+
+function clearKeyringPassword(account: string): SetCredentialResult {
+	const entry = entryFor(account);
+	if (!entry) return { ok: true };
+	try {
+		entry.deletePassword();
+		return { ok: true };
+	} catch (error) {
+		return { ok: false, error: `Could not remove the key: ${describe(error)}` };
+	}
 }
 
 /** True when this machine has a credential store A Cappella can write to. */
@@ -122,20 +170,7 @@ export function isKeyringAvailable(service: VoiceCredentialService): boolean {
  * it in a renderer heap, a devtools frame, and any crash dump taken afterwards.
  */
 export function getCredential(service: VoiceCredentialService): string | null {
-	const entry = entryFor(service);
-	if (!entry) return null;
-	try {
-		const value = entry.getPassword();
-		return value && value.trim() ? value.trim() : null;
-	} catch (error) {
-		// A locked keychain throws here. Report the shape of the failure, never the
-		// entry contents.
-		logger.warn(
-			`Could not read the ${credentialLabel(service)} key: ${describe(error)}`,
-			LOG_CONTEXT
-		);
-		return null;
-	}
+	return readKeyringPassword(service, `${credentialLabel(service)} key`);
 }
 
 /** Whether a key is stored. The cheap question the capability gate asks. */
@@ -154,35 +189,37 @@ export interface SetCredentialResult {
  * removes one without a second channel.
  */
 export function setCredential(service: VoiceCredentialService, key: string): SetCredentialResult {
-	const trimmed = key.trim();
-	if (!trimmed) return clearCredential(service);
-
-	const entry = entryFor(service);
-	if (!entry) {
-		return {
-			ok: false,
-			error: `This machine has no credential store Maestro can use, so the ${credentialLabel(service)} key cannot be saved. Keys are never written to disk in plain text.`,
-		};
-	}
-
-	try {
-		entry.setPassword(trimmed);
-		return { ok: true };
-	} catch (error) {
-		return { ok: false, error: `Could not save the key: ${describe(error)}` };
-	}
+	return writeKeyringPassword(service, `${credentialLabel(service)} key`, key);
 }
 
 /** Remove a stored key. Succeeds when there was nothing to remove. */
 export function clearCredential(service: VoiceCredentialService): SetCredentialResult {
-	const entry = entryFor(service);
-	if (!entry) return { ok: true };
-	try {
-		entry.deletePassword();
-		return { ok: true };
-	} catch (error) {
-		return { ok: false, error: `Could not remove the key: ${describe(error)}` };
-	}
+	return clearKeyringPassword(service);
+}
+
+/** True when this machine has a keyring entry for the TURN relay credential. */
+export function isTurnKeyringAvailable(): boolean {
+	return entryFor(TURN_CREDENTIAL_ACCOUNT) !== null;
+}
+
+/** Stored TURN relay credential from the OS keychain, or null. Main-process only. */
+export function getTurnCredential(): string | null {
+	return readKeyringPassword(TURN_CREDENTIAL_ACCOUNT, 'TURN relay credential');
+}
+
+/** Whether a TURN relay credential is stored in the OS keychain. */
+export function hasTurnCredential(): boolean {
+	return getTurnCredential() !== null;
+}
+
+/** Store the TURN relay credential in the OS keychain. Empty clears it. */
+export function setTurnCredential(credential: string): SetCredentialResult {
+	return writeKeyringPassword(TURN_CREDENTIAL_ACCOUNT, 'TURN relay credential', credential);
+}
+
+/** Remove the TURN relay credential from the OS keychain. */
+export function clearTurnCredential(): SetCredentialResult {
+	return clearKeyringPassword(TURN_CREDENTIAL_ACCOUNT);
 }
 
 /** Configured state for every service, for the settings panel. No keys. */
@@ -366,6 +403,7 @@ export function redactSecretsDeep<T>(value: T): T {
 }
 
 const SECRET_KEY_NAMES = /(api[_-]?key|secret|token|password|authorization)/i;
+const EXACT_SECRET_KEY_NAMES = /^credential$/i;
 
 function scrub(value: unknown): unknown {
 	if (typeof value === 'string') return redactSecrets(value);
@@ -373,7 +411,11 @@ function scrub(value: unknown): unknown {
 	if (value && typeof value === 'object') {
 		const out: Record<string, unknown> = {};
 		for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-			out[key] = SECRET_KEY_NAMES.test(key) && typeof inner === 'string' ? REDACTED : scrub(inner);
+			out[key] =
+				(SECRET_KEY_NAMES.test(key) || EXACT_SECRET_KEY_NAMES.test(key)) &&
+				typeof inner === 'string'
+					? REDACTED
+					: scrub(inner);
 		}
 		return out;
 	}

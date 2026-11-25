@@ -54,11 +54,38 @@ describe('usePairedDevices', () => {
 					list: vi.fn().mockResolvedValue([]),
 					pairingStatus: pairingStatusMock,
 					iceSettings: vi.fn().mockResolvedValue({
-						settings: { mode: 'lan', stunServers: [], turnServers: [] },
+						settings: {
+							stunUrls: [],
+							turn: {
+								enabled: false,
+								url: '',
+								username: '',
+								credentialConfigured: false,
+								keyringAvailable: true,
+								legacyPlaintextFallback: false,
+							},
+							hostCandidates: true,
+							forceRelay: false,
+						},
 						reach: 'LAN only',
 						tunnelNote: '',
 						discovery: null,
 					}),
+					updateIceSettings: vi.fn().mockResolvedValue({
+						stunUrls: [],
+						turn: {
+							enabled: true,
+							url: 'turns:relay.example.com:5349',
+							username: '',
+							credentialConfigured: false,
+							keyringAvailable: true,
+							legacyPlaintextFallback: false,
+						},
+						hostCandidates: true,
+						forceRelay: false,
+					}),
+					setTurnCredential: vi.fn().mockResolvedValue({ ok: true }),
+					clearTurnCredential: vi.fn().mockResolvedValue({ ok: true }),
 					onChanged: vi.fn().mockReturnValue(() => {}),
 					onPairingRequest: vi.fn((handler: (request: PairingRequest | null) => void) => {
 						requestListener = handler;
@@ -94,5 +121,38 @@ describe('usePairedDevices', () => {
 			expect(result.current.pairing).toBeNull();
 		});
 		expect(pairingStatusMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('routes ICE updates and TURN credential changes through dedicated IPC channels', async () => {
+		const settingsSetSpy = vi.fn();
+		(window.maestro as unknown as Record<string, unknown>).settings = {
+			get: vi.fn(),
+			set: settingsSetSpy,
+		};
+
+		const { result } = renderHook(() => usePairedDevices(true));
+		await waitFor(() => {
+			expect(result.current.loaded).toBe(true);
+		});
+
+		await act(async () => {
+			await result.current.updateIce({
+				turn: {
+					enabled: true,
+					url: 'turns:relay.example.com:5349',
+					username: 'u1',
+					credentialConfigured: false,
+					keyringAvailable: true,
+					legacyPlaintextFallback: false,
+				},
+			});
+			await result.current.setTurnCredential('turn-secret');
+			await result.current.clearTurnCredential();
+		});
+
+		expect(settingsSetSpy).not.toHaveBeenCalled();
+		expect(window.maestro.voice.devices.updateIceSettings).toHaveBeenCalledTimes(1);
+		expect(window.maestro.voice.devices.setTurnCredential).toHaveBeenCalledWith('turn-secret');
+		expect(window.maestro.voice.devices.clearTurnCredential).toHaveBeenCalledTimes(1);
 	});
 });

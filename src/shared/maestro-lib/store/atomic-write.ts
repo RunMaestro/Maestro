@@ -50,10 +50,14 @@ function uniqueTempPath(filePath: string): string {
  * passing `undefined`) can never be renamed over an existing good file. We
  * refuse the write instead of destroying data.
  */
-export async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
+export async function atomicWriteJson(
+	filePath: string,
+	data: unknown,
+	options?: { mode?: number; durable?: boolean }
+): Promise<void> {
 	const serialized = JSON.stringify(data, null, 2);
 	assertSerializedJsonIsSafe(serialized, filePath);
-	await atomicWriteFile(filePath, serialized);
+	await atomicWriteFile(filePath, serialized, options);
 }
 
 /**

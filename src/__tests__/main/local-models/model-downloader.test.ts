@@ -451,4 +451,64 @@ describe('model-downloader', () => {
 		expect(events.at(-1)?.phase).toBe('complete');
 		expect(events.at(-1)?.bytesReceived).toBe(fixture.bytes);
 	});
+
+	it('replaces a corrupt file of the expected byte length on re-download', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		const corrupt = Buffer.alloc(fixture.bytes, 0x7a);
+		expect(corrupt.length).toBe(fixture.bytes);
+		await fs.writeFile(finalPath(), corrupt);
+
+		let fetched = 0;
+		const fetchImpl: FetchLike = async () => {
+			fetched++;
+			return new Response(new Uint8Array(fixture.contents), { status: 200 });
+		};
+
+		const result = await makeDownloader(fetchImpl).download(fixture.id);
+
+		expect(result.status).toBe('complete');
+		expect(fetched).toBe(1);
+		expect(await fs.readFile(finalPath())).toEqual(fixture.contents);
+	});
+
+	it('skips fetching when an existing file matches both byte length and SHA-256', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		await fs.writeFile(finalPath(), fixture.contents);
+
+		const fetchImpl = vi.fn<FetchLike>();
+		const result = await makeDownloader(fetchImpl).download(fixture.id);
+
+		expect(result.status).toBe('complete');
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it('ends cancelled when cancelled during existing-file hash verification', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		await fs.writeFile(finalPath(), fixture.contents);
+
+		const fetchImpl = vi.fn<FetchLike>();
+		const downloader = makeDownloader(fetchImpl);
+		const downloadPromise = downloader.download(fixture.id);
+		await Promise.resolve();
+		downloader.cancel(fixture.id);
+		const result = await downloadPromise;
+
+		expect(result.status).toBe('cancelled');
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it('ends paused when paused during existing-file hash verification', async () => {
+		await fs.mkdir(modelDir(fixture.id), { recursive: true });
+		await fs.writeFile(finalPath(), fixture.contents);
+
+		const fetchImpl = vi.fn<FetchLike>();
+		const downloader = makeDownloader(fetchImpl);
+		const downloadPromise = downloader.download(fixture.id);
+		await Promise.resolve();
+		downloader.pause(fixture.id);
+		const result = await downloadPromise;
+
+		expect(result.status).toBe('paused');
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
 });

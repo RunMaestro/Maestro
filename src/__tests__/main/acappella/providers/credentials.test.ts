@@ -30,12 +30,17 @@ vi.mock('../../../../main/utils/logger', () => ({
 import {
 	__setCredentialEntryFactory,
 	clearCredential,
+	clearTurnCredential,
 	getCredential,
+	getTurnCredential,
 	hasCredential,
+	hasTurnCredential,
+	isTurnKeyringAvailable,
 	listCredentialStates,
 	redactSecrets,
 	redactSecretsDeep,
 	setCredential,
+	setTurnCredential,
 	validateCredential,
 	REDACTED,
 } from '../../../../main/acappella/providers/credentials';
@@ -252,5 +257,42 @@ describe('redaction', () => {
 		// A short value that no pattern would match is still redacted, because the
 		// KEY said what it was.
 		expect(scrubbed.nested[0].apiKey).toBe(REDACTED);
+	});
+
+	it('scrubs an exact credential key while leaving credentialKind untouched', () => {
+		const scrubbed = redactSecretsDeep({
+			credential: 'turn-secret-value',
+			credentialKind: 'oauth',
+			credentialLabel: 'OpenAI',
+		}) as { credential: string; credentialKind: string; credentialLabel: string };
+
+		expect(scrubbed.credential).toBe(REDACTED);
+		expect(scrubbed.credentialKind).toBe('oauth');
+		expect(scrubbed.credentialLabel).toBe('OpenAI');
+	});
+});
+
+describe('TURN relay credential storage', () => {
+	it('round-trips and clears the TURN credential through the keychain without touching settings or logs', () => {
+		expect(isTurnKeyringAvailable()).toBe(true);
+		expect(setTurnCredential('turn-secret-123')).toEqual({ ok: true });
+		expect(hasTurnCredential()).toBe(true);
+		expect(getTurnCredential()).toBe('turn-secret-123');
+		expect(entries['turn-relay']?.value).toBe('turn-secret-123');
+
+		expect(clearTurnCredential()).toEqual({ ok: true });
+		expect(hasTurnCredential()).toBe(false);
+		expect(getTurnCredential()).toBeNull();
+		expect(settingsWrites).toEqual([]);
+		expect(logLines.join('\n')).not.toContain('turn-secret-123');
+	});
+
+	it('refuses to store a TURN credential when no keyring is available', () => {
+		__setCredentialEntryFactory(() => null);
+		expect(isTurnKeyringAvailable()).toBe(false);
+		const result = setTurnCredential('turn-secret-123');
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('never written to disk');
+		expect(hasTurnCredential()).toBe(false);
 	});
 });

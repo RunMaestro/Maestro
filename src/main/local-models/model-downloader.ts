@@ -455,16 +455,22 @@ export class ModelDownloader {
 		const finalPath = modelFilePath(job.entry.id, file.path);
 		const partPath = `${finalPath}${PARTIAL_SUFFIX}`;
 
-		// A file already at its final path with the right length is already
-		// verified: it only got there by passing verification.
+		// A file already at its final path with the right length is only skipped
+		// if its SHA-256 also matches; a same-length corrupt file must be replaced.
 		const existing = await statSize(finalPath);
 		if (existing === file.bytes) {
-			job.bytesReceived += file.bytes;
-			// Bytes already on disk were not transferred; keep them out of the rate.
-			job.lastSampleBytes = job.bytesReceived;
-			this.emit(job, true);
-			return;
+			const digest = createHash('sha256');
+			await hashInto(digest, finalPath, job.controller.signal);
+			if (job.intent) throw new AbortedError(job.intent);
+			if (digest.digest('hex') === file.sha256) {
+				job.bytesReceived += file.bytes;
+				// Bytes already on disk were not transferred; keep them out of the rate.
+				job.lastSampleBytes = job.bytesReceived;
+				this.emit(job, true);
+				return;
+			}
 		}
+		if (job.intent) throw new AbortedError(job.intent);
 		if (existing !== null) await fs.rm(finalPath, { force: true });
 
 		let lastError: unknown;
@@ -666,9 +672,24 @@ async function statSize(filePath: string): Promise<number | null> {
 	}
 }
 
-async function hashInto(hash: Hash, filePath: string): Promise<void> {
+async function hashInto(hash: Hash, filePath: string, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) return;
 	const stream = createReadStream(filePath);
-	for await (const chunk of stream) hash.update(chunk as Buffer);
+	const onAbort = (): void => {
+		stream.destroy();
+	};
+	signal?.addEventListener('abort', onAbort, { once: true });
+	try {
+		for await (const chunk of stream) {
+			if (signal?.aborted) return;
+			hash.update(chunk as Buffer);
+		}
+	} catch (error) {
+		if (signal?.aborted) return;
+		throw error;
+	} finally {
+		signal?.removeEventListener('abort', onAbort);
+	}
 }
 
 function delay(ms: number): Promise<void> {

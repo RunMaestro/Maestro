@@ -276,6 +276,9 @@ import {
 	voiceDevicesRevoke,
 	voiceDevicesRevokeAll,
 	voiceDevicesTestConnection,
+	voiceDevicesTurnCredentialClear,
+	voiceDevicesTurnCredentialSet,
+	voiceDevicesTurnCredentialStatus,
 } from './commands/voice-devices';
 import { search } from './commands/search';
 import { tabSuggestCleanup } from './commands/tab-suggest-cleanup';
@@ -4860,6 +4863,28 @@ voiceDevices
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceDevicesTestConnection);
+
+const voiceDevicesTurnCredential = voiceDevices
+	.command('turn-credential')
+	.description('Manage the TURN relay credential in the OS keychain (never stored in settings)');
+
+voiceDevicesTurnCredential
+	.command('status')
+	.description('Show whether a TURN relay credential is stored (never prints the credential)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesTurnCredentialStatus);
+
+voiceDevicesTurnCredential
+	.command('set')
+	.description('Store the TURN relay credential in the OS keychain, read from standard input')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesTurnCredentialSet);
+
+voiceDevicesTurnCredential
+	.command('clear')
+	.description('Remove the stored TURN relay credential')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesTurnCredentialClear);
 
 const voiceWakePhrase = voice
 	.command('wake-phrase')

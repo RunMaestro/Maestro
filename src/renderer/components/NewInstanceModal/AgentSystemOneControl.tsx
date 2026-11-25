@@ -23,6 +23,7 @@ import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../../shared/local-mode
 import { formatSystemOneCost } from '../../../shared/local-models/system-one-spend';
 import { useSystemOneAgentAccess } from '../../hooks/localModels/useSystemOneAgentAccess';
 import { setAgentSystemOneOptOut } from '../../services/agentSystemOne';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { Theme } from '../../types';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { FormFieldLabel } from '../ui/FormFieldLabel';
@@ -46,6 +47,7 @@ export function AgentSystemOneControl({
 	sshRemoteName,
 }: AgentSystemOneControlProps) {
 	const { access, error: accessError, refresh } = useSystemOneAgentAccess(agentId);
+	const hasLocalEndpoints = useSettingsStore((s) => s.localModelEndpoints.length > 0);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 
@@ -66,6 +68,13 @@ export function AgentSystemOneControl({
 		},
 		[agentId, refresh]
 	);
+
+	const visible =
+		optedOut ||
+		hasLocalEndpoints ||
+		(access !== null && access.engine !== 'off') ||
+		accessError !== null;
+	if (!visible) return null;
 
 	// The agent's own switch is what the toggle shows; any other gate is said here.
 	const elsewhere = sshRemoteName

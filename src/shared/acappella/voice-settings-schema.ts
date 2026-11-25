@@ -362,13 +362,6 @@ export const VOICE_SETTING_FIELDS: Readonly<Record<string, VoiceSettingField>> =
 		allowEmpty: true,
 		description: 'The TURN relay user name.',
 	},
-	'ice.turn.credential': {
-		kind: 'string',
-		default: '',
-		allowEmpty: true,
-		sensitive: true,
-		description: 'The TURN relay credential.',
-	},
 });
 
 /** Every settable path under `acappella`, in table order. */
@@ -412,6 +405,7 @@ export function voiceSettingDefault(path: string): unknown {
 
 /** Whether a path holds a secret, so a reader masks it. */
 export function isSensitiveVoiceSetting(path: string): boolean {
+	if (path === 'ice.turn.credential') return true;
 	const field = VOICE_SETTING_FIELDS[path];
 	return field?.kind === 'string' && field.sensitive === true;
 }
@@ -519,7 +513,12 @@ function fieldProblem(path: string, field: VoiceSettingField, value: unknown): s
  * does, because a stored field nothing reads is a setting that silently does
  * nothing.
  */
+/** What a caller is told when trying to write the TURN credential into settings.json. */
+export const TURN_CREDENTIAL_SETTINGS_REFUSAL =
+	'acappella.ice.turn.credential is stored in the OS keychain, not in settings.json. Use "maestro-cli voice devices turn-credential set" instead.';
+
 export function voiceSettingProblem(path: string, value: unknown): string | null {
+	if (path === 'ice.turn.credential') return TURN_CREDENTIAL_SETTINGS_REFUSAL;
 	const field = VOICE_SETTING_FIELDS[path];
 	if (field) {
 		const problem = fieldProblem(path, field, value);
@@ -545,6 +544,7 @@ export function voiceSettingProblem(path: string, value: unknown): string | null
 function objectProblem(path: string, value: Record<string, unknown>): string | null {
 	for (const [key, entry] of Object.entries(value)) {
 		const childPath = path ? `${path}.${key}` : key;
+		if (childPath === 'ice.turn.credential') return TURN_CREDENTIAL_SETTINGS_REFUSAL;
 		// The migration's bookkeeping rides in the blob; a whole-blob write keeps it.
 		if (VOICE_BOOKKEEPING_KEYS.includes(childPath)) continue;
 		const field = VOICE_SETTING_FIELDS[childPath];

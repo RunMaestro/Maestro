@@ -27,8 +27,15 @@
  */
 
 import { getLocalIpAddressSync, listLocalIpv4Addresses } from '../../utils/networkUtils';
+import { logger } from '../../utils/logger';
 import type { DeviceCandidateType } from '../../../shared/acappella/device-protocol';
 import { DEFAULT_STUN_URLS, type IceServerConfig } from '../../../shared/acappella/webrtc-host';
+import {
+	getTurnCredential,
+	hasTurnCredential,
+	isTurnKeyringAvailable,
+	setTurnCredential,
+} from '../providers/credentials';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -40,6 +47,29 @@ export interface TurnSettings {
 	url: string;
 	username: string;
 	credential: string;
+}
+
+/** What the renderer and CLI see for TURN settings: never the plaintext credential. */
+export interface TurnSettingsView {
+	enabled: boolean;
+	url: string;
+	username: string;
+	credentialConfigured: boolean;
+	keyringAvailable: boolean;
+	/** True when an unmigrated plaintext credential remains in settings because no keyring is available. */
+	legacyPlaintextFallback: boolean;
+}
+
+export interface IceTransportSettingsView {
+	stunUrls: string[];
+	turn: TurnSettingsView;
+	hostCandidates: boolean;
+	forceRelay: boolean;
+}
+
+export interface IceSettingsStoreLike {
+	get: (key: string, defaultValue?: unknown) => unknown;
+	set?: (key: string, value: unknown) => void;
 }
 
 export interface IceTransportSettings {
@@ -118,7 +148,10 @@ function asString(value: unknown): string {
  * not be able to throw somewhere that leaves a device unable to connect with no
  * explanation.
  */
-export function readIceSettings(stored: unknown): IceTransportSettings {
+export function readIceSettings(
+	stored: unknown,
+	credentialOverride?: string
+): IceTransportSettings {
 	const raw = (stored ?? {}) as Record<string, unknown>;
 	const turnRaw = (raw.turn ?? {}) as Record<string, unknown>;
 	const url = asString(turnRaw.url);
@@ -130,11 +163,159 @@ export function readIceSettings(stored: unknown): IceTransportSettings {
 			enabled: turnRaw.enabled === true && !!url,
 			url,
 			username: asString(turnRaw.username),
-			credential: asString(turnRaw.credential),
+			credential:
+				credentialOverride !== undefined ? credentialOverride.trim() : asString(turnRaw.credential),
 		},
 		hostCandidates: raw.hostCandidates !== false,
 		forceRelay: raw.forceRelay === true,
 	};
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readLegacyTurnCredential(blob: unknown): string | null {
+	if (!isPlainRecord(blob) || !isPlainRecord(blob.ice) || !isPlainRecord(blob.ice.turn)) {
+		return null;
+	}
+	const raw = blob.ice.turn.credential;
+	return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+/** Remove `ice.turn.credential` from the `acappella` settings blob, keeping all other fields. */
+export function clearLegacyTurnCredential(settingsStore: IceSettingsStoreLike): boolean {
+	if (!settingsStore.set) return false;
+	const blob = settingsStore.get('acappella', {});
+	if (!isPlainRecord(blob) || !isPlainRecord(blob.ice) || !isPlainRecord(blob.ice.turn)) {
+		return false;
+	}
+	if (!('credential' in blob.ice.turn)) return false;
+	const nextTurn = { ...blob.ice.turn };
+	delete nextTurn.credential;
+	settingsStore.set('acappella', {
+		...blob,
+		ice: { ...blob.ice, turn: nextTurn },
+	});
+	return true;
+}
+
+let warnedLegacyFallback = false;
+
+/** Test helper to reset the one-shot no-keyring migration warning between tests. */
+export function __resetLegacyTurnWarningForTests(): void {
+	warnedLegacyFallback = false;
+}
+
+/**
+ * Move a legacy plaintext `ice.turn.credential` from `settings.json` into the OS
+ * keychain. If the keychain already holds a credential, remove only the stale
+ * plaintext copy without overwriting it. If no keyring is available, keep the
+ * plaintext in settings so a working TURN setup is not broken, warn once, and
+ * return `true` so callers can report it.
+ */
+export function migrateLegacyTurnCredential(settingsStore: IceSettingsStoreLike): boolean {
+	const blob = settingsStore.get('acappella', {});
+	const legacy = readLegacyTurnCredential(blob);
+	if (!legacy) return false;
+
+	if (hasTurnCredential()) {
+		clearLegacyTurnCredential(settingsStore);
+		warnedLegacyFallback = false;
+		return false;
+	}
+
+	const result = setTurnCredential(legacy);
+	if (result.ok) {
+		clearLegacyTurnCredential(settingsStore);
+		warnedLegacyFallback = false;
+		return false;
+	}
+
+	if (!warnedLegacyFallback) {
+		warnedLegacyFallback = true;
+		logger.warn(
+			'Could not migrate legacy TURN relay credential to the OS keychain; keeping existing setting until a keyring is available.',
+			'ACappella'
+		);
+	}
+	return true;
+}
+
+/**
+ * Read ICE settings for main-process runtime use and UI display, migrating any
+ * legacy plaintext credential when the OS keychain is available.
+ */
+export function readAndMigrateIceSettings(settingsStore: IceSettingsStoreLike): {
+	settings: IceTransportSettings;
+	view: IceTransportSettingsView;
+} {
+	const legacyRemaining = migrateLegacyTurnCredential(settingsStore);
+	const blob = settingsStore.get('acappella', {});
+	const storedIce = isPlainRecord(blob) ? blob.ice : undefined;
+	const keychainCred = getTurnCredential();
+	const settings = readIceSettings(storedIce, keychainCred ?? undefined);
+	const view: IceTransportSettingsView = {
+		stunUrls: settings.stunUrls,
+		turn: {
+			enabled: settings.turn.enabled,
+			url: settings.turn.url,
+			username: settings.turn.username,
+			credentialConfigured: Boolean(keychainCred || legacyRemaining),
+			keyringAvailable: isTurnKeyringAvailable(),
+			legacyPlaintextFallback: !keychainCred && legacyRemaining,
+		},
+		hostCandidates: settings.hostCandidates,
+		forceRelay: settings.forceRelay,
+	};
+	return { settings, view };
+}
+
+/**
+ * Persist non-secret ICE settings to `settingsStore`, stripping UI-only fields
+ * and preserving any unmigrated legacy `turn.credential` when no keyring is available.
+ */
+export function updateStoredIceSettings(
+	settingsStore: IceSettingsStoreLike,
+	patch: {
+		stunUrls?: string[];
+		hostCandidates?: boolean;
+		forceRelay?: boolean;
+		turn?: Partial<TurnSettingsView> & { credential?: unknown };
+	}
+): void {
+	if (!settingsStore.set) return;
+	const blob = settingsStore.get('acappella', {});
+	const currentBlob = isPlainRecord(blob) ? blob : {};
+	const currentIce = isPlainRecord(currentBlob.ice) ? currentBlob.ice : {};
+	const currentTurn = isPlainRecord(currentIce.turn) ? currentIce.turn : {};
+	const legacyCred = readLegacyTurnCredential(currentBlob);
+
+	const nextTurn: Record<string, unknown> = {
+		...currentTurn,
+		...(patch.turn ?? {}),
+	};
+	delete nextTurn.credentialConfigured;
+	delete nextTurn.keyringAvailable;
+	delete nextTurn.legacyPlaintextFallback;
+	if (legacyCred) {
+		nextTurn.credential = legacyCred;
+	} else {
+		delete nextTurn.credential;
+	}
+
+	const nextIce: Record<string, unknown> = {
+		...currentIce,
+		...(patch.stunUrls !== undefined ? { stunUrls: patch.stunUrls } : {}),
+		...(patch.hostCandidates !== undefined ? { hostCandidates: patch.hostCandidates } : {}),
+		...(patch.forceRelay !== undefined ? { forceRelay: patch.forceRelay } : {}),
+		...(patch.turn !== undefined ? { turn: nextTurn } : {}),
+	};
+
+	settingsStore.set('acappella', {
+		...currentBlob,
+		ice: nextIce,
+	});
 }
 
 // ---------------------------------------------------------------------------

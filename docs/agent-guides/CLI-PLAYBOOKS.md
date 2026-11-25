@@ -589,7 +589,7 @@ maestro-cli voice input list | set <device-id|default>
 maestro-cli voice providers list | set <stt|tts|brain|realtime> <provider-id> | set pipeline <cascade|realtime>
 maestro-cli voice voices list | set <voice-id> | preview [<voice-id>] [--text <text>]
 pbpaste | maestro-cli voice credentials set <openai|elevenlabs|anthropic>   # also: list, test, clear
-maestro-cli voice devices list|rename|revoke|forget|revoke-all|disconnect|discovery|test-connection
+maestro-cli voice devices list|rename|revoke|forget|revoke-all|disconnect|discovery|test-connection|turn-credential status|set|clear
 maestro-cli voice wake-phrase list | set <agent> <phrase> | clear <agent>
 maestro-cli voice wake record|stop|add|undo|clear-background|train|status|list|remove|test
 ```

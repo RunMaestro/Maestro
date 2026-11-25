@@ -475,7 +475,7 @@ Each connected device shows the connection path it actually won, in plain words.
 | Direct (through NAT)    | A STUN server                        | Most home networks                                  |
 | Relayed (TURN)          | **A TURN server you run or pay for** | Cellular, hotel WiFi, corporate networks            |
 
-The connection settings under **Paired Devices** hold **STUN servers, one per line**, and a **TURN relay** switch (off by default) with the TURN server URL, username, and credential. **Test connection** (`maestro-cli voice devices test-connection`) checks which paths this computer can offer.
+The connection settings under **Paired Devices** hold **STUN servers, one per line**, and a **TURN relay** switch (off by default) with the TURN server URL, username, and credential (stored in the operating system keychain, never in `settings.json`; from the command line, `maestro-cli voice devices turn-credential status|set|clear`, reading from standard input on `set`). The TURN credential is kept in this machine's OS keychain, like the hosted voice keys, so it does not travel with synced settings (custom Storage Location) and must be entered on each machine. **Test connection** (`maestro-cli voice devices test-connection`) checks which paths this computer can offer.
 
 If you already run an overlay network such as Tailscale, that is the whole answer: both machines have a routable address for each other and the connection is direct from anywhere. The pairing QR carries every local address the desktop has, overlay addresses included.
 

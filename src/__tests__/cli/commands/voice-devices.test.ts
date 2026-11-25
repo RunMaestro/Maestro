@@ -29,15 +29,25 @@ import {
 	voiceDevicesRevoke,
 	voiceDevicesRevokeAll,
 	voiceDevicesTestConnection,
+	voiceDevicesTurnCredentialClear,
+	voiceDevicesTurnCredentialSet,
+	voiceDevicesTurnCredentialStatus,
 } from '../../../cli/commands/voice-devices';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { isStdinTerminal, readStdinText } from '../../../cli/services/stdin';
 import { canPrompt, confirmOnTerminal } from '../../../cli/utils/confirm';
 import { ExitCode } from '../../../cli/exit-codes';
-import type {
-	VoiceControlReply,
-	VoiceControlRequest,
-	VoiceDeviceView,
+import {
+	voiceControlActionNeedsVoice,
+	type VoiceControlReply,
+	type VoiceControlRequest,
+	type VoiceDeviceView,
 } from '../../../shared/acappella/voice-control';
+
+vi.mock('../../../cli/services/stdin', () => ({
+	isStdinTerminal: vi.fn(() => false),
+	readStdinText: vi.fn(() => ''),
+}));
 
 function device(overrides: Partial<VoiceDeviceView> = {}): VoiceDeviceView {
 	return {
@@ -246,5 +256,34 @@ describe('voice devices commands', () => {
 			error: 'No network.',
 		});
 		expect(logSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('manages the TURN credential via stdin and status without printing the secret, even with voice off', async () => {
+		expect(voiceControlActionNeedsVoice('turn-credential-status')).toBe(false);
+		expect(voiceControlActionNeedsVoice('set-turn-credential')).toBe(false);
+		expect(voiceControlActionNeedsVoice('clear-turn-credential')).toBe(false);
+
+		vi.mocked(isStdinTerminal).mockReturnValue(false);
+		vi.mocked(readStdinText).mockReturnValue('  super-secret-turn-pass\n');
+
+		const sent = mockBridge((request) => {
+			if (request.action === 'turn-credential-status') {
+				return ok({ configured: true, keyringAvailable: true, legacyPlaintextFallback: false });
+			}
+			if (request.action === 'set-turn-credential') return ok({ configured: true });
+			return ok({ configured: false });
+		});
+
+		await voiceDevicesTurnCredentialSet({});
+		await voiceDevicesTurnCredentialStatus({});
+		await voiceDevicesTurnCredentialClear({});
+
+		expect(sent).toEqual([
+			{ action: 'set-turn-credential', credential: 'super-secret-turn-pass' },
+			{ action: 'turn-credential-status' },
+			{ action: 'clear-turn-credential' },
+		]);
+		expect(printed()).toContain('TURN relay credential: stored');
+		expect(printed()).not.toContain('super-secret-turn-pass');
 	});
 });

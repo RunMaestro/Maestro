@@ -18,9 +18,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { IceProbeResult } from '../../../../shared/acappella/webrtc-host';
 
-/** Settings key holding everything A Cappella persists. Mirrors the main-side constant. */
-const ACAPPELLA_SETTINGS_KEY = 'acappella';
-
 type DeviceApi = NonNullable<Window['maestro']>['voice']['devices'];
 export type DeviceStatus = Awaited<ReturnType<DeviceApi['list']>>[number];
 export type PairingPayload = NonNullable<Awaited<ReturnType<DeviceApi['startPairing']>>>;
@@ -48,6 +45,7 @@ export interface PairedDevices {
 	/** The last Test Connection verdict, or null before one has been run. */
 	probe: IceProbeResult | null;
 	testing: boolean;
+	credentialError: string | null;
 	loaded: boolean;
 
 	startPairing: () => Promise<void>;
@@ -61,12 +59,9 @@ export interface PairedDevices {
 	disconnectAll: () => Promise<void>;
 	setDiscovery: (enabled: boolean) => Promise<void>;
 	updateIce: (patch: Partial<IceSettings>) => Promise<void>;
+	setTurnCredential: (credential: string) => Promise<boolean>;
+	clearTurnCredential: () => Promise<boolean>;
 	testConnection: () => Promise<void>;
-}
-
-interface StoredBlob {
-	ice?: unknown;
-	[key: string]: unknown;
 }
 
 export function usePairedDevices(enabled: boolean): PairedDevices {
@@ -80,6 +75,7 @@ export function usePairedDevices(enabled: boolean): PairedDevices {
 	const [tunnelNote, setTunnelNote] = useState('');
 	const [probe, setProbe] = useState<IceProbeResult | null>(null);
 	const [testing, setTesting] = useState(false);
+	const [credentialError, setCredentialError] = useState<string | null>(null);
 	const [loaded, setLoaded] = useState(false);
 
 	const api = window.maestro?.voice?.devices;
@@ -149,11 +145,13 @@ export function usePairedDevices(enabled: boolean): PairedDevices {
 		return () => clearTimeout(timer);
 	}, [pairing, refreshPairing]);
 
-	const persistIce = useCallback(async (next: IceSettings) => {
-		const stored = ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ??
-			{}) as StoredBlob;
-		await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, { ...stored, ice: next });
-	}, []);
+	const persistIce = useCallback(
+		async (next: IceSettings) => {
+			if (!api) return;
+			await api.updateIceSettings(next);
+		},
+		[api]
+	);
 
 	const actions = useMemo(
 		() => ({
@@ -217,6 +215,33 @@ export function usePairedDevices(enabled: boolean): PairedDevices {
 		[ice, persistIce, refreshIce]
 	);
 
+	const setTurnCredential = useCallback(
+		async (credential: string): Promise<boolean> => {
+			if (!api) return false;
+			setCredentialError(null);
+			const result = await api.setTurnCredential(credential);
+			if (!result.ok) {
+				setCredentialError(result.error ?? 'Could not save the TURN relay credential.');
+				return false;
+			}
+			await refreshIce();
+			return true;
+		},
+		[api, refreshIce]
+	);
+
+	const clearTurnCredential = useCallback(async (): Promise<boolean> => {
+		if (!api) return false;
+		setCredentialError(null);
+		const result = await api.clearTurnCredential();
+		if (!result.ok) {
+			setCredentialError(result.error ?? 'Could not remove the TURN relay credential.');
+			return false;
+		}
+		await refreshIce();
+		return true;
+	}, [api, refreshIce]);
+
 	const testConnection = useCallback(async () => {
 		if (!api) return;
 		setTesting(true);
@@ -239,9 +264,12 @@ export function usePairedDevices(enabled: boolean): PairedDevices {
 		tunnelNote,
 		probe,
 		testing,
+		credentialError,
 		loaded,
 		...actions,
 		updateIce,
+		setTurnCredential,
+		clearTurnCredential,
 		testConnection,
 	};
 }

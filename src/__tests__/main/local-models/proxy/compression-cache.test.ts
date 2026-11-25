@@ -734,4 +734,47 @@ describe('createCompressionCache: usage and pruning', () => {
 		});
 		expect((await cache.prune({ now })).removedEntries).toBe(0);
 	});
+
+	it('writes cache files and directories with private permissions on POSIX', async () => {
+		if (process.platform === 'win32') return;
+		const bucketDir = path.dirname(entryFile(tempRoot.dir, HASH, '.json'));
+		await fs.chmod(tempRoot.dir, 0o755);
+		await fs.mkdir(bucketDir, { recursive: true, mode: 0o755 });
+		await fs.chmod(bucketDir, 0o755);
+
+		await cacheIn(tempRoot.dir).write(compressedVerdict(), ORIGINAL);
+
+		const dirMode = (await fs.stat(tempRoot.dir)).mode & 0o777;
+		const bucketMode = (await fs.stat(bucketDir)).mode & 0o777;
+		const origMode = (await fs.stat(entryFile(tempRoot.dir, HASH, '.original.txt'))).mode & 0o777;
+		const compMode = (await fs.stat(entryFile(tempRoot.dir, HASH, '.compressed.txt'))).mode & 0o777;
+		const jsonMode = (await fs.stat(entryFile(tempRoot.dir, HASH, '.json'))).mode & 0o777;
+
+		expect(dirMode & 0o077).toBe(0);
+		expect(bucketMode & 0o077).toBe(0);
+		expect(origMode & 0o077).toBe(0);
+		expect(compMode & 0o077).toBe(0);
+		expect(jsonMode & 0o077).toBe(0);
+	});
+
+	it('tightens an existing cache root directory on first read or prune on POSIX', async () => {
+		if (process.platform === 'win32') return;
+		await fs.chmod(tempRoot.dir, 0o755);
+
+		const cache = cacheIn(tempRoot.dir);
+		await cache.read(HASH);
+
+		const dirModeAfterRead = (await fs.stat(tempRoot.dir)).mode & 0o777;
+		expect(dirModeAfterRead & 0o077).toBe(0);
+
+		const secondDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-proxy-cache-prune-'));
+		try {
+			await fs.chmod(secondDir, 0o755);
+			await cacheIn(secondDir).prune();
+			const dirModeAfterPrune = (await fs.stat(secondDir)).mode & 0o777;
+			expect(dirModeAfterPrune & 0o077).toBe(0);
+		} finally {
+			await fs.rm(secondDir, { recursive: true, force: true });
+		}
+	});
 });

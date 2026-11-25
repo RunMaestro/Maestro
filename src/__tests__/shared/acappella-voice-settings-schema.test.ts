@@ -214,9 +214,12 @@ describe('redactVoiceSettings', () => {
 		ice: { turn: { enabled: true, url: 'turn:relay.test:3478', credential: 'hunter2' } },
 	};
 
-	it('marks the TURN credential as the one secret', () => {
+	it('marks ice.turn.credential as sensitive for legacy redaction while keeping it out of settable fields', () => {
 		expect(isSensitiveVoiceSetting('ice.turn.credential')).toBe(true);
-		expect(VOICE_SETTING_PATHS.filter(isSensitiveVoiceSetting)).toEqual(['ice.turn.credential']);
+		expect(VOICE_SETTING_PATHS).not.toContain('ice.turn.credential');
+		expect(voiceSettingProblem('ice.turn.credential', 'hunter2')).toContain(
+			'voice devices turn-credential set'
+		);
 	});
 
 	it('masks the secret in a read of the blob or of a section around it', () => {
