@@ -248,6 +248,20 @@ describe('peer:agent targets', () => {
 			expect(release).toHaveBeenCalledTimes(1);
 		});
 
+		it('reports groupName and groupHidden as null when the host cannot list its groups', async () => {
+			const peer = fakePeer(agentWith([{ id: 'tab-1', state: 'idle' }], { groupId: 'g1' }));
+			peer.client.groups.list.mockResolvedValue({
+				ok: false,
+				error: { code: 'unsupported', message: 'Not served.', method: 'groups.list' },
+			} as never);
+
+			await showAgent(`${PEER}:docs`, { json: true });
+
+			const [output] = printedJson(logSpy);
+			expect(output).toHaveProperty('groupName', null);
+			expect(output).toHaveProperty('groupHidden', null);
+		});
+
 		it('fills stats and recentHistory from the host History, naming another machine work', async () => {
 			const peer = fakePeer(agentWith([{ id: 'tab-1', state: 'idle' }]));
 			const usage = {

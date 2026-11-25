@@ -111,6 +111,30 @@ describe('show-agent command', () => {
 			);
 		});
 
+		it('should report groupHidden, inherited from a hidden parent group', () => {
+			const groups: Group[] = [
+				{ id: 'parent', name: 'Retired', emoji: '', collapsed: false, hidden: true },
+				{ id: 'child', name: 'Old', emoji: '', collapsed: false, parentGroupId: 'parent' },
+				{ id: 'live', name: 'Live', emoji: '', collapsed: false },
+			];
+			vi.mocked(readGroups).mockReturnValue(groups);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ groupId: 'child' }));
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				groupName: 'Old',
+				groupHidden: true,
+			});
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ groupId: 'live' }));
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toMatchObject({
+				groupName: 'Live',
+				groupHidden: false,
+			});
+		});
+
 		it('should handle agent without group', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession({ groupId: undefined }));
 			vi.mocked(readGroups).mockReturnValue([]);

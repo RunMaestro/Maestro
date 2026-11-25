@@ -482,6 +482,8 @@ list
 		'--all-peers',
 		'List local agents, then the agents on every SSH remote that runs a Federation host'
 	)
+	.option('--visible-only', 'Only agents whose group is not hidden from the Left Bar')
+	.option('--hidden-only', 'Only agents in a hidden group')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
 

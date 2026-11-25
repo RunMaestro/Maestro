@@ -6,6 +6,7 @@
 
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { HistoryEntry, SessionInfo } from '../../shared/types';
+import { agentGroupLookup } from '../../shared/groupHierarchy';
 import { getSessionById, readHistory, readGroups } from '../services/storage';
 import { formatAgentDetail, formatError } from '../output/formatter';
 import { readAgentSessionSettings } from '../services/agent-settings';
@@ -90,9 +91,8 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			throw new Error(`Agent not found: ${agentId}`);
 		}
 
-		// Get group name if agent belongs to a group
-		const groups = readGroups();
-		const group = agent.groupId ? groups.find((g) => g.id === agent.groupId) : undefined;
+		// The group's name, and whether it (or its parent) is hidden from the Left Bar
+		const { groupName, groupHidden } = agentGroupLookup(readGroups())(agent.groupId);
 
 		// Get history entries for this agent
 		const history = readHistory(undefined, agent.id);
@@ -104,7 +104,8 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			cwd: agent.cwd,
 			projectRoot: agent.projectRoot,
 			groupId: agent.groupId,
-			groupName: group?.name,
+			groupName: groupName ?? undefined,
+			groupHidden,
 			autoRunFolderPath: agent.autoRunFolderPath,
 			// Where this agent's worktrees go (Git menu -> Configure Worktrees).
 			// Null when unset; `create-worktree` then picks the desktop default.
@@ -148,7 +149,8 @@ interface PeerTabRow {
 function peerAgentOutput(
 	agent: AgentRecord,
 	peer: string,
-	groupName: string | undefined,
+	groupName: string | null | undefined,
+	groupHidden: boolean | null,
 	history: HistoryEntry[] | null
 ) {
 	const worktree = agent.worktreeConfig as { basePath?: string } | undefined;
@@ -166,6 +168,7 @@ function peerAgentOutput(
 		projectRoot: agent.projectRoot ?? agent.cwd ?? '',
 		groupId: agent.groupId,
 		groupName,
+		groupHidden,
 		autoRunFolderPath: agent.autoRunFolderPath,
 		worktreeBasePath: worktree?.basePath ?? null,
 		// The record mirrors the persisted `Session` fields these settings are read from; every
@@ -182,15 +185,30 @@ function peerAgentOutput(
 async function showPeerAgent(target: PeerTarget, options: ShowAgentOptions): Promise<void> {
 	try {
 		const output = await withPeerAgent(target, async ({ agent, client, peer }) => {
-			// The group name is a label only: a host that cannot list its groups still shows the agent.
-			let groupName: string | undefined;
+			// The group is a label only: a host that cannot list its groups still shows the agent,
+			// with `groupName` and `groupHidden` null (unknown). An ungrouped agent omits `groupName`.
+			let groupName: string | null | undefined;
+			let groupHidden: boolean | null = false;
 			if (agent.groupId) {
 				const groups = await client.groups.list();
-				if (groups.ok) groupName = groups.value.find((g) => g.id === agent.groupId)?.name;
+				if (groups.ok) {
+					const info = agentGroupLookup(groups.value)(agent.groupId);
+					groupName = info.groupName ?? undefined;
+					groupHidden = info.groupHidden;
+				} else {
+					groupName = null;
+					groupHidden = null;
+				}
 			}
 			// A host too old to serve History still shows the agent, with `stats: null`.
 			const history = await client.history.list(agent.id);
-			return peerAgentOutput(agent, peer, groupName, history.ok ? history.value : null);
+			return peerAgentOutput(
+				agent,
+				peer,
+				groupName,
+				groupHidden,
+				history.ok ? history.value : null
+			);
 		});
 		if (options.json) {
 			console.log(JSON.stringify(output, null, 2));
