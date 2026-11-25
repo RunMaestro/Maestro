@@ -5334,6 +5334,46 @@ Probe which paths a device could reach this machine on: local network, STUN, TUR
 maestro-cli voice devices test-connection
 ```
 
+## `maestro-cli voice devices turn-credential`
+
+Manage the TURN relay credential in the OS keychain (never stored in settings)
+
+## `maestro-cli voice devices turn-credential status`
+
+Show whether a TURN relay credential is stored (never prints the credential)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice devices turn-credential status
+```
+
+## `maestro-cli voice devices turn-credential set`
+
+Store the TURN relay credential in the OS keychain, read from standard input
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+pbpaste | maestro-cli voice devices turn-credential set
+```
+
+## `maestro-cli voice devices turn-credential clear`
+
+Remove the stored TURN relay credential
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice devices turn-credential clear
+```
+
 ## `maestro-cli voice wake-phrase`
 
 A wake phrase of its own for one agent: saying it opens a session on that agent

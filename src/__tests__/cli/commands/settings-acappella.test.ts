@@ -147,7 +147,7 @@ describe('settings commands on the A Cappella blob', () => {
 		expect(errors()).toContain('is not an A Cappella setting');
 	});
 
-	it('masks the TURN credential in a read of the object around it', () => {
+	it('masks a legacy TURN credential in a read of the object around it', () => {
 		vi.mocked(readSettingValue).mockReturnValue({
 			turn: { enabled: true, url: 'turn:relay.test:3478', credential: 'hunter2' },
 		});
@@ -158,13 +158,31 @@ describe('settings commands on the A Cappella blob', () => {
 		expect(printed()).toContain('turn:relay.test:3478');
 	});
 
-	it('prints the credential for a read of its own path, like any sensitive key', () => {
-		vi.mocked(readSettingValue).mockReturnValue('hunter2');
-		settingsGet('acappella.ice.turn.credential', {});
-		expect(printed()).toBe('hunter2');
+	it('refuses settings set for acappella.ice.turn.credential and points to voice devices turn-credential', async () => {
+		await expect(settingsSet('acappella.ice.turn.credential', 'hunter2', {})).rejects.toThrow(
+			'exit:1'
+		);
+		expect(writeSettingValue).not.toHaveBeenCalled();
+		expect(errors()).toContain('voice devices turn-credential set');
 	});
 
-	it('masks the TURN credential in the list, unless secrets are asked for', () => {
+	it('preserves an existing legacy TURN credential when updating acappella.ice.turn via --raw', async () => {
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'acappella.ice.turn.credential' ? 'legacy-secret' : undefined
+		);
+
+		await settingsSet('acappella.ice.turn', '', {
+			raw: '{"enabled":true,"url":"turns:new.example.com:5349"}',
+		});
+
+		expect(writeSettingValue).toHaveBeenCalledWith('acappella.ice.turn', {
+			enabled: true,
+			url: 'turns:new.example.com:5349',
+			credential: 'legacy-secret',
+		});
+	});
+
+	it('masks a legacy TURN credential in the list, unless secrets are asked for', () => {
 		vi.mocked(readSettings).mockReturnValue({
 			acappella: { ice: { turn: { credential: 'hunter2' } } },
 		});

@@ -67,6 +67,9 @@ export type VoiceControlRequest =
 	| { action: 'disconnect-devices' }
 	| { action: 'discovery'; enabled: boolean }
 	| { action: 'test-connection' }
+	| { action: 'turn-credential-status' }
+	| { action: 'set-turn-credential'; credential: string }
+	| { action: 'clear-turn-credential' }
 	| { action: 'latency' }
 	| { action: 'self-test' }
 	| { action: 'wake-test'; phrase?: string; sensitivity?: number; seconds: number };
@@ -176,6 +179,13 @@ export interface VoiceControlResults {
 	'disconnect-devices': Record<string, never>;
 	discovery: { discovery: VoiceDiscoveryView | null };
 	'test-connection': VoiceConnectionTestView;
+	'turn-credential-status': {
+		configured: boolean;
+		keyringAvailable: boolean;
+		legacyPlaintextFallback: boolean;
+	};
+	'set-turn-credential': { configured: boolean };
+	'clear-turn-credential': { configured: boolean };
 	/** `turn` is null when no turn has finished since the app launched. `text` is the breakdown as lines. */
 	latency: { turn: Record<string, unknown> | null; text: string | null };
 	/** `text` is the report as lines, the form a bug report pastes. */
@@ -212,6 +222,9 @@ export function voiceControlActionNeedsVoice(action: VoiceControlAction): boolea
 		case 'revoke-all-devices':
 		case 'disconnect-devices':
 		case 'discovery':
+		case 'turn-credential-status':
+		case 'set-turn-credential':
+		case 'clear-turn-credential':
 		case 'self-test':
 			return false;
 		default:
@@ -286,6 +299,8 @@ export function parseVoiceControlRequest(raw: unknown): VoiceControlRequest | nu
 		case 'revoke-all-devices':
 		case 'disconnect-devices':
 		case 'test-connection':
+		case 'turn-credential-status':
+		case 'clear-turn-credential':
 		case 'latency':
 		case 'self-test':
 			return { action: raw.action };
@@ -351,6 +366,10 @@ export function parseVoiceControlRequest(raw: unknown): VoiceControlRequest | nu
 			return typeof raw.enabled === 'boolean'
 				? { action: 'discovery', enabled: raw.enabled }
 				: null;
+		case 'set-turn-credential': {
+			const credential = nonEmptyString(raw.credential);
+			return credential ? { action: 'set-turn-credential', credential } : null;
+		}
 		case 'wake-test': {
 			const seconds =
 				typeof raw.seconds === 'number' && Number.isFinite(raw.seconds)

@@ -17,6 +17,7 @@ import { formatRelativeTime } from '../../shared/formatters';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatSuccess } from '../output/formatter';
 import { failCommand } from '../services/session-command';
+import { isStdinTerminal, readStdinText } from '../services/stdin';
 import { sendVoiceControl } from '../services/voice-control';
 import { canPrompt, confirmOnTerminal } from '../utils/confirm';
 import { parseCliBool } from '../utils/parse';
@@ -209,4 +210,61 @@ export async function voiceDevicesTestConnection(options: JsonOption): Promise<v
 		CANDIDATE_TYPE_LABELS[result.best as keyof typeof CANDIDATE_TYPE_LABELS] ?? result.best;
 	console.log(`Best path: ${best}`);
 	if (result.error) failCommand(result.error, false);
+}
+
+function readTurnCredentialFromStdin(json: boolean | undefined): string {
+	if (isStdinTerminal()) {
+		failCommand(
+			'Pipe the credential on standard input, for example: pbpaste | maestro-cli voice devices turn-credential set',
+			json,
+			ExitCode.InvalidUsage
+		);
+	}
+	let text: string;
+	try {
+		text = readStdinText();
+	} catch {
+		failCommand('Could not read the credential from standard input.', json);
+	}
+	const credential = text.trim();
+	if (!credential) {
+		failCommand('The credential on standard input was empty.', json, ExitCode.InvalidUsage);
+	}
+	return credential;
+}
+
+/** `voice devices turn-credential status` - whether a TURN credential is stored. Never prints it. */
+export async function voiceDevicesTurnCredentialStatus(options: JsonOption): Promise<void> {
+	const result = await sendVoiceControl({ action: 'turn-credential-status' }, options.json);
+	if (options.json) {
+		printJson({ ...result });
+		return;
+	}
+	if (result.legacyPlaintextFallback) {
+		console.log(
+			'TURN relay credential: stored in settings (no OS credential store is available on this machine)'
+		);
+	} else if (!result.keyringAvailable) {
+		console.log('TURN relay credential: no credential store on this machine');
+	} else {
+		console.log(`TURN relay credential: ${result.configured ? 'stored' : 'not set'}`);
+	}
+}
+
+/** `voice devices turn-credential set` - store the TURN credential read from standard input. */
+export async function voiceDevicesTurnCredentialSet(options: JsonOption): Promise<void> {
+	const credential = readTurnCredentialFromStdin(options.json);
+	const result = await sendVoiceControl(
+		{ action: 'set-turn-credential', credential },
+		options.json
+	);
+	if (options.json) printJson({ ...result });
+	else console.log(formatSuccess('Stored the TURN relay credential in the OS keychain.'));
+}
+
+/** `voice devices turn-credential clear` - remove the stored TURN credential. */
+export async function voiceDevicesTurnCredentialClear(options: JsonOption): Promise<void> {
+	const result = await sendVoiceControl({ action: 'clear-turn-credential' }, options.json);
+	if (options.json) printJson({ ...result });
+	else console.log(formatSuccess('Removed the TURN relay credential.'));
 }
