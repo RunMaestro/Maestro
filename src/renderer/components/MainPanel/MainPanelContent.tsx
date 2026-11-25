@@ -39,7 +39,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { BrowserTab } from '../../../shared/browserPage';
-import { deliverDesignPick } from '../../services/designModePick';
+import { deliverDesignPick, queueDesignPick } from '../../services/designModePick';
 import type {
 	Session,
 	Theme,
@@ -1294,6 +1294,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 				const isBrowserFocusActive = isBrowserTiled
 					? groupFocusedBrowserTabId === tabId && layerCount === 0
 					: isBrowserVisible && layerCount === 0;
+				// The browser tab the user is looking at, whether or not a dialog is open
+				// over it: visible, and when tiled the group's focused browser pane.
+				const isBrowserCurrent =
+					isBrowserVisible && (!isBrowserTiled || groupFocusedBrowserTabId === tabId);
 				return (
 					<div
 						key={tabId}
@@ -1332,6 +1336,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							tab={browserTab}
 							theme={theme}
 							isActive={isBrowserFocusActive}
+							isCurrent={isBrowserCurrent}
 							onUpdateTab={(tid, updates) =>
 								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
 							}
@@ -1341,6 +1346,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									sessionId: activeSession.id,
 									browserTabId: tabId,
 								}))
+							}
+							onDesignQueue={(capture) =>
+								queueDesignPick({
+									...capture,
+									sessionId: activeSession.id,
+									browserTabId: tabId,
+								})
 							}
 						/>
 					</div>

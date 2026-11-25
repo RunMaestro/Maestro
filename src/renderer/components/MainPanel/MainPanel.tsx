@@ -642,6 +642,12 @@ export const MainPanel = React.memo(
 					if (!session?.activeBrowserTabId) return;
 					browserViewRef.current?.toggleDesignMode();
 				},
+				setBrowserViewportPreset: (preset) => {
+					// Same fresh-from-store reasoning as `focusBrowserAddressBar`.
+					const session = selectActiveSession(useSessionStore.getState());
+					if (!session?.activeBrowserTabId) return;
+					browserViewRef.current?.setViewportPreset(preset);
+				},
 				browserBack: () => {
 					const session = selectActiveSession(useSessionStore.getState());
 					if (!session?.activeBrowserTabId) return;

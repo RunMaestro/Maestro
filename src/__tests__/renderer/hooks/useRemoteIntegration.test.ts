@@ -6,7 +6,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import type {} from '../../../renderer/global';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockAITab } from '../../helpers/mockTab';
+import { createMockAITab, createMockDesignPick } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -165,6 +165,9 @@ describe('useRemoteIntegration', () => {
 		| undefined;
 	let onRemoteDiffReviewCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
+	let onRemoteDesignPickCommandHandler:
+		| ((request: Record<string, unknown>) => Record<string, unknown>)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
@@ -328,6 +331,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteDiffReviewCommandResponse: vi.fn(),
+		onRemoteDesignPickCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteDesignPickCommandHandler = handler;
+			return () => {};
+		}),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -3744,6 +3751,27 @@ describe('useRemoteIntegration', () => {
 					expect.objectContaining({ success: false, error: expect.stringContaining('terminal') })
 				)
 			);
+		});
+	});
+
+	describe('remote Design Mode chip command', () => {
+		// The preload answers the CLI with whatever the subscribed callback
+		// returns, so the hook must subscribe the service that reads the live store.
+		it('answers browser-picks from the chips staged in the composer', () => {
+			const tab = createMockTab({ stagedDesignPicks: [createMockDesignPick({ id: 'pick-1' })] });
+			const deps = createDeps({
+				sessions: [createMockSession({ id: 'session-1', aiTabs: [tab], activeTabId: tab.id })],
+			});
+			renderHook(() => useRemoteIntegration(deps));
+
+			expect(window.maestro.process.onRemoteDesignPickCommand).toHaveBeenCalledTimes(1);
+			expect(
+				onRemoteDesignPickCommandHandler?.({ action: 'list', sessionId: 'session-1' })
+			).toEqual({
+				success: true,
+				aiTabId: tab.id,
+				picks: [expect.objectContaining({ id: 'pick-1', screenshot: false })],
+			});
 		});
 	});
 

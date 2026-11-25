@@ -73,7 +73,9 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	/**
 	 * maestro-cli browser-pick - focuses like a click in Design Mode: the element
 	 * lands in the agent's composer and the view switches to that AI tab.
-	 * `--background` stages it without moving the user.
+	 * `--background` stages it without moving the user. `--queue` sends it as its
+	 * own queued message and never moves the user, so it leaves the flag nothing
+	 * to decide.
 	 */
 	'browser-pick': false,
 	/** maestro-cli tab new [--prompt] - focuses today. */

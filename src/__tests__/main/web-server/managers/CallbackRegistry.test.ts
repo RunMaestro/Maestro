@@ -671,6 +671,42 @@ describe('CallbackRegistry', () => {
 		});
 	});
 
+	describe('setBrowserViewportCallback / browserViewport()', () => {
+		it('answers with a failure, not a rejection, when no callback is set', async () => {
+			await expect(
+				registry.browserViewport({ sessionId: 'session-1', tab: 'tab-1' })
+			).resolves.toEqual({ success: false, error: 'Browser viewport not configured' });
+		});
+
+		it('passes the request through and returns what the callback answered', async () => {
+			const answer = { success: true, tabId: 'tab-1', preset: 'phone', previous: 'fit' };
+			const callback = vi.fn().mockResolvedValue(answer);
+			registry.setBrowserViewportCallback(callback);
+			const request = { sessionId: 'session-1', tab: 'tab-1', preset: 'phone' as const };
+
+			expect(await registry.browserViewport(request)).toBe(answer);
+			expect(callback).toHaveBeenCalledWith(request);
+		});
+	});
+
+	describe('setDesignPickCommandCallback / designPickCommand()', () => {
+		it('answers with a failure, not a rejection, when no callback is set', async () => {
+			await expect(
+				registry.designPickCommand({ action: 'list', sessionId: 'session-1' })
+			).resolves.toEqual({ success: false, error: 'Browser Design Mode not configured' });
+		});
+
+		it('passes the request through and returns what the callback answered', async () => {
+			const answer = { success: true, aiTabId: 'ai-1', picks: [] };
+			const callback = vi.fn().mockResolvedValue(answer);
+			registry.setDesignPickCommandCallback(callback);
+			const request = { action: 'remove' as const, sessionId: 'session-1', pickId: 'pick-1' };
+
+			expect(await registry.designPickCommand(request)).toBe(answer);
+			expect(callback).toHaveBeenCalledWith(request);
+		});
+	});
+
 	describe('setGetHistoryCallback / getHistory()', () => {
 		it('returns the callback result', () => {
 			const history = [

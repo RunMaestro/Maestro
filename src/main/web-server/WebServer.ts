@@ -137,6 +137,8 @@ import type {
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
 	PickBrowserElementCallback,
+	BrowserViewportCallback,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
@@ -711,6 +713,14 @@ export class WebServer {
 
 	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
 		this.callbackRegistry.setPickBrowserElementCallback(callback);
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbackRegistry.setBrowserViewportCallback(callback);
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbackRegistry.setDesignPickCommandCallback(callback);
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
@@ -1499,6 +1509,8 @@ export class WebServer {
 				this.callbackRegistry.openBrowserTab(sessionId, url, options),
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
 			pickBrowserElement: async (request) => this.callbackRegistry.pickBrowserElement(request),
+			browserViewport: async (request) => this.callbackRegistry.browserViewport(request),
+			designPickCommand: async (request) => this.callbackRegistry.designPickCommand(request),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },

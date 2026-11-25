@@ -3,6 +3,10 @@ import {
 	EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX,
 	PERSISTENT_BROWSER_TAB_PARTITION_PATTERN,
 } from '../../shared/browserTabPartition';
+import {
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	parseBrowserViewportPreset,
+} from '../../shared/browserViewport';
 
 export {
 	EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX,
@@ -22,6 +26,11 @@ function sanitizeBrowserPartitionKey(sessionId: string): string {
 	return normalized || 'default';
 }
 
+// The partition behind every ordinary browser tab, so logins survive a restart:
+// `persist:` makes Electron keep the session on disk, and the value is a pure
+// function of the agent id (no random part, unlike an incognito tab's), so every
+// save, restore and new tab of that agent reopens the SAME session. Keep it that
+// way; browserTabLoginPersistence.test.ts pins the rule.
 export function getBrowserTabPartition(sessionId: string): string {
 	return `${BROWSER_TAB_PARTITION_PREFIX}${sanitizeBrowserPartitionKey(sessionId)}`;
 }
@@ -215,9 +224,18 @@ export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: str
 			? normalizeBrowserTabUrl(tab.url)
 			: DEFAULT_BROWSER_TAB_URL;
 	const title = getBrowserTabTitle(url, tab.title);
+	// Design Mode is the user's choice for this tab, not guest runtime state, so it
+	// survives a restart (the picker re-arms when the tab is shown). Only a literal
+	// true counts; anything else is dropped rather than read as truthy.
+	// The viewport preset is the same kind of choice. Fit is what an unset preset
+	// means, so it is not stored, and a value that is not a preset is dropped.
+	const { designMode, viewportPreset, ...rest } = tab;
+	const preset = parseBrowserViewportPreset(viewportPreset);
 
 	return {
-		...tab,
+		...rest,
+		...(designMode === true ? { designMode: true } : {}),
+		...(preset && preset !== DEFAULT_BROWSER_VIEWPORT_PRESET ? { viewportPreset: preset } : {}),
 		url,
 		title,
 		partition: getSafeBrowserTabPartition(tab.partition, sessionId),

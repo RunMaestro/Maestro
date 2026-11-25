@@ -327,6 +327,8 @@ function Browser({ theme }: SettingsSectionProps) {
 			setBrowserTabKeepAlive={settings.setBrowserTabKeepAlive}
 			browserTabKeepAliveLimit={settings.browserTabKeepAliveLimit}
 			setBrowserTabKeepAliveLimit={settings.setBrowserTabKeepAliveLimit}
+			designModeCollapsePanels={settings.designModeCollapsePanels}
+			setDesignModeCollapsePanels={settings.setDesignModeCollapsePanels}
 		/>
 	);
 }
@@ -406,7 +408,12 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 	},
 	{
 		key: 'browser',
-		settingIds: ['general-browser', 'general-html-double-click', 'general-browser-keepalive'],
+		settingIds: [
+			'general-browser',
+			'general-html-double-click',
+			'general-browser-keepalive',
+			'general-design-mode-collapse-panels',
+		],
 		Component: Browser,
 	},
 	{ key: 'storageLocation', settingIds: ['general-storage'], Component: StorageLocation },

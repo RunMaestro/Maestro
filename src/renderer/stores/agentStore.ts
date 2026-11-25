@@ -44,6 +44,7 @@ import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
+import { withoutDesignPickPageText } from '../utils/designModePicker';
 import {
 	useSessionStore,
 	selectSessionById,
@@ -589,12 +590,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// is what the turn's prompt has to be told about either.
 		let mentionDispatch: CrossAgentMentionDispatch | undefined;
 		if (!managedQueue && item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+			// Resolved without the page text of the Design Mode chips the send
+			// expanded in: page content must not consult an agent the user never named.
 			mentionDispatch = dispatchCrossAgentMentionsForMessage(
 				item.text,
 				session,
 				targetTab.id,
 				item.images,
-				item.mentionRouting
+				{
+					routingOverride: item.mentionRouting,
+					planText: withoutDesignPickPageText(item.text, item.designPickPageText),
+				}
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole

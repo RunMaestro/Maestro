@@ -23,6 +23,8 @@ import {
 	type SerializableWizardState,
 } from '../../../../renderer/components/Wizard/WizardContext';
 import type { AgentConfig, ToolType } from '../../../../renderer/types';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../../helpers/mockSession';
 
 const sentryMocks = vi.hoisted(() => ({
 	captureException: vi.fn(),
@@ -615,6 +617,51 @@ describe('WizardContext', () => {
 				act(() => result.current.setSessionSshRemoteConfig({ enabled: true, remoteId: 'host-b' }));
 				expect(result.current.canProceedToNext()).toBe(true);
 				expect(result.current.state.selectedAgent).toBe('grok');
+			});
+
+			// MAESTRO-199: a taken name used to pass step 1 and fail only at launch.
+			describe('when the name is already taken', () => {
+				afterEach(() => {
+					useSessionStore.setState({ sessions: [] });
+				});
+
+				it('blocks the step and names the existing agent', () => {
+					useSessionStore.setState({
+						sessions: [createMockSession({ id: 'existing', name: 'intranet' })],
+					});
+					const { result } = renderHook(() => useWizard(), { wrapper });
+
+					act(() => {
+						// A detected provider, so only the name decides the step.
+						result.current.setAvailableAgents([createMockAgent()]);
+						result.current.setSelectedAgent('claude-code');
+						result.current.setAgentName(' Intranet ');
+					});
+
+					expect(result.current.duplicateAgentName).toBe('intranet');
+					expect(result.current.canProceedToNext()).toBe(false);
+				});
+
+				it('unblocks once the user picks a free name', () => {
+					useSessionStore.setState({
+						sessions: [createMockSession({ id: 'existing', name: 'intranet' })],
+					});
+					const { result } = renderHook(() => useWizard(), { wrapper });
+
+					act(() => {
+						// A detected provider, so only the name decides the step.
+						result.current.setAvailableAgents([createMockAgent()]);
+						result.current.setSelectedAgent('claude-code');
+						result.current.setAgentName('intranet');
+					});
+					expect(result.current.canProceedToNext()).toBe(false);
+
+					act(() => {
+						result.current.setAgentName('intranet 2');
+					});
+					expect(result.current.duplicateAgentName).toBeNull();
+					expect(result.current.canProceedToNext()).toBe(true);
+				});
 			});
 		});
 

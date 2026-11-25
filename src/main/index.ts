@@ -69,6 +69,7 @@ import {
 import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
 import type { SshRemoteConfig } from '../shared/types';
+import { getCueSubscriptionTriggerStats } from './cue/cue-db';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { nativeCurrentTurns } from './pianola/current-turn';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
@@ -1011,6 +1012,7 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
 	},
+	getCueSubscriptionTriggerStats,
 	addGroupChatParticipant: async (chatId, agentId) => {
 		try {
 			const { participant, alreadyMember } = await addParticipantByAgentId(chatId, agentId);

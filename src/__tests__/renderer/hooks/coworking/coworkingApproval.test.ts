@@ -45,9 +45,12 @@ describe('browserOpNeedsConfirm', () => {
 		expect(browserOpNeedsConfirm('off', 'read')).toBe(false);
 	});
 
-	it('never confirms the host-only pick (it changes no page state)', () => {
-		expect(browserOpNeedsConfirm('all', 'pick')).toBe(false);
-		expect(browserOpNeedsConfirm('dangerous', 'pick')).toBe(false);
+	it('never confirms the host-only pick or viewport (neither changes page state)', () => {
+		for (const kind of ['pick', 'viewport'] as const) {
+			expect(browserOpNeedsConfirm('all', kind)).toBe(false);
+			expect(browserOpNeedsConfirm('dangerous', kind)).toBe(false);
+			expect(browserOpNeedsConfirm('off', kind)).toBe(false);
+		}
 	});
 
 	it('off confirms only eval (force-confirmed); every other op runs immediately', () => {

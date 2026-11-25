@@ -8,7 +8,11 @@ export function registerCueCallbacks(
 	server: WebServer,
 	deps: Pick<
 		WebServerFactoryDependencies,
-		'getCueGraphData' | 'setCueSubscriptionEnabled' | 'getCueActivityLog' | 'triggerCueSubscription'
+		| 'getCueGraphData'
+		| 'setCueSubscriptionEnabled'
+		| 'getCueActivityLog'
+		| 'triggerCueSubscription'
+		| 'getCueSubscriptionTriggerStats'
 	>
 ): void {
 	// Get Cue subscriptions - calls engine directly in the main process.
@@ -26,8 +30,13 @@ export function registerCueCallbacks(
 		}
 		// The mapping (ids, schedules, which agent a row is listed under) lives
 		// in `toCueSubscriptionInfos`, which the headless host and the CLI's
-		// cue.yaml read share.
-		return toCueSubscriptionInfos(deps.getCueGraphData(), sessionId);
+		// cue.yaml read share. Per-subscription counts come from the event
+		// journal, since the engine keeps last-triggered only per session.
+		return toCueSubscriptionInfos(
+			deps.getCueGraphData(),
+			sessionId,
+			deps.getCueSubscriptionTriggerStats?.() ?? []
+		);
 	});
 
 	// Toggle Cue subscription - calls engine directly in the main process.

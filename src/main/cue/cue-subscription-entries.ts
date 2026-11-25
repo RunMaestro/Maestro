@@ -16,6 +16,7 @@ import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { cueTurnSettingsOf } from '../../shared/cue/turn-settings';
 import type { CueGraphSession } from '../../shared/cue/contracts';
 import type { CueSubscriptionInfo } from '../web-server/types';
+import type { CueSubscriptionTriggerStat } from './cue-db';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -50,18 +51,33 @@ export function formatCueSchedule(sub: {
 	return undefined;
 }
 
-/** The rows `cue list` shows: every subscription in the graph, for one agent or all of them. */
+/**
+ * The rows `cue list` shows: every subscription in the graph, for one agent or all of them.
+ *
+ * `triggerStats` are the per-subscription counts and last-trigger times from the
+ * `cue.db` event journal (`getCueSubscriptionTriggerStats()`). The engine keeps
+ * last-triggered only per session, in memory, so a reader without the journal
+ * (the CLI reading cue.yaml itself) passes none and every row reads "never
+ * triggered". Keyed by session and raw name: `pipeline_id` is NULL whenever
+ * usage stats are off.
+ */
 export function toCueSubscriptionInfos(
 	graph: CueGraphSession[],
-	sessionId?: string
+	sessionId?: string,
+	triggerStats: readonly CueSubscriptionTriggerStat[] = []
 ): CueSubscriptionInfo[] {
 	const filtered =
 		typeof sessionId === 'string' && sessionId.length > 0
 			? graph.filter((gs) => gs.sessionId === sessionId)
 			: graph;
+	const statsByKey = new Map<string, CueSubscriptionTriggerStat>();
+	for (const stat of triggerStats) {
+		statsByKey.set(`${stat.sessionId}\u0000${stat.subscriptionName}`, stat);
+	}
 	const subs: CueSubscriptionInfo[] = [];
 	for (const session of filtered) {
 		for (const sub of session.subscriptions) {
+			const stat = statsByKey.get(`${session.sessionId}\u0000${sub.name}`);
 			subs.push({
 				// No stable per-subscription id in YAML; compose one from
 				// session + pipeline + name. Names are unique within a
@@ -79,11 +95,10 @@ export function toCueSubscriptionInfos(
 				sessionId: session.sessionId,
 				sessionName: session.sessionName,
 				enabled: sub.enabled !== false,
-				// Per-subscription last-triggered / count are not yet
-				// tracked by the engine (only per-session). Leave the
-				// numeric fields zero so the CLI renders "never triggered"
-				// rather than fabricating a value.
-				triggerCount: 0,
+				// No journal rows = genuinely never fired; the CLI renders
+				// "never triggered" for an absent `lastTriggered`.
+				triggerCount: stat?.triggerCount ?? 0,
+				lastTriggered: stat?.lastTriggered,
 				...cueTurnSettingsOf(sub),
 			});
 		}

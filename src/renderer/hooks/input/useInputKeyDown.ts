@@ -19,6 +19,7 @@ import {
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { getActiveTab, hasStagedAttachments } from '../../utils/tabHelpers';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
@@ -205,8 +206,10 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		trackShortcutUsage('forcedParallelSend');
 		// Empty draft: open the Force Send confirmation for the most recent
 		// eligible queued item - the keyboard equivalent of clicking that item's
-		// Force Send button. With text in the draft, send the draft in parallel.
-		if (getInputValue().trim().length === 0) {
+		// Force Send button. With a draft (text, staged images, or Design Mode
+		// chips, the same things Enter would send), send the draft in parallel.
+		const activeTab = getActiveTab(activeSession);
+		if (getInputValue().trim().length === 0 && !(activeTab && hasStagedAttachments(activeTab))) {
 			logger.info('[ForcedParallel] Empty input, dispatching triggerForceSendQueued');
 			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
 			return;

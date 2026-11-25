@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	findAgentWithName,
 	validateNewSession,
 	SessionValidationResult,
 } from '../../../renderer/utils/sessionValidation';
@@ -7,6 +8,36 @@ import type { Session, ToolType } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 
 describe('sessionValidation', () => {
+	describe('findAgentWithName', () => {
+		const sessions = [
+			createMockSession({ id: 'a', name: 'intranet' }),
+			createMockSession({ id: 'b', name: 'Docs' }),
+		];
+
+		it('matches ignoring case and surrounding spaces', () => {
+			expect(findAgentWithName('  Intranet ', sessions)?.id).toBe('a');
+		});
+
+		it('matches a stored name that kept surrounding spaces', () => {
+			const padded = [createMockSession({ id: 'p', name: ' intranet ' })];
+			expect(findAgentWithName('Intranet', padded)?.id).toBe('p');
+		});
+
+		it('returns undefined for a free name', () => {
+			expect(findAgentWithName('intranet 2', sessions)).toBeUndefined();
+		});
+
+		it('never matches a blank name', () => {
+			const withBlank = [...sessions, createMockSession({ id: 'c', name: '' })];
+			expect(findAgentWithName('   ', withBlank)).toBeUndefined();
+		});
+
+		it('skips the excluded agent', () => {
+			expect(findAgentWithName('docs', sessions, 'b')).toBeUndefined();
+			expect(findAgentWithName('docs', sessions, 'a')?.id).toBe('b');
+		});
+	});
+
 	describe('validateNewSession', () => {
 		describe('name uniqueness', () => {
 			it('returns valid when no sessions exist', () => {

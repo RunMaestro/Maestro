@@ -125,6 +125,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Main process: stores, persistence, platform
 
 - **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
+- **Whether a Coworking browser op skips the interaction gate and per-call approval:** `isUngatedBrowserOp(kind)`, `UNGATED_BROWSER_OP_KINDS` in `src/shared/coworkingBrowser.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)
@@ -365,7 +366,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
 - **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
 - **Line review comments (pin comments to lines, send them as one review):** `createReviewCommentStore()` in `src/renderer/stores/reviewCommentStore.ts`, `formatReviewPrompt()` in `src/renderer/utils/reviewPrompt.ts`, `sendReviewPrompt()` in `src/renderer/services/reviewDelivery.ts`
-- **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
+- **Picking an element or a region in a browser tab (Design Mode):** `captureDesignPick()`, `captureDesignRegion()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`; `readBrowserPickTarget()` in `src/shared/coworkingBrowser.ts`
+- **A Design Mode pick as a composer chip (stage, queue, edit, expand at send, CLI):** `stageDesignPickOnAgent()` in `src/renderer/services/quoteIntoComposer.ts`, `queueDesignPick()` in `src/renderer/services/designModePick.ts`, `getStagedDesignPicks()` in `src/renderer/services/stagedDesignPicks.ts`
+- **Showing a browser tab's page at a set width (Fit / Desktop / Laptop / Tablet / Phone):** `BROWSER_VIEWPORT_PRESETS`, `parseBrowserViewportPreset()`, `browserViewportWidth()` in `src/shared/browserViewport.ts`; `computeBrowserViewportBox()` in `src/renderer/utils/browserViewport.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Whether a composer paste carries an image (text pastes are never rewritten):** `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
@@ -377,7 +380,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
 - **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`, bound by `useTemplateAutocomplete()` (textarea) or `useEditorTemplateAutocomplete()` (CodeMirror)
-- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it)
+- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it; `planMentions: false` for text the user did not write)
 - **Running or withdrawing one queued item now:** `sendQueuedItemNow()`, `removeQueuedItem()` in `src/renderer/services/queuedPrompt.ts`
 - **The tab a queued item is going to:** `resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` (label), `resolveQueuedItemTarget()` in `src/renderer/utils/tabHelpers` (tab); never render `item.tabName`
 - **Whether a queued item's tab is still mid-turn:** `isQueuedItemTargetBusy(session, item)` in `src/renderer/utils/tabHelpers` (every queue drain path asks it before dequeuing)
@@ -491,6 +494,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### UI components and widgets
 
+- **The red X that removes a staged attachment (image tile, Design Mode chip):** `<RemoveBadgeButton>` in `src/renderer/components/ui/RemoveBadgeButton.tsx`
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
 - **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
@@ -558,13 +562,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Layout, scroll, sizing, and hook utilities
 
+- **Folding the Left Bar and Right Bar while a surface needs the room, then giving back only what it closed:** `collapseSidePanels()` in `src/renderer/utils/sidePanelCollapse.ts`, `useDesignModePanelCollapse(shown)` in `src/renderer/hooks/ui/useDesignModePanelCollapse.ts`
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
 - **Pausing looping animations while the window is unfocused:** `installMotionPause()`, `MOTION_PAUSED_CLASS` in `src/renderer/utils/motionPause.ts`
 - **Keeping a scrolling strip's active item on screen:** `useRevealActiveItem()`, `revealActiveProps()`, `computeRevealScroll()` in `src/renderer/hooks/ui/useRevealActiveItem.ts`
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect, never a `ref` on the row; a plain list uses `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Sizing a virtualized row the user's font decides:** `virtualizer.measureElement` + `data-index` and NO inline `height` (see `HistoryPanel`, `FileSearchModal`)
-- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
+- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)`, `useElementSize(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
 - **Keeping a floating menu on screen:** `useContextMenuPosition(menuRef, x, y)` in `src/renderer/hooks/ui/useContextMenuPosition.ts` (apply BOTH `maxHeight` and `overflowY: 'auto'`)
 - **How a floating surface looks (popover, menu, hover card, tooltip):** `elevatedSurfaceStyle(theme)`, `getElevatedSurfaceColors(colors)` in `src/renderer/utils/elevatedSurface.ts`
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`

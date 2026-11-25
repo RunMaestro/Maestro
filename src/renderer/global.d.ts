@@ -1248,6 +1248,11 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
 		) => void;
+		onRemoteDesignPickCommand: (
+			callback: (
+				request: import('../shared/designPickCommands').DesignPickCommandRequest
+			) => import('../shared/designPickCommands').DesignPickCommandResult
+		) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;
