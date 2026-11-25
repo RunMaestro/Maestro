@@ -190,6 +190,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
+- **Template variables in a shell command:** `substituteShellTemplateVariables()`, `ShellTemplateError` in `src/shared/shellTemplateVariables.ts`
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
 - **A one-shot SSH command that must find a binary the user installed:** `wrapRemoteCommandWithPath()` in `src/shared/maestro-lib/launch/ssh-command-builder.ts`
 - **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`

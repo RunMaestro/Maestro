@@ -268,6 +268,13 @@ An Agent message command completes when the message is delivered. A downstream s
 
 For a shell step, use `action: command` with `command: { mode: shell, shell: 'npm run lint' }`. Shell steps capture stdout for downstream prompts through `{{CUE_SOURCE_OUTPUT}}`.
 
+Template variables arrive in a shell command already quoted. Cue puts each value in an environment variable and writes a quoted reference to it where the placeholder was, so the shell reads the value as one literal word. Text from a pull request, an issue, a comment, or a webhook is never run as a command. This holds with or without your own quotes around the placeholder: `gh pr comment {{CUE_GH_NUMBER}} --body "Thanks for: {{CUE_GH_TITLE}}"` posts the title exactly as its author wrote it. The variables are named `MAESTRO_VAR_<NAME>`, so the command shown in the Process Monitor reads like `gh pr comment "${MAESTRO_VAR_CUE_GH_NUMBER}" ...`. The text you write yourself is not changed. `{{MAESTRO_CLI_PATH}}` is the one exception: it is inserted as the command it names, so `{{MAESTRO_CLI_PATH}} send ...` still runs maestro-cli.
+
+Two cases do not run:
+
+- A placeholder inside a quoted heredoc (`<<'EOF'`). The shell expands nothing in that body, so the value cannot reach it. Use an unquoted delimiter (`<<EOF`).
+- On Windows, a local shell command that uses a variable carrying outside text, for example `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, or `{{CUE_WEBHOOK_BODY}}`. The Windows shell cannot quote that text safely. Use a prompt instead, or run the command on an SSH remote.
+
 ## Template Variables
 
 All prompts support `{{VARIABLE}}` syntax. Variables are replaced with event payload data before the prompt is sent to the agent.
