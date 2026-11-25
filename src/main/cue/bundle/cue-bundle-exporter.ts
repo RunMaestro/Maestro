@@ -37,6 +37,7 @@ import * as yaml from 'js-yaml';
 import type { Playbook, SessionInfo } from '../../../shared/types';
 import type { CuePipeline, PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 import { CUE_CONFIG_PATH } from '../../../shared/maestro-paths';
+import { hasGitMetadataSegment } from '../../../shared/pathContainment';
 import {
 	effectiveAgentCustomEnvVars,
 	resolveAgentAccountKey,
@@ -760,9 +761,10 @@ function lstatIfPresent(p: string): fs.Stats | undefined {
 }
 
 function sortedDirEntries(dir: string): fs.Dirent[] {
+	// A skill kept as a git clone has a `.git` of its own; git metadata never travels in a bundle.
 	return fs
 		.readdirSync(dir, { withFileTypes: true })
-		.filter((entry) => entry.name !== '.DS_Store')
+		.filter((entry) => entry.name !== '.DS_Store' && !hasGitMetadataSegment(entry.name))
 		.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 

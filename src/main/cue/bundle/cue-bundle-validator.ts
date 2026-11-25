@@ -15,6 +15,8 @@
 import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
 import { compareVersions } from '../../../shared/pathUtils';
+import { CUE_PROMPTS_DIR, MAESTRO_DIR, PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { foldPathSegment, hasGitMetadataSegment } from '../../../shared/pathContainment';
 import {
 	CUE_BUNDLE_LOCAL_PATH,
 	CUE_BUNDLE_GROK_RESOURCE_ROOTS,
@@ -100,6 +102,14 @@ export const CUE_BUNDLE_CONFIG_ISSUE_CODES: ReadonlySet<string> = new Set([
 	'sub-minute-heartbeat',
 	'desktop-only-command',
 ]);
+
+/**
+ * The folders of a project's `.maestro` that a bundle may carry files in: Cue prompt files and Auto Run
+ * documents. The third thing it owns there, the workspace's cue.yaml, is the one file the manifest declares.
+ */
+const MAESTRO_BUNDLE_FOLDERS: ReadonlySet<string> = new Set(
+	[CUE_PROMPTS_DIR, PLAYBOOKS_DIR].map((dir) => dir.slice(MAESTRO_DIR.length + 1))
+);
 
 type RawSubscription = Record<string, unknown>;
 
@@ -375,6 +385,42 @@ export function validateCueBundleArchive(
 					manifest.local
 				);
 			}
+		}
+	}
+
+	// ─── Paths no bundle may write ───────────────────────────────────────────
+	// Git metadata never travels: a hook or config under `.git` runs the next time git runs in the project.
+	// A `.maestro` folder holds what Maestro acts on, so a bundle puts in it only what the format owns. The
+	// cue.yaml is one of those, and it is merged with its shell commands shown first; the same file written
+	// as a plain entry would skip that review. A name is read the way a file system may open it (any case,
+	// either separator, no trailing dots), so a spelling cannot slip past.
+	const declaredCueConfigs = new Set(
+		manifest.workspaces
+			.filter(isRecord)
+			.flatMap((ws) => (typeof ws.cueConfig === 'string' ? [ws.cueConfig] : []))
+	);
+	for (const name of [...entries.keys()].sort()) {
+		if (hasGitMetadataSegment(name)) {
+			error(
+				'git-metadata-path',
+				'A bundle cannot carry git metadata: a hook or config under .git runs the next time git runs in the project',
+				name
+			);
+		}
+		if (declaredCueConfigs.has(name)) continue;
+		const segments = name.split(/[/\\]/);
+		// Every `.maestro` in the path counts, so one nested inside an owned folder is held to the same rule.
+		const unowned = segments.some(
+			(segment, at) =>
+				foldPathSegment(segment) === MAESTRO_DIR &&
+				!(segments.length - at > 2 && MAESTRO_BUNDLE_FOLDERS.has(segments[at + 1]))
+		);
+		if (unowned) {
+			error(
+				'maestro-path-not-owned',
+				`A .maestro folder in a bundle may hold only the cue.yaml the manifest declares and files under ${[...MAESTRO_BUNDLE_FOLDERS].map((folder) => `${folder}/`).join(' or ')}`,
+				name
+			);
 		}
 	}
 

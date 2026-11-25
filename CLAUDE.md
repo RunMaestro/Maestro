@@ -94,6 +94,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
+- **A path from outside that must not reach `.git` (or any name a file system folds):** `hasGitMetadataSegment()`, `foldPathSegment()` in `src/shared/pathContainment.ts`
 - **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **A performance trace path a caller hands in (Feedback attach, discard):** `checkFeedbackTraceBundle()`, `feedbackTraceBundlePath()` in `src/main/profiling/feedback-trace.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
