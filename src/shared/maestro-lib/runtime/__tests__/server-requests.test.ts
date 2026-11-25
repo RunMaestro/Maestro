@@ -914,6 +914,7 @@ describe('live tab state and the host queue', () => {
 	function hostClient() {
 		const setPausedCalls: unknown[][] = [];
 		const mergeCalls: unknown[][] = [];
+		const editCalls: unknown[][] = [];
 		const client = {
 			agents: { list: async () => ok([stored]) },
 			tabs: { list: async () => ok(stored.aiTabs) },
@@ -923,6 +924,11 @@ describe('live tab state and the host queue', () => {
 						setPausedCalls.push([agentId, itemId, paused]);
 						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 						return ok({ found: itemId === 'q1', paused });
+					},
+					edit: async (agentId: string, itemId: string, edit: unknown) => {
+						editCalls.push([agentId, itemId, edit]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ found: itemId === 'q1' });
 					},
 					merge: async (agentId: string, itemId: string) => {
 						mergeCalls.push([agentId, itemId]);
@@ -936,7 +942,7 @@ describe('live tab state and the host queue', () => {
 				},
 			},
 		} as unknown as MaestroClient;
-		return { client, setPausedCalls, mergeCalls };
+		return { client, setPausedCalls, mergeCalls, editCalls };
 	}
 
 	const liveTabs = (agentId: string) =>
@@ -1044,6 +1050,34 @@ describe('live tab state and the host queue', () => {
 			success: false,
 			error: expect.stringContaining('cannot steer'),
 		});
+	});
+
+	it('edits a waiting message with edit_queue_item, and refuses a malformed edit', async () => {
+		const { client, editCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'edit_queue_item', sessionId: 'a1' };
+		expect(
+			await handle({ ...base, itemId: 'q1', text: 'new', turnSettings: { model: 'm', effort: '' } })
+		).toEqual({ type: 'edit_queue_item_result', success: true, found: true });
+		expect(await handle({ ...base, itemId: 'q9', text: 'new' })).toEqual({
+			type: 'edit_queue_item_result',
+			success: true,
+			found: false,
+		});
+		expect(await handle({ ...base, itemId: 'q1', text: '  ' })).toMatchObject({
+			success: false,
+			found: false,
+			error: 'Missing text',
+		});
+		expect(await handle({ ...base, itemId: 'q1', text: 'x', images: [1] })).toMatchObject({
+			success: false,
+			error: 'images must be a list of strings',
+		});
+		// The refusals never reached the queue; an empty effort is dropped, not sent.
+		expect(editCalls).toEqual([
+			['a1', 'q1', { text: 'new', turnSettings: { model: 'm' } }],
+			['a1', 'q9', { text: 'new' }],
+		]);
 	});
 
 	it('refuses set_queue_item_paused without a boolean paused, and changes nothing', async () => {

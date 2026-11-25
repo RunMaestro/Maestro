@@ -16,11 +16,10 @@ import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { steerQueuedItem } from '../../services/chatSteering';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
-import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
+	editQueuedItem,
 	mergeQueuedItemIntoAbove,
-	resolveQueuedItemEdit,
 	sendQueuedItemNow,
 	toggleQueuedItemPaused,
 } from '../../services/queuedPrompt';
@@ -125,27 +124,11 @@ export function useQueueHandlers({
 		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
+	// Edit: the same service the inline card's Edit and `maestro-cli queue edit`
+	// reach, so the rules (and a hosted item's route to its host) cannot differ.
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) => {
-			// The mention flags and the slash command are re-derived from the EDITED
-			// text (see resolveQueuedItemEdit): a stale flag consults the wrong agent,
-			// and `/commit` left as a message is sent to the provider as literal text.
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
-					return {
-						...s,
-						executionQueue: applyQueuedItemEdit(
-							s.executionQueue,
-							itemId,
-							patch,
-							crossAgent,
-							slashCommand
-						),
-					};
-				})
-			);
+			editQueuedItem(sessionId, itemId, patch);
 		},
 		[]
 	);

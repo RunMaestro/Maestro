@@ -6,7 +6,8 @@
 // tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and `tabs.update`, a settings
 // change is `agents.update`, and the queue actions on a waiting message are `turns.queue.remove`
 // (`remove_queue_item`), `turns.queue.setPaused` (`set_queue_item_paused`), `turns.queue.merge`
-// (`merge_queue_item`), and `turns.queue.steer` (`steer_queue_item`). The CLI reaches the host over its own short-lived forward
+// (`merge_queue_item`), `turns.queue.steer` (`steer_queue_item`), and `turns.queue.edit`
+// (`edit_queue_item`). The CLI reaches the host over its own short-lived forward
 // (`withPeerAgent()`), the desktop over the mirror service's held one; both run the action
 // through `runPeerAgentAction()`, so there is one copy.
 //
@@ -25,10 +26,12 @@ import type {
 	ClientError,
 	ClientResult,
 	MaestroClient,
+	QueuedTurnEdit,
 	TabPatch,
 	TurnOverrides,
 	TurnSendReceipt,
 } from './types';
+import { parseQueuedTurnEdit } from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
@@ -63,6 +66,8 @@ export type PeerAgentAction =
 	| { kind: 'merge-queued'; itemId: string }
 	/** Hand a waiting message to the turn running on its tab (the card's Steer). */
 	| { kind: 'steer-queued'; itemId: string }
+	/** Rewrite a waiting message in place (the card's Edit). Images, when given, are data URLs. */
+	| { kind: 'edit-queued'; itemId: string; edit: QueuedTurnEdit }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -92,6 +97,8 @@ export type PeerAgentActionResult =
 	| { kind: 'merge-queued'; itemId: string; merged: boolean; mergedIntoId?: string }
 	/** What the host's steer did: `outcome` is the same one a local steer reports. */
 	| { kind: 'steer-queued'; itemId: string; result: QueueSteerResult }
+	/** `found: false`: the message no longer waits (it started, or another client removed it). */
+	| { kind: 'edit-queued'; itemId: string; found: boolean }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string };
 
@@ -109,6 +116,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'pause-queued',
 	'merge-queued',
 	'steer-queued',
+	'edit-queued',
 	'update-agent',
 	'update-tab',
 ];
@@ -208,6 +216,15 @@ export async function runPeerAgentAction(
 					}
 				: steered;
 		}
+		case 'edit-queued': {
+			const edited = await client.turns.queue.edit(agent.id, action.itemId, action.edit);
+			return edited.ok
+				? {
+						ok: true,
+						value: { kind: 'edit-queued', itemId: action.itemId, found: edited.value.found },
+					}
+				: edited;
+		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
 			return updated.ok
@@ -299,6 +316,22 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		case 'steer-queued':
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			return { kind, itemId: value.itemId };
+		case 'edit-queued': {
+			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
+			const raw =
+				value.edit && typeof value.edit === 'object' && !Array.isArray(value.edit)
+					? (value.edit as Record<string, unknown>)
+					: {};
+			const parsed = parseQueuedTurnEdit(raw);
+			if ('error' in parsed) throw new Error(parsed.error);
+			// An empty list is an edit too: it clears the message's images.
+			const images = raw.images === undefined ? undefined : (parseImages(raw.images) ?? []);
+			return {
+				kind,
+				itemId: value.itemId,
+				edit: { ...parsed.edit, ...(images ? { images } : {}) },
+			};
+		}
 		case 'update-agent':
 			return { kind, patch: parseAgentPatch(value.patch) };
 		case 'update-tab':

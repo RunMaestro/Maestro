@@ -420,6 +420,26 @@ describe('QueuedItemsList edit modal', () => {
 		useUIStore.getState().setEditingQueuedItemId(null);
 	});
 
+	// A local and an SSH agent's cards are this machine's queue; a hosted agent's are its host's
+	// (`hostQueued`). Edit reads the same and hands the same patch up in all three: only where the
+	// edit runs differs (`editQueuedItem` routes a host item to the host).
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers the same Edit and saves the same patch', (_mode, hostQueued) => {
+		const { onEditQueuedItem } = renderList([item({ id: 'q1', text: 'draft', hostQueued })]);
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+		fireEvent.change(screen.getByPlaceholderText('Message to send…'), {
+			target: { value: 'final' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onEditQueuedItem).toHaveBeenCalledWith(
+			'q1',
+			expect.objectContaining({ text: 'final', images: [] })
+		);
+	});
+
 	it('opens the modal for the item named by uiStore, with no click involved', () => {
 		useUIStore.getState().setEditingQueuedItemId('q1');
 		renderList();

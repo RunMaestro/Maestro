@@ -248,6 +248,20 @@ describe('federation IPC handlers', () => {
 				text: 'look',
 				images: [fresh, `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`],
 			});
+			// A queued card's Edit keeps its images the same way.
+			await call('federation:act', 'a', 'x', {
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: 'look', images: [`maestro-image://store/${sha}.png`] },
+			});
+			expect(service.act).toHaveBeenLastCalledWith('a', 'x', {
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: {
+					text: 'look',
+					images: [`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`],
+				},
+			});
 			rmSync(dir, { recursive: true, force: true });
 		});
 

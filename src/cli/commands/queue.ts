@@ -4,7 +4,7 @@
 // verb uses, so they fail with MAESTRO_NOT_RUNNING when the app is down.
 //
 // With Federation on, `--agent <peer:agent>` names a peer's agent instead: list,
-// remove, hold, resume, merge, and steer act on that host's queue through the same shared
+// remove, hold, resume, merge, steer, and edit act on that host's queue through the same shared
 // action the desktop's mirrored queued cards run (`runPeerAgentAction`).
 
 import { withMaestroClient } from '../services/maestro-client';
@@ -32,6 +32,7 @@ import {
 	type PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import { queuedTurnsToWire } from '../../shared/maestro-lib/runtime/server-frames';
+import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
 
 interface QueueListItem {
 	id: string;
@@ -45,6 +46,8 @@ interface QueueListItem {
 	paused?: boolean;
 	/** The `@mention` routing picked for the item (strip or `dispatch --routing`). */
 	mentionRouting?: MentionRouting;
+	/** The model and effort it was queued with (a field left out: the agent's default). */
+	turnSettings?: { model?: string; effort?: string };
 }
 
 interface QueueListSession {
@@ -72,6 +75,13 @@ export interface QueueSteerOptions {
 
 export interface QueueMergeOptions {
 	agent?: string;
+}
+
+export interface QueueEditOptions {
+	agent?: string;
+	text?: string;
+	model?: string;
+	effort?: string;
 }
 
 function emitError(error: string, code: string): void {
@@ -427,6 +437,74 @@ export async function queueMerge(itemId: string, options: QueueMergeOptions): Pr
 			)
 		);
 	} catch (error) {
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
+}
+
+/**
+ * `maestro-cli queue edit <item-id> --agent <id> --text <text> [--model <m>] [--effort <e>]` -
+ * rewrite a queued message in place, like the Edit button on its queued card. It keeps its place,
+ * hold, and images. `--model` / `--effort` replace the item's own pair (one left out means the
+ * agent's default); with neither, the item keeps them. Fails with ITEM_NOT_FOUND when it no
+ * longer waits.
+ */
+export async function queueEdit(itemId: string, options: QueueEditOptions): Promise<void> {
+	if (!options.agent) {
+		emitError('queue edit requires --agent <id>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+	if (typeof options.text !== 'string' || !options.text.trim()) {
+		emitError('queue edit requires --text <text>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+	const turnSettings =
+		options.model !== undefined || options.effort !== undefined
+			? {
+					...(options.model ? { model: options.model } : {}),
+					...(options.effort ? { effort: options.effort } : {}),
+				}
+			: undefined;
+	const edit: QueuedTurnEdit = { text: options.text, ...(turnSettings ? { turnSettings } : {}) };
+	const peer = peerQueueTarget(options.agent);
+	if (peer) {
+		return queueActPeer(peer, itemId, { kind: 'edit-queued', itemId, edit }, (result) =>
+			result.kind === 'edit-queued' && result.found ? {} : null
+		);
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	try {
+		const result = await withMaestroClient((client) =>
+			client.sendCommand<{ success?: boolean; found?: boolean; error?: string }>(
+				{ type: 'edit_queue_item', sessionId, itemId, ...edit },
+				'edit_queue_item_result'
+			)
+		);
+		if (result.success === false) {
+			emitError(result.error ?? 'Queue edit failed', 'EDIT_FAILED');
+			process.exit(1);
+			return;
+		}
+		if (!result.found) {
+			emitError(`No queued item with id ${itemId} for agent ${sessionId}`, 'ITEM_NOT_FOUND');
+			process.exit(1);
+			return;
+		}
+		console.log(JSON.stringify({ success: true, agentId: sessionId, itemId }, null, 2));
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
 		process.exit(1);

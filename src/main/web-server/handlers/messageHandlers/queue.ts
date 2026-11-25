@@ -3,7 +3,7 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
  * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused,
- * merge_queue_item.
+ * merge_queue_item, edit_queue_item.
  */
 
 import { logger } from '../../../utils/logger';
@@ -27,7 +27,10 @@ import { dispatchSupervision } from './dispatchSupervision';
 import { generateUUID } from '../../../../shared/uuid';
 import { newTabAdmission } from './tabs';
 import * as pianolaStore from '../../../pianola/pianola-store-main';
-import { normalizeTurnOverrides } from '../../../../shared/maestro-lib/client/types';
+import {
+	normalizeTurnOverrides,
+	parseQueuedTurnEdit,
+} from '../../../../shared/maestro-lib/client/types';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -548,6 +551,48 @@ export function handleMergeQueueItem(
 				success: false,
 				merged: false,
 				error: `Failed to merge queue item: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle edit_queue_item message - rewrite a queued message in place, the same
+ * thing the queued card's Edit does. Used by `maestro-cli queue edit` and by a
+ * client's hosted queued card.
+ */
+export function handleEditQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: { success: boolean; found: boolean; error?: string }) =>
+		ctx.send(client, { type: 'edit_queue_item_result', ...result, requestId: message.requestId });
+	if (!sessionId || !itemId) {
+		reply({ success: false, found: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	const parsed = parseQueuedTurnEdit(message);
+	if ('error' in parsed) {
+		reply({ success: false, found: false, error: parsed.error });
+		return;
+	}
+	if (!ctx.callbacks.editQueueItem) {
+		reply({ success: false, found: false, error: 'Edit queue item not configured' });
+		return;
+	}
+	ctx.callbacks
+		.editQueueItem(sessionId, itemId, parsed.edit)
+		.then(reply)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'edit_queue_item', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				found: false,
+				error: `Failed to edit queue item: ${error.message}`,
 			});
 		});
 }

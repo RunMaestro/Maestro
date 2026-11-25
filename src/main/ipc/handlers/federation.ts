@@ -90,9 +90,26 @@ const LOG_CONTEXT = '[Federation]';
 export async function inlineSendImageRefs(action: unknown): Promise<unknown> {
 	if (!action || typeof action !== 'object') return action;
 	const raw = action as Record<string, unknown>;
-	if (raw.kind !== 'send' || !Array.isArray(raw.images)) return action;
+	if (raw.kind === 'send' && Array.isArray(raw.images)) {
+		return { ...raw, images: await inlineImageList(raw.images) };
+	}
+	// A queued card's Edit carries the images it keeps, which may be refs into this store too.
+	const edit = raw.edit as Record<string, unknown> | undefined;
+	if (
+		raw.kind === 'edit-queued' &&
+		edit &&
+		typeof edit === 'object' &&
+		Array.isArray(edit.images)
+	) {
+		return { ...raw, edit: { ...edit, images: await inlineImageList(edit.images) } };
+	}
+	return action;
+}
+
+/** Each string ref as its data URL; a ref whose file is gone is dropped, as a local spawn drops it. */
+async function inlineImageList(list: unknown[]): Promise<unknown[]> {
 	const images: unknown[] = [];
-	for (const image of raw.images) {
+	for (const image of list) {
 		if (typeof image !== 'string') {
 			images.push(image);
 			continue;
@@ -100,7 +117,7 @@ export async function inlineSendImageRefs(action: unknown): Promise<unknown> {
 		const inline = await resolveToDataUrl(image);
 		if (inline) images.push(inline);
 	}
-	return { ...raw, images };
+	return images;
 }
 
 function opts(operation: string) {

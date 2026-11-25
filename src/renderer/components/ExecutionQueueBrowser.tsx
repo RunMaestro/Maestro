@@ -335,7 +335,7 @@ export function ExecutionQueueBrowser({
 				run: merge,
 			});
 		}
-		if (onEditItem && item.type !== 'command' && !item.hostQueued) {
+		if (onEditItem && item.type !== 'command') {
 			menuActions.push({
 				id: 'edit',
 				label: 'Edit',
@@ -502,7 +502,7 @@ export function ExecutionQueueBrowser({
 								<div className="space-y-0">
 									{session.executionQueue?.map((item, index) => {
 										// A hosted agent's host runs its own queue: its items offer Remove,
-										// Hold / Resume, and Merge, which act on the host, and nothing that
+										// Hold / Resume, Merge, and Edit, which act on the host, and nothing that
 										// would only change this copy (the next host sync would undo it).
 										// Same rule as QueuedItemsList.
 										const hostOnly = item.hostQueued === true;
@@ -539,7 +539,7 @@ export function ExecutionQueueBrowser({
 															: undefined
 													}
 													onEdit={
-														onEditItem && item.type !== 'command' && !hostOnly
+														onEditItem && item.type !== 'command'
 															? () => setEditing({ sessionId: session.id, item })
 															: undefined
 													}

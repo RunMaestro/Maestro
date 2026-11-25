@@ -803,6 +803,62 @@ describe('runtime turns', () => {
 			expect(errorOf(await runtime.turns.queue.steer('nope', 'q1')).code).toBe('not-found');
 		});
 
+		it('edits a waiting message in place, the way the queued card does', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(
+				await runtime.turns.send('a1', 't1', { text: 'draft', overrides: { model: 'm1' } })
+			);
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: queued.itemId, turnSettings: { model: 'm1' } }),
+			]);
+
+			// Text only: the item keeps its model.
+			expect(value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'final' }))).toEqual(
+				{ found: true }
+			);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({
+					itemId: queued.itemId,
+					text: 'final',
+					turnSettings: { model: 'm1' },
+				}),
+			]);
+			// Settings given: assigned whole.
+			value(
+				await runtime.turns.queue.edit('a1', queued.itemId, {
+					text: 'final',
+					turnSettings: { effort: 'high' },
+				})
+			);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ turnSettings: { effort: 'high' } }),
+			]);
+			// A headless host queues no images, so an edit with some is refused whole.
+			expect(
+				errorOf(
+					await runtime.turns.queue.edit('a1', queued.itemId, {
+						text: 'x',
+						images: ['data:image/png;base64,AAAA'],
+					})
+				).code
+			).toBe('unsupported');
+			expect(value(await runtime.turns.queue.edit('a1', 'gone', { text: 'x' }))).toEqual({
+				found: false,
+			});
+			expect(
+				errorOf(await runtime.turns.queue.edit('nope', queued.itemId, { text: 'x' })).code
+			).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', queued.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
+		});
+
 		it('says nothing was stopped when the tab is idle', async () => {
 			const runtime = await start();
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: false });

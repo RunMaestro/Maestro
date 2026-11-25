@@ -1140,6 +1140,18 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
 		) => void;
+		onRemoteEditQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				edit: import('../shared/maestro-lib/client/types').QueuedTurnEdit,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteEditQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; error?: string }
+		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
 		) => () => void;

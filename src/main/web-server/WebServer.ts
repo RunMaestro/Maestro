@@ -1,3 +1,4 @@
+import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
 import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
@@ -156,6 +157,7 @@ import type {
 	SteerQueueItemCallback,
 	SetQueueItemPausedCallback,
 	MergeQueueItemCallback,
+	EditQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -873,6 +875,10 @@ export class WebServer {
 		this.callbackRegistry.setMergeQueueItemCallback(callback);
 	}
 
+	setEditQueueItemCallback(callback: EditQueueItemCallback): void {
+		this.callbackRegistry.setEditQueueItemCallback(callback);
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbackRegistry.setRefreshAutoRunDocsCallback(callback);
 	}
@@ -1581,6 +1587,8 @@ export class WebServer {
 				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
 			mergeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
+			editQueueItem: async (sessionId: string, itemId: string, edit: QueuedTurnEdit) =>
+				this.callbackRegistry.editQueueItem(sessionId, itemId, edit),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (

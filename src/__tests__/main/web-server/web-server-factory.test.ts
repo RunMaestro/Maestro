@@ -83,6 +83,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
 			setMergeQueueItemCallback = vi.fn();
+			setEditQueueItemCallback = vi.fn();
 			setSteerQueueItemCallback = vi.fn();
 			setSetQueueItemPausedCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();

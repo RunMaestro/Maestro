@@ -228,6 +228,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeQueueItem: vi
 			.fn()
 			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
+		editQueueItem: vi.fn().mockResolvedValue({ success: true, found: true }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -4140,6 +4141,52 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('merge_queue_item_result');
 			expect(response.success).toBe(false);
 			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Edit Queue Item (queue edit, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the checked edit and answers whether the item was there', async () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: 'rewritten',
+				turnSettings: { model: 'm' },
+			} as never);
+
+			await vi.waitFor(() => {
+				expect(callbacks.editQueueItem).toHaveBeenCalledWith('session-1', 'item-9', {
+					text: 'rewritten',
+					turnSettings: { model: 'm' },
+				});
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('edit_queue_item_result');
+				expect(response).toMatchObject({ success: true, found: true });
+			});
+		});
+
+		it('rejects a missing itemId or an empty text without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				text: 'x',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'edit_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: ' ',
+			} as never);
+			expect(lastSend()).toMatchObject({ success: false, error: 'Missing text' });
+			expect(callbacks.editQueueItem).not.toHaveBeenCalled();
 		});
 	});
 

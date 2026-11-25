@@ -31,6 +31,7 @@ vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
 });
 
 import {
+	queueEdit,
 	queueHold,
 	queueList,
 	queueMerge,
@@ -227,6 +228,70 @@ describe('queue command', () => {
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('ITEM_NOT_FOUND');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('queue edit', () => {
+		it('sends edit_queue_item with the text, and the settings only when a flag names them', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			const mockSendCommand = vi
+				.fn()
+				.mockResolvedValue({ type: 'edit_queue_item_result', success: true, found: true });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await queueEdit('item-9', { agent: 'ag', text: 'new text' });
+			await queueEdit('item-9', { agent: 'ag', text: 'new text', model: 'm' });
+
+			expect(mockSendCommand).toHaveBeenNthCalledWith(
+				1,
+				{ type: 'edit_queue_item', sessionId: 'agent-1', itemId: 'item-9', text: 'new text' },
+				'edit_queue_item_result'
+			);
+			expect(mockSendCommand).toHaveBeenNthCalledWith(
+				2,
+				{
+					type: 'edit_queue_item',
+					sessionId: 'agent-1',
+					itemId: 'item-9',
+					text: 'new text',
+					turnSettings: { model: 'm' },
+				},
+				'edit_queue_item_result'
+			);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				itemId: 'item-9',
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with INVALID_OPTIONS without --agent or --text', async () => {
+			await queueEdit('item-9', { text: 'x' });
+			await queueEdit('item-9', { agent: 'ag', text: '  ' });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).code).toBe('INVALID_OPTIONS');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with ITEM_NOT_FOUND when the item no longer waits', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi.fn().mockResolvedValue({ success: true, found: false }),
+				} as never)
+			);
+
+			await queueEdit('ghost', { agent: 'ag', text: 'x' });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				code: 'ITEM_NOT_FOUND',
+			});
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
@@ -460,6 +525,7 @@ describe('queue command', () => {
 						steer: vi.fn(async () =>
 							ok<QueueSteerResult>({ outcome: 'delivered', verdict: 'delivered' })
 						),
+						edit: vi.fn(async () => ok({ found: true })),
 					},
 				},
 			};
@@ -632,6 +698,31 @@ describe('queue command', () => {
 			expect(output).toMatchObject({ success: false, code: 'NOT_MERGEABLE' });
 			expect(output.error).toContain(`${PEER}:${AGENT_ID}`);
 			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('queue edit rewrites the item on the host, in the local shape', async () => {
+			const { client } = fakePeer();
+
+			await queueEdit('q1', { agent: `${PEER}:docs`, text: 'new', effort: 'high' });
+
+			expect(client.turns.queue.edit).toHaveBeenCalledWith(AGENT_ID, 'q1', {
+				text: 'new',
+				turnSettings: { effort: 'high' },
+			});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				peer: PEER,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+
+			client.turns.queue.edit.mockResolvedValue(ok({ found: false }));
+			await queueEdit('q1', { agent: `${PEER}:docs`, text: 'new' });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toMatchObject({
+				success: false,
+				code: 'ITEM_NOT_FOUND',
+			});
 		});
 
 		it('queue steer hands the item to the running turn on the host, in the local shape', async () => {

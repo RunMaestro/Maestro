@@ -232,8 +232,8 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
-import { resolveQueuedItemEdit } from './services/queuedPrompt';
+import { reorderQueueItem } from './utils/executionQueue';
+import { editQueuedItem } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -1836,21 +1836,10 @@ function MaestroConsoleInner() {
 		mergeQueuedItemIntoAbove(activeSessionIdRef.current, itemId);
 	}, []);
 
-	// Edit a queued message's prompt text and attached images in place.
+	// Edit a queued message's prompt text and attached images in place. Same
+	// service `maestro-cli queue edit` reaches; a hosted card's edit goes to its host.
 	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => {
-			const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
-			return {
-				...s,
-				executionQueue: applyQueuedItemEdit(
-					s.executionQueue,
-					itemId,
-					patch,
-					crossAgent,
-					slashCommand
-				),
-			};
-		});
+		editQueuedItem(activeSessionIdRef.current, itemId, patch);
 	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The

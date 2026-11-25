@@ -29,7 +29,7 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
+import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnEdit } from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -798,6 +798,16 @@ export function createRequestHandler(
 					await client.turns.queue.steer(sessionId(message), str(message.itemId) ?? ''),
 					(result) => ({ result })
 				);
+			case 'edit_queue_item': {
+				const type = 'edit_queue_item_result';
+				const parsed = parseQueuedTurnEdit(message);
+				if ('error' in parsed) return refusal(type, parsed.error, { found: false });
+				return outcome(
+					type,
+					await client.turns.queue.edit(sessionId(message), str(message.itemId) ?? '', parsed.edit),
+					(value) => ({ found: value.found })
+				);
+			}
 			case 'merge_queue_item':
 				return outcome(
 					'merge_queue_item_result',

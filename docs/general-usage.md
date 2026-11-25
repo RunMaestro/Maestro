@@ -451,7 +451,7 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 | **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
 | **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
 
-**Editing** is only offered for messages, not slash commands. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+**Editing** is only offered for messages, not slash commands. Agents can edit a queued message with `maestro-cli queue edit <item-id> --agent <id> --text "..."`. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
 
 ### Merging queued messages
 

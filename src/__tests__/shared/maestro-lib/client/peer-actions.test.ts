@@ -27,6 +27,7 @@ function fakeClient() {
 				setPaused: vi.fn(async (_agentId: string, itemId: string, paused: boolean) =>
 					ok({ found: itemId !== 'gone', paused })
 				),
+				edit: vi.fn(async (_agentId: string, itemId: string) => ok({ found: itemId !== 'gone' })),
 				merge: vi.fn(async (_agentId: string, itemId: string) =>
 					ok(itemId === 'gone' ? { merged: false } : { merged: true, mergedIntoId: 'q0' })
 				),
@@ -294,6 +295,18 @@ describe('runPeerAgentAction', () => {
 		).toEqual(ok({ kind: 'steer-queued', itemId: 'gone', result: { outcome: 'not-found' } }));
 	});
 
+	it('edits a waiting message on the host', async () => {
+		const { client, asClient } = fakeClient();
+		const edit = { text: 'new', turnSettings: { model: 'm' } };
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'edit-queued', itemId: 'q1', edit })
+		).toEqual(ok({ kind: 'edit-queued', itemId: 'q1', found: true }));
+		expect(client.turns.queue.edit).toHaveBeenCalledWith('a1', 'q1', edit);
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'edit-queued', itemId: 'gone', edit })
+		).toEqual(ok({ kind: 'edit-queued', itemId: 'gone', found: false }));
+	});
+
 	it('passes a failed queue call through untouched', async () => {
 		const { client, asClient } = fakeClient();
 		const failure = {
@@ -368,6 +381,20 @@ describe('parsePeerAgentAction', () => {
 			kind: 'merge-queued',
 			itemId: 'q1',
 		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: 'new', turnSettings: { model: 'm', extra: 1 }, images: [] },
+			})
+		).toEqual({
+			kind: 'edit-queued',
+			itemId: 'q1',
+			edit: { text: 'new', turnSettings: { model: 'm' }, images: [] },
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: 'only text' } })
+		).toEqual({ kind: 'edit-queued', itemId: 'q1', edit: { text: 'only text' } });
 		expect(parsePeerAgentAction({ kind: 'steer-queued', itemId: 'q1', extra: 1 })).toEqual({
 			kind: 'steer-queued',
 			itemId: 'q1',
@@ -548,6 +575,16 @@ describe('parsePeerAgentAction', () => {
 			'Missing queued item id'
 		);
 		expect(() => parsePeerAgentAction({ kind: 'merge-queued' })).toThrow('Missing queued item id');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: ' ' } })
+		).toThrow('Missing text');
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: 'x', images: ['/tmp/a.png'] },
+			})
+		).toThrow('images must be a list of data URLs');
 		expect(() => parsePeerAgentAction({ kind: 'steer-queued' })).toThrow('Missing queued item id');
 		expect(() =>
 			parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: 'yes' })

@@ -22,13 +22,16 @@ vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) 
 
 // A hosted agent's queue actions go to its host; the test reads which one went.
 const mergeMirrorQueuedItem = vi.fn(async () => undefined);
+const editMirrorQueuedItem = vi.fn(async () => undefined);
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
 	mergeMirrorQueuedItem: (...args: unknown[]) => mergeMirrorQueuedItem(...(args as [])),
+	editMirrorQueuedItem: (...args: unknown[]) => editMirrorQueuedItem(...(args as [])),
 }));
 
 import {
 	buildQueuedMessageItem,
+	editQueuedItem,
 	enqueuePromptForTab,
 	getQueuedCommandScopeRefusal,
 	getQueuedCommandSelectionRefusal,
@@ -438,6 +441,70 @@ describe('setQueuedItemPaused / toggleQueuedItemPaused', () => {
 		seed();
 		expect(toggleQueuedItemPaused('session-1', 'ghost')).toBe(false);
 		expect(setQueuedItemPaused('missing-session', 'ghost', true)).toBe(false);
+	});
+});
+
+describe('editQueuedItem', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+	afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+	it('rewrites the item in place, and keeps the images and settings an edit leaves out', () => {
+		seed();
+		const queued = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'one' })!;
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) => ({
+				...s,
+				executionQueue: s.executionQueue.map((i) => ({
+					...i,
+					images: ['data:image/png;base64,AAAA'],
+					turnSettings: { model: 'm1' },
+				})),
+			})),
+		}));
+		expect(editQueuedItem('session-1', queued.id, { text: 'two' })).toBe(true);
+		expect(currentQueue()[0]).toMatchObject({
+			id: queued.id,
+			text: 'two',
+			images: ['data:image/png;base64,AAAA'],
+			turnSettings: { model: 'm1' },
+		});
+		// The card's Edit always sends all three: they are written whole.
+		editQueuedItem('session-1', queued.id, { text: 'three', images: [], turnSettings: {} });
+		expect(currentQueue()[0]).toMatchObject({ text: 'three', images: [], turnSettings: {} });
+		expect(editQueuedItem('session-1', 'gone', { text: 'x' })).toBe(false);
+	});
+
+	it("sends a hosted agent's edit to its host and leaves this copy alone", () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const queue: QueuedItem[] = [
+			{ id: 'h1', timestamp: 0, tabId: 'b', type: 'message', text: 'one', hostQueued: true },
+		];
+		seed({ liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 }, executionQueue: queue });
+		editMirrorQueuedItem.mockClear();
+
+		expect(
+			editQueuedItem('session-1', 'h1', { text: 'two', images: [], turnSettings: { model: 'm' } })
+		).toBe(true);
+		// No images on the card means none added: the host keeps its own.
+		expect(editMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h1', {
+			text: 'two',
+			turnSettings: { model: 'm' },
+		});
+		editQueuedItem('session-1', 'h1', {
+			text: 'two',
+			images: ['data:image/png;base64,AAAA'],
+			turnSettings: {},
+		});
+		expect(editMirrorQueuedItem).toHaveBeenLastCalledWith('box', 'host-agent', 'h1', {
+			text: 'two',
+			turnSettings: {},
+			images: ['data:image/png;base64,AAAA'],
+		});
+		// The host's queue update redraws the card; nothing changes here first.
+		expect(currentQueue()).toEqual(queue);
 	});
 });
 

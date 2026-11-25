@@ -327,8 +327,8 @@ export const QueuedItemsList = memo(
 					<style>{proseStyles}</style>
 					{filteredQueue.map((item, index) => {
 						// A hosted agent's host runs its own queue: its cards offer Remove, Hold /
-						// Resume, Merge, and Steer, which act on the host, and nothing that would
-						// only change this copy.
+						// Resume, Merge, Steer, and Edit, which act on the host, and nothing that
+						// would only change this copy.
 						const hostOnly = item.hostQueued === true;
 						// Ask for eligibility whenever a handler is wired and the item is
 						// not already flagged to run in parallel. `forcedParallelEnabled` is
@@ -396,7 +396,7 @@ export const QueuedItemsList = memo(
 									onCopy={() => handleCopy(item)}
 									renderMarkdown={!chatRawTextMode}
 									onEdit={
-										onEditQueuedItem && item.type !== 'command' && !hostOnly
+										onEditQueuedItem && item.type !== 'command'
 											? () => setEditItemId(item.id)
 											: undefined
 									}

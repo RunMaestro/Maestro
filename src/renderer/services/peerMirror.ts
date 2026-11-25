@@ -12,6 +12,7 @@
 
 import {
 	normalizeTurnOverrides,
+	type QueuedTurnEdit,
 	type TurnOverrides,
 	type TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
@@ -81,6 +82,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'pause-queued': 'Could not hold or resume the queued message',
 	'merge-queued': 'Could not merge the queued message',
 	'steer-queued': 'Could not steer this turn',
+	'edit-queued': 'Could not edit the queued message',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 };
@@ -237,6 +239,26 @@ export async function mergeMirrorQueuedItem(
 			color: 'yellow',
 			title: 'Messages not merged',
 			message: 'They no longer both wait on the host: one may have started already.',
+		});
+	}
+}
+
+/**
+ * Rewrite a waiting message on its host (the queued card's Edit). The host's queue update redraws
+ * the card; a message that no longer waits is a notice, not a red toast.
+ */
+export async function editMirrorQueuedItem(
+	peerId: string,
+	agentId: string,
+	itemId: string,
+	edit: QueuedTurnEdit
+): Promise<void> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'edit-queued', itemId, edit });
+	if (result?.kind === 'edit-queued' && !result.found) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Message not edited',
+			message: 'It no longer waits on the host: it may have started already.',
 		});
 	}
 }

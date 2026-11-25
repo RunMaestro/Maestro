@@ -371,6 +371,25 @@ describe('createExecutionQueue ordering', () => {
 		expect(h.queue.merge('nope', combine)).toBeNull();
 	});
 
+	it('rewrites a waiting item in place, keeping its id and place', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't1'));
+		h.queue.submit(item('c', 't1'));
+		await h.flush();
+		h.events.length = 0;
+		// `change` cannot move the item to another id.
+		expect(h.queue.update('b', (i) => ({ ...i, id: 'other', text: 'rewritten' }))).toBe(true);
+		expect(h.queue.items().map((i) => [i.id, i.text])).toEqual([
+			['b', 'rewritten'],
+			['c', 'c'],
+		]);
+		expect(h.events.map((event) => [event.type, event.item.id])).toEqual([['updated', 'b']]);
+		// `a` is running, not waiting.
+		expect(h.queue.update('a', (i) => i)).toBe(false);
+		expect(h.queue.update('nope', (i) => i)).toBe(false);
+	});
+
 	it('holds a tab behind a retry until drain() is called after it clears', async () => {
 		const retryHeld = new Set(['t1']);
 		const h = harness({ retryHeld });

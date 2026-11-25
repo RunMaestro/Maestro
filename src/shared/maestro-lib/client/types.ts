@@ -102,6 +102,7 @@ export type ClientMethod =
 	| 'turns.queue.setPaused'
 	| 'turns.queue.merge'
 	| 'turns.queue.steer'
+	| 'turns.queue.edit'
 	| 'history.list'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
@@ -476,6 +477,70 @@ export interface QueuedTurn {
 	text: string;
 	/** The host paused the queue on this item. */
 	paused: boolean;
+	/**
+	 * Model and effort captured when it was queued (an absent field: the agent's default applies).
+	 * Absent when the host did not say, so the card and the editor fall back to the tab's own.
+	 */
+	turnSettings?: QueuedTurnSettingsWire;
+}
+
+/** A waiting message's own model and effort, as the queue wire carries them. */
+export interface QueuedTurnSettingsWire {
+	model?: string;
+	effort?: string;
+}
+
+/**
+ * A waiting message's `turnSettings` off the wire: only its non-empty string fields, or
+ * `undefined` when there is no object at all (the host did not say).
+ */
+export function parseQueuedTurnSettings(raw: unknown): QueuedTurnSettingsWire | undefined {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+	const { model, effort } = raw as Record<string, unknown>;
+	return {
+		...(typeof model === 'string' && model ? { model } : {}),
+		...(typeof effort === 'string' && effort ? { effort } : {}),
+	};
+}
+
+/**
+ * What an edit to a waiting message writes (the queued card's Edit). `text` replaces the item's.
+ * `turnSettings`, when present, is assigned whole, so a field left out means the agent's default;
+ * absent, the item keeps its own (a script that only rewrites the text). `images` likewise
+ * replaces the item's images when present and keeps them when absent.
+ */
+export interface QueuedTurnEdit {
+	text: string;
+	turnSettings?: QueuedTurnSettingsWire;
+	images?: string[];
+}
+
+/**
+ * An edit off the wire (`edit_queue_item`, the `edit-queued` peer action), checked: the text is a
+ * string with something in it, `turnSettings` an object, and `images` (when given) a list of
+ * strings. Returns the reason in `error` when it is not one.
+ */
+export function parseQueuedTurnEdit(
+	raw: Record<string, unknown>
+): { edit: QueuedTurnEdit } | { error: string } {
+	if (typeof raw.text !== 'string' || !raw.text.trim()) return { error: 'Missing text' };
+	const turnSettings = parseQueuedTurnSettings(raw.turnSettings);
+	if (raw.turnSettings !== undefined && !turnSettings) {
+		return { error: 'turnSettings must be an object' };
+	}
+	if (
+		raw.images !== undefined &&
+		(!Array.isArray(raw.images) || !raw.images.every((image) => typeof image === 'string'))
+	) {
+		return { error: 'images must be a list of strings' };
+	}
+	return {
+		edit: {
+			text: raw.text,
+			...(turnSettings ? { turnSettings } : {}),
+			...(raw.images !== undefined ? { images: raw.images as string[] } : {}),
+		},
+	};
 }
 
 export interface TurnToolCall {
@@ -553,6 +618,15 @@ export interface TurnsApi {
 		 * `outcome` says what happened; a headless host answers `unsupported`.
 		 */
 		steer(agentId: string, itemId: string): Promise<ClientResult<QueueSteerResult>>;
+		/**
+		 * Rewrite a waiting message in place: the queued card's Edit. It keeps its id, place, and
+		 * hold. `found: false` when no waiting message has that id (it may have started).
+		 */
+		edit(
+			agentId: string,
+			itemId: string,
+			edit: QueuedTurnEdit
+		): Promise<ClientResult<{ found: boolean }>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;

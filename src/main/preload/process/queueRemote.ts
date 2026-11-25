@@ -2,7 +2,7 @@ import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispat
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
-import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
 export function createQueueRemoteApi() {
 	return {
@@ -204,6 +204,43 @@ export function createQueueRemoteApi() {
 		sendRemoteMergeQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "edit queue item" from the CLI (`queue edit`) or a
+		 * client's hosted queued card. Renderer replies via sendRemoteEditQueueItemResponse.
+		 */
+		onRemoteEditQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				edit: QueuedTurnEdit,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				itemId: string,
+				edit: QueuedTurnEdit,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, itemId, edit, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, found: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:editQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:editQueueItem', handler);
+		},
+
+		sendRemoteEditQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

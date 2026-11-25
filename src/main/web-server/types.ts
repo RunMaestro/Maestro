@@ -1,6 +1,6 @@
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
-import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
+import type { QueuedTurnEdit, TurnOverrides } from '../../shared/maestro-lib/client/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -724,6 +724,13 @@ export type MergeQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<MergeQueueItemResult>;
+/** `maestro-cli queue edit`: whether a waiting item had that id to rewrite. */
+export type EditQueueItemResult = { success: boolean; found: boolean; error?: string };
+export type EditQueueItemCallback = (
+	sessionId: string,
+	itemId: string,
+	edit: QueuedTurnEdit
+) => Promise<EditQueueItemResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (

@@ -5,6 +5,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { requestFromRenderer } from './remoteRequest';
 import {
 	parseQueueSteerResult,
 	QUEUE_STEER_RENDERER_TIMEOUT_MS,
@@ -285,6 +286,29 @@ export function registerQueueCallbacks(
 			);
 		}
 	);
+
+	// Round-trip `maestro-cli queue edit <itemId>` (and a client's hosted queued
+	// card) into the renderer, which runs the same edit the queued card's Edit does.
+	server.setEditQueueItemCallback(async (sessionId, itemId, edit) => {
+		const mainWindow = resolveSessionWindow(sessionId);
+		if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
+			logger.warn('mainWindow is unavailable for editQueueItem', 'WebServer');
+			return { success: false, found: false, error: 'Desktop window unavailable' };
+		}
+		return requestFromRenderer(mainWindow, 'remote:editQueueItem', {
+			args: [sessionId, itemId, edit],
+			fallback: { success: false, found: false, error: 'Renderer did not respond' },
+			timeoutMs: 5000,
+			parse: (raw) => {
+				const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+				return {
+					success: r.success === true,
+					found: r.found === true,
+					...(typeof r.error === 'string' ? { error: r.error } : {}),
+				};
+			},
+		});
+	});
 
 	// Round-trip `maestro-cli queue merge <itemId>` into the renderer, which runs
 	// the same merge the queued card's Merge button does.

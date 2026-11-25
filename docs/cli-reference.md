@@ -506,6 +506,17 @@ Merge a queued message into the message above it on the same tab, like the Merge
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli queue edit <item-id>`
+
+Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.
+
+| Option              | Description                                      | Default |
+| ------------------- | ------------------------------------------------ | ------- |
+| `-a, --agent <id>`  | Agent whose queue the item belongs to (required) | -       |
+| `-t, --text <text>` | The new message text (required)                  | -       |
+| `--model <model>`   | Model the message runs with                      | -       |
+| `--effort <effort>` | Effort the message runs with                     | -       |
+
 ## `maestro-cli queue steer <item-id>`
 
 Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.

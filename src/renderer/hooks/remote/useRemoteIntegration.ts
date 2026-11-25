@@ -33,6 +33,7 @@ import {
 	enqueuePromptForTab,
 	sendQueuedItemNow,
 	setQueuedItemPaused,
+	editQueuedItem,
 	mergeQueuedItemIntoAbove,
 } from '../../services/queuedPrompt';
 import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
@@ -1617,6 +1618,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 							...(item.paused !== undefined ? { paused: item.paused } : {}),
 							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
+							// A client's hosted queued card draws the model and effort it runs with.
+							...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 						})),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
@@ -1712,6 +1715,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "edit queue item" from the CLI (`queue edit`) or a client's
+		// hosted queued card. Same edit the queued card's Edit runs.
+		const unsubscribeEditQueueItem = window.maestro.process.onRemoteEditQueueItem?.(
+			(sessionId, itemId, edit, responseChannel) => {
+				try {
+					const found = editQueuedItem(sessionId, itemId, edit);
+					window.maestro.process.sendRemoteEditQueueItemResponse(responseChannel, {
+						success: true,
+						found,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteEditQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteEditQueueItemResponse(responseChannel, {
+						success: false,
+						found: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
 		// steerQueuedItem() the Steer button does, so the queue removal and the later
 		// re-queue on a `dropped` verdict happen exactly as they do for a click.
@@ -1759,6 +1783,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSteerQueueItem?.();
 			unsubscribeSetQueueItemPaused?.();
 			unsubscribeMergeQueueItem?.();
+			unsubscribeEditQueueItem?.();
 		};
 	}, [
 		sessionsRef,

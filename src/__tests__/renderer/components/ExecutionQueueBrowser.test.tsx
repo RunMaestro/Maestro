@@ -2506,7 +2506,7 @@ describe('ExecutionQueueBrowser', () => {
 
 	describe('host-queued items (hosted agent)', () => {
 		// A hosted agent's host runs its own queue. Its items offer what acts on the host (Remove,
-		// Hold / Resume, Merge); edit, reorder and Send Now would change this copy only.
+		// Hold / Resume, Merge, Edit); reorder and Send Now would change this copy only.
 		const hostSession = () =>
 			createSession({
 				id: 'active-session',
@@ -2556,7 +2556,7 @@ describe('ExecutionQueueBrowser', () => {
 			});
 		});
 
-		it('the action menu offers Remove, Hold, and Merge', () => {
+		it('the action menu offers Remove, Hold, Merge, and Edit', () => {
 			renderHost();
 			const card = screen.getByLabelText('Execution Queue');
 			fireEvent.keyDown(card, { key: 'ArrowDown' });
@@ -2564,7 +2564,7 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
 			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
 			expect(screen.getByTestId('queue-action-merge')).toBeInTheDocument();
-			expect(screen.queryByTestId('queue-action-edit')).toBeNull();
+			expect(screen.getByTestId('queue-action-edit')).toBeInTheDocument();
 			expect(screen.queryByTestId('queue-action-send')).toBeNull();
 		});
 	});
@@ -2611,6 +2611,44 @@ describe('ExecutionQueueBrowser', () => {
 				fireEvent.click(screen.getByTitle(MERGE_TITLE));
 				fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 				expect(onMergeItem).toHaveBeenCalledWith('active-session', 'q3');
+			}
+		);
+
+		it.each(Object.keys(modes) as Array<keyof typeof modes>)(
+			'%s: offers Edit on the same card and hands the same patch to onEditItem',
+			async (mode) => {
+				const hostQueued = mode === 'hosted' ? true : undefined;
+				const onEditItem = vi.fn();
+				render(
+					<ExecutionQueueBrowser
+						isOpen={true}
+						onClose={mockOnClose}
+						sessions={[
+							createSession({
+								id: 'active-session',
+								...modes[mode],
+								executionQueue: [
+									createQueuedItem({ id: 'q1', text: 'draft', tabId: 'tab-a', hostQueued }),
+								],
+							} as Partial<Session>),
+						]}
+						activeSessionId="active-session"
+						theme={theme}
+						onRemoveItem={mockOnRemoveItem}
+						onSwitchSession={mockOnSwitchSession}
+						onEditItem={onEditItem}
+					/>
+				);
+				fireEvent.click(screen.getByTitle('Edit message and images'));
+				fireEvent.change(screen.getByPlaceholderText('Message to send…'), {
+					target: { value: 'final' },
+				});
+				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+				expect(onEditItem).toHaveBeenCalledWith(
+					'active-session',
+					'q1',
+					expect.objectContaining({ text: 'final', images: [] })
+				);
 			}
 		);
 	});

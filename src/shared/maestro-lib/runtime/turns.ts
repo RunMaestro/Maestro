@@ -58,7 +58,11 @@ import type {
 	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
+import {
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnSettings,
+} from '../client/types';
 import { logger } from '../host';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
@@ -197,6 +201,7 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		kind: 'message',
 		text: item.text,
 		paused: item.paused === true,
+		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
 	};
 }
 
@@ -853,6 +858,27 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					'unsupported',
 					'This host cannot steer a running turn. The message stays queued and sends when the turn ends.'
 				);
+			},
+			edit: async (agentId, itemId, edit) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.edit', 'not-found', `No agent ${agentId}.`);
+				}
+				// A headless host queues no images, so an edit that carries some is refused whole
+				// rather than run without them.
+				if (edit.images && edit.images.length > 0) {
+					return fail(
+						'turns.queue.edit',
+						'unsupported',
+						'This host does not queue images. Edit the message without them.'
+					);
+				}
+				const found =
+					queues.get(agentId)?.update(itemId, (item) => ({
+						...item,
+						text: edit.text,
+						...(edit.turnSettings ? { turnSettings: { ...edit.turnSettings } } : {}),
+					})) ?? false;
+				return ok({ found });
 			},
 		},
 

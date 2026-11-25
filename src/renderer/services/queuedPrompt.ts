@@ -25,6 +25,7 @@ import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
 import {
+	editMirrorQueuedItem,
 	mergeMirrorQueuedItem,
 	removeMirrorQueuedItem,
 	setMirrorQueuedItemPaused,
@@ -35,12 +36,14 @@ import type { QueuedSlashCommand } from '../utils/executionQueue';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
+	applyQueuedItemEdit,
 	findQueuedMergeTarget,
 	getQueueBusyContext,
 	mergeQueuedItemIntoPrevious,
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
+import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import { withoutDesignPickPageText } from '../utils/designModePicker';
 import { generateId } from '../utils/ids';
@@ -490,6 +493,54 @@ export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): str
 		return { ...s, executionQueue: result.queue };
 	});
 	return targetId;
+}
+
+/**
+ * Rewrite one queued message in place: the queued card's Edit, the Execution Queue's Edit, and
+ * `maestro-cli queue edit`. The mention flags and the slash command are re-derived from the
+ * EDITED text (`resolveQueuedItemEdit`): a stale flag consults the wrong agent, and `/commit`
+ * left as a message is sent to the provider as literal text.
+ *
+ * `images` or `turnSettings` absent keeps the item's own (a script that only rewrites the text).
+ *
+ * @returns Whether the item was in the queue to change. A hosted agent's host item answers
+ * `true` at once: the host edits it by the same rule, and its queue update redraws the card.
+ */
+export function editQueuedItem(sessionId: string, itemId: string, edit: QueuedTurnEdit): boolean {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		// The mirror carries no images, so an empty list means "none added": the host keeps its own.
+		const images = edit.images && edit.images.length > 0 ? edit.images : undefined;
+		void editMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId, {
+			text: edit.text,
+			...(edit.turnSettings ? { turnSettings: edit.turnSettings } : {}),
+			...(images ? { images } : {}),
+		});
+		return true;
+	}
+	let found = false;
+	updateSessionWith(sessionId, (s) => {
+		const item = s.executionQueue?.find((queued) => queued.id === itemId);
+		if (!item || item.pendingAdmissionId) return s;
+		found = true;
+		const patch: QueuedItemEditPatch = {
+			text: edit.text,
+			images: edit.images ?? item.images ?? [],
+			turnSettings: edit.turnSettings ?? item.turnSettings ?? {},
+		};
+		const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
+		return {
+			...s,
+			executionQueue: applyQueuedItemEdit(
+				s.executionQueue,
+				itemId,
+				patch,
+				crossAgent,
+				slashCommand
+			),
+		};
+	});
+	return found;
 }
 
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */

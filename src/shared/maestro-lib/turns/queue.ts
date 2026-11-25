@@ -270,6 +270,11 @@ export interface ExecutionQueue<T extends QueueItem> {
 	 * no waiting item above it to merge into.
 	 */
 	merge(id: string, combine: (upper: T, lower: T) => T): string | null;
+	/**
+	 * Rewrite a waiting item in place (the queued card's Edit). `change` builds the new item; it
+	 * keeps its id and place. Returns false when no waiting item has that id.
+	 */
+	update(id: string, change: (item: T) => T): boolean;
 	/** Look at the queue again, for a hold that cleared (a retry that landed). */
 	drain(): void;
 	/** Resolves when no turn is running or starting. Items may still wait, held or blocked. */
@@ -506,6 +511,14 @@ export function createExecutionQueue<T extends QueueItem>(
 			emit({ type: 'removed', item: lowerEntry.item });
 			emit({ type: 'updated', item: upperEntry.item });
 			return upperEntry.item.id;
+		},
+
+		update(id, change) {
+			const entry = entries.find((e) => e.state === 'queued' && e.item.id === id);
+			if (!entry) return false;
+			entry.item = { ...change(entry.item), id: entry.item.id };
+			emit({ type: 'updated', item: entry.item });
+			return true;
 		},
 
 		drain() {

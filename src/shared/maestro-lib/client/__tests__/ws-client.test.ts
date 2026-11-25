@@ -1206,6 +1206,58 @@ describe('createWsMaestroClient', () => {
 			expect((await client.turns.queue.steer(A1, 'q1')).ok).toBe(false);
 		});
 
+		it('edits a queued item with edit_queue_item, sending only what the edit names', async () => {
+			bridge.typed.set('edit_queue_item', (message) => ({
+				type: 'edit_queue_item_result',
+				success: true,
+				found: message.itemId === 'q1',
+			}));
+			expect(
+				await client.turns.queue.edit(A1, 'q1', { text: 'new', turnSettings: { model: 'm' } })
+			).toEqual({ ok: true, value: { found: true } });
+			expect(await client.turns.queue.edit(A1, 'q9', { text: 'new' })).toEqual({
+				ok: true,
+				value: { found: false },
+			});
+			const sent = bridge.sent('edit_queue_item');
+			expect(sent[0]).toMatchObject({
+				sessionId: A1,
+				itemId: 'q1',
+				text: 'new',
+				turnSettings: { model: 'm' },
+			});
+			expect(sent[1]).not.toHaveProperty('turnSettings');
+			expect(sent[1]).not.toHaveProperty('images');
+		});
+
+		it("reads a queued item's turn settings off the queue listing", async () => {
+			bridge.typed.set('list_queue', () => ({
+				type: 'list_queue_result',
+				success: true,
+				queues: [
+					{
+						sessionId: A1,
+						items: [
+							{
+								id: 'q1',
+								tabId: 't',
+								timestamp: 1,
+								type: 'message',
+								text: 'a',
+								turnSettings: { model: 'm', effort: 5 },
+							},
+							{ id: 'q2', tabId: 't', timestamp: 2, type: 'message', text: 'b' },
+						],
+					},
+				],
+			}));
+			const listed = await client.turns.queue.list(A1);
+			expect(listed.ok && listed.value.map((item) => item.turnSettings)).toEqual([
+				{ model: 'm' },
+				undefined,
+			]);
+		});
+
 		it('reports a refused merge_queue_item as a failure', async () => {
 			bridge.typed.set('merge_queue_item', () => ({
 				type: 'merge_queue_item_result',

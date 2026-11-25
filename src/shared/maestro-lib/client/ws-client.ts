@@ -109,6 +109,7 @@ import type {
 	MaestroEvent,
 	ProviderInfo,
 	QueuedTurn,
+	QueuedTurnEdit,
 	SettingsChange,
 	TabPatch,
 	TranscriptOptions,
@@ -118,7 +119,7 @@ import type {
 	Unsubscribe,
 	WsMaestroClientOptions,
 } from './types';
-import { normalizeOriginHost, normalizeTurnOverrides } from './types';
+import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnSettings } from './types';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -170,6 +171,7 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 	return items.filter(isObject).map((item): QueuedTurn => {
 		const command = asString(item.command);
 		const args = asString(item.commandArgs);
+		const turnSettings = parseQueuedTurnSettings(item.turnSettings);
 		return {
 			itemId: asString(item.id) ?? '',
 			tabId: asString(item.tabId) ?? '',
@@ -177,6 +179,7 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			kind: item.type === 'command' ? 'command' : 'message',
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
+			...(turnSettings ? { turnSettings } : {}),
 		};
 	});
 }
@@ -394,6 +397,8 @@ class WsMaestroClient implements MaestroClient {
 				this.queueSetPaused(agentId, itemId, paused),
 			merge: (agentId: string, itemId: string) => this.queueMerge(agentId, itemId),
 			steer: (agentId: string, itemId: string) => this.queueSteer(agentId, itemId),
+			edit: (agentId: string, itemId: string, edit: QueuedTurnEdit) =>
+				this.queueEdit(agentId, itemId, edit),
 		},
 		subscribe: (
 			agentId: string,
@@ -2053,6 +2058,31 @@ class WsMaestroClient implements MaestroClient {
 		return result
 			? ok(result)
 			: this.fail(method, 'invalid', 'The host answered the steer with no outcome.');
+	}
+
+	/** The message `maestro-cli queue edit` sends a desktop, which a headless host answers too. */
+	private async queueEdit(
+		agentId: string,
+		itemId: string,
+		edit: QueuedTurnEdit
+	): Promise<ClientResult<{ found: boolean }>> {
+		const method: ClientMethod = 'turns.queue.edit';
+		const sent = await this.send(
+			method,
+			{
+				type: 'edit_queue_item',
+				sessionId: agentId,
+				itemId,
+				text: edit.text,
+				...(edit.turnSettings ? { turnSettings: edit.turnSettings } : {}),
+				...(edit.images ? { images: edit.images } : {}),
+			},
+			'edit_queue_item_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		return ok({ found: sent.value.found === true });
 	}
 
 	// =======================================================================

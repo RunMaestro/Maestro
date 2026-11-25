@@ -91,11 +91,29 @@ describe('mirrorQueuedItem', () => {
 		});
 	});
 
-	it('marks a held message paused and draws a host command as its text', () => {
-		const item = mirrorQueuedItem(queued('q2', { kind: 'command', text: '/x y', paused: true }));
-		expect(item.type).toBe('message');
-		expect(item.text).toBe('/x y');
-		expect(item.paused).toBe(true);
+	it('marks a held host command paused and draws it as the command card a local one is', () => {
+		expect(
+			mirrorQueuedItem(queued('q2', { kind: 'command', text: ' /x  y z ', paused: true }))
+		).toEqual({
+			id: 'q2',
+			timestamp: 100,
+			tabId: 't1',
+			type: 'command',
+			command: '/x',
+			commandArgs: 'y z',
+			paused: true,
+		});
+		expect(mirrorQueuedItem(queued('q3', { kind: 'command', text: '/clear' }))).toMatchObject({
+			command: '/clear',
+			commandArgs: '',
+		});
+	});
+
+	it('carries the model and effort the host will run it with', () => {
+		expect(
+			mirrorQueuedItem(queued('q4', { turnSettings: { model: 'm', effort: 'high' } })).turnSettings
+		).toEqual({ model: 'm', effort: 'high' });
+		expect(mirrorQueuedItem(queued('q5'))).not.toHaveProperty('turnSettings');
 	});
 });
 

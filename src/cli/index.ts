@@ -18,6 +18,7 @@ import { ask } from './commands/ask';
 import {
 	queueHold,
 	queueList,
+	queueEdit,
 	queueMerge,
 	queueRemove,
 	queueResume,
@@ -821,6 +822,17 @@ queue
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueMerge);
+
+queue
+	.command('edit <item-id>')
+	.description(
+		'Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('-t, --text <text>', 'The new message text (required)')
+	.option('--model <model>', 'Model the message runs with')
+	.option('--effort <effort>', 'Effort the message runs with')
+	.action(queueEdit);
 
 queue
 	.command('steer <item-id>')
