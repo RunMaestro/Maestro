@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMockSession } from '../../../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	createMockSession,
+	createModeSession,
+	type AgentMode,
+} from '../../../../helpers/mockSession';
 import { buildAgentPanelCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from '../../../../../renderer/components/QuickActionsModal/commands/contextCommands';
@@ -1354,5 +1359,128 @@ describe('agent-switch window scoping', () => {
 		expect(roomCommands.find((a) => a.id === 'toggleStarTab')).toBeUndefined();
 		expect(roomCommands.find((a) => a.id === 'copySessionId')).toBeDefined();
 		expect(roomCommands.find((a) => a.id === 'markTabUnread')).toBeDefined();
+	});
+});
+
+describe('mode parity (local, SSH, hosted)', () => {
+	/** Every agent-scoped palette command the builders offer, as the palette lists it. */
+	function paletteFor(mode: AgentMode) {
+		const session = createModeSession(mode, {
+			id: 's1',
+			name: 'Atlas',
+			isGitRepo: true,
+			worktreeBranch: 'feat/x',
+			parentSessionId: 'parent',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+		});
+		const commands = [
+			...buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open in Finder',
+				platform: 'darwin',
+				openPath: vi.fn(),
+				shortcuts: {},
+			}),
+			...buildSessionManagementCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				sessions: [session],
+				setSessions,
+				setQuickActionOpen: close,
+				setRenameInstanceModalOpen: vi.fn(),
+				setRenameInstanceValue: vi.fn(),
+				deleteSession: vi.fn(),
+				openClearBookmarksConfirm: vi.fn(),
+			}),
+			...buildNewTabCommands({
+				activeSession: session,
+				onNewTab: vi.fn(),
+				setQuickActionOpen: close,
+			}),
+			...buildTabCommands({
+				activeSession: session,
+				isAiMode: true,
+				activeTabInfo: {
+					isTerminalMode: false,
+					hasActiveTab: true,
+					activeUnifiedIndex: 0,
+					unifiedTabCount: 1,
+					activeTabType: 'ai',
+				},
+				enterToSendAI: true,
+				onRenameTab: vi.fn(),
+				setQuickActionOpen: close,
+				shortcuts: {},
+				toggleInputMode: vi.fn(),
+			}),
+			...buildGitWorktreeCommands({
+				activeSession: session,
+				sessions: [createMockSession({ id: 'parent', name: 'Parent' }), session],
+				gitActions: {
+					isGitRepo: true,
+					branch: 'feat/x',
+					ahead: 0,
+					behind: 0,
+					canCreatePR: true,
+					canConfigureWorktrees: true,
+					changes: { fileCount: 1, additions: 2, deletions: 1, modified: 1 },
+					viewLog: vi.fn(),
+					viewDiff: vi.fn(),
+					pull: vi.fn(),
+					push: vi.fn(),
+					switchBranch: vi.fn(),
+					createPR: vi.fn(),
+					configureWorktrees: vi.fn(),
+				} as any,
+				setQuickActionOpen: close,
+				onQuickCreateWorktree: vi.fn(),
+				onOpenCreatePR: vi.fn(),
+				onRefreshGitFileState: vi.fn(),
+				shortcuts: {},
+				gitService: { getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
+				notifyToast: vi.fn(),
+				openUrl: vi.fn(),
+				logger: { error: vi.fn() },
+			}),
+		];
+		return commands.map(({ id, label, subtext, shortcut }) => ({ id, label, subtext, shortcut }));
+	}
+
+	it('offers SSH and hosted agents the same commands', () => {
+		const [local, ssh, hosted] = AGENT_MODES.map(paletteFor);
+		expect(hosted).toEqual(ssh);
+		// 🔒 The one difference from local: the working directory is on the remote, not
+		// this disk, so there is nothing for Finder to open.
+		expect(local.filter((c) => c.id !== 'openWorkingDirectory')).toEqual(ssh);
+		expect(local.map((c) => c.id)).toContain('openWorkingDirectory');
+		expect(ssh.map((c) => c.id)).not.toContain('openWorkingDirectory');
+	});
+
+	it('hides Open Working Directory for an SSH agent before its first spawn', () => {
+		const pending = createMockSession({
+			id: 's1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		} as any);
+		const ids = buildNavigationCommands({
+			activeSession: pending,
+			activeSessionId: 's1',
+			setQuickActionOpen: close,
+			setLeftSidebarOpen: vi.fn(),
+			setRightPanelOpen: vi.fn(),
+			addNewSession: vi.fn(),
+			deleteSession: vi.fn(),
+			getOpenInLabel: () => 'Open',
+			platform: 'darwin',
+			shortcuts: {},
+		}).map((a) => a.id);
+		expect(ids).not.toContain('openWorkingDirectory');
 	});
 });

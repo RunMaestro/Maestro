@@ -1,6 +1,7 @@
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
 import { areUnreadFiltersActive, toggleAllUnreadFilters } from '../../../services/unreadFilters';
+import { isSessionRemote } from '../../../utils/sessionHelpers';
 
 interface BuildNavigationCommandsArgs {
 	activeSession: Session | undefined;
@@ -156,7 +157,8 @@ export function buildNavigationCommands({
 		});
 	}
 
-	if (activeSession && !activeSession.sshRemote) {
+	// The working directory is on the remote for an SSH or hosted agent, not on this disk.
+	if (activeSession && !isSessionRemote(activeSession)) {
 		commands.push({
 			id: 'openWorkingDirectory',
 			label: `${getOpenInLabel(platform)}: Working Directory`,
