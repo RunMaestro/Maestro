@@ -84,6 +84,7 @@ import {
 	registerVoiceControl,
 	releaseVoiceControlRegistration,
 } from './acappella/voice-control';
+import { migrateLegacyTurnCredential } from '../../acappella/transport/ice-config';
 import {
 	createWakeHandlers,
 	disposeVoiceHotkeys,
@@ -148,6 +149,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// Before anything reads a provider id: an upgraded install can still hold the
 	// mock trio an early build persisted, and it outranks every default.
 	migrateLegacyVoiceProviders(settingsStore);
+	migrateLegacyTurnCredential(settingsStore);
 	watchRosterChanges();
 
 	const session = createSessionHandlers(deps);
