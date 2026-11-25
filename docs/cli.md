@@ -2541,7 +2541,7 @@ Before it acts, `lift` prints what moves and what stays. `--json` gives the same
 
 When the host's Maestro is an older build that cannot accept a moved agent, `lift` fails with `LIFT_HOST_TOO_OLD` and nothing moves. Update Maestro.app on the remote and relaunch it (or, with no desktop app there, run `maestro-cli remote-host install <remote> --restart --force`), then lift again.
 
-The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here.
+The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs and queued slash commands stay here. Images in the transcript and on queued messages move as their bytes; only an image whose file is gone from this machine's image store stays behind.
 
 ```bash
 maestro-cli lift docs --dry-run
