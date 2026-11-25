@@ -483,6 +483,7 @@ describe('tabs', () => {
 					saveToHistory: false,
 					enterToSend: null,
 					agentSessionId: 'wizard-session',
+					mergedContext: 'Additional context',
 				})
 			).toEqual({
 				readOnlyMode: true,
@@ -492,7 +493,14 @@ describe('tabs', () => {
 				saveToHistory: false,
 				enterToSend: null,
 				agentSessionId: 'wizard-session',
+				pendingMergedContext: 'Additional context',
 			});
+		});
+
+		it("holds a merge's context for the tab's next turn", () => {
+			const held = applyTabPatch(tab('t'), { pendingMergedContext: 'Additional context' });
+			expect(held.ok && held.value.pendingMergedContext).toBe('Additional context');
+			expect(applyTabPatch(tab('t'), { pendingMergedContext: 7 }).ok).toBe(false);
 		});
 
 		it("adopts a provider session and drops the old one's binding", () => {

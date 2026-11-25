@@ -130,6 +130,14 @@ describe('update_session_config', () => {
 		expect(tabs.find((tab) => tab.id === 't1')?.agentSessionId).toBe('wizard-session');
 	});
 
+	it("holds a merge's context on the tab for its next turn", async () => {
+		expect(await update({ tabId: 't1', pendingMergedContext: 'Additional context' })).toMatchObject(
+			{ type: 'update_session_config_result', success: true }
+		);
+		const tabs = (await stored()).aiTabs as Array<{ id: string; pendingMergedContext?: string }>;
+		expect(tabs.find((tab) => tab.id === 't1')?.pendingMergedContext).toBe('Additional context');
+	});
+
 	it('clears every allowlisted key on null', async () => {
 		for (const key of AGENT_EDITABLE_KEYS) {
 			expect(await update({ [key]: SAMPLE[key] }), key).toMatchObject({ success: true });

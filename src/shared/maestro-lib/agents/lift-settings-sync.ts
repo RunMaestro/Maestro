@@ -315,6 +315,10 @@ export const TAB_PATCH_FEDERATION: Readonly<Record<keyof TabPatch, FederationSet
 		scope: 'shared',
 		why: 'The conversation the host resumes on the next turn, for every conductor.',
 	},
+	mergedContext: {
+		scope: 'shared',
+		why: "Context the conversation's next turn carries (a merge), whoever sends it.",
+	},
 };
 
 /** Every personal tab choice a message can carry, so a new one is a compile error here too. */

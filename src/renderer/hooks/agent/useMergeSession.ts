@@ -39,7 +39,6 @@ import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
 import type { MergeState, TabMergeState } from '../../stores/operationStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { refuseOnHostedAgent } from '../../services/hostedTurns';
 import { estimateTokensFromLogs } from '../../../shared/formatters';
 import { logger } from '../../utils/logger';
 
@@ -723,16 +722,6 @@ export function useMergeSessionWithSessions(
 					error: `Target session not found: ${targetSessionId}`,
 				};
 			}
-			// Merging into an existing tab injects the context as pending context for the next send,
-			// which a hosted send does not carry. A merge into a new agent makes a plain SSH agent
-			// (no `liftedTo`), so only the in-place merge is refused.
-			if (!options.createNewSession && refuseOnHostedAgent(targetSession, 'Merge context')) {
-				return {
-					success: false,
-					error: 'Merge context is not available on hosted agents yet',
-				};
-			}
-
 			// Execute the merge
 			const result = await baseHook.startMerge({
 				sourceSession,

@@ -112,6 +112,49 @@ describe('hostedTurns', () => {
 		});
 	});
 
+	it("hands a merge's context to the host tab ahead of the send, and spends it here once sent", async () => {
+		hydrateHost();
+		const base = row();
+		const session = createMockSession({
+			...base,
+			aiTabs: [{ ...base.aiTabs[0], pendingMergedContext: 'Additional context' }, base.aiTabs[1]],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'update-tab', tabId: 't1' } })
+			.mockResolvedValueOnce({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+		expect(await sendHostedTurn(session, 't1', "I'm merging context", [])).toEqual({
+			status: 'started',
+		});
+		// The host prepends it to the turn's prompt, as a local send does; the message stays as typed.
+		expect(act$.mock.calls.map((call) => call[2])).toEqual([
+			{ kind: 'update-tab', tabId: 't1', patch: { mergedContext: 'Additional context' } },
+			expect.objectContaining({ kind: 'send', tabId: 't1', text: "I'm merging context" }),
+		]);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].pendingMergedContext).toBeUndefined();
+	});
+
+	it('keeps the context and sends nothing when the host refuses it', async () => {
+		hydrateHost();
+		const base = row();
+		const session = createMockSession({
+			...base,
+			aiTabs: [{ ...base.aiTabs[0], pendingMergedContext: 'Additional context' }, base.aiTabs[1]],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$.mockResolvedValueOnce({ ok: false, error: 'host is down' });
+
+		expect(await sendHostedTurn(session, 't1', 'go on', [])).toBeNull();
+		expect(act$).toHaveBeenCalledTimes(1);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].pendingMergedContext).toBe(
+			'Additional context'
+		);
+	});
+
 	it('Queue Held sends the message held, so the host queues it paused', async () => {
 		hydrateHost();
 		const queued = { status: 'queued', itemId: 'q1', position: 1, queueLength: 1 };
@@ -234,6 +277,34 @@ describe('hostedTurns', () => {
 		const shown = useSessionStore.getState().sessions[0];
 		expect(shown.aiTabs.map((tab) => tab.id)).toEqual(['t1', 't-fork', 'kept']);
 		expect(shown.unifiedTabOrder?.map((ref) => ref.id)).toEqual(['t1', 't-fork', 'kept']);
+	});
+
+	it('opens a compacted tab with no first turn, and in the background leaves the visible tab', async () => {
+		hydrateHost();
+		const session = row();
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-compact' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-compact' } });
+		const summary = { id: 's1', timestamp: 1, source: 'ai' as const, text: 'Summary' };
+		let tabId: string | null = null;
+		await act(async () => {
+			tabId = await startHostedConversation(session, {
+				afterTabId: 't1',
+				name: 'Docs Compacted',
+				fields: { logs: [summary] },
+				background: true,
+			});
+		});
+		expect(tabId).toBe('t-compact');
+		expect(act$.mock.calls.map((call) => call[2])).toEqual([
+			{ kind: 'new-tab' },
+			{ kind: 'rename-tab', tabId: 't-compact', name: 'Docs Compacted' },
+		]);
+		const shown = useSessionStore.getState().sessions[0];
+		expect(shown.aiTabs.map((tab) => tab.id)).toEqual(['t1', 't-compact', 'kept']);
+		expect(shown.aiTabs[1].logs).toEqual([summary]);
+		expect(shown.activeTabId).toBe('t1');
 	});
 
 	it('starts no conversation for an agent that is not hosted', async () => {

@@ -369,6 +369,12 @@ export interface TabPatch {
 	 * wizard promotes its session into its tab when it ends.
 	 */
 	agentSessionId?: string;
+	/**
+	 * Context the tab's next turn carries ahead of the typed message (`pendingMergedContext`), set
+	 * by Merge context, Send to Agent, and session recovery. The host prepends it to that turn's
+	 * prompt and clears it, as a local send does, so the transcript shows only the typed message.
+	 */
+	mergedContext?: string;
 }
 
 export interface TranscriptOptions {

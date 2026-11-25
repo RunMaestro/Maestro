@@ -64,6 +64,11 @@ export interface LogEntryRecord extends UnknownFields {
 	/** The model and effort the turn ran under; absent means the agent default. */
 	turnModel?: string;
 	turnEffort?: string;
+	/**
+	 * A "Session not found" entry's recovery card: the prompt that hit the dead session and the
+	 * tab to re-send it on, with the prior conversation as context.
+	 */
+	recoveryAction?: { lastUserPrompt: string; tabId: string };
 }
 
 function isLogEntryRecord(value: unknown): value is LogEntryRecord {

@@ -506,10 +506,10 @@ describe('the Federation decision table', () => {
 		expect([...syncedAgentPatchFields()].sort()).toEqual(shared);
 	});
 
-	it('shares no tab setting through tabs.update, only the conversation the tab resumes', () => {
+	it('shares no tab setting through tabs.update, only the conversation and its next context', () => {
 		const shared = Object.entries(TAB_PATCH_FEDERATION)
 			.filter(([, rule]) => rule.scope === 'shared')
 			.map(([field]) => field);
-		expect(shared).toEqual(['agentSessionId']);
+		expect(shared).toEqual(['agentSessionId', 'mergedContext']);
 	});
 });

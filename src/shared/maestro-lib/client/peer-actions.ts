@@ -590,6 +590,7 @@ const TAB_PATCH_CHECKS: Record<keyof TabPatch, FieldCheck> = {
 	saveToHistory: isBoolean,
 	enterToSend: orNull(isBoolean),
 	agentSessionId: isNonEmptyString,
+	mergedContext: isNonEmptyString,
 };
 
 const TURN_OVERRIDE_CHECKS: Record<keyof TurnOverrides, FieldCheck> = {

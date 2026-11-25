@@ -44,13 +44,20 @@ describe('mirrorLogEntry', () => {
 		expect(mapped.turnModel).toBe('gpt-5');
 	});
 
-	it('does not carry cross-agent jumps, recovery actions, or agent errors', () => {
+	it("carries the host's session recovery card, so the tab draws the same one", () => {
+		const recoveryAction = { lastUserPrompt: 'retry this', tabId: 't1' };
+		expect(
+			mirrorLogEntry(entry('e4', 'Session not found', { recoveryAction })).recoveryAction
+		).toEqual(recoveryAction);
+	});
+
+	it('does not carry cross-agent jumps, malformed recovery actions, or agent errors', () => {
 		const mapped = mirrorLogEntry(
 			entry('e3', 'x', {
 				metadata: { crossAgent: { requestId: 'r', fromSessionId: 'host-agent' } },
 				recoveryAction: { kind: 'resume' },
 				agentError: { type: 'unknown', message: 'boom' },
-			} as Partial<LogEntryRecord>)
+			} as unknown as Partial<LogEntryRecord>)
 		) as unknown as Record<string, unknown>;
 		expect(mapped.recoveryAction).toBeUndefined();
 		expect(mapped.agentError).toBeUndefined();

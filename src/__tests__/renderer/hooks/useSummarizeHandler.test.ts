@@ -65,6 +65,11 @@ import { createTabAtPosition } from '../../../renderer/utils/tabHelpers';
 import { useOperationStore } from '../../../renderer/stores/operationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -189,8 +194,98 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 		);
 	});
 
-	it('refuses on a hosted agent before any summarization', async () => {
+	it.each(['local', 'ssh', 'hosted'] as const)(
+		'a %s agent compacts into the same tab, in the same place, with the same toast',
+		async (mode) => {
+			const federationAct = vi.fn(async (_peer: string, _agent: string, action: any) =>
+				action.kind === 'new-tab'
+					? { ok: true, result: { kind: 'new-tab', tabId: 'new-tab-1' } }
+					: { ok: true, result: { kind: 'rename-tab', tabId: action.tabId } }
+			);
+			if (mode === 'hosted') {
+				useSettingsStore.setState({ federationHostedAgents: true });
+				const { peer } = replacePeerAgents(
+					createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					[{ id: 'h1', name: 'Agent', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+					[],
+					1
+				);
+				usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+				(window as any).maestro.federation = { act: federationAct };
+			}
+			try {
+				const session = createMockSession({
+					...(mode === 'local'
+						? {}
+						: { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+					...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+				});
+				seedActiveSession(session);
+				const { result } = renderHook(() => useSummarizeAndContinue());
+
+				let outcome;
+				await act(async () => {
+					outcome = await result.current.summarizeTab(session.id, 'tab-1');
+				});
+
+				expect(outcome).toEqual({
+					success: true,
+					sessionId: session.id,
+					tabId: 'tab-1',
+					newTabId: 'new-tab-1',
+					reductionPercent: 70,
+				});
+				// The same summary, over the same SSH remote for SSH and hosted (the record keeps it).
+				expect(contextSummarizationService.summarizeContext).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sshRemoteConfig: mode === 'local' ? undefined : { enabled: true, remoteId: 'r1' },
+					}),
+					expect.any(Array),
+					expect.any(Function)
+				);
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'new-tab-1']);
+				expect(updated.activeTabId).toBe('new-tab-1');
+				const compacted = updated.aiTabs[1];
+				expect(compacted.name).toBe('Tab 1 Compacted');
+				expect(compacted.logs.map((log) => log.text)).toEqual(['compacted']);
+				expect(updated.aiTabs[0].logs.at(-1)?.text).toContain(
+					'Context summarized and continued in new tab "Tab 1 Compacted"'
+				);
+				expect(notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'success', title: 'Context Compacted' })
+				);
+
+				// Only where the tab lives differs: here, or on the host.
+				if (mode === 'hosted') {
+					expect(createTabAtPosition).not.toHaveBeenCalled();
+					expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
+						{ kind: 'new-tab' },
+						{ kind: 'rename-tab', tabId: 'new-tab-1', name: 'Tab 1 Compacted' },
+					]);
+				} else {
+					expect(createTabAtPosition).toHaveBeenCalledTimes(1);
+				}
+			} finally {
+				useSettingsStore.setState({ federationHostedAgents: false });
+				usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState(), true);
+				delete (window as any).maestro.federation;
+			}
+		}
+	);
+
+	it('opens no compacted tab when the host refuses it', async () => {
 		useSettingsStore.setState({ federationHostedAgents: true });
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Agent', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		(window as any).maestro.federation = {
+			act: vi.fn().mockResolvedValue({ ok: false, error: 'host is down' }),
+		};
 		try {
 			const session = createMockSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
 			seedActiveSession(session);
@@ -201,17 +296,15 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 				outcome = await result.current.summarizeTab(session.id, 'tab-1');
 			});
 
-			expect(outcome).toMatchObject({
-				success: false,
-				error: 'Summarize & Continue is not available on hosted agents yet',
-			});
-			expect(contextSummarizationService.summarizeContext).not.toHaveBeenCalled();
-			// The refusal comes ahead of the size check and startSummarize, so neither of their toasts follows.
-			expect(notifyToast).not.toHaveBeenCalledWith(
-				expect.objectContaining({ title: 'Cannot Compact' })
+			expect(outcome).toMatchObject({ success: false });
+			expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(1);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'error', title: 'Compaction Failed' })
 			);
 		} finally {
 			useSettingsStore.setState({ federationHostedAgents: false });
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState(), true);
+			delete (window as any).maestro.federation;
 		}
 	});
 

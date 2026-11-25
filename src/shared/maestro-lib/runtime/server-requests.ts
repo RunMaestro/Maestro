@@ -123,6 +123,7 @@ export function tabPatchFromConfig(config: Record<string, unknown>): TabPatch {
 	take('saveToHistory', 'saveToHistory');
 	take('enterToSend', 'enterToSend');
 	take('agentSessionId', 'agentSessionId');
+	take('pendingMergedContext', 'mergedContext');
 	return patch as TabPatch;
 }
 

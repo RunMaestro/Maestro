@@ -667,6 +667,7 @@ export const TAB_EDITABLE_KEYS: Readonly<Record<string, 'boolean' | 'string' | '
 	customModel: 'string',
 	customEffort: 'string',
 	agentSessionId: 'string',
+	pendingMergedContext: 'string',
 };
 
 /** The record-keyed form of a `TabPatch`: the keys the tab stores, with `null` still meaning "clear". */
@@ -679,6 +680,7 @@ export function buildTabConfigPatch(patch: TabPatch): Record<string, unknown> {
 	if (patch.saveToHistory !== undefined) out.saveToHistory = patch.saveToHistory;
 	if (patch.enterToSend !== undefined) out.enterToSend = patch.enterToSend;
 	if (patch.agentSessionId !== undefined) out.agentSessionId = patch.agentSessionId;
+	if (patch.mergedContext !== undefined) out.pendingMergedContext = patch.mergedContext;
 	return out;
 }
 

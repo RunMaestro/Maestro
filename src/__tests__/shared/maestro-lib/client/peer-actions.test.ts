@@ -515,6 +515,14 @@ describe('parsePeerAgentAction', () => {
 				patch: { agentSessionId: 'wizard-session' },
 			})
 		).toEqual({ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: 'wizard-session' } });
+		// A merge into a hosted tab hands the host the context for the tab's next turn.
+		expect(
+			parsePeerAgentAction({
+				kind: 'update-tab',
+				tabId: 't1',
+				patch: { mergedContext: 'Additional context' },
+			})
+		).toEqual({ kind: 'update-tab', tabId: 't1', patch: { mergedContext: 'Additional context' } });
 	});
 
 	it('refuses a settings patch with an unknown field, a bad value, or nothing in it', () => {
@@ -549,6 +557,9 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: '' } })
 		).toThrow("Invalid value for tab settings field 'agentSessionId'");
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { mergedContext: '' } })
+		).toThrow("Invalid value for tab settings field 'mergedContext'");
 	});
 
 	it('carries Queue Held through to turns.send, and reads it only as a strict true', async () => {
