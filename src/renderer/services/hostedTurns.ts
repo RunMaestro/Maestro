@@ -10,19 +10,25 @@
  * - `openHostedTab()`, `closeHostedTab()`, `renameHostedTab()`, `starHostedTab()`: the strip.
  * - `updateHostedTab()`: a tab setting the host must hold before a turn starts (thinking).
  * - `settleHostedWizardTab()`: a wizard that ran here hands its tab name and session to the host.
+ * - `startHostedAutoRun()`, `controlHostedAutoRun()`: the Auto Run panel's Run, Stop, and pause
+ *   choices. The host runs the loop; its progress draws here as this record's run
+ *   (`hostedAgentSync.ts`).
  * - `refuseOnHostedAgent()`: an action that would spawn here, refused with a toast.
  *
  * Every call goes through `services/peerMirror.ts` (`actOnMirroredAgent()`), which toasts a
  * failure and never queues here: a host that is down refuses at once.
  */
 
+import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
+import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { BatchRunConfig } from '../../shared/types';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -255,4 +261,70 @@ export function starHostedTab(
 	if (target && isHostTab(target, tabId)) {
 		void starMirrorTab(target.peerId, target.agentId, tabId, starred);
 	}
+}
+
+/**
+ * Start an Auto Run on the host: the Auto Run panel's Run for a hosted agent. The host runs the
+ * loop, as it does for `maestro-cli auto-run`, over the same documents (its own Auto Run folder,
+ * which the record reads over SSH), prompt, loop, model, and effort. True when the host took it;
+ * a refusal shows as a toast. A no-op (false) for an agent that is not hosted.
+ *
+ * Not carried: a worktree, the task selection mode, and the auto-resume policy. The host runs the
+ * documents in its own checkout, in order, with its own auto-resume settings.
+ */
+export async function startHostedAutoRun(
+	session: Pick<Session, 'name' | 'liftedTo' | 'autoRunFolderPath'>,
+	config: BatchRunConfig,
+	folderPath: string
+): Promise<boolean> {
+	const target = hostedTargetOf(session);
+	if (!target) return false;
+	const goal = config.goalConfig;
+	if (goal) {
+		const result = await actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'goal-run',
+			launch: {
+				goal: goal.goal,
+				...(goal.exitCriteria.trim() ? { exitCriteria: goal.exitCriteria } : {}),
+				maxIterations: goal.maxIterations,
+				...(config.model ? { model: config.model } : {}),
+				...(config.effort ? { effort: config.effort } : {}),
+			},
+		});
+		return result?.kind === 'goal-run';
+	}
+	// The host works out each name under its own folder, so name each document by its full path.
+	const hostFolder = target.agent?.autoRunFolderPath || session.autoRunFolderPath || folderPath;
+	const result = await actOnMirroredAgent(target.peerId, target.agentId, {
+		kind: 'auto-run',
+		launch: {
+			documents: config.documents.map((document) => ({
+				file: joinPath(hostFolder, `${document.filename}.md`),
+				...(document.resetOnCompletion ? { resetOnCompletion: true } : {}),
+			})),
+			...(config.loopEnabled ? { loop: true } : {}),
+			...(config.loopEnabled && typeof config.maxLoops === 'number'
+				? { maxLoops: config.maxLoops }
+				: {}),
+			...(config.model ? { model: config.model } : {}),
+			...(config.effort ? { effort: config.effort } : {}),
+			...(config.prompt.trim() ? { prompt: config.prompt } : {}),
+			...(config.ignoreModelHints ? { ignoreModelHints: true } : {}),
+		},
+	});
+	return result?.kind === 'auto-run';
+}
+
+/**
+ * Stop a hosted agent's run, or answer its pause, on the host that runs it. A refusal shows as a
+ * toast. False for an agent that is not hosted, so the caller acts on its own run instead.
+ */
+export function controlHostedAutoRun(
+	session: Pick<Session, 'liftedTo'> | null | undefined,
+	control: AutoRunControl
+): boolean {
+	const target = hostedTargetOf(session);
+	if (!target) return false;
+	void actOnMirroredAgent(target.peerId, target.agentId, { kind: 'auto-run-control', control });
+	return true;
 }

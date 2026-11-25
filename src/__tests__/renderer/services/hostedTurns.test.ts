@@ -8,6 +8,7 @@ import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	closeHostedTab,
+	controlHostedAutoRun,
 	hostedTargetOf,
 	hostingEnabled,
 	hostedTurnOverrides,
@@ -15,6 +16,7 @@ import {
 	openHostedTab,
 	sendHostedTurn,
 	settleHostedWizardTab,
+	startHostedAutoRun,
 	starHostedTab,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -214,5 +216,95 @@ describe('hostedTurns', () => {
 		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
 		settleHostedWizardTab('row', 't1');
 		expect(act$).not.toHaveBeenCalled();
+	});
+});
+
+describe('hosted Auto Run', () => {
+	const runConfig = {
+		documents: [
+			{ id: 'd1', filename: 'phase-1', resetOnCompletion: false, isDuplicate: false },
+			{ id: 'd2', filename: 'nested/phase-2', resetOnCompletion: true, isDuplicate: false },
+		],
+		prompt: 'Work the tasks',
+		loopEnabled: true,
+		maxLoops: 3,
+		model: 'opus',
+		effort: 'high',
+		ignoreModelHints: true,
+	};
+
+	beforeEach(() => {
+		resetStores(usePeerMirrorStore, useSessionStore);
+		useSettingsStore.setState({ federationHostedAgents: true });
+		act$.mockReset();
+		maestro.federation = { act: act$ };
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[
+				{
+					id: 'h1',
+					name: 'Docs',
+					toolType: 'claude-code',
+					autoRunFolderPath: '/home/me/docs',
+					aiTabs: [{ id: 't1' }],
+				},
+			],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+	});
+
+	afterEach(() => {
+		delete maestro.federation;
+	});
+
+	it('starts the run on the host over its own folder, with the run choices made here', async () => {
+		act$.mockResolvedValue({ ok: true, result: { kind: 'auto-run' } });
+		await expect(startHostedAutoRun(row(), runConfig, '/local/copy')).resolves.toBe(true);
+		expect(act$).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'auto-run',
+			launch: {
+				documents: [
+					{ file: '/home/me/docs/phase-1.md' },
+					{ file: '/home/me/docs/nested/phase-2.md', resetOnCompletion: true },
+				],
+				loop: true,
+				maxLoops: 3,
+				model: 'opus',
+				effort: 'high',
+				prompt: 'Work the tasks',
+				ignoreModelHints: true,
+			},
+		});
+	});
+
+	it('starts a goal run on the host', async () => {
+		act$.mockResolvedValue({ ok: true, result: { kind: 'goal-run', tabId: 't9' } });
+		const goal = {
+			...runConfig,
+			goalConfig: { goal: 'Ship it', exitCriteria: '', maxIterations: null },
+		};
+		await expect(startHostedAutoRun(row(), goal, '/local/copy')).resolves.toBe(true);
+		expect(act$).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'goal-run',
+			launch: { goal: 'Ship it', maxIterations: null, model: 'opus', effort: 'high' },
+		});
+	});
+
+	it('answers false when the host refused, and does nothing for an agent that is not hosted', async () => {
+		act$.mockResolvedValue({ ok: false, error: 'busy' });
+		await expect(startHostedAutoRun(row(), runConfig, '/x')).resolves.toBe(false);
+		act$.mockReset();
+		const local = createMockSession({ id: 'local', liftedTo: undefined });
+		await expect(startHostedAutoRun(local, runConfig, '/x')).resolves.toBe(false);
+		expect(controlHostedAutoRun(local, 'stop')).toBe(false);
+		expect(act$).not.toHaveBeenCalled();
+	});
+
+	it('sends a control to the host', () => {
+		act$.mockResolvedValue({ ok: true, result: { kind: 'auto-run-control', control: 'skip' } });
+		expect(controlHostedAutoRun(row(), 'skip')).toBe(true);
+		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'auto-run-control', control: 'skip' });
 	});
 });

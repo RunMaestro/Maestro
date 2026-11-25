@@ -88,6 +88,9 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'side-question': 'Could not ask the side question',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
+	'auto-run': 'Auto Run did not start',
+	'goal-run': 'Auto Run did not start',
+	'auto-run-control': 'Auto Run control failed',
 };
 
 /** What the main-process service answered for one action (`PeerMirrorService.act()`). */

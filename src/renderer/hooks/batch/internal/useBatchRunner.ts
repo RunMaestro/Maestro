@@ -74,7 +74,6 @@ import type {
 	DocumentRunOverrides,
 	UseDocumentProcessorReturn,
 } from '../useDocumentProcessor';
-import { refuseOnHostedAgent } from '../../../services/hostedTurns';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -234,10 +233,6 @@ export function useBatchRunner({
 				);
 				return;
 			}
-			// Every task spawns the provider here, which main refuses for a hosted agent, so the run
-			// would fail task by task. Refuse once, before any state changes.
-			if (refuseOnHostedAgent(session, 'Auto Run')) return;
-
 			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
 
 			// Continuing a run the app quit in the middle of (an update restart). A

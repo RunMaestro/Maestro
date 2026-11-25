@@ -9,7 +9,9 @@
 // (`merge_queue_item`), `turns.queue.steer` (`steer_queue_item`), `turns.queue.edit`
 // (`edit_queue_item`), `turns.queue.move` (`move_queue_item`), and `turns.queue.sendNow`
 // (`send_queue_item_now`). A `/btw` side question is `consults.ask` with `sideQuestion`
-// (`cross_agent_ask`): the host forks its own tab, as a `/btw` typed there does. The CLI reaches the host over its own short-lived forward
+// (`cross_agent_ask`): the host forks its own tab, as a `/btw` typed there does. Auto Run is
+// `autoRun.launch` (`configure_auto_run`), `autoRun.launchGoal` (`launch_goal_run`), and the run's
+// controls `autoRun.stop` / `resume` / `skip` / `abort`: the host runs the loop. The CLI reaches the host over its own short-lived forward
 // (`withPeerAgent()`), the desktop over the mirror service's held one; both run the action
 // through `runPeerAgentAction()`, so there is one copy.
 //
@@ -19,6 +21,12 @@
 
 import type { QueueSteerResult } from '../../chatSteering';
 import { isCodexTransport } from '../../codexTransport';
+import {
+	validateAutoRunLaunch,
+	validateGoalRunLaunch,
+	type AutoRunLaunchInput,
+	type GoalRunLaunchInput,
+} from '../autorun/launch';
 import { asThinkingMode } from '../../types';
 import { isHarnessControlMode } from '../providers/native-control';
 import type { AgentRecord } from '../store/records';
@@ -85,7 +93,18 @@ export type PeerAgentAction =
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
-	| { kind: 'update-tab'; tabId: string; patch: TabPatch };
+	| { kind: 'update-tab'; tabId: string; patch: TabPatch }
+	/** Start a document Auto Run on the host. Documents are absolute paths in the host's folder. */
+	| { kind: 'auto-run'; launch: AutoRunLaunchInput }
+	/** Start a goal-driven Auto Run on the host. */
+	| { kind: 'goal-run'; launch: GoalRunLaunchInput }
+	/** Stop the host's run, or answer its pause (resume, skip the document, abort). */
+	| { kind: 'auto-run-control'; control: AutoRunControl };
+
+/** What a person can do to a running Auto Run from another machine. */
+export type AutoRunControl = 'stop' | 'resume' | 'skip' | 'abort';
+
+const AUTO_RUN_CONTROLS: readonly AutoRunControl[] = ['stop', 'resume', 'skip', 'abort'];
 
 export type PeerAgentActionKind = PeerAgentAction['kind'];
 
@@ -119,7 +138,13 @@ export type PeerAgentActionResult =
 	| { kind: 'send-now-queued'; itemId: string; sent: boolean }
 	| { kind: 'side-question'; tabId: string; answer: string }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
-	| { kind: 'update-tab'; tabId: string };
+	| { kind: 'update-tab'; tabId: string }
+	/** The host accepted the launch; the run's progress arrives as `autorun` events. */
+	| { kind: 'auto-run' }
+	/** `tabId`: the tab the host shows the goal run on, when it says. */
+	| { kind: 'goal-run'; tabId?: string }
+	/** The host took the control; the run's `autorun` events show it land. */
+	| { kind: 'auto-run-control'; control: AutoRunControl };
 
 /** The agent fields an action reads: interrupt picks the busy tabs from the record. */
 export type PeerActionAgent = Pick<AgentRecord, 'id' | 'aiTabs'>;
@@ -141,6 +166,9 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'side-question',
 	'update-agent',
 	'update-tab',
+	'auto-run',
+	'goal-run',
+	'auto-run-control',
 ];
 
 /**
@@ -297,6 +325,28 @@ export async function runPeerAgentAction(
 				? { ok: true, value: { kind: 'update-tab', tabId: action.tabId } }
 				: updated;
 		}
+		case 'auto-run': {
+			const launched = await client.autoRun.launch(agent.id, action.launch);
+			return launched.ok ? { ok: true, value: { kind: 'auto-run' } } : launched;
+		}
+		case 'goal-run': {
+			const launched = await client.autoRun.launchGoal(agent.id, action.launch);
+			return launched.ok
+				? {
+						ok: true,
+						value: {
+							kind: 'goal-run',
+							...(launched.value.tabId ? { tabId: launched.value.tabId } : {}),
+						},
+					}
+				: launched;
+		}
+		case 'auto-run-control': {
+			const controlled = await client.autoRun[action.control](agent.id);
+			return controlled.ok
+				? { ok: true, value: { kind: 'auto-run-control', control: action.control } }
+				: controlled;
+		}
 	}
 }
 
@@ -406,7 +456,86 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			return { kind, patch: parseAgentPatch(value.patch) };
 		case 'update-tab':
 			return { kind, tabId: tabId(), patch: parseTabPatch(value.patch) };
+		case 'auto-run':
+			return { kind, launch: parseAutoRunLaunch(value.launch) };
+		case 'goal-run':
+			return { kind, launch: parseGoalRunLaunch(value.launch) };
+		case 'auto-run-control': {
+			const control = value.control as AutoRunControl;
+			if (!AUTO_RUN_CONTROLS.includes(control)) {
+				throw new Error(`Unknown Auto Run control: ${String(value.control)}`);
+			}
+			return { kind, control };
+		}
 	}
+}
+
+function launchRecord(raw: unknown): Record<string, unknown> {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Missing launch');
+	return raw as Record<string, unknown>;
+}
+
+function optionalString(record: Record<string, unknown>, field: string): string | undefined {
+	const value = record[field];
+	if (value === undefined) return undefined;
+	if (typeof value !== 'string') throw new Error(`${field} must be text`);
+	return value;
+}
+
+function optionalCount(record: Record<string, unknown>, field: string): number | null | undefined {
+	const value = record[field];
+	if (value === undefined || value === null) return value;
+	if (typeof value !== 'number') throw new Error(`${field} must be a number`);
+	return value;
+}
+
+/** A document run's launch, each field checked for its type, then by the launch rule itself. */
+function parseAutoRunLaunch(raw: unknown): AutoRunLaunchInput {
+	const record = launchRecord(raw);
+	if (!Array.isArray(record.documents)) throw new Error('documents must be a list');
+	const documents = record.documents.map((document) => {
+		if (!document || typeof document !== 'object') throw new Error('A document has no file.');
+		const entry = document as Record<string, unknown>;
+		if (typeof entry.file !== 'string') throw new Error('A document has no file.');
+		return {
+			file: entry.file,
+			...(entry.resetOnCompletion === true ? { resetOnCompletion: true } : {}),
+		};
+	});
+	const maxLoops = optionalCount(record, 'maxLoops');
+	const model = optionalString(record, 'model');
+	const effort = optionalString(record, 'effort');
+	const prompt = optionalString(record, 'prompt');
+	const checked = validateAutoRunLaunch({
+		documents,
+		...(record.loop === true ? { loop: true } : {}),
+		...(maxLoops !== undefined ? { maxLoops } : {}),
+		...(model !== undefined ? { model } : {}),
+		...(effort !== undefined ? { effort } : {}),
+		...(prompt !== undefined ? { prompt } : {}),
+		...(record.ignoreModelHints === true ? { ignoreModelHints: true } : {}),
+	});
+	if (!checked.ok) throw new Error(checked.reason);
+	return checked.value;
+}
+
+/** A goal run's launch, each field checked for its type, then by the launch rule itself. */
+function parseGoalRunLaunch(raw: unknown): GoalRunLaunchInput {
+	const record = launchRecord(raw);
+	if (typeof record.goal !== 'string') throw new Error('Say what the run should achieve.');
+	const exitCriteria = optionalString(record, 'exitCriteria');
+	const maxIterations = optionalCount(record, 'maxIterations');
+	const model = optionalString(record, 'model');
+	const effort = optionalString(record, 'effort');
+	const checked = validateGoalRunLaunch({
+		goal: record.goal,
+		...(exitCriteria !== undefined ? { exitCriteria } : {}),
+		...(maxIterations !== undefined ? { maxIterations } : {}),
+		...(model !== undefined ? { model } : {}),
+		...(effort !== undefined ? { effort } : {}),
+	});
+	if (!checked.ok) throw new Error(checked.reason);
+	return checked.value;
 }
 
 type FieldCheck = (value: unknown) => boolean;

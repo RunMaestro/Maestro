@@ -41,6 +41,7 @@ import {
 	type GoalRunLaunchInput,
 } from '../autorun/launch';
 import { parseAutoRunProgress } from '../autorun/progress';
+import { parseAutoRunBroadcastState } from '../../autoRunBroadcast';
 import {
 	parseGroupChatFrame,
 	parseGroupChatRecord,
@@ -1023,7 +1024,12 @@ class WsMaestroClient implements MaestroClient {
 				this.emit({
 					type: 'autorun',
 					agentId,
-					event: { kind: 'state', at: this.now(), state: parseAutoRunProgress(frame.state) },
+					event: {
+						kind: 'state',
+						at: this.now(),
+						state: parseAutoRunProgress(frame.state),
+						frame: parseAutoRunBroadcastState(frame.state),
+					},
 				});
 				break;
 			}

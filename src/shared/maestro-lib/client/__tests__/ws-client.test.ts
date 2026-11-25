@@ -1940,6 +1940,8 @@ describe('createWsMaestroClient', () => {
 					completedTasks: 0,
 					currentTaskIndex: 0,
 					documents: ['one'],
+					lockedDocuments: ['one', 7],
+					initialCompletedTasks: 'x',
 				},
 				timestamp: 1,
 			});
@@ -1949,7 +1951,19 @@ describe('createWsMaestroClient', () => {
 				kind: 'state',
 				state: { isRunning: true, documents: ['one'], tasksTotal: 2 },
 			});
-			expect(autoRunEvents()[1]).toMatchObject({ kind: 'state', state: null });
+			// The frame itself, read field by field, for a client that draws the same card.
+			expect(autoRunEvents()[0]).toMatchObject({
+				frame: {
+					isRunning: true,
+					totalTasks: 2,
+					completedTasks: 0,
+					currentTaskIndex: 0,
+					documents: ['one'],
+					lockedDocuments: ['one'],
+				},
+			});
+			expect(autoRunEvents()[0]).not.toHaveProperty('frame.initialCompletedTasks');
+			expect(autoRunEvents()[1]).toMatchObject({ kind: 'state', state: null, frame: null });
 			expect(events.every((event) => event.type !== 'turn')).toBe(true);
 		});
 

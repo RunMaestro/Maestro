@@ -55,6 +55,14 @@ function fakeClient() {
 		consults: {
 			ask: vi.fn(async () => ok({ answer: 'src/foo.ts', agentName: 'docs' })),
 		},
+		autoRun: {
+			launch: vi.fn(async () => ok(undefined)),
+			launchGoal: vi.fn(async () => ok({ tabId: 't-goal' })),
+			stop: vi.fn(async () => ok(undefined)),
+			resume: vi.fn(async () => ok(undefined)),
+			skip: vi.fn(async () => ok(undefined)),
+			abort: vi.fn(async () => ok(undefined)),
+		},
 	};
 	return { client, asClient: client as unknown as MaestroClient };
 }
@@ -704,6 +712,92 @@ describe('peerActionErrorMessage', () => {
 	it('names the peer for a host refusal', () => {
 		expect(peerActionErrorMessage('build', { code: 'not-found', message: 'No such tab' })).toBe(
 			'Peer "build": No such tab'
+		);
+	});
+});
+
+describe('Auto Run actions', () => {
+	const launch = { documents: [{ file: '/docs/phase-1.md' }], prompt: 'Work it' };
+
+	it('starts a run with autoRun.launch and a goal run with autoRun.launchGoal', async () => {
+		const { client, asClient } = fakeClient();
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'auto-run', launch })).toEqual(
+			ok({ kind: 'auto-run' })
+		);
+		expect(client.autoRun.launch).toHaveBeenCalledWith('a1', launch);
+		const goal = { goal: 'Ship it', maxIterations: null };
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'goal-run', launch: goal })).toEqual(
+			ok({ kind: 'goal-run', tabId: 't-goal' })
+		);
+		expect(client.autoRun.launchGoal).toHaveBeenCalledWith('a1', goal);
+	});
+
+	it.each(['stop', 'resume', 'skip', 'abort'] as const)(
+		'sends the %s control to the same client method',
+		async (control) => {
+			const { client, asClient } = fakeClient();
+			expect(
+				await runPeerAgentAction(asClient, agent, { kind: 'auto-run-control', control })
+			).toEqual(ok({ kind: 'auto-run-control', control }));
+			expect(client.autoRun[control]).toHaveBeenCalledWith('a1');
+		}
+	);
+
+	it('reads a launch that crossed IPC, checked by the launch rules', () => {
+		expect(
+			parsePeerAgentAction({
+				kind: 'auto-run',
+				launch: {
+					documents: [{ file: '/docs/a.md', resetOnCompletion: true, extra: 1 }],
+					loop: true,
+					maxLoops: 2,
+					model: ' ',
+					prompt: 'Go',
+				},
+			})
+		).toEqual({
+			kind: 'auto-run',
+			launch: {
+				documents: [{ file: '/docs/a.md', resetOnCompletion: true }],
+				loop: true,
+				maxLoops: 2,
+				prompt: 'Go',
+			},
+		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'goal-run',
+				launch: { goal: ' Ship ', exitCriteria: '', maxIterations: null },
+			})
+		).toEqual({ kind: 'goal-run', launch: { goal: 'Ship', maxIterations: null } });
+		expect(parsePeerAgentAction({ kind: 'auto-run-control', control: 'skip' })).toEqual({
+			kind: 'auto-run-control',
+			control: 'skip',
+		});
+	});
+
+	it('refuses a bad launch or control before any host call', () => {
+		expect(() => parsePeerAgentAction({ kind: 'auto-run' })).toThrow('Missing launch');
+		expect(() => parsePeerAgentAction({ kind: 'auto-run', launch: { documents: 'a' } })).toThrow(
+			'documents must be a list'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'auto-run', launch: { documents: [] } })).toThrow(
+			'Pick at least one document.'
+		);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'auto-run', launch: { documents: [{ file: 3 }] } })
+		).toThrow('A document has no file.');
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'auto-run',
+				launch: { documents: [{ file: '/a.md' }], maxLoops: '2' },
+			})
+		).toThrow('maxLoops must be a number');
+		expect(() => parsePeerAgentAction({ kind: 'goal-run', launch: { goal: ' ' } })).toThrow(
+			'Say what the run should achieve.'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'auto-run-control', control: 'kill' })).toThrow(
+			'Unknown Auto Run control: kill'
 		);
 	});
 });
