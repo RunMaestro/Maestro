@@ -35,6 +35,7 @@ import {
 	setQueuedItemPaused,
 	editQueuedItem,
 	mergeQueuedItemIntoAbove,
+	moveQueuedItem,
 } from '../../services/queuedPrompt';
 import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
@@ -1736,6 +1737,48 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "move queue item" from the CLI (`queue move`) or a client's
+		// hosted queued card's drag. Same move the drag runs.
+		const unsubscribeMoveQueueItem = window.maestro.process.onRemoteMoveQueueItem?.(
+			(sessionId, itemId, toIndex, tabId, responseChannel) => {
+				try {
+					const moved = moveQueuedItem(sessionId, itemId, toIndex, tabId ?? undefined);
+					window.maestro.process.sendRemoteMoveQueueItemResponse(responseChannel, {
+						success: true,
+						moved,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteMoveQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteMoveQueueItemResponse(responseChannel, {
+						success: false,
+						moved: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "send queue item now" from the CLI (`queue send-now`) or a
+		// client's hosted queued card's Force Send. Same send the Force Send button runs.
+		const unsubscribeSendQueueItemNow = window.maestro.process.onRemoteSendQueueItemNow?.(
+			(sessionId, itemId, responseChannel) => {
+				try {
+					const sent = sendQueuedItemNow(sessionId, itemId);
+					window.maestro.process.sendRemoteSendQueueItemNowResponse(responseChannel, {
+						success: true,
+						sent,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteSendQueueItemNow failed:', undefined, error);
+					window.maestro.process.sendRemoteSendQueueItemNowResponse(responseChannel, {
+						success: false,
+						sent: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
 		// steerQueuedItem() the Steer button does, so the queue removal and the later
 		// re-queue on a `dropped` verdict happen exactly as they do for a click.
@@ -1784,6 +1827,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSetQueueItemPaused?.();
 			unsubscribeMergeQueueItem?.();
 			unsubscribeEditQueueItem?.();
+			unsubscribeMoveQueueItem?.();
+			unsubscribeSendQueueItemNow?.();
 		};
 	}, [
 		sessionsRef,

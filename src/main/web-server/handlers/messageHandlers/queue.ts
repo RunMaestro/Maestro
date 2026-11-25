@@ -3,7 +3,7 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
  * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused,
- * merge_queue_item, edit_queue_item.
+ * merge_queue_item, edit_queue_item, move_queue_item, send_queue_item_now.
  */
 
 import { logger } from '../../../utils/logger';
@@ -593,6 +593,90 @@ export function handleEditQueueItem(
 				success: false,
 				found: false,
 				error: `Failed to edit queue item: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle move_queue_item message - move a queued item to another place, the same
+ * thing the queued card's drag does. Used by `maestro-cli queue move` and by a
+ * client's hosted queued card. With `tabId`, `toIndex` counts that tab's items only.
+ */
+export function handleMoveQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const tabId = typeof message.tabId === 'string' && message.tabId ? message.tabId : undefined;
+	const toIndex = message.toIndex;
+	const reply = (result: { success: boolean; moved: boolean; error?: string }) =>
+		ctx.send(client, { type: 'move_queue_item_result', ...result, requestId: message.requestId });
+	if (!sessionId || !itemId) {
+		reply({ success: false, moved: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	if (typeof toIndex !== 'number' || !Number.isInteger(toIndex) || toIndex < 0) {
+		reply({ success: false, moved: false, error: 'toIndex must be a whole number, 0 or more' });
+		return;
+	}
+	if (!ctx.callbacks.moveQueueItem) {
+		reply({ success: false, moved: false, error: 'Move queue item not configured' });
+		return;
+	}
+	ctx.callbacks
+		.moveQueueItem(sessionId, itemId, toIndex, tabId)
+		.then(reply)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'move_queue_item', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				moved: false,
+				error: `Failed to move queue item: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle send_queue_item_now message - run a queued item now instead of in its
+ * turn, the same thing the queued card's Force Send does. Used by
+ * `maestro-cli queue send-now` and by a client's hosted queued card.
+ */
+export function handleSendQueueItemNow(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: { success: boolean; sent: boolean; error?: string }) =>
+		ctx.send(client, {
+			type: 'send_queue_item_now_result',
+			...result,
+			requestId: message.requestId,
+		});
+	if (!sessionId || !itemId) {
+		reply({ success: false, sent: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	if (!ctx.callbacks.sendQueueItemNow) {
+		reply({ success: false, sent: false, error: 'Send queue item now not configured' });
+		return;
+	}
+	ctx.callbacks
+		.sendQueueItemNow(sessionId, itemId)
+		.then(reply)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'send_queue_item_now', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				sent: false,
+				error: `Failed to send queue item now: ${error.message}`,
 			});
 		});
 }

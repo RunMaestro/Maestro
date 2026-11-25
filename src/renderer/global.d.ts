@@ -1152,6 +1152,26 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; found: boolean; error?: string }
 		) => void;
+		onRemoteMoveQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteMoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; moved: boolean; error?: string }
+		) => void;
+		onRemoteSendQueueItemNow: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSendQueueItemNowResponse: (
+			responseChannel: string,
+			result: { success: boolean; sent: boolean; error?: string }
+		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
 		) => () => void;

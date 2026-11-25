@@ -246,6 +246,73 @@ export function createQueueRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to remote "move queue item" from the CLI (`queue move`) or a
+		 * client's hosted queued card's drag. `tabId` is null for a whole-queue
+		 * move. Renderer replies via sendRemoteMoveQueueItemResponse.
+		 */
+		onRemoteMoveQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, itemId, toIndex, tabId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, moved: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:moveQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:moveQueueItem', handler);
+		},
+
+		sendRemoteMoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; moved: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "send queue item now" from the CLI (`queue send-now`)
+		 * or a client's hosted queued card's Force Send. Renderer replies via
+		 * sendRemoteSendQueueItemNowResponse.
+		 */
+		onRemoteSendQueueItemNow: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					callback(sessionId, itemId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, sent: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:sendQueueItemNow', handler);
+			return () => ipcRenderer.removeListener('remote:sendQueueItemNow', handler);
+		},
+
+		sendRemoteSendQueueItemNowResponse: (
+			responseChannel: string,
+			result: { success: boolean; sent: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote "steer queue item" from the CLI (`queue steer`).
 		 * Renderer replies via sendRemoteSteerQueueItemResponse.
 		 */

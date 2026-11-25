@@ -375,6 +375,31 @@ describe('QueuedItemsList drag-to-reorder', () => {
 		expect(onReorderItems).toHaveBeenCalledWith(0, 1);
 	});
 
+	// A hosted agent's cards are its host's queue (`hostQueued`); the drag reads and reports the
+	// same in all three modes, and `reorderQueuedItems` routes a host item's move to the host.
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers the same drag and reports the same move', (_mode, hostQueued) => {
+		vi.useFakeTimers();
+		const onReorderItems = vi.fn();
+		const { container } = setup({
+			executionQueue: twoItems.map((queued) => ({ ...queued, hostQueued })),
+			onReorderItems,
+		});
+		const cards = container.querySelectorAll('.group.select-none');
+		cards.forEach((card) => expect(card).toHaveStyle({ cursor: 'grab' }));
+		fireEvent.mouseDown(cards[0], { button: 0 });
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+		const dropZones = container.querySelectorAll('.relative.h-1');
+		fireEvent.mouseEnter(dropZones[dropZones.length - 1]);
+		fireEvent.mouseUp(window);
+		expect(onReorderItems).toHaveBeenCalledWith(0, 1);
+	});
+
 	it('does not start a drag when pressing an action button', () => {
 		vi.useFakeTimers();
 		const onReorderItems = vi.fn();
@@ -623,6 +648,26 @@ describe('QueuedItemsList force send', () => {
 		// it. With nothing else running the setting is irrelevant.
 		withForceSend(eligibility(), { forcedParallelEnabled: false });
 		expect(screen.getByRole('button', { name: /Force Send/i })).toBeEnabled();
+	});
+
+	// Force Send asks the same eligibility and hands the same id up in all three modes;
+	// `sendQueuedItemNow` runs a host item on its host.
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers the same Force Send and sends the same item', (_mode, hostQueued) => {
+		const onForceSendQueuedItem = vi.fn();
+		setup({
+			executionQueue: [item({ id: 'q1', hostQueued })],
+			onForceSendQueuedItem,
+			getForceSendContext: () => eligibility(),
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Force Send/i }));
+		// The same confirmation, then the same id.
+		const confirms = screen.getAllByRole('button', { name: 'Force Send' });
+		fireEvent.click(confirms[confirms.length - 1]);
+		expect(onForceSendQueuedItem).toHaveBeenCalledWith('q1');
 	});
 
 	it('hides Force Send when the target tab is already working', () => {

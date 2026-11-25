@@ -915,6 +915,7 @@ describe('live tab state and the host queue', () => {
 		const setPausedCalls: unknown[][] = [];
 		const mergeCalls: unknown[][] = [];
 		const editCalls: unknown[][] = [];
+		const moveCalls: unknown[][] = [];
 		const client = {
 			agents: { list: async () => ok([stored]) },
 			tabs: { list: async () => ok(stored.aiTabs) },
@@ -930,6 +931,15 @@ describe('live tab state and the host queue', () => {
 						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 						return ok({ found: itemId === 'q1' });
 					},
+					move: async (agentId: string, itemId: string, toIndex: number, tabId?: string) => {
+						moveCalls.push([agentId, itemId, toIndex, tabId]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ moved: itemId === 'q1' });
+					},
+					sendNow: async (agentId: string, itemId: string) => {
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ sent: itemId === 'q1' });
+					},
 					merge: async (agentId: string, itemId: string) => {
 						mergeCalls.push([agentId, itemId]);
 						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
@@ -942,7 +952,7 @@ describe('live tab state and the host queue', () => {
 				},
 			},
 		} as unknown as MaestroClient;
-		return { client, setPausedCalls, mergeCalls, editCalls };
+		return { client, setPausedCalls, mergeCalls, editCalls, moveCalls };
 	}
 
 	const liveTabs = (agentId: string) =>
@@ -1078,6 +1088,49 @@ describe('live tab state and the host queue', () => {
 			['a1', 'q1', { text: 'new', turnSettings: { model: 'm' } }],
 			['a1', 'q9', { text: 'new' }],
 		]);
+	});
+
+	it('moves a waiting message with move_queue_item, and refuses a bad place', async () => {
+		const { client, moveCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'move_queue_item', sessionId: 'a1' };
+		expect(await handle({ ...base, itemId: 'q1', toIndex: 0, tabId: 't1' })).toEqual({
+			type: 'move_queue_item_result',
+			success: true,
+			moved: true,
+		});
+		expect(await handle({ ...base, itemId: 'q9', toIndex: 2 })).toEqual({
+			type: 'move_queue_item_result',
+			success: true,
+			moved: false,
+		});
+		for (const toIndex of [-1, 1.5, '1', undefined]) {
+			expect(await handle({ ...base, itemId: 'q1', toIndex })).toMatchObject({
+				success: false,
+				moved: false,
+				error: 'toIndex must be a whole number, 0 or more',
+			});
+		}
+		// The refusals never reached the queue.
+		expect(moveCalls).toEqual([
+			['a1', 'q1', 0, 't1'],
+			['a1', 'q9', 2, undefined],
+		]);
+	});
+
+	it('sends a waiting message now with send_queue_item_now', async () => {
+		const handle = createRequestHandler(hostClient().client);
+		const base = { type: 'send_queue_item_now', sessionId: 'a1' };
+		expect(await handle({ ...base, itemId: 'q1' })).toEqual({
+			type: 'send_queue_item_now_result',
+			success: true,
+			sent: true,
+		});
+		expect(await handle({ ...base, itemId: 'q9' })).toEqual({
+			type: 'send_queue_item_now_result',
+			success: true,
+			sent: false,
+		});
 	});
 
 	it('refuses set_queue_item_paused without a boolean paused, and changes nothing', async () => {

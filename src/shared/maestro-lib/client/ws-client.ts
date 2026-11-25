@@ -399,6 +399,9 @@ class WsMaestroClient implements MaestroClient {
 			steer: (agentId: string, itemId: string) => this.queueSteer(agentId, itemId),
 			edit: (agentId: string, itemId: string, edit: QueuedTurnEdit) =>
 				this.queueEdit(agentId, itemId, edit),
+			move: (agentId: string, itemId: string, toIndex: number, tabId?: string) =>
+				this.queueMove(agentId, itemId, toIndex, tabId),
+			sendNow: (agentId: string, itemId: string) => this.queueSendNow(agentId, itemId),
 		},
 		subscribe: (
 			agentId: string,
@@ -2083,6 +2086,48 @@ class WsMaestroClient implements MaestroClient {
 		const checked = this.checkResult(method, sent.value);
 		if (!checked.ok) return checked;
 		return ok({ found: sent.value.found === true });
+	}
+
+	/** The message `maestro-cli queue move` sends a desktop, which a headless host answers too. */
+	private async queueMove(
+		agentId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	): Promise<ClientResult<{ moved: boolean }>> {
+		const method: ClientMethod = 'turns.queue.move';
+		const sent = await this.send(
+			method,
+			{
+				type: 'move_queue_item',
+				sessionId: agentId,
+				itemId,
+				toIndex,
+				...(tabId ? { tabId } : {}),
+			},
+			'move_queue_item_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		return ok({ moved: sent.value.moved === true });
+	}
+
+	/** The message `maestro-cli queue send-now` sends a desktop, which a headless host answers too. */
+	private async queueSendNow(
+		agentId: string,
+		itemId: string
+	): Promise<ClientResult<{ sent: boolean }>> {
+		const method: ClientMethod = 'turns.queue.sendNow';
+		const sent = await this.send(
+			method,
+			{ type: 'send_queue_item_now', sessionId: agentId, itemId },
+			'send_queue_item_now_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		return ok({ sent: sent.value.sent === true });
 	}
 
 	// =======================================================================

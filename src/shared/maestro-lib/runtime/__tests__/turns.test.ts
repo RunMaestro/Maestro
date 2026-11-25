@@ -859,6 +859,59 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		it('moves a waiting message, the way dragging its queued card does', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const b = value(await runtime.turns.send('a1', 't1', { text: 'b' }));
+			const c = value(await runtime.turns.send('a1', 't1', { text: 'c' }));
+			if (b.status !== 'queued' || c.status !== 'queued') throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.move('a1', c.itemId, 0, 't1'))).toEqual({
+				moved: true,
+			});
+			expect(value(await runtime.turns.queue.list('a1')).map((item) => item.text)).toEqual([
+				'c',
+				'b',
+			]);
+			expect(value(await runtime.turns.queue.move('a1', c.itemId, 5))).toEqual({ moved: false });
+			expect(value(await runtime.turns.queue.move('a1', 'gone', 0))).toEqual({ moved: false });
+			expect(errorOf(await runtime.turns.queue.move('nope', c.itemId, 0)).code).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', b.itemId));
+			value(await runtime.turns.queue.remove('a1', c.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
+		});
+
+		it('sends a waiting message now beside another tab, never over its own', async () => {
+			hold = true;
+			const runtime = await start();
+			const first = watch(runtime, 't1');
+			const second = watch(runtime, 't2');
+			value(await runtime.turns.send('a1', 't1', { text: 'busy' }));
+			await first.started();
+			const own = value(await runtime.turns.send('a1', 't1', { text: 'own tab' }));
+			hold = false;
+			const other = value(await runtime.turns.send('a1', 't2', { text: 'other tab' }));
+			if (own.status !== 'queued' || other.status !== 'queued') throw new Error('expected queued');
+
+			// Its own tab is mid-turn.
+			expect(value(await runtime.turns.queue.sendNow('a1', own.itemId))).toEqual({ sent: false });
+			// Beside t1's turn, t2's message runs now.
+			expect(value(await runtime.turns.queue.sendNow('a1', other.itemId))).toEqual({ sent: true });
+			await second.outcome();
+			expect(second.outcomes()).toEqual(['completed']);
+			expect(value(await runtime.turns.queue.sendNow('a1', 'gone'))).toEqual({ sent: false });
+			expect(errorOf(await runtime.turns.queue.sendNow('nope', own.itemId)).code).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', own.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await first.outcome();
+		});
+
 		it('says nothing was stopped when the tab is idle', async () => {
 			const runtime = await start();
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: false });

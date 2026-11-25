@@ -23,10 +23,14 @@ vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) 
 // A hosted agent's queue actions go to its host; the test reads which one went.
 const mergeMirrorQueuedItem = vi.fn(async () => undefined);
 const editMirrorQueuedItem = vi.fn(async () => undefined);
+const moveMirrorQueuedItem = vi.fn(async () => undefined);
+const sendMirrorQueuedItemNow = vi.fn(async () => undefined);
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
 	mergeMirrorQueuedItem: (...args: unknown[]) => mergeMirrorQueuedItem(...(args as [])),
 	editMirrorQueuedItem: (...args: unknown[]) => editMirrorQueuedItem(...(args as [])),
+	moveMirrorQueuedItem: (...args: unknown[]) => moveMirrorQueuedItem(...(args as [])),
+	sendMirrorQueuedItemNow: (...args: unknown[]) => sendMirrorQueuedItemNow(...(args as [])),
 }));
 
 import {
@@ -38,7 +42,9 @@ import {
 	getQueuedCommandSpawnSelection,
 	matchQueuedSlashCommand,
 	mergeQueuedItemIntoAbove,
+	moveQueuedItem,
 	removeQueuedItem,
+	reorderQueuedItems,
 	resolveQueuedItemEdit,
 	sendQueuedItemNow,
 	setQueuedItemPaused,
@@ -561,7 +567,91 @@ describe('mergeQueuedItemIntoAbove', () => {
 	});
 });
 
+describe('reorderQueuedItems / moveQueuedItem', () => {
+	afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+	const queued = (id: string, tabId: string, hostQueued?: boolean): QueuedItem => ({
+		id,
+		timestamp: 0,
+		tabId,
+		type: 'message',
+		text: id,
+		...(hostQueued ? { hostQueued } : {}),
+	});
+
+	it('moves within a tab and keeps the other tabs in their slots', () => {
+		seed({ executionQueue: [queued('a1', 'a'), queued('x', 'b'), queued('a2', 'a')] });
+		expect(reorderQueuedItems('session-1', 1, 0, 'a')).toBe(true);
+		expect(currentQueue().map((i) => i.id)).toEqual(['a2', 'x', 'a1']);
+		// By id, as the CLI and a client's hosted card reach this desktop.
+		expect(moveQueuedItem('session-1', 'a1', 0)).toBe(true);
+		expect(currentQueue().map((i) => i.id)).toEqual(['a1', 'a2', 'x']);
+		// Already there, out of range, or gone.
+		expect(moveQueuedItem('session-1', 'a1', 0)).toBe(true);
+		expect(moveQueuedItem('session-1', 'a1', 5)).toBe(false);
+		expect(moveQueuedItem('session-1', 'gone', 0)).toBe(false);
+	});
+
+	it("sends a hosted agent's move to its host, counted in the host's own queue", () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const queue = [
+			queued('local', 'a'),
+			queued('h1', 'a', true),
+			queued('hx', 'b', true),
+			queued('h2', 'a', true),
+		];
+		seed({ liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 }, executionQueue: queue });
+		moveMirrorQueuedItem.mockClear();
+
+		// Tab a's list is [local, h1, h2]: h2 onto h1's place is the host's tab-a index 0.
+		expect(reorderQueuedItems('session-1', 2, 1, 'a')).toBe(true);
+		expect(moveMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h2', 0, 'a');
+		// The Execution Queue's whole-queue indices: h2 onto hx's place is host index 1.
+		reorderQueuedItems('session-1', 3, 2);
+		expect(moveMirrorQueuedItem).toHaveBeenLastCalledWith('box', 'host-agent', 'h2', 1, undefined);
+		// A place held by a message still on its way to the host is refused.
+		expect(reorderQueuedItems('session-1', 1, 0, 'a')).toBe(false);
+		expect(reorderQueuedItems('session-1', 0, 1, 'a')).toBe(false);
+		expect(moveMirrorQueuedItem).toHaveBeenCalledTimes(2);
+		// The host's queue update redraws the list; nothing changes here first.
+		expect(currentQueue()).toEqual(queue);
+	});
+});
+
 describe('sendQueuedItemNow', () => {
+	afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+	it("sends a hosted agent's Force Send to its host by the same rule", () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const host: QueuedItem = {
+			id: 'h1',
+			timestamp: 0,
+			tabId: 'b',
+			type: 'message',
+			text: 'hi',
+			hostQueued: true,
+		};
+		seed({ liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 }, executionQueue: [host] });
+		sendMirrorQueuedItemNow.mockClear();
+		const dispatch = vi.fn().mockResolvedValue(true);
+
+		expect(sendQueuedItemNow('session-1', 'h1', dispatch)).toBe(true);
+		expect(sendMirrorQueuedItemNow).toHaveBeenCalledWith('box', 'host-agent', 'h1');
+		// The host runs it; this copy does not.
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(currentQueue()).toEqual([host]);
+
+		// Its tab mid-turn: refused here as a local Force Send is.
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === 'b' ? { ...t, state: 'busy' as const } : t)),
+			})),
+		});
+		expect(sendQueuedItemNow('session-1', 'h1', dispatch)).toBe(false);
+		expect(sendMirrorQueuedItemNow).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps technical admission held across user resume and force send', () => {
 		const held = {
 			id: 'held',

@@ -83,6 +83,8 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'merge-queued': 'Could not merge the queued message',
 	'steer-queued': 'Could not steer this turn',
 	'edit-queued': 'Could not edit the queued message',
+	'move-queued': 'Could not move the queued message',
+	'send-now-queued': 'Could not send the queued message now',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 };
@@ -259,6 +261,52 @@ export async function editMirrorQueuedItem(
 			color: 'yellow',
 			title: 'Message not edited',
 			message: 'It no longer waits on the host: it may have started already.',
+		});
+	}
+}
+
+/**
+ * Move a waiting message on its host (the queued card's drag). `toIndex` counts the host's waiting
+ * messages, of `tabId` only when given. The host's queue update redraws the list; a message that
+ * no longer waits is a notice, not a red toast.
+ */
+export async function moveMirrorQueuedItem(
+	peerId: string,
+	agentId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+): Promise<void> {
+	const result = await actOnMirroredAgent(peerId, agentId, {
+		kind: 'move-queued',
+		itemId,
+		toIndex,
+		...(tabId ? { tabId } : {}),
+	});
+	if (result?.kind === 'move-queued' && !result.moved) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Message not moved',
+			message: 'It no longer waits on the host: it may have started already.',
+		});
+	}
+}
+
+/**
+ * Run a waiting message on its host now instead of in its turn (the queued card's Force Send).
+ * The host decides as a local Force Send does; a message it cannot start is a notice.
+ */
+export async function sendMirrorQueuedItemNow(
+	peerId: string,
+	agentId: string,
+	itemId: string
+): Promise<void> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'send-now-queued', itemId });
+	if (result?.kind === 'send-now-queued' && !result.sent) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Message not sent now',
+			message: 'Its tab on the host is mid-turn, or it already started.',
 		});
 	}
 }

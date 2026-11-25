@@ -6,8 +6,9 @@
 // tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and `tabs.update`, a settings
 // change is `agents.update`, and the queue actions on a waiting message are `turns.queue.remove`
 // (`remove_queue_item`), `turns.queue.setPaused` (`set_queue_item_paused`), `turns.queue.merge`
-// (`merge_queue_item`), `turns.queue.steer` (`steer_queue_item`), and `turns.queue.edit`
-// (`edit_queue_item`). The CLI reaches the host over its own short-lived forward
+// (`merge_queue_item`), `turns.queue.steer` (`steer_queue_item`), `turns.queue.edit`
+// (`edit_queue_item`), `turns.queue.move` (`move_queue_item`), and `turns.queue.sendNow`
+// (`send_queue_item_now`). The CLI reaches the host over its own short-lived forward
 // (`withPeerAgent()`), the desktop over the mirror service's held one; both run the action
 // through `runPeerAgentAction()`, so there is one copy.
 //
@@ -68,6 +69,13 @@ export type PeerAgentAction =
 	| { kind: 'steer-queued'; itemId: string }
 	/** Rewrite a waiting message in place (the card's Edit). Images, when given, are data URLs. */
 	| { kind: 'edit-queued'; itemId: string; edit: QueuedTurnEdit }
+	/**
+	 * Move a waiting message to `toIndex` (the card's drag). With `tabId`, the index counts only
+	 * that tab's waiting messages, as the tab's queue list draws them.
+	 */
+	| { kind: 'move-queued'; itemId: string; toIndex: number; tabId?: string }
+	/** Run a waiting message now instead of in its turn (the card's Force Send). */
+	| { kind: 'send-now-queued'; itemId: string }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -99,6 +107,10 @@ export type PeerAgentActionResult =
 	| { kind: 'steer-queued'; itemId: string; result: QueueSteerResult }
 	/** `found: false`: the message no longer waits (it started, or another client removed it). */
 	| { kind: 'edit-queued'; itemId: string; found: boolean }
+	/** `moved: false`: the message no longer waits, or the place is out of range. */
+	| { kind: 'move-queued'; itemId: string; moved: boolean }
+	/** `sent: false`: the message no longer waits, or its tab is mid-turn. */
+	| { kind: 'send-now-queued'; itemId: string; sent: boolean }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string };
 
@@ -117,6 +129,8 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'merge-queued',
 	'steer-queued',
 	'edit-queued',
+	'move-queued',
+	'send-now-queued',
 	'update-agent',
 	'update-tab',
 ];
@@ -225,6 +239,23 @@ export async function runPeerAgentAction(
 					}
 				: edited;
 		}
+		case 'move-queued': {
+			const moved = await client.turns.queue.move(
+				agent.id,
+				action.itemId,
+				action.toIndex,
+				action.tabId
+			);
+			return moved.ok
+				? { ok: true, value: { kind: 'move-queued', itemId: action.itemId, ...moved.value } }
+				: moved;
+		}
+		case 'send-now-queued': {
+			const sent = await client.turns.queue.sendNow(agent.id, action.itemId);
+			return sent.ok
+				? { ok: true, value: { kind: 'send-now-queued', itemId: action.itemId, ...sent.value } }
+				: sent;
+		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
 			return updated.ok
@@ -312,8 +343,22 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			if (typeof value.paused !== 'boolean') throw new Error('paused must be true or false');
 			return { kind, itemId: value.itemId, paused: value.paused };
+		case 'move-queued': {
+			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
+			const toIndex = value.toIndex;
+			if (typeof toIndex !== 'number' || !Number.isInteger(toIndex) || toIndex < 0) {
+				throw new Error('toIndex must be a whole number, 0 or more');
+			}
+			return {
+				kind,
+				itemId: value.itemId,
+				toIndex,
+				...(value.tabId === undefined ? {} : { tabId: tabId() }),
+			};
+		}
 		case 'merge-queued':
 		case 'steer-queued':
+		case 'send-now-queued':
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			return { kind, itemId: value.itemId };
 		case 'edit-queued': {

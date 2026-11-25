@@ -1230,6 +1230,42 @@ describe('createWsMaestroClient', () => {
 			expect(sent[1]).not.toHaveProperty('images');
 		});
 
+		it('moves a queued item with move_queue_item, naming the tab only when given', async () => {
+			bridge.typed.set('move_queue_item', (message) => ({
+				type: 'move_queue_item_result',
+				success: true,
+				moved: message.itemId === 'q1',
+			}));
+			expect(await client.turns.queue.move(A1, 'q1', 0, 't1')).toEqual({
+				ok: true,
+				value: { moved: true },
+			});
+			expect(await client.turns.queue.move(A1, 'q9', 2)).toEqual({
+				ok: true,
+				value: { moved: false },
+			});
+			const sent = bridge.sent('move_queue_item');
+			expect(sent[0]).toMatchObject({ sessionId: A1, itemId: 'q1', toIndex: 0, tabId: 't1' });
+			expect(sent[1]).not.toHaveProperty('tabId');
+		});
+
+		it('sends a queued item now with send_queue_item_now', async () => {
+			bridge.typed.set('send_queue_item_now', (message) => ({
+				type: 'send_queue_item_now_result',
+				success: true,
+				sent: message.itemId === 'q1',
+			}));
+			expect(await client.turns.queue.sendNow(A1, 'q1')).toEqual({
+				ok: true,
+				value: { sent: true },
+			});
+			expect(await client.turns.queue.sendNow(A1, 'q9')).toEqual({
+				ok: true,
+				value: { sent: false },
+			});
+			expect(bridge.sent('send_queue_item_now')[0]).toMatchObject({ sessionId: A1, itemId: 'q1' });
+		});
+
 		it("reads a queued item's turn settings off the queue listing", async () => {
 			bridge.typed.set('list_queue', () => ({
 				type: 'list_queue_result',

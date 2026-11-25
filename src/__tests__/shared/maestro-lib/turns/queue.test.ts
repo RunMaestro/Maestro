@@ -13,6 +13,7 @@ import {
 	decideSubmit,
 	findQueueMergeTarget,
 	joinMergedQueueText,
+	moveQueueEntry,
 	type QueueEvent,
 	type QueueItem,
 	type QueuedTurnHandle,
@@ -388,6 +389,65 @@ describe('createExecutionQueue ordering', () => {
 		// `a` is running, not waiting.
 		expect(h.queue.update('a', (i) => i)).toBe(false);
 		expect(h.queue.update('nope', (i) => i)).toBe(false);
+	});
+
+	it('moves a waiting item, counting only its tab when asked, and leaves a starting one', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't1'));
+		h.queue.submit(item('x', 't2'));
+		h.queue.submit(item('c', 't1'));
+		await h.flush();
+		h.events.length = 0;
+		// Whole queue: c to the front.
+		expect(h.queue.move('c', 0)).toBe(true);
+		expect(h.queue.items().map((i) => i.id)).toEqual(['c', 'b', 'x']);
+		// Tab scope: t1's waiting items are [c, b]; b to the first of them, x stays put.
+		expect(h.queue.move('b', 0, 't1')).toBe(true);
+		expect(h.queue.items().map((i) => i.id)).toEqual(['b', 'c', 'x']);
+		expect(h.events.map((event) => [event.type, event.item.id])).toEqual([
+			['updated', 'c'],
+			['updated', 'b'],
+		]);
+		// Already there is a move that took, and changes nothing.
+		expect(h.queue.move('b', 0, 't1')).toBe(true);
+		// Out of range, running, or gone.
+		expect(h.queue.move('b', 2, 't1')).toBe(false);
+		expect(h.queue.move('a', 0)).toBe(false);
+		expect(h.queue.move('nope', 0)).toBe(false);
+	});
+
+	it('sends a waiting item now beside another tab, never over its own', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't2'));
+		h.queue.submit(item('c', 't1'));
+		await h.flush();
+		expect(h.startOrder).toEqual(['a']);
+		// c's own tab is mid-turn.
+		expect(h.queue.sendNow('c')).toBe(false);
+		// b runs beside a, forced parallel.
+		expect(h.queue.sendNow('b')).toBe(true);
+		await h.flush();
+		expect(h.startOrder).toEqual(['a', 'b']);
+		expect(h.turnFor('b').item.forceParallel).toBe(true);
+		expect(h.queue.items().map((i) => i.id)).toEqual(['c']);
+		expect(h.queue.sendNow('nope')).toBe(false);
+	});
+
+	it('sends a waiting item on an idle agent without forcing it parallel', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't1', { paused: true }));
+		await h.flush();
+		h.turnFor('a').end();
+		await h.flush();
+		// Held, so the queue left it waiting on an idle agent.
+		expect(h.startOrder).toEqual(['a']);
+		expect(h.queue.sendNow('b')).toBe(true);
+		await h.flush();
+		expect(h.startOrder).toEqual(['a', 'b']);
+		expect(h.turnFor('b').item.forceParallel).toBeUndefined();
 	});
 
 	it('holds a tab behind a retry until drain() is called after it clears', async () => {
@@ -781,5 +841,28 @@ describe('joinMergedQueueText', () => {
 		expect(joinMergedQueueText('one  \n\n', '\n\n  two')).toBe('one\n\n  two');
 		expect(joinMergedQueueText('one', '   ')).toBe('one');
 		expect(joinMergedQueueText(undefined, 'two')).toBe('two');
+	});
+});
+
+describe('moveQueueEntry', () => {
+	const ids = (list: readonly Item[]) => list.map((i) => i.id);
+	const queue = [item('a', 't1'), item('x', 't2'), item('b', 't1'), item('c', 't1')];
+
+	it('moves by splice over the whole queue', () => {
+		expect(ids(moveQueueEntry(queue, 3, 0))).toEqual(['c', 'a', 'x', 'b']);
+		expect(ids(moveQueueEntry(queue, 0, 2))).toEqual(['x', 'b', 'a', 'c']);
+	});
+
+	it('moves within a scope and keeps every other item in its slot', () => {
+		const t1 = (i: Item) => i.tabId === 't1';
+		// t1's items are [a, b, c]; c to the first of them.
+		expect(ids(moveQueueEntry(queue, 2, 0, t1))).toEqual(['c', 'x', 'a', 'b']);
+	});
+
+	it('returns the same queue for a no-op or an out-of-range move', () => {
+		expect(moveQueueEntry(queue, 1, 1)).toBe(queue);
+		expect(moveQueueEntry(queue, -1, 0)).toBe(queue);
+		expect(moveQueueEntry(queue, 0, 4)).toBe(queue);
+		expect(moveQueueEntry(queue, 0, 3, (i) => i.tabId === 't1')).toBe(queue);
 	});
 });

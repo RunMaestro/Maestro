@@ -252,6 +252,10 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					guarded('turns.queue.steer', () => deps.turns.queue.steer(agentId, itemId)),
 				edit: (agentId, itemId, edit) =>
 					guarded('turns.queue.edit', () => deps.turns.queue.edit(agentId, itemId, edit)),
+				move: (agentId, itemId, toIndex, tabId) =>
+					guarded('turns.queue.move', () => deps.turns.queue.move(agentId, itemId, toIndex, tabId)),
+				sendNow: (agentId, itemId) =>
+					guarded('turns.queue.sendNow', () => deps.turns.queue.sendNow(agentId, itemId)),
 			},
 			subscribe: (agentId, tabId, listener): Unsubscribe =>
 				deps.turns.subscribe(agentId, tabId, listener),

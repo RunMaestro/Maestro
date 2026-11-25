@@ -30,7 +30,11 @@ import {
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
-import { findQueueMergeTarget, joinMergedQueueText } from '../../shared/maestro-lib/turns/queue';
+import {
+	findQueueMergeTarget,
+	joinMergedQueueText,
+	moveQueueEntry,
+} from '../../shared/maestro-lib/turns/queue';
 import { isSessionRemote } from './sessionHelpers';
 import { hostRunView } from './hostedSession';
 import {
@@ -493,60 +497,14 @@ export function reorderQueueItem(
 	toIndex: number,
 	tabId?: string
 ): QueuedItem[] {
-	if (!tabId) {
-		const len = queue.length;
-		if (
-			fromIndex === toIndex ||
-			fromIndex < 0 ||
-			fromIndex >= len ||
-			toIndex < 0 ||
-			toIndex >= len
-		) {
-			return queue;
-		}
-		const moved = queue[fromIndex];
-		if (
-			moved.pendingAdmissionId ||
-			queue
-				.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1)
-				.some((item) => item.pendingAdmissionId && item.tabId === moved.tabId)
-		) {
-			return queue;
-		}
-		const next = [...queue];
-		const [removed] = next.splice(fromIndex, 1);
-		next.splice(toIndex, 0, removed);
-		return next;
-	}
-
-	// Tab-scoped reorder: collect this tab's items and the slots they occupy.
-	const slots: number[] = [];
-	const items: QueuedItem[] = [];
-	queue.forEach((item, i) => {
-		if (item.tabId === tabId) {
-			slots.push(i);
-			items.push(item);
-		}
-	});
-	const len = items.length;
-	if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) {
-		return queue;
-	}
-	if (
-		items
-			.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1)
-			.some((item) => item.pendingAdmissionId)
-	) {
-		return queue;
-	}
-	const reordered = [...items];
-	const [removed] = reordered.splice(fromIndex, 1);
-	reordered.splice(toIndex, 0, removed);
-	const next = [...queue];
-	slots.forEach((pos, idx) => {
-		next[pos] = reordered[idx];
-	});
-	return next;
+	const inScope = tabId ? (item: QueuedItem) => item.tabId === tabId : undefined;
+	const scoped = inScope ? queue.filter(inScope) : queue;
+	const moved = scoped[fromIndex];
+	if (!moved || toIndex < 0 || toIndex >= scoped.length) return queue;
+	// A pending admission hold neither moves nor is crossed by work on its tab.
+	const crossed = scoped.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1);
+	if (crossed.some((item) => item.pendingAdmissionId && item.tabId === moved.tabId)) return queue;
+	return moveQueueEntry(queue, fromIndex, toIndex, inScope) as QueuedItem[];
 }
 
 /**

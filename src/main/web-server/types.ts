@@ -731,6 +731,20 @@ export type EditQueueItemCallback = (
 	itemId: string,
 	edit: QueuedTurnEdit
 ) => Promise<EditQueueItemResult>;
+/** `maestro-cli queue move`: whether a waiting item had that id and the place was in range. */
+export type MoveQueueItemResult = { success: boolean; moved: boolean; error?: string };
+export type MoveQueueItemCallback = (
+	sessionId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+) => Promise<MoveQueueItemResult>;
+/** `maestro-cli queue send-now`: whether the waiting item was dispatched out of turn. */
+export type SendQueueItemNowResult = { success: boolean; sent: boolean; error?: string };
+export type SendQueueItemNowCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SendQueueItemNowResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (

@@ -184,6 +184,38 @@ export function findQueueMergeTarget<T extends Pick<QueueItem, 'id' | 'tabId'>>(
 }
 
 /**
+ * `queue` with one item moved, the queued card's drag (Array.splice semantics: take it out at
+ * `fromIndex`, put it back at `toIndex`). With `inScope`, both indices address only the items it
+ * accepts (one tab's cards, as the tab's list draws them): those are reordered among themselves
+ * and written back into the slots they held, so every other item keeps its absolute place.
+ * Out-of-range and no-op moves return `queue` itself (same reference). The desktop queue, its
+ * Execution Queue, and a headless host's queue all move by this rule.
+ */
+export function moveQueueEntry<T>(
+	queue: readonly T[],
+	fromIndex: number,
+	toIndex: number,
+	inScope?: (item: T) => boolean
+): readonly T[] {
+	const slots: number[] = [];
+	queue.forEach((item, index) => {
+		if (!inScope || inScope(item)) slots.push(index);
+	});
+	const len = slots.length;
+	if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) {
+		return queue;
+	}
+	const scoped = slots.map((slot) => queue[slot]);
+	const [moved] = scoped.splice(fromIndex, 1);
+	scoped.splice(toIndex, 0, moved);
+	const next = [...queue];
+	slots.forEach((slot, index) => {
+		next[slot] = scoped[index];
+	});
+	return next;
+}
+
+/**
  * The text of two merged messages: exactly one blank line between them, so the second reads as
  * its own paragraph. Trailing whitespace of the first and leading blank lines of the second are
  * dropped (the second's own indentation is kept); an empty side is left out.
@@ -275,6 +307,18 @@ export interface ExecutionQueue<T extends QueueItem> {
 	 * keeps its id and place. Returns false when no waiting item has that id.
 	 */
 	update(id: string, change: (item: T) => T): boolean;
+	/**
+	 * Move a waiting item to `toIndex` (the queued card's drag, `moveQueueEntry`). With `tabId`,
+	 * the index counts only that tab's waiting items. Returns false when no waiting item has that
+	 * id, or the index is out of range.
+	 */
+	move(id: string, toIndex: number, tabId?: string): boolean;
+	/**
+	 * Run a waiting item now instead of in its turn (the queued card's Force Send). Never over a
+	 * turn on its own tab; beside another tab's turn it runs `forceParallel`. Returns false when
+	 * no waiting item has that id, or its tab is busy.
+	 */
+	sendNow(id: string): boolean;
 	/** Look at the queue again, for a hold that cleared (a retry that landed). */
 	drain(): void;
 	/** Resolves when no turn is running or starting. Items may still wait, held or blocked. */
@@ -518,6 +562,33 @@ export function createExecutionQueue<T extends QueueItem>(
 			if (!entry) return false;
 			entry.item = { ...change(entry.item), id: entry.item.id };
 			emit({ type: 'updated', item: entry.item });
+			return true;
+		},
+
+		move(id, toIndex, tabId) {
+			// Only waiting entries move; one being started keeps its slot.
+			const inScope = (entry: Entry<T>) =>
+				entry.state === 'queued' && (tabId === undefined || entry.item.tabId === tabId);
+			const scoped = entries.filter(inScope);
+			const fromIndex = scoped.findIndex((entry) => entry.item.id === id);
+			if (fromIndex === -1 || toIndex < 0 || toIndex >= scoped.length) return false;
+			const next = moveQueueEntry(entries, fromIndex, toIndex, inScope);
+			if (next === entries) return true;
+			entries.splice(0, entries.length, ...next);
+			const moved = entries.find((entry) => entry.item.id === id);
+			if (moved) emit({ type: 'updated', item: moved.item });
+			// A new head can be runnable where the old one was held.
+			drain();
+			return true;
+		},
+
+		sendNow(id) {
+			if (disposed) return false;
+			const entry = entries.find((e) => e.state === 'queued' && e.item.id === id);
+			if (!entry) return false;
+			if (active.has(entry.item.tabId) || starting.has(entry.item.tabId)) return false;
+			if (busyTurns().length > 0) entry.item = { ...entry.item, forceParallel: true };
+			void dispatch(entry, true);
 			return true;
 		},
 

@@ -228,6 +228,8 @@ import {
 	handleSetQueueItemPaused,
 	handleMergeQueueItem,
 	handleEditQueueItem,
+	handleMoveQueueItem,
+	handleSendQueueItemNow,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -628,6 +630,14 @@ export class WebSocketMessageHandler {
 
 			case 'edit_queue_item':
 				handleEditQueueItem(this.ctx, client, message);
+				break;
+
+			case 'move_queue_item':
+				handleMoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'send_queue_item_now':
+				handleSendQueueItemNow(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':

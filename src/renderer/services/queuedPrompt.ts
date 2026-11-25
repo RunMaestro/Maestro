@@ -27,7 +27,9 @@ import { hostedTargetOf } from './hostedTurns';
 import {
 	editMirrorQueuedItem,
 	mergeMirrorQueuedItem,
+	moveMirrorQueuedItem,
 	removeMirrorQueuedItem,
+	sendMirrorQueuedItemNow,
 	setMirrorQueuedItemPaused,
 } from './peerMirror';
 import { useAgentStore } from '../stores/agentStore';
@@ -40,6 +42,7 @@ import {
 	findQueuedMergeTarget,
 	getQueueBusyContext,
 	mergeQueuedItemIntoPrevious,
+	reorderQueueItem,
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
@@ -543,6 +546,69 @@ export function editQueuedItem(sessionId: string, itemId: string, edit: QueuedTu
 	return found;
 }
 
+/**
+ * Move one queued item to another place: the queued card's drag, the Execution Queue's drag, and
+ * `maestro-cli queue move`. Indices follow `reorderQueueItem`: with `tabId` they address that
+ * tab's items as its inline list draws them, without it the agent's whole queue.
+ *
+ * A hosted agent's host item moves on its host, by the same rule: the target place is read as the
+ * host item drawn there, and its queue update redraws the list. A move across an item the host
+ * does not hold (one still on its way to it) is refused, since the host cannot place it there.
+ *
+ * @returns Whether the move was made (or handed to the host).
+ */
+export function reorderQueuedItems(
+	sessionId: string,
+	fromIndex: number,
+	toIndex: number,
+	tabId?: string
+): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session) return false;
+	const scoped = (session.executionQueue ?? []).filter((item) => !tabId || item.tabId === tabId);
+	const moved = scoped[fromIndex];
+	const target = scoped[toIndex];
+	if (!moved || !target || moved === target) return false;
+	const hosted = hostQueuedItemTarget(sessionId, moved.id);
+	if (hosted) {
+		if (!target.hostQueued) return false;
+		const hostScoped = hosted.hostQueue.filter((item) => !tabId || item.tabId === tabId);
+		const hostToIndex = hostScoped.findIndex((item) => item.id === target.id);
+		if (hostToIndex === -1) return false;
+		void moveMirrorQueuedItem(hosted.peerId, hosted.agentId, moved.id, hostToIndex, tabId);
+		return true;
+	}
+	// A message still on its way to the host cannot take a place among the host's own.
+	if (target.hostQueued) return false;
+	let changed = false;
+	updateSessionWith(sessionId, (s) => {
+		const executionQueue = reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId);
+		if (executionQueue === s.executionQueue) return s;
+		changed = true;
+		return { ...s, executionQueue };
+	});
+	return changed;
+}
+
+/**
+ * Move one queued item, named by id, to `toIndex`: the form `maestro-cli queue move` and a
+ * client's hosted card reach this desktop with. Same rule as the drag (`reorderQueuedItems`).
+ */
+export function moveQueuedItem(
+	sessionId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const scoped = (session?.executionQueue ?? []).filter((item) => !tabId || item.tabId === tabId);
+	const fromIndex = scoped.findIndex((item) => item.id === itemId);
+	if (fromIndex === -1) return false;
+	// Already there: nothing to do, and nothing failed.
+	if (fromIndex === toIndex) return true;
+	return reorderQueuedItems(sessionId, fromIndex, toIndex, tabId);
+}
+
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */
 export type QueuedItemDispatcher = (sessionId: string, item: QueuedItem) => Promise<unknown>;
 
@@ -580,6 +646,12 @@ export function sendQueuedItemNow(
 
 	const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
 	if (targetTabBusy) return false;
+	// A hosted agent's host item runs on its host, which applies this same rule to its own tabs.
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		void sendMirrorQueuedItemNow(hosted.peerId, hosted.agentId, itemId);
+		return true;
+	}
 	// Without the dispatch deps nothing could run it: leave it for the queue.
 	if (dispatch === dispatchThroughStore && !getDispatchDeps()) return false;
 

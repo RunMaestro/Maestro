@@ -2504,34 +2504,50 @@ describe('ExecutionQueueBrowser', () => {
 		});
 	});
 
-	describe('host-queued items (hosted agent)', () => {
-		// A hosted agent's host runs its own queue. Its items offer what acts on the host (Remove,
-		// Hold / Resume, Merge, Edit); reorder and Send Now would change this copy only.
-		const hostSession = () =>
-			createSession({
+	// The same queue in a local, an SSH, and a hosted agent: only the transport differs.
+	const AGENT_MODES = {
+		local: {},
+		ssh: { sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
+		hosted: {
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+			liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 },
+		},
+	} as const;
+	type AgentMode = keyof typeof AGENT_MODES;
+	const AGENT_MODE_NAMES = Object.keys(AGENT_MODES) as AgentMode[];
+
+	describe('Send Now, reorder, and the action menu in local, SSH, and hosted agents', () => {
+		const modeSession = (mode: AgentMode) => {
+			const hostQueued = mode === 'hosted' ? true : undefined;
+			return createSession({
 				id: 'active-session',
+				...AGENT_MODES[mode],
 				aiTabs: [
 					{ id: 'tab-1', name: 'tab-1', agentSessionId: null, logs: [], state: 'idle' },
 				] as any,
 				activeTabId: 'tab-1',
 				executionQueue: [
-					createQueuedItem({ id: 'host-1', text: 'first', hostQueued: true }),
-					createQueuedItem({ id: 'host-2', text: 'second', hostQueued: true }),
+					createQueuedItem({ id: 'q1', text: 'first', hostQueued }),
+					createQueuedItem({ id: 'q2', text: 'second', hostQueued }),
 				],
-			});
+			} as Partial<Session>);
+		};
 
-		const renderHost = () =>
+		const renderMode = (
+			mode: AgentMode,
+			handlers: { onForceSendItem?: ReturnType<typeof vi.fn> } = {}
+		) =>
 			render(
 				<ExecutionQueueBrowser
 					isOpen={true}
 					onClose={mockOnClose}
-					sessions={[hostSession()]}
+					sessions={[modeSession(mode)]}
 					activeSessionId="active-session"
 					theme={theme}
 					onRemoveItem={mockOnRemoveItem}
 					onSwitchSession={mockOnSwitchSession}
 					onReorderItems={vi.fn()}
-					onForceSendItem={vi.fn()}
+					onForceSendItem={handlers.onForceSendItem ?? vi.fn()}
 					onMergeItem={vi.fn()}
 					onEditItem={vi.fn()}
 					onToggleItemPause={vi.fn()}
@@ -2542,43 +2558,49 @@ describe('ExecutionQueueBrowser', () => {
 			useSettingsStore.setState({ forcedParallelExecution: false });
 		});
 
-		it('offers no Send Now on a host item', () => {
-			renderHost();
-			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
+		it.each(AGENT_MODE_NAMES)('%s: offers the same Send Now and hands the same ids', (mode) => {
+			const onForceSendItem = vi.fn();
+			renderMode(mode, { onForceSendItem });
+			const buttons = screen.getAllByText('Send Now');
+			expect(buttons).toHaveLength(2);
+			fireEvent.click(buttons[1]);
+			expect(onForceSendItem).toHaveBeenCalledWith('active-session', 'q2');
 		});
 
-		it('is not draggable', () => {
-			const { container } = renderHost();
-			const hostRows = container.querySelectorAll('.group.select-none');
-			expect(hostRows.length).toBe(2);
-			hostRows.forEach((row) => {
-				expect(row).not.toHaveStyle({ cursor: 'grab' });
+		it.each(AGENT_MODE_NAMES)('%s: every item is draggable', (mode) => {
+			const { container } = renderMode(mode);
+			const rows = container.querySelectorAll('.group.select-none');
+			expect(rows.length).toBe(2);
+			rows.forEach((row) => {
+				expect(row).toHaveStyle({ cursor: 'grab' });
 			});
 		});
 
-		it('the action menu offers Remove, Hold, Merge, and Edit', () => {
-			renderHost();
+		it.each(AGENT_MODE_NAMES)('%s: the action menu offers the same actions', (mode) => {
+			renderMode(mode);
 			const card = screen.getByLabelText('Execution Queue');
 			fireEvent.keyDown(card, { key: 'ArrowDown' });
 			fireEvent.keyDown(card, { key: 'Enter' });
-			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
-			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
-			expect(screen.getByTestId('queue-action-merge')).toBeInTheDocument();
-			expect(screen.getByTestId('queue-action-edit')).toBeInTheDocument();
-			expect(screen.queryByTestId('queue-action-send')).toBeNull();
+			const offered = Array.from(
+				screen.getByTestId('queue-action-list').querySelectorAll('[data-testid^="queue-action-"]')
+			)
+				.map((node) => node.getAttribute('data-testid'))
+				.filter((id) => id !== 'queue-action-list');
+			expect(offered).toEqual(
+				expect.arrayContaining([
+					'queue-action-send',
+					'queue-action-delete',
+					'queue-action-pause',
+					'queue-action-merge',
+					'queue-action-edit',
+				])
+			);
 		});
 	});
 
 	describe('Merge in local, SSH, and hosted agents', () => {
 		const MERGE_TITLE = /Merge into the earlier message/i;
-		const modes = {
-			local: {},
-			ssh: { sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
-			hosted: {
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
-				liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 },
-			},
-		} as const;
+		const modes = AGENT_MODES;
 
 		it.each(Object.keys(modes) as Array<keyof typeof modes>)(
 			'%s: offers Merge on the same card and hands the same ids to onMergeItem',

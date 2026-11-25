@@ -310,6 +310,52 @@ export function registerQueueCallbacks(
 		});
 	});
 
+	// Round-trip `maestro-cli queue move <itemId>` (and a client's hosted queued
+	// card's drag) into the renderer, which runs the same move the drag does.
+	server.setMoveQueueItemCallback(async (sessionId, itemId, toIndex, tabId) => {
+		const mainWindow = resolveSessionWindow(sessionId);
+		if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
+			logger.warn('mainWindow is unavailable for moveQueueItem', 'WebServer');
+			return { success: false, moved: false, error: 'Desktop window unavailable' };
+		}
+		return requestFromRenderer(mainWindow, 'remote:moveQueueItem', {
+			args: [sessionId, itemId, toIndex, tabId ?? null],
+			fallback: { success: false, moved: false, error: 'Renderer did not respond' },
+			timeoutMs: 5000,
+			parse: (raw) => {
+				const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+				return {
+					success: r.success === true,
+					moved: r.moved === true,
+					...(typeof r.error === 'string' ? { error: r.error } : {}),
+				};
+			},
+		});
+	});
+
+	// Round-trip `maestro-cli queue send-now <itemId>` (and a client's hosted
+	// queued card's Force Send) into the renderer, which runs the same send.
+	server.setSendQueueItemNowCallback(async (sessionId, itemId) => {
+		const mainWindow = resolveSessionWindow(sessionId);
+		if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
+			logger.warn('mainWindow is unavailable for sendQueueItemNow', 'WebServer');
+			return { success: false, sent: false, error: 'Desktop window unavailable' };
+		}
+		return requestFromRenderer(mainWindow, 'remote:sendQueueItemNow', {
+			args: [sessionId, itemId],
+			fallback: { success: false, sent: false, error: 'Renderer did not respond' },
+			timeoutMs: 5000,
+			parse: (raw) => {
+				const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+				return {
+					success: r.success === true,
+					sent: r.sent === true,
+					...(typeof r.error === 'string' ? { error: r.error } : {}),
+				};
+			},
+		});
+	});
+
 	// Round-trip `maestro-cli queue merge <itemId>` into the renderer, which runs
 	// the same merge the queued card's Merge button does.
 	server.setMergeQueueItemCallback(async (sessionId: string, itemId: string) => {

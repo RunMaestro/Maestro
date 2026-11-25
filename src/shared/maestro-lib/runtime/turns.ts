@@ -880,6 +880,18 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					})) ?? false;
 				return ok({ found });
 			},
+			move: async (agentId, itemId, toIndex, tabId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.move', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok({ moved: queues.get(agentId)?.move(itemId, toIndex, tabId) ?? false });
+			},
+			sendNow: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.sendNow', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok({ sent: queues.get(agentId)?.sendNow(itemId) ?? false });
+			},
 		},
 
 		subscribe: (agentId, tabId, listener): Unsubscribe =>

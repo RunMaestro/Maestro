@@ -103,6 +103,8 @@ export type ClientMethod =
 	| 'turns.queue.merge'
 	| 'turns.queue.steer'
 	| 'turns.queue.edit'
+	| 'turns.queue.move'
+	| 'turns.queue.sendNow'
 	| 'history.list'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
@@ -627,6 +629,23 @@ export interface TurnsApi {
 			itemId: string,
 			edit: QueuedTurnEdit
 		): Promise<ClientResult<{ found: boolean }>>;
+		/**
+		 * Move a waiting message to `toIndex` (the queued card's drag). With `tabId`, the index
+		 * counts only that tab's waiting messages. `moved: false` when no waiting message has that
+		 * id or the index is out of range.
+		 */
+		move(
+			agentId: string,
+			itemId: string,
+			toIndex: number,
+			tabId?: string
+		): Promise<ClientResult<{ moved: boolean }>>;
+		/**
+		 * Run a waiting message now instead of in its turn (the queued card's Force Send). Beside
+		 * another tab's turn it runs in parallel. `sent: false` when no waiting message has that
+		 * id or its own tab is mid-turn.
+		 */
+		sendNow(agentId: string, itemId: string): Promise<ClientResult<{ sent: boolean }>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;

@@ -285,6 +285,16 @@ export interface MessageHandlerCallbacks {
 		itemId: string,
 		edit: QueuedTurnEdit
 	) => Promise<{ success: boolean; found: boolean; error?: string }>;
+	moveQueueItem: (
+		sessionId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	) => Promise<{ success: boolean; moved: boolean; error?: string }>;
+	sendQueueItemNow: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; sent: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,

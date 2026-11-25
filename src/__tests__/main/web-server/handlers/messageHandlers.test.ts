@@ -229,6 +229,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			.fn()
 			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
 		editQueueItem: vi.fn().mockResolvedValue({ success: true, found: true }),
+		moveQueueItem: vi.fn().mockResolvedValue({ success: true, moved: true }),
+		sendQueueItemNow: vi.fn().mockResolvedValue({ success: true, sent: true }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -4187,6 +4189,87 @@ describe('WebSocketMessageHandler', () => {
 			} as never);
 			expect(lastSend()).toMatchObject({ success: false, error: 'Missing text' });
 			expect(callbacks.editQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Move Queue Item (queue move, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the move and answers whether it took', async () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: 0,
+				tabId: 'tab-1',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.moveQueueItem).toHaveBeenCalledWith('session-1', 'item-9', 0, 'tab-1');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'move_queue_item_result',
+					success: true,
+					moved: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId or a bad place without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				toIndex: 0,
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'move_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: -1,
+			} as never);
+			expect(lastSend()).toMatchObject({
+				success: false,
+				error: 'toIndex must be a whole number, 0 or more',
+			});
+			expect(callbacks.moveQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Send Queue Item Now (queue send-now, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the send and answers whether it started', async () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.sendQueueItemNow).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'send_queue_item_now_result',
+					success: true,
+					sent: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'send_queue_item_now_result', success: false });
+			expect(callbacks.sendQueueItemNow).not.toHaveBeenCalled();
 		});
 	});
 

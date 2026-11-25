@@ -808,6 +808,29 @@ export function createRequestHandler(
 					(value) => ({ found: value.found })
 				);
 			}
+			case 'move_queue_item': {
+				const type = 'move_queue_item_result';
+				const toIndex = message.toIndex;
+				if (typeof toIndex !== 'number' || !Number.isInteger(toIndex) || toIndex < 0) {
+					return refusal(type, 'toIndex must be a whole number, 0 or more', { moved: false });
+				}
+				return outcome(
+					type,
+					await client.turns.queue.move(
+						sessionId(message),
+						str(message.itemId) ?? '',
+						toIndex,
+						str(message.tabId)
+					),
+					(value) => ({ moved: value.moved })
+				);
+			}
+			case 'send_queue_item_now':
+				return outcome(
+					'send_queue_item_now_result',
+					await client.turns.queue.sendNow(sessionId(message), str(message.itemId) ?? ''),
+					(value) => ({ sent: value.sent })
+				);
 			case 'merge_queue_item':
 				return outcome(
 					'merge_queue_item_result',

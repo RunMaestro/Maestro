@@ -84,6 +84,16 @@ export interface QueueEditOptions {
 	effort?: string;
 }
 
+export interface QueueMoveOptions {
+	agent?: string;
+	to?: string;
+	tab?: string;
+}
+
+export interface QueueSendNowOptions {
+	agent?: string;
+}
+
 function emitError(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
 }
@@ -499,6 +509,136 @@ export async function queueEdit(itemId: string, options: QueueEditOptions): Prom
 		}
 		if (!result.found) {
 			emitError(`No queued item with id ${itemId} for agent ${sessionId}`, 'ITEM_NOT_FOUND');
+			process.exit(1);
+			return;
+		}
+		console.log(JSON.stringify({ success: true, agentId: sessionId, itemId }, null, 2));
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
+}
+
+/**
+ * `maestro-cli queue move <item-id> --agent <id> --to <position> [--tab <tab-id>]` - move a queued
+ * item to another place, like dragging its queued card. `--to` counts from 0 (the first item that
+ * waits); with `--tab` it counts only that tab's items, as the tab's queue list draws them. A
+ * hosted agent's item moves on its host.
+ */
+export async function queueMove(itemId: string, options: QueueMoveOptions): Promise<void> {
+	if (!options.agent) {
+		emitError('queue move requires --agent <id>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+	const toIndex = options.to !== undefined && /^\d+$/.test(options.to) ? Number(options.to) : NaN;
+	if (!Number.isInteger(toIndex)) {
+		emitError('queue move requires --to <position> (0 is the first item)', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+	const tabId = options.tab?.trim() || undefined;
+	const peer = peerQueueTarget(options.agent);
+	if (peer) {
+		return queueActPeer(
+			peer,
+			itemId,
+			{ kind: 'move-queued', itemId, toIndex, ...(tabId ? { tabId } : {}) },
+			(result) => (result.kind === 'move-queued' && result.moved ? { toIndex } : null)
+		);
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	try {
+		const result = await withMaestroClient((client) =>
+			client.sendCommand<{ success?: boolean; moved?: boolean; error?: string }>(
+				{ type: 'move_queue_item', sessionId, itemId, toIndex, ...(tabId ? { tabId } : {}) },
+				'move_queue_item_result'
+			)
+		);
+		if (result.success === false) {
+			emitError(result.error ?? 'Queue move failed', 'MOVE_FAILED');
+			process.exit(1);
+			return;
+		}
+		if (!result.moved) {
+			emitError(
+				`No queued item with id ${itemId} for agent ${sessionId} can move to position ${toIndex}`,
+				'ITEM_NOT_FOUND'
+			);
+			process.exit(1);
+			return;
+		}
+		console.log(JSON.stringify({ success: true, agentId: sessionId, itemId, toIndex }, null, 2));
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
+}
+
+/**
+ * `maestro-cli queue send-now <item-id> --agent <id>` - run a queued item now instead of in its
+ * turn, like the Force Send button on its queued card. Never over a turn on its own tab; beside
+ * another tab's turn it runs in parallel. A hosted agent's item runs on its host.
+ */
+export async function queueSendNow(itemId: string, options: QueueSendNowOptions): Promise<void> {
+	if (!options.agent) {
+		emitError('queue send-now requires --agent <id>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+	const peer = peerQueueTarget(options.agent);
+	if (peer) {
+		return queueActPeer(
+			peer,
+			itemId,
+			{ kind: 'send-now-queued', itemId },
+			(result) => (result.kind === 'send-now-queued' && result.sent ? {} : null),
+			(agentRef) => ({
+				message: `Queued item ${itemId} for agent ${agentRef} did not start: it is gone, or its tab is mid-turn`,
+				code: 'NOT_SENT',
+			})
+		);
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	try {
+		const result = await withMaestroClient((client) =>
+			client.sendCommand<{ success?: boolean; sent?: boolean; error?: string }>(
+				{ type: 'send_queue_item_now', sessionId, itemId },
+				'send_queue_item_now_result'
+			)
+		);
+		if (result.success === false) {
+			emitError(result.error ?? 'Queue send-now failed', 'SEND_FAILED');
+			process.exit(1);
+			return;
+		}
+		if (!result.sent) {
+			emitError(
+				`Queued item ${itemId} for agent ${sessionId} did not start: it is gone, or its tab is mid-turn`,
+				'NOT_SENT'
+			);
 			process.exit(1);
 			return;
 		}

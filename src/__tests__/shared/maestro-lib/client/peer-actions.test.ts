@@ -28,6 +28,8 @@ function fakeClient() {
 					ok({ found: itemId !== 'gone', paused })
 				),
 				edit: vi.fn(async (_agentId: string, itemId: string) => ok({ found: itemId !== 'gone' })),
+				move: vi.fn(async (_agentId: string, itemId: string) => ok({ moved: itemId !== 'gone' })),
+				sendNow: vi.fn(async (_agentId: string, itemId: string) => ok({ sent: itemId !== 'gone' })),
 				merge: vi.fn(async (_agentId: string, itemId: string) =>
 					ok(itemId === 'gone' ? { merged: false } : { merged: true, mergedIntoId: 'q0' })
 				),
@@ -307,6 +309,34 @@ describe('runPeerAgentAction', () => {
 		).toEqual(ok({ kind: 'edit-queued', itemId: 'gone', found: false }));
 	});
 
+	it('moves a waiting message on the host, in its tab when one is named', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'move-queued',
+				itemId: 'q1',
+				toIndex: 0,
+				tabId: 't1',
+			})
+		).toEqual(ok({ kind: 'move-queued', itemId: 'q1', moved: true }));
+		expect(client.turns.queue.move).toHaveBeenCalledWith('a1', 'q1', 0, 't1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'move-queued', itemId: 'gone', toIndex: 1 })
+		).toEqual(ok({ kind: 'move-queued', itemId: 'gone', moved: false }));
+		expect(client.turns.queue.move).toHaveBeenLastCalledWith('a1', 'gone', 1, undefined);
+	});
+
+	it('sends a waiting message now on the host', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'send-now-queued', itemId: 'q1' })
+		).toEqual(ok({ kind: 'send-now-queued', itemId: 'q1', sent: true }));
+		expect(client.turns.queue.sendNow).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'send-now-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'send-now-queued', itemId: 'gone', sent: false }));
+	});
+
 	it('passes a failed queue call through untouched', async () => {
 		const { client, asClient } = fakeClient();
 		const failure = {
@@ -395,6 +425,18 @@ describe('parsePeerAgentAction', () => {
 		expect(
 			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: 'only text' } })
 		).toEqual({ kind: 'edit-queued', itemId: 'q1', edit: { text: 'only text' } });
+		expect(
+			parsePeerAgentAction({ kind: 'move-queued', itemId: 'q1', toIndex: 2, tabId: 't1', x: 1 })
+		).toEqual({ kind: 'move-queued', itemId: 'q1', toIndex: 2, tabId: 't1' });
+		expect(parsePeerAgentAction({ kind: 'move-queued', itemId: 'q1', toIndex: 0 })).toEqual({
+			kind: 'move-queued',
+			itemId: 'q1',
+			toIndex: 0,
+		});
+		expect(parsePeerAgentAction({ kind: 'send-now-queued', itemId: 'q1', extra: 1 })).toEqual({
+			kind: 'send-now-queued',
+			itemId: 'q1',
+		});
 		expect(parsePeerAgentAction({ kind: 'steer-queued', itemId: 'q1', extra: 1 })).toEqual({
 			kind: 'steer-queued',
 			itemId: 'q1',
@@ -586,6 +628,17 @@ describe('parsePeerAgentAction', () => {
 			})
 		).toThrow('images must be a list of data URLs');
 		expect(() => parsePeerAgentAction({ kind: 'steer-queued' })).toThrow('Missing queued item id');
+		expect(() => parsePeerAgentAction({ kind: 'send-now-queued' })).toThrow(
+			'Missing queued item id'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'move-queued', toIndex: 0 })).toThrow(
+			'Missing queued item id'
+		);
+		for (const toIndex of [-1, 0.5, '2', undefined]) {
+			expect(() => parsePeerAgentAction({ kind: 'move-queued', itemId: 'q1', toIndex })).toThrow(
+				'toIndex must be a whole number, 0 or more'
+			);
+		}
 		expect(() =>
 			parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: 'yes' })
 		).toThrow('paused must be true or false');

@@ -184,6 +184,7 @@ import { registerSessionPersistenceFlush } from './services/sessionPersistenceFl
 import {
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
+	reorderQueuedItems,
 	toggleQueuedItemPaused,
 } from './services/queuedPrompt';
 import {
@@ -232,7 +233,6 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem } from './utils/executionQueue';
 import { editQueuedItem } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
@@ -1844,14 +1844,12 @@ function MaestroConsoleInner() {
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that
-	// tab's items; reorderQueueItem rearranges them while keeping other tabs'
+	// tab's items; reorderQueuedItems rearranges them while keeping other tabs'
 	// queued items in their absolute positions (see the helper for details).
+	// Same service `maestro-cli queue move` reaches; a hosted card's move goes to its host.
 	const handleReorderQueuedItem = useCallback(
 		(fromIndex: number, toIndex: number, tabId?: string) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId),
-			}));
+			reorderQueuedItems(activeSessionIdRef.current, fromIndex, toIndex, tabId);
 		},
 		[]
 	);

@@ -312,10 +312,9 @@ export function ExecutionQueueBrowser({
 	const menuActions: QueueItemAction[] = [];
 	if (actionMenuOpen && selectedEntry) {
 		const { session, item } = selectedEntry;
-		const eligibility =
-			onForceSendItem && !item.hostQueued
-				? getForceSendEligibility(session, item, { forcedParallelEnabled })
-				: null;
+		const eligibility = onForceSendItem
+			? getForceSendEligibility(session, item, { forcedParallelEnabled })
+			: null;
 		const sendNow = forceSendAction(session, item, eligibility);
 		if (sendNow) {
 			menuActions.push({
@@ -501,15 +500,11 @@ export function ExecutionQueueBrowser({
 								{/* Queue Items */}
 								<div className="space-y-0">
 									{session.executionQueue?.map((item, index) => {
-										// A hosted agent's host runs its own queue: its items offer Remove,
-										// Hold / Resume, Merge, and Edit, which act on the host, and nothing that
-										// would only change this copy (the next host sync would undo it).
-										// Same rule as QueuedItemsList.
-										const hostOnly = item.hostQueued === true;
-										const forceSend =
-											onForceSendItem && !hostOnly
-												? getForceSendEligibility(session, item, { forcedParallelEnabled })
-												: null;
+										// A hosted agent's items offer every action a local one does; the
+										// queue services route each to the host. Same rule as QueuedItemsList.
+										const forceSend = onForceSendItem
+											? getForceSendEligibility(session, item, { forcedParallelEnabled })
+											: null;
 										const flatIndex = flatIndexById.get(item.id) ?? -1;
 										return (
 											<React.Fragment key={item.id}>
@@ -550,11 +545,7 @@ export function ExecutionQueueBrowser({
 													isDragging={
 														dragState?.key === session.id && dragState?.fromIndex === index
 													}
-													canDrag={
-														!!onReorderItems &&
-														!hostOnly &&
-														(session.executionQueue?.length || 0) > 1
-													}
+													canDrag={!!onReorderItems && (session.executionQueue?.length || 0) > 1}
 													isAnyDragging={isAnyDragging}
 													onDragStart={() => startDrag(session.id, index)}
 													onDragEnd={endDrag}
