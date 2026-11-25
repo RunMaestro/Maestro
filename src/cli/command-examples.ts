@@ -806,6 +806,26 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'lite pair submit': ['maestro-cli lite pair submit --pin-stdin < pin.txt'],
 	'lite pair read': ['maestro-cli lite pair read'],
 	'lite pair cancel': ['maestro-cli lite pair cancel'],
+	'sqlite info': ['maestro-cli sqlite info ./data.db --json'],
+	'sqlite tables': ['maestro-cli sqlite tables ./data.db'],
+	'sqlite schema': ['maestro-cli sqlite schema ./data.db users'],
+	'sqlite rows': ['maestro-cli sqlite rows ./data.db users --limit 20 --json'],
+	'sqlite count': ['maestro-cli sqlite count ./data.db users'],
+	'sqlite blob': ['maestro-cli sqlite blob ./data.db files body --rowid 7 --output ./body.bin'],
+	'sqlite query': ['maestro-cli sqlite query ./data.db "SELECT id, name FROM users" --json'],
+	'sqlite history': ['maestro-cli sqlite history ./data.db'],
+	'sqlite log': ['maestro-cli sqlite log ./data.db --limit 10'],
+	'sqlite set': [
+		'maestro-cli sqlite set ./data.db users name --rowid 7 --value "Ada" --enable-editing',
+	],
+	'sqlite insert': [
+		'maestro-cli sqlite insert ./data.db users --value name=Ada --value-number age=36 --enable-editing',
+	],
+	'sqlite delete': ['maestro-cli sqlite delete ./data.db users --rowid 7 --enable-editing'],
+	'sqlite undo': ['maestro-cli sqlite undo ./data.db --enable-editing'],
+	'sqlite transaction': [
+		'maestro-cli sqlite transaction ./data.db "UPDATE users SET name = \'Ada\' WHERE id = 7" --commit --enable-editing',
+	],
 };
 
 /** The command's path without the program name: `models server start`. */
