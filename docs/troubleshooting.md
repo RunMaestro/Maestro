@@ -177,7 +177,7 @@ Support packages usually end up attached to a public GitHub issue, so the debug 
 - **Agent, session, and group names** - Not included
 - **SSH remote identities** - Hosts and usernames replaced with `[REDACTED]`
 - **URLs** - Reduced to scheme and domain, so tunnel URLs cannot be reused
-- **Environment variables** - Only counts shown, not values (may contain secrets)
+- **Environment variables** - Names are kept so support can see what is set, but every value is replaced with `[redacted, N chars]`, whatever the name
 - **Custom agent arguments** - Only `[SET]` or `[NOT SET]` shown, not actual values
 
 **Example path redaction:**

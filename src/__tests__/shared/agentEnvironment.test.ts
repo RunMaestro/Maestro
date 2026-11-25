@@ -8,6 +8,7 @@ import {
 	envSourceLabel,
 	isSecretEnvKey,
 	maskEnvValue,
+	maskEnvVarValues,
 	resolveAgentEnvironment,
 	isBlankEnvValue,
 	isBlankEnvKey,
@@ -190,6 +191,65 @@ describe('maskEnvValue', () => {
 			expect(maskEnvValue('', key)).toBe('•');
 		}
 	);
+});
+
+describe('maskEnvVarValues', () => {
+	const vars = {
+		NPM_TOKEN: 'npm_synthetic0123456789abcdefghijklmnopqrst',
+		HF_TOKEN: 'hf_synthetic0123456789abcdefghijklmnopqrstuv',
+		MY_API: 'https://internal.synthetic.invalid/v2?key=synthetic-query-secret',
+		EDITOR: 'vim',
+	};
+
+	it('masks every value and keeps every name, secret-looking or not', () => {
+		const masked = maskEnvVarValues(vars);
+
+		expect(Object.keys(masked)).toEqual(['NPM_TOKEN', 'HF_TOKEN', 'MY_API', 'EDITOR']);
+		expect(masked.NPM_TOKEN).toBe(`[redacted, ${vars.NPM_TOKEN.length} chars]`);
+		expect(masked.HF_TOKEN).toBe(`[redacted, ${vars.HF_TOKEN.length} chars]`);
+		expect(masked.MY_API).toBe(`[redacted, ${vars.MY_API.length} chars]`);
+		expect(masked.EDITOR).toBe('[redacted, 3 chars]');
+	});
+
+	it('leaves no fragment of any value in the result', () => {
+		const text = JSON.stringify(maskEnvVarValues(vars));
+
+		for (const value of Object.values(vars)) {
+			expect(text).not.toContain(value);
+			// No tail either: the last four characters are as much a leak as the head.
+			expect(text).not.toContain(value.slice(-4));
+		}
+	});
+
+	it('shows no tail of a short secret, unlike maskEnvValue', () => {
+		// Nine characters is over maskEnvValue's eight-character cutoff, so it would ship four of nine.
+		expect(maskEnvValue('hunter123', 'DB_PASSWORD')).toBe('••••••••r123');
+		expect(maskEnvVarValues({ DB_PASSWORD: 'hunter123' })).toEqual({
+			DB_PASSWORD: '[redacted, 9 chars]',
+		});
+	});
+
+	it('reports an empty value as set but empty', () => {
+		expect(maskEnvVarValues({ FOO: '' })).toEqual({ FOO: '[redacted, 0 chars]' });
+	});
+
+	it('masks a value that is not a string without a length', () => {
+		const masked = maskEnvVarValues({ PORT: 8080, NESTED: { token: 'x' }, NOTHING: null });
+
+		expect(masked).toEqual({ PORT: '[redacted]', NESTED: '[redacted]', NOTHING: '[redacted]' });
+	});
+
+	it('returns a new object and leaves the input alone', () => {
+		const input = { NPM_TOKEN: 'npm_synthetic' };
+		const masked = maskEnvVarValues(input);
+
+		expect(masked).not.toBe(input);
+		expect(input).toEqual({ NPM_TOKEN: 'npm_synthetic' });
+	});
+
+	it('returns an empty record for an empty record', () => {
+		expect(maskEnvVarValues({})).toEqual({});
+	});
 });
 
 describe('envSourceLabel', () => {
