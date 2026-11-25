@@ -36,6 +36,7 @@ import {
 import { getSettingsStore } from '../stores/getters';
 import { isInitialized } from '../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
+import { checkFeedbackTraceBundle } from '../profiling/feedback-trace';
 import { captureFeedbackLiveDiagnosis } from './live-state';
 import {
 	formatLiveDiagnosisForIssue,
@@ -1597,6 +1598,29 @@ export async function submitFeedbackConversation(
 	// stays filed.
 	inFlightReportFingerprints.add(fingerprint);
 	try {
+		// The trace path comes from the caller (the renderer, or the web bridge
+		// through `feedback_submit`), and the file it names is uploaded to a public
+		// repo and then deleted. Only a bundle Maestro captured passes. A refusal
+		// stops the whole submit before anything is uploaded, and nothing is
+		// deleted. Below, the trace is read and deleted at the checked real path.
+		let performanceTracePath: string | null = null;
+		const requestedTracePath: unknown = payload.performanceTracePath;
+		if (
+			requestedTracePath !== undefined &&
+			requestedTracePath !== null &&
+			requestedTracePath !== ''
+		) {
+			const trace = await checkFeedbackTraceBundle(requestedTracePath);
+			if (!trace.ok) {
+				logger.warn(`Refused performanceTracePath: ${trace.reason}`, LOG_CONTEXT);
+				return {
+					success: false,
+					error: `Refused performanceTracePath: ${trace.reason}. Remove the performance trace and capture a new one.`,
+				};
+			}
+			performanceTracePath = trace.realPath;
+		}
+
 		// An upload failure is reported as a result, not thrown: a throw crosses IPC
 		// as "Error invoking remote method ...", burying the gh guidance it carries.
 		// A failed screenshot degrades to a warning so the rest of the report still
@@ -1669,10 +1693,6 @@ export async function submitFeedbackConversation(
 		// retried with the same trace. If the user closes instead, the renderer
 		// discards it (it only marks the trace consumed on success).
 		let performanceTraceMarkdown = '';
-		const performanceTracePath =
-			typeof payload.performanceTracePath === 'string' && payload.performanceTracePath
-				? payload.performanceTracePath
-				: null;
 		if (performanceTracePath) {
 			try {
 				performanceTraceMarkdown = await uploadFeedbackZip(
