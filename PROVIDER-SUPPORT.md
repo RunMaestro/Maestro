@@ -567,6 +567,7 @@ Current support:
 | `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root     |
 | `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write) |
 | `opencode`      | none (`--dir` only moves the cwd) | Prompt-only               |
+| `kilo`          | none (`--dir` only moves the cwd) | Prompt-only               |
 | `factory-droid` | unverified                        | Prompt-only               |
 | `gemini-cli`    | unverified                        | Prompt-only               |
 
@@ -1056,7 +1057,7 @@ describe('YourAgentOutputParser', () => {
 
 ---
 
-### OpenCode 🔄 Stub Ready
+### OpenCode ✅ Implemented
 
 | Aspect           | Value                                                         |
 | ---------------- | ------------------------------------------------------------- |
@@ -1118,10 +1119,11 @@ OpenCode stores session data in `~/.local/share/opencode/storage/` with the foll
 
 **Implementation Status:**
 
-- ✅ Output Parser: `src/main/parsers/opencode-output-parser.ts` (based on expected format)
-- ⏳ Session Storage: `src/main/storage/opencode-session-storage.ts` (stub, needs implementation using storage paths above)
-- ⏳ Error Patterns: Placeholder, needs real-world testing
-- ⏳ Capabilities: Set to minimal defaults; `supportsSessionStorage` can be enabled once storage is implemented
+- ✅ Output Parser: `src/shared/maestro-lib/parsers/opencode-output-parser.ts`
+- ✅ Session Storage: `src/main/storage/opencode-session-storage.ts` (SQLite `opencode.db`, with the JSON layout above as a fallback)
+- ✅ Error Patterns: `OPENCODE_ERROR_PATTERNS` in `src/shared/agentErrorPatterns.ts`
+- ✅ Capabilities: resume, session storage, read-only, images, and model selection enabled in `src/shared/maestro-lib/providers/capabilities.ts`
+- ⚠️ SSH remote history reads only the JSON layout. A remote install that keeps its sessions only in `opencode.db` lists no sessions.
 
 **JSON Event Types:**
 
@@ -1224,6 +1226,82 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 - [OpenCode Config Docs](https://opencode.ai/docs/config/)
 - [OpenCode Providers Docs](https://opencode.ai/docs/providers/)
 - [OpenCode Models Docs](https://opencode.ai/docs/models/)
+
+---
+
+### Kilo (KiloCode) 🔄 Fork of OpenCode
+
+| Aspect           | Value                                                 |
+| ---------------- | ----------------------------------------------------- |
+| Binary           | `kilo`                                                |
+| npm package      | `@kilocode/cli`                                       |
+| JSON Output      | `--format json`                                       |
+| Resume           | `--session <session-id>`                              |
+| Read-only        | `--agent plan`                                        |
+| Session ID Field | `sessionID` (camelCase)                               |
+| Session Storage  | ✅ `~/.local/share/kilo/kilo.db` or `storage/`        |
+| YOLO Mode        | ✅ Auto-enabled in batch mode (`KILO_CONFIG_CONTENT`) |
+| Model Selection  | `--model provider/model`                              |
+| Config File      | `~/.config/kilo/kilo.json` or project `kilo.json`     |
+
+[Kilo](https://github.com/Kilo-Org/kilocode) is a fork of OpenCode. The `run`
+subcommand, the CLI flags, the JSONL event stream, and the on-disk session
+layout are all identical - only the binary name, the data directory, the
+database filename, and the config environment variable are rebranded. Maestro
+therefore implements Kilo as a thin layer over the OpenCode integration rather
+than as a parallel copy:
+
+- **Parser:** `KiloOutputParser` (`src/shared/maestro-lib/parsers/kilo-output-parser.ts`)
+  subclasses `OpenCodeOutputParser` and overrides only `agentId`.
+- **Session storage:** `KiloSessionStorage`
+  (`src/main/storage/kilo-session-storage.ts`) subclasses
+  `OpenCodeSessionStorage` and supplies an `OpenCodeStorageBrand` of
+  `{ dirName: 'kilo', dbFileName: 'kilo.db' }`. Every local, remote, and SQLite
+  path is derived from that one value.
+- **Error patterns:** Kilo reuses `OPENCODE_ERROR_PATTERNS` verbatim - the
+  messages are brand-neutral, so sharing the set is what stops the two from
+  drifting apart.
+- **Capabilities:** mirror OpenCode's entry exactly.
+
+**Read the OpenCode section above** for the JSON event types, the storage
+layout, the YOLO mode details, and the provider and model configuration. Those
+subsections apply to Kilo with `opencode` swapped for `kilo`. The OpenCode
+SSH history limit applies too.
+
+**Known gaps** (OpenCode-only for now, tracked as follow-ups):
+
+- Model discovery reads `kilo models` but does not additionally parse
+  `kilo.json`, so a provider defined purely in config must be typed into the
+  Model field by hand.
+- No custom slash-command discovery from `.kilo/commands/` (the built-in
+  command set is wired up).
+- No Coworking MCP installer and no `MCP_CONFIG_BY_AGENT` entry.
+- History honors `KILO_DB` only when Maestro's own process inherits it. A
+  `KILO_DB` set in the agent's custom env vars, and the per-channel
+  `kilo-<channel>.db` files, are not seen: Maestro then reads the default
+  `~/.local/share/kilo/kilo.db` (or the `XDG_DATA_HOME` equivalent).
+- SSH remote history reads only the JSON layout, as for OpenCode. A remote
+  install that keeps its sessions only in `kilo.db` lists no sessions.
+- A read-only turn replaces `KILO_CONFIG_CONTENT` with the permission-only
+  payload, as OpenCode does with `OPENCODE_CONFIG_CONTENT`. Keep provider
+  credentials in `kilo.json` or the stored provider login, not only in that
+  variable.
+
+**Provider switching:** Kilo has no translation adapter and no entry in
+`src/shared/maestro-lib/translation/support.ts`. Switching an agent to or from
+Kilo carries no sessions, memories, instructions, skills, or custom subagents
+in either direction. The switch starts a fresh provider session, and the
+switching warning stays in place.
+
+**Verification status:** the `KILO_CONFIG_CONTENT` variable
+([flag.ts](https://github.com/Kilo-Org/kilocode/blob/main/packages/core/src/flag/flag.ts))
+and the `kilo.db` filename
+([db.ts](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/storage/db.ts))
+are confirmed in the KiloCode source.
+Maestro has not yet run a shipping Kilo binary. The OpenCode parity above is
+proven by tests over the shared code paths and OpenCode-format fixtures, not
+by a recorded Kilo session, so treat it as unverified for any specific Kilo
+version.
 
 ---
 

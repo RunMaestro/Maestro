@@ -43,6 +43,7 @@ const MAESTRO_INSTALL_PATH_LINE = 'export PATH="$HOME/.maestro/bin:$PATH"';
 const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
+	'$HOME/.kilo/bin',
 	'$HOME/.claude/local',
 	'$HOME/bin',
 	'/usr/local/bin',
@@ -761,6 +762,7 @@ export async function buildSshCommand(
 	// We prepend common binary locations to PATH:
 	// - ~/.local/bin: Claude Code, pip --user installs
 	// - ~/.opencode/bin: OpenCode installer default location
+	// - ~/.kilo/bin: Kilo installer default location
 	// - ~/.claude/local: Claude Code local-install layout (auto-update bundle)
 	// - ~/bin: User scripts
 	// - /usr/local/bin: Homebrew on Intel Mac, manual installs

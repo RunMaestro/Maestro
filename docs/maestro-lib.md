@@ -45,6 +45,7 @@ What each provider supports in maestro-lib `0.6.0`:
 | `claude-code`   | Claude Code     | yes         | yes    | yes       |
 | `codex`         | Codex           | yes         | yes    | yes       |
 | `opencode`      | OpenCode        | yes         | yes    | yes       |
+| `kilo`          | Kilo            | yes         | yes    | yes       |
 | `factory-droid` | Factory Droid   | yes         | yes    | yes       |
 | `copilot-cli`   | Copilot-CLI     | yes         | yes    | yes       |
 | `qwen3-coder`   | Qwen3 Coder     | yes         | yes    | yes       |
