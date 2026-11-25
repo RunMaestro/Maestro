@@ -93,4 +93,5 @@ maestro-cli browser-pick <tab> --selector "section.hero button.cta" \
 
 - Design Mode only reads the element you pick. It does not send anything until you press **Add to Message**, and nothing reaches the agent until you send the message yourself.
 - The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, never from anything the page does.
+- A page in a browser tab is denied every web permission (camera, microphone, location, notifications and the like) except copying to the clipboard and going full screen.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.

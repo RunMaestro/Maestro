@@ -827,6 +827,8 @@ echo "Preview: maestro+http://localhost:5173"
 
 Hints work in plain terminal output, in OSC 8 terminal hyperlinks, and in markdown links. In chat markdown, write a hinted URL as a link (`[label](maestro+https://...)`) or in angle brackets (`<maestro+https://...>`); a bare hinted URL in markdown is only partly linked. Only `http` and `https` may follow a hint: `maestro+file://...` or `system+ssh://...` opens nothing.
 
+A `file://` link, **Open in Default App**, or any other path Maestro hands to your OS never runs a program. An app, installer, script, or disk image (for example `.app`, `.exe`, `.sh`, `.dmg`, or a file with the executable bit) is shown in your file manager instead, so you can see it and run it on purpose.
+
 ## Agent Management
 
 Agents are the core of Maestro - each agent represents an AI coding assistant running in its own workspace.
