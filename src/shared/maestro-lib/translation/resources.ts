@@ -151,6 +151,12 @@ export async function collectTranslationResources(
 			identity.accountRoot,
 			identity.memoryProjectRoot
 		);
+		for (const ignored of memory.ignored)
+			limitations.push({
+				code: 'project-memory-directory-ignored',
+				severity: 'warning',
+				message: `${path.relative(identity.projectRoot, ignored.settingsPath).replace(/\\/g, '/')} sets autoMemoryDirectory to ${ignored.directory}, which resolves to ${ignored.resolvedPath}, outside the project and the Claude account folder. A repository setting may only name a folder inside one of them, so Maestro ignored it.`,
+			});
 		if (memory.source === 'account')
 			limitations.push({
 				code: 'account-memory-scope',

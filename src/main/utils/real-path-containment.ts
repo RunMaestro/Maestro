@@ -19,24 +19,10 @@ export function foldPathCase(p: string, platform: NodeJS.Platform = process.plat
 
 /**
  * Resolve symlinks through the nearest existing ancestor (sync), so a not-yet-created file under a symlinked
- * folder resolves to where it would land. `p` unchanged when nothing on it resolves.
+ * folder resolves to where it would land. Defined in `src/shared/pathUtils.ts` (the shared libraries judge
+ * paths the same way); re-exported so main keeps one import for the whole real-path trio.
  */
-export function realpathThroughAncestor(p: string): string {
-	let current = p;
-	const rest: string[] = [];
-	for (let i = 0; i < 64; i++) {
-		try {
-			const real = fs.realpathSync.native(current);
-			return rest.length > 0 ? path.join(real, ...rest.reverse()) : real;
-		} catch {
-			const parent = path.dirname(current);
-			if (parent === current) return p;
-			rest.push(path.basename(current));
-			current = parent;
-		}
-	}
-	return p;
-}
+export { realpathThroughAncestor } from '../../shared/pathUtils';
 
 /** Whether absolute path `child` is `parent` or inside it, compared as given (fold and resolve first). */
 export function isPathWithin(child: string, parent: string): boolean {

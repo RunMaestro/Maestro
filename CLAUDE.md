@@ -95,7 +95,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
 - **A path from outside that must not reach `.git` (or any name a file system folds):** `hasGitMetadataSegment()`, `foldPathSegment()` in `src/shared/pathContainment.ts`
-- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
+- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()` in `src/main/utils/real-path-containment.ts`; `realpathThroughAncestor()` in `src/shared/pathUtils.ts`
 - **A performance trace path a caller hands in (Feedback attach, discard):** `checkFeedbackTraceBundle()`, `feedbackTraceBundlePath()` in `src/main/profiling/feedback-trace.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
@@ -242,7 +242,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
 
-- **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()`, `discoverClaudeMemoryRoot()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`

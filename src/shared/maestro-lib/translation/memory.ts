@@ -1,7 +1,8 @@
 import { parseJsonWithBom } from '../../jsonUtils';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { encodeClaudeProjectPath, expandTilde } from '../../pathUtils';
+import { encodeClaudeProjectPath, expandTilde, realpathThroughAncestor } from '../../pathUtils';
+import { isPathAtOrUnderRoot } from '../../worktreePaths';
 
 /** The host supplies the repository/worktree identity and effective account root. */
 export function resolveClaudeMemoryPath(
@@ -22,15 +23,63 @@ export async function discoverClaudeMemoryPath(
 	return (await discoverClaudeMemoryRoot(projectRoot, accountRoot, memoryProjectRoot)).path;
 }
 
+/** A project-level `autoMemoryDirectory` that was not honored (see `discoverClaudeMemoryRoot()`). */
+export interface IgnoredMemoryDirectory {
+	/** The project settings file that carried it. */
+	settingsPath: string;
+	/** The value as written. */
+	directory: string;
+	/** Where it points once `~`, `..` and symlinks are resolved. */
+	resolvedPath: string;
+}
+
+/**
+ * Where a project-level `autoMemoryDirectory` really points when it leaves both the project and the provider's
+ * config directory, else null. A repository writes its own `.claude/settings.json` and
+ * `.claude/settings.local.json`, so it may name a folder inside itself, or inside the account's config
+ * directory (where the default memory folder lives), and nothing else: `~/.ssh`, `../../` or an absolute path
+ * elsewhere would make the Memory Viewer and a provider migration read files the repository has no claim to.
+ * Symlinks are followed on both sides, through the nearest existing ancestor for a folder Claude has not
+ * created yet. The compare is case-sensitive on purpose: an allow-list that mismatches on case rejects, it
+ * never admits.
+ */
+function memoryDirectoryOutsideAllowedRoots(
+	projectRoot: string,
+	accountRoot: string,
+	directory: string
+): string | null {
+	const resolved = realpathThroughAncestor(path.resolve(projectRoot, expandTilde(directory)));
+	const posix = (p: string): string => p.replace(/\\/g, '/');
+	const inside = [projectRoot, accountRoot].some((root) =>
+		isPathAtOrUnderRoot(posix(resolved), posix(realpathThroughAncestor(path.resolve(root))))
+	);
+	return inside ? null : resolved;
+}
+
+/**
+ * Which folder Claude keeps its memory in for this project: the default under the account's config
+ * directory, or the `autoMemoryDirectory` of the account settings, the project's `.claude/settings.json` or
+ * its `.claude/settings.local.json` (the last one set wins).
+ *
+ * The account's own value is the user's and is honored as written. A project-level value is not trusted: one
+ * that leaves the project and the account's config directory is skipped (listed in `ignored`, so the caller
+ * can say so) and the next value down applies, ending at the default.
+ */
 export async function discoverClaudeMemoryRoot(
 	projectRoot: string,
 	accountRoot: string,
 	memoryProjectRoot = projectRoot
-): Promise<{ path: string; source: 'default' | 'account' | 'project' }> {
+): Promise<{
+	path: string;
+	source: 'default' | 'account' | 'project';
+	ignored: IgnoredMemoryDirectory[];
+}> {
 	let directory: string | undefined;
 	let source: 'default' | 'account' | 'project' = 'default';
+	const ignored: IgnoredMemoryDirectory[] = [];
+	const accountSettings = path.join(accountRoot, 'settings.json');
 	for (const settingsPath of [
-		path.join(accountRoot, 'settings.json'),
+		accountSettings,
 		path.join(projectRoot, '.claude', 'settings.json'),
 		path.join(projectRoot, '.claude', 'settings.local.json'),
 	]) {
@@ -39,8 +88,24 @@ export async function discoverClaudeMemoryRoot(
 				await fs.readFile(settingsPath, 'utf8')
 			);
 			if (typeof settings.autoMemoryDirectory === 'string' && settings.autoMemoryDirectory.trim()) {
+				const fromAccount = settingsPath === accountSettings;
+				const outside = fromAccount
+					? null
+					: memoryDirectoryOutsideAllowedRoots(
+							projectRoot,
+							accountRoot,
+							settings.autoMemoryDirectory
+						);
+				if (outside !== null) {
+					ignored.push({
+						settingsPath,
+						directory: settings.autoMemoryDirectory,
+						resolvedPath: outside,
+					});
+					continue;
+				}
 				directory = settings.autoMemoryDirectory;
-				source = settingsPath === path.join(accountRoot, 'settings.json') ? 'account' : 'project';
+				source = fromAccount ? 'account' : 'project';
 			}
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -53,6 +118,7 @@ export async function discoverClaudeMemoryRoot(
 			directory
 		),
 		source,
+		ignored,
 	};
 }
 

@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { translationArtifact } from '../../../shared/maestro-lib/translation/identity';
 import {
 	projectResourceDefinition,
@@ -231,6 +231,83 @@ describe('project resource translation', () => {
 			);
 			expect(resources.artifacts).toHaveLength(0);
 			expect(resources.limitations[0].code).toBe('account-memory-scope');
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not copy a folder outside the project that a repository's settings name as memory", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-memory-directory-'));
+		try {
+			const home = path.join(root, 'home');
+			const accountRoot = path.join(root, 'account');
+			const projectRoot = path.join(root, 'project');
+			await Promise.all(
+				[path.join(home, '.ssh'), accountRoot, path.join(projectRoot, '.claude')].map((dir) =>
+					fs.mkdir(dir, { recursive: true })
+				)
+			);
+			const secret = 'PRIVATE KEY MATERIAL';
+			await fs.writeFile(path.join(home, '.ssh', 'id_rsa'), secret);
+			await fs.writeFile(
+				path.join(projectRoot, '.claude', 'settings.json'),
+				JSON.stringify({ autoMemoryDirectory: '~/.ssh' })
+			);
+			// Claude's own memory for the project, at the default place under the account.
+			const defaultMemory = resolveClaudeMemoryPath(projectRoot, accountRoot);
+			await fs.mkdir(defaultMemory, { recursive: true });
+			await fs.writeFile(path.join(defaultMemory, 'MEMORY.md'), 'default memory');
+			// `~` expands through os.homedir(), which reads these: a throwaway home, never the real one.
+			vi.stubEnv('HOME', home);
+			vi.stubEnv('USERPROFILE', home);
+			const resources = await collectTranslationResources(
+				{ provider: 'claude-code', version: '2.1.296', accountRoot, projectRoot },
+				{ projectKnowledge: true, selectedUserResources: [] }
+			);
+			expect(resources.artifacts.map((artifact) => artifact.relativePath)).toEqual([
+				'memory/MEMORY.md',
+			]);
+			const payload = JSON.stringify(resources);
+			expect(payload).not.toContain(secret);
+			expect(payload).not.toContain(Buffer.from(secret).toString('base64'));
+			const warning = resources.limitations.find(
+				(limitation) => limitation.code === 'project-memory-directory-ignored'
+			);
+			expect(warning?.severity).toBe('warning');
+			expect(warning?.message).toContain(
+				'.claude/settings.json sets autoMemoryDirectory to ~/.ssh'
+			);
+			expect(warning?.message).toContain('Maestro ignored it');
+		} finally {
+			vi.unstubAllEnvs();
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+	it('still copies a memory folder inside the project that its settings name', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-memory-inside-'));
+		try {
+			const accountRoot = path.join(root, 'account');
+			const projectRoot = path.join(root, 'project');
+			await Promise.all([
+				fs.mkdir(accountRoot),
+				fs.mkdir(path.join(projectRoot, '.claude'), { recursive: true }),
+				fs.mkdir(path.join(projectRoot, 'docs', 'memory'), { recursive: true }),
+			]);
+			await fs.writeFile(
+				path.join(projectRoot, '.claude', 'settings.json'),
+				JSON.stringify({ autoMemoryDirectory: 'docs/memory' })
+			);
+			await fs.writeFile(path.join(projectRoot, 'docs', 'memory', 'topic.md'), 'a project fact');
+			const resources = await collectTranslationResources(
+				{ provider: 'claude-code', version: '2.1.296', accountRoot, projectRoot },
+				{ projectKnowledge: true, selectedUserResources: [] }
+			);
+			expect(resources.artifacts.map((artifact) => artifact.relativePath)).toEqual([
+				'memory/topic.md',
+			]);
+			expect(resources.limitations).not.toContainEqual(
+				expect.objectContaining({ code: 'project-memory-directory-ignored' })
+			);
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}
