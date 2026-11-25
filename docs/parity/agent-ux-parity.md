@@ -78,11 +78,11 @@ The one permitted visual difference is the **transport label**: the `SSH` / `Hos
 
 ### Queue
 
-| Surface                           | Status | Code path                                           | Test                             | Notes                                               |
-| --------------------------------- | ------ | --------------------------------------------------- | -------------------------------- | --------------------------------------------------- |
-| Queued cards under the transcript | ❌     | `QueuedItemsList.tsx` (`hostOnly`)                  |                                  | Hosted cards drop Force Send, Steer, Edit, drag.    |
-| Execution Queue browser           | ❌     | `ExecutionQueueBrowser.tsx` (`hostOnly`)            | `ExecutionQueueBrowser.test.tsx` | Hosted items drop Edit, Merge, Force Send, reorder. |
-| Remove, Hold / Resume             | 🟢     | `services/queuedPrompt.ts` (`hostQueuedItemTarget`) |                                  | Transport only.                                     |
+| Surface                           | Status | Code path                                           | Test                             | Notes                                                                                                                                                                                                                     |
+| --------------------------------- | ------ | --------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Queued cards under the transcript | ❌     | `QueuedItemsList.tsx` (`hostOnly`)                  |                                  | Hosted cards drop Force Send, Steer, Edit, drag. Needs host queue ops beside `turns.queue.remove` / `setPaused` (`client/types.ts`, `client/peer-actions.ts`, `runtime/server-requests.ts`): edit text, move, force send. |
+| Execution Queue browser           | ❌     | `ExecutionQueueBrowser.tsx` (`hostOnly`)            | `ExecutionQueueBrowser.test.tsx` | Hosted items drop Edit, Merge, Force Send, reorder.                                                                                                                                                                       |
+| Remove, Hold / Resume             | 🟢     | `services/queuedPrompt.ts` (`hostQueuedItemTarget`) |                                  | Transport only.                                                                                                                                                                                                           |
 
 ### Actions refused on hosted agents (WIP `refuseOnHostedAgent`)
 
