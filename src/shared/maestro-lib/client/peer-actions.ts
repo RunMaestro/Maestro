@@ -8,7 +8,8 @@
 // (`remove_queue_item`), `turns.queue.setPaused` (`set_queue_item_paused`), `turns.queue.merge`
 // (`merge_queue_item`), `turns.queue.steer` (`steer_queue_item`), `turns.queue.edit`
 // (`edit_queue_item`), `turns.queue.move` (`move_queue_item`), and `turns.queue.sendNow`
-// (`send_queue_item_now`). The CLI reaches the host over its own short-lived forward
+// (`send_queue_item_now`). A `/btw` side question is `consults.ask` with `sideQuestion`
+// (`cross_agent_ask`): the host forks its own tab, as a `/btw` typed there does. The CLI reaches the host over its own short-lived forward
 // (`withPeerAgent()`), the desktop over the mirror service's held one; both run the action
 // through `runPeerAgentAction()`, so there is one copy.
 //
@@ -76,6 +77,11 @@ export type PeerAgentAction =
 	| { kind: 'move-queued'; itemId: string; toIndex: number; tabId?: string }
 	/** Run a waiting message now instead of in its turn (the card's Force Send). */
 	| { kind: 'send-now-queued'; itemId: string }
+	/**
+	 * Ask a `/btw` side question about a tab's conversation. The host answers from a throwaway fork
+	 * of its tab (tools off), so nothing lands in the tab's transcript and a busy tab answers too.
+	 */
+	| { kind: 'side-question'; tabId: string; question: string }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -111,6 +117,7 @@ export type PeerAgentActionResult =
 	| { kind: 'move-queued'; itemId: string; moved: boolean }
 	/** `sent: false`: the message no longer waits, or its tab is mid-turn. */
 	| { kind: 'send-now-queued'; itemId: string; sent: boolean }
+	| { kind: 'side-question'; tabId: string; answer: string }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string };
 
@@ -131,6 +138,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'edit-queued',
 	'move-queued',
 	'send-now-queued',
+	'side-question',
 	'update-agent',
 	'update-tab',
 ];
@@ -256,6 +264,20 @@ export async function runPeerAgentAction(
 				? { ok: true, value: { kind: 'send-now-queued', itemId: action.itemId, ...sent.value } }
 				: sent;
 		}
+		case 'side-question': {
+			const asked = await client.consults.ask({
+				targetAgentId: agent.id,
+				question: action.question,
+				sideQuestion: true,
+				targetTabId: action.tabId,
+			});
+			return asked.ok
+				? {
+						ok: true,
+						value: { kind: 'side-question', tabId: action.tabId, answer: asked.value.answer },
+					}
+				: asked;
+		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
 			return updated.ok
@@ -377,6 +399,9 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				edit: { ...parsed.edit, ...(images ? { images } : {}) },
 			};
 		}
+		case 'side-question':
+			if (!nonEmptyString(value.question)) throw new Error('The question is empty.');
+			return { kind, tabId: tabId(), question: value.question.trim() };
 		case 'update-agent':
 			return { kind, patch: parseAgentPatch(value.patch) };
 		case 'update-tab':

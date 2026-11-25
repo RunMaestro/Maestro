@@ -976,6 +976,8 @@ export function createRequestHandler(
 					...(typeof message.handoffAnswer === 'string'
 						? { handoffAnswer: message.handoffAnswer }
 						: {}),
+					...(message.sideQuestion === true ? { sideQuestion: true } : {}),
+					...(str(message.targetTabId) ? { targetTabId: str(message.targetTabId) } : {}),
 				});
 				if (result.ok) {
 					return {

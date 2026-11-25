@@ -476,6 +476,12 @@ function recordingClient(
 				return ok([{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }]);
 			},
 		},
+		consults: {
+			ask: async (input: unknown) => {
+				note('consults.ask', input);
+				return ok({ answer: 'yes' });
+			},
+		},
 	};
 	const handle = createRequestHandler(client as unknown as MaestroClient);
 	const named = (method: string) => calls.filter((call) => call.method === method);
@@ -814,6 +820,24 @@ describe('origin host on a send', () => {
 		for (const call of host.named('turns.send')) {
 			expect(call.args[2]).toEqual({ text: 'hi' });
 		}
+	});
+});
+
+describe('cross_agent_ask', () => {
+	it('passes a /btw side question and its tab to the runtime, which decides on it', async () => {
+		const host = recordingClient();
+		await host.handle({
+			type: 'cross_agent_ask',
+			sessionId: 'a1',
+			question: 'which file?',
+			sideQuestion: true,
+			targetTabId: 't1',
+		});
+		await host.handle({ type: 'cross_agent_ask', sessionId: 'a1', question: 'plain' });
+		expect(host.named('consults.ask').map((call) => call.args[0])).toEqual([
+			expect.objectContaining({ question: 'which file?', sideQuestion: true, targetTabId: 't1' }),
+			expect.not.objectContaining({ sideQuestion: true }),
+		]);
 	});
 });
 

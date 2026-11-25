@@ -2496,6 +2496,22 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it("asks a /btw side question of the host's tab on the same message", async () => {
+			await connect();
+			bridge.typed.set('cross_agent_ask', reply('cross_agent_ask_result', { answer: 'teal' }));
+			expect(
+				await client.consults.ask({
+					targetAgentId: 'a2',
+					question: 'colour?',
+					sideQuestion: true,
+					targetTabId: 't1',
+				})
+			).toEqual({ ok: true, value: { answer: 'teal' } });
+			expect(bridge.sent('cross_agent_ask')).toEqual([
+				expect.objectContaining({ sessionId: 'a2', sideQuestion: true, targetTabId: 't1' }),
+			]);
+		});
+
 		it('keeps the consult read-only and out of the desktop: no tab, no turn, no focus message', async () => {
 			await connect();
 			bridge.typed.set('cross_agent_ask', reply('cross_agent_ask_result', { answer: 'ok' }));

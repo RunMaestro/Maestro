@@ -343,6 +343,21 @@ describe('runtime consults', () => {
 			expect(provider.calls).toEqual([]);
 		});
 
+		it('refuses a /btw side question rather than answering it as a consult', async () => {
+			const runtime = await start();
+			const refused = errorOf(
+				await runtime.consults.ask({
+					targetAgentId: 'a2',
+					question: 'which file?',
+					sideQuestion: true,
+					targetTabId: 't1',
+				})
+			);
+			expect(refused.code).toBe('rejected');
+			expect(refused.message).toContain('side questions (/btw)');
+			expect(provider.calls).toEqual([]);
+		});
+
 		it('refuses a target with no directory to run in', async () => {
 			const runtime = await start(ANSWER, [
 				agentRecord('a1', 'Alpha', work),

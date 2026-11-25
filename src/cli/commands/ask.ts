@@ -103,17 +103,20 @@ export async function ask(agentId: string, question: string, options: AskOptions
 
 	const timeoutError = `--timeout must be between ${MIN_TIMEOUT_SECONDS} and ${MAX_TIMEOUT_SECONDS} seconds`;
 
+	const sideQuestion = options.btw === true;
+	if (options.tab !== undefined && !sideQuestion) {
+		fail('--tab only applies to --btw');
+		return;
+	}
+	if (sideQuestion && options.withContext) {
+		fail('--with-context does not apply to --btw: a side question already reads the tab');
+		return;
+	}
+
 	const route = routeAgentTarget(agentId);
 	if (route.kind === 'peer') {
-		// A side question forks a desktop tab; a peer's host has no tab to fork.
-		if (options.btw === true || options.tab !== undefined) {
-			fail(
-				`${options.btw === true ? '--btw' : '--tab'} forks a tab on this desktop, which the host on peer "${route.target.peer}" does not offer. Ask without it.`,
-				{},
-				ExitCode.InvalidUsage
-			);
-			return;
-		}
+		// `--btw` (and its `--tab`) rides the same message: a desktop host forks its own tab, as a
+		// `/btw` typed there does. A headless host refuses it.
 		if (options.from !== undefined || options.withContext) {
 			fail(
 				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${route.target.peer}" cannot see. Ask without it.`,
@@ -169,15 +172,6 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		}
 	} else {
 		fromSessionId = caller?.agentId;
-	}
-	const sideQuestion = options.btw === true;
-	if (options.tab !== undefined && !sideQuestion) {
-		fail('--tab only applies to --btw');
-		return;
-	}
-	if (sideQuestion && options.withContext) {
-		fail('--with-context does not apply to --btw: a side question already reads the tab');
-		return;
 	}
 	// A side question forks a tab and never writes to it, so an agent asking
 	// about its own conversation is fine; a consult of itself would deadlock.

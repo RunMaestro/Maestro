@@ -240,6 +240,15 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		if (disposed) return fail(method, 'host-unavailable', 'The runtime is closing.');
 		const question = input.question.trim();
 		if (!question) return fail(method, 'invalid', 'The question is empty.');
+		// A side question forks a desktop tab's provider session (`/btw`); answering it as a consult
+		// would add a turn to a consult tab instead, so refuse it rather than answer something else.
+		if (input.sideQuestion === true) {
+			return fail(
+				method,
+				'rejected',
+				'This host does not answer side questions (/btw). Run it on a desktop host.'
+			);
+		}
 		const record = repository.getAgent(input.targetAgentId);
 		if (!record) return fail(method, 'not-found', `No agent ${input.targetAgentId}.`);
 		if (input.fromAgentId && input.fromAgentId === input.targetAgentId) {

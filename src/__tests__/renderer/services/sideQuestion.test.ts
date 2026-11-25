@@ -12,6 +12,12 @@ import {
 } from '../../../renderer/services/sideQuestion';
 import { sideQuestionKey, useSideQuestionStore } from '../../../renderer/stores/sideQuestionStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import type { Session } from '../../../renderer/types';
 
 const ask = vi.fn();
@@ -99,5 +105,97 @@ describe('sideQuestion service', () => {
 		const outcome = await runRemoteSideQuestion({ targetSessionId: 'agent-1', question: 'q' });
 
 		expect(outcome).toMatchObject({ success: true, tabId: 'tab-1', agentName: 'Builder' });
+	});
+
+	describe('in all three modes', () => {
+		const ssh = { enabled: true, remoteId: 'build-box' };
+		const liftedTo = { peer: 'box', agentId: 'h1', at: 1 };
+		const federationAct = vi.fn();
+		const maestro = window as unknown as { maestro: Record<string, unknown> };
+
+		beforeEach(() => {
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'build-box', name: 'Box' }),
+				[{ id: 'h1', name: 'Builder', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+			useSettingsStore.setState({ federationHostedAgents: true });
+			federationAct.mockReset();
+			maestro.maestro = { ...maestro.maestro, federation: { act: federationAct } };
+		});
+
+		it('local, SSH, and hosted agents draw the same answered card', async () => {
+			ask.mockResolvedValue({ success: true, answer: 'src/foo.ts' });
+			federationAct.mockResolvedValue({
+				ok: true,
+				result: { kind: 'side-question', tabId: 'tab-1', answer: 'src/foo.ts' },
+			});
+			const cards: unknown[] = [];
+			for (const fields of [
+				{},
+				{ sessionSshRemoteConfig: ssh },
+				{ sessionSshRemoteConfig: ssh, liftedTo },
+			]) {
+				useSideQuestionStore.setState({ entries: {} });
+				const outcome = await askSideQuestion({
+					session: makeSession(fields as Partial<Session>),
+					tabId: 'tab-1',
+					question: 'which file?',
+				});
+				expect(outcome).toMatchObject({ success: true, answer: 'src/foo.ts', tabId: 'tab-1' });
+				const {
+					requestId: _requestId,
+					startedAt: _startedAt,
+					...card
+				} = useSideQuestionStore.getState().entries[
+					sideQuestionKey('agent-1', 'tab-1')
+				] as unknown as Record<string, unknown>;
+				cards.push(card);
+			}
+			expect(cards[1]).toEqual(cards[0]);
+			expect(cards[2]).toEqual(cards[0]);
+			// Local and SSH fork here; the hosted tab is forked by its host, and nothing spawns here.
+			expect(ask).toHaveBeenCalledTimes(2);
+			expect(federationAct).toHaveBeenCalledTimes(1);
+			expect(federationAct).toHaveBeenCalledWith('box', 'h1', {
+				kind: 'side-question',
+				tabId: 'tab-1',
+				question: 'which file?',
+			});
+		});
+
+		it("shows a host's failure on the card, as a local failure shows", async () => {
+			federationAct.mockResolvedValue({ ok: false, error: 'Peer "box": The agent is gone.' });
+
+			const outcome = await askSideQuestion({
+				session: makeSession({ liftedTo } as Partial<Session>),
+				tabId: 'tab-1',
+				question: 'q',
+			});
+
+			expect(outcome).toMatchObject({ success: false, error: 'Peer "box": The agent is gone.' });
+			expect(
+				useSideQuestionStore.getState().entries[sideQuestionKey('agent-1', 'tab-1')]
+			).toMatchObject({ status: 'error', error: 'Peer "box": The agent is gone.' });
+			expect(ask).not.toHaveBeenCalled();
+		});
+
+		it('fails on the card for a tab kept from before the move, which the host cannot fork', async () => {
+			const outcome = await askSideQuestion({
+				session: makeSession({
+					liftedTo,
+					aiTabs: [{ id: 'kept', agentSessionId: 'older', logs: [] }],
+				} as unknown as Partial<Session>),
+				tabId: 'kept',
+				question: 'q',
+			});
+
+			expect(outcome.success).toBe(false);
+			expect(outcome.error).toContain('copy kept from before the move');
+			expect(federationAct).not.toHaveBeenCalled();
+			expect(ask).not.toHaveBeenCalled();
+		});
 	});
 });

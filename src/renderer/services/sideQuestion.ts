@@ -10,6 +10,10 @@
  *
  * `maestro-cli ask <agent> "<question>" --btw` reaches the same function, so a
  * question asked from a script shows the same card and gets the same answer.
+ *
+ * A hosted agent's tab lives on its Federation host, so the host forks its own
+ * tab (`askMirrorSideQuestion()`, the same `ask --btw` path) and the answer
+ * draws on the same card here. Only the transport differs.
  */
 
 import type { Session } from '../types';
@@ -18,6 +22,8 @@ import { logger } from '../utils/logger';
 import { codifyTurnSettings } from '../utils/providerTabSessions';
 import { useSessionStore } from '../stores/sessionStore';
 import { sideQuestionKey, useSideQuestionStore } from '../stores/sideQuestionStore';
+import { hostedTargetOf, isHostTab } from './hostedTurns';
+import { askMirrorSideQuestion } from './peerMirror';
 
 export interface SideQuestionOutcome {
 	success: boolean;
@@ -53,6 +59,21 @@ export async function askSideQuestion(options: {
 	};
 
 	if (!question) return fail('Type a question after /btw.');
+
+	const hosted = hostedTargetOf(session);
+	if (hosted) {
+		// A tab kept from before the move has no conversation on the host to fork.
+		if (!isHostTab(hosted, tabId)) {
+			return fail(
+				`This conversation is the copy kept from before the move. Ask in a tab that runs on ${hosted.peerId}.`
+			);
+		}
+		const reply = await askMirrorSideQuestion(hosted.peerId, hosted.agentId, tabId, question);
+		if ('error' in reply) return fail(reply.error);
+		if (!reply.answer) return fail('No answer came back.');
+		useSideQuestionStore.getState().resolveSideQuestion(requestId, reply.answer);
+		return { success: true, answer: reply.answer, tabId, agentName: session.name };
+	}
 
 	try {
 		const result = await window.maestro.sideQuestion.ask({

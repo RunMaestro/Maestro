@@ -121,10 +121,10 @@ const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: st
 /**
  * What a hosted agent's send would ask this Maestro to run locally, by name, or null when the host
  * can take it. `/history` and `/skills` go to the host as the typed text, and the host runs them
- * for the tab (`parseMaestroBuiltinCommand()`). `/wizard`, `/btw`, and the inline wizard draw in
- * this window's composer (the wizard panel, the side-question card), and each spawns here, which a
- * hosted agent cannot do. A held send is not one: the host queues it paused
- * (`sendHostedTurn()`'s `held`).
+ * for the tab (`parseMaestroBuiltinCommand()`); `/btw` is asked of the host before this
+ * (`askSideQuestion()`). `/wizard` and the inline wizard draw in this window's composer (the
+ * wizard panel) and spawn here, which a hosted agent cannot do. A held send is not one: the host
+ * queues it paused (`sendHostedTurn()`'s `held`).
  */
 export function hostedLocalOnlyAction(
 	text: string,
@@ -137,7 +137,6 @@ export function hostedLocalOnlyAction(
 	if (opts.isWizardActive) return 'The wizard';
 	const builtin = parseMaestroBuiltinCommand(text, opts.toolType);
 	if (builtin?.name === '/wizard' && opts.handles.wizard) return '/wizard';
-	if (builtin?.name === '/btw') return '/btw';
 	return null;
 }
 
@@ -528,16 +527,41 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
+			// Built-in /btw side question (AI mode, Claude Code only). Handled ahead of
+			// the hosted send and the queue further down, because it must run NOW even
+			// while the tab is busy: it forks the tab's session instead of adding a turn
+			// to it, and the answer goes to a card above the composer, never into the
+			// transcript. A hosted agent's host forks its own tab (`askSideQuestion()`
+			// routes it), and the same card draws the answer here.
+			// Not while the wizard is active: its panel replaces the composer, so the
+			// card would never render and the answer would be lost.
+			const sideQuestion =
+				activeSession.inputMode === 'ai'
+					? parseSideQuestion(stripShellCommandEscape(effectiveInputValue))
+					: null;
+			if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
+				const targetTab = resolveTargetTab(activeSession);
+				if (targetTab) {
+					clearComposerText();
+					void askSideQuestion({
+						session: activeSession,
+						tabId: targetTab.id,
+						question: sideQuestion,
+					});
+					return;
+				}
+			}
+
 			// A hosted agent's turns run on its Federation host: the message, its images, and this
 			// tab's own settings go there (`sendHostedTurn()`), and the host queues it when the tab is
 			// busy. Nothing spawns here. The draft clears only once the host took it, so a host that
 			// is down leaves it in place.
 			if (activeSession.inputMode === 'ai' && hostedTargetOf(activeSession)) {
 				const text = stripShellCommandEscape(effectiveInputValue);
-				// `/wizard`, `/btw`, and the inline wizard draw in this composer and spawn here, which
-				// main refuses for a hosted agent. Say so and keep the draft, rather than sending the
+				// `/wizard` and the inline wizard draw in this composer and spawn here, which main
+				// refuses for a hosted agent. Say so and keep the draft, rather than sending the
 				// literal command text to the host's provider as a message. `/history` and `/skills`
-				// go to the host, which runs them for the tab.
+				// go to the host, which runs them for the tab; `/btw` was asked of the host above.
 				const localOnly = hostedLocalOnlyAction(text, {
 					toolType: activeSession.toolType,
 					isWizardActive: !!isWizardActive,
@@ -621,27 +645,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (effectiveInputValue.trim().startsWith('/')) {
 				const commandText = effectiveInputValue.trim();
 				const isTerminalMode = activeSession.inputMode === 'terminal';
-
-				// Built-in /btw side question (AI mode, Claude Code only). Handled here,
-				// ahead of the queue further down, because it must run NOW even while
-				// the tab is busy: it forks the tab's session instead of adding a turn
-				// to it, and the answer goes to a card above the composer, never into
-				// the transcript.
-				// Not while the wizard is active: its panel replaces the composer, so
-				// the card would never render and the answer would be lost.
-				const sideQuestion = isTerminalMode ? null : parseSideQuestion(commandText);
-				if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
-					const targetTab = resolveTargetTab(activeSession);
-					if (targetTab) {
-						clearComposerText();
-						void askSideQuestion({
-							session: activeSession,
-							tabId: targetTab.id,
-							question: sideQuestion,
-						});
-						return;
-					}
-				}
 
 				// Handle built-in /history command (only in AI mode)
 				// This is intercepted here because it requires Maestro to handle the synopsis generation

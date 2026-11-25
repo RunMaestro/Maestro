@@ -789,6 +789,14 @@ export interface ConsultAskInput {
 	 * answering a question. `question` is then the person's instruction.
 	 */
 	handoffAnswer?: string;
+	/**
+	 * Ask a `/btw` side question instead of consulting: the host answers from a throwaway fork of
+	 * the target's tab (`targetTabId`, or its active tab), with tools off, and nothing lands in that
+	 * tab's transcript. A headless host refuses it.
+	 */
+	sideQuestion?: boolean;
+	/** With `sideQuestion`: the target's AI tab to fork. */
+	targetTabId?: string;
 }
 
 export interface ConsultAnswer {

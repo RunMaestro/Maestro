@@ -85,6 +85,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'edit-queued': 'Could not edit the queued message',
 	'move-queued': 'Could not move the queued message',
 	'send-now-queued': 'Could not send the queued message now',
+	'side-question': 'Could not ask the side question',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 };
@@ -323,6 +324,29 @@ export async function steerMirrorQueuedItem(
 ): Promise<QueueSteerResult | null> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'steer-queued', itemId });
 	return result?.kind === 'steer-queued' ? result.result : null;
+}
+
+/**
+ * Ask a `/btw` side question of a mirrored tab: the host forks its own tab and answers. Answers
+ * the reply text, or `{ error }` with no toast: the side-question card shows the failure where
+ * the answer would have gone, as it does for a local agent.
+ */
+export async function askMirrorSideQuestion(
+	peerId: string,
+	agentId: string,
+	tabId: string,
+	question: string
+): Promise<{ answer: string } | { error: string }> {
+	const answer = await callMirroredAgentAction(peerId, agentId, {
+		kind: 'side-question',
+		tabId,
+		question,
+	});
+	if (!answer) return { error: 'Federation is not available in this window.' };
+	if (!answer.ok) return { error: answer.error };
+	return answer.result.kind === 'side-question'
+		? { answer: answer.result.answer }
+		: { error: 'The host answered something else.' };
 }
 
 /** Close a mirrored tab on its host: it moves to the host's closed-tab history. */

@@ -52,6 +52,9 @@ function fakeClient() {
 		agents: {
 			update: vi.fn(async () => ok({ applied: ['model' as const, 'nudgeMessage' as const] })),
 		},
+		consults: {
+			ask: vi.fn(async () => ok({ answer: 'src/foo.ts', agentName: 'docs' })),
+		},
 	};
 	return { client, asClient: client as unknown as MaestroClient };
 }
@@ -297,6 +300,23 @@ describe('runPeerAgentAction', () => {
 		).toEqual(ok({ kind: 'steer-queued', itemId: 'gone', result: { outcome: 'not-found' } }));
 	});
 
+	it("asks a /btw side question of the host's tab, as `ask --btw` does", async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'side-question',
+				tabId: 't1',
+				question: 'which file?',
+			})
+		).toEqual(ok({ kind: 'side-question', tabId: 't1', answer: 'src/foo.ts' }));
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'which file?',
+			sideQuestion: true,
+			targetTabId: 't1',
+		});
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };
@@ -441,6 +461,9 @@ describe('parsePeerAgentAction', () => {
 			kind: 'steer-queued',
 			itemId: 'q1',
 		});
+		expect(
+			parsePeerAgentAction({ kind: 'side-question', tabId: 't1', question: '  which file? ' })
+		).toEqual({ kind: 'side-question', tabId: 't1', question: 'which file?' });
 		expect(
 			parsePeerAgentAction({
 				kind: 'update-agent',
@@ -628,6 +651,12 @@ describe('parsePeerAgentAction', () => {
 			})
 		).toThrow('images must be a list of data URLs');
 		expect(() => parsePeerAgentAction({ kind: 'steer-queued' })).toThrow('Missing queued item id');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'side-question', tabId: 't1', question: ' ' })
+		).toThrow('The question is empty.');
+		expect(() => parsePeerAgentAction({ kind: 'side-question', question: 'q' })).toThrow(
+			'Missing tab id'
+		);
 		expect(() => parsePeerAgentAction({ kind: 'send-now-queued' })).toThrow(
 			'Missing queued item id'
 		);

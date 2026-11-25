@@ -1907,7 +1907,33 @@ describe('useInputProcessing', () => {
 			}
 		);
 
-		it.each(['/btw what changed?', '/wizard plan it'])(
+		it('local, SSH, and hosted agents all ask /btw of the tab and draw the same card', async () => {
+			for (const [mode, fields] of modes) {
+				vi.mocked(sendHostedTurn).mockClear();
+				vi.mocked(askSideQuestion).mockClear();
+				mockSetInputValue.mockClear();
+				const session = createMockSession({ toolType: 'claude-code', ...fields });
+				const deps = createDeps({ activeSession: session, inputValue: '/btw what changed?' });
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				unmount();
+
+				// `askSideQuestion()` routes a hosted tab to its host (sideQuestion.test.ts).
+				expect(askSideQuestion, mode).toHaveBeenCalledWith({
+					session,
+					tabId: session.activeTabId,
+					question: 'what changed?',
+				});
+				expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+				expect(mockSetInputValue, mode).toHaveBeenCalledWith('');
+				expect(window.maestro.process.spawn, mode).not.toHaveBeenCalled();
+			}
+		});
+
+		it.each(['/wizard plan it'])(
 			'still refuses %s on a hosted agent: it draws in this composer and spawns here',
 			async (command) => {
 				vi.mocked(sendHostedTurn).mockClear();

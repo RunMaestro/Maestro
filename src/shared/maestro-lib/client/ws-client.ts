@@ -2384,6 +2384,8 @@ class WsMaestroClient implements MaestroClient {
 				withContext: input.withContext === true,
 				timeoutMs,
 				...(input.handoffAnswer !== undefined ? { handoffAnswer: input.handoffAnswer } : {}),
+				...(input.sideQuestion === true ? { sideQuestion: true } : {}),
+				...(input.targetTabId ? { targetTabId: input.targetTabId } : {}),
 			},
 			'cross_agent_ask_result',
 			{ timeoutMs: timeoutMs + CONSULT_WAIT_GRACE_MS }
