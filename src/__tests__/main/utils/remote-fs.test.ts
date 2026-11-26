@@ -2626,11 +2626,11 @@ finally:
 		const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
 
 		/** Deps that run the generated command with this machine's sh, as the remote would. */
-		function runLocally(): RemoteFsDeps {
+		function runLocally(env?: NodeJS.ProcessEnv): RemoteFsDeps {
 			return {
 				buildSshArgs: vi.fn().mockReturnValue(['host']),
 				execSsh: vi.fn(async (_ssh: string, args: string[], input?: string) => {
-					const out = spawnSync('sh', ['-c', args.at(-1)!], { input, encoding: 'utf8' });
+					const out = spawnSync('sh', ['-c', args.at(-1)!], { input, encoding: 'utf8', env });
 					return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
 				}),
 			};
@@ -2706,6 +2706,36 @@ finally:
 					runLocally()
 				);
 				expect(again).toEqual({ success: true });
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'finishes the copy into the file when the connection hangs up during it',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				// A `cat` that hangs up the script and itself, as a dropped SSH session
+				// does, after the target was already opened (and truncated) for it.
+				const bin = path.join(dir, 'bin');
+				fs.mkdirSync(bin);
+				const realCat = spawnSync('sh', ['-c', 'command -v cat'], {
+					encoding: 'utf8',
+				}).stdout.trim();
+				fs.writeFileSync(
+					path.join(bin, 'cat'),
+					`#!/bin/sh\nkill -HUP $PPID\nkill -HUP $$\nexec ${realCat} "$@"\n`,
+					{ mode: 0o755 }
+				);
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited after the hang-up'),
+					sha('fetched'),
+					baseConfig,
+					runLocally({ ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` })
+				);
+				expect(fs.readFileSync(file, 'utf8')).toBe('edited after the hang-up');
+				expect(result).toEqual({ success: true });
 			}
 		);
 

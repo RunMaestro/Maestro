@@ -1589,7 +1589,10 @@ const REPLACE_IF_UNCHANGED_NO_HASH = 5;
  * 2. The target is hashed there and compared with `expectedSha256`; a target
  *    that changed, or is gone, is left alone and reported as `changed`.
  * 3. The temp file is copied INTO the target (not moved over it), which keeps
- *    the target's mode, owner, and links.
+ *    the target's mode, owner, and links. That copy truncates the target
+ *    first, so the script ignores a hang-up from there on: a connection that
+ *    drops mid-copy (sshd sends SIGHUP to the session) no longer kills it and
+ *    leaves the target cut short. The copy finishes, then the temp file goes.
  *
  * Steps 2 and 3 run back to back on the remote host, which leaves the window for
  * another writer at the remote's own speed instead of an SSH round trip. A
@@ -1619,6 +1622,8 @@ export async function replaceFileRemoteIfUnchanged(
 		'cur=$(sum "$f")',
 		`[ "$cur" = ${contentSha256} ] && exit 0`,
 		`[ "$cur" = ${expectedSha256} ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
+		// Ignored signals are inherited, so the `cat` survives the hang-up too.
+		"trap '' HUP PIPE",
 		'cat "$tmp" > "$f"',
 	].join('\n');
 	const result = await execRemoteCommand(
