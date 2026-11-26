@@ -215,6 +215,20 @@ export interface SshReachabilityEvent {
 	message?: string;
 	/** Epoch ms the remote entered this state. */
 	since: number;
+	/**
+	 * What is down. `ssh` (also when absent, from an older main process): ssh cannot reach the
+	 * remote, so every agent on it is stuck. `host`: ssh works, but the Maestro host that runs
+	 * this remote's hosted agents does not answer.
+	 */
+	cause?: RemoteOutageCause;
+}
+
+/** What an outage on a remote is about: the SSH link itself, or the Maestro host behind it. */
+export type RemoteOutageCause = 'ssh' | 'host';
+
+/** The cause of an outage event, reading an absent field as `ssh`. */
+export function outageCause(event: Pick<SshReachabilityEvent, 'cause'>): RemoteOutageCause {
+	return event.cause === 'host' ? 'host' : 'ssh';
 }
 
 /** Parsed form of a probe's stdout. */

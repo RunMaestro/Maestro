@@ -21,7 +21,10 @@
 
 import { create } from 'zustand';
 
-import type { SshReachabilityEvent } from '../../shared/sshConnection';
+import { outageCause, type SshReachabilityEvent } from '../../shared/sshConnection';
+import { hostedTargetOf } from '../services/hostedTurns';
+import type { Session } from '../types';
+import { getSessionSshRemoteId, isSessionRemote } from '../utils/sessionHelpers';
 
 export interface SshOutage {
 	event: SshReachabilityEvent;
@@ -62,10 +65,14 @@ export const useSshOutageStore = create<SshOutageState>((set, get) => ({
 		set((state) => ({
 			outages: {
 				...state.outages,
-				// A repeat push for the same outage keeps the user's dismissal.
+				// A repeat push for the same outage keeps the user's dismissal. A change of cause
+				// (the host was down, now ssh itself is) is news, so its dialog opens again.
 				[event.remoteId]: {
 					event,
-					dismissed: previous?.dismissed ?? false,
+					dismissed:
+						previous && outageCause(previous.event) === outageCause(event)
+							? previous.dismissed
+							: false,
 					surfaced: previous?.surfaced ?? false,
 				},
 			},
@@ -103,20 +110,63 @@ export const useSshOutageStore = create<SshOutageState>((set, get) => ({
 }));
 
 /**
+ * Which outages an agent is exposed to: the remote its work runs through, and whether its turns
+ * run on that remote's Maestro host (a hosted agent), which a `host` outage stops. An SSH outage
+ * stops every agent on the remote; a host outage only the hosted ones.
+ */
+export interface OutageScope {
+	remoteId?: string;
+	hosted: boolean;
+}
+
+export function outageScopeOf(session: Session | null | undefined): OutageScope {
+	if (!isSessionRemote(session)) return { hosted: false };
+	return {
+		remoteId: getSessionSshRemoteId(session),
+		hosted: hostedTargetOf(session) !== undefined,
+	};
+}
+
+/** Whether an outage stops an agent in `scope`. */
+function outageReaches(outage: SshOutage, scope: OutageScope | undefined): boolean {
+	if (!scope?.remoteId || outage.event.remoteId !== scope.remoteId) return false;
+	return outageCause(outage.event) === 'ssh' || scope.hosted;
+}
+
+/**
  * Outages whose dialog should be on screen, oldest first: not dismissed, and
- * either surfaced by a live turn or on the remote of the agent the user is
- * looking at (`activeRemoteId`). Returns a new array, so derive it from
- * `outages` (useMemo) rather than passing it to the hook as a selector.
+ * either surfaced by a live turn or one that stops the agent the user is
+ * looking at (`active`: its scope, or just its remote id, read as an SSH
+ * agent). Returns a new array, so derive it from `outages` (useMemo) rather
+ * than passing it to the hook as a selector.
  */
 export function selectOpenSshOutages(
 	state: Pick<SshOutageState, 'outages'>,
-	activeRemoteId?: string
+	active?: OutageScope | string
 ): SshOutage[] {
+	const scope = typeof active === 'string' ? { remoteId: active, hosted: false } : active;
 	return Object.values(state.outages)
-		.filter(
-			(outage) => !outage.dismissed && (outage.surfaced || outage.event.remoteId === activeRemoteId)
-		)
+		.filter((outage) => !outage.dismissed && (outage.surfaced || outageReaches(outage, scope)))
 		.sort((a, b) => a.event.since - b.event.since);
+}
+
+/** Agents whose work runs through `remoteId`. */
+export function agentsOnRemote(sessions: Session[], remoteId: string): Session[] {
+	return sessions.filter(
+		(s) =>
+			(s.sessionSshRemoteConfig?.enabled && s.sessionSshRemoteConfig.remoteId === remoteId) ||
+			s.sshRemoteId === remoteId
+	);
+}
+
+/**
+ * The agents an outage stops: every agent on the remote when ssh is down, only the hosted ones
+ * when the host behind it is.
+ */
+export function agentsStoppedBy(sessions: Session[], event: SshReachabilityEvent): Session[] {
+	const onRemote = agentsOnRemote(sessions, event.remoteId);
+	if (outageCause(event) === 'ssh') return onRemote;
+	return onRemote.filter((session) => outageScopeOf(session).hosted);
 }
 
 /**

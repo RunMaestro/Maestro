@@ -8,6 +8,7 @@ import {
 } from '../../../renderer/components/SshUnreachableModal';
 import { useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -219,6 +220,80 @@ describe('SshUnreachableModal', () => {
 			// The Connection Error mark (lucide Wifi), never the old Server mode icon.
 			expect(html).toContain('data-testid="wifi-icon"');
 			expect(html).not.toContain('data-testid="server-icon"');
+		});
+	});
+
+	describe('a hosted agent whose host stopped answering (cause host)', () => {
+		const HOST_MESSAGE = 'The Maestro host on "pedtome" stopped answering.';
+		const agents = () =>
+			AGENT_MODES.map((mode) => createModeSession(mode, { id: mode, name: `Agent ${mode}` }));
+
+		beforeEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: true } as any);
+		});
+
+		function recordHostOutage() {
+			useSshOutageStore.getState().applyReachability({
+				remoteId: 'r1',
+				remoteName: 'pedtome',
+				reachable: false,
+				message: HOST_MESSAGE,
+				since: Date.now() - 60_000,
+				cause: 'host',
+			});
+		}
+
+		function look(mode: (typeof AGENT_MODES)[number]) {
+			useSessionStore.setState({
+				sessions: [createModeSession(mode, { id: 'active' })],
+				activeSessionId: 'active',
+			} as any);
+		}
+
+		it('opens the same dialog an SSH outage does, worded for the host, naming only the hosted agents', () => {
+			look('hosted');
+			recordHostOutage();
+			render(<SshUnreachableModal theme={mockTheme} sessions={agents()} />);
+
+			expect(screen.getByText('Can\'t reach the Maestro host on "pedtome"')).toBeInTheDocument();
+			expect(screen.getByText(HOST_MESSAGE)).toBeInTheDocument();
+			expect(screen.getByText('Agent hosted')).toBeInTheDocument();
+			expect(screen.queryByText(/Agent ssh/)).toBeNull();
+			expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+			expect(screen.getByTestId('ssh-unreachable-check-now')).toBeInTheDocument();
+			expect(screen.getByText(/checks again every 30 seconds/)).toBeInTheDocument();
+			expect(useSshOutageStore.getState().outages['r1'].surfaced).toBe(true);
+		});
+
+		it('stays hidden for an SSH or local agent on that remote, whose turns do not need the host', () => {
+			for (const mode of ['local', 'ssh'] as const) {
+				useSshOutageStore.setState({ outages: {} });
+				look(mode);
+				recordHostOutage();
+				const { unmount } = render(<SshUnreachableModal theme={mockTheme} sessions={agents()} />);
+				expect(screen.queryByTestId('ssh-unreachable-modal')).toBeNull();
+				unmount();
+			}
+		});
+
+		it('Check Now runs the same check, which reconnects the host in the main process', async () => {
+			look('hosted');
+			recordHostOutage();
+			checkReachability.mockResolvedValue({ success: true, reachable: true });
+			render(<SshUnreachableModal theme={mockTheme} sessions={agents()} />);
+			fireEvent.click(screen.getByTestId('ssh-unreachable-check-now'));
+			await waitFor(() => expect(checkReachability).toHaveBeenCalledWith('r1'));
+		});
+
+		it('a dismissed host outage opens again when ssh itself goes down: that is news', () => {
+			look('hosted');
+			recordHostOutage();
+			useSshOutageStore.getState().dismiss('r1');
+			recordOutage('r1');
+			expect(useSshOutageStore.getState().outages['r1'].dismissed).toBe(false);
+			render(<SshUnreachableModal theme={mockTheme} sessions={agents()} />);
+			expect(screen.getByText('Can\'t reach "pedtome" over SSH')).toBeInTheDocument();
+			expect(screen.getByText('Agent ssh, Agent hosted')).toBeInTheDocument();
 		});
 	});
 });

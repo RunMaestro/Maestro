@@ -6,8 +6,13 @@ vi.mock('../../main/utils/logger', () => ({
 
 import {
 	__resetSshReachabilityForTest,
+	checkRemoteLink,
 	checkSshRemote,
 	configureSshReachability,
+	forgetHostPeer,
+	HOST_OUTAGE_CONFIRM_MS,
+	noteHostConnection,
+	type HostConnectionReport,
 	getUnreachableSshRemotes,
 	noteSshExit,
 	SSH_RECOVERY_PROBE_INTERVAL_MS,
@@ -214,5 +219,134 @@ describe('ssh-reachability', () => {
 		await expect(checkSshRemote('r1')).resolves.toBe(false);
 		expect(getUnreachableSshRemotes()).toEqual([]);
 		expect(emitted).toHaveLength(1);
+	});
+
+	describe("a hosted agent's host (the same outage, cause host)", () => {
+		const report = (
+			connection: HostConnectionReport['connection'],
+			error?: string
+		): HostConnectionReport => ({
+			remoteId: 'r1',
+			peerId: 'pedtome',
+			name: 'pedtome',
+			connection,
+			...(error ? { error } : {}),
+		});
+		let hosts: boolean;
+		let reconnectHost: ReturnType<typeof vi.fn<(remoteId: string) => Promise<boolean>>>;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			hosts = true;
+			reconnectHost = vi.fn<(remoteId: string) => Promise<boolean>>().mockResolvedValue(false);
+			probe.mockResolvedValue(UP);
+			configureSshReachability({
+				resolveRemote: (id) => (id === remote.id ? remote : undefined),
+				probe,
+				emit: (event) => emitted.push(event),
+				hostsAgents: (peerId) => hosts && peerId === 'pedtome',
+				reconnectHost,
+			});
+			noteHostConnection(report('connected'));
+		});
+
+		it('raises one host outage when the host stays down past the grace, worded for the host', async () => {
+			noteHostConnection(report('lost', 'The connection dropped.'));
+			noteHostConnection(report('reconnecting', 'The connection dropped.'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS - 1);
+			expect(emitted).toEqual([]);
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(probe).toHaveBeenCalledTimes(1);
+			expect(emitted).toHaveLength(1);
+			expect(emitted[0]).toMatchObject({
+				remoteId: 'r1',
+				remoteName: 'pedtome',
+				reachable: false,
+				cause: 'host',
+			});
+			expect(emitted[0].message).toContain('The Maestro host on "pedtome" stopped answering');
+			expect(getUnreachableSshRemotes()).toEqual([emitted[0]]);
+		});
+
+		it('raises nothing for a drop that reconnects within the grace', async () => {
+			noteHostConnection(report('reconnecting'));
+			await vi.advanceTimersByTimeAsync(1_000);
+			noteHostConnection(report('connected'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS * 2);
+			expect(emitted).toEqual([]);
+			expect(probe).not.toHaveBeenCalled();
+		});
+
+		it('raises nothing for a host no agent on this machine runs on', async () => {
+			hosts = false;
+			noteHostConnection(report('host-down', 'No Maestro host is running.'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toEqual([]);
+		});
+
+		it('raises the SSH outage instead when ssh itself is down: one remote, one dialog', async () => {
+			probe.mockResolvedValue(DOWN);
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toHaveLength(1);
+			expect(emitted[0].cause).toBeUndefined();
+			expect(emitted[0].message).toContain('over SSH');
+			expect(getUnreachableSshRemotes()).toHaveLength(1);
+		});
+
+		it('names the fix the mirror gives when no host is running there', async () => {
+			noteHostConnection(
+				report('host-down', 'No Maestro host is running on peer "pedtome". Start it with: x')
+			);
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted[0].message).toBe(
+				'No Maestro host is running on peer "pedtome". Start it with: x'
+			);
+		});
+
+		it('announces the recovery once with cause host when the host attaches again', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			noteHostConnection(report('connected'));
+			expect(emitted.map((e) => [e.reachable, e.cause])).toEqual([
+				[false, 'host'],
+				[true, 'host'],
+			]);
+			expect(getUnreachableSshRemotes()).toEqual([]);
+		});
+
+		it('Check Now reconnects the host once ssh answers, and re-checks every 30 seconds', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			await expect(checkRemoteLink('r1')).resolves.toBe(false);
+			expect(reconnectHost).toHaveBeenCalledTimes(1);
+
+			await vi.advanceTimersByTimeAsync(SSH_RECOVERY_PROBE_INTERVAL_MS);
+			expect(reconnectHost).toHaveBeenCalledTimes(2);
+		});
+
+		it('after an SSH outage, gives a host that is still down its own dialog', async () => {
+			probe.mockResolvedValue(DOWN);
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toHaveLength(1);
+
+			probe.mockResolvedValue(UP);
+			await checkSshRemote('r1');
+			expect(emitted[1]).toMatchObject({ reachable: true });
+			expect(emitted[1].cause).toBeUndefined();
+
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted[2]).toMatchObject({ reachable: false, cause: 'host' });
+		});
+
+		it('forgets the host of a peer that is no longer mirrored, without a recovery toast', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			forgetHostPeer('pedtome');
+			expect(getUnreachableSshRemotes()).toEqual([]);
+			expect(emitted).toHaveLength(1);
+		});
 	});
 });
