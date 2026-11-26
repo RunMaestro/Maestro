@@ -65,6 +65,9 @@ import {
 	parseQueuedTurnSettings,
 } from '../client/types';
 import { logger } from '../host';
+import { admitTurnImages } from '../launch/image-delivery';
+import { agentIdCanReadImages } from '../providers/capabilities';
+import { getAgentDisplayName } from '../../agentMetadata';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { createOutputParser } from '../parsers/parser-factory';
@@ -161,6 +164,8 @@ export interface RuntimeTurns {
 /** One queued message, as the runtime holds it. */
 interface TurnItem extends QueueItem {
 	text: string;
+	/** The images it carries, as admitted data URLs (`admitTurnImages`), in attachment order. */
+	images?: string[];
 	queuedAt: number;
 	/** Model and effort at the moment it was queued (a model change before it runs must not relabel it). */
 	turnSettings: { model?: string; effort?: string };
@@ -355,6 +360,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const command = resolveSlashCommand(item.text, loaded.commands, agent.agentCommands);
 		const message: TurnMessage = {
 			text: item.text,
+			...(item.images?.length ? { images: item.images } : {}),
 			// Frozen settings only hold on the provider they were frozen on (see `settingsProvider`).
 			...(item.settingsProvider === agent.toolType ? { turnSettings: item.turnSettings } : {}),
 			...(command ? { command } : {}),
@@ -749,22 +755,31 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		input: TurnInput
 	): Promise<ClientResult<TurnSendReceipt>> {
 		const method: ClientMethod = 'turns.send';
-		if (input.images?.length) {
+		const record = repository.getAgent(agentId);
+		if (!record) return fail(method, 'not-found', `No agent ${agentId}.`);
+		// A provider that cannot read images never gets offered them on a desktop (the composer's
+		// attach button is off), so a send that carries some is refused here, never run without them.
+		if (input.images?.length && !agentIdCanReadImages(record.toolType)) {
 			return fail(
 				method,
 				'unsupported',
-				'Images cannot be sent from here yet. Send the message without them, or use the desktop.'
+				`${getAgentDisplayName(record.toolType)} cannot read images. Send the message without them.`
 			);
 		}
-		if (!input.text?.trim()) return fail(method, 'invalid', 'There is nothing to send.');
-		const record = repository.getAgent(agentId);
-		if (!record) return fail(method, 'not-found', `No agent ${agentId}.`);
+		// Images come from another machine: inline data URLs only, bounded in count and bytes.
+		const admitted = admitTurnImages(input.images);
+		if (!admitted.ok) return fail(method, 'invalid', admitted.error);
+		const images = admitted.images;
+		const text = typeof input.text === 'string' ? input.text : '';
+		if (!text.trim() && images.length === 0) {
+			return fail(method, 'invalid', 'There is nothing to send.');
+		}
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
 		// Maestro's own commands run in a desktop's composer (or for a send it receives). This host
 		// has nothing to run one, and the provider would get the literal text as a message.
-		const builtin = parseMaestroBuiltinCommand(input.text, record.toolType);
+		const builtin = parseMaestroBuiltinCommand(text, record.toolType);
 		if (builtin) {
 			return fail(
 				method,
@@ -783,7 +798,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const item: TurnItem = {
 			id: ctx.newId(),
 			tabId,
-			text: input.text,
+			text,
+			...(images.length > 0 ? { images } : {}),
 			queuedAt: deps.now(),
 			readOnly:
 				(overrides?.readOnly ?? tab.readOnlyMode === true) || tab.permissionMode === 'readonly',

@@ -81,6 +81,7 @@ describe('runtime turns', () => {
 						...turn.launch.sessionCustomEnvVars,
 						FAKE_AGENT_RECORDING: recordings[turn.provider.id],
 						FAKE_AGENT_ARGV_OUT: argvOut,
+						FAKE_AGENT_STDIN_OUT: argvOut.replace(/argv-(\d+)\.json$/, 'stdin-$1.txt'),
 						...(hold ? { FAKE_AGENT_HOLD: '1' } : {}),
 					},
 				},
@@ -417,8 +418,7 @@ describe('runtime turns', () => {
 
 			expect(error).toMatchObject({
 				code: 'unsupported',
-				message:
-					'Images cannot be sent from here yet. Send the message without them, or use the desktop.',
+				message: 'Grok CLI cannot read images. Send the message without them.',
 			});
 			expect(argvFiles).toEqual([]);
 			expect(turn.events).toEqual([]);
@@ -430,14 +430,69 @@ describe('runtime turns', () => {
 		it('refuses what cannot run, and says which', async () => {
 			const runtime = await start();
 			expect(errorOf(await runtime.turns.send('a1', 't1', { text: '   ' })).code).toBe('invalid');
-			expect(
-				errorOf(
-					await runtime.turns.send('a1', 't1', { text: 'x', images: ['data:image/png;base64,AA'] })
-				).code
-			).toBe('unsupported');
 			expect(errorOf(await runtime.turns.send('nope', 't1', { text: 'x' })).code).toBe('not-found');
 			expect(errorOf(await runtime.turns.send('a1', 'nope', { text: 'x' })).code).toBe('not-found');
 			expect(argvFiles).toEqual([]);
+		});
+
+		describe('images (M1: a headless host takes a pasted image as a desktop host does)', () => {
+			const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+			const JPEG = 'data:image/jpeg;base64,/9j/4AAQ';
+			const stdinOf = (index: number) =>
+				fs.readFileSync(argvFiles[index].replace(/argv-(\d+)\.json$/, 'stdin-$1.txt'), 'utf-8');
+
+			it("hands the provider the message's images, and keeps them on the transcript's user entry", async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+
+				expect(
+					value(
+						await runtime.turns.send('a1', 't1', { text: 'what is this?', images: [PNG, JPEG] })
+					)
+				).toEqual({ status: 'started' });
+				await turn.outcome();
+
+				expect(turn.outcomes()).toEqual(['completed']);
+				const argv = JSON.parse(fs.readFileSync(argvFiles[0], 'utf-8')) as string[];
+				expect(argv.slice(-2)).toEqual(['--input-format', 'stream-json']);
+				const message = JSON.parse(stdinOf(0).trim());
+				expect(message.message.content.map((block: { type: string }) => block.type)).toEqual([
+					'image',
+					'image',
+					'text',
+				]);
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { text: 'what is this?', images: [PNG, JPEG] },
+				});
+				expect((await transcript(runtime))[0]).toMatchObject({
+					source: 'user',
+					text: 'what is this?',
+					images: [PNG, JPEG],
+				});
+			});
+
+			it('runs an image-only message, as the desktop does', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '', images: [PNG] }));
+				await turn.outcome();
+				expect(turn.outcomes()).toEqual(['completed']);
+				expect((await transcript(runtime))[0]).toMatchObject({ source: 'user', images: [PNG] });
+			});
+
+			it.each([
+				['a store ref from another machine', ['maestro-image://sha256/abc']],
+				['a value that is not an image', ['data:text/plain;base64,aGk=']],
+				['bytes that are not base64', ['data:image/png;base64,@@@@']],
+				['more images than a message may carry', Array.from({ length: 21 }, () => PNG)],
+			])('refuses %s, and starts nothing', async (_label, images) => {
+				const runtime = await start();
+				const error = errorOf(await runtime.turns.send('a1', 't1', { text: 'x', images }));
+				expect(error.code).toBe('invalid');
+				expect(error.message).toMatch(/image/i);
+				expect(argvFiles).toEqual([]);
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			});
 		});
 
 		it('refuses a lifted agent with a pointer at peer:agentId, and starts nothing', async () => {

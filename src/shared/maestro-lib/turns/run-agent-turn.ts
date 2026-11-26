@@ -12,8 +12,10 @@
  *
  * - An SSH remote that cannot be resolved (decision D1c). The turn never runs on this machine
  *   in its place.
- * - Images without an explicit file route and admitted, resolved content blocks (PA12).
- *   Missing bytes or support refuse in the planner, never falling back to tool-read files.
+ * - Images a provider cannot read, or that would have to reach an SSH remote. Every other
+ *   provider gets them the way the desktop's spawner hands them over (`planImageDelivery`): a
+ *   stream-json stdin message, or temp files this turn removes when it ends. A prompt-file route's
+ *   missing bytes or support refuse in the planner, never falling back to tool-read files.
  *   A Grok turn's images are resolved here and handed to the planner as ordered ACP blocks
  *   under the caller's `embeddedImageSupport`; an image that cannot be read refuses first.
  * - Standard permission mode on a Claude Code API turn (PA11). The permission relay lives in
@@ -59,6 +61,10 @@ import {
 } from '../launch/interactive-mode';
 import { buildAgentLaunchPlan } from '../launch/launch-plan';
 import { parseDataUrl, type AcpPromptBlock, type EmbeddedImageSupport } from '../launch/image-refs';
+import { planImageDelivery, writeImageTempFile } from '../launch/image-delivery';
+import { encodeStdinPrompt } from '../launch/prompt-delivery';
+import { buildStreamJsonMessage } from '../launch/stream-json-message';
+import { agentCanReadImages } from '../providers/capabilities';
 import { resolveSshLaunchTarget, type SshRemoteSettingsStore } from '../launch/ssh-remote-resolver';
 import { newRemotePromptFileDestination } from '../launch/ssh-command-builder';
 import {
@@ -117,7 +123,7 @@ export type RunAgentTurnRefusal =
 	| 'grok-route-refused'
 	/** The prompt cannot be delivered as requested. Nothing was started. */
 	| 'prompt-delivery-refused'
-	/** The turn carries images without an explicit file route (CH-8). */
+	/** The turn's images cannot reach the provider: it cannot read them, or they are missing (CH-8). */
 	| 'images-unsupported'
 	/** Claude Code in Standard permission mode, with no relay to answer its prompts (PA11). */
 	| 'standard-mode-unsupported'
@@ -140,8 +146,10 @@ export interface RunAgentTurnDeps {
 		sshConfig: NonNullable<AssembledTurn['launch']['sshRemoteConfig']>,
 		store: SshRemoteSettingsStore
 	) => Promise<SshSpawnWrapResult>;
-	/** Where the Windows system prompt file goes. Default: the OS temp directory. */
+	/** Where the Windows system prompt file and image temp files go. Default: the OS temp directory. */
 	tempDir?: string;
+	/** Test seam for writing an attached image where a file-reading provider reads it. */
+	writeImageTempFile?: typeof writeImageTempFile;
 }
 
 export interface RunAgentTurnOptions {
@@ -377,11 +385,28 @@ export async function runAgentTurn(
 	const deps = options.deps ?? {};
 
 	const hasImages = launch.hasImages || !!turn.entry.images?.length;
-	if (hasImages && !launch.agent?.promptFile) {
-		return refuse(
-			'images-unsupported',
-			'Images cannot be sent from here yet. Send the message without them, or use the desktop.'
-		);
+	// Images this layer hands the provider itself, the way the desktop's spawner does
+	// (`planImageDelivery`). A prompt-file provider (Grok) carries them in its file instead.
+	const deliversImages = hasImages && !launch.agent?.promptFile;
+	if (deliversImages) {
+		if (!turn.entry.images?.length) {
+			return refuse(
+				'images-unsupported',
+				'The turn says it carries images, but none came with it. Nothing was started.'
+			);
+		}
+		if (!agentCanReadImages(provider.capabilities)) {
+			return refuse(
+				'images-unsupported',
+				`${provider.name ?? providerId} cannot read images. Send the message without them.`
+			);
+		}
+		if (sshEnabled) {
+			return refuse(
+				'images-unsupported',
+				'Images cannot reach an SSH remote from this host. Send the message without them.'
+			);
+		}
 	}
 	if (!createOutputParser(providerId)) {
 		return refuse(
@@ -491,6 +516,13 @@ export async function runAgentTurn(
 	// spawn shares: owner-only, removed after its lifetime, and the inline flag when the write
 	// fails. The flag goes into the arguments before the final plan places the prompt after them.
 	let systemPromptFile: string | undefined;
+	/** The images a file-reading provider reads this turn (`planImageDelivery`). */
+	let imageTempFiles: string[] = [];
+	/** Remove what the turn wrote for its process to read. Never throws. */
+	const removeTurnFiles = (): void => {
+		const files = systemPromptFile ? [systemPromptFile, ...imageTempFiles] : imageTempFiles;
+		if (files.length > 0) removeTempFiles(files);
+	};
 	if ((!planned || planned.ok) && turn.systemPromptDelivery.via === 'file' && turn.systemPrompt) {
 		const delivered = await writeSystemPromptFile({
 			args,
@@ -507,7 +539,7 @@ export async function runAgentTurn(
 	}
 	// A turn refused from here on leaves no file behind for its lifetime.
 	const abandon = (reason: RunAgentTurnRefusal, message: string): RunAgentTurnStart => {
-		if (systemPromptFile) removeTempFiles([systemPromptFile]);
+		removeTurnFiles();
 		return refuse(reason, message);
 	};
 
@@ -666,13 +698,79 @@ export async function runAgentTurn(
 	} else if (plan.env === undefined) {
 		return abandon('launch', 'The launch plan has no local environment');
 	} else {
-		spec = turnProcessSpecFromPlan({ ...plan, env: plan.env });
+		let localPlan = { ...plan, env: plan.env };
+		if (deliversImages) {
+			const images = turn.entry.images ?? [];
+			const prompt = plan.deliveredPrompt;
+			if (!prompt) {
+				return abandon(
+					'images-unsupported',
+					'The images have no message to go with, so the turn was not started.'
+				);
+			}
+			const viaStdin = plan.prompt.via === 'stdin';
+			const writeImage = deps.writeImageTempFile ?? writeImageTempFile;
+			const delivery = planImageDelivery(
+				{
+					args: nativeArgs,
+					prompt,
+					images,
+					capabilities: provider.capabilities,
+					imageArgs: provider.imageArgs,
+					imagePromptBuilder: provider.imagePromptBuilder,
+					promptArgs: provider.promptArgs,
+					noPromptSeparator: provider.noPromptSeparator,
+					promptViaStdin: viaStdin,
+				},
+				(image, index) => {
+					try {
+						return writeImage(image, index, deps.tempDir);
+					} catch (error) {
+						logger.warn('An attached image could not be written to a temp file', LOG_CONTEXT, {
+							error: error instanceof Error ? error.message : String(error),
+						});
+						return null;
+					}
+				}
+			);
+			if (delivery.via === 'none') {
+				return abandon(
+					'images-unsupported',
+					`${provider.name ?? providerId} has no way to take images. Send the message without them.`
+				);
+			}
+			if (delivery.via === 'stream-json') {
+				localPlan = {
+					...localPlan,
+					args: delivery.args,
+					stdin: buildStreamJsonMessage(prompt, [...images]) + '\n',
+				};
+			} else {
+				imageTempFiles = delivery.tempFiles;
+				// An image left behind would be a turn that silently answers without it.
+				if (delivery.dropped > 0) {
+					return abandon(
+						'images-unsupported',
+						'An attached image could not be written for the agent to read, so the turn was not started.'
+					);
+				}
+				localPlan = viaStdin
+					? {
+							...localPlan,
+							// The provider's stdin flags stay last, behind the image arguments.
+							args: [...delivery.args, ...('args' in plan.prompt ? plan.prompt.args : [])],
+							stdin: encodeStdinPrompt(provider, delivery.prompt),
+						}
+					: { ...localPlan, args: delivery.args };
+			}
+		}
+		spec = turnProcessSpecFromPlan(localPlan);
 		if (claudeDecision?.mode === 'interactive' && claudeDecision.maestroPBinPath) {
 			const applied = applyClaudeSpawnDecision({
 				decision: claudeDecision,
 				interactiveModeArgs: provider.interactiveModeArgs,
 				command: plan.command,
-				args: plan.args,
+				args: localPlan.args,
 				customEnvVars: {},
 				acceptWorkspaceTrust: options.acceptWorkspaceTrust,
 			});
@@ -731,7 +829,7 @@ export async function runAgentTurn(
 			const problem = nativeSelectionProblem();
 			if (problem) return abandon('grok-native-session-refused', problem);
 		} catch (error) {
-			if (systemPromptFile) removeTempFiles([systemPromptFile]);
+			removeTurnFiles();
 			throw error;
 		}
 	}
@@ -866,7 +964,7 @@ export async function runAgentTurn(
 		}
 	} catch (error) {
 		if (!spawnAttempted) {
-			if (systemPromptFile) removeTempFiles([systemPromptFile]);
+			removeTurnFiles();
 			throw error;
 		}
 		if (error instanceof UnknownProviderError) return abandon('no-parser', error.message);
@@ -900,7 +998,7 @@ export async function runAgentTurn(
 		stream.close();
 		// The file is only for the agent's first read. It goes when the turn does, or at the end of
 		// its lifetime, whichever is first.
-		if (systemPromptFile) removeTempFiles([systemPromptFile]);
+		removeTurnFiles();
 		noteEffortRefusal(providerId, completed);
 		return completed;
 	});

@@ -83,7 +83,8 @@ import {
 	rechunk,
 } from '../../../helpers/grokSyntheticStream';
 import { makeAgent, makeContext, makeTab, providerFor } from './fixtures';
-import { createMockSession } from '../../../helpers/mockSession';
+import { AGENT_MODES, createMockSession } from '../../../helpers/mockSession';
+import { buildStreamJsonMessage } from '../../../../shared/maestro-lib/launch/stream-json-message';
 import {
 	readSyntheticGrokAcpLog,
 	writeSyntheticGrokAcpPeer,
@@ -499,8 +500,156 @@ describe('runAgentTurn: an SSH remote', () => {
 	});
 });
 
+describe('runAgentTurn: images on a local turn (the headless host hands them over as the desktop does)', () => {
+	const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+	const JPEG = 'data:image/jpeg;base64,/9j/4AAQ';
+
+	it('sends Claude Code its images in one stream-json stdin message, never on the command line', async () => {
+		const argvOut = outFile('argv');
+		const stdinOut = outFile('stdin');
+		const turn = assembleWithFakeAgent('claude-code', {
+			recording: 'captured-claude-code-normal',
+			env: { FAKE_AGENT_ARGV_OUT: argvOut, FAKE_AGENT_STDIN_OUT: stdinOut },
+			text: 'what is in these?',
+			images: [PNG, JPEG],
+		});
+
+		const run = await start(turn);
+		await collect(run);
+		const result = await run.result;
+
+		expect(result.outcome).toBe('completed');
+		const argv: string[] = JSON.parse(fs.readFileSync(argvOut, 'utf8'));
+		expect(argv.slice(-2)).toEqual(['--input-format', 'stream-json']);
+		expect(argv.some((arg) => arg.includes('what is in these?'))).toBe(false);
+		const message = JSON.parse(fs.readFileSync(stdinOut, 'utf8').trim());
+		expect(message.message.content).toEqual([
+			{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+			{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/4AAQ' } },
+			{ type: 'text', text: expect.stringContaining('what is in these?') },
+		]);
+	});
+
+	it('writes a file-reading provider its images as temp files before the prompt, and removes them when the turn ends', async () => {
+		const argvOut = outFile('argv');
+		const imageDir = fs.mkdtempSync(path.join(scratch.dir, 'images-'));
+		const turn = assembleWithFakeAgent('opencode', {
+			recording: 'captured-opencode-normal',
+			env: { FAKE_AGENT_ARGV_OUT: argvOut },
+			text: 'describe it',
+			images: [PNG],
+		});
+
+		const run = await start(turn, { deps: { tempDir: imageDir } });
+		await collect(run);
+		await run.result;
+
+		const argv: string[] = JSON.parse(fs.readFileSync(argvOut, 'utf8'));
+		const flag = argv.indexOf('-f');
+		expect(flag).toBeGreaterThan(-1);
+		const imagePath = argv[flag + 1];
+		expect(path.dirname(imagePath)).toBe(imageDir);
+		expect(imagePath.endsWith('.png')).toBe(true);
+		expect(argv.findIndex((arg) => arg.includes('describe it'))).toBeGreaterThan(flag + 1);
+		await vi.waitFor(() => expect(fs.readdirSync(imageDir)).toEqual([]));
+	});
+
+	it('refuses, and starts nothing, when an image cannot be written for the provider to read', async () => {
+		const argvOut = outFile('argv');
+		const imageDir = fs.mkdtempSync(path.join(scratch.dir, 'images-'));
+		const turn = assembleWithFakeAgent('opencode', {
+			recording: 'captured-opencode-normal',
+			env: { FAKE_AGENT_ARGV_OUT: argvOut },
+			images: [PNG, JPEG],
+		});
+		let call = 0;
+
+		const started = await runAgentTurn(
+			turn,
+			optionsFor({
+				deps: {
+					tempDir: imageDir,
+					writeImageTempFile: (image, index, dir) => {
+						if (++call === 2) throw new Error('disk full');
+						const file = path.join(dir!, `image-${index}.png`);
+						fs.writeFileSync(file, image);
+						return file;
+					},
+				},
+			})
+		);
+
+		expect(started).toMatchObject({ ok: false, reason: 'images-unsupported' });
+		expect(fs.existsSync(argvOut)).toBe(false);
+		await vi.waitFor(() => expect(fs.readdirSync(imageDir)).toEqual([]));
+	});
+
+	// The desktop's local spawner (ChildProcessSpawner) and its SSH wrapper (wrap-spawn-for-ssh)
+	// both write `buildStreamJsonMessage(prompt, images)` for a Claude turn with images. A hosted
+	// agent's turn runs here, on its headless host: its provider must get the same bytes.
+	it.each(AGENT_MODES)(
+		'gives a %s agent the same provider message for its images',
+		async (mode) => {
+			const stdinOut = outFile('stdin');
+			const turn = assembleWithFakeAgent('claude-code', {
+				recording: 'captured-claude-code-normal',
+				env: { FAKE_AGENT_STDIN_OUT: stdinOut },
+				text: 'compare',
+				images: [PNG, JPEG],
+			});
+			const run = await start(turn);
+			await collect(run);
+			await run.result;
+			const hosted = fs.readFileSync(stdinOut, 'utf8');
+			const prompt = JSON.parse(hosted).message.content.at(-1).text as string;
+			const delivered =
+				mode === 'hosted' ? hosted : buildStreamJsonMessage(prompt, [PNG, JPEG]) + '\n';
+			expect(delivered).toBe(hosted);
+			expect(turn.entry.images).toEqual([PNG, JPEG]);
+		}
+	);
+
+	it('refuses images for a provider that cannot read them, and for an SSH remote', async () => {
+		const argvOut = outFile('argv');
+		const turn = assembleWithFakeAgent('opencode', {
+			recording: 'captured-opencode-normal',
+			env: { FAKE_AGENT_ARGV_OUT: argvOut },
+			images: [PNG],
+		});
+		const textOnly = await runAgentTurn(
+			{
+				...turn,
+				provider: {
+					...turn.provider,
+					capabilities: { ...turn.provider.capabilities, supportsImageInput: false },
+				},
+			},
+			optionsFor()
+		);
+		expect(textOnly).toMatchObject({
+			ok: false,
+			reason: 'images-unsupported',
+			message: expect.stringContaining('cannot read images'),
+		});
+
+		const remoteTurn = assembleWithFakeAgent('opencode', {
+			recording: 'captured-opencode-normal',
+			env: { FAKE_AGENT_ARGV_OUT: argvOut },
+			agent: { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+			images: [PNG],
+		});
+		const remote = await runAgentTurn(remoteTurn, optionsFor());
+		expect(remote).toMatchObject({
+			ok: false,
+			reason: 'images-unsupported',
+			message: expect.stringContaining('SSH remote'),
+		});
+		expect(fs.existsSync(argvOut)).toBe(false);
+	});
+});
+
 describe('runAgentTurn: refusals', () => {
-	it('refuses images before anything is started', async () => {
+	it('refuses a turn that says it carries images but has none, before anything is started', async () => {
 		const argvOut = outFile('argv');
 		const turn = assembleWithFakeAgent('opencode', {
 			recording: 'captured-opencode-normal',
