@@ -21,6 +21,12 @@ import {
 	clearCapabilitiesCache,
 	DEFAULT_CAPABILITIES,
 } from '../../../../renderer/hooks/agent/useAgentCapabilities';
+import { useAutoRunSteeringStore } from '../../../../renderer/stores/autoRunSteeringStore';
+import {
+	runRemoteSteeringCommand,
+	submitSteeringNote,
+} from '../../../../renderer/services/autoRunSteering';
+import { STEERING_BLOCK_START } from '../../../../shared/autorunSteering';
 
 // Mock notifyToast so toasts don't blow up and can be inspected if needed.
 const { mockNotifyToast } = vi.hoisted(() => ({ mockNotifyToast: vi.fn() }));
@@ -1306,6 +1312,123 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 			expect(finalSummaryEntry().summary).toContain('Goal completed');
+		});
+	});
+
+	describe('steering notes', () => {
+		beforeEach(() => {
+			useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
+		});
+
+		it('opens iteration N + 1 with a note sent during iteration N and lists it as delivered', async () => {
+			const responses = [
+				progressResponse(20, 'first pass'),
+				progressResponse(40, '[steered] switched to the new plan'),
+				progressResponse(100, 'done'),
+			];
+			let call = 0;
+			mockOnSpawnAgent.mockImplementation(async () => {
+				const index = call++;
+				// The operator steers while iteration 1 runs, the way the panel's
+				// Steer button and `steer-auto-run send` both do.
+				if (index === 0) {
+					const sent = runRemoteSteeringCommand({
+						action: 'send',
+						sessionId: SESSION_ID,
+						text: 'Use the new plan',
+						background: true,
+					});
+					expect(sent.success).toBe(true);
+				}
+				return { success: true, agentSessionId: `goal-agent-${index}`, response: responses[index] };
+			});
+
+			const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					goalConfig('Ship the feature', 'All tests pass', null),
+					'/test/folder'
+				);
+			});
+
+			const prompts = mockOnSpawnAgent.mock.calls.map((c) => c[1] as string);
+			expect(prompts).toHaveLength(3);
+			expect(prompts[0]).not.toContain(STEERING_BLOCK_START);
+			expect(prompts[1].startsWith(STEERING_BLOCK_START)).toBe(true);
+			expect(prompts[1]).toContain('Use the new plan');
+			// Goal wording: the iteration, and the deadlock marker the goal prompt describes.
+			expect(prompts[1]).toContain('the iteration you are about to do');
+			expect(prompts[1]).toContain('deadlock marker');
+			expect(prompts[1]).not.toContain('halt marker');
+			// Taken once: the note does not ride again.
+			expect(prompts[2]).not.toContain(STEERING_BLOCK_START);
+
+			const listed = runRemoteSteeringCommand({ action: 'list', sessionId: SESSION_ID });
+			expect(listed.success).toBe(true);
+			if (!listed.success || !('deliveries' in listed)) throw new Error('list failed');
+			expect(listed.pending).toEqual([]);
+			expect(listed.deliveries).toHaveLength(1);
+			expect(listed.deliveries?.[0].notes.map((n) => n.text)).toEqual(['Use the new plan']);
+			expect(listed.deliveries?.[0].reply).toMatchObject({
+				success: true,
+				summary: 'Goal progress: 40% - [steered] switched to the new plan',
+			});
+		});
+
+		it('drops a note left over from an earlier run and one still waiting at the end', async () => {
+			submitSteeringNote({ sessionId: SESSION_ID, text: 'stale note', announce: false });
+			mockOnSpawnAgent.mockImplementation(async () => {
+				// Sent during the last iteration: no iteration is left to take it.
+				submitSteeringNote({ sessionId: SESSION_ID, text: 'too late', announce: false });
+				return {
+					success: true,
+					agentSessionId: 'goal-agent',
+					response: progressResponse(100, 'done'),
+				};
+			});
+
+			const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					goalConfig('Ship it', '', null),
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent.mock.calls[0][1]).not.toContain('stale note');
+			expect(useAutoRunSteeringStore.getState().notes[SESSION_ID] ?? []).toEqual([]);
+		});
+
+		it('answers a note whose iteration failed', async () => {
+			let call = 0;
+			mockOnSpawnAgent.mockImplementation(async () => {
+				const index = call++;
+				if (index === 0) {
+					submitSteeringNote({ sessionId: SESSION_ID, text: 'try again', announce: false });
+					return {
+						success: true,
+						agentSessionId: 'a0',
+						response: progressResponse(10, 'start'),
+					};
+				}
+				if (index === 1) return { success: false, error: 'agent crashed' };
+				return { success: true, agentSessionId: 'a2', response: progressResponse(100, 'done') };
+			});
+
+			const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					goalConfig('Ship it', '', null),
+					'/test/folder'
+				);
+			});
+
+			const delivered = useAutoRunSteeringStore.getState().delivered[SESSION_ID] ?? [];
+			expect(delivered).toHaveLength(1);
+			expect(delivered[0].response).toMatchObject({ success: false });
 		});
 	});
 });
