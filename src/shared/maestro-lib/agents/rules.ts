@@ -728,10 +728,22 @@ export interface TurnBegin {
 
 /**
  * `logs` with the message a turn starts on. A resend of a message the transcript already holds
- * (the same entry id, `TurnInput.entryId`) is that entry: the transcript stays as it is.
+ * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
+ * the transcript stays as it is. An id alone never drops a message.
  */
 function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
-	const held = logs.some((existing) => (existing as { id?: unknown } | null)?.id === entry.id);
+	const sent = entry.images ?? [];
+	const held = logs.some((candidate) => {
+		const existing = candidate as Partial<LogEntryRecord> | null;
+		const images = existing?.images ?? [];
+		return (
+			existing?.id === entry.id &&
+			existing.source === 'user' &&
+			existing.text === entry.text &&
+			images.length === sent.length &&
+			images.every((image, i) => image === sent[i])
+		);
+	});
 	return held ? [...logs] : [...logs, entry];
 }
 
