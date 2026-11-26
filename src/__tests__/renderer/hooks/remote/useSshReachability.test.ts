@@ -81,4 +81,34 @@ describe('useSshReachability', () => {
 		expect(notifyToast).not.toHaveBeenCalled();
 		expect(useSshOutageStore.getState().outages).toEqual({});
 	});
+
+	it('announces a host coming back through the same toast, naming the host (ssh worked throughout)', () => {
+		renderHook(() => useSshReachability());
+		push({ ...down, cause: 'host', message: 'The Maestro host on "pedtome" stopped answering.' });
+		useSshOutageStore.getState().surface('r1');
+		push({ ...up, cause: 'host' });
+		expect(notifyToast).toHaveBeenCalledWith({
+			type: 'success',
+			title: 'Host connection restored',
+			message: 'The Maestro host on "pedtome" is reachable again.',
+		});
+		// The dialog closes with it.
+		expect(useSshOutageStore.getState().outages).toEqual({});
+	});
+
+	it('words the SSH and the host recovery from one place, the same shape for both', () => {
+		renderHook(() => useSshReachability());
+		for (const cause of [undefined, 'host'] as const) {
+			notifyToast.mockReset();
+			push({ ...down, ...(cause ? { cause } : {}) });
+			useSshOutageStore.getState().surface('r1');
+			push({ ...up, ...(cause ? { cause } : {}) });
+			expect(notifyToast).toHaveBeenCalledTimes(1);
+			expect(Object.keys(notifyToast.mock.calls[0][0]).sort()).toEqual([
+				'message',
+				'title',
+				'type',
+			]);
+		}
+	});
 });

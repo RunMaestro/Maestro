@@ -2,11 +2,14 @@ import { useEffect } from 'react';
 
 import { useIsLifecycleOwner } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
-import { useSshOutageStore } from '../../stores/sshOutageStore';
+import { outageRecoveryNotice, useSshOutageStore } from '../../stores/sshOutageStore';
 import { logger } from '../../utils/logger';
 
 /**
  * Keep `sshOutageStore` in step with the main process's reachability tracker.
+ *
+ * The same for an SSH outage and a hosted agent's host outage (`cause: 'host'`): one store, one
+ * dialog, and one recovery toast, worded for what came back (`outageRecoveryNotice()`).
  *
  * Mount once per client. It loads the remotes already down (a window opened
  * mid-outage missed the push), then applies every transition. A recovery is
@@ -39,11 +42,7 @@ export function useSshReachability(): void {
 			// went down and came back unnoticed stays quiet.
 			// A cleared outage (the remote was deleted) did not come back: nothing to announce.
 			if (ended?.surfaced && isLifecycleOwner && !event.cleared) {
-				notifyToast({
-					type: 'success',
-					title: 'SSH connection restored',
-					message: `"${event.remoteName}" is reachable again.`,
-				});
+				notifyToast({ type: 'success', ...outageRecoveryNotice(event) });
 			}
 		});
 

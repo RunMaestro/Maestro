@@ -150,6 +150,26 @@ export function selectOpenSshOutages(
 		.sort((a, b) => a.event.since - b.event.since);
 }
 
+/**
+ * The notice a recovery raises: the same toast for every outage, naming what came back. ssh for
+ * an SSH outage; the Maestro host for a host outage, where ssh worked throughout.
+ */
+export function outageRecoveryNotice(event: SshReachabilityEvent): {
+	title: string;
+	message: string;
+} {
+	if (outageCause(event) === 'host') {
+		return {
+			title: 'Host connection restored',
+			message: `The Maestro host on "${event.remoteName}" is reachable again.`,
+		};
+	}
+	return {
+		title: 'SSH connection restored',
+		message: `"${event.remoteName}" is reachable again.`,
+	};
+}
+
 /** Agents whose work runs through `remoteId`. */
 export function agentsOnRemote(sessions: Session[], remoteId: string): Session[] {
 	return sessions.filter(
