@@ -323,6 +323,22 @@ On 2026-11-26 the comparison in the running app was repeated on the merged `rc`.
 
 The History summary of a hosted entry (row N4 above) is worked with these, after PR #2131.
 
+## Round 6: what the third live pass found
+
+The third pass ran on `rc` with the headless host work merged. Sending an image, `/btw`, Queue Held then Resume, and editing a queued message with an image were the same in all three modes. A soak (ten mixed turns, a 4000-line reply, two tabs at once, five minutes idle) found no stall and no growth in any mode. The pass then stopped the SSH server and the host, idle and mid-turn. Both recover without a reload. What the user sees differs:
+
+| Surface                                                      | Status | Code path                                                                          | Test | Notes                                                                                                                                                      |
+| ------------------------------------------------------------ | ------ | ---------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M13 `/history` and `/skills` on a headless host draw at once | ❌     | `runtime/server-frames.ts` (`turnFrames`)                                          |      | The host ran them, and the window drew nothing until the next turn; `/history` raised no toast.                                                            |
+| R1 Link down while idle                                      | ❌     | `SshUnreachableModal.tsx`, `main/ssh-reachability.ts`, `client/peer-connection.ts` |      | SSH: a dialog within 12 s. Hosted: nothing, and the status still read Ready.                                                                               |
+| R2 A send while the link is down                             | ❌     | `stores/retryStore.ts`, `services/hostedTurns.ts`                                  |      | SSH kept the message with a retry card. Hosted refused it with a toast and left the draft.                                                                 |
+| R3 A send during the reconnect window                        | ❌     | `client/peer-connection.ts`                                                        |      | Refused with "No maestro-cli host is running" while the host was running.                                                                                  |
+| R4 Link cut during a turn                                    | ❌     | `services/hostedAgentSync.ts`, `services/turnInterrupt.ts`                         |      | Hosted: the tab stayed Thinking, Stop was refused, and the reply was lost with no note.                                                                    |
+| R5 Link back                                                 | ❌     | `hooks/remote/useSshReachability`                                                  |      | SSH said "connection restored". Hosted said nothing.                                                                                                       |
+| R6 The retry card of a kept message names the cause          | ❌     | `stores/retryStore.ts`, `shared/agentErrorPatterns.ts`                             |      | With the SSH link down the card said "Service overloaded".                                                                                                 |
+| R7 Files panel refresh rule                                  | ❌     | `hooks/git/useFileTreeManagement.ts`                                               |      | A folder created on the remote showed for the SSH agent only after Refresh.                                                                                |
+| R8 Render cost of a hosted reply                             | ❌     | `utils/hostedSession.ts`                                                           |      | A 4000-line reply cost a hosted tab about 3.5 times the CPU and 2.5 times the DOM nodes while it landed; ordinary turns made 20 to 40% more React commits. |
+
 ## Found later
 
 Not counted in the denominator.
