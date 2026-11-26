@@ -16,7 +16,7 @@ import type { CodexVisualizationLoadResult } from '../../../../shared/codexVisua
 const PATH = '/Users/p/designs/dropdown-hints.html';
 const load = vi.fn<(request: unknown) => Promise<CodexVisualizationLoadResult>>();
 
-function renderFrame() {
+function renderFrame(mode?: string) {
 	const Link = createMarkdownLink({
 		theme: mockTheme,
 		linkColor: 'accentText',
@@ -26,6 +26,7 @@ function renderFrame() {
 	return render(
 		<CodexVisualizationFrame
 			path={PATH}
+			mode={mode}
 			theme={mockTheme}
 			LinkComponent={Link}
 			conversation={{ sessionId: 'agent-1', tabId: 'tab-1' }}
@@ -69,6 +70,29 @@ describe('CodexVisualizationFrame', () => {
 		expect(frame.getAttribute('src')).toContain('surface=visualization');
 		expect(frame.getAttribute('src')).toContain('id=abc');
 		expect(screen.getByTestId('codex-file-citation')).toBeInTheDocument();
+	});
+
+	it('caps a normal visual at reading width and lets a wide one fill the column', async () => {
+		load.mockResolvedValue({ ok: true, id: 'abc', revision: 1 });
+		const { unmount } = renderFrame();
+		await waitFor(() =>
+			expect(screen.getByTestId('codex-visualization')).toHaveAttribute(
+				'data-visualization-state',
+				'ready'
+			)
+		);
+		expect(screen.getByTestId('codex-visualization').style.maxWidth).toBe('768px');
+		unmount();
+
+		renderFrame('wide');
+		await waitFor(() =>
+			expect(screen.getByTestId('codex-visualization')).toHaveAttribute(
+				'data-visualization-state',
+				'ready'
+			)
+		);
+		expect(screen.getByTestId('codex-visualization').style.maxWidth).toBe('');
+		expect(screen.getByTestId('codex-visualization').style.width).toBe('100%');
 	});
 
 	it('resizes on a height message and never sends a follow-up without a click', async () => {

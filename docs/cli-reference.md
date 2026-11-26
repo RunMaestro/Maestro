@@ -1868,6 +1868,15 @@ Print the command that installs a provider CLI (e.g. codex) on this platform, fo
 | `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
 | `--json`                | Output as JSON (for scripting)                                   | -       |
 
+## `maestro-cli rollback [version]`
+
+List earlier Maestro releases you can roll back to, or download one (e.g. 1.0.3) so the next restart installs it
+
+| Option         | Description                                                                       | Default |
+| -------------- | --------------------------------------------------------------------------------- | ------- |
+| `--prerelease` | Include beta and RC releases (default: the "Include pre-release updates" setting) | -       |
+| `--json`       | Output as JSON (for scripting)                                                    | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)
