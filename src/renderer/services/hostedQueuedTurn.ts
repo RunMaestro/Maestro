@@ -360,13 +360,27 @@ function fireMentionsForHostTurn(
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
 			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
-			markHandoffSentToHost(sessionId, tabId, receipt, boundary, queueReads);
+			markHandoffSentToHost(
+				sessionId,
+				tabId,
+				receipt,
+				boundary,
+				queueReads,
+				item.images?.length ?? 0
+			);
 		});
 		return;
 	}
 	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
 	if (mention.routing === 'handoff') {
-		markHandoffSentToHost(sessionId, tabId, receipt, undefined, queueReads);
+		markHandoffSentToHost(
+			sessionId,
+			tabId,
+			receipt,
+			undefined,
+			queueReads,
+			item.images?.length ?? 0
+		);
 	}
 }
 
@@ -501,7 +515,7 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
  * seen waiting (`hostReads`, a reconnect): the exit named while this window was not attached is
  * missing, so that item is judged by the rules below.
  *
- * An older headless host, and a desktop host, name none. Then the item started when it is not in
+ * An older host, headless or desktop, names none. Then the item started when it is not in
  * the host's queue and the host wrote its own message's user entry on the tab after the send
  * boundary (`judgeUnnamedHostStart()`): live as its turn starts, or in the saved transcript, read
  * once the tab is idle, when it ran while this window was not attached. A turn of another message
@@ -566,7 +580,11 @@ export function fireHostStartedMentions(
 				tab,
 				{
 					afterEntryId: waiting.afterEntryId,
-					message: waiting.item.text,
+					message: {
+						itemId: hostItemId,
+						text: waiting.item.text,
+						imageCount: waiting.item.images?.length ?? 0,
+					},
 					seenQueued: waiting.seenQueued,
 					aheadKnown: !!waiting.aheadKnown,
 					turnStartedAt: waiting.turnStartedAt,

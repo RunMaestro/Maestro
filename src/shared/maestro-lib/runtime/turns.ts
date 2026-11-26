@@ -630,7 +630,12 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		try {
 			// The message is now sent: write it down, and spend a merge it carried.
 			const startedAt = deps.now();
-			const userEntry = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
+			// Stamped with the queue item it ran from, as the desktop stamps a queued message's card
+			// (`markTabRunningQueuedItem()`): a client that queued it finds its turn by that id.
+			const userEntry: LogEntryRecord = {
+				...buildUserTranscriptEntry(turn.entry, startedAt, ctx),
+				queuedItemId: item.id,
+			};
 			const begun = await repository.beginTurn(
 				agentId,
 				item.tabId,

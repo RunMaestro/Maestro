@@ -27,6 +27,7 @@ import {
 	HOST_QUEUE_START_GRACE_MS,
 	hostedHandoffStep,
 	hostedHandoffTurn,
+	resetHostEntryClaims,
 } from '../../../renderer/services/crossAgentHandoff';
 import {
 	dropStoppedHostStartMentions,
@@ -106,6 +107,9 @@ const queuedMessage = (overrides: Partial<QueuedItem> = {}): QueuedItem => ({
 	text: 'wake up',
 	...overrides,
 });
+
+// A host entry matched to one message in a test is never held for another test's message.
+beforeEach(() => resetHostEntryClaims());
 
 describe('hostedQueuedTurn', () => {
 	beforeEach(() => {
@@ -542,6 +546,9 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			{ id: 'a', timestamp: 4, source: 'ai', text: 'done' },
 		];
 		expect(idleLate(ranWhileDetached, true)).toBe('running');
+		// The cases below are other hand-offs on fresh tabs that reuse the entry ids above: entry `u`
+		// now belongs to h9's message, so forget that before them.
+		resetHostEntryClaims();
 		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(

@@ -1,3 +1,4 @@
+import type { QueuedItemSnapshot } from '../../shared/queueSnapshot';
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 import type {
@@ -688,30 +689,8 @@ export type EnqueueCommandCallback = (
 	/** A Federation client's agent-only text for this turn (`TurnInput.agentContext`, `agentNotes`). */
 	agentText?: TurnAgentText
 ) => Promise<EnqueueCommandResult>;
-/**
- * A single queued item, mirrored from the renderer's executionQueue for CLI
- * inspection (`maestro-cli queue list`). Tracks the renderer QueuedItem shape.
- */
-export interface QueuedItemSnapshot {
-	id: string;
-	timestamp: number;
-	tabId: string;
-	type: 'message' | 'command';
-	text?: string;
-	command?: string;
-	commandArgs?: string;
-	tabName?: string;
-	paused?: boolean;
-	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
-	mentionRouting?: MentionRouting;
-	/** Model and effort captured when it was queued. */
-	turnSettings?: { model?: string; effort?: string };
-	/**
-	 * The images it was queued with: store refs from the renderer; data URLs on the wire when the
-	 * client asked for them (`list_queue` `inlineImages`), and left out otherwise.
-	 */
-	images?: string[];
-}
+/** A single queued item, mirrored from the renderer's executionQueue (`src/shared/queueSnapshot.ts`). */
+export type { QueuedItemSnapshot };
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the
  * session state alongside the queued items so `maestro-cli queue list` can show

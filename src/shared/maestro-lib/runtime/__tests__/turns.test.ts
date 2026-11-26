@@ -1484,6 +1484,25 @@ describe('runtime turns', () => {
 			expect(changes[3].items).toEqual([]);
 		});
 
+		it('stamps each user entry with the queue item it ran from, so a client that queued it finds its turn by id (M23)', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'same text' }));
+			await turn.started();
+			hold = false;
+			// The same text twice: only the id tells the two turns apart.
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'same text' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+			expect(users).toHaveLength(2);
+			expect(users[0].queuedItemId).toEqual(expect.any(String));
+			expect(users[0].queuedItemId).not.toBe(queued.itemId);
+			expect(users[1].queuedItemId).toBe(queued.itemId);
+		});
+
 		it('holds and releases a waiting message, and says when none has that id', async () => {
 			hold = true;
 			const runtime = await start();
