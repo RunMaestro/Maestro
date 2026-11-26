@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
+import { TRANSCRIPT_CHANGED_CHANNEL } from '../bridge-frames';
 import { normalizeOriginHost } from '../types';
 import type {
 	MaestroClient,
@@ -878,6 +879,27 @@ describe('createWsMaestroClient', () => {
 			expect(result).toEqual({ ok: true, value: { status: 'ran' } });
 			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ command: '/history' });
 			expect(turnKinds()).toEqual([]);
+		});
+
+		it('reads a transcript-changed frame for an idle tab as a gap, so the tab is read again (M13)', async () => {
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID);
+			await vi.waitFor(() => expect(turnKinds()).toEqual(['gap']));
+			expect(turnEvents()[0]).toMatchObject({ kind: 'gap' });
+			expect(events.find((event) => event.type === 'turn')).toMatchObject({
+				agentId: A1,
+				tabId: A1_TAB,
+			});
+		});
+
+		it('leaves a running turn alone on a transcript-changed frame, and ignores a malformed one (M13)', async () => {
+			bridge.pushBridgeEvent('process:data', PID, 'partial');
+			await vi.waitFor(() => expect(turnKinds()).toContain('text'));
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, 42);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, 'not-a-tab-process');
+			bridge.pushBridgeEvent('process:data', PID, ' more');
+			await vi.waitFor(() => expect(turnKinds().filter((kind) => kind === 'text')).toHaveLength(2));
+			expect(turnKinds()).not.toContain('gap');
 		});
 
 		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {

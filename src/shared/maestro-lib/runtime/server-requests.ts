@@ -311,8 +311,13 @@ function imagesOf(message: Request): string[] | undefined {
 	return message.images as string[];
 }
 
-/** The reply fields that say whether the message is running or waiting its turn. */
+/**
+ * The reply fields that say whether the message is running or waiting its turn, or was one of
+ * Maestro's own commands the host ran (`ran`, as a desktop host replies): no turn starts for it, so
+ * a client must not wait for one to end.
+ */
 function receiptFields(receipt: TurnSendReceipt): Frame {
+	if (receipt.status === 'ran') return { queued: false, ran: true };
 	return receipt.status === 'queued'
 		? {
 				queued: true,

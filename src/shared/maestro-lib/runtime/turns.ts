@@ -69,6 +69,7 @@ import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
 import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
 import type { SessionImageStore } from '../store/session-images';
+import type { LogEntryRecord } from '../store/transcript';
 import { agentIdCanReadImages } from '../providers/capabilities';
 import { getAgentDisplayName } from '../../agentMetadata';
 import { steeringSocketPathFor } from '../../chatSteeringSocket';
@@ -376,9 +377,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		rules: ctx,
 		reserveTabSession,
 		...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
-		// A transcript that grew outside a turn: `gap` is the event that tells a client to read
-		// the tab again, which an older client already honors.
-		transcriptChanged: (agentId, tabId) => emitTurn(agentId, tabId, { kind: 'gap' }),
+		transcriptChanged: (agentId, tabId, entry) => announceEntry(agentId, tabId, entry),
 	});
 
 	// `/btw`: a read-only fork of a tab's session, beside whatever the tab runs, as a desktop host forks it.
@@ -392,6 +391,15 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	});
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
+	/**
+	 * An entry written to a tab outside its turn's own stream (a steer, `/skills`, `/history`).
+	 * Mid-turn it joins the live turn in order; on an idle tab `gap` tells clients to read the tab
+	 * again (`TRANSCRIPT_CHANGED_CHANNEL` on the wire), so it shows at once, as a local agent's does.
+	 */
+	const announceEntry = (agentId: string, tabId: string, entry: LogEntryRecord): void => {
+		if (queues.get(agentId)?.isTabBusy(tabId)) emitTurn(agentId, tabId, { kind: 'user', entry });
+		else emitTurn(agentId, tabId, { kind: 'gap' });
+	};
 	// Steer Running Turn: a TUI turn this host runs takes a waiting message over its socket.
 	const steering = createRuntimeSteering<TurnItem>({
 		queueOf: (agentId) => queues.get(agentId),
@@ -405,9 +413,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				);
 				return;
 			}
-			// Mid-turn the entry joins the live turn in order; on an idle tab clients read the tab again.
-			if (queues.get(agentId)?.isTabBusy(tabId)) emitTurn(agentId, tabId, { kind: 'user', entry });
-			else emitTurn(agentId, tabId, { kind: 'gap' });
+			announceEntry(agentId, tabId, entry);
 		},
 		newId: () => ctx.newId(),
 		now: () => deps.now(),

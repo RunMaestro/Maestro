@@ -15,6 +15,7 @@
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
+import { TRANSCRIPT_CHANGED_CHANNEL } from '../client/bridge-frames';
 import type { AutoRunOutcome, MaestroEvent, QueuedTurn, TurnEvent } from '../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 import type { AgentRecord, AITabRecord } from '../store/records';
@@ -243,9 +244,12 @@ function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: Fra
 			);
 			return frames;
 		}
-		// `started` is learned from the first frame, and a `gap` is the client's own signal.
-		case 'started':
+		// A transcript that grew outside a turn: the client reads the tab again. (A client's own
+		// `gap`, for events it missed, never comes from here.)
 		case 'gap':
+			return [bridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, processId)];
+		// `started` is learned from the first frame.
+		case 'started':
 			return [];
 	}
 }

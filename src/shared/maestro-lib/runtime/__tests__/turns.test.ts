@@ -697,6 +697,31 @@ describe('runtime turns', () => {
 				expect(turn.kinds()).toEqual(['gap', 'gap']);
 			});
 
+			it('hands a busy tab its /skills rows as live entries of the running turn, not a re-read (M13)', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: '/skills' }))).toEqual({
+					status: 'ran',
+				});
+				await vi.waitFor(
+					() => expect(turn.kinds().filter((kind) => kind === 'user')).toHaveLength(3),
+					{ timeout: 8_000 }
+				);
+				const live = turn.events.flatMap((event) => (event.kind === 'user' ? [event.entry] : []));
+				expect(live.slice(1).map((entry) => [entry.source, entry.text.split('\n')[0]])).toEqual([
+					['user', '/skills'],
+					['system', expect.stringContaining('Skills')],
+				]);
+				// A `gap` mid-turn would make a client drop the turn's live text.
+				expect(turn.kinds()).not.toContain('gap');
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
 			it('says there is no session yet, and writes no History', async () => {
 				const runtime = await start();
 				value(await runtime.turns.send('a1', 't1', { text: '/history' }));

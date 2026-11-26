@@ -83,6 +83,18 @@ function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * `bridge.event` channel a host sends when a tab's transcript grew outside a turn (a `/skills` or
+ * `/history` that ran on an idle tab), with the tab's process id: read the tab again. A client
+ * turns it into a turn `gap`; an older client ignores the channel, as it ignores any it does not know.
+ */
+export const TRANSCRIPT_CHANGED_CHANNEL = 'process:transcript-changed';
+
+/** The tab a `TRANSCRIPT_CHANGED_CHANNEL` frame names, or null when its arguments are malformed. */
+export function parseTranscriptChangedFrame(args: unknown[]): ProcessTarget | null {
+	return typeof args[0] === 'string' ? parseProcessId(args[0]) : null;
+}
+
 /** `failed` is the error spelling some providers use; a missing status is a call still running. */
 function toolStatus(state: Record<string, unknown> | undefined): TurnToolCall['status'] {
 	const status = state?.status;

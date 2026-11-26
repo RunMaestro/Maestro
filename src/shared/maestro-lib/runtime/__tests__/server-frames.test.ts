@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseAutoRunProgress } from '../../autorun/progress';
-import { parseProcessFrame } from '../../client/bridge-frames';
+import {
+	parseProcessFrame,
+	parseTranscriptChangedFrame,
+	TRANSCRIPT_CHANGED_CHANNEL,
+} from '../../client/bridge-frames';
 import type { MaestroEvent, QueuedTurn, TurnEvent } from '../../client/types';
 import {
 	makeGroupChatLine,
@@ -150,13 +154,22 @@ describe('framesForEvent', () => {
 		expect(lone.map((frame) => frame.channel)).toEqual(['agent:error', 'process:exit']);
 	});
 
-	it('says nothing for a turn start, a gap, or a tab change', () => {
+	it('says nothing for a turn start or a tab change', () => {
 		const state = createFrameState();
 		expect(framesForEvent(turn({ kind: 'started', at: 1 }), state)).toEqual([]);
-		expect(framesForEvent(turn({ kind: 'gap', at: 1 }), state)).toEqual([]);
 		expect(
 			framesForEvent({ type: 'tab.updated', agentId: 'a1', tab: { id: 't1' } }, state)
 		).toEqual([]);
+	});
+
+	it('sends a gap (a tab written outside a turn) as the frame that tells a client to read the tab again (M13)', () => {
+		const frames = framesForEvent(turn({ kind: 'gap', at: 1 }), createFrameState());
+		expect(frames).toHaveLength(1);
+		expect(frames[0].channel).toBe(TRANSCRIPT_CHANGED_CHANNEL);
+		const args = frames[0].args as unknown[];
+		expect(parseTranscriptChangedFrame(args)).toEqual({ kind: 'tab', agentId: 'a1', tabId: 't1' });
+		// Not a process frame: an older client, which streams only those, ignores it.
+		expect(parseProcessFrame(TRANSCRIPT_CHANGED_CHANNEL, args)).toBeNull();
 	});
 
 	it('pushes an agent as a lifecycle upsert and a removal as session_removed', () => {

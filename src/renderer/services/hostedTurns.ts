@@ -23,6 +23,7 @@
 import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
+import { parseMaestroBuiltinCommand } from '../../shared/maestroBuiltinCommands';
 import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
@@ -55,6 +56,7 @@ import {
 	starMirrorTab,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
+import { hostedTranscriptBaseline, watchHostedHistoryCommand } from './historyEntryToast';
 
 export interface HostedTarget {
 	peerId: string;
@@ -403,6 +405,13 @@ export async function sendHostedTurn(
 		});
 		if (!handed) return null;
 	}
+	// `/history`: the host saves the entry; the toast a local `/history` raises is raised here.
+	const historyCommand =
+		!opts.held && parseMaestroBuiltinCommand(text, session.toolType)?.name === '/history';
+	const historyBaseline = historyCommand
+		? hostedTranscriptBaseline(target.peerId, target.agentId, hostTabId as string)
+		: undefined;
+	const sentAt = Date.now();
 	const receipt = await sendToMirroredTab(
 		target.peerId,
 		target.agentId,
@@ -424,6 +433,12 @@ export async function sendHostedTurn(
 				? { ...candidate, pendingMergedContext: undefined }
 				: candidate
 		);
+	}
+	if (historyCommand && receipt?.status === 'ran' && hostTabId) {
+		watchHostedHistoryCommand(session.id, target, hostTabId, {
+			sentAt,
+			...(historyBaseline ? { baseline: historyBaseline } : {}),
+		});
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
 	if (receipt && opts.nameFrom && hostTabId) {
