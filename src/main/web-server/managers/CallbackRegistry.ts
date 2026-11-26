@@ -26,6 +26,7 @@ import type {
 	GetSessionDetailCallback,
 	WriteToSessionCallback,
 	ExecuteCommandCallback,
+	ExecuteCommandOutcome,
 	InterruptSessionCallback,
 	SwitchModeCallback,
 	SelectSessionCallback,
@@ -522,7 +523,7 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	): Promise<boolean> {
+	): Promise<ExecuteCommandOutcome> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
 			sessionId,

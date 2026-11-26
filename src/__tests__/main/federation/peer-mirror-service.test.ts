@@ -543,6 +543,45 @@ describe('PeerMirrorService', () => {
 			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('new')] });
 		});
 
+		it('counts a whole read whose answer a newer queue.changed replaced, as the gap it covered (M19)', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			// A host that names exits: A (with an @mention) and B wait.
+			a.emit({
+				type: 'queue.changed',
+				agentId: 'a-a1',
+				items: [waiting('A'), waiting('B')],
+				namesExits: true,
+			});
+			expect(h.service.snapshot().peers[0].queueReads?.['a-a1']).toBeUndefined();
+			// The link drops; A starts unseen. The reconnect reads the queue whole, and while that
+			// read is out B starts too: that change names only B.
+			let answer!: (value: { ok: true; value: QueuedTurn[] }) => void;
+			a.queueList.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			a.emit({
+				type: 'queue.changed',
+				agentId: 'a-a1',
+				items: [],
+				exit: { itemId: 'B', exit: 'started' },
+				namesExits: true,
+			});
+			h.pushes.splice(0);
+			answer({ ok: true, value: [waiting('B')] });
+			await settle();
+			const peer = h.service.snapshot().peers[0];
+			// The newer list stands, B's named start is kept, and the read is counted.
+			expect(peer.queues).toEqual({});
+			expect(peer.queueExits?.['a-a1']).toEqual([{ itemId: 'B', exit: 'started' }]);
+			expect(peer.queueReads?.['a-a1']).toBe(1);
+			// Every window counts it too: the push is a whole read (no `namesExits`).
+			expect(h.pushes.map((p) => p.event)).toEqual([
+				{ type: 'agent.queue', agentId: 'a-a1', items: [] },
+			]);
+		});
+
 		it('keeps what it held when a read fails', async () => {
 			const a = fakeHost('a');
 			a.setQueue('a-a1', [waiting('q1')]);

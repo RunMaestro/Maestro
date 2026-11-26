@@ -1061,6 +1061,23 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
 
+			it('a start missed while detached still consults once when the next item starts during the reconnect read (M19)', async () => {
+				const id = `m19-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row(), [], Date.now(), 0);
+				// Detached: this item starts unseen. On reconnect B starts during the queue read; that
+				// change names only B, and main counts the read it replaced (one read).
+				hostSays(id, text, { queued: false, busy: 300 });
+				fireHostStartedMentions(row(), [started('B')], Date.now(), 1);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				fireHostStartedMentions(row(), [started('B')], Date.now(), 1);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(
+					'Nothing was asked of Backend: the message was removed before it ran.'
+				);
+			});
+
 			it('a host that names its exits: a start still in flight is never taken for a removal (CodeRabbit on #2148)', async () => {
 				const id = `f-${routing}`;
 				const text = await drainQueued(id, routing);
@@ -1159,6 +1176,20 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				followHostedHandoffs(row(), undefined, [], Date.now(), 1);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text, []);
+			});
+
+			it('a start missed while detached arms once when the next item starts during the reconnect read (M19)', async () => {
+				const text = await drainQueued('h-m19', 'handoff');
+				hostSays('h-m19', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
+				// Detached: it starts unseen; B starts during the reconnect read, named alone, and main
+				// counts the replaced read.
+				hostSays('h-m19', text, { queued: false, busy: 300 });
+				followHostedHandoffs(row(), undefined, [started('B')], Date.now(), 1);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				followHostedHandoffs(row(), undefined, [started('B')], Date.now(), 1);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				releasesWithItsAnswer(text, [started('B')]);
 			});
 
 			it('a named start on a tab that still reads idle never releases from a transcript older than it (CodeRabbit on #2148)', async () => {

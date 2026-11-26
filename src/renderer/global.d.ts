@@ -686,8 +686,14 @@ interface MaestroAPI {
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
 		 *  means the command reached the spawn/queue logic, not that it
-		 *  completed. Drives the CLI's `dispatch` success flag. */
-		sendRemoteCommandReceipt: (receiptChannel: string, accepted: boolean, reason?: string) => void;
+		 *  completed. Drives the CLI's `dispatch` success flag. `queued`: a hosted
+		 *  agent's host queued it behind the running turn. */
+		sendRemoteCommandReceipt: (
+			receiptChannel: string,
+			accepted: boolean,
+			reason?: string,
+			queued?: { itemId: string; position: number }
+		) => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		) => () => void;

@@ -36,6 +36,7 @@ import type {
 	PickBrowserElementResult,
 	BrowserViewportCallback,
 	CreateSessionConfig,
+	ExecuteCommandOutcome,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
 	WebPlaybookDocument,
@@ -149,7 +150,7 @@ export interface MessageHandlerCallbacks {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	) => Promise<boolean>;
+	) => Promise<ExecuteCommandOutcome>;
 	switchMode: (
 		sessionId: string,
 		mode: 'ai' | 'terminal',

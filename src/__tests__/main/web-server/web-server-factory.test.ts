@@ -1203,7 +1203,7 @@ describe('web-server/web-server-factory', () => {
 		 * recent `remote:executeCommand` send, standing in for the renderer.
 		 * The acknowledgement must originate from the owning webContents.
 		 */
-		const answerReceipt = (accepted: boolean, reason?: string): void => {
+		const answerReceipt = (accepted: boolean, reason?: string, queued?: unknown): void => {
 			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
 			const call = [...send.mock.calls]
 				.reverse()
@@ -1211,8 +1211,36 @@ describe('web-server/web-server-factory', () => {
 			if (!call) throw new Error('no remote:executeCommand send was issued');
 			const receiptChannel = call[call.length - 1] as string;
 			const listener = vi.mocked(ipcMain.on).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
-			listener?.({ sender: mockWebContents } as never, { accepted, reason });
+			listener?.(
+				{ sender: mockWebContents } as never,
+				queued === undefined ? { accepted, reason } : { accepted, reason, queued }
+			);
 		};
+
+		// M19: a hosted agent's host queued a forced message behind its running turn.
+		it('answers a receipt that says the host queued it with the queued item', async () => {
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const pending = callback('session-1', 'work', 'ai', 'tab', true);
+			answerReceipt(true, undefined, { itemId: 'q-7', position: 2 });
+			await expect(pending).resolves.toEqual({ queued: true, itemId: 'q-7', queuePosition: 2 });
+		});
+
+		it.each([
+			['a non-object', 'q-7'],
+			['an empty item id', { itemId: '', position: 1 }],
+			['an overlong item id', { itemId: 'x'.repeat(201), position: 1 }],
+			['a position below 1', { itemId: 'q-7', position: 0 }],
+			['a fractional position', { itemId: 'q-7', position: 1.5 }],
+		])('reads a receipt whose queued field is %s as plainly accepted', async (_label, queued) => {
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const pending = callback('session-1', 'work', 'ai', 'tab', true);
+			answerReceipt(true, undefined, queued);
+			await expect(pending).resolves.toBe(true);
+		});
 
 		it('forwards the host dispatch marker and waits for the owning renderer receipt', async () => {
 			const server = createWebServerFactory(deps)();
