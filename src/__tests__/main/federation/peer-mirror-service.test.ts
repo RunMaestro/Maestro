@@ -847,6 +847,8 @@ describe('PeerMirrorService', () => {
 			a.emitLease({
 				status: 'down',
 				error: new SshForwardError('not-running', 'No maestro-cli host is running on a.'),
+				attempt: 1,
+				retryInMs: 1000,
 			});
 			a.emit({ type: 'host.reconnecting', attempt: 1, delayMs: 15_000 });
 		}

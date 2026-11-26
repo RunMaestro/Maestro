@@ -265,6 +265,40 @@ export function hostedTurnsEndedHere(
 }
 
 /**
+ * The tabs of `sessionId` (only `tabId`, when given) whose turn a lost link cut and that wait for
+ * the host to say how the turn ended. Drawn idle here, so Stop finds them by this, not by state.
+ */
+export function cutHostedTurnTabs(sessionId: string, tabId?: string): string[] {
+	const tabs: string[] = [];
+	for (const cut of cutTurns.values()) {
+		if (cut.sessionId !== sessionId || cut.stopped) continue;
+		if (tabId !== undefined && cut.tabId !== tabId) continue;
+		tabs.push(cut.tabId);
+	}
+	return tabs;
+}
+
+/**
+ * Stop means stop: when the host is back, the turn of each tab is not sent again, whether the link
+ * loss was confirmed before the Stop or after it, or again by a later outage.
+ */
+export function markHostedTurnsStopped(
+	sessionId: string,
+	tabIds: readonly string[],
+	remoteName: string
+): void {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	for (const tabId of tabIds) {
+		const key = cutKey(sessionId, tabId);
+		const tabLogs = session?.aiTabs.find((tab) => tab.id === tabId)?.logs;
+		stoppedTurns.set(key, lastUserMessage(tabLogs)?.id ?? '');
+		const cut = cutTurns.get(key);
+		if (cut) cut.stopped = true;
+		else cutTurns.set(key, { sessionId, tabId, remoteName, stopped: true });
+	}
+}
+
+/**
  * Stop on a hosted turn whose host cannot be told: end it here, as a local Stop settles its tab,
  * and say the host was not told.
  */
@@ -275,18 +309,8 @@ export function endHostedTurnsHere(
 ): void {
 	if (tabIds.length === 0) return;
 	const tabs = endedHere.get(sessionId) ?? new Set<string>();
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	for (const tabId of tabIds) {
-		tabs.add(tabId);
-		// Stop means stop: when the host is back, this turn's message is not sent again, whether
-		// the link loss was confirmed before the Stop or after it, or again by a later outage.
-		const key = cutKey(sessionId, tabId);
-		const tabLogs = session?.aiTabs.find((tab) => tab.id === tabId)?.logs;
-		stoppedTurns.set(key, lastUserMessage(tabLogs)?.id ?? '');
-		const cut = cutTurns.get(key);
-		if (cut) cut.stopped = true;
-		else cutTurns.set(key, { sessionId, tabId, remoteName, stopped: true });
-	}
+	for (const tabId of tabIds) tabs.add(tabId);
+	markHostedTurnsStopped(sessionId, tabIds, remoteName);
 	endedHere.set(sessionId, tabs);
 	updateSessionWith(sessionId, (session) =>
 		tabIds.reduce((current, tabId) => settleTabThinkingState(current, tabId), session)

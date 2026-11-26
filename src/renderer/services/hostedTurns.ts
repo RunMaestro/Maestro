@@ -411,7 +411,12 @@ export async function sendHostedTurn(
 	// Merge context, Send to Agent, and session recovery leave context for the tab's next turn. A
 	// local send prepends it to the prompt (`takePendingMergedContext()`); the host does the same
 	// from its own tab, so it goes there first and the transcript shows only the typed message.
-	const mergedContext = tab?.pendingMergedContext;
+	// Read from the store, not the caller's snapshot: a send that waited behind an earlier one of
+	// this tab must not hand over context that send already spent.
+	const liveTab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	const mergedContext = (liveTab ?? tab)?.pendingMergedContext;
 	if (mergedContext) {
 		const handed = await actOnMirroredAgent(target.peerId, target.agentId, {
 			kind: 'update-tab',

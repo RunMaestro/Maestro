@@ -287,17 +287,16 @@ describe('a turn cut by a lost link', () => {
 			if (order === 'before') {
 				confirmOutage();
 				syncHostedAgents();
-				// Already ended by the outage; Stop has nothing to forward, so mark it as a Stop here.
-				hostReports('busy', 'reconnecting');
+				// Already ended by the outage: the tab is drawn idle, and Stop still finds its cut turn.
+				expect(tab().state).toBe('idle');
 			}
 			syncHostedAgents();
+			const result = await interruptTurn('row', { tabId: 't1' });
+			expect(result).toMatchObject({ success: true, wasBusy: true, stoppedTabIds: ['t1'] });
+			expect(act$).not.toHaveBeenCalled();
 			if (order === 'after') {
-				await interruptTurn('row', { tabId: 't1' });
 				confirmOutage();
 				syncHostedAgents();
-			} else {
-				const { endHostedTurnsHere } = await import('../../../renderer/services/hostedLinkLoss');
-				endHostedTurnsHere('row', ['t1'], 'Box');
 			}
 
 			transcript.mockResolvedValue([QUESTION]);

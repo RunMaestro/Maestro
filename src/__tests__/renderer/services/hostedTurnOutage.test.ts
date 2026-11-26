@@ -16,6 +16,7 @@ import {
 	keepTurnForHost,
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
+import { interruptTurn } from '../../../renderer/services/turnInterrupt';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	getRetryEntry,
@@ -169,6 +170,34 @@ describe('a message sent while the link is down is kept for a retry', () => {
 			queue: [['m1', 'hello', false]],
 		});
 		expect(useNotificationStore.getState().toasts).toHaveLength(0);
+	});
+
+	it('Stop on a tab whose message waits for its retry ends the retry, for SSH and hosted alike', async () => {
+		// The SSH Stop signals this machine's ssh process for the tab.
+		const processApi = window.maestro.process as unknown as Record<string, unknown>;
+		const interrupt = processApi.interrupt;
+		processApi.interrupt = vi.fn(async () => true);
+		const outcomes: Record<string, unknown> = {};
+		for (const mode of ['ssh', 'hosted'] as const) {
+			useRetryStore.setState({ retries: {}, outages: {} });
+			const session = seed(mode);
+			const item = message('m1', 'hello');
+			if (mode === 'ssh') {
+				noteDirectDispatch(session.id, item);
+				listenerStandIn('row-ai-t1', sshTurnError);
+			} else {
+				keepTurnForHost(session.id, item, UNAVAILABLE.error);
+			}
+			expect(getRetryEntry(session.id, 't1')).toBeDefined();
+			// The tab is idle: the message waits on the retry card, not in a running turn.
+			const result = await interruptTurn(session.id, { tabId: 't1' });
+			outcomes[mode] = { wasBusy: result.wasBusy, retry: getRetryEntry(session.id, 't1') };
+		}
+		expect(outcomes.hosted).toEqual(outcomes.ssh);
+		processApi.interrupt = interrupt;
+		expect(outcomes.hosted).toEqual({ wasBusy: true, retry: undefined });
+		// Nothing was forwarded to the host for an idle tab.
+		expect(act$).not.toHaveBeenCalled();
 	});
 
 	it('a queued item the host refuses as not connected is kept for a retry, not held paused', async () => {
