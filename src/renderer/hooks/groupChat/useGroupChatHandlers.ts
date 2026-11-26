@@ -26,7 +26,10 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
+import {
+	consumeGroupChatAutoRun,
+	getAutoRunSessionsForGroupChat,
+} from '../../utils/groupChatAutoRunRegistry';
 import { archiveGroupChat, stopGroupChatWork } from '../../services/remoteGroupChat';
 import { steerGroupChatQueuedItem } from '../../services/groupChatSteering';
 import { logger } from '../../utils/logger';
@@ -310,6 +313,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 						sessions.some((s) => s.id === sid && s.name === participantName)
 					);
 					if (matchingSessionId) {
+						// The chat is done waiting (a report or its timeout): a later run of
+						// this agent must not report to it.
+						consumeGroupChatAutoRun(matchingSessionId);
 						useBatchStore.getState().dispatchBatch({
 							type: 'COMPLETE_BATCH',
 							sessionId: matchingSessionId,

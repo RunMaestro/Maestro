@@ -26,6 +26,8 @@ import { findSessionForParticipantName } from '../../shared/group-chat-types';
 import { groupChatAutoRunSummary } from '../../shared/maestro-lib/groupchat/autorun-summary';
 import { useSessionStore } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { hostedTargetOf } from './hostedTurns';
 import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { resolveGroupChatAutoRunTarget } from '../utils/groupChatAutoRun';
 import {
@@ -67,13 +69,15 @@ function report(trigger: GroupChatAutoRunTrigger, summary: string): Promise<void
 		});
 }
 
-/** The participant's agent: by id when main sent one, else by name as the router matches it. */
+/**
+ * The participant's agent: by id when main sent one, else by name as the router
+ * matches it. An id that matches no agent is NOT retried by name: a linked
+ * participant whose agent is gone must never resolve to another agent that
+ * happens to carry the same name (`findParticipantSourceAgent`).
+ */
 function resolveParticipantAgent(trigger: GroupChatAutoRunTrigger): Session | undefined {
 	const sessions = useSessionStore.getState().sessions;
-	if (trigger.agentId) {
-		const byId = sessions.find((session) => session.id === trigger.agentId);
-		if (byId) return byId;
-	}
+	if (trigger.agentId) return sessions.find((session) => session.id === trigger.agentId);
 	return findSessionForParticipantName(trigger.participantName, sessions);
 }
 
@@ -128,6 +132,22 @@ export async function startGroupChatAutoRun(
 		await fail(
 			`No Maestro agent named "${trigger.participantName}" found. Make sure the agent exists and is open.`
 		);
+		return;
+	}
+	// Refusals `startBatchRun` would make, made here so the chat hears the reason.
+	// One registry entry per agent: a second request must not take over the
+	// completion the first one is waiting for.
+	if (
+		hasGroupChatAutoRun(session.id) ||
+		useBatchStore.getState().batchRunStates[session.id]?.isRunning
+	) {
+		await fail(
+			`Agent "${session.name}" is already running an Auto Run. Ask again when that run ends.`
+		);
+		return;
+	}
+	if (useSettingsStore.getState().autoRunDisabled) {
+		await fail('Auto Run is turned off in this Maestro (Settings).');
 		return;
 	}
 	const folderPath = session.autoRunFolderPath;
@@ -188,5 +208,19 @@ export async function startGroupChatAutoRun(
 		if (consumeGroupChatAutoRun(session.id)) {
 			await fail(ipcErrorMessage(err));
 		}
+		return;
+	}
+	// A run this window drives is awaited to its end, so its completion has
+	// already consumed the entry. One still waiting, with no run on screen, was
+	// declined by `startBatchRun` (which showed the reason in a notice). A run a
+	// host drives resolves when the host takes it, and its mirror ends it later.
+	if (
+		hasGroupChatAutoRun(session.id) &&
+		!useBatchStore.getState().batchRunStates[session.id]?.isRunning &&
+		!hostedTargetOf(session)
+	) {
+		stopWatching();
+		consumeGroupChatAutoRun(session.id);
+		await fail('Maestro declined to start the run. Its notice says why.');
 	}
 }

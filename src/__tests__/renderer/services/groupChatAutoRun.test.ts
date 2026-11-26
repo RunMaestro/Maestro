@@ -13,6 +13,7 @@ import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer'
 import { DEFAULT_BATCH_PROMPT } from '../../../renderer/hooks/batch/batchUtils';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
 	groupChatAutoRunFailure,
 	startGroupChatAutoRun,
@@ -47,6 +48,24 @@ function mirror(overrides: Partial<BatchRunState> = {}): BatchRunState {
 
 const trigger = { groupChatId: 'chat-1', participantName: 'Client' };
 
+/**
+ * `startBatchRun` as each transport really behaves. A run this window drives
+ * (local, SSH) is awaited to its end, where the batch processor's completion
+ * consumes the entry and reports. A hosted run resolves once its host takes it.
+ * `registered` records that the entry existed while the launch ran.
+ */
+function launcherFor(mode: (typeof AGENT_MODES)[number]) {
+	const seen = { registered: false };
+	const launch = vi.fn(async (sessionId: string) => {
+		seen.registered = hasGroupChatAutoRun(sessionId);
+		if (mode !== 'hosted') consumeGroupChatAutoRun(sessionId);
+	});
+	return { launch, seen };
+}
+
+/** A launch that is still running (never resolves within the test). */
+const inProgress = () => vi.fn(() => new Promise<void>(() => {}));
+
 beforeEach(() => {
 	const maestro = window.maestro as unknown as Record<string, unknown>;
 	savedGroupChat = maestro.groupChat;
@@ -57,6 +76,8 @@ beforeEach(() => {
 		.mockReset()
 		.mockResolvedValue({ success: true, files: ['plans/phase-01', 'plans/phase-02'] });
 	useBatchStore.setState({ batchRunStates: {} });
+	// HOSTED is an SSH record with `liftedTo` while hosted agents are on.
+	useSettingsStore.setState({ autoRunDisabled: false, federationHostedAgents: true });
 });
 
 afterEach(() => {
@@ -69,7 +90,7 @@ describe('startGroupChatAutoRun in every mode', () => {
 		'starts the %s participant run through startBatchRun with the same config',
 		async (mode) => {
 			setAgent(mode);
-			const startBatchRun = vi.fn().mockResolvedValue(undefined);
+			const { launch: startBatchRun, seen } = launcherFor(mode);
 
 			await startGroupChatAutoRun(trigger, startBatchRun);
 
@@ -91,14 +112,15 @@ describe('startGroupChatAutoRun in every mode', () => {
 				FOLDER,
 				mode === 'local' ? undefined : 'r1'
 			);
-			expect(hasGroupChatAutoRun('agent-1')).toBe(true);
+			// Registered before the launch, so a run that ends at once still reports.
+			expect(seen.registered).toBe(true);
 			expect(reportAutoRunComplete).not.toHaveBeenCalled();
 		}
 	);
 
 	it.each(AGENT_MODES)('runs only the named document for a %s participant', async (mode) => {
 		setAgent(mode);
-		const startBatchRun = vi.fn().mockResolvedValue(undefined);
+		const { launch: startBatchRun } = launcherFor(mode);
 
 		await startGroupChatAutoRun({ ...trigger, targetFilename: 'phase-02.md' }, startBatchRun);
 
@@ -110,7 +132,7 @@ describe('startGroupChatAutoRun in every mode', () => {
 
 	it.each(AGENT_MODES)('finds a renamed %s participant by the agent id main sent', async (mode) => {
 		setAgent(mode, { name: 'Client (renamed)' });
-		const startBatchRun = vi.fn().mockResolvedValue(undefined);
+		const { launch: startBatchRun } = launcherFor(mode);
 
 		await startGroupChatAutoRun({ ...trigger, agentId: 'agent-1' }, startBatchRun);
 
@@ -119,6 +141,90 @@ describe('startGroupChatAutoRun in every mode', () => {
 });
 
 describe('startGroupChatAutoRun refusals reach the chat', () => {
+	it('does not fall back to a same-named agent when the agent id main sent is gone', async () => {
+		// Another agent carries the participant's name; the linked one was closed.
+		setAgent('local', { id: 'other-agent' });
+		const startBatchRun = vi.fn();
+
+		await startGroupChatAutoRun({ ...trigger, agentId: 'agent-1' }, startBatchRun);
+
+		expect(startBatchRun).not.toHaveBeenCalled();
+		expect(reportAutoRunComplete).toHaveBeenCalledWith(
+			'chat-1',
+			'Client',
+			expect.stringContaining('No Maestro agent named "Client" found')
+		);
+	});
+
+	it.each(AGENT_MODES)(
+		'refuses a second request while the %s agent already runs an Auto Run, keeping the first',
+		async (mode) => {
+			setAgent(mode);
+			void startGroupChatAutoRun(trigger, inProgress());
+			await vi.waitFor(() => expect(hasGroupChatAutoRun('agent-1')).toBe(true));
+			// The first request's run is on screen.
+			useBatchStore.setState({
+				batchRunStates: {
+					'agent-1': mode === 'hosted' ? mirror() : { ...DEFAULT_BATCH_STATE, isRunning: true },
+				},
+			});
+			const second = vi.fn();
+
+			await startGroupChatAutoRun({ ...trigger, groupChatId: 'chat-2' }, second);
+
+			expect(second).not.toHaveBeenCalled();
+			expect(reportAutoRunComplete).toHaveBeenCalledWith(
+				'chat-2',
+				'Client',
+				expect.stringContaining('is already running an Auto Run')
+			);
+			expect(consumeGroupChatAutoRun('agent-1')).toEqual({
+				groupChatId: 'chat-1',
+				participantName: 'Client',
+			});
+		}
+	);
+
+	it('refuses when Auto Run is turned off, before registering', async () => {
+		setAgent('local');
+		useSettingsStore.setState({ autoRunDisabled: true });
+		const startBatchRun = vi.fn();
+
+		await startGroupChatAutoRun(trigger, startBatchRun);
+
+		expect(startBatchRun).not.toHaveBeenCalled();
+		expect(hasGroupChatAutoRun('agent-1')).toBe(false);
+		expect(reportAutoRunComplete).toHaveBeenCalledWith(
+			'chat-1',
+			'Client',
+			expect.stringContaining('Auto Run is turned off')
+		);
+	});
+
+	it.each(['local', 'ssh'] as const)(
+		'reports a %s launch startBatchRun declined without a run, and clears its entry',
+		async (mode) => {
+			setAgent(mode);
+			// startBatchRun returns normally without starting a run (it showed its
+			// own notice, e.g. another Maestro window owns a run on this agent).
+			const startBatchRun = vi.fn().mockResolvedValue(undefined);
+
+			await startGroupChatAutoRun(trigger, startBatchRun);
+
+			expect(startBatchRun).toHaveBeenCalledTimes(1);
+			expect(hasGroupChatAutoRun('agent-1')).toBe(false);
+			expect(reportAutoRunComplete).toHaveBeenCalledWith(
+				'chat-1',
+				'Client',
+				groupChatAutoRunFailure('Client', 'Maestro declined to start the run. Its notice says why.')
+			);
+			// A later run of this agent no longer reports to the chat.
+			useBatchStore.setState({ batchRunStates: { 'agent-1': mirror() } });
+			useBatchStore.setState({ batchRunStates: {} });
+			expect(reportAutoRunComplete).toHaveBeenCalledTimes(1);
+		}
+	);
+
 	it('reports a participant with no agent', async () => {
 		useSessionStore.setState({ sessions: [] });
 		const startBatchRun = vi.fn();
@@ -227,7 +333,8 @@ describe('completion of a run another process drives', () => {
 
 	it('leaves a run this window drives to the batch processor completion', async () => {
 		setAgent('local');
-		await startGroupChatAutoRun(trigger, vi.fn().mockResolvedValue(undefined));
+		void startGroupChatAutoRun(trigger, inProgress());
+		await vi.waitFor(() => expect(hasGroupChatAutoRun('agent-1')).toBe(true));
 
 		useBatchStore.setState({
 			batchRunStates: { 'agent-1': { ...DEFAULT_BATCH_STATE, isRunning: true } },
@@ -242,7 +349,7 @@ describe('completion of a run another process drives', () => {
 describe('useGroupChatAutoRunTrigger', () => {
 	it('starts the run from the trigger event in the lifecycle owner', async () => {
 		setAgent('local');
-		const startBatchRun = vi.fn().mockResolvedValue(undefined);
+		const { launch: startBatchRun } = launcherFor('local');
 		renderHook(() => useGroupChatAutoRunTrigger({ enabled: true, startBatchRun }));
 
 		expect(onAutoRunTriggered).toHaveBeenCalledTimes(1);
