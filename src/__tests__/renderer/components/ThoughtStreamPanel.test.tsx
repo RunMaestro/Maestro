@@ -489,6 +489,28 @@ describe('ThoughtStreamPanel steering', () => {
 		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toBeUndefined();
 	});
 
+	it('takes a returned note only when it fits beside the draft, and never cuts the draft (review)', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+		const typed = 'y'.repeat(3_900);
+		fireEvent.change(box, { target: { value: typed } });
+		const refused = 'r'.repeat(500);
+		act(() => useAutoRunSteeringStore.getState().returnDraft(SID, refused));
+
+		// No room: the draft stays whole and the note waits.
+		expect(box).toHaveValue(typed);
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toEqual([refused]);
+
+		// The operator makes room: the note comes in, before what they typed.
+		fireEvent.change(box, { target: { value: 'short' } });
+		expect(box).toHaveValue(`${refused}\n\nshort`);
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toBeUndefined();
+	});
+
 	it('sends on Enter and keeps typing on Shift+Enter', () => {
 		runFor(SID);
 		useThoughtStreamStore.getState().openPanel(SID);

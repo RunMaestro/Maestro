@@ -105,7 +105,8 @@ export interface RecordedTurn {
 	streamed?: readonly LogEntryRecord[];
 	/**
 	 * Whether the turn ran a tool, for a caller that folds `streamed` only for a tab that keeps its
-	 * cards (the runtime folds a 'sticky' tab's only). Absent: `streamed` says whether a tool ran.
+	 * cards (the runtime folds a 'sticky' tab's only). True wins over `streamed`, which may hold
+	 * some cards and not the tool's. Absent or false: `streamed` says whether a tool ran.
 	 */
 	ranTool?: boolean;
 }
@@ -369,7 +370,8 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 		} else if (
 			options.summarize &&
 			!turnDidMeaningfulWork(
-				turn.streamed?.length ? turn.streamed : turn.ranTool ? RAN_TOOL_LOGS : [],
+				// A tool counts whether or not its card was folded (the tab may have left sticky mid-turn).
+				turn.ranTool ? RAN_TOOL_LOGS : (turn.streamed ?? []),
 				!!turn.assembled.entry.aiCommand,
 				thinkingLogsRecorded(tab.showThinking as ThinkingMode | boolean | undefined)
 			)

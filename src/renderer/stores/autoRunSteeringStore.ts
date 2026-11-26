@@ -90,11 +90,12 @@ export interface AutoRunSteeringState {
 	/** sessionId -> notes a task has already taken, oldest first. */
 	delivered: Record<string, DeliveredSteeringNote[]>;
 	/**
-	 * sessionId -> text of notes that never reached the run (a hosted agent's host refused the
-	 * send, or could not be reached), waiting for the Steer box to take it back. A local refusal
-	 * keeps the draft in the box; a host answers after the box has cleared, so the text waits here.
+	 * sessionId -> the text of each note that never reached the run (a hosted agent's host refused
+	 * the send, or could not be reached), oldest first, waiting for the Steer box to take it back.
+	 * A local refusal keeps the draft in the box; a host answers after the box has cleared, so the
+	 * text waits here until the box has room for it. A new run's start leaves it alone.
 	 */
-	returnedDrafts: Record<string, string>;
+	returnedDrafts: Record<string, string[]>;
 }
 
 export interface AutoRunSteeringActions {
@@ -131,10 +132,13 @@ export interface AutoRunSteeringActions {
 	clearPendingNotes: (sessionId: string) => void;
 	/** Drop everything for a session, pending and delivered (run start). */
 	clearNotes: (sessionId: string) => void;
-	/** Hand a note that was not delivered back to the Steer box (joined after any text waiting). */
+	/** Hand a note that was not delivered back to the Steer box (after any already waiting). */
 	returnDraft: (sessionId: string, text: string) => void;
-	/** Read and clear the text waiting for the Steer box, if any. */
-	takeReturnedDraft: (sessionId: string) => string | undefined;
+	/**
+	 * Take the waiting notes, oldest first, that fit in `room` characters once joined with a blank
+	 * line each; the rest keep waiting. Empty when none waits or the first does not fit.
+	 */
+	takeReturnedDrafts: (sessionId: string, room: number) => string[];
 }
 
 export type AutoRunSteeringStore = AutoRunSteeringState & AutoRunSteeringActions;
@@ -241,37 +245,45 @@ export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get)
 
 	clearNotes: (sessionId) =>
 		set((s) => {
-			if (!s.notes[sessionId] && !s.delivered[sessionId] && !(sessionId in s.returnedDrafts)) {
-				return {};
-			}
+			if (!s.notes[sessionId] && !s.delivered[sessionId]) return {};
 			const nextNotes = { ...s.notes };
 			delete nextNotes[sessionId];
 			const nextDelivered = { ...s.delivered };
 			delete nextDelivered[sessionId];
-			const nextDrafts = { ...s.returnedDrafts };
-			delete nextDrafts[sessionId];
-			return { notes: nextNotes, delivered: nextDelivered, returnedDrafts: nextDrafts };
+			return { notes: nextNotes, delivered: nextDelivered };
 		}),
 
 	returnDraft: (sessionId, text) => {
 		const normalized = normalizeSteeringNoteText(text);
 		if (!normalized) return;
-		set((s) => {
-			const waiting = s.returnedDrafts[sessionId];
-			const joined = waiting ? `${waiting}\n\n${normalized}` : normalized;
-			return { returnedDrafts: { ...s.returnedDrafts, [sessionId]: joined } };
-		});
+		set((s) => ({
+			returnedDrafts: {
+				...s.returnedDrafts,
+				[sessionId]: [...(s.returnedDrafts[sessionId] ?? []), normalized],
+			},
+		}));
 	},
 
-	takeReturnedDraft: (sessionId) => {
-		const text = get().returnedDrafts[sessionId];
-		if (text === undefined) return undefined;
+	takeReturnedDrafts: (sessionId, room) => {
+		const waiting = get().returnedDrafts[sessionId];
+		if (!waiting?.length) return [];
+		const taken: string[] = [];
+		let used = 0;
+		for (const text of waiting) {
+			const needed = text.length + (taken.length ? 2 : 0);
+			if (used + needed > room) break;
+			taken.push(text);
+			used += needed;
+		}
+		if (taken.length === 0) return [];
 		set((s) => {
 			const next = { ...s.returnedDrafts };
-			delete next[sessionId];
+			const rest = (next[sessionId] ?? []).slice(taken.length);
+			if (rest.length) next[sessionId] = rest;
+			else delete next[sessionId];
 			return { returnedDrafts: next };
 		});
-		return text;
+		return taken;
 	},
 }));
 

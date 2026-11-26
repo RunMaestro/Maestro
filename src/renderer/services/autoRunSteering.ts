@@ -207,7 +207,10 @@ function forwardToHost(
 		if (!session) return null;
 		const ask = typeof input === 'function' ? input() : input;
 		let answer: SteeringCommandResult | null = null;
+		/** Set when a send may have reached the host: the ids it held before, to find the note by. */
+		let uncertainSince: Set<string> | undefined;
 		if (ask.action !== 'list') {
+			const before = shownNoteIds(sessionId);
 			const sent = await steerHostedAutoRun(session, ask);
 			// Answered (or out of reach): from here the host's list says whether it waits.
 			if (options.localNoteId) markUnanswered(sessionId, options.localNoteId, false);
@@ -222,6 +225,7 @@ function forwardToHost(
 				}
 			} else {
 				if (sent && !sent.ok && sent.unsupported) hostsWithoutSteering.add(sessionId);
+				if (sent && !sent.ok && sent.unknown) uncertainSince = before;
 				const error = sent?.ok
 					? typeof sent.result.error === 'string' && sent.result.error
 						? sent.result.error.slice(0, 500)
@@ -231,7 +235,15 @@ function forwardToHost(
 			}
 		}
 		const listed = hostsWithoutSteering.has(sessionId) ? null : await readHostList(sessionId);
-		if (answer && !answer.success) settleRefusal(sessionId, ask, answer.error, listed, options);
+		if (answer && !answer.success) {
+			settleRefusal(
+				sessionId,
+				ask,
+				answer.error,
+				options,
+				uncertainSince && { listed, uncertainSince }
+			);
+		}
 		return ask.action === 'list' ? listed : answer;
 	});
 }
@@ -245,28 +257,65 @@ async function readHostList(sessionId: string): Promise<SteeringCommandResult | 
 		if (read.unsupported) hostsWithoutSteering.add(sessionId);
 		return null;
 	}
-	if (!read.result.success) return null;
+	// The agent may have stopped being hosted while the host answered: its notes are this
+	// window's again, and the host's list must not replace them.
+	if (!read.result.success || !hostedSessionOf(sessionId)) return null;
 	applyHostList(sessionId, read.result);
 	return read.result;
 }
 
-/** A command the host did not take: drop the note it named, hand its text back, say why. */
+/** The ids of every note this window shows for an agent, pending or delivered. */
+function shownNoteIds(sessionId: string): Set<string> {
+	const { notes, delivered } = useAutoRunSteeringStore.getState();
+	return new Set([...(notes[sessionId] ?? []), ...(delivered[sessionId] ?? [])].map((n) => n.id));
+}
+
+/**
+ * Whether the host's list shows a send whose answer was lost: a note with its text, pending or
+ * already taken by a task, under an id this window did not show before the send.
+ */
+function hostTookSend(
+	listed: SteeringCommandResult | null,
+	text: string,
+	before: ReadonlySet<string>
+): boolean {
+	if (!listed) return false;
+	const notes = [
+		...(Array.isArray(listed.pending) ? listed.pending : []),
+		...(Array.isArray(listed.deliveries)
+			? listed.deliveries.flatMap((delivery) =>
+					delivery && typeof delivery === 'object' && Array.isArray(delivery.notes)
+						? delivery.notes
+						: []
+				)
+			: []),
+	];
+	return notes.some((raw) => {
+		const note = hostNote(raw);
+		return note !== undefined && note.text === text && !before.has(note.id);
+	});
+}
+
+/**
+ * A command the host did not take: drop the note it named, hand its text back, say why. A send
+ * the host refused, or that never left, always hands the text back. Only a send that may have
+ * reached the host (`uncertain`) is looked for in the host's list first.
+ */
 function settleRefusal(
 	sessionId: string,
 	ask: SteeringCommandInput,
 	reason: string | undefined,
-	listed: SteeringCommandResult | null,
-	options: ForwardOptions
+	options: ForwardOptions,
+	uncertain?: { listed: SteeringCommandResult | null; uncertainSince: ReadonlySet<string> }
 ): void {
 	const { localNoteId } = options;
 	let returned = false;
 	if (ask.action === 'send' && localNoteId) {
 		useAutoRunSteeringStore.getState().removeNote(sessionId, localNoteId);
-		// A send whose outcome is unknown may still have landed: the host's list says so.
 		const text = normalizeSteeringNoteText(ask.text ?? '');
-		const landed = (Array.isArray(listed?.pending) ? listed.pending : []).some(
-			(note) => hostNote(note)?.text === text
-		);
+		const landed = uncertain
+			? hostTookSend(uncertain.listed, text, uncertain.uncertainSince)
+			: false;
 		if (text && !landed) {
 			useAutoRunSteeringStore.getState().returnDraft(sessionId, text);
 			returned = true;

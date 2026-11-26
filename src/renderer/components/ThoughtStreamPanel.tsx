@@ -570,19 +570,20 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 	// A note that never reached the run (a hosted agent's host refused it, or was out of reach)
 	// comes back into the box, as a local refusal keeps the draft there: the text is the
-	// operator's, and the box had already cleared by the time the host answered.
-	const returnedDraft = useAutoRunSteeringStore((st) =>
+	// operator's, and the box had already cleared by the time the host answered. Only what fits
+	// beside the draft is taken; the rest waits for room, so nothing typed is cut.
+	const returnedDrafts = useAutoRunSteeringStore((st) =>
 		panelSessionId ? st.returnedDrafts[panelSessionId] : undefined
 	);
 	useEffect(() => {
-		if (!panelSessionId || returnedDraft === undefined || !canSteer) return;
-		const text = useAutoRunSteeringStore.getState().takeReturnedDraft(panelSessionId);
-		if (!text) return;
-		setSteerDraft((draft) =>
-			(draft.trim() ? `${text}\n\n${draft}` : text).slice(0, MAX_STEERING_NOTE_LENGTH)
-		);
+		if (!panelSessionId || !returnedDrafts?.length || !canSteer) return;
+		const draft = steerDraft.trim() ? steerDraft : '';
+		const room = MAX_STEERING_NOTE_LENGTH - (draft ? draft.length + 2 : 0);
+		const taken = useAutoRunSteeringStore.getState().takeReturnedDrafts(panelSessionId, room);
+		if (taken.length === 0) return;
+		setSteerDraft([...taken, ...(draft ? [draft] : [])].join('\n\n'));
 		setBarMode('steer');
-	}, [panelSessionId, returnedDraft, canSteer]);
+	}, [panelSessionId, returnedDrafts, canSteer, steerDraft]);
 
 	// Hand the caret to whichever input a button just opened. The panel registers
 	// a PASSIVE layer, so nothing else does; without this the operator clicks

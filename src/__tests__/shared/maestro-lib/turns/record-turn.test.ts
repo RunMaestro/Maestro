@@ -894,6 +894,15 @@ describe('turn records', () => {
 			expect(result.history).toMatchObject({ ok: true });
 		});
 
+		it('summarizes a tool turn whose thinking was folded and whose tool was not (review)', async () => {
+			seed({}, { showThinking: 'on' });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const thought = { id: 'th1', timestamp: 1, source: 'thinking', text: 'Plan it.' } as const;
+			await records.recordTurn(turn({ streamed: [thought], ranTool: true }));
+			expect(summarize).toHaveBeenCalledTimes(1);
+		});
+
 		it('summarizes no turn that ran in no provider session, as the desktop does not', async () => {
 			const summarize = vi.fn();
 			const { recorder: records } = await recorder({ summarize });

@@ -402,11 +402,11 @@ export async function steerMirrorQueuedItem(
 /**
  * What a host said to one steering command: its result (a refusal is `success: false` in it), or
  * why it gave none. `unsupported`: the host does not know the op (an older host), so asking it
- * again cannot help.
+ * again cannot help. `unknown`: the command may have reached the host before the answer was lost.
  */
 export type MirrorSteeringAnswer =
 	| { ok: true; result: SteeringCommandResult }
-	| { ok: false; error: string; unsupported: boolean };
+	| { ok: false; error: string; unsupported: boolean; unknown?: boolean };
 
 /**
  * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss), with no
@@ -424,6 +424,7 @@ export async function steerMirrorAutoRun(
 			ok: false,
 			error: mirroredActionError(answer),
 			unsupported: answer.code === 'unsupported',
+			...(answer.unknown ? { unknown: true } : {}),
 		};
 	}
 	if (answer.result.kind !== 'steer-auto-run' || !answer.result.result) {

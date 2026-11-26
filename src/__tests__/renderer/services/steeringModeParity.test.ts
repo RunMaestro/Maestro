@@ -73,7 +73,7 @@ beforeEach(() => {
 	hostPending = [];
 	hostRefuses = null;
 	listFails = false;
-	act.mockClear();
+	act.mockReset();
 	act.mockImplementation(hostAnswer);
 	forgetHostedSteering(SID);
 	(window as any).maestro = { ...((window as any).maestro || {}), federation: { act } };
@@ -256,7 +256,7 @@ describe('a note the run never got keeps its text (P9)', () => {
 			await settled();
 			results.push({
 				waiting: pending().filter((text) => text === 'Prefer the fixtures'),
-				kept: note === null || returned() === 'Prefer the fixtures',
+				kept: note === null || (returned() ?? []).includes('Prefer the fixtures'),
 				before,
 			});
 			hostRefuses = null;
@@ -277,7 +277,7 @@ describe('a note the run never got keeps its text (P9)', () => {
 		submitSteeringNote({ sessionId: SID, text: 'Use the v3 endpoint', announce: false });
 		await settled();
 		expect(pending()).toEqual([]);
-		expect(returned()).toBe('Use the v3 endpoint');
+		expect(returned()).toEqual(['Use the v3 endpoint']);
 		expect(
 			await answerSteeringCommand({ action: 'send', sessionId: SID, text: 'From the CLI' })
 		).toEqual({ success: false, error: 'The host is not connected' });
@@ -296,6 +296,66 @@ describe('a note the run never got keeps its text (P9)', () => {
 		expect(returned()).toBeUndefined();
 	});
 
+	it('keeps no copy when a task took a send of unknown outcome before the list (review)', async () => {
+		setUp('hosted');
+		let deliveries: unknown[] = [];
+		act.mockImplementation(async (_peer: string, _agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				// The host took it and a task took it at once; the answer was lost on the way back.
+				deliveries = [
+					{
+						deliveryId: 'd1',
+						notes: [{ id: 'host-9', text: action.input.text, timestamp: 7 }],
+					},
+				];
+				return { ok: false, error: 'The connection dropped.', unknown: true };
+			}
+			return {
+				ok: true,
+				result: {
+					kind: 'steer-auto-run',
+					result: { success: true, steerable: true, pending: [], deliveries },
+				},
+			};
+		});
+		submitSteeringNote({ sessionId: SID, text: 'Taken at once', announce: false });
+		await settled();
+		expect(returned()).toBeUndefined();
+		expect(useAutoRunSteeringStore.getState().delivered[SID]?.map((n) => n.text)).toEqual([
+			'Taken at once',
+		]);
+	});
+
+	it('hands back a refused send even when the host holds a note with the same text (review)', async () => {
+		setUp('hosted');
+		hostPending = [{ id: 'host-0', text: 'Repeat the checks', timestamp: 1 }];
+		hostRefuses = 'Too many notes are waiting';
+		submitSteeringNote({ sessionId: SID, text: 'Repeat the checks', announce: false });
+		await settled();
+		expect(returned()).toEqual(['Repeat the checks']);
+	});
+
+	it('leaves a note alone when the agent stops being hosted while the host answers a list (review)', async () => {
+		setUp('hosted');
+		hostPending = [{ id: 'host-1', text: 'On the host', timestamp: 1 }];
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		act.mockImplementationOnce(async (peer: string, agent: string, action: any) => {
+			await held;
+			return hostAnswer(peer, agent, action);
+		});
+		const reading = refreshHostedSteering(SID);
+		await vi.waitFor(() => expect(act).toHaveBeenCalled());
+		// Moved back mid-read: the run is this window's own again, and so are its notes.
+		setUp('ssh');
+		submitSteeringNote({ sessionId: SID, text: 'Local again', announce: false });
+		release();
+		await reading;
+		expect(pending()).toEqual(['Local again']);
+	});
+
 	it('stops reading the list from a host that does not know the op', async () => {
 		setUp('hosted');
 		act.mockImplementation(async () => ({
@@ -305,7 +365,7 @@ describe('a note the run never got keeps its text (P9)', () => {
 		}));
 		submitSteeringNote({ sessionId: SID, text: 'Old host', announce: false });
 		await settled();
-		expect(returned()).toBe('Old host');
+		expect(returned()).toEqual(['Old host']);
 		const calls = act.mock.calls.length;
 		for (let i = 0; i < 5; i++) await refreshHostedSteering(SID);
 		expect(act.mock.calls.length).toBe(calls);
