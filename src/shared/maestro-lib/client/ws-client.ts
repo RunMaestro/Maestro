@@ -143,6 +143,7 @@ import {
 	normalizeTurnOverrides,
 	parseQueuedTurnImages,
 	parseQueuedTurnSettings,
+	readTurnEntryId,
 } from './types';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
@@ -1938,6 +1939,8 @@ class WsMaestroClient implements MaestroClient {
 		if (input.held === true) message.held = true;
 		if (input.agentContext) message.agentContext = input.agentContext;
 		if (input.agentNotes) message.agentNotes = input.agentNotes;
+		const entryId = readTurnEntryId(input.entryId);
+		if (entryId) message.entryId = entryId;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)

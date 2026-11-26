@@ -183,6 +183,12 @@ export interface OutageRecord {
 	 * instead of "Service overloaded". Undefined for a provider outage.
 	 */
 	cause?: OutageCause;
+	/**
+	 * The kept message was not sent again because the hosted agent's host already had it: the turn
+	 * a lost link cut was still running there, or had finished (`settleRetryOnHost()`). The card
+	 * says so instead of "Sent after n retries".
+	 */
+	settledByHost?: boolean;
 }
 
 /** See `OutageRecord.cause`. */
@@ -644,6 +650,15 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 		return null;
 	}
 	return strategy;
+}
+
+/**
+ * Whether `error` on this agent would be taken over by an automatic retry (the error is retryable
+ * and the agent's resilience toggle for it is on), without scheduling anything. A caller that keeps
+ * a message only when the retry card will stand for it asks this first.
+ */
+export function wouldAutoRetry(sessionId: string, error: ClassifiableError): boolean {
+	return resolveStrategy(sessionId, error) !== null;
 }
 
 /**
@@ -1749,6 +1764,29 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
  */
 export function noteRetryProgress(sessionId: string, tabId: string): void {
 	recoverInFlightRetry(sessionId, tabId, 'Resend is producing output; outage recovered');
+}
+
+/**
+ * End this tab's outage because the message it keeps is not owed any more: a hosted agent's host
+ * already had it (the turn a lost link cut was still running there, or had finished). Nothing is
+ * sent again: the held copy leaves the queue, the retry ends as recovered with the card saying the
+ * host had it (`OutageRecord.settledByHost`), and the tab's retryable error clears. Works whether
+ * the retry is still counting down or its resend is waiting for this answer. Answers whether there
+ * was an outage to end.
+ */
+export function settleRetryOnHost(sessionId: string, tabId: string): boolean {
+	const key = keyFor(sessionId, tabId);
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry) return false;
+	logger.info('[retry] The host already had the kept message; not sending it again', undefined, {
+		key,
+	});
+	if (entry.heldItemId) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	useRetryStore.getState().patchOutage(entry.outageId, { settledByHost: true });
+	resolveOutage(entry.outageId, 'recovered');
+	removeEntry(key);
+	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	return true;
 }
 
 /**

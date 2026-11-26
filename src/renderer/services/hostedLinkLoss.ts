@@ -7,16 +7,21 @@
  *
  * - `hostLinkLostError()`: while the link is down (a confirmed outage of the agent's remote, or a
  *   connection the mirror gave up), the error each such turn ends with. The projection draws the
- *   tab ended with it and a note in its transcript (`HostedProjectionInput.linkLost`), and the
- *   outage dialog is surfaced, as a live SSH turn dying on its remote surfaces it.
+ *   tab ended, and the outage dialog is surfaced, as a live SSH turn dying on its remote surfaces
+ *   it. The turn's message is kept at once under the auto-retry card, as an SSH turn's is when its
+ *   link is cut (`noteHostedTurnsCut()`, `HostedProjectionInput.keptCuts`), drawn once: its resend
+ *   names the entry the host already wrote (`QueuedItem.hostEntryId`). A cut whose message cannot
+ *   be kept (Agent Resilience off) gets the error and a note in its transcript instead
+ *   (`HostedProjectionInput.linkLost`).
  * - `endHostedTurnsHere()`: Stop on a hosted turn while the host cannot be told settles the tab
  *   here (`settleTabThinkingState()`) and says so. The tab stays idle until the host reports again
  *   (`hostedTurnsEndedHere()`); a turn the host still runs then draws Thinking again, with Stop.
  * - `settleCutHostedTurns()`: once the host is back, each cut turn's fate is read from the host,
- *   never guessed. Still running: it draws Thinking again. Finished: its answer is in the host's
- *   transcript and draws. Died with the host (no answer after the message): the message gets the
- *   same treatment as one the host could not take (`keepTurnForHost()`): kept, the auto-retry card,
- *   and sent. A message is never sent again while the host's transcript cannot be read.
+ *   never guessed. Still running: it draws Thinking again, and the kept message is not sent
+ *   (`settleRetryOnHost()`). Finished: its answer is in the host's transcript and draws, and the
+ *   same. Died with the host (no answer after the message): the kept message is sent at once
+ *   (`retryNow()`). A resend that fires first waits for that answer (`cutTurnFate()`). A message is
+ *   never sent again while the host's transcript cannot be read.
  */
 
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
@@ -24,6 +29,7 @@ import type { PeerMirrorConnection } from '../../shared/maestro-lib/client/peer-
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { notifyToast } from '../stores/notificationStore';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
+import { getRetryEntry, retryNow, settleRetryOnHost } from '../stores/retryStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSshOutageStore } from '../stores/sshOutageStore';
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
@@ -100,6 +106,27 @@ interface CutTurn {
 	awaitingRead?: boolean;
 	/** The user stopped this turn here while the host could not be told: never sent again. */
 	stopped?: boolean;
+	/** The message is kept for a resend under the auto-retry card, as this queue item. */
+	keptItemId?: string;
+	/** Resends waiting for the host to say how the turn ended (`cutTurnFate()`). */
+	waiters?: ((fate: CutTurnFate) => void)[];
+}
+
+/**
+ * How a cut turn's kept message goes on: `send` (the turn died with the host), `answered` (the
+ * host still runs it, finished it, or no longer has the tab: never sent again), or `unknown` (the
+ * host's transcript could not be read: kept for the next try).
+ */
+export type CutTurnFate = 'send' | 'answered' | 'unknown';
+
+/** How long a resend waits for the host to say how a cut turn ended, as a send waits for a reconnect. */
+export const CUT_TURN_FATE_WAIT_MS = 10_000;
+
+/** Tell each resend waiting on `cut` how it goes on. */
+function answerWaiters(cut: CutTurn, fate: CutTurnFate): void {
+	const waiters = cut.waiters ?? [];
+	cut.waiters = undefined;
+	for (const waiter of waiters) waiter(fate);
 }
 
 /** By `sessionId:tabId`. */
@@ -130,8 +157,10 @@ function lastUserMessage(logs: readonly LogEntry[] | undefined): LogEntry | unde
 /**
  * Record each turn the host last reported running as cut by the lost link, once, and surface the
  * outage: a live turn died on that remote, so its dialog shows even for an agent not on screen.
+ * The turn's message is kept at once for a resend under the auto-retry card (with `lost` as its
+ * reason), as an SSH turn's is when its link is cut; its resend names the host's entry for it.
  */
-export function noteHostedTurnsCut(session: Session, link: HostLink): void {
+export function noteHostedTurnsCut(session: Session, link: HostLink, lost?: AgentError): void {
 	// Connected: the host's report is the real state, nothing is cut (`hostLinkLostError()`).
 	if (link.connection === 'connected') return;
 	let cut = false;
@@ -140,7 +169,7 @@ export function noteHostedTurnsCut(session: Session, link: HostLink): void {
 		const key = cutKey(session.id, hostTab.id);
 		if (cutTurns.has(key)) continue;
 		const message = lastUserMessage(session.aiTabs.find((tab) => tab.id === hostTab.id)?.logs);
-		cutTurns.set(key, {
+		const entry: CutTurn = {
 			sessionId: session.id,
 			tabId: hostTab.id,
 			remoteName: link.remoteName,
@@ -154,11 +183,82 @@ export function noteHostedTurnsCut(session: Session, link: HostLink): void {
 						},
 					}
 				: {}),
-		});
+		};
+		cutTurns.set(key, entry);
+		if (lost && entry.message && !entry.stopped) keepCutMessage(entry, lost.message);
 		cut = true;
 	}
 	if (cut && useSshOutageStore.getState().outages[link.remoteId]) {
 		useSshOutageStore.getState().surface(link.remoteId);
+	}
+}
+
+/**
+ * Keep a cut turn's message for a resend under the auto-retry card, the way an SSH turn's message
+ * is kept when its link is cut. Kept only when a retry takes it (Agent Resilience on); otherwise
+ * the cut draws its error and note, and is settled from the host once it is back.
+ */
+function keepCutMessage(cut: CutTurn, reason: string): void {
+	const message = cut.message!;
+	const item: QueuedItem = {
+		id: generateId(),
+		timestamp: Date.now(),
+		tabId: cut.tabId,
+		type: 'message',
+		text: message.text,
+		...(message.images?.length ? { images: [...message.images] } : {}),
+		hostEntryId: message.id,
+	};
+	if (keepTurnForHost(cut.sessionId, item, reason, { onlyIfRetried: true })) {
+		cut.keptItemId = item.id;
+	}
+}
+
+/**
+ * The tabs of `sessionId` whose cut turn's message is kept for a resend: drawn ended with no link
+ * note, since the auto-retry card stands for the cut (as it does for an SSH turn's).
+ */
+export function hostedCutsKept(sessionId: string): ReadonlySet<string> | undefined {
+	let tabs: Set<string> | undefined;
+	for (const cut of cutTurns.values()) {
+		if (cut.sessionId !== sessionId || !cut.keptItemId) continue;
+		(tabs ??= new Set()).add(cut.tabId);
+	}
+	return tabs;
+}
+
+/**
+ * Whether the resend of `item` must wait for the host to say how the turn it repeats ended, and if
+ * so, that answer. Null: send now (not a cut turn's message, already decided, or the host is not
+ * connected, so the send is refused and the message stays kept).
+ */
+export function cutTurnFate(
+	sessionId: string,
+	item: Pick<QueuedItem, 'tabId' | 'hostEntryId'>,
+	connected: boolean
+): Promise<CutTurnFate> | null {
+	if (!item.hostEntryId || !connected) return null;
+	const cut = cutTurns.get(cutKey(sessionId, item.tabId));
+	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) return null;
+	if (cut.awaitingRead) return Promise.resolve('unknown');
+	return new Promise<CutTurnFate>((resolve) => {
+		const timer = setTimeout(() => {
+			cut.waiters = cut.waiters?.filter((waiter) => waiter !== answer);
+			resolve('unknown');
+		}, CUT_TURN_FATE_WAIT_MS);
+		const answer = (fate: CutTurnFate) => {
+			clearTimeout(timer);
+			resolve(fate);
+		};
+		(cut.waiters ??= []).push(answer);
+	});
+}
+
+/** A kept cut message is not owed: the host had it. Its retry ends, and nothing is sent. */
+function settleKeptCut(cut: CutTurn): void {
+	answerWaiters(cut, 'answered');
+	if (cut.keptItemId && getRetryEntry(cut.sessionId, cut.tabId)?.heldItemId === cut.keptItemId) {
+		settleRetryOnHost(cut.sessionId, cut.tabId);
 	}
 }
 
@@ -198,16 +298,27 @@ function decideCutTurn(key: string, link: HostLink): void {
 		!cut.message
 	) {
 		cutTurns.delete(key);
+		settleKeptCut(cut);
 		return;
 	}
 	const slot = mirror.transcripts[link.peerId]?.[liveTurnKey(link.agentId, cut.tabId)];
 	// A read that failed, or one already behind, cannot prove the turn died: never send twice.
 	if (!slot?.loaded || slot.loading || slot.error || slot.stale) {
 		cut.awaitingRead = true;
+		answerWaiters(cut, 'unknown');
 		return;
 	}
 	cutTurns.delete(key);
-	if (turnEnded(slot.entries, cut.message.id)) return;
+	if (turnEnded(slot.entries, cut.message.id)) {
+		settleKeptCut(cut);
+		return;
+	}
+	if (cut.keptItemId) {
+		// Died with the host: the kept message goes now, not at its countdown's end.
+		answerWaiters(cut, 'send');
+		retryNow(cut.sessionId, cut.tabId);
+		return;
+	}
 	const item: QueuedItem = {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -332,6 +443,7 @@ export function endHostedTurnsHere(
 
 /** Test-only: forget every cut turn and local stop. */
 export function __resetHostedLinkLossForTests(): void {
+	for (const cut of cutTurns.values()) cut.waiters = undefined;
 	linkErrors.clear();
 	cutTurns.clear();
 	stoppedTurns.clear();

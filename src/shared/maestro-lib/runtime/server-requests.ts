@@ -38,7 +38,12 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnEdit } from '../client/types';
+import {
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnEdit,
+	readTurnEntryId,
+} from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -507,8 +512,12 @@ function turnOverridesOf(message: Request): { overrides?: TurnOverrides } {
  * The agent-only text a desktop's `@mention` adds to this one turn (`TurnInput.agentContext`,
  * `agentNotes`), passed through as sent: the runtime checks it and refuses a send it cannot take.
  */
-function turnAgentTextOf(message: Request): Pick<TurnInput, 'agentContext' | 'agentNotes'> {
+function turnAgentTextOf(
+	message: Request
+): Pick<TurnInput, 'agentContext' | 'agentNotes' | 'entryId'> {
+	const entryId = readTurnEntryId(message.entryId);
 	return {
+		...(entryId ? { entryId } : {}),
 		...(message.agentContext !== undefined
 			? { agentContext: message.agentContext as TurnInput['agentContext'] }
 			: {}),

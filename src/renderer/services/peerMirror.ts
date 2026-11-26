@@ -202,7 +202,8 @@ export function isHostUnavailableAnswer(answer: MirroredActionAnswer | null): bo
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
  * one turn. The host's receipt when it took it (ran, queued, or held), null when it did not.
  * `held` is Queue Held: the host queues it paused, even on an idle tab, as a local Queue Held does.
- * `agentText` is the agent-only context and notes an `@mention` adds to this one turn.
+ * `agentText` is the agent-only context and notes an `@mention` adds to this one turn, and the
+ * transcript entry the message already is (`entryId`, a resend drawn once).
  */
 export async function sendToMirroredTab(
 	peerId: string,
@@ -212,7 +213,7 @@ export async function sendToMirroredTab(
 	overrides?: TurnOverrides,
 	images?: readonly string[],
 	held?: boolean,
-	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes'> = {},
+	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes' | 'entryId'> = {},
 	/**
 	 * Takes a refusal that sent nothing because the peer is not connected
 	 * (`isHostUnavailableAnswer()`), instead of the red toast: the caller keeps the message for a
@@ -230,6 +231,7 @@ export async function sendToMirroredTab(
 		...(held === true ? { held: true } : {}),
 		...(agentText.agentContext ? { agentContext: agentText.agentContext } : {}),
 		...(agentText.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
+		...(agentText.entryId ? { entryId: agentText.entryId } : {}),
 	};
 	const answer = await callMirroredAgentAction(peerId, agentId, action);
 	if (onHostUnavailable && answer && !answer.ok && isHostUnavailableAnswer(answer)) {

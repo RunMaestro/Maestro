@@ -982,6 +982,18 @@ describe('beginTurnRecord', () => {
 		expect(before.logs).toHaveLength(1);
 	});
 
+	it('writes no second entry for a resend of a message the transcript holds (R13)', () => {
+		const before = tab('t1', { logs: [userEntry] });
+		const after = beginTurnRecord(before, {
+			turnId: 'attempt-2',
+			userEntry,
+			provider: 'claude-code',
+			consumedMergedContext: false,
+		});
+		expect((after.logs as { id: string }[]).map((entry) => entry.id)).toEqual(['u1']);
+		expect(after.runtimeTurnId).toBe('attempt-2');
+	});
+
 	it('clears a merged context the prompt carried, and keeps one it did not', () => {
 		const pending = tab('t1', { pendingMergedContext: 'from another tab' });
 		const spent = beginTurnRecord(pending, {

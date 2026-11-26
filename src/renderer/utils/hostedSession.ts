@@ -66,6 +66,12 @@ export interface HostedProjectionInput {
 	linkLost?: AgentError;
 	/** Tabs whose turn was stopped here while the host could not be told: drawn idle until it can. */
 	endedHere?: ReadonlySet<string>;
+	/**
+	 * Tabs whose cut turn's message is kept for a resend (`hostedCutsKept()`): drawn ended like any
+	 * cut tab, with no link note and no link error, because the auto-retry card and its error stand
+	 * for the cut, as they do for an SSH turn whose link is cut.
+	 */
+	keptCuts?: ReadonlySet<string>;
 }
 
 /**
@@ -338,13 +344,15 @@ function projectTab(
 	liveTurn: LiveTurn | undefined,
 	watched: boolean,
 	hostSeenAt: number | undefined,
-	link: { lost?: AgentError; endedHere: boolean }
+	link: { lost?: AgentError; endedHere: boolean; kept: boolean }
 ): AITab {
 	// A turn the host last reported running that nobody here can follow or finish ends here.
 	const cut = host.state === 'busy' && link.lost !== undefined;
 	const busy = host.state === 'busy' && !cut && !link.endedHere;
+	// A kept cut has the retry card for its note, and the kept message's error for its own.
+	const noted = cut && !link.kept;
 	const logs =
-		cut && link.lost
+		noted && link.lost
 			? withLinkNote(merged, local.logs ?? [], {
 					id: hostLinkNoteId(local.id, merged, link.lost),
 					timestamp: link.lost.timestamp,
@@ -361,7 +369,7 @@ function projectTab(
 	const starred = host.starred === true;
 	const state = busy ? 'busy' : 'idle';
 	const agentError =
-		cut && link.lost ? link.lost : hostedTabError(local, busy, logs, link.lost !== undefined);
+		noted && link.lost ? link.lost : hostedTabError(local, busy, logs, link.lost !== undefined);
 	const hasUnread = hostedTabUnread(local, logs, watched);
 	// The host runs the turns, so its tab's usage is what the header's gauge and cost pill read. A
 	// host that reports none (an older host) leaves the usage this tab already had.
@@ -494,7 +502,11 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
 			input.viewing === true && local.id === session.activeTabId,
 			hostingAt ?? local.hostSeenAt,
-			{ lost: input.linkLost, endedHere: input.endedHere?.has(local.id) === true }
+			{
+				lost: input.linkLost,
+				endedHere: input.endedHere?.has(local.id) === true,
+				kept: input.keptCuts?.has(local.id) === true,
+			}
 		);
 		if (next !== local) changed = true;
 		aiTabs.push(next);

@@ -1479,6 +1479,71 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		// Parity R13: the resend of a message a lost link cut names the entry the host already
+		// wrote for it, so the message is one entry in the transcript, as an SSH resend is.
+		describe('the entry a message already is (entryId, R13)', () => {
+			const cutTab = (logs: unknown[]) =>
+				seedAgent({ aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs }] });
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+
+			it('writes no second entry for the resend of a message the tab already holds', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.outcome();
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user')).toEqual([
+					expect.objectContaining({ id: 'u1', text: 'Summarize the docs' }),
+				]);
+				expect(entries.some((entry) => entry.source !== 'user')).toBe(true);
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { id: 'u1' },
+				});
+			});
+
+			it('gives a new message the id it names', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello', entryId: 'drawn-1' }));
+				await turn.outcome();
+				expect((await transcript(runtime))[0]).toMatchObject({
+					id: 'drawn-1',
+					source: 'user',
+					text: 'hello',
+				});
+			});
+
+			it.each([
+				['another message', { id: 'u1', timestamp: 1, source: 'user', text: 'something else' }],
+				['an answer', { id: 'u1', timestamp: 1, source: 'ai', text: 'The docs say' }],
+			])(
+				'never hides or replaces %s whose id it names: the message gets its own entry',
+				async (_what, held) => {
+					const runtime = await start([cutTab([held])]);
+					const turn = watch(runtime);
+					value(
+						await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' })
+					);
+					await turn.outcome();
+					const entries = await transcript(runtime);
+					expect(entries[0]).toMatchObject(held);
+					const sent = entries.filter((entry) => entry.text === 'Summarize the docs');
+					expect(sent).toHaveLength(1);
+					expect(sent[0].id).not.toBe('u1');
+				}
+			);
+
+			it('ignores an id it cannot take', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', { text: 'hello', entryId: 'no spaces/allowed' })
+				);
+				await turn.outcome();
+				expect((await transcript(runtime))[0].id).not.toBe('no spaces/allowed');
+			});
+		});
+
 		// Parity M7: a hosted agent's `@mention` runs on the desktop that sent it, and the turn
 		// carries the mention's agent-only text here, as a local turn carries it.
 		describe('agent-only text from an @mention (M7)', () => {

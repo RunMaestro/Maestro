@@ -150,9 +150,11 @@ export function RetryStatusCard({
 				<span>
 					<span className="font-medium">{headline}</span>{' '}
 					<span style={{ color: theme.colors.textDim }}>
-						{connectionLost
-							? `Sent after ${retries}${over}, once the link was back.`
-							: `${strategyLabel} cleared after ${retries}${over}.`}
+						{connectionLost && outage.settledByHost
+							? 'The host already had this message, so it was not sent again.'
+							: connectionLost
+								? `Sent after ${retries}${over}, once the link was back.`
+								: `${strategyLabel} cleared after ${retries}${over}.`}
 					</span>
 				</span>
 			</div>

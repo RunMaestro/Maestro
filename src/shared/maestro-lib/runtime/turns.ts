@@ -64,6 +64,7 @@ import {
 	normalizeTurnOverrides,
 	parseQueuedTurnSettings,
 	readTurnAgentText,
+	readTurnEntryId,
 } from '../client/types';
 import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
@@ -223,9 +224,32 @@ interface TurnItem extends QueueItem {
 	agentContext?: string;
 	/** Agent-only notes behind `text` when it runs (`TurnInput.agentNotes`). */
 	agentNotes?: string;
+	/**
+	 * The id its transcript entry takes (`TurnInput.entryId`). When the tab already holds that entry
+	 * (a resend of a message the host wrote down before its turn died), no second one is written.
+	 */
+	entryId?: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
+
+/**
+ * The entry id a send may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
+ * entry of this same message (a resend), which then stands for it. An id that names another entry
+ * is dropped, and the message gets a new one: a send never hides or replaces what is there.
+ */
+function turnEntryIdFor(
+	tab: { logs?: unknown } | undefined,
+	raw: unknown,
+	text: string
+): string | undefined {
+	const entryId = readTurnEntryId(raw);
+	if (!entryId) return undefined;
+	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
+	const existing = logs.find((entry) => entry?.id === entryId);
+	if (!existing) return entryId;
+	return existing.source === 'user' && existing.text === text ? entryId : undefined;
+}
 
 /** A start the provider layer refused before anything ran, with its reason. */
 class TurnStartRefusal extends Error {
@@ -629,7 +653,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		try {
 			// The message is now sent: write it down, and spend a merge it carried.
 			const startedAt = deps.now();
-			const userEntry = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
+			const built = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
+			const userEntry = item.entryId ? { ...built, id: item.entryId } : built;
 			const begun = await repository.beginTurn(
 				agentId,
 				item.tabId,
@@ -1074,6 +1099,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (overrides) item.overrides = overrides;
 		if (agentContext.value) item.agentContext = agentContext.value;
 		if (agentNotes.value) item.agentNotes = agentNotes.value;
+		const entryId = turnEntryIdFor(tabRecord, input.entryId, text);
+		if (entryId) item.entryId = entryId;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));

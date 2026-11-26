@@ -473,6 +473,19 @@ export interface TurnInput {
 	 * answer is handed off). Never drawn in the transcript. A host that does not know it ignores it.
 	 */
 	agentNotes?: string;
+	/**
+	 * The id the host gives this message's transcript entry (`readTurnEntryId()`). The resend of a
+	 * message the host already wrote down (a turn cut by a lost link that died with the host) names
+	 * that entry, so the message stays one entry: the host writes no second one. A message drawn on
+	 * the sender before it reached the host names the entry drawn there, so the host's copy stands
+	 * in for it. A host that does not know the field ignores it, and writes a new entry.
+	 */
+	entryId?: string;
+}
+
+/** A `TurnInput.entryId` the host can take: an id of letters, digits, `-` and `_`, 1 to 128 long. */
+export function readTurnEntryId(value: unknown): string | undefined {
+	return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined;
 }
 
 /** The most characters `TurnInput.agentContext` or `agentNotes` may hold, each. */

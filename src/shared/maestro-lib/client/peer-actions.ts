@@ -54,7 +54,7 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from './types';
-import { parseQueuedTurnEdit, readTurnAgentText } from './types';
+import { parseQueuedTurnEdit, readTurnAgentText, readTurnEntryId } from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
@@ -76,6 +76,8 @@ export type PeerAgentAction =
 			agentContext?: string;
 			/** Agent-only notes behind the message (`TurnInput.agentNotes`). */
 			agentNotes?: string;
+			/** The id the host gives the message's transcript entry (`TurnInput.entryId`). */
+			entryId?: string;
 	  }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
@@ -276,6 +278,7 @@ export async function runPeerAgentAction(
 				...(action.held === true ? { held: true } : {}),
 				...(action.agentContext ? { agentContext: action.agentContext } : {}),
 				...(action.agentNotes ? { agentNotes: action.agentNotes } : {}),
+				...(action.entryId ? { entryId: action.entryId } : {}),
 			});
 			return sent.ok ? { ok: true, value: { kind: 'send', receipt: sent.value } } : sent;
 		}
@@ -543,6 +546,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (!agentContext.ok) throw new Error(agentContext.error);
 			const agentNotes = readTurnAgentText(value.agentNotes, 'agentNotes');
 			if (!agentNotes.ok) throw new Error(agentNotes.error);
+			const entryId = readTurnEntryId(value.entryId);
 			return {
 				kind,
 				tabId: tabId(),
@@ -553,6 +557,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(value.held === true ? { held: true } : {}),
 				...(agentContext.value ? { agentContext: agentContext.value } : {}),
 				...(agentNotes.value ? { agentNotes: agentNotes.value } : {}),
+				...(entryId ? { entryId } : {}),
 			};
 		}
 		case 'interrupt':

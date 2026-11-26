@@ -727,6 +727,15 @@ export interface TurnBegin {
 }
 
 /**
+ * `logs` with the message a turn starts on. A resend of a message the transcript already holds
+ * (the same entry id, `TurnInput.entryId`) is that entry: the transcript stays as it is.
+ */
+function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
+	const held = logs.some((existing) => (existing as { id?: unknown } | null)?.id === entry.id);
+	return held ? [...logs] : [...logs, entry];
+}
+
+/**
  * A tab with a turn started on it: the message is in the transcript (so a crash cannot cost the
  * person what they typed), `turnProvider` names who owns the turn's late events, and a merged
  * context the prompt carried is cleared in the same write that sends it.
@@ -738,7 +747,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 		...base,
 		turnProvider: begin.provider,
 		runtimeTurnId: begin.turnId,
-		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
+		logs: withUserEntry(Array.isArray(tab.logs) ? tab.logs : [], begin.userEntry),
 	};
 }
 

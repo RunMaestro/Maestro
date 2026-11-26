@@ -39,7 +39,10 @@ import {
 	getRetryEntry,
 	noteDirectDispatch,
 	raiseAgentError,
+	settleRetryOnHost,
+	wouldAutoRetry,
 } from '../stores/retryStore';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemRelease,
@@ -61,6 +64,7 @@ import {
 	hasDeferredHostedHandoff,
 	markHandoffSentToHost,
 } from './crossAgentHandoff';
+import { cutTurnFate } from './hostedLinkLoss';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
 import { queuedItemNamingText } from './tabAutoNaming';
 
@@ -179,11 +183,19 @@ function queueBehind(sessionId: string, item: QueuedItem): void {
  * the two reach the host in the order they were typed.
  *
  * Answers whether the message is kept. False (Agent Resilience off for the agent, or no listener):
- * the caller keeps it its own way.
+ * the caller keeps it its own way. `opts.onlyIfRetried` raises nothing at all when no retry would
+ * take the message (the caller draws the failure its own way instead).
  */
-export function keepTurnForHost(sessionId: string, item: QueuedItem, message: string): boolean {
+export function keepTurnForHost(
+	sessionId: string,
+	item: QueuedItem,
+	message: string,
+	opts: { onlyIfRetried?: boolean } = {}
+): boolean {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return false;
+	const error = hostUnavailableError(session, message);
+	if (opts.onlyIfRetried && !wouldAutoRetry(sessionId, error)) return false;
 	const waiting = getRetryEntry(sessionId, item.tabId);
 	if (waiting && waiting.heldItemId !== item.id) {
 		queueBehind(sessionId, item);
@@ -191,7 +203,7 @@ export function keepTurnForHost(sessionId: string, item: QueuedItem, message: st
 	}
 	// The prompt the retry resends. A resend of this same item keeps its snapshot.
 	noteDirectDispatch(sessionId, item);
-	if (!raiseAgentError(`${sessionId}-ai-${item.tabId}`, hostUnavailableError(session, message))) {
+	if (!raiseAgentError(`${sessionId}-ai-${item.tabId}`, error)) {
 		// No listener to report it: say so here, as the refusal's own toast would have.
 		notifyToast({ color: 'red', title: 'Message not sent', message });
 		return false;
@@ -238,7 +250,8 @@ function forwardToHost(
 	mention: CrossAgentMentionPlan | null = null
 ): Promise<TurnSendReceipt | null> {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	if (!session || !hostedTargetOf(session)) {
+	const target = hostedTargetOf(session);
+	if (!session || !target) {
 		holdRefusedItem(sessionId, item, index);
 		return Promise.resolve(null);
 	}
@@ -249,39 +262,64 @@ function forwardToHost(
 	const agentNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
 	const overrides = queuedItemHostOverrides(item);
-	const send = sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
-		held: item.paused === true,
-		...(overrides ? { overrides } : {}),
-		...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
-		...(item.agentContext ? { agentContext: item.agentContext } : {}),
-		...(agentNotes ? { agentNotes } : {}),
-		// A held item is the user's to send; only one on its way now is kept for a retry.
-		...(item.paused === true
-			? {}
-			: {
-					onHostUnavailable: (message: string) => {
-						kept = keepTurnForHost(sessionId, item, message);
-					},
-				}),
-	}).then(
-		(receipt) => {
-			if (receipt) {
-				// The host took a resend: the outage it was kept through is over.
-				clearRetryIfSettled(sessionId, item.tabId);
-				if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
-			} else if (!kept) {
-				// Refused for another reason (already toasted): a resend ends its outage here.
-				failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
+	const sendToHost = () =>
+		sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
+			held: item.paused === true,
+			...(overrides ? { overrides } : {}),
+			...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
+			...(item.agentContext ? { agentContext: item.agentContext } : {}),
+			...(agentNotes ? { agentNotes } : {}),
+			// The entry the message already is: the host writes no second one.
+			...(item.hostEntryId ? { entryId: item.hostEntryId } : {}),
+			// A held item is the user's to send; only one on its way now is kept for a retry.
+			...(item.paused === true
+				? {}
+				: {
+						onHostUnavailable: (message: string) => {
+							kept = keepTurnForHost(sessionId, item, message);
+						},
+					}),
+		}).then(
+			(receipt) => {
+				if (receipt) {
+					// The host took a resend: the outage it was kept through is over.
+					clearRetryIfSettled(sessionId, item.tabId);
+					if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
+				} else if (!kept) {
+					// Refused for another reason (already toasted): a resend ends its outage here.
+					failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
+					holdRefusedItem(sessionId, item, index);
+				}
+				return receipt;
+			},
+			(error: unknown) => {
+				failInFlightRetry(sessionId, item.tabId, 'The message could not be sent to the host.');
 				holdRefusedItem(sessionId, item, index);
+				throw error;
 			}
-			return receipt;
-		},
-		(error: unknown) => {
-			failInFlightRetry(sessionId, item.tabId, 'The message could not be sent to the host.');
-			holdRefusedItem(sessionId, item, index);
-			throw error;
-		}
-	);
+		);
+	// The message of a turn a lost link cut goes again only once the host says that turn died: it
+	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
+	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
+	const fate = cutTurnFate(sessionId, item, connected);
+	const send = !fate
+		? sendToHost()
+		: fate.then((decided) => {
+				if (decided === 'send') return sendToHost();
+				if (decided === 'answered') {
+					// The host had it: the retry ends here, nothing is sent or held.
+					settleRetryOnHost(sessionId, item.tabId);
+					return null;
+				}
+				// The host could not say (its transcript did not load): kept for the next try.
+				kept = keepTurnForHost(
+					sessionId,
+					item,
+					`The Maestro host on "${target.peerId}" could not say yet how the cut turn ended. Your message is kept and sent once it can.`
+				);
+				if (!kept) holdRefusedItem(sessionId, item, index);
+				return null;
+			});
 	sendsInFlight.set(item.id, send);
 	const settle = () => {
 		if (sendsInFlight.get(item.id) === send) sendsInFlight.delete(item.id);

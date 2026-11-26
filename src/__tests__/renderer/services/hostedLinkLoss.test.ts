@@ -8,6 +8,9 @@
  * outage is confirmed, Stop settles it here when the host cannot be told, and once the host is back
  * the host says how the turn ended: still running, finished, or died (then the message is kept for
  * a retry, as a message the host could not take is). A local agent has no link to lose.
+ *
+ * With Agent Resilience on (R13), the cut turn's message is kept at the cut under the same
+ * auto-retry card an SSH turn's gets, drawn once, and the host's answer decides whether it is sent.
  */
 
 import { act } from '@testing-library/react';
@@ -17,10 +20,15 @@ import { __resetHostedLinkLossForTests } from '../../../renderer/services/hosted
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
+	getRetryEntry,
+	noteDirectDispatch,
 	registerAgentErrorSurfacer,
 	registerDispatchDepsProvider,
+	retryNow,
+	scheduleRetryForError,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
+import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { isSshTransportError, useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
@@ -97,9 +105,14 @@ function hostReports(state: 'idle' | 'busy', connection: PeerMirrorConnection) {
 	}));
 }
 
-function seedHosted(): Session {
+/**
+ * A busy hosted record. `resilience` off (the default here) is the cut with no auto-retry to take
+ * its message: the tab draws the link error and a note, and the host decides once it is back.
+ */
+function seedHosted(resilience = false): Session {
 	const session = createModeSession('hosted', {
 		id: 'row',
+		...(resilience ? {} : { retryOnAvailabilityErrors: false }),
 		name: 'Docs',
 		state: 'busy',
 		busySource: 'ai',
@@ -119,7 +132,7 @@ function confirmOutage() {
 	useSshOutageStore.getState().applyReachability(hostOutage);
 }
 
-describe('a turn cut by a lost link', () => {
+describe('a turn cut by a lost link (Agent Resilience off: the cut draws its note)', () => {
 	beforeEach(() => {
 		resetStores(usePeerMirrorStore, useSessionStore);
 		useSshOutageStore.setState({ outages: {} });
@@ -488,5 +501,187 @@ describe('projectHostedSession with the link lost', () => {
 		const twice = projectHostedSession(late, { agent, linkLost });
 		const notes = twice.aiTabs[0].logs.filter((entry) => entry.agentError?.source === 'host-link');
 		expect(notes.map((entry) => entry.id)).toEqual(['host-link-t1-50']);
+	});
+});
+
+/** What the agent-error listener does with a retryable error: hand it to Agent Resilience. */
+function listenerStandIn(processSessionId: string, error: AgentError) {
+	raised.push({ processSessionId, error });
+	const parsed = parseSessionId(processSessionId);
+	scheduleRetryForError(parsed.baseSessionId, parsed.tabId as string, error);
+}
+
+describe('a turn cut by a lost link is kept under the retry card, drawn once (R13)', () => {
+	const queue = () => record().executionQueue ?? [];
+	const userBubbles = () => tab().logs.filter((entry) => entry.source === 'user');
+	const linkNotes = () => tab().logs.filter((entry) => entry.agentError?.source === 'host-link');
+	const sends = () => act$.mock.calls.filter(([, , action]) => action.kind === 'send');
+
+	beforeEach(() => {
+		resetStores(usePeerMirrorStore, useSessionStore);
+		useSshOutageStore.setState({ outages: {} });
+		useRetryStore.setState({ retries: {}, outages: {} });
+		useSettingsStore.setState({ federationHostedAgents: true });
+		__resetHostedLinkLossForTests();
+		toastMock.mockReset();
+		transcript.mockReset();
+		act$.mockReset();
+		maestro.federation = { transcript, act: act$ };
+		raised.length = 0;
+		registerAgentErrorSurfacer(listenerStandIn);
+		registerDispatchDepsProvider(() => ({}) as never);
+		usePeerMirrorStore.getState().hydrate([peerWith('busy', 'connected')]);
+		seedHosted(true);
+		syncHostedAgents();
+	});
+
+	afterEach(() => {
+		delete maestro.federation;
+		registerAgentErrorSurfacer(null);
+		registerDispatchDepsProvider(null);
+		useRetryStore.setState({ retries: {}, outages: {} });
+	});
+
+	/** The link drops mid-turn and the outage is confirmed. */
+	function cut() {
+		hostReports('busy', 'reconnecting');
+		confirmOutage();
+		syncHostedAgents();
+	}
+
+	/** The host is back and reports the tab `state`, with `entries` in its transcript. */
+	async function hostBack(state: 'idle' | 'busy', entries: LogEntry[]) {
+		transcript.mockResolvedValue(entries);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports(state, 'connected');
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+	}
+
+	it('shows the SSH outcome at the cut: the message under the retry card, once, with no link card', () => {
+		const outcomes: Record<string, unknown> = {};
+		// SSH: the turn was dispatched here; ssh dies with the link and main reports it.
+		const ssh = createModeSession('ssh', {
+			id: 'ssh-row',
+			name: 'Docs',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', logs: [QUESTION] })],
+			executionQueue: [],
+		});
+		useSessionStore.setState({ sessions: [ssh, ...useSessionStore.getState().sessions] });
+		noteDirectDispatch(ssh.id, {
+			id: 'q-ssh',
+			timestamp: 1,
+			tabId: 't1',
+			type: 'message',
+			text: QUESTION.text,
+		});
+		listenerStandIn('ssh-row-ai-t1', { ...sshTurnError, sessionId: 'ssh-row-ai-t1' });
+		cut();
+		for (const id of ['ssh-row', 'row']) {
+			const session = useSessionStore.getState().sessions.find((candidate) => candidate.id === id)!;
+			const entry = getRetryEntry(id, 't1');
+			const outage = entry ? useRetryStore.getState().outages[entry.outageId] : undefined;
+			const tab1 = session.aiTabs[0];
+			outcomes[id] = {
+				state: tab1.state,
+				retry: entry?.status,
+				cause: outage?.cause,
+				queued: (session.executionQueue ?? []).map((item) => item.text),
+				bubbles: tab1.logs.filter((log) => log.source === 'user').map((log) => log.text),
+				linkCards: tab1.logs.filter((log) => log.agentError?.source === 'host-link').length,
+			};
+		}
+		expect(outcomes.row).toEqual(outcomes['ssh-row']);
+		expect(outcomes.row).toEqual({
+			state: 'idle',
+			retry: 'scheduled',
+			cause: 'connection',
+			queued: [QUESTION.text],
+			bubbles: [QUESTION.text],
+			linkCards: 0,
+		});
+		// The kept message names the host's entry for it, so its resend draws no second bubble.
+		expect(useSessionStore.getState().sessions[1].executionQueue?.[0]?.hostEntryId).toBe('u1');
+		expect(useSshOutageStore.getState().outages.r1.surfaced).toBe(true);
+	});
+
+	it('keeps the cut message once, however many passes the sync makes', () => {
+		cut();
+		syncHostedAgents();
+		syncHostedAgents();
+		expect(raised).toHaveLength(1);
+		expect(queue()).toHaveLength(1);
+		expect(linkNotes()).toHaveLength(0);
+	});
+
+	it('sends the kept message at once, naming its entry, when the host is back and the turn died', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [QUESTION]);
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({
+			kind: 'send',
+			tabId: 't1',
+			text: QUESTION.text,
+			entryId: 'u1',
+		});
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(queue()).toHaveLength(0);
+		expect(userBubbles()).toHaveLength(1);
+	});
+
+	it.each([
+		[
+			'finished while the link was down',
+			'idle' as const,
+			[QUESTION, { id: 'a1', timestamp: 20, source: 'ai' as const, text: 'The docs say...' }],
+		],
+		['is still running on the host', 'busy' as const, [QUESTION]],
+	])('never sends the kept message again when the turn %s', async (_how, state, entries) => {
+		cut();
+		const outageId = getRetryEntry('row', 't1')!.outageId;
+		await hostBack(state, entries);
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(queue()).toHaveLength(0);
+		expect(useRetryStore.getState().outages[outageId]).toMatchObject({
+			status: 'recovered',
+			settledByHost: true,
+		});
+		expect(tab().agentError).toBeUndefined();
+	});
+
+	it('a resend that fires before the host has answered waits for it, and is not sent when the host had it', async () => {
+		cut();
+		// The host is back, but its transcript read has not landed yet.
+		let land: (entries: LogEntry[]) => void = () => undefined;
+		transcript.mockReturnValue(new Promise<LogEntry[]>((resolve) => (land = resolve)));
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('idle', 'connected');
+		syncHostedAgents();
+		retryNow('row', 't1');
+		await flush();
+		expect(sends()).toHaveLength(0);
+
+		land([QUESTION, { id: 'a1', timestamp: 20, source: 'ai', text: 'The docs say...' }]);
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(queue()).toHaveLength(0);
+	});
+
+	it('a resend while the host is still down stays kept under the same card', async () => {
+		cut();
+		const outageId = getRetryEntry('row', 't1')!.outageId;
+		retryNow('row', 't1');
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toMatchObject({ outageId, status: 'scheduled', attempt: 1 });
+		expect(queue()).toHaveLength(1);
 	});
 });

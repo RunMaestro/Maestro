@@ -379,6 +379,8 @@ export async function sendHostedTurn(
 		 */
 		agentContext?: string;
 		agentNotes?: string;
+		/** The transcript entry the message already is (`QueuedItem.hostEntryId`): drawn once. */
+		entryId?: string;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
@@ -440,6 +442,7 @@ export async function sendHostedTurn(
 		{
 			...(opts.agentContext ? { agentContext: opts.agentContext } : {}),
 			...(opts.agentNotes ? { agentNotes: opts.agentNotes } : {}),
+			...(opts.entryId ? { entryId: opts.entryId } : {}),
 		},
 		opts.onHostUnavailable
 	);
