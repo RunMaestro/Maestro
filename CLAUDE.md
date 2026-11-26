@@ -123,7 +123,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
 - **A file action that hands a file to this machine (open, reveal, play, save a copy):** `openFileInDefaultApp()`, `revealInFileManager()`, `openFolderInFileManager()`, `openFileInMaestroBrowser()`, `saveCopyOfFile()`, `resolveOpenSource()`, `fetchLocalCopy()` in `src/renderer/services/fileActions.ts`
-- **Saving an opened copy of a remote file back to the remote:** `createRemoteCopyWriteBack()`, `keptVersionPath()` in `src/main/utils/remote-copy-write-back.ts`; `replaceFileRemoteIfUnchanged()` in `src/main/utils/remote-fs.ts`
+- **Saving an opened copy of a remote file back to the remote:** `createRemoteCopyWriteBack()`, `keptVersionPath()`, `REMOTE_COPY_WRITE_BACK_MAX_BYTES` in `src/main/utils/remote-copy-write-back.ts`; `replaceFileRemoteIfUnchanged()`, `sha256FileRemote()` in `src/main/utils/remote-fs.ts`
+- **Sending opened remote copies' unsent saves before the app quits:** `flushRemoteCopyWriteBack()` in `src/main/ipc/handlers/filesystem.ts`; `REMOTE_WRITE_FLUSH_MAX_MS` in `src/main/app-lifecycle/quit-handler.ts`
+- **Counting a folder's files for the Files panel footer (capped):** `DIRECTORY_SIZE_MAX_FILES` in `src/main/ipc/handlers/filesystem.ts` (`fileCountCapped` on the `fs:directorySize` answer)
 - **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)`, `fileOpRemoteId()` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
 - **Which SSH remote an agent's files are on (renderer):** `getSessionSshRemoteId(session)`, `isSessionRemote(session)` in `src/renderer/utils/sessionHelpers.ts`
 
@@ -190,12 +192,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether an agent shares its History into the project folder:** `sharesHistoryInProject()`, `withHistorySharedInProject()` in `src/shared/historySharing.ts`; `withOwnHostAsLocal()` in `src/shared/history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
-- **Capping stored tool output:** `compactToolOutput()`, `compactToolInput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
+- **Capping stored tool output:** `compactToolOutput()`, `compactToolInput()`, `compactSessionToolOutputs()`, `compactLogToolOutputs()` in `src/shared/toolOutput.ts`
 - **Merging browser-deferred conversations:** `projectWebSession()`, `readDeferredContent()`, `mergeDeferredSessionContent()` in `src/main/stores/deferred-session-content.ts`, over `mergeDeferredItems()` in `src/shared/deferredSessionContent.ts`
 - **Turning Live mode (the web interface) or Remote Control (its tunnel) on or off:** `getLiveModeController()`, `createLiveModeController()` in `src/main/web-server/live-mode.ts`; wire types in `src/shared/liveMode.ts`
 - **Asking a renderer window a question from main (request, reply, timeout):** `requestFromRenderer(win, channel, { fallback, parse, timeoutMs, args })` in `src/main/web-server/callbacks/remoteRequest.ts`
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
-- **Async results cached by key for a window (in-flight shared, failures dropped):** `createTtlPromiseCache(ttlMs, keep?)` in `src/main/utils/ttl-promise-cache.ts`
+- **Async results cached by key for a window (in-flight shared, failures dropped):** `createTtlPromiseCache(ttlMs, keep?, { failureTtlMs }?)` in `src/main/utils/ttl-promise-cache.ts`
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
@@ -255,9 +257,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which hosted agents the Left Bar shows, and adding one:** `liftedAgentKeys()`, `findLiftedAgent()` in `src/shared/maestro-lib/agents/lift-pointer.ts`; `listHostedAgents()`, `addHostedAgent()`, `resolveHostAgentRef()` in `src/renderer/services/hostedAgents.ts`
 - **A hosted agent drawn as its own Left Bar record (renderer):** `projectHostedSession()` in `src/renderer/utils/hostedSession.ts`; `startHostedAgentSync()` in `src/renderer/services/hostedAgentSync.ts`; `sendHostedTurn()`, `interruptHostedTurn()`, `openHostedTab()` in `src/renderer/services/hostedTurns.ts`
 - **Keeping a closed hosted tab closed while its host catches up:** `closingHostTabIds()`, `closeHostedTab()` in `src/renderer/services/hostedTurns.ts`, fed to `projectHostedSession()` as `closing`
-- **A turn queued on this machine for a hosted agent:** `handQueuedItemToHost()`, `sendTakenItemToHost()`, `isQueuedItemForHost()`, `queuedItemHostSend()` in `src/renderer/services/hostedQueuedTurn.ts`
+- **A turn queued on this machine for a hosted agent:** `handQueuedItemToHost()`, `sendTakenItemToHost()`, `isQueuedItemForHost()`, `queuedItemHostSend()`, `queuedItemHostOverrides()` in `src/renderer/services/hostedQueuedTurn.ts`
 - **Whether a provider launch for a hosted agent may start on this machine:** `checkHostedAgentLaunch()` in `src/main/utils/hosted-launch-guard.ts`; `HOSTED_STATELESS_HELPERS`, `statelessHelperOfProcess()`, `hostedLaunchVerdict()` in `src/shared/maestro-lib/agents/hosted-launch.ts`
 - **Consulting a hosted agent on its host:** `askMirrorConsult()` in `src/renderer/services/peerMirror.ts`; `RemoteAskerContext`, `parseWireTranscript()`, `buildRemoteAskerKey()`, `parseWireAskerKey()` in `src/shared/crossAgentTypes.ts`; `cancelHostedConsults()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`
+- **A completion callback for a turn dispatched to a hosted agent (`--notify-on-complete`):** `feedHostedTurnToDispatchCallbacks()` in `src/main/dispatch-callbacks/hosted-turn-feed.ts`
+- **A save on a hosted agent that waits for its host and answers the reason (no toast):** `saveQueuedItemEdit()` in `src/renderer/services/queuedPrompt.ts`; `renameHostedTabSettled()` in `src/renderer/services/hostedTurns.ts`; `actOnMirroredAgentQuietly()` in `src/renderer/services/peerMirror.ts`
 - **A hosted agent's History with this machine's Cue runs:** `withHostedCueRuns()`, `hostedCueScopeAgents()` in `src/main/utils/cue-history-merge.ts`
 - **The peer mirror's store and record adapters (renderer):** `usePeerMirrorStore`, `reducePeerMirrorPush()` in `src/renderer/stores/peerMirrorStore.ts`; `mirrorTab()`, `mirrorLogEntry()`, `mirrorUsageStats()` in `src/renderer/utils/peerMirrorView.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
@@ -276,7 +280,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Steering a turn on this machine or a headless host (the local steering socket):** `steeringSocketPathFor()`, `steerOverSocket()`, `steeringTooLongResult()` in `src/shared/chatSteeringSocket.ts`; `createRuntimeSteering()`, `runtimeSteerBlockedReason()` in `src/shared/maestro-lib/runtime/steering.ts`
 - **How a turn's images reach a provider, and the bounds on images from another machine:** `planImageDelivery()`, `admitTurnImages()`, `turnImageBoundsError()`, `writeImageTempFile()`, `MAX_TURN_IMAGES` in `src/shared/maestro-lib/launch/image-delivery.ts`
 - **Image refs as data URLs where images leave a machine:** `inlineImageList()`, `withInlineEntryImages()` in `src/shared/maestro-lib/launch/image-refs.ts`
-- **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()` in `src/shared/maestro-lib/turns/record-turn.ts`
+- **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()`, `TurnSummaryHandoff` in `src/shared/maestro-lib/turns/record-turn.ts`
 - **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`, `withLiveTabState()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 
 #### Providers, accounts, and auth
@@ -384,6 +388,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Maestro's own slash commands (`/history`, `/skills`, `/wizard`, `/btw`):** `parseMaestroBuiltinCommand()`, `runsOutsideComposer()` in `src/shared/maestroBuiltinCommands.ts`; `runMaestroBuiltinCommand()`, `registerMaestroBuiltinCommandHandlers()` in `src/renderer/services/maestroBuiltinCommands.ts`
 - **What `/history` and `/skills` write, and running them with no desktop:** `HISTORY_COMMAND_TEXT`, `historySynopsisPrompt()`, `formatClaudeSkillsMessage()` in `src/shared/maestroBuiltinCommandText.ts`; `createRuntimeBuiltinCommands()` in `src/shared/maestro-lib/runtime/builtin-commands.ts`
+- **Drawing a tab its host wrote outside a turn (`/skills`, `/history`):** `TRANSCRIPT_CHANGED_CHANNEL`, `transcriptChangedArgs()`, `parseTranscriptChangedFrame()` in `src/shared/maestro-lib/client/bridge-frames.ts`
+- **The History Entry Added toast (a local `/history` and a hosted one):** `notifyHistoryEntryAdded()`, `watchHostedHistoryCommand()`, `hostedTranscriptBaseline()` in `src/renderer/services/historyEntryToast.ts`; `readHistoryCommandOutcome()` in `src/shared/maestroBuiltinCommandText.ts`
 - **A `/btw` side question (which tab, the fork, the turn):** `resolveSideQuestionTarget()`, `sideQuestionForkRefusal()` in `src/shared/sideQuestion.ts`; `assembleSideQuestionTurn()` in `src/shared/maestro-lib/turns/assemble.ts`; `createRuntimeSideQuestions()` in `src/shared/maestro-lib/runtime/side-questions.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
@@ -414,7 +420,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recovering a turn refused on the context limit:** `getContextCompactCommand()` in `src/shared/contextCompaction.ts`; `compactTabContext()`, `recordContextCompaction()` in `src/renderer/services/contextCompaction.ts`; driven by `scheduleRetryForError()` in `src/renderer/stores/retryStore.ts`
 - **Whether a Force Send control exists at all:** `shouldOfferForceSend()`, `getForceSendEligibility()`, `getForceSendTitle()` in `src/renderer/utils/executionQueue.ts`
 - **Model/effort badges on a finished turn:** `<TurnSettingPills>` in `src/renderer/components/ui/TurnSettingPills.tsx`; settings are stamped at SEND by `codifyTurnSettings()` in `src/renderer/utils/providerTabSessions.ts`
-- **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`
+- **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()`, `logsKeptAtTurnEnd()` in `src/shared/types.ts`
 - **The red Stop pill:** `<StopTurnButton>` in `src/renderer/components/ui/StopTurnButton.tsx`
 - **Opening the expanded staged-image organizer:** `requestOpenStagedImagesOrganizer()` in `src/renderer/services/stagedImagesOrganizer.ts`
 - **The `src` of a conversation image:** `displayImageSrc(src)` in `src/renderer/utils/sessionImageSrc.ts`, over `src/shared/sessionImageRefs.ts`; a chip wraps the RESULT in `sessionImageThumbnailSrc()`
@@ -424,8 +430,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Cross-agent consults
 
 - **Consulting another agent from a message (`@mention`):** `planCrossAgentMentions()`, `dispatchCrossAgentMentions()`, `dispatchCrossAgentMentionsForMessage()`, `queuedMentionFields()` in `src/renderer/services/crossAgentMentions.ts` (plan at submit, fire when the item is the agent's turn)
-- **Holding a mentioning turn open until its consult replies:** `holdTurnForConsults()`, `settleConsultHold()`, `withConsultPendingNote()` in `src/renderer/services/crossAgentConsultHold.ts`
+- **Holding a mentioning turn open until its consult replies:** `holdTurnForConsults()`, `settleConsultHold()`, `withConsultPendingNote()`, `consultPendingNoteText()`, `handoffPendingNoteText()` in `src/renderer/services/crossAgentConsultHold.ts`
 - **When a mention runs (parallel / consult first / hand-off):** `inferMentionTiming()`, `parseMentionRoutingField()`, `isMentionRouting()` in `src/shared/crossAgentContext.ts`; `armMentionHandoff()`, `releaseMentionHandoff()`, `dropMentionHandoffs()` in `src/renderer/services/crossAgentHandoff.ts`
+- **An `@mention` typed for a hosted agent (consulted here, the turn sent to its host):** `mentionTurnNotes()` in `src/renderer/services/crossAgentMentions.ts`; `queuedItemMentionPlan()`, `fireHostStartedMentions()` in `src/renderer/services/hostedQueuedTurn.ts`
+- **Agent-only text a turn carries to a host (`agentContext`, `agentNotes`):** `readTurnAgentText()`, `MAX_TURN_AGENT_TEXT_CHARS` in `src/shared/maestro-lib/client/types.ts`; `appendAgentNotes()` in `src/shared/maestro-lib/turns/prompt.ts`
+- **A hosted agent's hand-off (released when its host's turn ends):** `markHandoffSentToHost()`, `followHostedHandoffs()`, `hostedHandoffStep()`, `hostedHandoffTurn()`, `releaseHostedHandoff()`, `handoffSendBoundary()`, `deferHostedHandoff()` in `src/renderer/services/crossAgentHandoff.ts`
 - **An agent asking another agent (`maestro-cli ask`):** `runCrossAgentAsk()` in `src/renderer/services/crossAgentAsk.ts` (a question is `ask`, never `dispatch`)
 - **Marking an agent's own hand-off in its transcript (`dispatch` / `ask` from its shell):** `readCallerIdentity()`, `callerMessageFields()`, `isSelfDispatch()` in `src/shared/agentDelegation.ts`; `recordAgentDelegation()`, `settleAgentDelegation()` in `src/renderer/services/agentDelegation.ts`
 - **Running a consult (prompt, budgets, completion, Stop):** `createConsultService()` in `src/shared/maestro-lib/agents/consult.ts`
@@ -448,13 +457,15 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Model tier / effort level (`'low' | 'medium' | 'high'`):** `resolveTierModel()`, `resolveEffortLevel()`, `cheapTurnSettings()`, `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; `findActiveModelHint()` in `src/shared/autorunModelHints.ts`; `resolveTurnSettings()` in `src/shared/autorunTurnSettings.ts`
 - **Whether the account offers a tier model:** `unofferedTierModel()`, `tierNeedsOfferedModels()` in `src/shared/modelTiers.ts`
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()` in `src/shared/effortRejection.ts`; `rejectedEffortForLevel()` in `src/shared/modelTiers.ts`; `armEffortFallback()` in `src/renderer/services/effortRejection.ts`
-- **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
+- **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the gate is `turnDidMeaningfulWork()`, `thinkingLogsRecorded()` in `src/shared/synopsis.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
 - **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Turning an Auto Run prompt template into a task prompt:** `resolveAutoRunPromptTemplate()`, `namesAutoRunDocument()` in `src/shared/autorunPromptTemplate.ts`; desktop `buildDesktopAutoRunPrompt()` / `prepareDesktopAutoRunPrompt()` in `src/renderer/hooks/batch/batchUtils.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
+- **Steering a hosted agent's Auto Run (its notes live on its host):** `createSteeringLedger()` in `src/shared/maestro-lib/runtime/autorun-steering.ts`; `refreshHostedSteering()`, `answerSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; `steerMirrorAutoRun()` in `src/renderer/services/peerMirror.ts`
+- **Feeding the Thought Stream (a local run and a hosted run):** `createThoughtCoalescer()`, `captureToolActivity()` in `src/renderer/stores/thoughtStreamStore.ts`; `feedHostedAutoRunActivity()` in `src/renderer/services/hostedAgentSync.ts`; `toolStateOf()` in `src/shared/maestro-lib/runtime/autorun-turns.ts`
 - **Starting a group chat `!autorun` participant's run:** `startGroupChatAutoRun()`, `groupChatAutoRunFailure()` in `src/renderer/services/groupChatAutoRun.ts`; `useGroupChatAutoRunTrigger()` in `src/renderer/hooks/groupChat/useGroupChatAutoRunTrigger.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`
@@ -493,6 +504,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a modal takes the window over:** `DESTINATION_MODALS`, `registerExternalDestination()` in `src/renderer/stores/modalStore.ts`
 - **Opening a modal from inside Settings:** `launchFromSettings(open)` in `src/renderer/utils/launchFromSettings.ts`
 - **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
+- **A modal whose save can be refused (it closes only on a save that landed):** `useModalSave()`, `MODAL_SAVE_CHANGED_REASON` in `src/renderer/hooks/ui/useModalSave.ts`; `<ModalSaveError>` in `src/renderer/components/ui/ModalSaveError.tsx`; `ModalSaveOutcome` in `src/renderer/types/index.ts`
 - **Whether a surface is the topmost layer:** `useIsTopLayer(priority)` in `src/renderer/hooks/ui/useIsTopLayer.ts`
 - **Modal / find-bar ESC pill:** `<EscCloseButton>` in `src/renderer/components/ui/EscCloseButton.tsx`
 - **A modal default sized to the screen:** `viewportModalSize({ width, height })` in `src/renderer/utils/modalSizing.ts`
