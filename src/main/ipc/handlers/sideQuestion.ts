@@ -20,7 +20,11 @@ import {
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { buildSideQuestionPrompt, SIDE_QUESTION_TIMEOUT_MS } from '../../../shared/sideQuestion';
+import {
+	buildSideQuestionPrompt,
+	SIDE_QUESTION_TIMEOUT_MS,
+	sideQuestionForkRefusal,
+} from '../../../shared/sideQuestion';
 import type { AgentConfigsData } from '../../stores/types';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
@@ -101,12 +105,8 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 				if (!agent || (!agent.available && !isRemote)) {
 					return { success: false, error: `${config.agentType} is not available.` };
 				}
-				if (!agent.ephemeralForkArgs?.length) {
-					return {
-						success: false,
-						error: `${agent.name} cannot fork a session, so it cannot answer side questions.`,
-					};
-				}
+				const forkRefusal = sideQuestionForkRefusal(agent, !!config.agentSessionId);
+				if (forkRefusal) return { success: false, error: forkRefusal };
 
 				const agentConfigValues = agentConfigsStore.get('configs', {})[config.agentType] || {};
 

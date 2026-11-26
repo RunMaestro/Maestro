@@ -7,6 +7,7 @@
  * repository, its queue, and its records are real and write to a temp data directory.
  */
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -27,6 +28,12 @@ import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
 import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
+import { discoverClaudeSkills } from '../../agents/claude-skills';
+import {
+	formatClaudeSkillsMessage,
+	HISTORY_COMMAND_TEXT,
+} from '../../../maestroBuiltinCommandText';
+import { buildSideQuestionPrompt } from '../../../sideQuestion';
 import {
 	createMaestroRuntime,
 	type MaestroRuntime,
@@ -34,6 +41,7 @@ import {
 	type RuntimeDeps,
 } from '../index';
 import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
+import { MAX_WAITING_TURNS_PER_AGENT } from '../turns';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -56,6 +64,8 @@ describe('runtime turns', () => {
 	let recordings: Record<string, string>;
 	/** Keep the fake agent running after its replay, until it is stopped. */
 	let hold: boolean;
+	/** Run each turn as a maestro-p TUI turn, which opens its steering socket. */
+	let tui: boolean;
 	let argvFiles: string[];
 	/** The options each turn was started with. */
 	let turnOptions: RunAgentTurnOptions[];
@@ -65,12 +75,14 @@ describe('runtime turns', () => {
 
 	const watchDirectory: WatchDirectory = () => ({ close: () => undefined });
 
-	const fakeProvider: RuntimeDeps['turns']['runAgentTurn'] = (turn, options) => {
+	const fakeProvider: RuntimeDeps['turns']['runAgentTurn'] = async (turn, options) => {
 		const argvOut = path.join(work, `argv-${argvFiles.length + 1}.json`);
 		argvFiles.push(argvOut);
 		turnOptions.push(options);
 		launched.push(turn);
-		return runAgentTurn(
+		live.now += 1;
+		live.max = Math.max(live.max, live.now);
+		const started = await runAgentTurn(
 			{
 				...turn,
 				launch: {
@@ -81,13 +93,26 @@ describe('runtime turns', () => {
 						...turn.launch.sessionCustomEnvVars,
 						FAKE_AGENT_RECORDING: recordings[turn.provider.id],
 						FAKE_AGENT_ARGV_OUT: argvOut,
+						FAKE_AGENT_STDIN_OUT: argvOut.replace(/argv-(\d+)\.json$/, 'stdin-$1.txt'),
 						...(hold ? { FAKE_AGENT_HOLD: '1' } : {}),
 					},
 				},
 			},
 			{ ...options, stopGraceMs: 200 }
 		);
+		if (!started.ok) live.now -= 1;
+		else
+			void started.run.result.finally(() => {
+				live.now -= 1;
+			});
+		// A maestro-p TUI turn opens the socket it was given; the fake agent stands in for it.
+		if (tui && started.ok && options.steeringSocketPath) {
+			return { ...started, run: { ...started.run, steeringSocket: options.steeringSocketPath } };
+		}
+		return started;
 	};
+	/** How many provider processes run at once, and the most there ever were. */
+	const live = { now: 0, max: 0 };
 
 	function deps(): Partial<RuntimeDeps> {
 		let id = 0;
@@ -104,7 +129,7 @@ describe('runtime turns', () => {
 			watchDirectory,
 			probeBinary: async (binaryName) =>
 				binaryExists ? { exists: true, path: `/fake/bin/${binaryName}` } : { exists: false },
-			turns: { runAgentTurn: fakeProvider },
+			turns: { runAgentTurn: fakeProvider, homeDir: () => path.join(work, 'home') },
 		};
 	}
 
@@ -203,7 +228,10 @@ describe('runtime turns', () => {
 		work = fs.mkdtempSync(path.join(fixtureRoot, 'maestro-runtime-turns-work-'));
 		open = [];
 		hold = false;
+		tui = false;
 		argvFiles = [];
+		live.now = 0;
+		live.max = 0;
 		turnOptions = [];
 		launched = [];
 		binaryExists = true;
@@ -417,8 +445,7 @@ describe('runtime turns', () => {
 
 			expect(error).toMatchObject({
 				code: 'unsupported',
-				message:
-					'Images cannot be sent from here yet. Send the message without them, or use the desktop.',
+				message: 'Grok CLI cannot read images. Send the message without them.',
 			});
 			expect(argvFiles).toEqual([]);
 			expect(turn.events).toEqual([]);
@@ -430,14 +457,175 @@ describe('runtime turns', () => {
 		it('refuses what cannot run, and says which', async () => {
 			const runtime = await start();
 			expect(errorOf(await runtime.turns.send('a1', 't1', { text: '   ' })).code).toBe('invalid');
-			expect(
-				errorOf(
-					await runtime.turns.send('a1', 't1', { text: 'x', images: ['data:image/png;base64,AA'] })
-				).code
-			).toBe('unsupported');
 			expect(errorOf(await runtime.turns.send('nope', 't1', { text: 'x' })).code).toBe('not-found');
 			expect(errorOf(await runtime.turns.send('a1', 'nope', { text: 'x' })).code).toBe('not-found');
 			expect(argvFiles).toEqual([]);
+		});
+
+		describe('images (M1: a headless host takes a pasted image as a desktop host does)', () => {
+			const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+			const JPEG = 'data:image/jpeg;base64,/9j/4AAQ';
+			const stdinOf = (index: number) =>
+				fs.readFileSync(argvFiles[index].replace(/argv-(\d+)\.json$/, 'stdin-$1.txt'), 'utf-8');
+
+			it("hands the provider the message's images, and keeps them on the transcript's user entry", async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+
+				expect(
+					value(
+						await runtime.turns.send('a1', 't1', { text: 'what is this?', images: [PNG, JPEG] })
+					)
+				).toEqual({ status: 'started' });
+				await turn.outcome();
+
+				expect(turn.outcomes()).toEqual(['completed']);
+				const argv = JSON.parse(fs.readFileSync(argvFiles[0], 'utf-8')) as string[];
+				expect(argv.slice(-2)).toEqual(['--input-format', 'stream-json']);
+				const message = JSON.parse(stdinOf(0).trim());
+				expect(message.message.content.map((block: { type: string }) => block.type)).toEqual([
+					'image',
+					'image',
+					'text',
+				]);
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { text: 'what is this?', images: [PNG, JPEG] },
+				});
+				expect((await transcript(runtime))[0]).toMatchObject({
+					source: 'user',
+					text: 'what is this?',
+					images: [PNG, JPEG],
+				});
+			});
+
+			it('runs an image-only message, as the desktop does', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '', images: [PNG] }));
+				await turn.outcome();
+				expect(turn.outcomes()).toEqual(['completed']);
+				expect((await transcript(runtime))[0]).toMatchObject({ source: 'user', images: [PNG] });
+			});
+
+			it.each([
+				['a store ref from another machine', ['maestro-image://sha256/abc']],
+				['a value that is not an image', ['data:text/plain;base64,aGk=']],
+				['bytes that are not base64', ['data:image/png;base64,@@@@']],
+				['more images than a message may carry', Array.from({ length: 21 }, () => PNG)],
+				// M12: a malformed field refuses the send; it never becomes a text-only message.
+				['images that are not a list', PNG],
+				['a non-string entry beside a good image', [42, PNG]],
+				// M11: only the types a provider reads (the desktop's own list).
+				['an SVG', ['data:image/svg+xml;base64,PHN2Zy8+']],
+			])('refuses %s, and starts nothing', async (_label, images) => {
+				const runtime = await start();
+				const error = errorOf(
+					await runtime.turns.send('a1', 't1', { text: 'x', images: images as string[] })
+				);
+				expect(error.code).toBe('invalid');
+				expect(error.message).toMatch(/image/i);
+				expect(argvFiles).toEqual([]);
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			});
+		});
+
+		describe("images in the host's image store (M10: refs in the store, bytes only on the wire)", () => {
+			const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+			const imagesDir = () => path.join(dir, 'session-images');
+			const sessionsText = () => fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf-8');
+			const storedUserEntry = () =>
+				(
+					sessions().sessions[0].aiTabs[0].logs as Array<{ source: string; images?: string[] }>
+				).find((entry) => entry.source === 'user');
+
+			it('keeps a pasted image as a file and its ref on the stored entry, and hands out the bytes', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'what is this?', images: [PNG] }));
+				await turn.outcome();
+
+				// The sessions file holds the ref, never the bytes.
+				expect(sessionsText()).not.toContain('base64,');
+				const [ref] = storedUserEntry()!.images!;
+				expect(ref).toMatch(/^maestro-image:\/\/store\/[0-9a-f]{64}\.png$/);
+				const file = path.join(imagesDir(), ref.slice('maestro-image://store/'.length));
+				expect(fs.readFileSync(file).toString('base64')).toBe('iVBORw0KGgo=');
+
+				// The provider still gets the bytes, and so do a transcript read and the live event.
+				const stdin = fs.readFileSync(
+					argvFiles[0].replace(/argv-(\d+)\.json$/, 'stdin-$1.txt'),
+					'utf-8'
+				);
+				expect(JSON.parse(stdin.trim()).message.content[0].source.data).toBe('iVBORw0KGgo=');
+				expect((await transcript(runtime))[0]).toMatchObject({ images: [PNG] });
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { images: [PNG] },
+				});
+			});
+
+			it('moves an inline image the store already held (an older host, an import) out on the next write', async () => {
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [
+							{
+								id: 't1',
+								agentSessionId: null,
+								name: null,
+								logs: [{ id: 'old', timestamp: 1, source: 'user', text: 'old', images: [PNG] }],
+							},
+						],
+					}),
+				]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'next' }));
+				await turn.outcome();
+
+				expect(sessionsText()).not.toContain('base64,');
+				expect(storedUserEntry()!.images![0]).toMatch(/^maestro-image:\/\/store\//);
+				expect((await transcript(runtime))[0]).toMatchObject({ text: 'old', images: [PNG] });
+			});
+
+			it('keeps a waiting message on its refs, and lists the bytes on the card', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(await runtime.turns.send('a1', 't1', { text: 'look', images: [PNG] }));
+				if (queued.status !== 'queued') throw new Error('expected queued');
+
+				expect(fs.readdirSync(imagesDir())).toHaveLength(1);
+				expect(value(await runtime.turns.queue.list('a1'))[0]).toMatchObject({ images: [PNG] });
+
+				value(await runtime.turns.queue.remove('a1', queued.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it(`refuses a send past ${MAX_WAITING_TURNS_PER_AGENT} waiting messages, with the reason`, async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				for (let index = 0; index < MAX_WAITING_TURNS_PER_AGENT; index += 1) {
+					expect(value(await runtime.turns.send('a1', 't1', { text: `m${index}` })).status).toBe(
+						'queued'
+					);
+				}
+				const refused = errorOf(await runtime.turns.send('a1', 't1', { text: 'one too many' }));
+				expect(refused).toMatchObject({ code: 'rejected' });
+				expect(refused.message).toContain(`${MAX_WAITING_TURNS_PER_AGENT} messages waiting`);
+				expect(value(await runtime.turns.queue.list('a1'))).toHaveLength(
+					MAX_WAITING_TURNS_PER_AGENT
+				);
+
+				for (const item of value(await runtime.turns.queue.list('a1'))) {
+					value(await runtime.turns.queue.remove('a1', item.itemId));
+				}
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
 		});
 
 		it('refuses a lifted agent with a pointer at peer:agentId, and starts nothing', async () => {
@@ -450,23 +638,311 @@ describe('runtime turns', () => {
 			expect(argvFiles).toEqual([]);
 		});
 
-		// A Federation client sends a hosted agent's `/history` as the typed text; only a desktop host
-		// runs it. Here it would reach the provider as a message, so it is refused and nothing runs.
-		it.each(['/history', '/skills', '/wizard plan it', '/btw why?'])(
-			'refuses Maestro command %s, which only a desktop host runs, and starts nothing',
+		// `/wizard` and `/btw` draw in the composer of the window that typed them, so a remote send
+		// cannot run them anywhere; here they would reach the provider as a message, so they are
+		// refused and nothing runs.
+		it.each(['/wizard plan it', '/btw why?'])(
+			'refuses Maestro command %s, which needs the typing window, and starts nothing',
 			async (command) => {
 				const runtime = await start([seedAgent({ toolType: 'claude-code' })]);
 				const turn = watch(runtime);
 				const error = errorOf(await runtime.turns.send('a1', 't1', { text: command }));
 				expect(error).toMatchObject({
 					code: 'unsupported',
-					message: `${command.split(' ')[0]} runs on a desktop host. This host is headless, so it cannot run it.`,
+					message: `${command.split(' ')[0]} runs in the composer of the window that typed it, so it cannot run from here.`,
 				});
 				expect(argvFiles).toEqual([]);
 				expect(turn.events).toEqual([]);
 				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
 			}
 		);
+
+		describe('/history and /skills (M5: a headless host runs them as a desktop host does)', () => {
+			const transcriptLines = async (runtime: MaestroRuntime) =>
+				(await transcript(runtime)).map((entry) => [entry.source, entry.text]);
+			const settle = (runtime: MaestroRuntime, lines: number) =>
+				vi.waitFor(async () => expect((await transcript(runtime)).length).toBe(lines), {
+					timeout: 8_000,
+				});
+
+			it('lists the project and user skills on the tab, as the desktop does', async () => {
+				const skill = (root: string, name: string, description: string) => {
+					fs.mkdirSync(path.join(root, '.claude', 'skills', name), { recursive: true });
+					fs.writeFileSync(
+						path.join(root, '.claude', 'skills', name, 'SKILL.md'),
+						`---\nname: ${name}\ndescription: ${description}\n---\nBody`
+					);
+				};
+				skill(work, 'review', 'Reviews code');
+				skill(path.join(work, 'home'), 'notes', 'Takes notes');
+				const runtime = await start();
+				const turn = watch(runtime);
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: '/skills' }))).toEqual({
+					status: 'ran',
+				});
+				await settle(runtime, 2);
+
+				const lines = await transcriptLines(runtime);
+				expect(lines[0]).toEqual(['user', '/skills']);
+				expect(lines[1][0]).toBe('system');
+				expect(lines[1][1]).toBe(
+					formatClaudeSkillsMessage(await discoverClaudeSkills(work, path.join(work, 'home')))
+				);
+				expect(lines[1][1]).toContain('| **review** |');
+				expect(lines[1][1]).toContain('| **notes** |');
+				expect(argvFiles).toEqual([]);
+				// The clients are told to read the tab again; no turn started.
+				expect(turn.kinds()).toEqual(['gap', 'gap']);
+			});
+
+			it('says there is no session yet, and writes no History', async () => {
+				const runtime = await start();
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				await settle(runtime, 1);
+				expect(await transcriptLines(runtime)).toEqual([
+					['system', HISTORY_COMMAND_TEXT.noSession],
+				]);
+				expect(argvFiles).toEqual([]);
+			});
+
+			it('resumes the tab session for a synopsis, writes the History entry, and says it saved', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: '/history' }))).toEqual({
+					status: 'ran',
+				});
+				await settle(runtime, 4);
+
+				const lines = await transcriptLines(runtime);
+				expect(lines[2]).toEqual(['system', HISTORY_COMMAND_TEXT.pending]);
+				expect(lines[3][0]).toBe('system');
+				expect(lines[3][1]).toMatch(/^Synopsis saved to history: /);
+				// The synopsis resumed the tab's own conversation.
+				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
+				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
+				const history = readHistory(runtime.paths, 'a1');
+				const auto = (history.status === 'ok' ? history.entries : []).filter(
+					(entry) => entry.type === 'AUTO'
+				);
+				expect(auto).toHaveLength(1);
+				expect(lines[3][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
+			});
+
+			it('never runs two writers on one provider session: /history twice and a send take turns', async () => {
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [
+							{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+						],
+						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					}),
+				]);
+				const turn = watch(runtime);
+				await Promise.all([
+					runtime.turns.send('a1', 't1', { text: '/history' }),
+					runtime.turns.send('a1', 't1', { text: '/history' }),
+				]);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				await vi.waitFor(
+					async () =>
+						expect(
+							(await transcript(runtime)).filter((entry) =>
+								entry.text.startsWith('Synopsis saved to history: ')
+							)
+						).toHaveLength(2),
+					{ timeout: 8_000 }
+				);
+				expect(argvFiles).toHaveLength(3);
+				expect(live.max).toBe(1);
+			});
+
+			it('holds a send behind a long synopsis without spending its retries, so it never pauses', async () => {
+				hold = true;
+				const base = deps();
+				const runtime = await start(
+					[
+						seedAgent({
+							aiTabs: [
+								{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+							],
+							unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+						}),
+					],
+					// A 1 ms recheck: a send that collided with the hold would spend its six attempts at once.
+					{ deps: { ...base, turns: { ...base.turns!, recheckMs: 1 } } }
+				);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				await vi.waitFor(() => expect(argvFiles).toHaveLength(1), { timeout: 8_000 });
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: 'hello' }))).toMatchObject({
+					status: 'queued',
+				});
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({ text: 'hello', paused: false }),
+				]);
+				expect(turn.kinds()).not.toContain('error');
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			it('summarizes the session the tab holds once its turn ends, not the one it had before', async () => {
+				hold = true;
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [{ id: 't1', agentSessionId: 'session-before', name: null, logs: [] }],
+						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					}),
+				]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				// The turn has moved the tab to the provider's new session before /history is typed.
+				await vi.waitFor(() => expect(turn.kinds()).toContain('session'), { timeout: 8_000 });
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				await vi.waitFor(() => expect(argvFiles).toHaveLength(2), { timeout: 8_000 });
+				await vi.waitFor(
+					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					{ timeout: 8_000 }
+				);
+				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
+				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
+				expect(argv).not.toContain('session-before');
+			});
+
+			it('goes ahead when the turn it waited for could not start, instead of waiting forever', async () => {
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [{ id: 't1', agentSessionId: 'session-1', name: null, logs: [] }],
+						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					}),
+				]);
+				binaryExists = false;
+				const sent = runtime.turns.send('a1', 't1', { text: 'hello' });
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				expect(errorOf(await sent).code).toBe('failed');
+				await vi.waitFor(
+					async () =>
+						expect((await transcript(runtime)).map((entry) => entry.text)).toEqual([
+							HISTORY_COMMAND_TEXT.pending,
+							HISTORY_COMMAND_TEXT.failed,
+						]),
+					{ timeout: 8_000 }
+				);
+			});
+
+			it("stops a tab's synopsis when the tab closes, and when the host shuts down", async () => {
+				const seeded = () =>
+					seedAgent({
+						aiTabs: [
+							{ id: 't1', agentSessionId: 'session-1', name: null, logs: [] },
+							{ id: 't2', agentSessionId: 'session-2', name: null, logs: [] },
+						],
+					});
+				hold = true;
+				const runtime = await start([seeded()]);
+				value(await runtime.turns.send('a1', 't2', { text: '/history' }));
+				await vi.waitFor(() => expect(live.now).toBe(1), { timeout: 8_000 });
+				value(await runtime.tabs.close('a1', 't2'));
+				await vi.waitFor(() => expect(live.now).toBe(0), { timeout: 8_000 });
+
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				await vi.waitFor(() => expect(live.now).toBe(1), { timeout: 8_000 });
+				await runtime.connection.close();
+				await vi.waitFor(() => expect(live.now).toBe(0), { timeout: 8_000 });
+			});
+
+			it('queues a held /history as a message, as Queue Held does on a desktop', async () => {
+				const runtime = await start();
+				const held = value(await runtime.turns.send('a1', 't1', { text: '/history', held: true }));
+				expect(held).toMatchObject({ status: 'queued' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({ text: '/history', paused: true }),
+				]);
+			});
+		});
+
+		describe('/btw side questions (M6: a headless host forks its tab, as a desktop host does)', () => {
+			const ask = (runtime: MaestroRuntime, extra: Record<string, unknown> = {}) =>
+				runtime.consults.ask({
+					targetAgentId: 'a1',
+					targetTabId: 't1',
+					question: '  which file did we change?  ',
+					sideQuestion: true,
+					...extra,
+				});
+			const argvOf = (n: number) => JSON.parse(fs.readFileSync(argvFiles[n], 'utf-8')) as string[];
+
+			it('answers from a read-only throwaway fork of the tab, tools off, and writes nothing anywhere', async () => {
+				const runtime = await start([
+					seedAgent({
+						// A TUI token source still answers over --print: a fork never writes what maestro-p tails.
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						aiTabs: [
+							{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+						],
+					}),
+				]);
+				const turn = watch(runtime);
+
+				const answer = value(await ask(runtime));
+
+				expect(answer.agentName).toBe('Alpha');
+				expect(answer.answer).not.toBe('');
+				const argv = argvOf(0);
+				const resumeAt = argv.indexOf('--resume');
+				expect(argv[resumeAt + 1]).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+				expect(argv).toEqual(
+					expect.arrayContaining(['--fork-session', '--no-session-persistence'])
+				);
+				expect(argv[argv.indexOf('--tools') + 1]).toBe('');
+				expect(argv[argv.indexOf('--permission-mode') + 1]).toBe('plan');
+				expect(argv).not.toContain('--dangerously-skip-permissions');
+				expect(argv.some((arg) => arg.startsWith('--append-system-prompt'))).toBe(false);
+				expect(launched[0].prompt).toBe(buildSideQuestionPrompt('which file did we change?'));
+				expect(turnOptions[0].claudeTokenSource).toBeUndefined();
+				// Nothing lands in the tab, its History, or its live state.
+				expect(await transcript(runtime)).toEqual([]);
+				const history = readHistory(runtime.paths, 'a1');
+				expect(history.status === 'ok' ? history.entries : []).toEqual([]);
+				expect(turn.kinds()).toEqual([]);
+			});
+
+			it("forks the agent's active tab when none is named, and saves no session for a tab with none", async () => {
+				const runtime = await start();
+				value(await ask(runtime, { targetTabId: undefined }));
+				const argv = argvOf(0);
+				expect(argv).not.toContain('--resume');
+				expect(argv).not.toContain('--fork-session');
+				expect(argv).toContain('--no-session-persistence');
+			});
+
+			it("refuses what the desktop refuses, in the desktop's words, and starts nothing", async () => {
+				const runtime = await start([
+					seedAgent(),
+					seedAgent({ id: 'a2', name: 'Beta', toolType: 'opencode' }),
+				]);
+				expect(errorOf(await ask(runtime, { question: '   ' })).message).toBe(
+					'Type a question after /btw.'
+				);
+				expect(errorOf(await ask(runtime, { targetTabId: 'nope' })).message).toBe(
+					'No AI tab nope on Alpha'
+				);
+				expect(errorOf(await ask(runtime, { targetAgentId: 'a2' })).message).toBe(
+					'Beta cannot answer side questions (Claude Code agents only)'
+				);
+				expect(errorOf(await ask(runtime, { targetAgentId: 'zzz' })).code).toBe('not-found');
+				expect(argvFiles).toEqual([]);
+			});
+		});
 
 		it('answers host-unavailable once the runtime is closed', async () => {
 			const runtime = await start();
@@ -800,6 +1276,31 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		it('queues a held message paused on an idle tab, and runs it once resumed (M3)', async () => {
+			const runtime = await start();
+			const turn = watch(runtime);
+
+			const held = value(await runtime.turns.send('a1', 't1', { text: 'later', held: true }));
+			expect(held).toMatchObject({ status: 'queued', position: 1, queueLength: 1 });
+			if (held.status !== 'queued') throw new Error('expected queued');
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: held.itemId, text: 'later', paused: true }),
+			]);
+			// Nothing ran: the tab is idle and the message waits for a person.
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(argvFiles).toEqual([]);
+			expect(turn.events).toEqual([]);
+
+			expect(value(await runtime.turns.queue.setPaused('a1', held.itemId, false))).toEqual({
+				found: true,
+				paused: false,
+			});
+			await turn.outcome();
+			expect(turn.outcomes()).toEqual(['completed']);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			expect((await transcript(runtime))[0]).toMatchObject({ source: 'user', text: 'later' });
+		});
+
 		it('merges a waiting message into the one above it, the way the queued card does', async () => {
 			hold = true;
 			const runtime = await start();
@@ -837,12 +1338,87 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
-		it('refuses a steer: a headless turn takes no input once it starts, so the message waits', async () => {
+		it('steers a waiting message into the TUI turn running on its tab, over its socket (M4)', async () => {
+			hold = true;
+			tui = true;
 			const runtime = await start();
-			const refused = errorOf(await runtime.turns.queue.steer('a1', 'q1'));
-			expect(refused.code).toBe('unsupported');
-			expect(refused.message).toContain('stays queued');
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'go left instead' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+
+			// maestro-p's end of the socket: it takes the frame and answers delivered.
+			const socketPath = turnOptions[0].steeringSocketPath!;
+			expect(socketPath).toBeTruthy();
+			const frames: Array<{ id: string; text: string }> = [];
+			const server = net.createServer((socket) => {
+				socket.setEncoding('utf8');
+				socket.on('data', (chunk: string) => {
+					const frame = JSON.parse(chunk.trim()) as { id: string; text: string };
+					frames.push(frame);
+					socket.write(
+						`${JSON.stringify({ type: 'steering', id: frame.id, verdict: 'delivered' })}\n`
+					);
+				});
+			});
+			await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+			try {
+				expect(value(await runtime.turns.queue.steer('a1', queued.itemId))).toEqual({
+					outcome: 'delivered',
+					verdict: 'delivered',
+				});
+				expect(frames.map((frame) => frame.text)).toEqual(['go left instead']);
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				// The steered message joins the live turn and the tab's transcript, marked as a steer.
+				const steeredEntry = expect.objectContaining({
+					source: 'user',
+					text: 'go left instead',
+					steered: true,
+				});
+				expect(turn.events).toContainEqual(
+					expect.objectContaining({ kind: 'user', entry: steeredEntry })
+				);
+				expect(await transcript(runtime)).toContainEqual(steeredEntry);
+
+				// The turn says later that it never took it: back in line, live, and the tab says so.
+				turnOptions[0].onSteeringVerdict!({
+					type: 'steering',
+					id: frames[0].id,
+					verdict: 'dropped',
+				});
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({
+						itemId: queued.itemId,
+						text: 'go left instead',
+						paused: false,
+					}),
+				]);
+			} finally {
+				await new Promise<void>((resolve) => server.close(() => resolve()));
+			}
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
 			expect(errorOf(await runtime.turns.queue.steer('nope', 'q1')).code).toBe('not-found');
+		});
+
+		it('answers not-steerable for a claude --print turn, and the message waits', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'later' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.steer('a1', queued.itemId))).toMatchObject({
+				outcome: 'not-steerable',
+				blockedReason: 'api-token-source',
+				detail: expect.stringContaining('stays queued'),
+			});
+			expect(value(await runtime.turns.queue.list('a1'))).toHaveLength(1);
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
 		});
 
 		it('edits a waiting message in place, the way the queued card does', async () => {
@@ -880,15 +1456,15 @@ describe('runtime turns', () => {
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
 				expect.objectContaining({ turnSettings: { effort: 'high' } }),
 			]);
-			// A headless host queues no images, so an edit with some is refused whole.
+			// An image the edit carries is admitted as a send's is: a store ref is refused whole.
 			expect(
 				errorOf(
 					await runtime.turns.queue.edit('a1', queued.itemId, {
 						text: 'x',
-						images: ['data:image/png;base64,AAAA'],
+						images: ['maestro-image://sha256/abc'],
 					})
 				).code
-			).toBe('unsupported');
+			).toBe('invalid');
 			expect(value(await runtime.turns.queue.edit('a1', 'gone', { text: 'x' }))).toEqual({
 				found: false,
 			});
@@ -899,6 +1475,141 @@ describe('runtime turns', () => {
 			value(await runtime.turns.queue.remove('a1', queued.itemId));
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
+		});
+
+		describe('images on a waiting message (M2)', () => {
+			const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+			const JPEG = 'data:image/jpeg;base64,/9j/4AAQ';
+
+			it('queues a message with its images, lists them on the card, and runs it with them', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(
+					await runtime.turns.send('a1', 't1', { text: 'look', images: [PNG, JPEG] })
+				);
+				if (queued.status !== 'queued') throw new Error('expected queued');
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({ itemId: queued.itemId, text: 'look', images: [PNG, JPEG] }),
+				]);
+
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(2);
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user').at(-1)).toMatchObject({
+					text: 'look',
+					images: [PNG, JPEG],
+				});
+				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
+				expect(argv.slice(-2)).toEqual(['--input-format', 'stream-json']);
+			});
+
+			it('adds, replaces, keeps, and removes images on an Edit, the way the queued card does', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(await runtime.turns.send('a1', 't1', { text: 'draft' }));
+				if (queued.status !== 'queued') throw new Error('expected queued');
+				const card = async () => value(await runtime.turns.queue.list('a1'))[0];
+
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'two', images: [PNG] }));
+				expect(await card()).toMatchObject({ text: 'two', images: [PNG] });
+				// No images given: the message keeps its own.
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'three' }));
+				expect(await card()).toMatchObject({ text: 'three', images: [PNG] });
+				value(
+					await runtime.turns.queue.edit('a1', queued.itemId, { text: 'four', images: [JPEG, PNG] })
+				);
+				expect(await card()).toMatchObject({ images: [JPEG, PNG] });
+				// An empty list removes them all.
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'five', images: [] }));
+				expect((await card()).images).toBeUndefined();
+
+				value(await runtime.turns.queue.remove('a1', queued.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it('keeps an image-only message image-only through an Edit, and refuses an edit to nothing', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(await runtime.turns.send('a1', 't1', { text: '', images: [PNG] }));
+				if (queued.status !== 'queued') throw new Error('expected queued');
+
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: '', images: [JPEG] }));
+				expect(value(await runtime.turns.queue.list('a1'))[0]).toMatchObject({
+					text: '',
+					images: [JPEG],
+				});
+				expect(
+					errorOf(await runtime.turns.queue.edit('a1', queued.itemId, { text: ' ', images: [] }))
+						.code
+				).toBe('invalid');
+				expect(value(await runtime.turns.queue.list('a1'))[0]).toMatchObject({ images: [JPEG] });
+
+				value(await runtime.turns.queue.remove('a1', queued.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it('refuses a merge whose images together pass the bounds, and changes neither message', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const eleven = Array.from({ length: 11 }, () => PNG);
+				const upper = value(await runtime.turns.send('a1', 't1', { text: 'up', images: eleven }));
+				const lower = value(await runtime.turns.send('a1', 't1', { text: 'down', images: eleven }));
+				if (upper.status !== 'queued' || lower.status !== 'queued')
+					throw new Error('expected queued');
+
+				const refused = errorOf(await runtime.turns.queue.merge('a1', lower.itemId));
+				expect(refused.code).toBe('invalid');
+				expect(refused.message).toContain('20 images');
+				expect(value(await runtime.turns.queue.list('a1')).map((item) => item.text)).toEqual([
+					'up',
+					'down',
+				]);
+
+				value(await runtime.turns.queue.remove('a1', upper.itemId));
+				value(await runtime.turns.queue.remove('a1', lower.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it("merges the lower message's images after the upper's, as the desktop's merge does", async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const upper = value(await runtime.turns.send('a1', 't1', { text: 'up', images: [PNG] }));
+				const lower = value(await runtime.turns.send('a1', 't1', { text: 'down', images: [JPEG] }));
+				if (upper.status !== 'queued' || lower.status !== 'queued')
+					throw new Error('expected queued');
+
+				value(await runtime.turns.queue.merge('a1', lower.itemId));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({
+						itemId: upper.itemId,
+						text: 'up\n\ndown',
+						images: [PNG, JPEG],
+					}),
+				]);
+
+				value(await runtime.turns.queue.remove('a1', upper.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
 		});
 
 		it('moves a waiting message, the way dragging its queued card does', async () => {

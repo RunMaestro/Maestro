@@ -700,6 +700,26 @@ export function agentCanReadImages(
 }
 
 /**
+ * The image media types an attached image may have: the ones every image-reading provider takes
+ * (PNG, JPEG, GIF, WebP), and so the ones the desktop's room composer offers and a host admits from
+ * another machine. One list, so the two never disagree.
+ */
+export const PROVIDER_IMAGE_MEDIA_TYPES: readonly string[] = [
+	'image/png',
+	'image/jpeg',
+	'image/gif',
+	'image/webp',
+];
+
+/** The same list in words, for a refusal: "PNG, JPEG, GIF or WebP". */
+export const PROVIDER_IMAGE_MEDIA_TYPE_NAMES = 'PNG, JPEG, GIF or WebP';
+
+/** Whether an attached image's media type is one a provider reads (`PROVIDER_IMAGE_MEDIA_TYPES`). */
+export function isProviderImageMediaType(mediaType: string): boolean {
+	return PROVIDER_IMAGE_MEDIA_TYPES.includes(mediaType);
+}
+
+/**
  * Whether the provider with this id can read attached images. An unknown or
  * missing id allows: only a provider Maestro knows to be text-only refuses.
  */

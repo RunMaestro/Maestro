@@ -42,6 +42,7 @@ import type { SshRemoteConfig } from '../../types';
 import { parseWireAskerKey, remoteAskerConsultKey } from '../../crossAgentTypes';
 import type { MaestroPaths } from '../paths/resolve';
 import { readStoreDocument } from '../store/io';
+import { withInlineEntryImages } from '../launch/image-refs';
 import { sliceTranscript, transcriptOf, type LogEntryRecord } from '../store/transcript';
 
 /** Where the runtime is in its life, which decides what a call may do. */
@@ -231,8 +232,12 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					}
 					const tab = repository.getTab(agentId, tabId);
 					if (!tab) return fail('tabs.transcript', 'not-found', `No tab ${tabId}.`);
-					// A copy: the stored entries belong to the repository (R6).
-					return ok(structuredClone(sliceTranscript(transcriptOf(tab), options)));
+					// A copy: the stored entries belong to the repository (R6). An entry's images are
+					// refs into this machine's image store, which the reader cannot open: it gets the
+					// bytes, as a lift sends them (M10).
+					return ok(
+						structuredClone(sliceTranscript(transcriptOf(tab), options)).map(withInlineEntryImages)
+					);
 				}),
 		},
 

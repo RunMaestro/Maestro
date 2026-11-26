@@ -641,12 +641,20 @@ describe('dispatch messages', () => {
 			expect(none.named('turns.send')).toEqual([]);
 		});
 
-		it('refuses a held message instead of running it', async () => {
-			const host = recordingClient({ activeTabId: 't-active' });
+		it('queues a held message paused, as a desktop host does (M3)', async () => {
+			const host = recordingClient({ activeTabId: 't-active', send: queued });
 			const reply = await host.handle({ ...base, held: true });
-			expect(reply).toMatchObject({ type: 'enqueue_command_result', success: false });
-			expect(String(reply?.error)).toContain('cannot queue a held message');
-			expect(host.named('turns.send')).toEqual([]);
+			expect(reply).toMatchObject({
+				type: 'enqueue_command_result',
+				success: true,
+				queued: true,
+				itemId: 'q1',
+			});
+			expect(host.named('turns.send')[0].args).toEqual([
+				'a1',
+				't-active',
+				{ text: 'hello', held: true },
+			]);
 		});
 
 		it('words a missing agent and a missing tab the way the CLI maps to its codes', async () => {
@@ -708,6 +716,25 @@ describe('dispatch messages', () => {
 				text: 'hello',
 				images: ['data:image/png;base64,AAAA'],
 			});
+		});
+
+		// M12: nothing on the wire is dropped quietly. The runtime's `admitTurnImages()` refuses the
+		// whole send with the reason (see turns.test.ts), so the list reaches it as sent.
+		it.each([
+			['a value that is not a list', 'data:image/png;base64,AAAA'],
+			['a list with a non-string entry', [42, 'data:image/png;base64,AAAA']],
+		])('hands %s to the runtime whole, never a text-only send', async (_label, images) => {
+			const host = recordingClient({
+				activeTabId: 't-active',
+				send: () =>
+					fail('invalid', 'An attached image could not be read. Remove it and send again.'),
+			});
+			expect(await host.handle({ ...base, images })).toMatchObject({
+				type: 'command_result',
+				success: false,
+				error: 'An attached image could not be read. Remove it and send again.',
+			});
+			expect(host.named('turns.send')[0].args[2]).toEqual({ text: 'hello', images });
 		});
 
 		it('refuses a terminal command and a completion callback before sending anything', async () => {
@@ -1179,10 +1206,22 @@ describe('live tab state and the host queue', () => {
 			success: false,
 			error: 'images must be a list of strings',
 		});
+		// An image-only message keeps its empty text through an Edit, over the wire too.
+		const png = 'data:image/png;base64,iVBORw0KGgo=';
+		expect(await handle({ ...base, itemId: 'q1', text: '', images: [png] })).toEqual({
+			type: 'edit_queue_item_result',
+			success: true,
+			found: true,
+		});
+		expect(await handle({ ...base, itemId: 'q1', text: '', images: [] })).toMatchObject({
+			success: false,
+			error: 'Missing text',
+		});
 		// The refusals never reached the queue; an empty effort is dropped, not sent.
 		expect(editCalls).toEqual([
 			['a1', 'q1', { text: 'new', turnSettings: { model: 'm' } }],
 			['a1', 'q9', { text: 'new' }],
+			['a1', 'q1', { text: '', images: [png] }],
 		]);
 	});
 

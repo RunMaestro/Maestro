@@ -14,7 +14,7 @@
 import { useCallback } from 'react';
 import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { steerQueuedItem } from '../../services/chatSteering';
+import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
@@ -130,9 +130,10 @@ export function useQueueHandlers({
 	// course mid-task. The inverse of Force Send above - that one needs the tab IDLE
 	// and spawns a turn, this one needs it BUSY and types into the live TUI. The
 	// whole flow, including what happens when the transcript answers later, lives in
-	// services/chatSteering.ts.
+	// services/chatSteering.ts. A click the live state (or a hosted agent's host) declines says
+	// why, since the card it came from was drawn as steerable.
 	const handleSteerQueueItem = useCallback(
-		(sessionId: string, itemId: string) => steerQueuedItem(sessionId, itemId),
+		(sessionId: string, itemId: string) => steerQueuedItemOrExplain(sessionId, itemId),
 		[]
 	);
 

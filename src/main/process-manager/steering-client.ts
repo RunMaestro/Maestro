@@ -10,8 +10,6 @@
 // has to carry a value for the other.
 
 import * as crypto from 'crypto';
-import * as os from 'os';
-import * as path from 'path';
 
 import {
 	parseSteeringResult,
@@ -19,13 +17,16 @@ import {
 	STEERING_RELAY_FLAG,
 	STEERING_RELAY_STARTED_LINE,
 	STEERING_REPLY_TIMEOUT_MS,
-	STEERING_TOO_LONG_DETAIL,
 	steeringTextTooLong,
 	type SteeringResultFrame,
 	type SteeringRequestFrame,
 } from '../../shared/chatSteering';
-import { requestSteeringOverSocket } from '../../shared/chatSteeringSocket';
-import { isWindows } from '../../shared/platformDetection';
+import {
+	steerOverSocket,
+	steeringSocketDigest,
+	steeringSocketPathFor,
+	steeringTooLongResult,
+} from '../../shared/chatSteeringSocket';
 import {
 	describeSshUnreachable,
 	isSshConnectionFailure,
@@ -37,33 +38,9 @@ import { buildSshCommand, execSshCommand } from '../utils/ssh-command-builder';
 
 const LOG_CONTEXT = '[Steering]';
 
-/**
- * Socket path for a given process key (`${sessionId}-ai-${tabId}`).
- *
- * The key is HASHED rather than sanitized into the name, because a unix socket
- * address is capped near 104 bytes on macOS and a session UUID plus a tab id plus
- * a tmpdir already exceeds that - the socket would simply fail to bind, and
- * steering would be silently unavailable with no obvious cause. A short hash is
- * also stable across both callers, which is the whole point.
- *
- * Not a security boundary: anything able to read the directory can find the
- * socket. What protects it is that the server only ever types into the TUI it
- * owns, refuses when the editor is not accepting input, and caps the frame size.
- */
-export function steeringSocketPathFor(processKey: string): string {
-	const digest = steeringSocketDigest(processKey);
-	// Node on Windows implements a local socket as a named pipe, whose address must
-	// live in the pipe namespace: a filesystem path there fails to bind, so every
-	// Windows turn would silently be un-steerable. The server recognizes this form
-	// and never stats or unlinks it (a pipe is not a file).
-	if (isWindows()) return `\\\\.\\pipe\\maestro-steer-${digest}`;
-	return path.join(os.tmpdir(), `maestro-steer-${digest}.sock`);
-}
-
-/** The short, stable name both ends derive from a process key. See {@link steeringSocketPathFor}. */
-function steeringSocketDigest(processKey: string): string {
-	return crypto.createHash('sha1').update(processKey).digest('hex').slice(0, 16);
-}
+// The socket path both halves derive from a process key lives in shared code, so a
+// headless host (`maestro-cli host`) opens its turns' channels the same way.
+export { steeringSocketPathFor } from '../../shared/chatSteeringSocket';
 
 /**
  * A fresh socket for one turn on an SSH remote, named from its process key plus a
@@ -103,17 +80,6 @@ export interface RemoteSteeringChannel {
 // web-server round trip can size their own waits from it.
 export { STEERING_REPLY_TIMEOUT_MS } from '../../shared/chatSteering';
 
-/** The answer for an over-cap steer, from every transport. Never sent. */
-function tooLongResult(id: string): SteeringResultFrame {
-	return {
-		type: 'steering',
-		id,
-		verdict: 'refused',
-		refusal: 'too-long',
-		detail: STEERING_TOO_LONG_DETAIL,
-	};
-}
-
 /**
  * Ask a running maestro-p turn on THIS machine to take `text` into the turn in
  * flight.
@@ -130,13 +96,10 @@ export async function sendSteeringRequest(options: {
 	id: string;
 	timeoutMs?: number;
 }): Promise<SteeringResultFrame> {
-	// Never sent: the server would refuse it anyway, and the round trip costs a
-	// connection for an answer known here.
-	if (steeringTextTooLong(options.text)) return tooLongResult(options.id);
-	const frame: SteeringRequestFrame = { type: 'steer', id: options.id, text: options.text };
-	return requestSteeringOverSocket({
+	return steerOverSocket({
 		socketPath: steeringSocketPathFor(options.processKey),
-		frame,
+		text: options.text,
+		id: options.id,
 		timeoutMs: options.timeoutMs ?? STEERING_REPLY_TIMEOUT_MS,
 		warn: (message, stage) =>
 			logger.warn(
@@ -170,7 +133,7 @@ export async function sendRemoteSteeringRequest(options: {
 	timeoutMs?: number;
 }): Promise<SteeringResultFrame> {
 	const { channel, id } = options;
-	if (steeringTextTooLong(options.text)) return tooLongResult(id);
+	if (steeringTextTooLong(options.text)) return steeringTooLongResult(id);
 	const frame: SteeringRequestFrame = { type: 'steer', id, text: options.text };
 	const notSent = (detail: string): SteeringResultFrame => ({
 		type: 'steering',

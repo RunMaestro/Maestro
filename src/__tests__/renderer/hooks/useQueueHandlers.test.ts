@@ -30,6 +30,7 @@ vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 import { useQueueHandlers } from '../../../renderer/hooks/agent/useQueueHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 
 // ============================================================================
 // Helpers
@@ -1092,6 +1093,10 @@ describe('useQueueHandlers', () => {
 
 			expect(steer).not.toHaveBeenCalled();
 			expect(updated.executionQueue).toEqual([item]);
+			// The card was drawn as steerable, so the click says why it did nothing.
+			expect(useNotificationStore.getState().toasts).toContainEqual(
+				expect.objectContaining({ title: 'Could not steer this turn' })
+			);
 		});
 
 		it('does not steer a non-Claude agent', async () => {

@@ -357,19 +357,20 @@ describe('runtime consults', () => {
 			expect(provider.calls).toEqual([]);
 		});
 
-		it('refuses a /btw side question rather than answering it as a consult', async () => {
+		it('never answers a /btw side question as a consult: no consult tab, no consult turn', async () => {
 			const runtime = await start();
 			const refused = errorOf(
 				await runtime.consults.ask({
 					targetAgentId: 'a2',
 					question: 'which file?',
 					sideQuestion: true,
-					targetTabId: 't1',
+					targetTabId: 'missing',
 				})
 			);
-			expect(refused.code).toBe('rejected');
-			expect(refused.message).toContain('side questions (/btw)');
+			// The side questions answer it (here: the tab is not Beta's), never the consult path.
+			expect(refused.message).toBe('No AI tab missing on Beta');
 			expect(provider.calls).toEqual([]);
+			expect(consultTab('a2')).toBeUndefined();
 		});
 
 		it('refuses a target with no directory to run in', async () => {
