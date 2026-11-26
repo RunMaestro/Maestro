@@ -89,6 +89,20 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 		});
 	});
 
+	it('leaves off namesExits on a change with an exit it cannot prove, so the client counts a gap (CodeRabbit on #2154)', async () => {
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'a1', executionQueue: [{ ...message('cmd'), type: 'command' as never }] }],
+			[{ id: 'a1', executionQueue: [] }]
+		);
+		await settled();
+		expect(broadcastToAll).toHaveBeenCalledWith({
+			type: 'queue_changed',
+			sessionId: 'a1',
+			items: [],
+		});
+	});
+
 	it('sends nothing with no client attached, or no queue changed', async () => {
 		broadcastDesktopQueueChanges(
 			server(0),

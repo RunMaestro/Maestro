@@ -134,4 +134,29 @@ describe('an unnamed host start belongs to the queued message whose own entry th
 			)
 		).toBe('running');
 	});
+
+	it('a host that names its exits: a hand-off never seen waiting runs on its own stamped entry (CodeRabbit on #2154)', () => {
+		const tab = (logs: LogEntry[]) => ({
+			state: 'busy' as const,
+			thinkingStartTime: 200,
+			logs: [boundary, ...logs],
+			pendingMentionHandoff: {
+				targets: [],
+				message: 'ship it',
+				hostTurn: { stage: 'sent' as const, queueItemId: 'h1', afterEntryId: 'b' },
+			},
+		});
+		// No exit named for it, and none may come: its own entry decides.
+		expect(
+			hostedHandoffStep(tab([user('own', 'ship it', { queuedItemId: 'h1' })]), new Set(), false, [])
+		).toBe('running');
+		expect(
+			hostedHandoffStep(
+				tab([user('other', 'ship it', { queuedItemId: 'h0' })]),
+				new Set(),
+				false,
+				[]
+			)
+		).toBe('left-queue');
+	});
 });

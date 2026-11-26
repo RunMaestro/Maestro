@@ -1058,6 +1058,28 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			pruneHostStartedMentions(new Set());
 		});
 
+		it('a host that names its exits: a consult never seen waiting starts on its own entry, not only on a name that may never come (CodeRabbit on #2154)', async () => {
+			const id = 'unseen';
+			const text = await drainQueued(id, 'parallel');
+			// The message joined and left the host queue between two of its frames: no name for it.
+			hostSays(id, text, { queued: false, busy: 200, ran: true });
+			fireHostStartedMentions(row(), []);
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		});
+
+		it('a host that names its exits: a consult never seen waiting, with no entry of its own yet, waits (CodeRabbit on #2154)', async () => {
+			const id = 'unseen-wait';
+			const text = await drainQueued(id, 'parallel');
+			hostSays(id, text, { queued: false, busy: 100 });
+			fireHostStartedMentions(row(), []);
+			fireHostStartedMentions(row(), [], Date.now() + HOST_QUEUE_START_GRACE_MS + 1);
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			expect(row().aiTabs[0].logs.some((entry) => /removed before it ran/.test(entry.text))).toBe(
+				false
+			);
+			pruneHostStartedMentions(new Set());
+		});
+
 		it('a hand-off: a start grace that ran out is no deadline (Greptile and CodeRabbit on #2154)', () => {
 			const tab = (goneAt: number) => ({
 				...createMockSession({ id: 'h' }),

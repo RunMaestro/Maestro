@@ -571,8 +571,10 @@ export function fireHostStartedMentions(
 			}
 			// Named exits: gone without a name, its start (or its first frame) is still coming.
 			// Unless the queue was read whole since it was last seen waiting (a reconnect): a start
-			// named while this window was not attached never comes, so the tab decides.
-			if (hostExits && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
+			// named while this window was not attached never comes, so the tab decides. And unless it
+			// was never seen waiting (it joined and left between two of the host's frames): no name
+			// may ever come for it, so its own entry on the tab decides (CodeRabbit on #2154).
+			if (hostExits && waiting.seenQueued && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
 			// Unnamed: it ran only when the host wrote its own message on the tab (live as it starts,
 			// or in the saved transcript after it ran while this window was not attached). Another
 			// message's turn is never its start.

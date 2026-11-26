@@ -74,6 +74,11 @@ export interface DesktopQueueChange {
 	agentId: string;
 	items: QueuedItemSnapshot[];
 	exits: QueueExit[];
+	/**
+	 * An item left with no exit this write can prove (see `desktopQueueChanges()`): the frame must
+	 * not claim `namesExits`, so a client counts a gap and judges what waits by the tab instead.
+	 */
+	unnamedExit: boolean;
 }
 
 function wroteCardFor(agent: QueueDiffAgent, itemId: string): boolean {
@@ -89,10 +94,12 @@ function wroteCardFor(agent: QueueDiffAgent, itemId: string): boolean {
  * A message that left the queue STARTED when the write holds its card, the user entry the desktop
  * writes for it as it runs, stamped with its id (`markTabRunningQueuedItem()`); one that left with
  * no card was REMOVED. A dispatch writes the card in the same update that takes the item out, so
- * both land in one write. An item whose start writes no card has no exit named: a command (nothing
- * waits on one: a mention is always a message), and a message with a mention a Pianola dispatch
- * runs (`applyQueuedItemDispatch(..., false)`), since naming its start a removal would drop the
- * consult of a turn that ran. An agent that is gone is not listed (its removal says so).
+ * both land in one write. An item whose start writes no card has no exit this write can prove: a
+ * command, and a message with a mention a Pianola dispatch runs (`applyQueuedItemDispatch(...,
+ * false)`; naming its start a removal would drop the consult of a turn that ran). Such a change is
+ * `unnamedExit`, and its frame does not claim to name every exit. A message that joined and left
+ * between two writes is in neither: a client that never saw it waiting judges it by its own entry
+ * (`fireHostStartedMentions()`). An agent that is gone is not listed (its removal says so).
  */
 export function desktopQueueChanges(
 	previous: readonly QueueDiffAgent[],
@@ -106,12 +113,18 @@ export function desktopQueueChanges(
 		if (canonicalJson(had.map(toQueuedItemSnapshot)) === canonicalJson(items)) continue;
 		const still = new Set(items.map((item) => item.id));
 		const exits: QueueExit[] = [];
+		let unnamedExit = false;
 		for (const item of had) {
-			if (still.has(item.id) || item.type !== 'message') continue;
-			if (wroteCardFor(agent, item.id)) exits.push({ itemId: item.id, exit: 'started' });
-			else if (!item.crossAgentMention) exits.push({ itemId: item.id, exit: 'removed' });
+			if (still.has(item.id)) continue;
+			if (item.type === 'message' && wroteCardFor(agent, item.id)) {
+				exits.push({ itemId: item.id, exit: 'started' });
+			} else if (item.type === 'message' && !item.crossAgentMention) {
+				exits.push({ itemId: item.id, exit: 'removed' });
+			} else {
+				unnamedExit = true;
+			}
 		}
-		changes.push({ agentId: agent.id, items, exits });
+		changes.push({ agentId: agent.id, items, exits, unnamedExit });
 	}
 	return changes;
 }

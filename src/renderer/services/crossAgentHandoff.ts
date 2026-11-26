@@ -529,8 +529,9 @@ export function hostedHandoffStep(
 			: 'seen-queued';
 	}
 	if (queued) {
-		// Named exits: gone without a name, its start (or its first frame) is still coming.
-		if (hostExits && !readSince) return 'wait';
+		// Named exits: gone without a name, its start (or its first frame) is still coming. Unless it
+		// was never seen waiting: no name may ever come for it, so its own entry decides.
+		if (hostExits && !readSince && hostTurn.seenQueued) return 'wait';
 		// Unnamed: it ran only when the host wrote its own message on the tab; another message's
 		// turn is never its start, and nothing it never ran is handed off.
 		const verdict = judgeUnnamedHostStart(

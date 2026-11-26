@@ -66,6 +66,7 @@ describe('desktopQueueChanges (M23)', () => {
 						{ itemId: 'ran', exit: 'started' },
 						{ itemId: 'gone', exit: 'removed' },
 					],
+					unnamedExit: false,
 				},
 			]);
 		}
@@ -80,6 +81,7 @@ describe('desktopQueueChanges (M23)', () => {
 				agentId: 'a1',
 				items: [message('q1', 'a'), message('q2', 'b')].map(toQueuedItemSnapshot),
 				exits: [],
+				unnamedExit: false,
 			},
 		]);
 		expect(
@@ -106,11 +108,14 @@ describe('desktopQueueChanges (M23)', () => {
 		]);
 	});
 
-	it('names no exit where the card proves nothing: a command, and a mention a Pianola dispatch runs', () => {
+	it('names no exit where the card proves nothing (a command, a mention a Pianola dispatch runs), and says so (CodeRabbit on #2154)', () => {
 		const before = agent([
 			{ ...message('cmd', ''), type: 'command' as never },
 			message('mention', 'ask @Backend', { crossAgentMention: true }),
 		]);
-		expect(desktopQueueChanges([before], [agent([])])[0].exits).toEqual([]);
+		expect(desktopQueueChanges([before], [agent([])])[0]).toMatchObject({
+			exits: [],
+			unnamedExit: true,
+		});
 	});
 });
