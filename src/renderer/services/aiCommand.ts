@@ -61,6 +61,7 @@ export async function requestAiCommand(options: {
 	try {
 		const result = await window.maestro.aiCommand.suggest({
 			request,
+			ownerAgentId: session.id,
 			agentType: session.toolType,
 			cwd: resolveCommandCwd(session),
 			isGitRepo: session.isGitRepo,

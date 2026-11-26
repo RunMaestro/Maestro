@@ -9,6 +9,7 @@
  * `group-chat-storage.ts`.
  */
 
+import type { HostedLaunchFeature } from '../agents/hosted-launch';
 import type {
 	GroupChatHistoryEntry,
 	GroupChatMessage as GroupChatRoomMessage,
@@ -232,6 +233,14 @@ export interface GroupChatSpawn {
 	appendSystemPrompt?: string;
 	/** True when `args` resume an existing provider session. */
 	isResume?: boolean;
+	/**
+	 * The Maestro agent record this process runs as (a participant's or a consulted agent's id),
+	 * and the feature launching it. The host checks a hosted agent's launch against
+	 * `HOSTED_STATELESS_HELPERS` with them. Absent for a process that runs as no agent (the
+	 * moderator, a synthesis).
+	 */
+	ownerAgentId?: string;
+	launchFeature?: HostedLaunchFeature;
 }
 
 /** Starts and stops the processes a round is made of. */

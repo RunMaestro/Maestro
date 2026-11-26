@@ -182,20 +182,43 @@ describe('sideQuestion service', () => {
 			expect(ask).not.toHaveBeenCalled();
 		});
 
-		it('fails on the card for a tab kept from before the move, which the host cannot fork', async () => {
-			const outcome = await askSideQuestion({
-				session: makeSession({
-					liftedTo,
-					aiTabs: [{ id: 'kept', agentSessionId: 'older', logs: [] }],
-				} as unknown as Partial<Session>),
-				tabId: 'kept',
-				question: 'q',
-			});
-
-			expect(outcome.success).toBe(false);
-			expect(outcome.error).toContain('copy kept from before the move');
+		it('answers in a tab kept from before the move, as an SSH agent answers, by forking it over SSH', async () => {
+			ask.mockResolvedValue({ success: true, answer: 'the old plan' });
+			const cards: unknown[] = [];
+			const requests: unknown[] = [];
+			// The same tab, which the host does not list, in an SSH and a hosted record.
+			for (const fields of [
+				{ sessionSshRemoteConfig: ssh },
+				{ sessionSshRemoteConfig: ssh, liftedTo },
+			]) {
+				ask.mockClear();
+				useSideQuestionStore.setState({ entries: {} });
+				const outcome = await askSideQuestion({
+					session: makeSession({
+						...fields,
+						activeTabId: 'kept',
+						aiTabs: [{ id: 'kept', agentSessionId: 'older', logs: [] }],
+					} as unknown as Partial<Session>),
+					tabId: 'kept',
+					question: 'what was the plan?',
+				});
+				expect(outcome).toMatchObject({ success: true, answer: 'the old plan', tabId: 'kept' });
+				expect(ask).toHaveBeenCalledTimes(1);
+				requests.push(ask.mock.calls[0][0]);
+				const {
+					requestId: _requestId,
+					startedAt: _startedAt,
+					...card
+				} = useSideQuestionStore.getState().entries[
+					sideQuestionKey('agent-1', 'kept')
+				] as unknown as Record<string, unknown>;
+				cards.push(card);
+			}
+			expect(cards[1]).toEqual(cards[0]);
+			// The same fork of the tab's own session over the record's remote.
+			expect(requests[1]).toEqual(requests[0]);
+			expect(requests[0]).toMatchObject({ agentSessionId: 'older', sessionSshRemoteConfig: ssh });
 			expect(federationAct).not.toHaveBeenCalled();
-			expect(ask).not.toHaveBeenCalled();
 		});
 	});
 });

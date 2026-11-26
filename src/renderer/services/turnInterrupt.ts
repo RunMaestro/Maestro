@@ -24,6 +24,7 @@ import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../type
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
+import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
 import { generateId } from '../utils/ids';
 import {
 	getActiveTab,
@@ -171,6 +172,8 @@ export async function interruptTurn(
 	} catch (crossAgentErr) {
 		logger.warn('[turnInterrupt] Failed to cancel cross-agent consults:', undefined, crossAgentErr);
 	}
+	// A consult of a hosted agent runs on its host, so no process here holds it: end the wait.
+	consultsCanceled += cancelHostedConsults(sessionId, scopeTabId);
 
 	const busyTabIds = scopedTab
 		? scopedTab.state === 'busy'

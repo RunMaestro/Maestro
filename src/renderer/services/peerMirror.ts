@@ -22,6 +22,7 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { RemoteAskerContext } from '../../shared/crossAgentTypes';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -86,6 +87,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'move-queued': 'Could not move the queued message',
 	'send-now-queued': 'Could not send the queued message now',
 	'side-question': 'Could not ask the side question',
+	consult: 'Could not consult the agent',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 	'auto-run': 'Auto Run did not start',
@@ -377,6 +379,28 @@ export async function askMirrorSideQuestion(
 	if (!answer.ok) return { error: answer.error };
 	return answer.result.kind === 'side-question'
 		? { answer: answer.result.answer }
+		: { error: 'The host answered something else.' };
+}
+
+/**
+ * Consult a mirrored agent for an agent on this machine (`@mention`, `maestro-cli ask`): the host
+ * runs the consult in its own hidden consult tab and History, as a local target does here.
+ * Answers the reply and the name the host reports, or `{ error }` with no toast: the consult's
+ * bubble shows the failure where the answer would have gone, as it does for a local target.
+ */
+export async function askMirrorConsult(
+	peerId: string,
+	agentId: string,
+	consult: { question: string } & RemoteAskerContext
+): Promise<{ answer: string; agentName?: string } | { error: string }> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'consult', ...consult });
+	if (!answer) return { error: 'Federation is not available in this window.' };
+	if (!answer.ok) return { error: answer.error };
+	return answer.result.kind === 'consult'
+		? {
+				answer: answer.result.answer,
+				...(answer.result.agentName ? { agentName: answer.result.agentName } : {}),
+			}
 		: { error: 'The host answered something else.' };
 }
 

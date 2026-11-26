@@ -57,7 +57,12 @@ import {
 	requestWizardTabAutoName,
 	WIZARD_TAB_PLACEHOLDER_NAME,
 } from '../../services/tabAutoNaming';
-import { renameHostedTab, settleHostedWizardTab } from '../../services/hostedTurns';
+import {
+	hostedTargetOf,
+	renameHostedTab,
+	settleHostedWizardTab,
+	startHostedConversation,
+} from '../../services/hostedTurns';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -1096,6 +1101,73 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		}
 
 		const currentDefaults = useSettingsStore.getState();
+		const currentUIState: PreviousUIState = {
+			readOnlyMode: false,
+			saveToHistory: currentDefaults.defaultSaveToHistory,
+			showThinking: currentDefaults.defaultShowThinking,
+		};
+
+		// Start the wizard in the tab just opened, read back from the store so a host tab and a
+		// local tab start it the same way.
+		const startWizardInTab = (tabId: string) => {
+			const session = selectSessionById(currentSession.id)(useSessionStore.getState());
+			const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+			if (!session || !tab) {
+				logger.warn('[handleLaunchWizardTab] The new wizard tab is gone');
+				return;
+			}
+			// The new tab inherits the agent configuration, not the previous tab's overrides.
+			const { model, effort } = resolveModelEffort(tab, session, {
+				defaultModel: '',
+				defaultEffort: '',
+			});
+			startInlineWizard(
+				undefined,
+				currentUIState,
+				session.projectRoot || session.cwd,
+				session.toolType,
+				session.name,
+				tabId,
+				session.id,
+				session.autoRunFolderPath,
+				session.sessionSshRemoteConfig,
+				useSettingsStore.getState().conductorProfile,
+				{
+					customPath: session.customPath,
+					customArgs: session.customArgs,
+					customEnvVars: session.customEnvVars,
+					customModel: model || undefined,
+					customEffort: effort || undefined,
+					claudeTokenSource: getClaudeTokenSourceFields(session),
+				}
+			);
+			useSessionStore
+				.getState()
+				.addLogToTab(
+					session.id,
+					{ source: 'system', text: 'Starting wizard for Auto Run documents...' },
+					tabId
+				);
+		};
+
+		// A hosted agent's tabs live on its host, so the wizard's tab is a host tab, as the tab
+		// `/wizard` runs in is: the wizard runs here over the record's SSH remote and hands its
+		// name and session to that host tab when it ends (`settleHostedWizardTab()`). A host that
+		// refuses the tab says so in a toast, and no wizard starts.
+		if (hostedTargetOf(currentSession)) {
+			void startHostedConversation(currentSession, {
+				name: WIZARD_TAB_PLACEHOLDER_NAME,
+				afterTabId: currentSession.activeTabId,
+				fields: {
+					saveToHistory: currentDefaults.defaultSaveToHistory,
+					showThinking: currentDefaults.defaultShowThinking,
+				},
+			}).then((tabId) => {
+				if (tabId) startWizardInTab(tabId);
+			});
+			return;
+		}
+
 		const result = createTab(currentSession, {
 			name: WIZARD_TAB_PLACEHOLDER_NAME,
 			saveToHistory: currentDefaults.defaultSaveToHistory,
@@ -1114,48 +1186,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			activeTabId: newTab.id,
 		}));
 
-		const currentUIState: PreviousUIState = {
-			readOnlyMode: false,
-			saveToHistory: currentDefaults.defaultSaveToHistory,
-			showThinking: currentDefaults.defaultShowThinking,
-		};
-
-		const currentConductorProfile = useSettingsStore.getState().conductorProfile;
-		const addLogToTab = useSessionStore.getState().addLogToTab;
-		// The new tab inherits the agent configuration, not the previous tab's overrides.
-		const { model, effort } = resolveModelEffort(newTab, currentSession, {
-			defaultModel: '',
-			defaultEffort: '',
-		});
-
-		setTimeout(() => {
-			startInlineWizard(
-				undefined,
-				currentUIState,
-				currentSession.projectRoot || currentSession.cwd,
-				currentSession.toolType,
-				currentSession.name,
-				newTab.id,
-				currentSession.id,
-				currentSession.autoRunFolderPath,
-				currentSession.sessionSshRemoteConfig,
-				currentConductorProfile,
-				{
-					customPath: currentSession.customPath,
-					customArgs: currentSession.customArgs,
-					customEnvVars: currentSession.customEnvVars,
-					customModel: model || undefined,
-					customEffort: effort || undefined,
-					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
-				}
-			);
-
-			const wizardLog = {
-				source: 'system' as const,
-				text: 'Starting wizard for Auto Run documents...',
-			};
-			addLogToTab(currentSession.id, wizardLog, newTab.id);
-		}, 0);
+		setTimeout(() => startWizardInTab(newTab.id), 0);
 	}, [activeSessionId, startInlineWizard]);
 
 	// ========================================================================

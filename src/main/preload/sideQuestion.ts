@@ -10,6 +10,8 @@ import { ipcRenderer } from 'electron';
 
 export interface SideQuestionRequest {
 	question: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** Provider that owns the tab. */
 	agentType: string;
 	/** The agent's working directory. */

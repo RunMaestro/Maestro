@@ -217,6 +217,9 @@ export function registerCommandCallbacks(
 					withContext: params.withContext,
 					sideQuestion: params.sideQuestion,
 					targetTabId: params.targetTabId,
+					transcript: params.transcript,
+					fromAgentName: params.fromAgentName,
+					handoffAnswer: params.handoffAnswer,
 				},
 			],
 		});

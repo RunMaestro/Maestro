@@ -2,6 +2,7 @@ import { ipcRenderer } from 'electron';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import type { RemoteAskerContext } from '../../../shared/crossAgentTypes';
 
 /**
  * Helper to log via the main process logger.
@@ -130,7 +131,7 @@ export function createCommandRemoteApi() {
 					withContext?: boolean;
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & RemoteAskerContext,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -145,7 +146,7 @@ export function createCommandRemoteApi() {
 					withContext?: boolean;
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & RemoteAskerContext,
 				responseChannel: string
 			) => {
 				log('Received remote:crossAgentAsk IPC', {

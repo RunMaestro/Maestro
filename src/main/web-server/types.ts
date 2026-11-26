@@ -8,6 +8,7 @@ import type { QueuedTurnEdit, TurnOverrides } from '../../shared/maestro-lib/cli
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { RemoteAskerContext } from '../../shared/crossAgentTypes';
 import type { InterruptTurnResult } from '../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry, DesktopSessionsSnapshot } from '../../shared/desktopTabs';
@@ -566,7 +567,7 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
  * of streaming it into a chat bubble, because the caller here is an agent
  * waiting on a tool result rather than a human reading a transcript.
  */
-export type ConsultAgentParams = {
+export type ConsultAgentParams = RemoteAskerContext & {
 	targetSessionId: string;
 	question: string;
 	/** The calling agent, when it named itself. Attribution + continuity. */

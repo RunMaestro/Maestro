@@ -13,7 +13,9 @@
  *
  * A hosted agent's tab lives on its Federation host, so the host forks its own
  * tab (`askMirrorSideQuestion()`, the same `ask --btw` path) and the answer
- * draws on the same card here. Only the transport differs.
+ * draws on the same card here. A tab kept from before the move, which the host
+ * lacks, forks over the record's SSH remote as an SSH agent's tab does. Only the
+ * transport differs.
  */
 
 import type { Session } from '../types';
@@ -60,14 +62,11 @@ export async function askSideQuestion(options: {
 
 	if (!question) return fail('Type a question after /btw.');
 
+	// A host tab is forked by its host. A tab kept from before the move has no conversation there,
+	// so its own provider session is forked over the record's SSH remote, exactly as an SSH
+	// agent's is: a fork only reads the conversation and never writes it.
 	const hosted = hostedTargetOf(session);
-	if (hosted) {
-		// A tab kept from before the move has no conversation on the host to fork.
-		if (!isHostTab(hosted, tabId)) {
-			return fail(
-				`This conversation is the copy kept from before the move. Ask in a tab that runs on ${hosted.peerId}.`
-			);
-		}
+	if (hosted && isHostTab(hosted, tabId)) {
 		const reply = await askMirrorSideQuestion(hosted.peerId, hosted.agentId, tabId, question);
 		if ('error' in reply) return fail(reply.error);
 		if (!reply.answer) return fail('No answer came back.');
@@ -78,6 +77,7 @@ export async function askSideQuestion(options: {
 	try {
 		const result = await window.maestro.sideQuestion.ask({
 			question,
+			ownerAgentId: session.id,
 			agentType: session.toolType,
 			cwd: session.cwd,
 			agentSessionId: tab?.agentSessionId ?? undefined,

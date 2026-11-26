@@ -1058,7 +1058,7 @@ interface MaestroAPI {
 					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & import('../shared/crossAgentTypes').RemoteAskerContext,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -4882,6 +4882,7 @@ interface MaestroAPI {
 	tabNaming: {
 		generateTabName: (config: {
 			userMessage: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			sessionSshRemoteConfig?: {
@@ -4918,6 +4919,7 @@ interface MaestroAPI {
 	aiCommand: {
 		suggest: (config: {
 			request: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			isGitRepo?: boolean;
@@ -4945,6 +4947,7 @@ interface MaestroAPI {
 	sideQuestion: {
 		ask: (config: {
 			question: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			agentSessionId?: string;
