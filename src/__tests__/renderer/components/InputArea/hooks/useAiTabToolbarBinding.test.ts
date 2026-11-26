@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAiTabToolbarBinding } from '../../../../../renderer/components/InputArea/hooks/useAiTabToolbarBinding';
 import { createInputAreaSession } from '../_fixtures';
 import type { AITab } from '../../../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../../../helpers/mockSession';
 
 const mockUpdateSessionWith = vi.fn();
 const storeMocks = vi.hoisted(() => ({ sessions: [] as unknown[] }));
@@ -24,8 +25,8 @@ describe('useAiTabToolbarBinding', () => {
 		storeMocks.sessions = [];
 	});
 
-	function bind(tabOverrides: Partial<AITab> = {}) {
-		const base = createInputAreaSession();
+	function bind(tabOverrides: Partial<AITab> = {}, mode: (typeof AGENT_MODES)[number] = 'local') {
+		const base = createInputAreaSession(agentModeFields(mode));
 		const session = {
 			...base,
 			aiTabs: base.aiTabs.map((t) => (t.id === 'tab-1' ? { ...t, ...tabOverrides } : t)),
@@ -81,6 +82,35 @@ describe('useAiTabToolbarBinding', () => {
 
 		// updateHostedTab() is a no-op for a local or SSH agent, so every mode takes one path.
 		expect(mockUpdateHostedTab).toHaveBeenCalledWith(session, 'tab-1', { thinking: 'on' });
+	});
+
+	it('sets the thinking and permission pills the same way in every mode (mode parity)', () => {
+		// docs/parity/agent-ux-parity.md, Composer: one binding for every mode. The host
+		// hand-off is updateHostedTab(), a no-op for a local or SSH agent.
+		const outcomes = AGENT_MODES.map((mode) => {
+			mockUpdateSessionWith.mockClear();
+			mockUpdateHostedTab.mockClear();
+			const { session, result } = bind({}, mode);
+			storeMocks.sessions = [session];
+			result.current.onThinkingModeChange('sticky');
+			const thinking = lastUpdatedTab(session).showThinking;
+			result.current.onPermissionModeChange('readonly');
+			const { permissionMode, readOnlyMode } = lastUpdatedTab(session);
+			return {
+				thinking,
+				permissionMode,
+				readOnlyMode,
+				hostCall: mockUpdateHostedTab.mock.calls.map((call) => call.slice(1)),
+			};
+		});
+		expect(outcomes[0]).toEqual({
+			thinking: 'sticky',
+			permissionMode: 'readonly',
+			readOnlyMode: true,
+			hostCall: [['tab-1', { thinking: 'sticky' }]],
+		});
+		expect(outcomes[1]).toEqual(outcomes[0]);
+		expect(outcomes[2]).toEqual(outcomes[0]);
 	});
 
 	it('writes nothing without an active tab', () => {

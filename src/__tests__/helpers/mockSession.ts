@@ -70,13 +70,18 @@ export type AgentMode = (typeof AGENT_MODES)[number];
  * each and assert the same output.
  */
 export function createModeSession(mode: AgentMode, overrides: Partial<Session> = {}): Session {
-	const remote: Partial<Session> =
-		mode === 'local'
-			? {}
-			: {
-					sshRemoteId: 'r1',
-					sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
-					...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
-				};
-	return createMockSession({ ...remote, ...overrides } as Partial<Session>);
+	return createMockSession({ ...agentModeFields(mode), ...overrides } as Partial<Session>);
+}
+
+/**
+ * Only the fields that make an agent local, SSH, or hosted, for a suite that builds its
+ * sessions with its own factory (spread them into that factory's overrides).
+ */
+export function agentModeFields(mode: AgentMode): Partial<Session> {
+	if (mode === 'local') return {};
+	return {
+		sshRemoteId: 'r1',
+		sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+	} as Partial<Session>;
 }

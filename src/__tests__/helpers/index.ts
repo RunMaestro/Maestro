@@ -7,7 +7,7 @@
 
 export { isolateAgentEnv, SHELL_OVERRIDABLE_AGENT_ENV_KEYS } from './agentEnvIsolation';
 export { createMockAITab, createMockDesignPick, createMockFileTab } from './mockTab';
-export { AGENT_MODES, createMockSession, createModeSession } from './mockSession';
+export { AGENT_MODES, agentModeFields, createMockSession, createModeSession } from './mockSession';
 export type { AgentMode } from './mockSession';
 export { installLocalStorageMock, installSessionStorageMock } from './mockLocalStorage';
 export { ALL_RENDERER_STORES, resetAllStores, resetStore, resetStores } from './resetStores';

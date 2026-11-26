@@ -116,7 +116,41 @@ export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
  * Module scope, not a ref: a ref belongs to one hook instance, and the guard
  * has to hold for the tab.
  */
-const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: string[] }>>();
+const composerSubmitsInFlight = new Map<string, ComposerSubmit[]>();
+
+/** What one composer submit read from the draft: the typed text and the staged images. */
+interface ComposerSubmit {
+	text: string;
+	images: string[];
+}
+
+/**
+ * Whether `submit` repeats one still in flight on the tab `key` names (`<agent id>:<tab id>`).
+ * Chips are never a repeat: they are read live, so any still staged were staged after the first
+ * submit took its own. One rule for every mode: a local, SSH, and hosted send all ask it.
+ */
+function isRepeatComposerSubmit(
+	key: string,
+	submit: ComposerSubmit,
+	hasDesignPicks: boolean
+): boolean {
+	if (hasDesignPicks) return false;
+	return (composerSubmitsInFlight.get(key) ?? []).some(
+		(prior) =>
+			(!submit.text.trim() || submit.text === prior.text) &&
+			(submit.images === prior.images || (submit.images.length === 0 && prior.images.length === 0))
+	);
+}
+
+/** Mark `submit` in flight on the tab `key` names. Call the returned release when it lands. */
+function holdComposerSubmit(key: string, submit: ComposerSubmit): () => void {
+	composerSubmitsInFlight.set(key, [...(composerSubmitsInFlight.get(key) ?? []), submit]);
+	return () => {
+		const remaining = (composerSubmitsInFlight.get(key) ?? []).filter((entry) => entry !== submit);
+		if (remaining.length > 0) composerSubmitsInFlight.set(key, remaining);
+		else composerSubmitsInFlight.delete(key);
+	};
+}
 
 /**
  * Whether a hosted agent's send runs on this machine, as it does for a local or SSH agent, instead
@@ -584,38 +618,23 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const hostedSubmit = { text, images: effectiveImages };
 				if (
 					isComposerSubmit &&
-					designPicks.length === 0 &&
-					(composerSubmitsInFlight.get(hostedKey) ?? []).some(
-						(prior) =>
-							(!text.trim() || text === prior.text) &&
-							(effectiveImages === prior.images ||
-								(effectiveImages.length === 0 && prior.images.length === 0))
-					)
+					isRepeatComposerSubmit(hostedKey, hostedSubmit, designPicks.length > 0)
 				) {
 					logger.info(
-						'[processInput] Ignoring a repeat hosted submit while the first is in flight'
+						'[processInput] Ignoring a repeat composer submit while the first is in flight'
 					);
 					return;
 				}
-				if (isComposerSubmit) {
-					composerSubmitsInFlight.set(hostedKey, [
-						...(composerSubmitsInFlight.get(hostedKey) ?? []),
-						hostedSubmit,
-					]);
-				}
+				const releaseSubmit = isComposerSubmit
+					? holdComposerSubmit(hostedKey, hostedSubmit)
+					: undefined;
 				let receipt: Awaited<ReturnType<typeof sendHostedTurn>> = null;
 				try {
 					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
 						held: options?.hold === true,
 					});
 				} finally {
-					if (isComposerSubmit) {
-						const remaining = (composerSubmitsInFlight.get(hostedKey) ?? []).filter(
-							(entry) => entry !== hostedSubmit
-						);
-						if (remaining.length > 0) composerSubmitsInFlight.set(hostedKey, remaining);
-						else composerSubmitsInFlight.delete(hostedKey);
-					}
+					releaseSubmit?.();
 				}
 				// Steer Running Turn: the host queued the draft behind its running turn, which is
 				// what a steer starts from, as the local path above queues it first.
@@ -892,18 +911,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const namingText = typedText.trim() ? typedText : effectiveInputValue;
 
 			// Only a composer submit reads the draft, so only it can read it twice.
-			// Chips are never a repeat: they are read live, so any still staged were
-			// staged after the first submit took its own.
 			const inFlightKey = `${activeSession.id}:${targetTabId ?? ''}`;
 			const submitted = { text: typedText, images: typedImages };
-			const isRepeatOfInFlight = (composerSubmitsInFlight.get(inFlightKey) ?? []).some(
-				(prior) =>
-					designPicks.length === 0 &&
-					(!submitted.text.trim() || submitted.text === prior.text) &&
-					(submitted.images === prior.images ||
-						(submitted.images.length === 0 && prior.images.length === 0))
-			);
-			if (currentMode === 'ai' && isComposerSubmit && isRepeatOfInFlight) {
+			if (
+				currentMode === 'ai' &&
+				isComposerSubmit &&
+				isRepeatComposerSubmit(inFlightKey, submitted, designPicks.length > 0)
+			) {
 				logger.info(
 					'[processInput] Ignoring a repeat composer submit while the first is in flight'
 				);
@@ -961,10 +975,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				}));
 			};
 			const probeForSubmit = async (tabId: string | undefined) => {
-				if (isComposerSubmit) {
-					const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
-					composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
-				}
+				const releaseSubmit = isComposerSubmit
+					? holdComposerSubmit(inFlightKey, submitted)
+					: undefined;
 				try {
 					if (isComposerSubmit && !isWebDesktop()) {
 						clearComposer();
@@ -986,13 +999,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					}
 					return state;
 				} finally {
-					if (isComposerSubmit) {
-						const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
-							(entry) => entry !== submitted
-						);
-						if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
-						else composerSubmitsInFlight.delete(inFlightKey);
-					}
+					releaseSubmit?.();
 				}
 			};
 
