@@ -250,6 +250,38 @@ describe('interruptTurn: queued work after a whole-agent stop', () => {
 		}
 	});
 
+	it('writes the line on a tab whose consult Stop ended before that tab starts its next message (CodeRabbit on #2154)', async () => {
+		vi.useFakeTimers();
+		try {
+			seedAgent({ executionQueue: [queued] });
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+			useCrossAgentInFlightStore.setState({ requests: {} });
+			useCrossAgentInFlightStore.getState().start({
+				requestId: 'r-c',
+				sourceSessionId: 'agent-1',
+				sourceTabId: 'tab-c',
+				targetSessionId: 'backend',
+				targetAgentName: 'Backend',
+				startedAt: 1,
+			});
+			registerTurnInterruptDeps({
+				cancelPendingSynopsis: vi.fn(),
+				processQueuedItem: vi.fn().mockResolvedValue(undefined),
+				ownsQueue: () => true,
+			});
+
+			await interruptTurn('agent-1');
+			await vi.runAllTimersAsync();
+
+			const texts = tab('tab-c').logs.map((l) => l.text);
+			expect(texts.filter((text) => text === TURN_CANCELED_NOTE)).toHaveLength(1);
+			expect(tab('tab-c').state).toBe('busy');
+		} finally {
+			useCrossAgentInFlightStore.setState({ requests: {} });
+			vi.useRealTimers();
+		}
+	});
+
 	it('leaves the item queued for the owner in a browser client', async () => {
 		// The owning desktop renderer's exit listener starts it. Taking it out here
 		// either lost it or would send it twice.

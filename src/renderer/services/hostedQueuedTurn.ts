@@ -489,24 +489,38 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
 }
 
 /**
- * Stop ended the agent's turn (or `tabId`'s): every consult of that scope whose message the host's
- * queue does not list waiting belonged to that turn, so it goes, with a note, and nothing fires
- * after Stop. One the host's queue still lists stays: that message runs later, and consults when
- * it starts, as a local queued message does after Stop.
+ * Stop ended the turns of `stoppedTabIds` (those it told the host to stop, or ended here): a
+ * consult of one of those tabs whose message may be the turn Stop ended goes, with a note, so
+ * nothing consults after Stop (M24). That is every one the host's queue does not list waiting,
+ * also one it never listed (a turn that joined and left between two frames, or an older desktop
+ * host) or whose start's name is still on its way, unless the tab still runs the very turn the
+ * message was queued behind (`turnStartedAt`, the host's clock): then Stop ended that turn, and
+ * the message still waits, listed or not yet listed (CodeRabbit on #2154). One the host's queue
+ * lists stays, and one on a tab Stop did not end: those messages run later, and consult when they
+ * start, as a local queued message does after Stop.
  */
-export function dropStoppedHostStartMentions(sessionId: string, tabId?: string): void {
+export function dropStoppedHostStartMentions(
+	sessionId: string,
+	stoppedTabIds: readonly string[]
+): void {
+	if (stoppedTabIds.length === 0) return;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	// What the host's queue still lists waiting: those messages run after Stop, as a local queued
-	// message does, and consult when they start.
 	const stillWaiting = new Set(
 		(session?.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
 	);
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
 		if (waiting.sessionId !== sessionId || stillWaiting.has(hostItemId)) continue;
-		if (tabId && (waiting.item.tabId || session?.activeTabId) !== tabId) continue;
-		// Not listed: its turn is the one Stop ended (or its start is still on its way), also when the
-		// queue never showed it (a turn that joined and left between two frames, or an older desktop
-		// host). Left waiting, its saved user entry would consult after Stop (M24): nothing does.
+		const tabId = waiting.item.tabId || session?.activeTabId;
+		if (!tabId || !stoppedTabIds.includes(tabId)) continue;
+		// The host's own record, as the receipt read it: the local tab may read idle between the
+		// drain's release and the next sync while the host runs the turn ahead.
+		const running = hostTurnAhead(sessionId, tabId);
+		const behindStoppedTurn =
+			!!waiting.aheadKnown &&
+			waiting.turnStartedAt !== undefined &&
+			running.busy &&
+			running.startedAt === waiting.turnStartedAt;
+		if (behindStoppedTurn) continue;
 		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 	}
 }

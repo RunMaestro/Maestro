@@ -162,13 +162,13 @@ export async function interruptTurn(
 		// armed for the turn, the same as below. The hand-off goes first, before any await, so a
 		// host update that lands meanwhile cannot release it.
 		dropMentionHandoffs(sessionId, scopeTabId);
-		// A consult of the stopped turn whose start the host has not confirmed yet goes with it.
-		dropStoppedHostStartMentions(sessionId, scopeTabId);
 		const peer = usePeerMirrorStore.getState().peers[hostedTargetOf(session)?.peerId ?? ''];
 		// A turn the lost link cut is drawn idle here while the host may still run it, or may not
 		// have: Stop ends it too, so it is never sent again when the host is back.
 		const cutTabs = cutHostedTurnTabs(sessionId, scopeTabId);
 		const stopHere = [...new Set([...hostBusy, ...cutTabs])];
+		// A consult whose message may be a turn Stop ends goes with it, also before any await.
+		dropStoppedHostStartMentions(sessionId, stopHere);
 		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
 		if (hostNotTold) {
 			// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
@@ -519,7 +519,11 @@ function settleStoppedAgent(
 				...s,
 				...busyFields,
 				aiTabs: s.aiTabs.map((tab) => {
-					if (tab.id === target.tabId) return markTabRunningQueuedItem(tab, nextItem, s);
+					// The next message runs on a tab whose consult Stop ended: the line first.
+					if (tab.id === target.tabId) {
+						const settled = consultTabIds.has(tab.id) ? idleStoppedTab(tab, note) : tab;
+						return markTabRunningQueuedItem(settled, nextItem, s);
+					}
 					return tab.state === 'busy' || consultTabIds.has(tab.id)
 						? idleStoppedTab(tab, note)
 						: tab;
