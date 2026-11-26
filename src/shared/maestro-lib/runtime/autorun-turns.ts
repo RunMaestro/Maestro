@@ -40,6 +40,7 @@ import type { NativeSessionBinding } from '../agents/providerSwap';
 import type { AutoRunTurnResult, AutoRunTurnRequest } from '../autorun/engine-types';
 import { createIdleWatchdog } from '../control/idle-watchdog';
 import { logger } from '../host';
+import { toolActivityState } from '../../toolActivityLabel';
 import { createOutputParser } from '../parsers/parser-factory';
 import type { TurnToolCall } from '../client/types';
 import type { MaestroPaths } from '../paths/resolve';
@@ -276,7 +277,8 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 								kind: 'tool',
 								processId: sessionId,
 								toolName: event.tool.name,
-								state: toolStateOf(event.tool),
+								// What the Thought Stream reads, never the tool's output.
+								state: toolActivityState(toolStateOf(event.tool)),
 								...(event.tool.id ? { toolCallId: event.tool.id } : {}),
 							});
 						}
