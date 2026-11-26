@@ -331,7 +331,14 @@ export async function projectTokenUsage(
 			: read.failedProjects.size > 0
 				? 'failed'
 				: 'read';
-		results.push({ status, breakdowns: read.breakdowns, complete: status === 'read' });
+		// A storage may match conversations in folders under the one asked (Codex
+		// matches by prefix, so a request for `/` would list every rollout with its
+		// own working directory). Each answers as the folder asked: the peer learns
+		// only the numbers of what is under it, never a path it did not name.
+		const breakdowns = read.breakdowns.map((breakdown) =>
+			breakdown.projectPath === projectPath ? breakdown : { ...breakdown, projectPath }
+		);
+		results.push({ status, breakdowns, complete: status === 'read' });
 	}
 	return { projects: results };
 }

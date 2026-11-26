@@ -20,7 +20,12 @@
  * its agent "not counted", so a total is never quietly short. Pure: no I/O, no Electron.
  */
 
-import type { ModelTokenUsage, SessionTokenBreakdown, TokenCoverage } from './tokenUsage';
+import {
+	DEFAULT_ACCOUNT_KEY,
+	type ModelTokenUsage,
+	type SessionTokenBreakdown,
+	type TokenCoverage,
+} from './tokenUsage';
 import type { UsageAccounting, UsageCost } from './types';
 
 /** The request message type. */
@@ -33,6 +38,12 @@ export const PROJECT_TOKEN_USAGE_REPLY = 'project_token_usage_result';
  * read of the token totals that may ask remotes waits this long plus its own margin.
  */
 export const REMOTE_TOKEN_USAGE_TIMEOUT_MS = 30_000;
+
+/**
+ * The error a host answers when it could not read the usage. Always this text: the cause can name
+ * the host's own paths, so it stays in the host's log.
+ */
+export const PROJECT_TOKEN_USAGE_FAILED = 'The host could not read the token usage.';
 
 /** The most projects one request may name. A caller with more asks in chunks (`chunkProjects`). */
 export const MAX_PROJECT_TOKEN_USAGE_PROJECTS = 64;
@@ -250,12 +261,12 @@ function modelsToWire(byModel: readonly ModelTokenUsage[]): Json[] {
  * completeness and cost (`lifetime`), so the requester counts its lifetime totals the way this
  * machine does, not the sum of its model detail. Per-call speed buckets stay on the host.
  */
-function breakdownToWire(breakdown: SessionTokenBreakdown): Json {
+function breakdownToWire(breakdown: SessionTokenBreakdown, accountLabel: string): Json {
 	return {
 		sessionId: breakdown.sessionId,
 		agentType: breakdown.agentType,
 		projectPath: breakdown.projectPath,
-		accountKey: breakdown.accountKey,
+		accountKey: accountLabel,
 		timestampMs: breakdown.timestampMs,
 		...(breakdown.origin ? { origin: breakdown.origin } : {}),
 		...(breakdown.accounting
@@ -278,11 +289,46 @@ function breakdownToWire(breakdown: SessionTokenBreakdown): Json {
 	};
 }
 
+/** The last part of a path, on either separator. */
+function lastSegment(value: string): string {
+	const trimmed = value.replace(/[\\/]+$/, '');
+	return trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1);
+}
+
+/**
+ * What the wire calls each account of `usage`. An account key is the host's absolute config-dir
+ * path, which must not leave the host: the wire carries the dir's own name instead (`.claude-work`),
+ * which is what the account is called on the host's own dashboard. Two accounts whose dirs share a
+ * name get `-2`, `-3` in the order of their full paths, so they stay apart. The default account
+ * keeps its key.
+ */
+export function wireAccountLabels(usage: ProjectTokenUsage): Map<string, string> {
+	const keys = new Set<string>();
+	for (const project of usage.projects) {
+		for (const breakdown of project.breakdowns) keys.add(breakdown.accountKey);
+	}
+	const labels = new Map<string, string>();
+	const taken = new Set<string>([DEFAULT_ACCOUNT_KEY]);
+	labels.set(DEFAULT_ACCOUNT_KEY, DEFAULT_ACCOUNT_KEY);
+	for (const key of [...keys].sort()) {
+		if (key === DEFAULT_ACCOUNT_KEY) continue;
+		const segment = lastSegment(key);
+		const base = segment && !isPrototypeKey(segment) ? segment : 'account';
+		let label = base;
+		for (let n = 2; taken.has(label); n++) label = `${base}-${n}`;
+		taken.add(label);
+		labels.set(key, label);
+	}
+	return labels;
+}
+
 /**
  * The reply frame a host sends for `usage`. Past the reply cap the remaining conversations are
  * left out and their project says so (`truncated`), so the requester never reads it as whole.
+ * Accounts go by their {@link wireAccountLabels}, never by a path of the host.
  */
 export function projectTokenUsageReplyFrame(usage: ProjectTokenUsage): Json {
+	const labels = wireAccountLabels(usage);
 	let room = MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS;
 	return {
 		type: PROJECT_TOKEN_USAGE_REPLY,
@@ -292,7 +338,9 @@ export function projectTokenUsageReplyFrame(usage: ProjectTokenUsage): Json {
 			room -= kept.length;
 			return {
 				status: project.status,
-				breakdowns: kept.map(breakdownToWire),
+				breakdowns: kept.map((breakdown) =>
+					breakdownToWire(breakdown, labels.get(breakdown.accountKey) ?? DEFAULT_ACCOUNT_KEY)
+				),
 				...(kept.length < project.breakdowns.length || !project.complete
 					? { truncated: true }
 					: {}),
@@ -423,8 +471,16 @@ function parseModel(raw: unknown): ModelTokenUsage | undefined {
 	};
 }
 
-/** One conversation from the wire for a project of `provider`, or undefined when it does not hold together. */
-function parseBreakdown(raw: unknown, provider: string): SessionTokenBreakdown | undefined {
+/**
+ * One conversation from the wire for `asked` (the project the request named), or undefined when it
+ * does not hold together. A host answers every conversation under the folder asked with that
+ * folder's path, so any other path is a record that does not belong to the request.
+ */
+function parseBreakdown(
+	raw: unknown,
+	asked: ProjectTokenUsageProject
+): SessionTokenBreakdown | undefined {
+	const provider = asked.provider;
 	if (!isObject(raw)) return undefined;
 	// Each of these becomes an object or map key on the requester (series, groups, the dedupe key).
 	const sessionId = keyString(raw.sessionId, MAX_ID_LENGTH);
@@ -440,7 +496,7 @@ function parseBreakdown(raw: unknown, provider: string): SessionTokenBreakdown |
 	if (
 		!sessionId ||
 		raw.agentType !== provider ||
-		!projectPath ||
+		projectPath !== asked.projectPath ||
 		!accountKey ||
 		timestampMs === undefined ||
 		inputTokens === undefined ||
@@ -533,7 +589,7 @@ export function parseProjectTokenUsageReply(
 				complete = false;
 				break;
 			}
-			const breakdown = parseBreakdown(entry, asked[i].provider);
+			const breakdown = parseBreakdown(entry, asked[i]);
 			if (breakdown) {
 				breakdowns.push(breakdown);
 				room--;

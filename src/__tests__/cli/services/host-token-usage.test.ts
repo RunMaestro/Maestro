@@ -13,6 +13,7 @@ import {
 	type ProjectTokenUsageReader,
 } from '../../../cli/services/host-token-usage';
 import {
+	PROJECT_TOKEN_USAGE_FAILED,
 	PROJECT_TOKEN_USAGE_REPLY,
 	projectTokenUsageRequest,
 } from '../../../shared/projectTokenUsage';
@@ -59,8 +60,14 @@ describe('headless host token usage answer', () => {
 		expect(await answer({ type: 'cue_list' })).toBeUndefined();
 	});
 
-	it('refuses a request with no project, and reports a read failure without throwing', async () => {
-		const answer = createHostTokenUsageAnswer(vi.fn().mockRejectedValue(new Error('disk gone')));
+	it('refuses a request with no project, and reports a read failure without throwing or naming a host path', async () => {
+		const log = vi.fn();
+		const answer = createHostTokenUsageAnswer(
+			vi
+				.fn()
+				.mockRejectedValue(new Error("EACCES: open '/home/dev/.claude-work/projects/x.jsonl'")),
+			{ log }
+		);
 		expect(await answer({ type: 'get_project_token_usage', projects: [] })).toMatchObject({
 			success: false,
 		});
@@ -69,8 +76,10 @@ describe('headless host token usage answer', () => {
 		).toEqual({
 			type: PROJECT_TOKEN_USAGE_REPLY,
 			success: false,
-			error: 'Failed to read token usage: disk gone',
+			error: PROJECT_TOKEN_USAGE_FAILED,
 		});
+		// The detail stays in the host's own log.
+		expect(log).toHaveBeenCalledWith(expect.stringContaining('/home/dev/.claude-work'));
 	});
 
 	it('finds the accounts the host stores: its agents, provider env, and Settings env', async () => {

@@ -236,6 +236,34 @@ describe('project token usage reply', () => {
 		}
 	});
 
+	it('names each account by its dir, never by a path of the host, keeping same-named dirs apart', () => {
+		const frame = wire({
+			projects: [
+				read([
+					breakdown({ sessionId: 'a', accountKey: '/home/dev/.claude-work' }),
+					breakdown({ sessionId: 'b', accountKey: '/opt/other/.claude-work' }),
+					breakdown({ sessionId: 'c', accountKey: 'C:\\Users\\dev\\.claude-home\\' }),
+					breakdown({ sessionId: 'd', accountKey: 'default' }),
+				]),
+			],
+		});
+		expect(JSON.stringify(frame)).not.toMatch(/home\/dev|opt\/other|Users/);
+		const parsed = parseProjectTokenUsageReply(frame, ASKED)!;
+		expect(parsed.projects[0].complete).toBe(true);
+		expect(parsed.projects[0].breakdowns.map((b) => b.accountKey)).toEqual([
+			'.claude-work',
+			'.claude-work-2',
+			'.claude-home',
+			'default',
+		]);
+	});
+
+	it('drops a record whose path is not the folder the request named', () => {
+		const parsed = parseProjectTokenUsageReply(replyWith({ projectPath: '/srv/app/sub' }), ASKED);
+		expect(parsed!.projects[0].breakdowns).toEqual([]);
+		expect(parsed!.projects[0].complete).toBe(false);
+	});
+
 	it('keeps only known coverage and origin words', () => {
 		const parsed = parseProjectTokenUsageReply(
 			replyWith({ coverage: 'everything', origin: 'robot' }),

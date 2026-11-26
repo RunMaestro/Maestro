@@ -37,7 +37,10 @@ import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/me
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 import { getTimeRangeStart } from '../../../../shared/statsTimeRange';
 import { createHostTokenUsageAnswer } from '../../../../cli/services/host-token-usage';
-import { projectTokenUsageRequest } from '../../../../shared/projectTokenUsage';
+import {
+	PROJECT_TOKEN_USAGE_FAILED,
+	projectTokenUsageRequest,
+} from '../../../../shared/projectTokenUsage';
 
 function createMockClient(): WebClient {
 	return {
@@ -194,5 +197,24 @@ describe('get_project_token_usage handler (the desktop as a Federation host)', (
 		await flush();
 		expect(mockGetProjectTokenUsage).not.toHaveBeenCalled();
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'q3' });
+	});
+
+	it('answers a failed read with a generic error, never the cause that can name a host path', async () => {
+		mockGetProjectTokenUsage.mockRejectedValue(
+			new Error("EACCES: open '/Users/dev/.claude-work/projects/x.jsonl'")
+		);
+		const client = createMockClient();
+		new WebSocketMessageHandler().handleMessage(client, {
+			...projectTokenUsageRequest(projects),
+			requestId: 'q4',
+		});
+		await flush();
+		const frame = lastResponse(client);
+		expect(frame).toMatchObject({
+			success: false,
+			error: PROJECT_TOKEN_USAGE_FAILED,
+			requestId: 'q4',
+		});
+		expect(JSON.stringify(frame)).not.toContain('/Users/dev');
 	});
 });

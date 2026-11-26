@@ -225,4 +225,27 @@ describe('projectTokenUsage (the host side)', () => {
 			['unsupported', false],
 		]);
 	});
+
+	it('answers a conversation in a folder under the one asked as that folder, never with its own path', async () => {
+		// Codex matches a project by prefix: asked for `/`, its storage lists every rollout.
+		const listSessions = vi.fn(async () => [
+			{
+				sessionId: 'r1',
+				projectPath: '/home/dev/secret-client/app',
+				timestamp: '2026-11-20T10:00:00Z',
+				modifiedAt: '2026-11-20T10:00:00Z',
+				inputTokens: 5,
+				outputTokens: 5,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				sizeBytes: 1,
+			},
+		]);
+		const usage = await projectTokenUsage([{ provider: 'codex', projectPath: '/' }], {
+			storageFor: () => ({ listSessions }) as never,
+			accountDirsFor: async () => [],
+		});
+		expect(usage.projects[0].breakdowns.map((b) => b.projectPath)).toEqual(['/']);
+		expect(JSON.stringify(usage)).not.toContain('secret-client');
+	});
 });

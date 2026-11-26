@@ -17,6 +17,7 @@
 import {
 	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
 	PROJECT_TOKEN_USAGE_MESSAGE,
+	PROJECT_TOKEN_USAGE_FAILED,
 	parseProjectTokenUsageRequest,
 	projectTokenUsageFailureFrame,
 	projectTokenUsageReplyFrame,
@@ -128,8 +129,19 @@ export function createHeadlessTokenUsageReader(
 	};
 }
 
-/** The host's answer to `get_project_token_usage`, over `read`. */
-export function createHostTokenUsageAnswer(read: ProjectTokenUsageReader): HostTokenUsageAnswer {
+export interface HostTokenUsageAnswerOptions {
+	/** The host's own log: where a failed read's detail goes, since the wire carries none. */
+	log?(line: string): void;
+}
+
+/**
+ * The host's answer to `get_project_token_usage`, over `read`. A failed read answers a generic
+ * error: its message can name this machine's paths, so the detail goes only to the host's log.
+ */
+export function createHostTokenUsageAnswer(
+	read: ProjectTokenUsageReader,
+	options: HostTokenUsageAnswerOptions = {}
+): HostTokenUsageAnswer {
 	return async (message) => {
 		if (message.type !== PROJECT_TOKEN_USAGE_MESSAGE) return undefined;
 		const projects = parseProjectTokenUsageRequest(message);
@@ -141,9 +153,10 @@ export function createHostTokenUsageAnswer(read: ProjectTokenUsageReader): HostT
 		try {
 			return projectTokenUsageReplyFrame(await read(projects));
 		} catch (error) {
-			return projectTokenUsageFailureFrame(
-				`Failed to read token usage: ${error instanceof Error ? error.message : String(error)}`
+			options.log?.(
+				`Token usage read failed: ${error instanceof Error ? error.message : String(error)}`
 			);
+			return projectTokenUsageFailureFrame(PROJECT_TOKEN_USAGE_FAILED);
 		}
 	};
 }

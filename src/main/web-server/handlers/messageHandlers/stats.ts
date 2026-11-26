@@ -16,6 +16,7 @@ import {
 } from '../../../stats/token-usage/token-usage-accessor';
 import {
 	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
+	PROJECT_TOKEN_USAGE_FAILED,
 	parseProjectTokenUsageRequest,
 	projectTokenUsageFailureFrame,
 	projectTokenUsageReplyFrame,
@@ -23,7 +24,11 @@ import {
 import { getSettingsStore } from '../../../stores';
 import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
 import { getStatsIndexingState } from '../../../stats/stats-indexing';
+import { logger } from '../../../utils/logger';
+import { captureException } from '../../../utils/sentry';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+const LOG_CONTEXT = '[StatsHandlers]';
 
 /**
  * Refuse a stats read while Usage & Stats is off, the way the desktop never
@@ -145,11 +150,13 @@ export function handleGetProjectTokenUsage(
 	getProjectTokenUsage(projects)
 		.then((usage) => reply(projectTokenUsageReplyFrame(usage)))
 		.catch((error) => {
-			reply(
-				projectTokenUsageFailureFrame(
-					`Failed to read token usage: ${error instanceof Error ? error.message : String(error)}`
-				)
-			);
+			// The message can name this machine's paths: it goes to this machine's log
+			// and Sentry, and the peer gets a generic error.
+			logger.error('Token usage read for a peer failed', LOG_CONTEXT, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			void captureException(error, { operation: 'tokenUsage:peerAnswer' });
+			reply(projectTokenUsageFailureFrame(PROJECT_TOKEN_USAGE_FAILED));
 		});
 }
 
