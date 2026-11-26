@@ -540,6 +540,48 @@ export function closeTabRecord(
 	};
 }
 
+export interface ReopenTabOutcome {
+	agent: AgentRecord;
+	/** The tab that is open now. */
+	tabId: string;
+	/** The conversation already had a tab: nothing was added, and `tabId` names that tab. */
+	wasDuplicate?: boolean;
+}
+
+/**
+ * Reopen one archived tab (Cmd+Shift+T, a Federation peer's reopen): back where it sat in
+ * `aiTabs`, at the end of the strip order, in the background (the active tab, the other active
+ * ids, and `inputMode` are never touched). A conversation that already has a visible tab is not
+ * opened twice. The tab keeps its id unless another tab took it since.
+ */
+export function reopenTabRecord(
+	agent: AgentRecord,
+	closed: ClosedTabRecord,
+	ctx: RuleContext
+): ReopenTabOutcome {
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	const sessionId = closed.tab.agentSessionId;
+	const open = sessionId
+		? tabs.find((tab) => tab.hidden !== true && tab.agentSessionId === sessionId)
+		: undefined;
+	if (open) return { agent, tabId: open.id, wasDuplicate: true };
+	const id = tabs.some((tab) => tab.id === closed.tab.id) ? ctx.newId() : closed.tab.id;
+	const tab: AITabRecord = { ...closed.tab, id, state: 'idle' };
+	const at = Math.max(
+		0,
+		Math.min(Number.isInteger(closed.index) ? closed.index : tabs.length, tabs.length)
+	);
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+	return {
+		agent: {
+			...agent,
+			aiTabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)],
+			unifiedTabOrder: [...order, { type: 'ai', id }],
+		},
+		tabId: id,
+	};
+}
+
 /** The AI tab to activate after `closedId` leaves: the chip to its left, or the new first one. */
 function neighbourTabId(
 	agent: AgentRecord,

@@ -1,3 +1,4 @@
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * The `MaestroClient` interface: the one surface the TUI programs against.
@@ -96,6 +97,8 @@ export type ClientMethod =
 	| 'tabs.star'
 	| 'tabs.update'
 	| 'tabs.transcript'
+	| 'tabs.closed'
+	| 'tabs.reopen'
 	| 'turns.send'
 	| 'turns.interrupt'
 	| 'turns.queue.list'
@@ -396,6 +399,21 @@ export interface TabsApi {
 	rename(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	/** The tab moves to the host's closed-tab history. */
 	close(agentId: string, tabId: string): Promise<ClientResult<void>>;
+	/**
+	 * The agent's closed-tab stack, newest first (what Cmd+Shift+T reopens next is index 0),
+	 * bounded as a stack here is (`parseWireClosedTabs()`). A host that keeps none answers
+	 * `unsupported`.
+	 */
+	closed?(agentId: string): Promise<ClientResult<ClosedTabSummary[]>>;
+	/**
+	 * Reopen one closed AI tab in the background (the host's view does not move): the newest, or the
+	 * one closed as `tabId`. `wasDuplicate`: the conversation was already open, and `tabId` names
+	 * that tab.
+	 */
+	reopen?(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>>;
 	star(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	update(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
 	/** CH-5. The tab's transcript as the host persisted it, oldest first. */

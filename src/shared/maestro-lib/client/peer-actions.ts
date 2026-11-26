@@ -25,6 +25,8 @@ import {
 	parseWireTranscript,
 	type RemoteAskerContext,
 } from '../../crossAgentTypes';
+import { parseWireClosedTabs } from '../../closedTabHistory';
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import { isCodexTransport } from '../../codexTransport';
 import {
 	validateAutoRunLaunch,
@@ -39,6 +41,7 @@ import type {
 	AgentPatch,
 	AgentPatchField,
 	ClientError,
+	ClientMethod,
 	ClientResult,
 	MaestroClient,
 	QueuedTurnEdit,
@@ -112,6 +115,10 @@ export type PeerAgentAction =
 	 * running on the host, which end there as stopped ones, as main ends a local target's.
 	 */
 	| { kind: 'consult-cancel'; asker: { agentId: string; tabId: string } }
+	/** Read the agent's closed-tab stack on the host (Quick Chat, Cmd+Shift+T). */
+	| { kind: 'closed-tabs' }
+	/** Reopen a closed tab on the host in the background: the newest, or the one closed as `tabId`. */
+	| { kind: 'reopen-tab'; index?: number; tabId?: string }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -163,6 +170,10 @@ export type PeerAgentActionResult =
 	| { kind: 'consult'; answer: string; agentName?: string }
 	/** `canceled`: how many consults the host stopped (0: none was running, or it already ended). */
 	| { kind: 'consult-cancel'; canceled: number }
+	/** The host's stack, newest first, bounded (`parseWireClosedTabs()`). */
+	| { kind: 'closed-tabs'; closedTabs: ClosedTabSummary[] }
+	/** `tabId`: the tab open on the host now. `wasDuplicate`: it was already open. */
+	| { kind: 'reopen-tab'; tabId: string; wasDuplicate?: boolean }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string }
 	/** The host accepted the launch; the run's progress arrives as `autorun` events. */
@@ -192,6 +203,8 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'side-question',
 	'consult',
 	'consult-cancel',
+	'closed-tabs',
+	'reopen-tab',
 	'update-agent',
 	'update-tab',
 	'auto-run',
@@ -207,6 +220,17 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 export interface PeerActionContext {
 	/** This machine's hostname: a send stamps its History entry with it on the host (`originHost`). */
 	originHost?: string;
+}
+
+/** An action the host's client has no call for (an older host): a stated refusal. */
+function unsupportedAction(
+	method: ClientMethod,
+	what: string
+): ClientResult<PeerAgentActionResult> {
+	return {
+		ok: false,
+		error: { code: 'unsupported', message: `This host cannot ${what}.`, method },
+	};
 }
 
 /** The asker key the host keeps a consult tab per: this machine, the asking agent, its tab. */
@@ -367,22 +391,36 @@ export async function runPeerAgentAction(
 				: asked;
 		}
 		case 'consult-cancel': {
-			if (!client.consults.cancel) {
-				return {
-					ok: false,
-					error: {
-						code: 'unsupported',
-						message: 'This host cannot stop a consult.',
-						method: 'consults.cancel',
-					},
-				};
-			}
+			if (!client.consults.cancel) return unsupportedAction('consults.cancel', 'stop a consult');
 			const stopped = await client.consults.cancel({
 				askerKey: remoteAskerKeyOf(action.asker, context),
 			});
 			return stopped.ok
 				? { ok: true, value: { kind: 'consult-cancel', canceled: stopped.value.canceled } }
 				: stopped;
+		}
+		case 'closed-tabs': {
+			if (!client.tabs.closed) return unsupportedAction('tabs.closed', 'keep closed tabs');
+			const read = await client.tabs.closed(agent.id);
+			return read.ok
+				? { ok: true, value: { kind: 'closed-tabs', closedTabs: parseWireClosedTabs(read.value) } }
+				: read;
+		}
+		case 'reopen-tab': {
+			if (!client.tabs.reopen) return unsupportedAction('tabs.reopen', 'reopen a closed tab');
+			const reopened = await client.tabs.reopen(agent.id, {
+				...(action.tabId ? { tabId: action.tabId } : { index: action.index ?? 0 }),
+			});
+			return reopened.ok
+				? {
+						ok: true,
+						value: {
+							kind: 'reopen-tab',
+							tabId: reopened.value.tabId,
+							...(reopened.value.wasDuplicate ? { wasDuplicate: true } : {}),
+						},
+					}
+				: reopened;
 		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
@@ -544,6 +582,18 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(asker ? { asker } : {}),
 				...(typeof value.handoffAnswer === 'string' ? { handoffAnswer: value.handoffAnswer } : {}),
 			};
+		}
+		case 'closed-tabs':
+			return { kind };
+		case 'reopen-tab': {
+			if (typeof value.tabId === 'string' && value.tabId.trim()) {
+				return { kind, tabId: value.tabId.trim() };
+			}
+			const index = value.index ?? 0;
+			if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+				throw new Error('index must be a non-negative integer');
+			}
+			return { kind, index };
 		}
 		case 'consult-cancel': {
 			const asker = parseAsker(value.asker);

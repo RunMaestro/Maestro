@@ -70,7 +70,15 @@ import type {
 } from '../store/records';
 import { agentsOf, groupsOf, optionalArrayShape, visibleAiTabsOf } from '../store/read-stores';
 import type { LogEntryRecord } from '../store/transcript';
-import { archiveClosedTab, removeClosedTabArchive } from './closed-tabs';
+import {
+	archiveClosedTab,
+	closedTabsFile,
+	readClosedTabs,
+	removeClosedTabArchive,
+	takeClosedTab,
+} from './closed-tabs';
+import type { ClosedTabSummary } from '../../closedTabCommands';
+import { getTabDisplayName } from '../store/tab-display';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
@@ -87,6 +95,7 @@ import {
 	checkAgentCreateInput,
 	checkAgentName,
 	closeTabRecord,
+	reopenTabRecord,
 	DEFAULT_RULE_CONTEXT,
 	DEFAULT_TAB_DEFAULTS,
 	groupsWithout,
@@ -205,6 +214,13 @@ export interface AgentRepository {
 	createTab(agentId: string): Promise<ClientResult<{ tabId: string }>>;
 	renameTab(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
+	/** The agent's closed-tab archive as summaries, newest first (`closed_tab_command` list). */
+	listClosedTabs(agentId: string): Promise<ClientResult<ClosedTabSummary[]>>;
+	/** Reopen one archived tab in the background: the newest, or the one closed as `tabId`. */
+	reopenClosedTab(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>>;
 	starTab(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	updateTab(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
 	/**
@@ -1176,8 +1192,71 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
+	async function listClosedTabs(agentId: string): Promise<ClientResult<ClosedTabSummary[]>> {
+		if (!findAgent(agentId)) return noAgent('tabs.closed', agentId);
+		const archive = await readClosedTabs(closedTabsFile(paths.syncDir, agentId));
+		return {
+			ok: true,
+			value: archive.map((entry, index) => ({
+				index,
+				type: 'ai' as const,
+				label: getTabDisplayName(entry.tab),
+				tabId: entry.tab.id,
+				closedAt: entry.closedAt,
+				...(entry.tab.agentSessionId ? { agentSessionId: entry.tab.agentSessionId } : {}),
+			})),
+		};
+	}
+
+	/**
+	 * Reopen an archived tab: the archive loses the entry only once the tab is back in the record
+	 * (`after`, so a failed write leaves it archived, never lost), and a conversation
+	 * that already has a tab is answered with that tab, its entry dropped, as the desktop does.
+	 */
+	function reopenClosedTab(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>> {
+		const method: ClientMethod = 'tabs.reopen';
+		return run(method, async () => {
+			const agent = findAgent(agentId);
+			if (!agent) return noAgent(method, agentId);
+			const taken = await takeClosedTab(paths.syncDir, agentId, (archive) =>
+				target.tabId
+					? archive.findIndex((entry) => entry.tab.id === target.tabId)
+					: (target.index ?? 0)
+			);
+			if (!taken) {
+				return failure(method, 'not-found', 'There is no closed tab to reopen.');
+			}
+			const outcome = reopenTabRecord(agent, taken.closed, ctx);
+			const value = {
+				tabId: outcome.tabId,
+				...(outcome.wasDuplicate ? { wasDuplicate: true } : {}),
+			};
+			if (outcome.wasDuplicate) {
+				return { ok: true, plan: { value, after: taken.commit, events: [] } };
+			}
+			const tab = outcome.agent.aiTabs?.find((candidate) => candidate.id === outcome.tabId);
+			return {
+				ok: true,
+				plan: {
+					value,
+					after: taken.commit,
+					sessions: withAgents(new Map([[agentId, outcome.agent]])),
+					events: [
+						...(tab ? [{ type: 'tab.added' as const, agentId, tab: projectTab(tab) }] : []),
+						{ type: 'agent.updated', agent: project(outcome.agent) },
+					],
+				},
+			};
+		});
+	}
+
 	return {
 		load,
+		listClosedTabs,
+		reopenClosedTab,
 		listAgents: () => agents().map(project),
 		getAgent: (agentId) => {
 			const agent = findAgent(agentId);

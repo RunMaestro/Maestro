@@ -21,6 +21,7 @@ import {
 	parseWireTranscript,
 } from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
+import { parseClosedTabCommandRequest } from '../../closedTabCommands';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
 	AgentCreateInput,
@@ -1028,6 +1029,37 @@ export function createRequestHandler(
 					error: errorText(result),
 					...(stopped ? { canceled: true } : {}),
 				};
+			}
+
+			// Cmd+Shift+T and Quick Chat on an agent this host runs, from another machine.
+			case 'closed_tab_command': {
+				const parsed = parseClosedTabCommandRequest(message);
+				if (!parsed.ok) return refusal('closed_tab_command_result', parsed.error);
+				const { request } = parsed;
+				if (request.action === 'list') {
+					if (!client.tabs.closed) {
+						return refusal('closed_tab_command_result', 'This host keeps no closed tabs.');
+					}
+					return outcome(
+						'closed_tab_command_result',
+						await client.tabs.closed(request.sessionId),
+						(closedTabs) => ({ closedTabs })
+					);
+				}
+				if (!client.tabs.reopen) {
+					return refusal('closed_tab_command_result', 'This host cannot reopen a closed tab.');
+				}
+				return outcome(
+					'closed_tab_command_result',
+					await client.tabs.reopen(request.sessionId, {
+						...(request.tabId ? { tabId: request.tabId } : { index: request.index ?? 0 }),
+					}),
+					(reopened) => ({
+						tabId: reopened.tabId,
+						tabType: 'ai',
+						...(reopened.wasDuplicate ? { wasDuplicate: true } : {}),
+					})
+				);
 			}
 
 			// Stop on an asker on another machine: its consults here end as stopped ones.

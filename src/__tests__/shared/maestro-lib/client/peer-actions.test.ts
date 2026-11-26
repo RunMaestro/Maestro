@@ -398,6 +398,42 @@ describe('runPeerAgentAction', () => {
 		if (!stopped.ok) expect(stopped.error.code).toBe('unsupported');
 	});
 
+	it('reads the host closed-tab stack bounded, and reopens one there (G5)', async () => {
+		const { client, asClient } = fakeClient();
+		const tabs = client.tabs as unknown as Record<string, unknown>;
+		tabs.closed = vi.fn(async () =>
+			ok([
+				{ index: 7, type: 'ai', label: 'Tax', tabId: 'h-tax', closedAt: 5, agentSessionId: 's1' },
+				{ type: 'bogus', tabId: 'x' },
+			])
+		);
+		tabs.reopen = vi.fn(async () => ok({ tabId: 'h-tax' }));
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'closed-tabs' })).toEqual(
+			ok({
+				kind: 'closed-tabs',
+				closedTabs: [
+					{ index: 0, type: 'ai', label: 'Tax', tabId: 'h-tax', closedAt: 5, agentSessionId: 's1' },
+				],
+			})
+		);
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'reopen-tab', tabId: 'h-tax' })
+		).toEqual(ok({ kind: 'reopen-tab', tabId: 'h-tax' }));
+		expect(tabs.reopen).toHaveBeenCalledWith('a1', { tabId: 'h-tax' });
+		expect(parsePeerAgentAction({ kind: 'reopen-tab' })).toEqual({ kind: 'reopen-tab', index: 0 });
+		expect(() => parsePeerAgentAction({ kind: 'reopen-tab', index: -1 })).toThrow();
+		expect(parsePeerAgentAction({ kind: 'closed-tabs', extra: 1 })).toEqual({
+			kind: 'closed-tabs',
+		});
+	});
+
+	it('answers unsupported for closed tabs on a host client that keeps none', async () => {
+		const { asClient } = fakeClient();
+		const read = await runPeerAgentAction(asClient, agent, { kind: 'closed-tabs' });
+		expect(read.ok).toBe(false);
+		if (!read.ok) expect(read.error.code).toBe('unsupported');
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };

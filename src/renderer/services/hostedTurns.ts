@@ -48,6 +48,7 @@ import {
 	closeMirrorTab,
 	interruptMirroredAgent,
 	renameMirrorTab,
+	reopenMirrorClosedTab,
 	sendToMirroredTab,
 	starMirrorTab,
 } from './peerMirror';
@@ -195,6 +196,26 @@ export async function openHostedTab(
 	openedHostTabs.add(hostTabKey(target, result.tabId));
 	focusHostTab(session.id, result.tabId, placement);
 	return result.tabId;
+}
+
+/**
+ * Reopen a closed tab of a hosted agent on its host (Cmd+Shift+T, Quick Chat), as a local agent
+ * reopens one here: the conversation continues on the host. The newest, or the one closed as
+ * `tabId`. It shows here at once and the host's update fills it; `placement.background` keeps the
+ * view where it is. The tab open now, or null when the host refused (a red toast).
+ */
+export async function reopenHostedClosedTab(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	target: { index?: number; tabId?: string },
+	placement?: HostedTabPlacement
+): Promise<{ tabId: string; wasDuplicate?: boolean } | null> {
+	const host = hostedTargetOf(session);
+	if (!host) return null;
+	const reopened = await reopenMirrorClosedTab(host.peerId, host.agentId, target);
+	if (!reopened) return null;
+	openedHostTabs.add(hostTabKey(host, reopened.tabId));
+	focusHostTab(session.id, reopened.tabId, placement);
+	return reopened;
 }
 
 /**

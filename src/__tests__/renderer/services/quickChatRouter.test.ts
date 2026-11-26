@@ -193,27 +193,94 @@ describe('routeQuickChatMessage', () => {
 		);
 	});
 
+	// G5: a hosted agent's closed conversation is offered from its host's closed-tab stack (with the
+	// host's History describing it) and reopens on the host, which continues it, as a local or SSH
+	// agent's is offered from its History and reopens here.
 	it.each(AGENT_MODES)(
-		'%s: offers a closed conversation only where the machine that runs the turns can continue it',
+		'%s: offers a closed conversation and reopens it where the machine that runs the turns can continue it',
 		async (mode) => {
 			useSettingsStore.setState({ federationHostedAgents: true });
 			history([entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })]);
-			const session = agentWith([buildTab()], agentModeFields(mode));
-			const routed = await routeQuickChatMessage(session, 'home office deduction limits?', noChat);
-			const reopened = await reopenClosedConversation('agent', {
-				agentSessionId: 's-tax',
-				name: 'Tax',
-			});
-			if (mode === 'hosted') {
-				// The host keeps its own closed tabs; one reopened here is a tab it does not have.
-				expect(routed).toEqual({ kind: 'new' });
-				expect(reopened).toBeNull();
-				expect(getAllPaginated).not.toHaveBeenCalled();
-			} else {
-				expect(routed).toEqual({ kind: 'closed', agentSessionId: 's-tax', name: 'Tax' });
+			vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
+				messages: [
+					{ type: 'user', content: 'deduction?', timestamp: '2026-10-01T00:00:00Z', uuid: 'u1' },
+				],
+				total: 1,
+				hasMore: false,
+			} as never);
+			const act = vi.fn(async (_peer: string, _agent: string, action: { kind: string }) =>
+				action.kind === 'closed-tabs'
+					? {
+							ok: true,
+							result: {
+								kind: 'closed-tabs',
+								closedTabs: [
+									{
+										index: 0,
+										type: 'ai',
+										label: 'Tax',
+										tabId: 'host-tax',
+										closedAt: Date.now(),
+										agentSessionId: 's-tax',
+									},
+								],
+							},
+						}
+					: { ok: true, result: { kind: 'reopen-tab', tabId: 'host-tax' } }
+			);
+			const historyPage = vi.fn(async () => ({
+				entries: [entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })],
+				hasMore: false,
+				total: 1,
+			}));
+			(window.maestro as unknown as { federation: unknown }).federation = { act, historyPage };
+			try {
+				const session = agentWith([buildTab()], agentModeFields(mode));
+				const routed = await routeQuickChatMessage(
+					session,
+					'home office deduction limits?',
+					noChat
+				);
+				expect(routed).toMatchObject({ kind: 'closed', agentSessionId: 's-tax', name: 'Tax' });
+				const reopened = await reopenClosedConversation('agent', routed as never);
+				const reopenedTab = useSessionStore
+					.getState()
+					.sessions[0].aiTabs.find((candidate) => candidate.id === reopened);
+				expect(reopenedTab).toBeDefined();
+				if (mode === 'hosted') {
+					// The host's stack and History, and the reopen on the host: none of this machine's.
+					expect(getAllPaginated).not.toHaveBeenCalled();
+					expect(act).toHaveBeenCalledWith('box', 'h1', { kind: 'reopen-tab', tabId: 'host-tax' });
+					expect(reopened).toBe('host-tax');
+				} else {
+					expect(act).not.toHaveBeenCalled();
+					expect(reopenedTab?.agentSessionId).toBe('s-tax');
+				}
+				// The view did not move, in any mode.
+				expect(useSessionStore.getState().sessions[0].activeTabId).toBe('build');
+			} finally {
+				delete (window.maestro as unknown as { federation?: unknown }).federation;
 			}
 		}
 	);
+
+	it('offers a hosted agent no closed conversation its host cannot list, never this machine', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		history([entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })]);
+		const act = vi.fn(async () => ({ ok: false, error: 'Not connected to peer "box".' }));
+		(window.maestro as unknown as { federation: unknown }).federation = { act };
+		try {
+			const session = agentWith([buildTab()], agentModeFields('hosted'));
+			expect(await routeQuickChatMessage(session, 'home office deduction limits?', noChat)).toEqual(
+				{
+					kind: 'new',
+				}
+			);
+			expect(getAllPaginated).not.toHaveBeenCalled();
+		} finally {
+			delete (window.maestro as unknown as { federation?: unknown }).federation;
+		}
+	});
 
 	it('reaches a conversation through its tab when it still has one, never beside it', async () => {
 		history([entry('s-amazon', 'Tracked the amazon package to the porch')]);

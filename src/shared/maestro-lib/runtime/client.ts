@@ -211,6 +211,10 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			rename: (agentId, tabId, name) =>
 				guarded('tabs.rename', () => repository.renameTab(agentId, tabId, name)),
 			close: (agentId, tabId) => guarded('tabs.close', () => repository.closeTab(agentId, tabId)),
+			closed: (agentId) => guarded('tabs.closed', () => repository.listClosedTabs(agentId)),
+			// A reopened tab is a record write, which a fenced runtime could not keep.
+			reopen: (agentId, target) =>
+				Promise.resolve(gate('tabs.reopen', true) ?? repository.reopenClosedTab(agentId, target)),
 			star: (agentId, tabId, starred) =>
 				guarded('tabs.star', () => repository.starTab(agentId, tabId, starred)),
 			update: (agentId, tabId, patch) =>

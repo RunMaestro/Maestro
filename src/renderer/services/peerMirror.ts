@@ -22,6 +22,7 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { ClosedTabSummary } from '../../shared/closedTabCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -88,6 +89,8 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'side-question': 'Could not ask the side question',
 	consult: 'Could not consult the agent',
 	'consult-cancel': 'Could not stop the consult',
+	'closed-tabs': 'Could not read the closed tabs',
+	'reopen-tab': 'Could not reopen the tab',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 	'auto-run': 'Auto Run did not start',
@@ -423,6 +426,34 @@ export async function cancelMirrorConsult(
 		message: `${answer?.error ?? 'Federation is not available in this window.'} The host may still finish the consult.`,
 	});
 	return false;
+}
+
+/**
+ * The closed-tab stack of a mirrored agent, read from its host, newest first and bounded. Empty
+ * with no toast when the host cannot say (down, or an older host): a Quick Chat route then simply
+ * has no closed conversation to offer, as a local agent with none.
+ */
+export async function readMirrorClosedTabs(
+	peerId: string,
+	agentId: string
+): Promise<ClosedTabSummary[]> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'closed-tabs' });
+	return answer?.ok && answer.result.kind === 'closed-tabs' ? answer.result.closedTabs : [];
+}
+
+/**
+ * Reopen a closed tab of a mirrored agent on its host, in the background: the newest, or the one
+ * closed as `tabId`. The tab open there now, or null after a red toast when the host refused.
+ */
+export async function reopenMirrorClosedTab(
+	peerId: string,
+	agentId: string,
+	target: { index?: number; tabId?: string }
+): Promise<{ tabId: string; wasDuplicate?: boolean } | null> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'reopen-tab', ...target });
+	return result?.kind === 'reopen-tab'
+		? { tabId: result.tabId, ...(result.wasDuplicate ? { wasDuplicate: true } : {}) }
+		: null;
 }
 
 /** Close a mirrored tab on its host: it moves to the host's closed-tab history. */

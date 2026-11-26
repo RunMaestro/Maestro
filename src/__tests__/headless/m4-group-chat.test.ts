@@ -337,4 +337,43 @@ describe('M4 end-to-end: headless group chat and consults', () => {
 		expect(consultTab.logs.map((log: { source: string }) => log.source)).toEqual(['user', 'ai']);
 		expect(consultTab.logs[1].text).toMatch(/was stopped/);
 	});
+
+	// G5: a tab closed on a headless host comes back there, with its conversation, when a peer
+	// reopens it (Cmd+Shift+T or Quick Chat on the hosted agent), and is never opened twice.
+	it('reopens an archived tab with its conversation, in the background, and only once', async () => {
+		const runtime = await startRuntime([
+			seedAgent('docs', 'Docs', {
+				aiTabs: [
+					{ id: 't-main', agentSessionId: null, name: null, logs: [] },
+					{ id: 't-tax', agentSessionId: 's-tax', name: 'Tax', logs: [] },
+				],
+				activeTabId: 't-main',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 't-main' },
+					{ type: 'ai', id: 't-tax' },
+				],
+			}),
+		]);
+		try {
+			value(await runtime.tabs.close('docs', 't-tax'));
+			const closed = value(await runtime.tabs.closed!('docs'));
+			expect(closed).toMatchObject([
+				{ index: 0, type: 'ai', label: 'Tax', tabId: 't-tax', agentSessionId: 's-tax' },
+			]);
+			expect(value(await runtime.tabs.reopen!('docs', { tabId: 't-tax' }))).toEqual({
+				tabId: 't-tax',
+			});
+			const tabs = value(await runtime.tabs.list('docs'));
+			expect(tabs.map((tab) => tab.id)).toEqual(['t-main', 't-tax']);
+			expect(tabs[1].agentSessionId).toBe('s-tax');
+			expect(value(await runtime.tabs.closed!('docs'))).toEqual([]);
+			const again = await runtime.tabs.reopen!('docs', { tabId: 't-tax' });
+			expect(again.ok).toBe(false);
+		} finally {
+			await runtime.connection.close();
+		}
+		const stored = JSON.parse(fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf8'));
+		// The view did not move: the reopen is in the background.
+		expect(stored.sessions[0].activeTabId).toBe('t-main');
+	});
 });
