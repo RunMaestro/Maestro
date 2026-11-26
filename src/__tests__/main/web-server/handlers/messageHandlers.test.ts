@@ -691,6 +691,46 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.error).toContain('not found');
 		});
 
+		// G4: a wire hand-off may run writable (`crossAgentHandoffsWritable`, default on), so it must
+		// never be open to a client that may not send a turn. Today no client kind is refused a send
+		// (Web Login accounts are equal operators, the CLI and a Federation peer present the CLI
+		// secret), so every kind may do both. Pinned per kind: a gate added to `send_command` for one
+		// kind fails here until the wire hand-off carries the same gate.
+		describe.each([
+			['a web-desktop or phone client (URL token only)', {}],
+			[
+				'a Web Login account',
+				{ user: { id: 'u1', username: 'ann', displayName: 'Ann' }, sessionId: 's1' },
+			],
+			['maestro-cli or a Federation peer (CLI secret)', { cli: true, cliAuthenticated: true }],
+		] as Array<[string, Partial<WebClient>]>)('as %s', (_kind, fields) => {
+			it('may hand off on the wire only as far as it may send a turn', async () => {
+				const kindClient = { ...createMockClient('kind-client'), ...fields };
+				handler.handleMessage(kindClient, {
+					type: 'send_command',
+					sessionId: 'session-1',
+					command: 'do it',
+					inputMode: 'ai',
+				});
+				handler.handleMessage(kindClient, {
+					type: 'cross_agent_ask',
+					sessionId: 'session-1',
+					question: 'then pass it on',
+					handoffAnswer: 'the plan',
+				});
+
+				await vi.waitFor(() => {
+					expect(callbacks.consultAgent).toHaveBeenCalled();
+				});
+				const handedOff = (callbacks.consultAgent as any).mock.calls.some(
+					([params]: [{ handoffAnswer?: string }]) => params.handoffAnswer === 'the plan'
+				);
+				const sent = (callbacks.executeCommand as any).mock.calls.length > 0;
+				expect(handedOff).toBe(true);
+				expect(sent).toBe(handedOff);
+			});
+		});
+
 		it('clamps an absurd timeout instead of holding a process for a day', async () => {
 			handler.handleMessage(client, {
 				type: 'cross_agent_ask',
