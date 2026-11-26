@@ -103,6 +103,36 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 		});
 	});
 
+	it('keeps a proven start beside an exit it cannot prove: the start is named, then the gap is marked (CodeRabbit on #2154)', async () => {
+		broadcastDesktopQueueChanges(
+			server(1),
+			[
+				{
+					id: 'a1',
+					executionQueue: [message('q1'), { ...message('cmd'), type: 'command' as never }],
+				},
+			],
+			[
+				{
+					id: 'a1',
+					executionQueue: [],
+					aiTabs: [{ logs: [{ source: 'user', queuedItemId: 'q1' }] }],
+				},
+			]
+		);
+		await settled();
+		expect(broadcastToAll.mock.calls.map(([frame]) => frame)).toEqual([
+			{
+				type: 'queue_changed',
+				sessionId: 'a1',
+				items: [],
+				namesExits: true,
+				exit: { itemId: 'q1', exit: 'started' },
+			},
+			{ type: 'queue_changed', sessionId: 'a1', items: [] },
+		]);
+	});
+
 	it('sends nothing with no client attached, or no queue changed', async () => {
 		broadcastDesktopQueueChanges(
 			server(0),
