@@ -254,6 +254,8 @@ describe('hostedTurns', () => {
 		const kinds = act$.mock.calls.map((call) => call[2]);
 		expect(kinds).toEqual([
 			{ kind: 'new-tab' },
+			// The new tab holds the defaults a local new tab starts with.
+			{ kind: 'update-tab', tabId: 't2', patch: { saveToHistory: true, thinking: 'off' } },
 			{ kind: 'close-tab', tabId: 't1' },
 			{ kind: 'star-tab', tabId: 't1', starred: true },
 			{ kind: 'interrupt', tabId: 't1' },
@@ -266,6 +268,7 @@ describe('hostedTurns', () => {
 		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
 		act$
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'update-tab', tabId: 't-fork' } })
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-fork' } })
 			.mockResolvedValueOnce({
 				ok: true,
@@ -284,12 +287,13 @@ describe('hostedTurns', () => {
 		expect(tabId).toBe('t-fork');
 		expect(act$.mock.calls.map((call) => call[2])).toEqual([
 			{ kind: 'new-tab' },
+			{ kind: 'update-tab', tabId: 't-fork', patch: { saveToHistory: true, thinking: 'off' } },
 			{ kind: 'rename-tab', tabId: 't-fork', name: 'Forked: Docs' },
 			{
 				kind: 'send',
 				tabId: 't-fork',
 				text: '# Forked Conversation',
-				overrides: { readOnly: true },
+				overrides: { readOnly: true, saveToHistory: true },
 			},
 		]);
 		const shown = useSessionStore.getState().sessions[0];
@@ -328,6 +332,7 @@ describe('hostedTurns', () => {
 		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
 		act$
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-compact' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'update-tab', tabId: 't-compact' } })
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-compact' } });
 		const summary = { id: 's1', timestamp: 1, source: 'ai' as const, text: 'Summary' };
 		let tabId: string | null = null;
@@ -342,6 +347,7 @@ describe('hostedTurns', () => {
 		expect(tabId).toBe('t-compact');
 		expect(act$.mock.calls.map((call) => call[2])).toEqual([
 			{ kind: 'new-tab' },
+			{ kind: 'update-tab', tabId: 't-compact', patch: { saveToHistory: true, thinking: 'off' } },
 			{ kind: 'rename-tab', tabId: 't-compact', name: 'Docs Compacted' },
 		]);
 		const shown = useSessionStore.getState().sessions[0];
@@ -356,6 +362,7 @@ describe('hostedTurns', () => {
 		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
 		act$
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'update-tab', tabId: 't-fork' } })
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-fork' } })
 			.mockResolvedValueOnce({ ok: false, error: 'Not connected to peer "box".' });
 		let tabId: string | null = 'unset';
@@ -378,6 +385,7 @@ describe('hostedTurns', () => {
 		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
 		act$
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'update-tab', tabId: 't-fork' } })
 			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-fork' } })
 			.mockImplementationOnce(async () => {
 				// The person types in the new tab before the host answers.

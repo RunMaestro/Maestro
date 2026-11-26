@@ -13,7 +13,7 @@ import {
 	type LogEntryRecord,
 	type LogEntrySource,
 } from '../../shared/maestro-lib/store/transcript';
-import type { AgentError } from '../../shared/types';
+import { asThinkingMode, type AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem } from '../types';
 
 const KNOWN_SOURCES = new Set<string>(LOG_ENTRY_SOURCES);
@@ -86,8 +86,13 @@ export function mirrorLogEntry(record: LogEntryRecord): LogEntry {
 	return entry;
 }
 
-/** A host tab as the tab strip draws it: name, star, and busy state; no transcript, no draft. */
+/**
+ * A host tab as the tab strip and composer draw it: name, star, busy state, and the composer
+ * settings the host's tab holds (Save to History, thinking, read-only, model, effort), so its pills
+ * show what the host will run; no transcript, no draft.
+ */
 export function mirrorTab(record: AITabRecord): AITab {
+	const thinking = asThinkingMode(record.showThinking);
 	return {
 		id: record.id,
 		agentSessionId: record.agentSessionId ?? null,
@@ -103,6 +108,11 @@ export function mirrorTab(record: AITabRecord): AITab {
 			? { thinkingStartTime: record.thinkingStartTime }
 			: {}),
 		...(record.hidden ? { hidden: true } : {}),
+		...(typeof record.saveToHistory === 'boolean' ? { saveToHistory: record.saveToHistory } : {}),
+		...(thinking ? { showThinking: thinking } : {}),
+		...(typeof record.readOnlyMode === 'boolean' ? { readOnlyMode: record.readOnlyMode } : {}),
+		...(record.customModel ? { customModel: record.customModel } : {}),
+		...(record.customEffort ? { customEffort: record.customEffort } : {}),
 	};
 }
 

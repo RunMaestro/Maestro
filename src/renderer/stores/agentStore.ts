@@ -373,9 +373,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// Clear the error state
 		get().clearAgentError(sessionId);
 
-		// A hosted agent's tabs live on its host: the host opens the new tab, as New Tab does.
+		// A hosted agent's tabs live on its host: the host opens the new tab, as New Tab does, with
+		// the same Save to History and thinking a local new tab gets here.
 		if (hostedTargetOf(session)) {
-			void openHostedTab(session);
+			void openHostedTab(session, {
+				fields: {
+					...(options?.saveToHistory !== undefined ? { saveToHistory: options.saveToHistory } : {}),
+					...(options?.showThinking !== undefined ? { showThinking: options.showThinking } : {}),
+				},
+			});
 			return;
 		}
 

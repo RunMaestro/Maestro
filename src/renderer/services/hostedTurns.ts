@@ -22,6 +22,7 @@
 
 import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
+import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
 import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
@@ -183,18 +184,31 @@ function focusHostTab(sessionId: string, tabId: string, placement: HostedTabPlac
 
 /**
  * Open a tab on the host and show it, at `placement` when given. Answers the new tab's id, or null
- * when the host refused.
+ * when the host refused. The tab starts with Save to History and thinking as `createTab()` starts
+ * a local one: what `placement.fields` sets (New Tab passes the user's defaults, a fork its source
+ * tab's), else `DEFAULT_TAB_DEFAULTS`. The host's tab is given the same, so the pills show what the
+ * host will do.
  */
 export async function openHostedTab(
 	session: Pick<Session, 'id' | 'liftedTo'>,
-	placement?: HostedTabPlacement
+	placement: HostedTabPlacement = {}
 ): Promise<string | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
 	const result = await actOnMirroredAgent(target.peerId, target.agentId, { kind: 'new-tab' });
 	if (result?.kind !== 'new-tab') return null;
 	openedHostTabs.add(hostTabKey(target, result.tabId));
-	focusHostTab(session.id, result.tabId, placement);
+	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
+	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
+	focusHostTab(session.id, result.tabId, {
+		...placement,
+		fields: { ...placement.fields, saveToHistory, showThinking },
+	});
+	void actOnMirroredAgent(target.peerId, target.agentId, {
+		kind: 'update-tab',
+		tabId: result.tabId,
+		patch: { saveToHistory, thinking: showThinking },
+	});
 	return result.tabId;
 }
 

@@ -600,7 +600,30 @@ describe('agentStore', () => {
 			expect(updated.agentError).toBeUndefined();
 			// No local-only tab: the host makes it, and the host sync draws it here.
 			expect(updated.aiTabs).toHaveLength(session.aiTabs.length);
-			expect(openHostedTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }));
+			expect(openHostedTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), {
+				fields: {},
+			});
+		});
+
+		it("gives a hosted agent's new tab the Save to History and thinking a local one gets", async () => {
+			const { hostedTargetOf, openHostedTab } =
+				await import('../../../renderer/services/hostedTurns');
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: { type: 'agent_crashed', message: 'crash' } as any,
+				liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+			});
+			useSessionStore.getState().setSessions([session]);
+			vi.mocked(hostedTargetOf).mockReturnValueOnce({ peerId: 'box', agentId: 'h1' });
+
+			useAgentStore
+				.getState()
+				.startNewSessionAfterError('session-1', { saveToHistory: false, showThinking: 'on' });
+
+			expect(openHostedTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), {
+				fields: { saveToHistory: false, showThinking: 'on' },
+			});
 		});
 
 		it('does nothing if session not found', () => {
