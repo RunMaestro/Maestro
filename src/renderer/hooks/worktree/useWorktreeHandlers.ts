@@ -554,6 +554,14 @@ async function scanConfiguredWorktrees(
 
 const EMPTY_RIGHT_PANEL_REF: React.RefObject<RightPanelHandle | null> = { current: null };
 
+/**
+ * How often a watched Worktree Directory on an SSH remote is rescanned. A local
+ * directory has a file watcher; a remote one has none, so this bounded poll
+ * (one registry read per remote parent, skipped while the window is hidden or a
+ * scan is still running) gives it the same "new worktree appears" result.
+ */
+export const REMOTE_WORKTREE_POLL_MS = 30_000;
+
 // ============================================================================
 // Hook
 // ============================================================================
@@ -1188,13 +1196,18 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	// Shared scan logic: discovers new worktrees in configured basePath directories,
 	// adds them as child sessions, and removes child sessions whose worktree directories
 	// no longer exist on disk. Used by startup scan, visibility-change rescan, and manual refresh.
-	const scanWorktreeConfigs = useCallback(async () => {
+	// `onlyParentIds` narrows the scan to those parents (the remote poll); with
+	// none, every configured parent is scanned.
+	const scanWorktreeConfigs = useCallback(async (onlyParentIds?: ReadonlySet<string>) => {
 		const currentSessions = useSessionStore.getState().sessions;
 		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
 			useSettingsStore.getState();
 
 		const sessionsWithWorktreeConfig = currentSessions.filter(
-			(s) => s.worktreeConfig?.basePath && !s.parentSessionId
+			(s) =>
+				s.worktreeConfig?.basePath &&
+				!s.parentSessionId &&
+				(!onlyParentIds || onlyParentIds.has(s.id))
 		);
 
 		if (sessionsWithWorktreeConfig.length === 0) return;
@@ -1520,7 +1533,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	useEffect(() => {
 		if (!isLifecycleOwner || !sessionsLoaded) return;
 
-		const timer = setTimeout(scanWorktreeConfigs, 500);
+		const timer = setTimeout(() => void scanWorktreeConfigs(), 500);
 		return () => clearTimeout(timer);
 	}, [isLifecycleOwner, sessionsLoaded, scanWorktreeConfigs]);
 
@@ -1745,7 +1758,28 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 		document.addEventListener('visibilitychange', handleVisibilityChange);
 
+		// A Worktree Directory on an SSH remote has no file watcher (the main
+		// process answers `isRemote`), so it is polled instead: a worktree created
+		// there appears within one interval, as a local one appears from its
+		// watcher, without waiting for the user to refocus the app. Hosted agents
+		// keep their SSH fields, so they are polled the same way.
+		const remoteWatchedIds = new Set(
+			watchableSessions.filter((s) => getSshRemoteId(s)).map((s) => s.id)
+		);
+		let remotePollInFlight = false;
+		const remotePoll =
+			remoteWatchedIds.size > 0
+				? setInterval(() => {
+						if (document.hidden || remotePollInFlight) return;
+						remotePollInFlight = true;
+						void scanWorktreeConfigs(remoteWatchedIds).finally(() => {
+							remotePollInFlight = false;
+						});
+					}, REMOTE_WORKTREE_POLL_MS)
+				: undefined;
+
 		return () => {
+			if (remotePoll) clearInterval(remotePoll);
 			cleanupListener();
 			cleanupRemovalListener();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);

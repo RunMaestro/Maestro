@@ -327,9 +327,6 @@ export const QueuedItemsList = memo(
 				<div className={`mx-6 ${QUEUE_PROSE_SCOPE}`}>
 					<style>{proseStyles}</style>
 					{filteredQueue.map((item, index) => {
-						// A hosted agent's host runs its own queue: its cards offer Remove and Hold /
-						// Resume, which act on the host, and nothing that would only change this copy.
-						const hostOnly = item.hostQueued === true;
 						// Ask for eligibility whenever a handler is wired and the item is
 						// not already flagged to run in parallel. `forcedParallelEnabled` is
 						// deliberately NOT a gate here: it is one of the inputs the shared
@@ -337,7 +334,7 @@ export const QueuedItemsList = memo(
 						// case where force send is allowed without it - jumping the queue
 						// order, or releasing a held item on an otherwise idle agent.
 						const forceSendContext =
-							onForceSendQueuedItem && getForceSendContext && !item.forceParallel && !hostOnly
+							onForceSendQueuedItem && getForceSendContext && !item.forceParallel
 								? getForceSendContext(item)
 								: null;
 						// Same rule as the Execution Queue modal, deliberately - see
@@ -354,7 +351,7 @@ export const QueuedItemsList = memo(
 						// executionQueue.test.ts). Commands are excluded - a shell command is
 						// not something an agent can be steered with.
 						const steerContext =
-							onSteerQueuedItem && getSteerContext && item.type !== 'command' && !hostOnly
+							onSteerQueuedItem && getSteerContext && item.type !== 'command'
 								? getSteerContext(item)
 								: null;
 						const showSteerButton = shouldOfferSteer(steerContext);
@@ -365,7 +362,6 @@ export const QueuedItemsList = memo(
 						// list can interleave tabs, and the merge target is always the
 						// previous item for the SAME tab.
 						const canMergeUp =
-							!hostOnly &&
 							!!onMergeQueuedItem &&
 							index > 0 &&
 							findQueuedMergeTarget(executionQueue, item.id)?.id === filteredQueue[index - 1].id;
@@ -384,7 +380,7 @@ export const QueuedItemsList = memo(
 									item={item}
 									index={index}
 									theme={theme}
-									canDrag={canDrag && !hostOnly}
+									canDrag={canDrag}
 									isDragging={dragState?.key === INLINE_QUEUE_KEY && dragState?.fromIndex === index}
 									isAnyDragging={isAnyDragging}
 									onDragStart={() => startDrag(INLINE_QUEUE_KEY, index)}
@@ -397,7 +393,7 @@ export const QueuedItemsList = memo(
 									onCopy={() => handleCopy(item)}
 									renderMarkdown={!chatRawTextMode}
 									onEdit={
-										onEditQueuedItem && item.type !== 'command' && !hostOnly
+										onEditQueuedItem && item.type !== 'command'
 											? () => setEditItemId(item.id)
 											: undefined
 									}

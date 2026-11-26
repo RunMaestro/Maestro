@@ -38,7 +38,11 @@ vi.mock('../../../renderer/utils/sentry', () => ({
 	captureMessage: vi.fn(),
 }));
 
-import { useWorktreeHandlers } from '../../../renderer/hooks/worktree/useWorktreeHandlers';
+import {
+	useWorktreeHandlers,
+	REMOTE_WORKTREE_POLL_MS,
+} from '../../../renderer/hooks/worktree/useWorktreeHandlers';
+import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -198,8 +202,16 @@ async function runConfiguredScan(
 			Object.defineProperty(document, 'hidden', { value: false, writable: true });
 			document.dispatchEvent(new Event('visibilitychange'));
 		}
-		await vi.runAllTimersAsync();
+		await flushTimersBeforeRemotePoll();
 	});
+}
+
+/**
+ * Run every timer short of the remote worktree poll. A watched SSH parent keeps
+ * an interval running, which `runAllTimersAsync` would treat as an endless loop.
+ */
+async function flushTimersBeforeRemotePoll(): Promise<void> {
+	await vi.advanceTimersByTimeAsync(REMOTE_WORKTREE_POLL_MS - 1);
 }
 
 // ============================================================================
@@ -3104,6 +3116,75 @@ describe('Effects', () => {
 	});
 
 	describe('File watcher effect', () => {
+		// A local Worktree Directory reports a new worktree through its file
+		// watcher; a remote one (SSH or hosted) has none and is polled. The user
+		// sees the same thing in every mode: the worktree appears without a refocus.
+		describe.each(AGENT_MODES)('a new worktree in a %s agent', (mode) => {
+			const newPath = '/projects/worktrees/feature-new';
+			const parent = () =>
+				({
+					...mockParentSession,
+					worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+					...agentModeFields(mode),
+				}) as any;
+
+			beforeEach(() => {
+				vi.useFakeTimers();
+				Object.defineProperty(document, 'hidden', {
+					value: false,
+					writable: true,
+					configurable: true,
+				});
+				mockGit.listWorktrees.mockResolvedValue({
+					resolvedCwd: '/projects/myapp',
+					resolvedBasePath: '/projects/worktrees',
+					worktrees: [
+						registryEntry('/projects/myapp', 'main'),
+						registryEntry(newPath, 'feature-new'),
+					],
+				});
+				useSessionStore.setState({
+					sessions: [parent()],
+					activeSessionId: 'parent-1',
+					sessionsLoaded: false,
+				} as any);
+			});
+
+			const arrive = async () => {
+				const discovered = mockGit.onWorktreeDiscovered.mock.calls[0]?.[0];
+				await act(async () => {
+					// The watcher's event (a remote parent ignores it, as it must).
+					await discovered?.({
+						sessionId: 'parent-1',
+						worktree: { path: newPath, name: 'feature-new', branch: 'feature-new' },
+					});
+					await vi.advanceTimersByTimeAsync(REMOTE_WORKTREE_POLL_MS + 1);
+				});
+			};
+
+			it('appears as a child agent within one interval, without a refocus', async () => {
+				renderHook(() => useWorktreeHandlers());
+				await arrive();
+				const children = useSessionStore
+					.getState()
+					.sessions.filter((s) => s.parentSessionId === 'parent-1');
+				expect(children.map((s) => [s.cwd, s.worktreeBranch])).toEqual([[newPath, 'feature-new']]);
+			});
+
+			it('does not poll while the window is hidden', async () => {
+				Object.defineProperty(document, 'hidden', {
+					value: true,
+					writable: true,
+					configurable: true,
+				});
+				renderHook(() => useWorktreeHandlers());
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(REMOTE_WORKTREE_POLL_MS * 3);
+				});
+				expect(mockGit.listWorktrees).not.toHaveBeenCalled();
+			});
+		});
+
 		it('starts watchers for sessions with watchEnabled', () => {
 			const parentWithWatch = {
 				...mockParentSession,
@@ -6923,7 +7004,7 @@ describe('Per-parent discovery with SSH reconciliation', () => {
 					Object.defineProperty(document, 'hidden', { value: false, writable: true });
 					document.dispatchEvent(new Event('visibilitychange'));
 				}
-				await vi.runAllTimersAsync();
+				await flushTimersBeforeRemotePoll();
 			});
 			// Check the selected entry point before a refresh could mask its failure.
 			expect(

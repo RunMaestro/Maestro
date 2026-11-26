@@ -2222,7 +2222,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					logger.debug(`[GroupChat:Debug] Emitted state change: agent-working`);
 				}
 				// Now emit the trigger - renderer will start the batch run
-				events.autoRunTriggered(groupChatId, participant.name, targetFilename);
+				events.autoRunTriggered(groupChatId, participant.name, targetFilename, matchingSession.id);
 				logger.debug(
 					`[GroupChat:Debug] Emitted autoRunTriggered for @${participant.name}${targetFilename ? `:${targetFilename}` : ''} in chat ${groupChatId}`
 				);
@@ -2443,6 +2443,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
 						appendSystemPrompt: await systemPrompts?.forParticipant(matchingSession),
 						isResume,
+						ownerAgentId: matchingSession?.id,
+						launchFeature: 'group-chat-participant',
 					});
 
 					logger.debug(
@@ -3075,6 +3077,8 @@ Review the agent responses above. Either:
 			maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
 			// A fresh session (no resume), so a non-native agent gets it embedded again.
 			appendSystemPrompt: await systemPrompts?.forParticipant(matchingSession),
+			ownerAgentId: matchingSession?.id,
+			launchFeature: 'group-chat-participant',
 		});
 
 		logger.debug(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);

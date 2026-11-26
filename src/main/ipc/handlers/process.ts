@@ -45,6 +45,8 @@ import {
 	liftedOwnerOfProcess,
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
+import { statelessHelperOfProcess } from '../../../shared/maestro-lib/agents/hosted-launch';
+import { installHostedLaunchGuard } from '../../utils/hosted-launch-guard';
 import {
 	initPermissionRelay,
 	resolvePermissionResponse,
@@ -214,6 +216,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		safeSend,
 	} = deps;
 
+	// The launches that skip process:spawn (group chat, consults, Cue, groomed one-shots) check a
+	// hosted agent against the same records this handler's backstop reads.
+	installHostedLaunchGuard({
+		sessions: () => deps.sessionsStore.get('sessions', []),
+		hostedEnabled: () => settingsStore.get(HOSTED_AGENTS_SETTING, false) === true,
+	});
+
 	// Wire the Claude Code permission relay: surface requests to the renderer
 	// and clean up per-spawn bindings when a process exits.
 	initPermissionRelay(getMainWindow, getProcessManager());
@@ -273,11 +282,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
 		// A lifted agent runs on its Federation host now. Its local copy keeps every tab, but no turn
-		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
+		// of it may start here: it would resume the provider session the host owns. Shell tabs stay,
+		// and so does a named stateless helper (`HOSTED_STATELESS_HELPERS`): it writes nothing into
+		// the agent, so it runs over the record's SSH remote exactly as it does for an SSH agent.
 		if (config.toolType !== 'terminal') {
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
 			const refusal =
 				lifted &&
+				!statelessHelperOfProcess(config.sessionId, lifted.id) &&
 				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true);
 			if (refusal) throw new Error(refusal);
 		}

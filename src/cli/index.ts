@@ -18,9 +18,12 @@ import { ask } from './commands/ask';
 import {
 	queueHold,
 	queueList,
+	queueEdit,
 	queueMerge,
+	queueMove,
 	queueRemove,
 	queueResume,
+	queueSendNow,
 	queueSteer,
 } from './commands/queue';
 import {
@@ -345,6 +348,7 @@ import {
 	statsPlanUsage,
 	statsQuery,
 	statsTokens,
+	statsProjectTokens,
 } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
@@ -977,6 +981,35 @@ queue
 	.action(queueMerge);
 
 queue
+	.command('edit <item-id>')
+	.description(
+		'Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('-t, --text <text>', 'The new message text (required)')
+	.option('--model <model>', 'Model the message runs with')
+	.option('--effort <effort>', 'Effort the message runs with')
+	.action(queueEdit);
+
+queue
+	.command('move <item-id>')
+	.description(
+		"Move a queued item to another place, like dragging its queued card. --to counts from 0 (the first item that waits); with --tab it counts only that tab's items, as the tab's queue list draws them."
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--to <position>', 'Where the item goes, 0 being the first (required)')
+	.option('--tab <tab-id>', "Count positions among this tab's items only")
+	.action(queueMove);
+
+queue
+	.command('send-now <item-id>')
+	.description(
+		"Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on."
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueSendNow);
+
+queue
 	.command('steer <item-id>')
 	.description(
 		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.'
@@ -1596,7 +1629,7 @@ program
 // complement `auto-run` (which launches) for full lifecycle control.
 program
 	.command('stop-auto-run')
-	.description('Stop the active Auto Run for an agent')
+	.description('Stop the active Auto Run for an agent (on a run already stopping, end it now)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => stopAutoRun(options.agent, options));
@@ -1617,7 +1650,7 @@ program
 
 program
 	.command('abort-auto-run')
-	.description('Abort an error-paused Auto Run')
+	.description('Abort an error-paused Auto Run (on a run already stopping, end it now)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => abortAutoRun(options.agent, options));
@@ -6456,6 +6489,23 @@ encoreCommand(program, 'stats-tokens', 'usageStats', encoreFlags)
 	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
 	.option('--json', 'Output the full token usage object as JSON')
 	.action(statsTokens);
+
+// Not gated on Usage & Stats: a host answers a peer's dashboard whatever this machine's own
+// dashboard setting is, and this reads exactly what it answers.
+program
+	.command('stats-project-tokens')
+	.description(
+		"Show the token usage this machine's host answers a peer for projects kept here (SSH and hosted agents)"
+	)
+	.requiredOption('--provider <id>', 'Provider id (claude-code, codex, ...)')
+	.requiredOption(
+		'--project <path>',
+		'Working directory on this machine (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the conversations and unreadable providers as JSON')
+	.action(statsProjectTokens);
 
 program
 	.command('stats-indexing')

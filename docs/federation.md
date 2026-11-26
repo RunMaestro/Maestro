@@ -109,7 +109,7 @@ An agent you moved back with **Move Back from Host** is never moved automaticall
 Whatever Maestro cannot do itself ends with the reason and the one thing you have to do, in four places:
 
 - **A toast**, when an agent moves and when something new needs you.
-- **The agent's badge.** The `SSH` badge turns red. Hover it for the reason and the fix.
+- **The agent's badge.** The `REMOTE` pill turns red. Hover it for the reason and the fix.
 - **Settings > SSH Hosts > Federation automation**, which lists every remote and agent with its state, and **Run Now**.
 - **`maestro-cli federation auto`**, the same list. It exits `1` when something needs you, so a script can check it.
 
@@ -202,7 +202,7 @@ The tabs and transcripts you see are the host's, copied into this machine's reco
 
 The Right Bar's History reads the host, where the agent's turns are recorded now. Files, Auto Run documents, the Memory Viewer, and Agent Sessions read the remote over SSH, as they did before the move.
 
-A send while the host is not connected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer. The Hosted badge turns red, and its hover card says why.
+A send while the host is not connected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer. The `HOSTED` pill turns red, and its hover card says why.
 
 Not yet routed to the host: running an Auto Run, and resuming a past session from Agent Sessions into a new tab. Both still act on this machine.
 
@@ -281,7 +281,7 @@ An SSH remote agent already runs its provider on the remote as the SSH user, so 
 - The host gets an agent with the same remote working directory, provider, model, effort, and arguments.
 - Every visible tab moves with its transcript and its provider session ID, so the next turn resumes the same conversation. Queued messages move too.
 - Non-secret custom env vars move. Secret ones stay on your laptop unless you choose to send them. The variable that selects the provider's config or session directory (such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`) always moves.
-- Your local agent keeps its tabs and transcripts but becomes a pointer. Its Left Bar row stays in its group with a `Hosted` badge, and clicking it opens the agent on its host, with the tabs it kept here listed after the host's. Sends to the local copy are refused. Its settings follow the host from then on (see [Settings of a hosted agent](#settings-of-a-hosted-agent)).
+- Your local agent keeps its tabs and transcripts but becomes a pointer. Its Left Bar row stays in its group with a `HOSTED` pill, and clicking it opens the agent on its host, with the tabs it kept here listed after the host's. Sends to the local copy are refused. Its settings follow the host from then on (see [Settings of a hosted agent](#settings-of-a-hosted-agent)).
 - Settings the import cannot carry (bookmark, token source, Codex transport, harness control mode) are sent right after it, so the hosted agent starts with all of them.
 
 From the desktop, right-click the agent in the Left Bar and choose **Move to Host**, or run it from the command palette. When the remote runs no host yet, it sets one up first and then continues. Either way it shows the plan (what moves and which env vars stay) before anything moves. From the CLI:
@@ -362,7 +362,7 @@ Run the host as the same user your SSH agents run as. The host then reads the sa
 - **No `@mention` of a mirrored agent** from a local composer. Use `maestro-cli ask peer:agent` instead.
 - **Auto Run and Cue status are not mirrored.** They run on the host. Check them there with `maestro-cli` over SSH.
 - **History of Auto Run and Cue runs refreshes on the next turn.** A hosted agent's History reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
-- **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, and resume a message. Edit, merge, reorder, Force Send, and steer stay off, because the host does not serve them.
+- **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, resume, merge, steer, and edit a message. Steer works as it does on a local agent, because the host runs the turn on its own machine; a headless host cannot steer, so the message stays queued. An edit keeps the images the message already has on the host; the card does not show them yet. Reorder and Force Send stay off, because the host does not serve them.
 - **The queue lives in the host's memory.** If the host process stops or the machine reboots, the messages still waiting are lost, and a turn that was running is recorded as interrupted. Run the host as a service (see [Durability](#durability)).
 - **Some agent settings stay on this machine for now.** Extra directories, the Agent Resilience retry switches, Codex automatic reset, env vars you parked with the eye button, and the tier targets are not sent to the host yet, so a hosted agent runs without them. Edit Agent marks each **Not synced yet**. Set them on the host's own Maestro if you need them there.
 - **The installer needs a POSIX shell.** A Windows remote must answer SSH with Git Bash or WSL, as an SSH agent there already must. The host's sleep prevention and lingering check cover macOS and Linux only.

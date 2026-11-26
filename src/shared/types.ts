@@ -1597,6 +1597,16 @@ export interface DirectoryEntry {
 	path: string;
 }
 
+/** The answer of `fs:watchRemoteCopy`: where the copy is, and whether it saves back. */
+export interface RemoteCopyWatchResult {
+	/** The copy's path on this machine. */
+	path: string;
+	/** False when the copy is not watched, so a change saved in it stays here. */
+	savesBack: boolean;
+	/** Why it does not save back, in words for the user (set when `savesBack` is false). */
+	reason?: string;
+}
+
 /**
  * Update status from electron-updater (serializable subset for IPC).
  */

@@ -484,6 +484,58 @@ describe('ClaudeSessionStorage', () => {
 		});
 	});
 
+	it('says which transcripts it found but could not read, and not one that is simply gone', async () => {
+		vi.mocked(fs.readdir).mockResolvedValue(['locked.jsonl', 'gone.jsonl'] as never);
+		vi.mocked(fs.stat).mockImplementation(async (file) => {
+			if (String(file).includes('gone')) {
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			}
+			throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+		});
+		const observer = vi.fn();
+		expect(
+			await storage.listSessions('/local/project', undefined, undefined, {
+				onSkippedFile: observer,
+			})
+		).toEqual([]);
+		expect(observer.mock.calls).toEqual([[{ sizeBytes: 0, reason: 'unreadable' }]]);
+	});
+
+	it('says which transcripts a listing left out as too large to read, locally and over SSH', async () => {
+		const big = 200 * 1024 * 1024;
+		vi.mocked(fs.readdir).mockResolvedValue(['big.jsonl'] as never);
+		vi.mocked(fs.stat).mockResolvedValue({
+			size: big,
+			mtimeMs: 1_000,
+			isFile: () => true,
+		} as never);
+		const local = vi.fn();
+		expect(
+			await storage.listSessions('/local/project', undefined, undefined, { onSkippedFile: local })
+		).toEqual([]);
+		expect(local).toHaveBeenCalledWith({ sizeBytes: big, reason: 'too-large' });
+
+		const sshConfig: SshRemoteConfig = {
+			id: 'remote',
+			name: 'Remote',
+			host: 'example.test',
+			port: 22,
+			username: 'test',
+			privateKeyPath: '',
+			enabled: true,
+			useSshConfig: false,
+		};
+		vi.mocked(listDirWithStatsRemote).mockResolvedValue({
+			success: true,
+			data: [{ name: 'big.jsonl', size: big, mtime: 1_000 }],
+		} as never);
+		const remote = vi.fn();
+		expect(
+			await storage.listSessions('/remote/project', sshConfig, undefined, { onSkippedFile: remote })
+		).toEqual([]);
+		expect(remote).toHaveBeenCalledWith({ sizeBytes: big, reason: 'too-large' });
+	});
+
 	it.each([
 		[undefined, '~/.claude/projects'],
 		['~/.claude-work/', '~/.claude-work/projects'],
@@ -573,6 +625,48 @@ describe('ClaudeSessionStorage', () => {
 			storage.registerSessionOrigin('/project', 'session-1', 'user');
 
 			expect(mockStore.set).toHaveBeenCalledWith('origins', expect.any(Object));
+		});
+	});
+
+	describe('readSessionMessages - a missing or unreadable transcript, in every mode', () => {
+		const sshConfig = { id: 'r1', host: 'box', port: 22 } as unknown as SshRemoteConfig;
+		const errno = (code: string) => Object.assign(new Error(code), { code });
+		const EMPTY = { messages: [], total: 0, hasMore: false };
+
+		// A hosted agent's host reads its own disk, so it takes the local path below.
+		it.each(['local', 'hosted'])(
+			'reads a missing transcript as an empty conversation for a %s agent',
+			async () => {
+				vi.mocked(fs.access).mockRejectedValue(errno('ENOENT'));
+				vi.mocked(fs.readFile).mockRejectedValue(errno('ENOENT'));
+				await expect(storage.readSessionMessages('/project', 'gone')).resolves.toMatchObject(EMPTY);
+			}
+		);
+
+		it('reads a missing transcript as an empty conversation for an SSH agent', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: false, error: 'File not found: x' });
+			await expect(
+				storage.readSessionMessages('/project', 'gone', undefined, sshConfig)
+			).resolves.toMatchObject(EMPTY);
+		});
+
+		it.each(['local', 'hosted'])(
+			'rejects a transcript that exists and cannot be read for a %s agent',
+			async () => {
+				vi.mocked(fs.access).mockResolvedValue(undefined);
+				vi.mocked(fs.readFile).mockRejectedValue(errno('EACCES'));
+				await expect(storage.readSessionMessages('/project', 'locked')).rejects.toThrow('EACCES');
+			}
+		);
+
+		it('rejects a transcript that exists and cannot be read for an SSH agent', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({
+				success: false,
+				error: 'Permission denied: x',
+			});
+			await expect(
+				storage.readSessionMessages('/project', 'locked', undefined, sshConfig)
+			).rejects.toThrow('Permission denied: x');
 		});
 	});
 

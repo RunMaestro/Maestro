@@ -25,6 +25,8 @@ import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { createMockAITab } from '../../helpers/mockTab';
+import { mirrorLogEntry } from '../../../renderer/utils/peerMirrorView';
+import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -5449,5 +5451,76 @@ describe('message pins', () => {
 		// The gutter marker opens the panel for this tab.
 		fireEvent.click(screen.getByTestId('log-pinned-marker'));
 		expect(useUIStore.getState().messagePinsTabId).toBe('tab-1');
+	});
+});
+
+// docs/parity/agent-ux-parity.md, Transcript "Message rendering, tool cards, formatting": a
+// hosted agent's transcript arrives as host records, folded into the tab's logs by
+// mirrorLogEntry(); local and SSH transcripts are the tab's own logs. The same conversation
+// draws the same DOM in every mode.
+describe('TerminalOutput mode parity', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		useSettingsStore.setState({ showToolCalls: true });
+		useUIStore.setState({ pendingLogJump: null });
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	const conversation: LogEntry[] = [
+		{ id: 'u1', timestamp: 1700000000000, source: 'user', text: 'Rename the **helper**' },
+		{
+			id: 't1',
+			timestamp: 1700000001000,
+			source: 'tool',
+			text: 'Edit',
+			metadata: {
+				toolState: {
+					status: 'completed',
+					input: { file_path: '/test/path/a.ts', old_string: 'a', new_string: 'b' },
+					output: 'ok',
+				},
+			},
+		},
+		{
+			id: 'a1',
+			timestamp: 1700000002000,
+			source: 'stdout',
+			text: '## Done\n\n- renamed `helper`\n\n```ts\nconst b = 1;\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |',
+		},
+		{ id: 's1', timestamp: 1700000003000, source: 'system', text: 'Canceled by user' },
+	];
+
+	it('draws the same transcript for a local, an SSH, and a hosted agent', () => {
+		const markup = AGENT_MODES.map((mode) => {
+			// The hosted tab's logs are what the host sync folds in from the host's records.
+			const logs =
+				mode === 'hosted'
+					? conversation.map((entry) =>
+							mirrorLogEntry(entry as unknown as Parameters<typeof mirrorLogEntry>[0])
+						)
+					: conversation;
+			const session = createDefaultSession({
+				...agentModeFields(mode),
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				aiTabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, showThinking: 'on' }],
+				activeTabId: 'tab-1',
+			} as unknown as Partial<Session>);
+			const { container, unmount } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			expect(screen.getByText('Edit')).toBeInTheDocument();
+			expect(container.textContent).toContain('Rename the');
+			expect(container.textContent).toContain('Canceled by user');
+			const html = container.innerHTML;
+			unmount();
+			return html;
+		});
+		expect(markup[1]).toBe(markup[0]);
+		expect(markup[2]).toBe(markup[0]);
 	});
 });

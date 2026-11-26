@@ -38,6 +38,8 @@ import {
 } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { newRemotePromptFileDestination } from '../../shared/maestro-lib/launch/ssh-command-builder';
 import { argsResumeSession, resumeIdFromArgs } from '../../shared/maestro-lib/run/pipe-spawn';
+import type { HostedLaunchFeature } from '../../shared/maestro-lib/agents/hosted-launch';
+import { checkHostedAgentLaunch } from './hosted-launch-guard';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -260,6 +262,13 @@ export interface GroomContextOptions {
 	acceptWorkspaceTrust?: boolean;
 	/** Optional callback for progress updates during grooming */
 	onProgress?: (update: GroomProgressUpdate) => void;
+	/**
+	 * The Maestro agent record this turn runs for, and the feature asking. Set whenever the turn
+	 * belongs to one agent: a hosted agent's launch from here is checked against
+	 * `HOSTED_STATELESS_HELPERS` (see `checkHostedAgentLaunch`).
+	 */
+	ownerAgentId?: string;
+	launchFeature?: HostedLaunchFeature;
 }
 
 /**
@@ -290,6 +299,9 @@ export async function groomContext(
 	processManager: GroomingProcessManager,
 	agentDetector: AgentDetector
 ): Promise<GroomContextResult> {
+	if (options.ownerAgentId) {
+		checkHostedAgentLaunch(options.ownerAgentId, options.launchFeature ?? 'groom-context');
+	}
 	let groomerSessionId = `groomer-${uuidv4()}`;
 	const controller = new AbortController();
 	activeGroomingSessions.set(groomerSessionId, {

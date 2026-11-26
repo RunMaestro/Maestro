@@ -44,6 +44,7 @@ import {
 	resolveTabNativeProvider,
 } from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { hostedTargetOf, startHostedConversation } from '../../services/hostedTurns';
 
 // ============================================================================
 // Dependencies interface
@@ -542,6 +543,37 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Clear pending terminal buffer so subsequent AI-tab sends use the normal path
 				if (pendingBuffer) useTabStore.getState().setPendingTerminalBufferSend(null);
 			};
+
+			// A hosted agent's tabs and turns are its host's. The transfer opens its tab there and
+			// the host runs the context as that tab's first turn, as a fork of a hosted tab starts
+			// (a busy host queues it behind the running turn, as this queue would). The notice is
+			// this record's own entry; the host's transcript brings the context message.
+			if (hostedTargetOf(targetSession)) {
+				const hostTabId = await startHostedConversation(targetSession, {
+					name: `From: ${sourceName}`,
+					prompt: contextMessage,
+					fields: { logs: [transferNotice], ...permissionModeFields(transferPermissionMode) },
+					...(background ? { background: true } : {}),
+				});
+				finishTransfer();
+				if (!hostTabId) {
+					return {
+						success: false,
+						error: `"${targetSession.name}" runs on its host, which did not take the context.`,
+					};
+				}
+				if (!background) {
+					setActiveSessionId(targetSessionId);
+					notifyToast({
+						type: 'success',
+						title: 'Context Sent',
+						message: `"${sourceName}" → "${targetSession.name}"${tokenInfo}`,
+						sessionId: targetSessionId,
+						tabId: hostTabId,
+					});
+				}
+				return { success: true, newSessionId: targetSessionId, newTabId: hostTabId };
+			}
 
 			// A busy target keeps the sequential-per-agent rule: the context waits in
 			// its execution queue behind the running turn. Only an explicit Force Send

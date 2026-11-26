@@ -1,3 +1,4 @@
+import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
 import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
@@ -158,6 +159,9 @@ import type {
 	SteerQueueItemCallback,
 	SetQueueItemPausedCallback,
 	MergeQueueItemCallback,
+	EditQueueItemCallback,
+	MoveQueueItemCallback,
+	SendQueueItemNowCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -878,6 +882,18 @@ export class WebServer {
 
 	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
 		this.callbackRegistry.setMergeQueueItemCallback(callback);
+	}
+
+	setEditQueueItemCallback(callback: EditQueueItemCallback): void {
+		this.callbackRegistry.setEditQueueItemCallback(callback);
+	}
+
+	setMoveQueueItemCallback(callback: MoveQueueItemCallback): void {
+		this.callbackRegistry.setMoveQueueItemCallback(callback);
+	}
+
+	setSendQueueItemNowCallback(callback: SendQueueItemNowCallback): void {
+		this.callbackRegistry.setSendQueueItemNowCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1615,6 +1631,12 @@ export class WebServer {
 				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
 			mergeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
+			editQueueItem: async (sessionId: string, itemId: string, edit: QueuedTurnEdit) =>
+				this.callbackRegistry.editQueueItem(sessionId, itemId, edit),
+			moveQueueItem: async (sessionId: string, itemId: string, toIndex: number, tabId?: string) =>
+				this.callbackRegistry.moveQueueItem(sessionId, itemId, toIndex, tabId),
+			sendQueueItemNow: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.sendQueueItemNow(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (

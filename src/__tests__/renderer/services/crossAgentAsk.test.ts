@@ -172,6 +172,47 @@ describe('runCrossAgentAsk', () => {
 		await pending;
 	});
 
+	it('uses the name, context, and hand-off an asker on another machine sends (Federation)', async () => {
+		const transcript = [{ source: 'user', text: 'we drop events', timestamp: 1 }];
+		const pending = runCrossAgentAsk({
+			targetSessionId: 'target',
+			question: 'q',
+			fromAgentName: 'Laptop Agent',
+			transcript,
+			handoffAnswer: 'the plan',
+		});
+		expect(sentOptions().sourceSessionId).toBe(CROSS_AGENT_ASK_SESSION_ID);
+		expect(sentOptions().sourceAgentName).toBe('Laptop Agent');
+		expect(sentOptions().contextTranscript).toEqual(transcript);
+		expect(sentOptions().handoffAnswer).toBe('the plan');
+		complete({ text: 'a' });
+		await pending;
+	});
+
+	it('gives each remote asker key its own consult thread, and an unreadable key the shared one', async () => {
+		const sources: string[] = [];
+		for (const askerKey of ['laptop/agent-a/tab-1', 'laptop/agent-a/tab-2', 'caller', undefined]) {
+			sendCrossAgentRequest.mockClear();
+			const pending = runCrossAgentAsk({
+				targetSessionId: 'target',
+				question: 'q',
+				fromAgentName: 'Laptop Agent',
+				...(askerKey ? { askerKey } : {}),
+			});
+			expect(sentOptions().sourceTabId).toBe(CROSS_AGENT_ASK_TAB_ID);
+			sources.push(sentOptions().sourceSessionId);
+			complete({ text: 'a' });
+			await pending;
+		}
+		expect(sources).toEqual([
+			'remote-asker:laptop/agent-a/tab-1',
+			'remote-asker:laptop/agent-a/tab-2',
+			// A bare agent id is not a key: it never reaches that agent's own consult tab.
+			CROSS_AGENT_ASK_SESSION_ID,
+			CROSS_AGENT_ASK_SESSION_ID,
+		]);
+	});
+
 	it('returns the answer and the consult tab on success', async () => {
 		const pending = runCrossAgentAsk({ targetSessionId: 'target', question: 'q' });
 		complete({ text: 'Signed cookie, no session table.', targetTabId: 'consult-1' });

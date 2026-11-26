@@ -23,6 +23,7 @@ import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { formatElapsedTicker } from '../../shared/duration';
 import { StopTurnButton } from './ui/StopTurnButton';
 import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
+import { useIsMirroredBatchRun } from '../hooks/batch/useAutoRunStateMirror';
 import { useWindowContextOptional } from '../contexts/WindowContext';
 import {
 	selectPendingSteeringNotes,
@@ -657,6 +658,8 @@ function ThinkingStatusPillInner({
 		[onLocalSessionClick]
 	);
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// A run whose loop this window cannot reach (another Maestro window's) gets no Stop.
+	const isReadOnlyRun = useIsMirroredBatchRun(activeSessionId);
 	// Auto Runs on other agents. The viewed agent's run arrives as autoRunState.
 	// Multi-window: drop runs on agents another window owns, the same scoping
 	// buildThinkingItems applies to busy tabs.
@@ -717,7 +720,7 @@ function ThinkingStatusPillInner({
 				// Stop to reach, so drop the button rather than draw a dead one. The
 				// Right Panel card and the Auto Run tab keep a disabled Stop that
 				// explains why; this pill is too tight for that copy.
-				onStop={autoRunState.mirrored ? undefined : onStopAutoRun}
+				onStop={isReadOnlyRun ? undefined : onStopAutoRun}
 				thinkingItems={thinkingItems}
 				namedSessions={namedSessions}
 				onSessionClick={onSessionClick}
@@ -965,7 +968,7 @@ function ThinkingStatusPillInner({
 									completedTasks={getAutoRunTaskCounts(demotedAutoRun).completed}
 									totalTasks={getAutoRunTaskCounts(demotedAutoRun).total}
 									isStopping={demotedAutoRun.isStopping}
-									onStop={demotedAutoRun.mirrored ? undefined : onStopAutoRun}
+									onStop={isReadOnlyRun ? undefined : onStopAutoRun}
 								/>
 							)}
 							{thinkingItems.map((item) => (

@@ -2,6 +2,8 @@ import type { ProcessManager } from '../../../../main/process-manager/ProcessMan
 import { nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
 import { fakeAnchor } from '../../../helpers/mockAnchor';
+import { AGENT_MODES, agentModeFields } from '../../../helpers/mockSession';
+import { cueAssistProcessId } from '../../../../shared/maestro-lib/agents/hosted-launch';
 import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin-headless-agent-runner';
 import { RelayConversations } from '../../../../main/plugins/relay-conversations';
 import fs from 'node:fs';
@@ -760,6 +762,52 @@ describe('process IPC handlers', () => {
 			);
 			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
 		});
+
+		it.each(AGENT_MODES)(
+			'starts the Cue AI chat helper for a %s agent, and still refuses a real turn when hosted',
+			async (mode) => {
+				const agent = {
+					id: 'mode-agent',
+					name: 'Mode',
+					toolType: 'claude-code',
+					cwd: '/project',
+					aiTabs: [{ id: 'tab' }],
+					...agentModeFields(mode),
+				};
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? [agent] : fallback
+				);
+				mockSettingsStore.get.mockImplementation((key, fallback) =>
+					key === 'federationHostedAgents' ? true : fallback
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({
+					id: 'claude-code',
+					path: '/usr/bin/claude',
+					requiresPty: false,
+				});
+				mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+				const spawn = (sessionId: string) =>
+					handlers.get('process:spawn')!(
+						{},
+						{ sessionId, toolType: 'claude-code', cwd: '/project', command: 'claude', args: [] }
+					);
+
+				// The same helper launch in every mode: never refused for the lift.
+				const helper = await spawn(cueAssistProcessId('mode-agent', 1)).catch(
+					(error: Error) => error
+				);
+				expect(helper instanceof Error ? helper.message : '').not.toContain('box:h1');
+
+				// A real turn stays refused for a hosted agent only.
+				const turn = await spawn('mode-agent-ai-tab').catch((error: Error) => error);
+				expect(turn instanceof Error ? turn.message : '').toContain(
+					mode === 'hosted' ? 'Send to box:h1 instead.' : ''
+				);
+				if (mode !== 'hosted') {
+					expect(turn instanceof Error ? turn.message : '').not.toContain('box:h1');
+				}
+			}
+		);
 
 		it('runs a lifted agent as its SSH agent while hosting was never switched on', async () => {
 			const lifted = {

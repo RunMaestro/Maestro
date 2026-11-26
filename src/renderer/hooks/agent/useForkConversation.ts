@@ -19,6 +19,7 @@ import {
 } from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
+import { hostedTargetOf, startHostedConversation } from '../../services/hostedTurns';
 
 /**
  * Fork conversation at a log id into a new AI tab.
@@ -133,6 +134,42 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 			text: `Forked from tab "${sourceDisplayName}" at message ${rawLogIndex + 1} of ${sourceTab.logs.length}`,
 		};
 
+		// The fork carries the source tab's permission mode, resolved by the one rule
+		// the toolbar pill and the composer use, stamped on the new tab so its pill and
+		// this first turn agree. Never left implicit: a spawn with no mode plans
+		// `standard`, which is not what the source tab shows.
+		const forkPermissionMode = resolveTabPermissionMode(sourceTab);
+		const estimatedTokens = slicedLogs
+			.filter((log) => log.text && log.source !== 'system')
+			.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
+		const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
+		const forkedToast = (tabId: string) =>
+			notifyToast({
+				type: 'success',
+				title: 'Conversation Forked',
+				message: `"${sourceDisplayName}" → "${forkTabName}"${tokenInfo}`,
+				sessionId: session.id,
+				tabId,
+			});
+
+		// A hosted agent's fork is the same tab in the same place; its host opens it and runs the
+		// first turn, and records the context message as the tab's first user message.
+		if (hostedTargetOf(session)) {
+			void startHostedConversation(session, {
+				afterTabId: sourceTab.id,
+				name: forkTabName,
+				prompt: contextMessage,
+				fields: {
+					logs: [forkNotice],
+					saveToHistory: sourceTab.saveToHistory,
+					...permissionModeFields(forkPermissionMode),
+				},
+			}).then((tabId) => {
+				if (tabId) forkedToast(tabId);
+			});
+			return;
+		}
+
 		const userContextLog: LogEntry = {
 			id: `fork-context-${Date.now()}`,
 			timestamp: Date.now(),
@@ -153,11 +190,6 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 		const launchSession = projectTabProvider(session, tabResult.tab).agent;
 		const newTabId = tabResult.tab.id;
 		const sourceTabId = sourceTab.id;
-		// The fork carries the source tab's permission mode, resolved by the one rule
-		// the toolbar pill and the composer use, stamped on the new tab so its pill and
-		// this first turn agree. Never left implicit: a spawn with no mode plans
-		// `standard`, which is not what the source tab shows.
-		const forkPermissionMode = resolveTabPermissionMode(sourceTab);
 
 		// 5. Commit new tab onto the live session (avoid stale snapshot spread).
 		//    Mark the tab as busy since we're about to spawn.
@@ -212,18 +244,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 		);
 
 		// 6. Toast
-		const estimatedTokens = slicedLogs
-			.filter((log) => log.text && log.source !== 'system')
-			.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
-		const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
-
-		notifyToast({
-			type: 'success',
-			title: 'Conversation Forked',
-			message: `"${sourceDisplayName}" → "${forkTabName}"${tokenInfo}`,
-			sessionId: session.id,
-			tabId: newTabId,
-		});
+		forkedToast(newTabId);
 
 		// 7. Spawn agent async (follows Send-to-Agent pattern)
 		(async () => {

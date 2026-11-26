@@ -20,7 +20,11 @@ import {
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { buildSideQuestionPrompt, SIDE_QUESTION_TIMEOUT_MS } from '../../../shared/sideQuestion';
+import {
+	buildSideQuestionPrompt,
+	SIDE_QUESTION_TIMEOUT_MS,
+	sideQuestionForkRefusal,
+} from '../../../shared/sideQuestion';
 import type { AgentConfigsData } from '../../stores/types';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
@@ -48,6 +52,8 @@ export interface SideQuestionHandlerDependencies {
 /** What the renderer sends. Mirrors the agent config a chat spawn would use. */
 export interface SideQuestionRequest {
 	question: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** Provider that owns the tab. */
 	agentType: string;
 	/** The agent's working directory (where the tab's session lives). */
@@ -99,12 +105,8 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 				if (!agent || (!agent.available && !isRemote)) {
 					return { success: false, error: `${config.agentType} is not available.` };
 				}
-				if (!agent.ephemeralForkArgs?.length) {
-					return {
-						success: false,
-						error: `${agent.name} cannot fork a session, so it cannot answer side questions.`,
-					};
-				}
+				const forkRefusal = sideQuestionForkRefusal(agent, !!config.agentSessionId);
+				if (forkRefusal) return { success: false, error: forkRefusal };
 
 				const agentConfigValues = agentConfigsStore.get('configs', {})[config.agentType] || {};
 
@@ -142,6 +144,8 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 							// it resumed, and a fork never writes to it, so the TUI path would
 							// wait out the timeout. Side questions always run `claude --print`.
 							agentConfigValues,
+							ownerAgentId: config.ownerAgentId,
+							launchFeature: 'side-question',
 						},
 						processManager,
 						agentDetector

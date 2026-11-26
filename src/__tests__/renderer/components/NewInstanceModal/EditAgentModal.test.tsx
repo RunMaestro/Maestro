@@ -28,6 +28,9 @@ import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/def
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { AgentDiscoveryResult } from '../../../../shared/types';
 import { resetStore } from '../../../helpers/resetStores';
+import { AGENT_MODES, createModeSession, type AgentMode } from '../../../helpers';
+import { browseAndPick, resetPathPicker } from '../../../helpers/pathPicker';
+import { usePathPickerStore } from '../../../../renderer/services/pathPicker';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -1552,10 +1555,15 @@ describe('EditAgentModal', () => {
 				});
 				await act(() => vi.advanceTimersByTimeAsync(600));
 				expect(window.maestro.fs.stat).not.toHaveBeenCalled();
+				// Browse stays the same control; with no remote resolved it says so and never
+				// browses this machine's disk in its place.
 				const browse = screen.getByRole('button', { name: 'Browse folders' });
-				expect(browse).toBeDisabled();
-				fireEvent.click(browse);
+				expect(browse).not.toBeDisabled();
+				await act(async () => {
+					fireEvent.click(browse);
+				});
 				expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+				expect(usePathPickerStore.getState().request).toBeNull();
 				fireEvent.click(screen.getByText('Save Changes'));
 				expect(onSave).not.toHaveBeenCalled();
 			}
@@ -2998,6 +3006,23 @@ describe('EditAgentModal', () => {
 			}
 		);
 
+		// The note follows the agent's token source, never its mode: the same source
+		// gives the same note for a local, an SSH, and a hosted agent.
+		it.each(AGENT_MODES)(
+			'reads the token source note from the setting alone for a %s agent',
+			async (mode) => {
+				installCotExport();
+				const view = renderModal(
+					createModeSession(mode, { enableMaestroP: true, maestroPMode: 'interactive' })
+				);
+				expect(await screen.findByText(INTERACTIVE_NOTE)).toBeInTheDocument();
+				view.unmount();
+				renderModal(createModeSession(mode, { enableMaestroP: false }));
+				await sectionReady();
+				expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+			}
+		);
+
 		it('shows no token source note for an agent on the API', async () => {
 			installCotExport();
 			renderModal(createSession({ enableMaestroP: false }));
@@ -4268,5 +4293,189 @@ describe('EditAgentModal', () => {
 			await screen.findByDisplayValue('My Agent');
 			expect(screen.queryByTestId('federation-scope-name')).not.toBeInTheDocument();
 		});
+	});
+
+	describe('Mode parity (local, SSH, hosted)', () => {
+		// A hosted agent keeps its SSH remote config for the files, so the modal reads the same
+		// persisted `sessionSshRemoteConfig` for an SSH and a hosted agent and draws the same form.
+		const renderMode = async (mode: AgentMode) => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'r1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			const session = createModeSession(mode, {
+				id: 'session-123',
+				name: 'My Agent',
+				projectRoot: '/home/user/project',
+				cwd: '/home/user/project',
+			});
+			const view = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			// The path status row is drawn for a local directory too, with the same copy.
+			await screen.findByText('Directory found');
+			const input = view.container.ownerDocument.getElementById(
+				'edit-agent-working-dir-input'
+			) as HTMLInputElement;
+			const picker = screen.getByRole('button', { name: 'Browse folders' }) as HTMLButtonElement;
+			const drawn = {
+				placeholder: input.placeholder,
+				pickerTitle: picker.title,
+				pickerDisabled: picker.disabled,
+				extraDirPlaceholder: !!screen.queryByPlaceholderText('/path/to/directory or ~/path'),
+			};
+			const text = view.container.ownerDocument.body.textContent;
+			await browseAndPick(mode, () => fireEvent.click(picker), '/picked/project');
+			const pickedValue = input.value;
+			resetPathPicker();
+			fireEvent.change(input, { target: { value: '/home/user/project' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+			const saved = onSave.mock.calls.at(-1);
+			view.unmount();
+			onSave.mockClear();
+			resetStore(useSessionStore);
+			return { drawn, text, pickedValue, saved };
+		};
+
+		it('draws the same path rows and Browse in every mode', async () => {
+			const results = Object.fromEntries(
+				await AGENT_MODES.reduce<Promise<[AgentMode, Awaited<ReturnType<typeof renderMode>>][]>>(
+					async (acc, mode) => [...(await acc), [mode, await renderMode(mode)]],
+					Promise.resolve([])
+				)
+			) as Record<AgentMode, Awaited<ReturnType<typeof renderMode>>>;
+
+			expect(results.ssh.drawn).toEqual(results.local.drawn);
+			expect(results.hosted.drawn).toEqual(results.local.drawn);
+			expect(results.local.drawn).toMatchObject({
+				placeholder: 'Select directory...',
+				pickerTitle: 'Browse folders',
+				pickerDisabled: false,
+			});
+			for (const mode of AGENT_MODES) {
+				// Browse picks through the one entry point: native here, remote picker on r1.
+				expect(results[mode].pickedValue).toBe('/picked/project');
+				expect(results[mode].saved).toBeDefined();
+				// No mode word and no host-specific path copy (the SSH selector's option list, the
+				// setting itself, is the only place a host name appears).
+				expect(results[mode].text).not.toMatch(/hosted|remote path|on dev\.example\.com/i);
+			}
+			// SSH and hosted read the same persisted remote config and save the same form.
+			expect(results.hosted.saved).toEqual(results.ssh.saved);
+		});
+
+		it('keeps History sharing on, in both fields, when the agent moves to a remote', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'r1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createModeSession('local', {
+						id: 'session-123',
+						name: 'My Agent',
+						sessionSshRemoteConfig: {
+							enabled: false,
+							remoteId: null,
+							shareHistoryToProjectDir: true,
+						},
+					})}
+					existingSessions={[]}
+				/>
+			);
+			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			openTab('SSH');
+			const dropdown = (await screen.findByDisplayValue('Local Execution')) as HTMLSelectElement;
+			fireEvent.change(dropdown, { target: { value: 'r1' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls.at(-1)?.[11]).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				})
+			);
+		});
+
+		it.each(AGENT_MODES)(
+			'offers one History sharing toggle with the same words for a %s agent',
+			async (mode) => {
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+					success: true,
+					configs: [
+						{
+							id: 'r1',
+							name: 'Dev Server',
+							host: 'dev.example.com',
+							port: 22,
+							username: 'devuser',
+							privateKeyPath: '/path/to/key',
+							enabled: true,
+						},
+					],
+				});
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={createModeSession(mode, { id: 'session-123', name: 'My Agent' })}
+						existingSessions={[]}
+					/>
+				);
+				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				openTab('SSH');
+				expect(screen.queryByText('This agent is remote-controlled')).not.toBeInTheDocument();
+				expect(screen.queryByText('Sync history to remote')).not.toBeInTheDocument();
+				const toggle = (await screen.findByText('Share history in the project folder'))
+					.closest('label')!
+					.querySelector('input') as HTMLInputElement;
+				expect(toggle.checked).toBe(false);
+				fireEvent.click(toggle);
+				expect(toggle.checked).toBe(true);
+				fireEvent.click(screen.getByText('Save Changes'));
+				// The one setting lands in the field the agent's transport reads.
+				expect(onSave.mock.calls.at(-1)?.[11]).toEqual(
+					expect.objectContaining(
+						mode === 'local'
+							? { enabled: false, shareHistoryToProjectDir: true }
+							: { enabled: true, syncHistory: true, shareHistoryToProjectDir: true }
+					)
+				);
+			}
+		);
 	});
 });

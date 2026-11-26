@@ -59,6 +59,7 @@ import {
 	handleSwitchMode,
 	handleSelectSession,
 	handleCrossAgentAsk,
+	handleCrossAgentCancel,
 	handleInterruptTurn,
 } from './commands';
 import { ACAPPELLA_SIGNAL_MESSAGE, handleACappellaSignal } from './acappellaSignal';
@@ -285,6 +286,9 @@ import {
 	handleSteerQueueItem,
 	handleSetQueueItemPaused,
 	handleMergeQueueItem,
+	handleEditQueueItem,
+	handleMoveQueueItem,
+	handleSendQueueItemNow,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -296,6 +300,7 @@ import {
 	handleGetStatsAggregation,
 	handleGetModelUsage,
 	handleGetTokenUsage,
+	handleGetProjectTokenUsage,
 	handleGetStatsIndexing,
 	handleStatsQuery,
 	handleGetAchievements,
@@ -447,6 +452,10 @@ export class WebSocketMessageHandler {
 
 			case 'cross_agent_ask':
 				handleCrossAgentAsk(this.ctx, client, message);
+				break;
+
+			case 'cross_agent_cancel':
+				void handleCrossAgentCancel(this.ctx, client, message);
 				break;
 
 			case 'switch_mode':
@@ -682,6 +691,18 @@ export class WebSocketMessageHandler {
 
 			case 'merge_queue_item':
 				handleMergeQueueItem(this.ctx, client, message);
+				break;
+
+			case 'edit_queue_item':
+				handleEditQueueItem(this.ctx, client, message);
+				break;
+
+			case 'move_queue_item':
+				handleMoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'send_queue_item_now':
+				handleSendQueueItemNow(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -970,6 +991,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_token_usage':
 				handleGetTokenUsage(this.ctx, client, message);
+				break;
+
+			case 'get_project_token_usage':
+				handleGetProjectTokenUsage(this.ctx, client, message);
 				break;
 
 			case 'get_stats_indexing':

@@ -25,12 +25,8 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 import { useTabStore } from '../../stores/tabStore';
 import { isGistPublishableFile } from '../FilePreview/filePreviewUtils';
-import {
-	canRevealOnHost,
-	hostShellAvailable,
-	openFileForUser,
-	openFileForUserLabel,
-} from '../../services/hostShell';
+import { hostShellAvailable, openFileForUserLabel } from '../../services/hostShell';
+import { openFileInDefaultApp, revealInFileManager } from '../../services/fileActions';
 
 /**
  * Props for the FileTab component.
@@ -85,8 +81,11 @@ export interface FileTabProps {
 	colorBlindMode?: boolean;
 	/** Shortcut hint badge number (1-9 for Cmd+1-9, 0 for Cmd+0/last tab) */
 	shortcutHint?: number | null;
-	/** True when the owning agent is running on an SSH remote - hides local-only OS actions */
-	sshRemote?: boolean;
+	/**
+	 * The SSH remote the owning agent's files live on. Changes only the transport:
+	 * the tab's OS actions fetch the file to this machine first.
+	 */
+	sshRemoteId?: string;
 	/**
 	 * Disambiguated label to show instead of the bare filename, e.g. `ioc/service`
 	 * when another open tab shares the same name. Falls back to `tab.name`.
@@ -131,7 +130,7 @@ export const FileTab = memo(function FileTab({
 	tabIndex,
 	colorBlindMode,
 	shortcutHint,
-	sshRemote,
+	sshRemoteId,
 	displayName,
 }: FileTabProps) {
 	const [showCopied, setShowCopied] = useState<'path' | 'name' | null>(null);
@@ -209,19 +208,19 @@ export const FileTab = memo(function FileTab({
 	const handleOpenInDefaultApp = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
-			void openFileForUser(tab.path);
+			void openFileInDefaultApp({ path: tab.path, sshRemoteId });
 			setOverlayOpen(false);
 		},
-		[tab.path, setOverlayOpen]
+		[tab.path, sshRemoteId, setOverlayOpen]
 	);
 
 	const handleRevealInFinder = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
-			window.maestro?.shell?.showItemInFolder(tab.path);
+			void revealInFileManager({ path: tab.path, sshRemoteId });
 			setOverlayOpen(false);
 		},
-		[tab.path, setOverlayOpen]
+		[tab.path, sshRemoteId, setOverlayOpen]
 	);
 
 	const handleRenameClick = useCallback(
@@ -558,8 +557,8 @@ export const FileTab = memo(function FileTab({
 							{showCopied === 'name' ? 'Copied!' : 'Copy File Name'}
 						</button>
 
-						{/* Open in Default App (a browser downloads it; an SSH agent's file has no id here to download by) */}
-						{hasDiskPath && (hostShellAvailable() || !sshRemote) && (
+						{/* Open in Default App - a remote file opens its fetched copy; a browser downloads it */}
+						{hasDiskPath && (
 							<button
 								onClick={handleOpenInDefaultApp}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -570,8 +569,8 @@ export const FileTab = memo(function FileTab({
 							</button>
 						)}
 
-						{/* Reveal in Finder / Explorer - the host's: desktop and local only */}
-						{hasDiskPath && canRevealOnHost(sshRemote) && (
+						{/* Reveal in Finder / Explorer - a remote file reveals its fetched copy; desktop only */}
+						{hasDiskPath && hostShellAvailable() && (
 							<button
 								onClick={handleRevealInFinder}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

@@ -21,7 +21,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
 import { resetStores } from '../../helpers/resetStores';
 import { makeGrokCommandObservation } from '../../fixtures/grok-command-observation';
 import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
@@ -3320,5 +3324,80 @@ describe('Grok completion assembly and real keyboard acceptance', () => {
 			'/history',
 			'/wizard',
 		]);
+	});
+});
+
+// docs/parity/agent-ux-parity.md, Composer "Image paste / drop / attach": a pasted and a
+// dropped image stage on the active tab the same way for a local, an SSH, and a hosted agent.
+describe('useInputHandlers mode parity: image paste and drop', () => {
+	it('stages pasted and dropped images identically in every mode', () => {
+		const originalFileReader = global.FileReader;
+		let reads = 0;
+		class MockFileReaderLocal {
+			result: string | null = null;
+			onload: ((ev: any) => void) | null = null;
+			readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+				reads++;
+				this.result = `data:image/png;base64,image${reads}`;
+				this.onload?.({ target: { result: this.result } });
+			});
+		}
+		global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+		try {
+			const outcomes = AGENT_MODES.map((mode) => {
+				reads = 0;
+				useSessionStore.setState({
+					sessions: [createMockSession({ ...agentModeFields(mode), inputMode: 'ai' })],
+					activeSessionId: 'session-1',
+				} as any);
+				const { result, unmount } = renderHook(() => useInputHandlers(createMockDeps()));
+				const pasted = {
+					type: 'image/png',
+					getAsFile: () => new Blob(['x'], { type: 'image/png' }),
+				};
+				const pasteEvent = {
+					preventDefault: vi.fn(),
+					clipboardData: {
+						items: {
+							length: 1,
+							0: pasted,
+							[Symbol.iterator]: function* () {
+								yield pasted;
+							},
+						},
+						getData: () => '',
+					},
+				} as unknown as React.ClipboardEvent;
+				const dropEvent = {
+					preventDefault: vi.fn(),
+					dataTransfer: {
+						getData: () => '',
+						files: { length: 1, 0: { type: 'image/jpeg', name: 'shot.jpg' } } as any,
+					},
+				} as unknown as React.DragEvent;
+				act(() => {
+					result.current.handlePaste(pasteEvent);
+				});
+				act(() => {
+					result.current.handleDrop(dropEvent);
+				});
+				const tab = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'tab-1');
+				unmount();
+				return {
+					stagedImages: tab?.stagedImages,
+					pastePrevented: vi.mocked(pasteEvent.preventDefault).mock.calls.length > 0,
+					composer: useComposerInputStore.getState().aiValue,
+				};
+			});
+			expect(outcomes[0]).toEqual({
+				stagedImages: ['data:image/png;base64,image1', 'data:image/png;base64,image2'],
+				pastePrevented: true,
+				composer: '',
+			});
+			expect(outcomes[1]).toEqual(outcomes[0]);
+			expect(outcomes[2]).toEqual(outcomes[0]);
+		} finally {
+			global.FileReader = originalFileReader;
+		}
 	});
 });

@@ -25,6 +25,7 @@ import type { Session } from '../../types';
 import {
 	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
+	REMOTE_ACCOUNT_HOME_DIR,
 	resolveAgentAccountKey,
 	resolveAgentProfile,
 	type AgentBillingCredential,
@@ -203,10 +204,14 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 			);
 			const sshConfig = session.sessionSshRemoteConfig;
 			const remoteId = sshConfig?.enabled ? (sshConfig.remoteId ?? 'default') : null;
+			// A remote agent's default account lives under the REMOTE's home,
+			// which this machine does not know: name it `~/<subdir>` as the main
+			// process does, never under this machine's $HOME.
+			const accountHomeDir = remoteId ? REMOTE_ACCOUNT_HOME_DIR : homeDir;
 			const profile = resolveAgentProfile(
 				session.toolType,
 				env,
-				homeDir,
+				accountHomeDir,
 				remoteId ? { id: remoteId, name: remoteNames[remoteId] } : null
 			);
 			if (!profile) {
@@ -214,7 +219,7 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 				// attribution (such as uncertain Grok credentials) is settled. Keep
 				// both out of the index without inventing an account or duplicating
 				// the canonical resolver's credential classification.
-				if (!resolveAgentAccountKey(session.toolType, env, homeDir)) {
+				if (!resolveAgentAccountKey(session.toolType, env, accountHomeDir)) {
 					accountInputsSettled = false;
 				}
 				continue;

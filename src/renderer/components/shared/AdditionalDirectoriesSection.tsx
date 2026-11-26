@@ -24,16 +24,17 @@ import { Folder, Plus, Trash2 } from 'lucide-react';
 import { FormInput } from '../ui/FormInput';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { AdditionalDirectory, Theme } from '../../types';
+import { pickDirectory } from '../../services/pathPicker';
 
 export interface AdditionalDirectoriesSectionProps {
 	theme: Theme;
 	directories: AdditionalDirectory[];
 	onChange: (directories: AdditionalDirectory[]) => void;
 	/**
-	 * SSH agents run on a remote host, where the local folder picker is
-	 * meaningless. Hide the Browse buttons and let the user type remote paths.
+	 * The SSH remote the directories live on (SSH and hosted agents alike), or undefined for a
+	 * local agent. It only routes Browse (`pickDirectory()`); the rows look the same in every mode.
 	 */
-	disableBrowse?: boolean;
+	sshRemoteId?: string | null;
 	/**
 	 * Whether the selected provider enforces these grants at the CLI level
 	 * (`capabilities.supportsAdditionalDirectories`). Drives the copy only.
@@ -85,7 +86,7 @@ export function AdditionalDirectoriesSection({
 	theme,
 	directories,
 	onChange,
-	disableBrowse = false,
+	sshRemoteId,
 	nativelyEnforced = false,
 }: AdditionalDirectoriesSectionProps): React.ReactElement {
 	const updateAt = useCallback(
@@ -110,10 +111,14 @@ export function AdditionalDirectoriesSection({
 
 	const browseAt = useCallback(
 		async (index: number) => {
-			const folder = await window.maestro.dialog.selectFolder();
+			const folder = await pickDirectory({
+				sshRemoteId,
+				title: 'Select Directory',
+				startPath: directories[index]?.path.trim() || undefined,
+			});
 			if (folder) updateAt(index, { path: folder });
 		},
-		[updateAt]
+		[updateAt, sshRemoteId, directories]
 	);
 
 	return (
@@ -150,25 +155,21 @@ export function AdditionalDirectoriesSection({
 								theme={theme}
 								value={dir.path}
 								onChange={(value) => updateAt(index, { path: value })}
-								placeholder={
-									disableBrowse ? 'Enter remote path...' : '/path/to/directory or ~/path'
-								}
+								placeholder="/path/to/directory or ~/path"
 								monospace
 								heightClass="p-2"
 								addon={
 									<>
-										{!disableBrowse && (
-											<button
-												type="button"
-												onClick={() => void browseAt(index)}
-												className="p-2 rounded border transition-colors hover:bg-white/5"
-												style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-												title="Browse folders"
-												aria-label="Browse folders"
-											>
-												<Folder className="w-4 h-4" />
-											</button>
-										)}
+										<button
+											type="button"
+											onClick={() => void browseAt(index)}
+											className="p-2 rounded border transition-colors hover:bg-white/5"
+											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											title="Browse folders"
+											aria-label="Browse folders"
+										>
+											<Folder className="w-4 h-4" />
+										</button>
 										<PermissionSquare
 											theme={theme}
 											label="R"

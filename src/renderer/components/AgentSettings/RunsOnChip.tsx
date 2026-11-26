@@ -9,7 +9,6 @@
 
 import type { ReactNode } from 'react';
 import type { Theme } from '../../types';
-import { SshRemotePill } from '../ui/SshRemotePill';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { localExecutionLabel } from '../shared/SshRemoteSelector';
 
@@ -68,7 +67,7 @@ export function RunsOnChip({ theme, sshRemoteHost, idPrefix, choice }: RunsOnChi
 					]}
 				/>
 			) : sshRemoteHost ? (
-				<SshRemotePill remoteName={sshRemoteHost} size="sm" />
+				<span style={{ color: theme.colors.textMain }}>{sshRemoteHost}</span>
 			) : (
 				<span style={{ color: theme.colors.textMain }}>{localExecutionLabel()}</span>
 			)}

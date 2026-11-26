@@ -22,6 +22,13 @@ import { shouldOpenExternally } from '../../../utils/fileExplorer';
 import { joinPath } from '../../../../shared/formatters';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { downloadHostFile } from '../../../utils/clientDownload';
+import {
+	openFileInDefaultApp,
+	openFileInMaestroBrowser,
+	openFilesInDefaultApp,
+	revealInFileManager,
+	saveCopyOfFile,
+} from '../../../services/fileActions';
 import type { ContextMenuState, MultiDeleteModalState } from '../types';
 import { PREVIEW_ALL_CONFIRM_THRESHOLD } from '../types';
 import { collectPreviewableFiles, findNodeAtPath } from '../utils/pathHelpers';
@@ -505,23 +512,22 @@ export function useFileContextMenu({
 			return;
 		}
 
-		const openAll = () => {
-			for (const file of files) {
-				const absolutePath = `${session.fullPath}/${file.path}`;
-				void window.maestro?.shell?.openPath(absolutePath);
-			}
-			onShowFlash?.(`Opened ${files.length} file${files.length !== 1 ? 's' : ''}`);
+		const openAll = async () => {
+			const opened = await openFilesInDefaultApp(
+				files.map((file) => ({ path: `${session.fullPath}/${file.path}`, sshRemoteId }))
+			);
+			if (opened > 0) onShowFlash?.(`Opened ${opened} file${opened !== 1 ? 's' : ''}`);
 		};
 
 		if (files.length > PREVIEW_ALL_CONFIRM_THRESHOLD) {
 			useModalStore.getState().openModal('confirm', {
 				message: `Open all ${files.length} selected files in their default apps?`,
-				onConfirm: () => openAll(),
+				onConfirm: () => void openAll(),
 			});
 			return;
 		}
-		openAll();
-	}, [resolveSelectedNodes, session.fullPath, onShowFlash]);
+		void openAll();
+	}, [resolveSelectedNodes, session.fullPath, sshRemoteId, onShowFlash]);
 
 	const handleOpenDeleteMulti = useCallback(() => {
 		const nodes = resolveSelectedNodes();
@@ -637,77 +643,72 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu]);
 
-	// Browser/Lite downloads transfer from the host to this client. Desktop SSH
-	// downloads keep the existing native destination dialog on the owning desktop.
+	// "Save a Copy..." on the desktop, the same action in every mode: pick a
+	// destination, then copy (local) or download (remote) the file there.
+	// Browser/Lite transfers the file from the host to this client instead.
 	const handleDownloadFile = useCallback(async () => {
 		const menu = contextMenu;
 		setContextMenu(null);
-		if (!menu || !menu.node || menu.node.type !== 'file' || (!sshRemoteId && !isWebDesktop()))
-			return;
+		if (!menu || !menu.node || menu.node.type !== 'file') return;
 
-		const remotePath = joinPath(session.fullPath, menu.path);
+		const filePath = joinPath(session.fullPath, menu.path);
 		const fileName = menu.node.name;
 		try {
 			if (isWebDesktop()) {
-				await downloadHostFile(remotePath, fileName, sshRemoteId);
+				await downloadHostFile(filePath, fileName, sshRemoteId);
 				onShowFlash?.(`Downloaded "${fileName}" to this client`);
 				return;
 			}
-			const destPath = await window.maestro.dialog.saveFile({
-				defaultPath: fileName,
-				title: 'Download File',
-			});
+			const destPath = await saveCopyOfFile({ path: filePath, sshRemoteId }, fileName);
 			// User cancelled the save dialog.
 			if (!destPath) return;
-
-			await window.maestro.fs.downloadRemoteFile(remotePath, sshRemoteId!, destPath);
-			onShowFlash?.(`Downloaded "${fileName}"`);
+			onShowFlash?.(`Saved a copy of "${fileName}"`);
 		} catch (error) {
 			captureException(error, {
 				extra: {
-					action: 'download-remote-file',
+					action: 'save-file-copy',
 					path: menu.path,
-					remotePath,
+					filePath,
 					nodeName: fileName,
 					sessionId: session.id,
 					sshRemoteId,
 				},
 			});
-			onShowFlash?.(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+			onShowFlash?.(`Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
 		}
 	}, [contextMenu, session.fullPath, session.id, sshRemoteId, onShowFlash]);
 
 	const handleOpenInDefaultApp = useCallback(() => {
 		if (contextMenu) {
-			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
-			window.maestro?.shell?.openPath(absolutePath);
+			void openFileInDefaultApp({ path: `${session.fullPath}/${contextMenu.path}`, sshRemoteId });
 		}
 		setContextMenu(null);
-	}, [contextMenu, session.fullPath]);
+	}, [contextMenu, session.fullPath, sshRemoteId]);
 
 	const handleOpenInMaestroBrowser = useCallback(() => {
 		if (contextMenu && contextMenu.node && contextMenu.node.type === 'file' && onOpenBrowserTabAt) {
-			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
-			const normalizedPath = absolutePath.replace(/\\/g, '/');
-			const isWindowsDrivePath = /^[A-Za-z]:/.test(normalizedPath);
-			const pathForUrl = isWindowsDrivePath ? `/${normalizedPath}` : normalizedPath;
-			const encodedPath = pathForUrl
-				.split('/')
-				.map((seg, index) => (isWindowsDrivePath && index === 1 ? seg : encodeURIComponent(seg)))
-				.join('/');
-			const url = pathForUrl.startsWith('/') ? `file://${encodedPath}` : `file:///${encodedPath}`;
-			onOpenBrowserTabAt(url, { title: contextMenu.node.name });
+			void openFileInMaestroBrowser(
+				{ path: `${session.fullPath}/${contextMenu.path}`, sshRemoteId },
+				onOpenBrowserTabAt,
+				contextMenu.node.name
+			);
 		}
 		setContextMenu(null);
-	}, [contextMenu, onOpenBrowserTabAt, session.fullPath]);
+	}, [contextMenu, onOpenBrowserTabAt, session.fullPath, sshRemoteId]);
 
 	const handleOpenInExplorer = useCallback(() => {
 		if (contextMenu) {
-			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
-			window.maestro?.shell?.showItemInFolder(absolutePath);
+			void revealInFileManager(
+				{
+					path: `${session.fullPath}/${contextMenu.path}`,
+					sshRemoteId,
+					isDirectory: contextMenu.node?.type === 'folder',
+				},
+				{ sessionId: session.id }
+			);
 		}
 		setContextMenu(null);
-	}, [contextMenu, session.fullPath]);
+	}, [contextMenu, session.fullPath, session.id, sshRemoteId]);
 
 	// Open the New Agent modal pre-seeded with this folder as the working
 	// directory, giving a one-click path from browsing files to an agent scoped
@@ -717,11 +718,14 @@ export function useFileContextMenu({
 		const menu = contextMenu;
 		setContextMenu(null);
 		if (!menu || !menu.node || menu.node.type !== 'folder') return;
+		// The folder is on the agent's SSH remote for an SSH or hosted agent, so
+		// the new agent starts on that remote.
 		useModalStore.getState().openModal('newInstance', {
 			duplicatingSessionId: null,
 			presetWorkingDir: joinPath(session.fullPath, menu.path),
+			presetSshRemoteId: sshRemoteId ?? null,
 		});
-	}, [contextMenu, session.fullPath]);
+	}, [contextMenu, session.fullPath, sshRemoteId]);
 
 	// Talk with the right-clicked document: a voice session bound to THIS agent
 	// with the file as the subject. The agent is passed explicitly rather than

@@ -51,6 +51,7 @@ import {
 	type TabSessionUpdate,
 } from '../agents/rules';
 import { liftedSendRefusal } from '../agents/lift-pointer';
+import { parseMaestroBuiltinCommand, runsOutsideComposer } from '../../maestroBuiltinCommands';
 import type { EventBus } from '../client/event-bus';
 import type {
 	ClientError,
@@ -65,14 +66,27 @@ import type {
 	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
+import {
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnSettings,
+} from '../client/types';
 import { logger } from '../host';
+import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
+import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
+import type { SessionImageStore } from '../store/session-images';
+import { agentIdCanReadImages } from '../providers/capabilities';
+import { getAgentDisplayName } from '../../agentMetadata';
+import { steeringSocketPathFor } from '../../chatSteeringSocket';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
 import {
 	createExecutionQueue,
+	findQueueMergeTarget,
+	joinMergedQueueImages,
+	joinMergedQueueText,
 	TurnCollisionError,
 	type ExecutionQueue,
 	type QueueEvent,
@@ -93,12 +107,19 @@ import {
 	type TurnRecorder,
 	type RecordedTurn,
 } from '../turns/record-turn';
-import type { HistoryWriter } from '../turns/history';
+import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import { toTurnAgent, toTurnTab } from '../turns/records';
 import type { CompletedTurn } from '../run/run-to-completion';
 import { runAgentTurn, type AgentTurnRun, type RunAgentTurnRefusal } from '../turns/run-agent-turn';
 import { createTurnEventMapper, type UnstampedTurnEvent } from '../turns/turn-events';
-import type { StatsConnectionConstructor } from '../turns/stats';
+import {
+	createStatsRecorder,
+	readStatsCollectionEnabled,
+	type StatsConnectionConstructor,
+} from '../turns/stats';
+import { createRuntimeBuiltinCommands } from './builtin-commands';
+import { createRuntimeSideQuestions, type RuntimeSideQuestions } from './side-questions';
+import { createRuntimeSteering, type SteeredTurnHandle } from './steering';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
 import { createSshRemoteStore } from './ssh-store';
@@ -132,6 +153,8 @@ export interface RuntimeTurnDeps {
 	readGitBranch?(cwd: string): Promise<string | undefined>;
 	/** The clock for events and records. */
 	now: () => number;
+	/** The home directory `/skills` reads the user's own skills under. Default: this process's. */
+	homeDir?(): string;
 	/** `queue.recheckMs` and the timer behind it. */
 	recheckMs?: number;
 	schedule?(run: () => void, ms: number): () => void;
@@ -150,12 +173,26 @@ export interface RuntimeTurnsOptions {
 	historyWriter?: HistoryWriter;
 	options?: RuntimeTurnOptions;
 	deps?: Partial<RuntimeTurnDeps>;
+	/**
+	 * The data directory's session image store. An admitted image is kept there and a waiting
+	 * message and its transcript entry hold the `maestro-image://` ref, as on the desktop; the ref is
+	 * read back for the provider and for a client's queue read. Without one, images stay inline.
+	 */
+	images?: Pick<SessionImageStore, 'storeInlineImage'>;
 }
+
+/**
+ * The most messages one agent may have waiting on a headless host. Past it a send is refused with
+ * the reason, so a sender that never stops cannot grow the host's memory without bound.
+ */
+export const MAX_WAITING_TURNS_PER_AGENT = 100;
 
 export interface RuntimeTurns {
 	readonly api: TurnsApi;
 	/** Look at an agent's queue again, for a hold that cleared (an Auto Run ended). */
 	drain(agentId: string): void;
+	/** `/btw` side questions about this host's tabs, which `consults.ask` hands over (M6). */
+	readonly sideQuestions: Pick<RuntimeSideQuestions, 'ask'>;
 	/** Stop looking at queues: nothing more starts. Running turns are left to `registry.stopAll`. */
 	dispose(): void;
 }
@@ -163,6 +200,13 @@ export interface RuntimeTurns {
 /** One queued message, as the runtime holds it. */
 interface TurnItem extends QueueItem {
 	text: string;
+	/**
+	 * The images it carries, in attachment order: refs into the host's image store once admitted
+	 * (`admitTurnImages`) and kept (`RuntimeTurnsOptions.images`), never the bytes.
+	 */
+	images?: string[];
+	/** The decoded bytes of `images` together, recorded at admission, for a merge's bounds. */
+	imageBytes?: number;
 	queuedAt: number;
 	/** Model and effort at the moment it was queued (a model change before it runs must not relabel it). */
 	turnSettings: { model?: string; effort?: string; runOn?: RunOnTarget };
@@ -203,7 +247,17 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		kind: 'message',
 		text: item.text,
 		paused: item.paused === true,
+		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
+		// The images ride along, so a hosted card draws them as a local card does. The item holds
+		// store refs, which name this machine's disk: the client gets the bytes (M10).
+		...(item.images?.length ? inlineQueuedImages(item.images) : {}),
 	};
+}
+
+/** A waiting message's images as data URLs for a client. A ref whose file is gone is dropped. */
+function inlineQueuedImages(images: readonly string[]): { images?: string[] } {
+	const { inline } = inlineImageList(images);
+	return inline.length > 0 ? { images: inline } : {};
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -248,7 +302,120 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	const translation =
 		deps.translation ?? createRuntimeTranslationService(paths, repository, registry);
 
+	/**
+	 * Admitted images kept in the image store: their refs, in order. Inline as given when this
+	 * runtime has no store. A disk that refuses the write refuses the message, with the reason.
+	 */
+	async function keepImages(
+		images: string[]
+	): Promise<{ ok: true; images: string[] } | { ok: false; error: string }> {
+		const store = options.images;
+		if (!store || images.length === 0) return { ok: true, images };
+		try {
+			return {
+				ok: true,
+				images: await Promise.all(images.map((image) => store.storeInlineImage(image))),
+			};
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			logger.warn(`Could not keep a message's images: ${reason}`, LOG_CONTEXT);
+			return {
+				ok: false,
+				error: `The attached images could not be saved on this host (${reason}). Nothing was sent.`,
+			};
+		}
+	}
+
+	/** Woken when a tab may have become free (`reserveTabSession`), by `agentId` then `tabId`. */
+	const idleWaiters = new Map<string, Array<() => void>>();
+	const waiterKey = (agentId: string, tabId: string) => `${agentId}\u0000${tabId}`;
+	/** Tabs whose provider session a `/history` synopsis holds: a send to one waits (`startItem`). */
+	const synopsisHolds = new Set<string>();
+	let disposed = false;
+	/**
+	 * Hold the tab's provider session for a synopsis: once no turn starts or runs on the tab and no
+	 * other synopsis holds it. The check and the hold happen in one tick, so two `/history` commands
+	 * and a send can never both resume the session. The answer releases it.
+	 */
+	function reserveTabSession(agentId: string, tabId: string): Promise<() => void> {
+		const key = waiterKey(agentId, tabId);
+		if (disposed) return Promise.reject(new Error('The host is shutting down.'));
+		if (queues.get(agentId)?.isTabBusy(tabId) || synopsisHolds.has(key)) {
+			return new Promise<void>((resolve) => {
+				idleWaiters.set(key, [...(idleWaiters.get(key) ?? []), () => resolve()]);
+			}).then(() => reserveTabSession(agentId, tabId));
+		}
+		synopsisHolds.add(key);
+		let released = false;
+		return Promise.resolve(() => {
+			if (released) return;
+			released = true;
+			synopsisHolds.delete(key);
+			wakeIdleWaiters(agentId, tabId);
+			// A send that collided with the hold may start now.
+			queues.get(agentId)?.drain();
+		});
+	}
+	function wakeIdleWaiters(agentId: string, tabId: string): void {
+		const key = waiterKey(agentId, tabId);
+		const waiting = idleWaiters.get(key);
+		idleWaiters.delete(key);
+		for (const resolve of waiting ?? []) resolve();
+	}
+
+	// Maestro's own `/history` and `/skills`, run here for a tab as a desktop host runs them.
+	const builtins = createRuntimeBuiltinCommands({
+		paths,
+		repository,
+		registry,
+		historyWriter: options.historyWriter ?? createHistoryWriter({ paths, fence: options.fence }),
+		statsRecorder: createStatsRecorder({
+			paths,
+			loadSqlite: host.loadSqlite ?? noLoader,
+			fence: options.fence,
+			isEnabled: () => readStatsCollectionEnabled(paths.settingsFile),
+		}),
+		host,
+		deps,
+		rules: ctx,
+		reserveTabSession,
+		...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+		// A transcript that grew outside a turn: `gap` is the event that tells a client to read
+		// the tab again, which an older client already honors.
+		transcriptChanged: (agentId, tabId) => emitTurn(agentId, tabId, { kind: 'gap' }),
+	});
+
+	// `/btw`: a read-only fork of a tab's session, beside whatever the tab runs, as a desktop host forks it.
+	const sideQuestions = createRuntimeSideQuestions({
+		paths,
+		repository,
+		registry,
+		host,
+		deps,
+		rules: ctx,
+	});
+
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
+	// Steer Running Turn: a TUI turn this host runs takes a waiting message over its socket.
+	const steering = createRuntimeSteering<TurnItem>({
+		queueOf: (agentId) => queues.get(agentId),
+		toolTypeOf: (agentId) => repository.getAgent(agentId)?.toolType,
+		appendEntry: async (agentId, tabId, entry) => {
+			const written = await repository.appendTranscript(agentId, tabId, [entry]);
+			if (!written.ok) {
+				logger.warn(
+					`A steer's transcript entry was not written: ${written.error.message}`,
+					LOG_CONTEXT
+				);
+				return;
+			}
+			// Mid-turn the entry joins the live turn in order; on an idle tab clients read the tab again.
+			if (queues.get(agentId)?.isTabBusy(tabId)) emitTurn(agentId, tabId, { kind: 'user', entry });
+			else emitTurn(agentId, tabId, { kind: 'gap' });
+		},
+		newId: () => ctx.newId(),
+		now: () => deps.now(),
+	});
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
 	const verdicts = new Map<string, (verdict: Verdict) => void>();
 
@@ -272,8 +439,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (lifted) throw new Error(lifted);
 		let tabRecord = repository.getTab(agentId, item.tabId);
 		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
-		// The tab's previous process has not gone yet: a timing collision, not a verdict on the item.
-		if (registry.isBusy(agentId, item.tabId)) throw new TurnCollisionError();
+		// The tab's previous process has not gone yet, or a `/history` synopsis holds its provider
+		// session: a timing collision, not a verdict on the item.
+		if (registry.isBusy(agentId, item.tabId) || synopsisHolds.has(waiterKey(agentId, item.tabId))) {
+			throw new TurnCollisionError();
+		}
 
 		const getTranslationSession = () => {
 			const current = repository.getAgent(agentId);
@@ -414,6 +584,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const command = resolveSlashCommand(item.text, loaded.commands, agent.agentCommands);
 		const message: TurnMessage = {
 			text: item.text,
+			...(item.images?.length ? { images: item.images } : {}),
 			// Queuing is sending: provider, model and effort remain the captured choice.
 			turnSettings: settings,
 			...(command ? { command } : {}),
@@ -434,8 +605,18 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			isWorktree,
 		});
 
+		// A fenced runtime could not write this turn down, so it must not launch the provider either:
+		// the item stays held instead of starting a process that is stopped at its first record.
+		const fenced = repository.writeRefusal();
+		if (fenced) throw new Error(fenced);
+		// A fresh socket per spawn: a steer meant for a turn that just ended can never reach the next.
+		const steeringSocketPath = steeringSocketPathFor(`${agentId}-ai-${item.tabId}:${ctx.newId()}`);
+		// Bound once the run exists; a verdict can only follow a steer, which needs the run.
+		const steered: { turn?: SteeredTurnHandle } = {};
 		const started = await deps.runAgentTurn(turn, {
 			sessionId: `${agentId}-ai-${item.tabId}`,
+			steeringSocketPath,
+			onSteeringVerdict: (verdict) => steered.turn?.verdict(verdict),
 			grokLaunchScope: host.grokLaunchScope,
 			retainedNativeSessionBinding: expected.nativeSessionBinding,
 			...(provider === 'grok'
@@ -450,6 +631,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		});
 		if (!started.ok) throw new Error(started.message);
 		const run = started.run;
+		const steeredTurn = steering.turnStarted(agentId, item.tabId, {
+			provider,
+			readOnly: turn.readOnly,
+			...(run.steeringSocket ? { socketPath: run.steeringSocket } : {}),
+		});
+		steered.turn = steeredTurn;
+		void run.result.then(
+			() => steeredTurn.ended(),
+			() => steeredTurn.ended()
+		);
 
 		// The process exists, so the registry learns of it before anything is awaited: the agent
 		// reads busy to Auto Run, and a shutdown stops this process, from this line on. `settled`
@@ -485,7 +676,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			if (!begun.ok) throw new Error(begun.error.message);
 			ownedTurnId = item.id;
 
-			emitTurn(agentId, item.tabId, { kind: 'user', entry: userEntry });
+			// The stored entry keeps store refs; a watching client gets the bytes (M10).
+			emitTurn(agentId, item.tabId, { kind: 'user', entry: withInlineEntryImages(userEntry) });
 			emitTurn(agentId, item.tabId, { kind: 'started' });
 
 			done = streamTurn({
@@ -739,6 +931,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				verdicts.get(event.item.id)?.({ ok: true });
 				verdicts.delete(event.item.id);
 				break;
+			case 'ended':
+				wakeIdleWaiters(agentId, event.item.tabId);
+				break;
 			case 'dispatch-failed': {
 				if (event.held) {
 					logger.warn(`A turn could not start: ${event.error.message}`, LOG_CONTEXT);
@@ -752,6 +947,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 							timestamp: deps.now(),
 						},
 					});
+					// The tab is free again (the item is held, not running): a synopsis waiting on it
+					// goes ahead. A collision (`held: false`) retries, so the tab may still be taken.
+					wakeIdleWaiters(agentId, event.item.tabId);
 				}
 				verdicts.get(event.item.id)?.({ ok: false, message: event.error.message });
 				verdicts.delete(event.item.id);
@@ -768,6 +966,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			queue = createExecutionQueue<TurnItem>({
 				start: (item) => startItem(agentId, item),
 				onEvent: (event) => onQueueEvent(agentId, event),
+				// A `/history` synopsis holding the tab's provider session holds the tab's queue, as a
+				// retry does: the send waits, never spends its collision attempts, and runs at release.
+				isRetryHeld: (tabId) => synopsisHolds.has(waiterKey(agentId, tabId)),
 				holdsTree: () => options.autoRunHolds?.(agentId) ?? false,
 				...(deps.recheckMs !== undefined ? { recheckMs: deps.recheckMs } : {}),
 				...(deps.schedule ? { schedule: deps.schedule } : {}),
@@ -784,7 +985,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				const queue = queues.get(event.agentId);
 				queue?.dispose();
 				queues.delete(event.agentId);
+				builtins.stop(event.agentId);
 			} else if (event.type === 'tab.removed') {
+				// A closed tab's `/history` synopsis has nowhere to write: it stops with the tab.
+				builtins.stop(event.agentId, event.tabId);
 				const queue = queues.get(event.agentId);
 				for (const item of queue?.items() ?? []) {
 					if (item.tabId === event.tabId) queue?.remove(item.id);
@@ -804,20 +1008,45 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		input: TurnInput
 	): Promise<ClientResult<TurnSendReceipt>> {
 		const method: ClientMethod = 'turns.send';
-		if (input.images?.length) {
+		const record = repository.getAgent(agentId);
+		if (!record) return fail(method, 'not-found', `No agent ${agentId}.`);
+		// A provider that cannot read images never gets offered them on a desktop (the composer's
+		// attach button is off), so a send that carries some is refused here, never run without them.
+		if (input.images?.length && !agentIdCanReadImages(record.toolType)) {
 			return fail(
 				method,
 				'unsupported',
-				'Images cannot be sent from here yet. Send the message without them, or use the desktop.'
+				`${getAgentDisplayName(record.toolType)} cannot read images. Send the message without them.`
 			);
 		}
-		if (!input.text?.trim()) return fail(method, 'invalid', 'There is nothing to send.');
-		const record = repository.getAgent(agentId);
-		if (!record) return fail(method, 'not-found', `No agent ${agentId}.`);
+		// Images come from another machine: inline data URLs only, bounded in count and bytes.
+		const admitted = admitTurnImages(input.images);
+		if (!admitted.ok) return fail(method, 'invalid', admitted.error);
+		const text = typeof input.text === 'string' ? input.text : '';
+		if (!text.trim() && admitted.images.length === 0) {
+			return fail(method, 'invalid', 'There is nothing to send.');
+		}
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
 		const tabRecord = repository.getTab(agentId, tabId);
+		// Maestro's own commands. `/history` and `/skills` run here for the tab, as a desktop host
+		// runs them for a send it receives; one that needs the typing window's composer is refused,
+		// never handed to the provider as a message. A held send stays a message, as Queue Held keeps
+		// it on a desktop.
+		const builtin = input.held === true ? null : parseMaestroBuiltinCommand(text, record.toolType);
+		if (builtin) {
+			if (!runsOutsideComposer(builtin)) {
+				return fail(
+					method,
+					'unsupported',
+					`${builtin.name} runs in the composer of the window that typed it, so it cannot run from here.`
+				);
+			}
+			if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
+			void builtins.run(agentId, tabId, builtin);
+			return ok({ status: 'ran' });
+		}
 		if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
 		const projected = projectTabProvider(
 			{
@@ -839,6 +1068,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const tab = toTurnTab(tabRecord);
 		// The sender's own chips stand in for the tab's, for this message only (`TurnOverrides`).
 		const overrides = normalizeTurnOverrides(input.overrides);
+		if ((queues.get(agentId)?.items().length ?? 0) >= MAX_WAITING_TURNS_PER_AGENT) {
+			return fail(
+				method,
+				'rejected',
+				`This agent already has ${MAX_WAITING_TURNS_PER_AGENT} messages waiting. Wait for some to run, or remove some, and send again.`
+			);
+		}
+		const kept = await keepImages(admitted.images);
+		if (!kept.ok) return fail(method, 'failed', kept.error);
+		const images = kept.images;
 
 		const runOn = parseRunOnTarget(projected.agent.runOn ?? { type: 'provider' });
 		if (!runOn.ok) return fail(method, 'invalid', runOn.error);
@@ -846,7 +1085,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const item: TurnItem = {
 			id: ctx.newId(),
 			tabId,
-			text: input.text,
+			text,
+			...(images.length > 0 ? { images, imageBytes: admitted.bytes } : {}),
 			queuedAt: deps.now(),
 			readOnly:
 				(overrides?.readOnly ?? tab.readOnlyMode === true) || tab.permissionMode === 'readonly',
@@ -857,6 +1097,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			},
 			settingsProvider: agent.toolType,
 		};
+		// Queue Held: queued paused, even on an idle tab, until someone resumes it.
+		if (input.held === true) item.paused = true;
 		const originHost = normalizeOriginHost(input.originHost);
 		if (originHost) item.originHost = originHost;
 		if (overrides) item.overrides = overrides;
@@ -914,6 +1156,112 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				const found = queues.get(agentId)?.setPaused(itemId, paused) ?? false;
 				return ok({ found, paused });
 			},
+			merge: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.merge', 'not-found', `No agent ${agentId}.`);
+				}
+				// The merged message is one message: its images meet a send's bounds, or nothing merges.
+				const queue = queues.get(agentId);
+				const lower = queue?.items().find((item) => item.id === itemId);
+				const upper = queue && lower ? findQueueMergeTarget(queue.items(), itemId) : null;
+				if (upper && lower) {
+					// Both were admitted when they were queued, so their count and recorded size say
+					// whether the merged message fits.
+					const tooLarge = turnImageBoundsError(
+						(upper.images?.length ?? 0) + (lower.images?.length ?? 0),
+						(upper.imageBytes ?? 0) + (lower.imageBytes ?? 0)
+					);
+					if (tooLarge) return fail('turns.queue.merge', 'invalid', tooLarge);
+				}
+				// The upper message is the turn that runs first: it keeps its own settings and hold.
+				const mergedIntoId =
+					queues.get(agentId)?.merge(itemId, (upper, lower) => {
+						const images = joinMergedQueueImages(upper.images, lower.images);
+						const { images: _upperImages, imageBytes: _upperBytes, ...rest } = upper;
+						return {
+							...rest,
+							text: joinMergedQueueText(upper.text, lower.text),
+							...(images
+								? { images, imageBytes: (upper.imageBytes ?? 0) + (lower.imageBytes ?? 0) }
+								: {}),
+						};
+					}) ?? null;
+				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
+			},
+			// The queued card's Steer: typed into the Claude TUI turn running on the message's tab, as
+			// a desktop types it (`steering.ts`). A turn with no input channel (`claude --print`,
+			// `codex exec`) answers `not-steerable`, and the message stays queued.
+			steer: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.steer', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok(await steering.steer(agentId, itemId));
+			},
+			edit: async (agentId, itemId, edit) => {
+				const record = repository.getAgent(agentId);
+				if (!record) {
+					return fail('turns.queue.edit', 'not-found', `No agent ${agentId}.`);
+				}
+				// `images` replaces the message's images when given (an empty list removes them all)
+				// and keeps them when absent, as the desktop's Edit does. They are admitted as a send's
+				// are, so an edit is never a way past the bounds.
+				let images: string[] | undefined;
+				let imageBytes = 0;
+				if (edit.images !== undefined) {
+					if (edit.images.length > 0 && !agentIdCanReadImages(record.toolType)) {
+						return fail(
+							'turns.queue.edit',
+							'unsupported',
+							`${getAgentDisplayName(record.toolType)} cannot read images. Edit the message without them.`
+						);
+					}
+					const admitted = admitTurnImages(edit.images);
+					if (!admitted.ok) return fail('turns.queue.edit', 'invalid', admitted.error);
+					const kept = await keepImages(admitted.images);
+					if (!kept.ok) return fail('turns.queue.edit', 'failed', kept.error);
+					images = kept.images;
+					imageBytes = admitted.bytes;
+				}
+				// An image-only message may keep its text empty; a message with neither is nothing.
+				const current = queues
+					.get(agentId)
+					?.items()
+					.find((item) => item.id === itemId);
+				if (current && !edit.text.trim() && !(images ?? current.images ?? []).length) {
+					return fail('turns.queue.edit', 'invalid', 'There is nothing to send.');
+				}
+				const found =
+					queues.get(agentId)?.update(itemId, (item) => {
+						const next: TurnItem = {
+							...item,
+							text: edit.text,
+							...(edit.turnSettings ? { turnSettings: { ...edit.turnSettings } } : {}),
+						};
+						if (images !== undefined) {
+							if (images.length > 0) {
+								next.images = images;
+								next.imageBytes = imageBytes;
+							} else {
+								delete next.images;
+								delete next.imageBytes;
+							}
+						}
+						return next;
+					}) ?? false;
+				return ok({ found });
+			},
+			move: async (agentId, itemId, toIndex, tabId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.move', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok({ moved: queues.get(agentId)?.move(itemId, toIndex, tabId) ?? false });
+			},
+			sendNow: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.sendNow', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok({ sent: queues.get(agentId)?.sendNow(itemId) ?? false });
+			},
 		},
 
 		subscribe: (agentId, tabId, listener): Unsubscribe =>
@@ -927,11 +1275,20 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 	return {
 		api,
+		sideQuestions: { ask: sideQuestions.ask },
 		drain: (agentId) => queues.get(agentId)?.drain(),
 		dispose() {
+			disposed = true;
 			unsubscribeLifecycle();
+			builtins.stop();
+			sideQuestions.dispose();
 			for (const queue of queues.values()) queue.dispose();
 			queues.clear();
+			// Nothing runs any more, so nothing is left to wait for.
+			for (const key of [...idleWaiters.keys()]) {
+				const [agentId, tabId] = key.split('\u0000');
+				wakeIdleWaiters(agentId, tabId);
+			}
 		},
 	};
 }

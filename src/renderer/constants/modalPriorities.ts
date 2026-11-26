@@ -75,6 +75,11 @@ export const MODAL_PRIORITIES = {
 	 * above all of them and Escape closes it first. */
 	ZOOM_VIEWER: 990,
 
+	/** Folder or file picker for an agent whose paths live on a remote (`pickDirectory()`).
+	 * Opens from inside other modals (Edit Agent, Auto Run setup, worktree config), so it
+	 * sits above all of them and Escape closes it first. */
+	PATH_PICKER: 985,
+
 	/** Gist publish confirmation modal - high priority */
 	GIST_PUBLISH: 980,
 

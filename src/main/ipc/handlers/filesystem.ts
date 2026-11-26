@@ -15,6 +15,7 @@
  * - countItems: Count files and folders recursively (local & SSH remote)
  * - compressFolder: Zip a folder into its parent dir (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
+ * - downloadRemoteFile / downloadRemoteFolder: Fetch a remote file or folder to this machine
  *
  * Extracted from main/index.ts to improve code organization.
  */
@@ -22,9 +23,11 @@
 import { ipcMain } from 'electron';
 import path from 'path';
 import os from 'os';
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
+import * as chokidar from 'chokidar';
 
 import { logger } from '../../utils/logger';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
@@ -34,6 +37,11 @@ import {
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
+import { normalizeRootRelativePath } from '../../../shared/pathContainment';
+import { isWindows } from '../../../shared/platformDetection';
+import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
+import { generateUUID } from '../../../shared/uuid';
+import { formatSize } from '../../../shared/formatters';
 import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
 import { buildSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { isSqliteDatabaseFile } from '../../sqlite/sqlite-detect';
@@ -45,9 +53,9 @@ import {
 	readBinaryFileRemoteAsBase64,
 	readFileRemoteAbortable,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
 	mkdirRemote,
 	statRemote,
-	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
 	deleteManyRemote,
@@ -55,13 +63,22 @@ import {
 	countItemsRemote,
 	compressFolderRemote,
 	listTreeRemote,
+	sha256FileRemote,
 	type ListTreeOptions,
 } from '../../utils/remote-fs';
-import type { SshRemoteConfig } from '../../../shared/types';
+import type { RemoteCopyWatchResult, SshRemoteConfig } from '../../../shared/types';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
+import {
+	createRemoteCopyWriteBack,
+	RemoteCopyNotSavedBackError,
+	type RemoteCopyWriteBack,
+	type RemoteCopyWriteBackEvent,
+	type StagedCopy,
+} from '../../utils/remote-copy-write-back';
+import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
 import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
 import { getHostDirectoryInfo } from '../../utils/host-directory';
@@ -143,6 +160,328 @@ async function uploadLocalPathToRemote(
 }
 
 /**
+ * Where `fs:downloadRemoteFile` / `fs:downloadRemoteFolder` put a fetched copy
+ * when the caller names no destination: one temp folder per remote parent
+ * folder, so two remote entries that share a name (`a/notes.pdf`,
+ * `b/notes.pdf`) never overwrite each other's copy while one of them is open,
+ * playing, or being dragged. The entry keeps its own name, which is what Finder
+ * and the opener show.
+ */
+function remoteDownloadTempPath(sshRemoteId: string, remotePath: string): string {
+	const name = path.posix.basename(remotePath);
+	if (!isLocalPathSegment(name)) {
+		throw new Error(`Refusing a remote name that is not one file name on this computer: ${name}`);
+	}
+	const folderKey = createHash('sha1')
+		.update(`${sshRemoteId}\0${path.posix.dirname(remotePath)}`)
+		.digest('hex')
+		.slice(0, 12);
+	const folder = path.join(os.tmpdir(), 'maestro-remote-downloads', folderKey);
+	const dest = path.join(folder, name);
+	// The join is checked as well, so the name rule is not the only thing
+	// between a remote name and a path outside the folder.
+	if (path.dirname(dest) !== folder || path.basename(dest) !== name) {
+		throw new Error(`Refusing a remote name that is not one file name on this computer: ${name}`);
+	}
+	return dest;
+}
+
+/**
+ * Whether a name off a POSIX remote is exactly one path segment on this
+ * machine. A remote name can hold `\` and `C:`, which Windows reads as a
+ * separator and a drive: a remote folder named `..\..\victim` would join to a
+ * path outside the download folder. So Windows takes only a name
+ * `normalizeRootRelativePath()` leaves as it is. Elsewhere those are ordinary
+ * characters and the name is kept, so the copy is the file the remote listed.
+ */
+function isLocalPathSegment(name: string): boolean {
+	if (name === '' || name === '.' || name === '..') return false;
+	if (name.includes('/') || name.includes('\0')) return false;
+	return !isWindows() || normalizeRootRelativePath(name) === name;
+}
+
+/**
+ * A sibling of `localPath` to write into before it takes `localPath`'s place.
+ * Same folder, because a rename cannot cross volumes; a fresh name each time,
+ * so two downloads of one path never share it.
+ */
+function stagingPathFor(localPath: string): string {
+	return path.join(path.dirname(localPath), `.maestro-part-${generateUUID()}`);
+}
+
+/** Read one remote file's bytes (binary-safe). */
+async function readRemoteFileBytes(
+	remotePath: string,
+	sshConfig: SshRemoteConfig
+): Promise<Buffer> {
+	const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
+	if (!result.success) {
+		throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+	}
+	return Buffer.from(result.data ?? '', 'base64');
+}
+
+/**
+ * Read one remote file (binary-safe) and put its bytes at a local path. The
+ * bytes are written beside `localPath` and renamed over it, so the path never
+ * names a half-written file: a reader gets the earlier copy or the new one, and
+ * a failed download leaves the earlier copy as it was.
+ */
+async function downloadRemoteFileTo(
+	remotePath: string,
+	localPath: string,
+	sshConfig: SshRemoteConfig
+): Promise<Buffer> {
+	const bytes = await readRemoteFileBytes(remotePath, sshConfig);
+	await placeLocalFile(localPath, bytes);
+	return bytes;
+}
+
+/**
+ * Write `bytes` beside a local path, to be renamed over it (`commit`) or removed
+ * (`discard`). The path never names a half-written file, and a failed write or
+ * rename leaves the earlier file as it was.
+ */
+async function stageLocalFile(localPath: string, bytes: Buffer): Promise<StagedCopy> {
+	const staged = stagingPathFor(localPath);
+	const discard = async () => {
+		try {
+			await fs.rm(staged, { force: true });
+		} catch {
+			// The write's own failure is the one to report.
+		}
+	};
+	try {
+		await fs.writeFile(staged, bytes);
+	} catch (error) {
+		await discard();
+		throw error;
+	}
+	return {
+		commit: async () => {
+			try {
+				await fs.rename(staged, localPath);
+			} catch (error) {
+				await discard();
+				throw error;
+			}
+		},
+		discard,
+	};
+}
+
+/** Put `bytes` at a local path through a sibling and a rename ({@link stageLocalFile}). */
+async function placeLocalFile(localPath: string, bytes: Buffer): Promise<void> {
+	await (await stageLocalFile(localPath, bytes)).commit();
+}
+
+/** The most files one folder download fetches; a bigger folder is refused, never cut short. */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_FILES = 2000;
+/** The deepest a folder download walks (the tree listing's own default is 5). */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH = 64;
+/**
+ * The most bytes one folder download fetches in all. Each file is read whole into memory, so a
+ * bigger tree is refused (with its size) rather than copied; the callers fall back (a remote page
+ * opens alone, a drag-out says why).
+ */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
+/** The largest one file in a folder download may be (it is read whole, and four run at once). */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+/** Why a folder of `total` bytes (`atLeast`: a lower bound) is refused, or `null` when it fits. */
+export function remoteFolderTooLarge(
+	total: number,
+	largest: { name: string; size: number } | null,
+	atLeast = false
+): string | null {
+	const size = `${atLeast ? 'at least ' : ''}${formatSize(total)}`;
+	if (largest && largest.size > REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES) {
+		return (
+			`The folder is too large to copy to this computer (${size}): ` +
+			`${largest.name.slice(0, 200)} alone is ${formatSize(largest.size)}, over the ` +
+			`${formatSize(REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES)} limit for one file`
+		);
+	}
+	if (total > REMOTE_FOLDER_DOWNLOAD_MAX_BYTES) {
+		return (
+			`The folder is too large to copy to this computer (${size}; ` +
+			`the limit is ${formatSize(REMOTE_FOLDER_DOWNLOAD_MAX_BYTES)})`
+		);
+	}
+	return null;
+}
+
+/** Parallel SSH reads while downloading a folder. */
+const REMOTE_FOLDER_DOWNLOAD_CONCURRENCY = 4;
+
+/**
+ * Put a finished folder at `dest`, replacing the copy there. Two renames, not a recursive delete
+ * and a rename: the earlier copy moves aside whole and the new one takes its name, so a reader of
+ * `dest` (a drag from another window) never meets a half-deleted folder, and a failed second
+ * rename puts the earlier copy back. The earlier copy is deleted only once the new one is in place.
+ */
+export async function swapInFolder(staged: string, dest: string): Promise<void> {
+	const retired = stagingPathFor(dest);
+	let hadEarlier = false;
+	try {
+		await fs.rename(dest, retired);
+		hadEarlier = true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	try {
+		await fs.rename(staged, dest);
+	} catch (error) {
+		if (hadEarlier) {
+			try {
+				await fs.rename(retired, dest);
+			} catch (restoreError) {
+				void captureException(restoreError, { action: 'remote-folder-copy.restore', dest });
+			}
+		}
+		throw error;
+	}
+	if (hadEarlier) {
+		try {
+			await fs.rm(retired, { recursive: true, force: true });
+		} catch (error) {
+			// The new copy is in place; a leftover in the temp folder is only clutter.
+			logger.warn(
+				`Could not remove an earlier folder copy: ${retired}`,
+				'fs:downloadRemoteFolder',
+				{
+					error: error instanceof Error ? error.message : String(error),
+				}
+			);
+		}
+	}
+}
+
+/** One folder download per local folder at a time: two never build the same copy at once. */
+const remoteFolderDownloads = createKeyedWriteQueue();
+
+/**
+ * Download a remote directory tree to a local directory - the mirror of
+ * {@link uploadDirToRemote}. One SSH listing, then each file read binary-safe.
+ * The tree is built in a folder beside `localDir` and swapped in only when
+ * every file is there, so `localDir` never holds part of a copy: a failed
+ * download leaves the earlier copy as it was. The swap replaces the earlier
+ * copy whole, so a file deleted on the remote does not linger. Refuses (throws)
+ * a tree larger than {@link REMOTE_FOLDER_DOWNLOAD_MAX_FILES} or as deep as
+ * {@link REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH} rather than handing back a partial
+ * folder, a tree with a subfolder it cannot read (the strict listing names it),
+ * and any listed path that would land outside `localDir`.
+ */
+async function downloadRemoteDirToLocal(
+	remoteDir: string,
+	localDir: string,
+	sshConfig: SshRemoteConfig
+): Promise<number> {
+	const listed = await listTreeRemote(
+		remoteDir,
+		{
+			maxDepth: REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
+			maxFiles: REMOTE_FOLDER_DOWNLOAD_MAX_FILES,
+			// A subfolder the walk cannot read fails the copy, naming it, before any byte is
+			// fetched: a copy that silently lacks a subfolder is a wrong copy.
+			strict: true,
+			// Sizes come with the listing, so a tree too large to copy is refused before any read.
+			withSizes: true,
+		},
+		sshConfig
+	);
+	if (!listed.success) {
+		throw new Error(listed.error || `Failed to list remote folder: ${remoteDir}`);
+	}
+	if (listed.data!.truncated) {
+		throw new Error(
+			`The folder has more than ${REMOTE_FOLDER_DOWNLOAD_MAX_FILES} files, too many to copy to this computer`
+		);
+	}
+	// A listed path is read on the remote exactly as listed, and lands here
+	// segment for segment. One this machine would read as some other path is
+	// refused, never rewritten into a different name.
+	const toSegments = (rel: string): string[] => {
+		const segments = rel.split('/');
+		if (!segments.every(isLocalPathSegment)) {
+			throw new Error(`Refusing a remote path outside the folder: ${rel}`);
+		}
+		return segments;
+	};
+	const dirs = listed.data!.directories.map(toSegments);
+	// The listing stops at the depth limit without saying so. A folder that
+	// deep may hold entries the listing never saw.
+	if (dirs.some((segments) => segments.length >= REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH)) {
+		throw new Error(
+			`The folder is nested ${REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH} folders deep or more, too deep to copy to this computer`
+		);
+	}
+	const remoteRoot = remoteDir.replace(/\/+$/, '');
+	const sizes = listed.data!.fileSizes ?? [];
+	const files = listed.data!.files.map((rel, i) => ({
+		remote: `${remoteRoot}/${rel}`,
+		segments: toSegments(rel),
+		rel,
+		size: sizes[i] ?? null,
+	}));
+	// Checked from the listing before any byte is fetched, for every size the remote reported.
+	let listedTotal = 0;
+	let largest: { name: string; size: number } | null = null;
+	for (const file of files) {
+		if (file.size === null) continue;
+		listedTotal += file.size;
+		if (!largest || file.size > largest.size) largest = { name: file.rel, size: file.size };
+	}
+	const tooLarge = remoteFolderTooLarge(listedTotal, largest);
+	if (tooLarge) throw new Error(tooLarge);
+
+	const staging = stagingPathFor(localDir);
+	try {
+		await fs.mkdir(staging, { recursive: true });
+		for (const segments of dirs) {
+			await fs.mkdir(path.join(staging, ...segments), { recursive: true });
+		}
+		// The first failure stops the rest from starting, and the reads already
+		// running settle before the staging folder is removed under them.
+		const failures: unknown[] = [];
+		// Every file is checked again once its bytes are here, the same rule: a size the listing
+		// could not report counts now, and a file that grew since the listing counts at its real
+		// size, so neither slips past the budget.
+		let fetchedTotal = listedTotal;
+		// With a size still unknown, the running total is a lower bound.
+		const someSizeUnknown = files.some((file) => file.size === null);
+		await mapWithConcurrency(files, REMOTE_FOLDER_DOWNLOAD_CONCURRENCY, async (file) => {
+			if (failures.length > 0) return;
+			try {
+				const local = path.join(staging, ...file.segments);
+				await fs.mkdir(path.dirname(local), { recursive: true });
+				const bytes = await readRemoteFileBytes(file.remote, sshConfig);
+				fetchedTotal += bytes.length - (file.size ?? 0);
+				const over = remoteFolderTooLarge(
+					fetchedTotal,
+					{ name: file.rel, size: bytes.length },
+					someSizeUnknown
+				);
+				if (over) throw new Error(over);
+				await fs.writeFile(local, bytes);
+			} catch (error) {
+				failures.push(error);
+			}
+		});
+		if (failures.length > 0) throw failures[0];
+		await swapInFolder(staging, localDir);
+	} catch (error) {
+		try {
+			await fs.rm(staging, { recursive: true, force: true });
+		} catch {
+			// The download's own failure is the one to report.
+		}
+		throw error;
+	}
+	return files.length;
+}
+
+/**
  * Supported image file extensions for base64 encoding
  */
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
@@ -152,6 +491,8 @@ interface DirectorySizeResult {
 	totalSize: number;
 	fileCount: number;
 	folderCount: number;
+	/** The walk stopped counting files at {@link DIRECTORY_SIZE_MAX_FILES}: the count and size are at least these. */
+	fileCountCapped: boolean;
 }
 
 /**
@@ -164,6 +505,16 @@ interface DirectorySizeResult {
  * only has to outlive one burst of callers, not act as a real cache.
  */
 const DIRECTORY_SIZE_CACHE_MS = 2_000;
+
+/** How deep the Files panel's size walk goes: entries up to 10 levels below the root, in every mode. */
+const DIRECTORY_SIZE_MAX_DEPTH = 10;
+
+/**
+ * The most files the Files panel's size walk counts, in every mode. A remote
+ * walk lists every file over SSH, so a huge tree would send megabytes of
+ * paths; past the cap the footer shows the count as "N+".
+ */
+export const DIRECTORY_SIZE_MAX_FILES = 50_000;
 
 /**
  * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
@@ -267,7 +618,138 @@ async function deleteLocalPath(targetPath: string, recursive: boolean): Promise<
 	}
 }
 
-export function registerFilesystemHandlers(): void {
+/** The words for one write-back outcome, sent on the existing toast and flash channels. */
+function announceWriteBack(
+	safeSend: SafeSendFn | undefined,
+	event: RemoteCopyWriteBackEvent
+): void {
+	if (!safeSend) return;
+	const name = path.posix.basename(event.remotePath);
+	if (event.kind === 'saved') {
+		safeSend('remote:notifyCenterFlash', {
+			message: 'Saved to the remote host',
+			detail: name,
+			color: 'green',
+			duration: 2000,
+		});
+		return;
+	}
+	if (event.kind === 'unwatched') {
+		safeSend('remote:notifyToast', {
+			title: 'No longer saving to the remote host',
+			message: `Maestro can no longer watch the copy of ${name} on this computer, so changes you save to it from now on stay here. Open the file again to start saving back.`,
+			color: 'yellow',
+			dismissible: true,
+		});
+		return;
+	}
+	if (event.kind === 'kept') {
+		safeSend('remote:notifyToast', {
+			title: 'Your change was kept',
+			message: event.replaced
+				? `${name} was opened again, so the copy now holds the remote file. Your change, which was not saved there, is kept at ${event.keptAt}.`
+				: `Your change to ${name}, which was not saved to the remote host, is kept at ${event.keptAt}.`,
+			color: 'yellow',
+			dismissible: true,
+		});
+		return;
+	}
+	safeSend('remote:notifyToast', {
+		title:
+			event.kind === 'conflict' ? 'Not saved to the remote host' : 'Save to the remote host failed',
+		message:
+			event.kind === 'conflict'
+				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}. Later changes to this copy are not saved back: open the file again to start from the remote version.`
+				: `${name}: ${event.message}. Your change is still in the copy on this computer.`,
+		color: 'red',
+		dismissible: true,
+	});
+}
+
+function sshConfigOrThrow(sshRemoteId: string): SshRemoteConfig {
+	const sshConfig = getSshRemoteById(sshRemoteId);
+	if (!sshConfig) throw new Error(`SSH remote not found: ${sshRemoteId}`);
+	return sshConfig;
+}
+
+/**
+ * The write-back for remote copies opened in another app (`fs:watchRemoteCopy`).
+ * Its watchers do not keep the app alive, and each watches one file.
+ */
+function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopyWriteBack {
+	return createRemoteCopyWriteBack({
+		watchFile: (localPath, onChange, onError) => {
+			const watcher = chokidar.watch(localPath, {
+				ignoreInitial: true,
+				persistent: false,
+				// An app that saves by writing a sibling and renaming it over the file
+				// still reads as one change to this path.
+				atomic: true,
+				awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+			});
+			watcher.on('add', onChange);
+			watcher.on('change', onChange);
+			watcher.on('error', (error) => {
+				logger.warn('Remote copy watcher failed', 'fs:watchRemoteCopy', {
+					localPath,
+					error: String(error),
+				});
+				onError(error);
+			});
+			return { close: () => watcher.close() };
+		},
+		statLocal: async (localPath) => {
+			try {
+				const stat = await fs.stat(localPath);
+				return { size: stat.size, mtimeMs: stat.mtimeMs };
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+				throw error;
+			}
+		},
+		readLocal: (localPath) => fs.readFile(localPath),
+		// `wx`: a kept version never replaces an earlier one.
+		createLocal: (localPath, bytes) => fs.writeFile(localPath, bytes, { flag: 'wx' }),
+		hashRemote: async (remotePath, sshRemoteId) => {
+			const result = await sha256FileRemote(remotePath, sshConfigOrThrow(sshRemoteId));
+			if (!result.success) throw new Error(result.error || 'The remote file could not be read');
+			return result.data ?? null;
+		},
+		writeRemote: async (remotePath, bytes, sshRemoteId, expectedSha256) => {
+			const result = await replaceFileRemoteIfUnchanged(
+				remotePath,
+				bytes,
+				expectedSha256,
+				sshConfigOrThrow(sshRemoteId)
+			);
+			if (result.success) return 'written';
+			if (result.changed) return 'changed';
+			throw new Error(result.error || 'The remote write failed');
+		},
+		notify: (event) => announceWriteBack(safeSend, event),
+	});
+}
+
+let remoteCopyWriteBack: RemoteCopyWriteBack | null = null;
+
+/**
+ * On quit: send every opened remote copy's change not sent yet, then stop the
+ * watches. Resolves when those writes are done; the quit path bounds the wait.
+ */
+export function flushRemoteCopyWriteBack(): Promise<void> {
+	return remoteCopyWriteBack?.dispose() ?? Promise.resolve();
+}
+
+export interface FilesystemHandlerDependencies {
+	/** Broadcast to the renderers: the write-back of a remote copy reports through it. */
+	safeSend?: SafeSendFn;
+}
+
+export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies = {}): void {
+	void remoteCopyWriteBack?.dispose();
+	remoteCopyWriteBack = createFilesystemWriteBack(deps.safeSend);
+	const writeBack = remoteCopyWriteBack;
+
 	// Get user home directory
 	ipcMain.handle('fs:homeDir', () => {
 		return os.homedir();
@@ -551,22 +1033,62 @@ export function registerFilesystemHandlers(): void {
 				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
-			const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
-			if (!result.success) {
-				throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+			if (localDestPath) {
+				await downloadRemoteFileTo(remotePath, localDestPath, sshConfig);
+				return { success: true, path: localDestPath };
 			}
-
-			let destPath = localDestPath;
-			if (!destPath) {
-				const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads');
-				await fs.mkdir(tempDir, { recursive: true });
-				destPath = path.join(tempDir, path.basename(remotePath));
-			}
-
-			await fs.writeFile(destPath, Buffer.from(result.data ?? '', 'base64'));
+			const destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+			// A copy opened in another app may hold a change the remote does not have
+			// yet: it stays (the write is tried again), never replaced by a fetch. The
+			// fetch runs in that copy's own queue, so no save of it interleaves.
+			await writeBack.refetch(destPath, {
+				download: () => readRemoteFileBytes(remotePath, sshConfig),
+				stage: async (bytes) => {
+					await fs.mkdir(path.dirname(destPath), { recursive: true });
+					return stageLocalFile(destPath, bytes);
+				},
+			});
 			return { success: true, path: destPath };
 		}
 	);
+
+	// Watch the copy `fs:downloadRemoteFile` fetched for a remote file (no
+	// destination named), and write a change saved in another app back to the
+	// remote file. The copy's path is derived here, never taken from the caller,
+	// so only a fetched copy can be sent to the remote. Call it right after the
+	// fetch: the copy's bytes now are what the remote held. A copy that does not
+	// save back (too large, or one a refetch could not start over) answers why,
+	// for the flash.
+	ipcMain.handle(
+		'fs:watchRemoteCopy',
+		async (_, remotePath: string, sshRemoteId: string): Promise<RemoteCopyWatchResult> => {
+			sshConfigOrThrow(sshRemoteId);
+			const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+			try {
+				await writeBack.watch({ localPath, remotePath, sshRemoteId });
+			} catch (error) {
+				if (!(error instanceof RemoteCopyNotSavedBackError)) throw error;
+				return { path: localPath, savesBack: false, reason: error.message };
+			}
+			return { path: localPath, savesBack: true };
+		}
+	);
+
+	// Download a remote SSH folder (its whole tree) to a temp folder on this
+	// machine, for actions that must hand a real folder to the OS (the Files
+	// panel's Option-drag out to Finder). Same temp layout as a single file.
+	// Returns the local folder path and how many files it holds.
+	ipcMain.handle('fs:downloadRemoteFolder', async (_, remotePath: string, sshRemoteId: string) => {
+		const sshConfig = getSshRemoteById(sshRemoteId);
+		if (!sshConfig) {
+			throw new Error(`SSH remote not found: ${sshRemoteId}`);
+		}
+		const destPath = remoteDownloadTempPath(sshRemoteId, remotePath.replace(/\/+$/, ''));
+		const fileCount = await remoteFolderDownloads.enqueue(destPath, () =>
+			downloadRemoteDirToLocal(remotePath, destPath, sshConfig)
+		);
+		return { success: true, path: destPath, fileCount };
+	});
 
 	// Get file/directory statistics (supports SSH remote)
 	ipcMain.handle('fs:stat', async (_, filePath: string, sshRemoteId?: string) => {
@@ -641,25 +1163,11 @@ export function registerFilesystemHandlers(): void {
 			ignorePatterns?: string[],
 			honorGitignore?: boolean
 		) => {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
-				}
-				// Fetch size and counts in parallel for SSH remotes
-				const [sizeResult, countResult] = await Promise.all([
-					directorySizeRemote(dirPath, sshConfig),
-					countItemsRemote(dirPath, sshConfig),
-				]);
-				if (!sizeResult.success) {
-					throw new Error(sizeResult.error || 'Failed to get remote directory size');
-				}
-				return {
-					totalSize: sizeResult.data!,
-					fileCount: countResult.success ? countResult.data!.fileCount : 0,
-					folderCount: countResult.success ? countResult.data!.folderCount : 0,
-				};
+			// SSH remote: the same walk rule (patterns, .gitignore, depth) over SSH, so
+			// one tree gives the same counts and size wherever the agent runs.
+			const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			if (sshRemoteId && !sshConfig) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
 			// The Files panel asks for this from several places that all fire inside
@@ -669,7 +1177,7 @@ export function registerFilesystemHandlers(): void {
 			// those into one walk: a request that arrives while a matching walk is
 			// still running joins it, and the settled answer is reused for a beat
 			// afterwards so the back-to-back callers do not each pay for it.
-			const cacheKey = `${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
+			const cacheKey = `${sshRemoteId ?? ''}\u0000${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
 				ignorePatterns ?? LOCAL_IGNORE_DEFAULTS
 			).join('\u0001')}`;
 			const cached = directorySizeCache.get(cacheKey);
@@ -677,7 +1185,7 @@ export function registerFilesystemHandlers(): void {
 				return cached.result;
 			}
 
-			const pending = computeDirectorySize();
+			const pending = sshConfig ? computeRemoteDirectorySize(sshConfig) : computeDirectorySize();
 			const now = Date.now();
 			// Prune while we are here so a long-lived session cannot accumulate one
 			// entry per directory the user ever opened.
@@ -689,6 +1197,55 @@ export function registerFilesystemHandlers(): void {
 			// inherit the rejection for the rest of the TTL.
 			pending.catch(() => directorySizeCache.delete(cacheKey));
 			return pending;
+
+			/**
+			 * The local walk's rule on an SSH remote, in one round trip: the same
+			 * patterns (with the root's .gitignore read on the remote), the same
+			 * depth, and every surviving file's size. `listTreeRemote()` prunes by
+			 * `find -name`; each path is then checked with `shouldIgnore()` too, the
+			 * check the local walk makes, so a case the remote `find` does not fold
+			 * is dropped as it is here.
+			 */
+			async function computeRemoteDirectorySize(
+				remote: SshRemoteConfig
+			): Promise<DirectorySizeResult> {
+				let effectivePatterns = ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
+				if (honorGitignore) {
+					const gitignore = await readFileRemote(path.posix.join(dirPath, '.gitignore'), remote);
+					if (gitignore.success && gitignore.data) {
+						effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(gitignore.data)];
+					}
+				}
+				const listed = await listTreeRemote(
+					dirPath,
+					{
+						maxDepth: DIRECTORY_SIZE_MAX_DEPTH,
+						ignorePatterns: effectivePatterns,
+						withSizes: true,
+						maxFiles: DIRECTORY_SIZE_MAX_FILES,
+					},
+					remote
+				);
+				if (!listed.success || !listed.data) {
+					throw new Error(listed.error || 'Failed to get remote directory size');
+				}
+				const kept = (relative: string) =>
+					!relative.split('/').some((name) => shouldIgnore(name, effectivePatterns));
+				const { directories, files, fileSizes, truncated } = listed.data;
+				let totalSize = 0;
+				let fileCount = 0;
+				files.forEach((file, index) => {
+					if (!kept(file)) return;
+					fileCount++;
+					totalSize += fileSizes?.[index] ?? 0;
+				});
+				return {
+					totalSize,
+					fileCount,
+					folderCount: directories.filter(kept).length,
+					fileCountCapped: truncated,
+				};
+			}
 
 			async function computeDirectorySize(): Promise<DirectorySizeResult> {
 				// Build effective ignore patterns (same logic as loadFileTree)
@@ -710,10 +1267,11 @@ export function registerFilesystemHandlers(): void {
 				let totalSize = 0;
 				let fileCount = 0;
 				let folderCount = 0;
+				let fileCountCapped = false;
 
 				const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
 					// Limit recursion depth to match file tree loading
-					if (depth >= 10) return;
+					if (depth >= DIRECTORY_SIZE_MAX_DEPTH) return;
 
 					try {
 						const entries = await fs.readdir(currentPath, { withFileTypes: true });
@@ -739,12 +1297,24 @@ export function registerFilesystemHandlers(): void {
 								continue;
 							}
 
-							if (entry.isDirectory()) {
+							// A symlink counts as its target, as the Files panel tree draws it
+							// and as the remote walk (`find -L`) counts it; the depth bound
+							// ends a link loop, as it does in the tree.
+							const childPath = childPrefix + entry.name;
+							const kind = entry.isSymbolicLink()
+								? await resolveDirentType(entry, childPath)
+								: { isDirectory: entry.isDirectory(), isFile: entry.isFile() };
+							if (kind.isDirectory) {
 								folderCount++;
-								await calculateSize(childPrefix + entry.name, depth + 1);
-							} else if (entry.isFile()) {
+								await calculateSize(childPath, depth + 1);
+							} else if (kind.isFile) {
+								// The remote walk's cap, so a huge tree reads "N+" in every mode.
+								if (fileCount >= DIRECTORY_SIZE_MAX_FILES) {
+									fileCountCapped = true;
+									continue;
+								}
 								fileCount++;
-								filePaths.push(childPrefix + entry.name);
+								filePaths.push(childPath);
 							}
 						}
 
@@ -770,6 +1340,7 @@ export function registerFilesystemHandlers(): void {
 					totalSize,
 					fileCount,
 					folderCount,
+					fileCountCapped,
 				};
 			}
 		}

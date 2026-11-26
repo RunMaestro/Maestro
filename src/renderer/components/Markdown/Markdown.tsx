@@ -368,7 +368,7 @@ export const Markdown = memo(function Markdown({
 					onDismiss={dismissFileMenu}
 					onPreview={onFileClick}
 					projectRoot={projectRoot}
-					sshRemote={!!sshRemoteId}
+					sshRemoteId={sshRemoteId}
 				/>
 			)}
 		</div>

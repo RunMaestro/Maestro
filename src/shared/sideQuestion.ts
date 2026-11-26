@@ -45,3 +45,59 @@ export function buildSideQuestionPrompt(question: string): string {
 		question,
 	].join('\n');
 }
+
+/** The agent a side question is put to, as `resolveSideQuestionTarget` reads it. */
+export interface SideQuestionAgent {
+	name: string;
+	toolType: string;
+	activeTabId?: string;
+	/** The agent's AI tab ids. */
+	tabIds: readonly string[];
+}
+
+/** Which tab a side question forks, or why it cannot be asked. */
+export type SideQuestionTarget = { ok: true; tabId: string } | { ok: false; error: string };
+
+/**
+ * The tab a side question forks: the one named, else the agent's active tab. A side question is
+ * Claude Code only. The desktop's `maestro-cli ask --btw` and a headless host's answer the same
+ * way, so a script reads one set of refusals from every host.
+ */
+export function resolveSideQuestionTarget(
+	agent: SideQuestionAgent,
+	requestedTabId?: string
+): SideQuestionTarget {
+	if (agent.toolType !== 'claude-code') {
+		return {
+			ok: false,
+			error: `${agent.name} cannot answer side questions (Claude Code agents only)`,
+		};
+	}
+	const tabId = requestedTabId ?? agent.activeTabId;
+	if (!tabId || !agent.tabIds.includes(tabId)) {
+		return {
+			ok: false,
+			error: requestedTabId ? `No AI tab ${requestedTabId} on ${agent.name}` : 'No AI tab to ask',
+		};
+	}
+	return { ok: true, tabId };
+}
+
+/**
+ * Why `provider` cannot answer a side question about a tab, or null when it can. Resuming the
+ * tab's session needs a throwaway fork (`ephemeralForkArgs`); a tab with no session yet needs a
+ * turn that saves none (`noPersistenceArgs`). Without them the question would write into the
+ * real conversation, or leave a new one behind.
+ */
+export function sideQuestionForkRefusal(
+	provider: { name: string; ephemeralForkArgs?: string[]; noPersistenceArgs?: string[] },
+	hasSession: boolean
+): string | null {
+	if (!provider.ephemeralForkArgs?.length) {
+		return `${provider.name} cannot fork a session, so it cannot answer side questions.`;
+	}
+	if (!hasSession && !provider.noPersistenceArgs?.length) {
+		return `${provider.name} cannot run a turn without saving a session, so it cannot answer side questions.`;
+	}
+	return null;
+}

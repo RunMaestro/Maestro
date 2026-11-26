@@ -27,7 +27,11 @@ import { resolveFileReference } from '../../utils/fileLinks/resolve';
 import { getBasename } from '../../../shared/formatters';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
-import { canRevealOnHost, openFileForUser } from '../../services/hostShell';
+import {
+	openFileInDefaultApp,
+	openFolderInFileManager,
+	resolveOpenSource,
+} from '../../services/fileActions';
 
 // ============================================================================
 // Dependencies interface
@@ -153,33 +157,38 @@ export function useFileExplorerEffects(
 			const sshRemoteId =
 				currentSession.sshRemoteId || currentSession.sessionSshRemoteConfig?.remoteId || undefined;
 
-			// Check if file should be opened externally (PDF, etc.)
-			if (!sshRemoteId && shouldOpenExternally(filename)) {
-				void openFileForUser(fullPath);
+			// A file Maestro cannot preview (PDF, etc.) opens in this machine's
+			// default app in every mode; a remote one is fetched first.
+			if (shouldOpenExternally(filename)) {
+				await openFileInDefaultApp({ path: fullPath, sshRemoteId });
 				return;
 			}
 
 			try {
-				const target = await readPathForOpen(fullPath, sshRemoteId);
+				// Media plays from this disk only, so a remote media file is read
+				// from its fetched local copy. Everything else reads in place.
+				const source = await resolveOpenSource({ path: fullPath, sshRemoteId }, filename);
+				const target = await readPathForOpen(source.path, source.sshRemoteId);
 				if (!target) return;
 				if (target.kind === 'directory') {
 					// A folder has no preview: take the user to it in the Files panel.
-					// One outside the tree can't be shown there, so hand it to the OS.
-					if (
-						!revealPathInFileTree(currentSession.id, fullPath, { focus: true }) &&
-						canRevealOnHost(sshRemoteId)
-					) {
-						void window.maestro.shell.openPath(fullPath);
+					// One outside the tree can't be shown there, so it opens in the file
+					// manager (a remote folder, which has none here, says so instead).
+					if (!revealPathInFileTree(currentSession.id, fullPath, { focus: true })) {
+						await openFolderInFileManager(
+							{ path: fullPath, sshRemoteId },
+							{ sessionId: currentSession.id }
+						);
 					}
 					return;
 				}
 				const { content, lastModified } = target;
 				handleOpenFileTab(
 					{
-						path: fullPath,
+						path: source.path,
 						name: filename,
 						content,
-						sshRemoteId,
+						sshRemoteId: source.sshRemoteId,
 						lastModified,
 					},
 					{ openInNewTab: options?.openInNewTab ?? false }

@@ -737,6 +737,54 @@ describe('SessionContextMenu', () => {
 			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
 		});
 
+		it('local, SSH, and hosted agents get the same rows, but for the one transport toggle', () => {
+			mirror();
+			const transportToggles = new Set([
+				'session-menu-move-to-host',
+				'session-menu-move-back-from-host',
+			]);
+			const rowsFor = (session: Session) => {
+				renderMenu({
+					session: { ...session, worktreeConfig: { basePath: '/test/wt', watchEnabled: false } },
+					onExport: vi.fn(),
+					onQuickCreateWorktree: vi.fn(),
+					onConfigureWorktrees: vi.fn(),
+					onConfigureCue: vi.fn(),
+				});
+				// Rows sit in the top level and in two submenus whose flyouts draw outside the menu
+				// element, one open at a time: read the document with each submenu open in turn.
+				const buttons = new Set<HTMLButtonElement>();
+				const collect = () =>
+					document.body.querySelectorAll('button').forEach((button) => buttons.add(button));
+				collect();
+				fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
+				collect();
+				fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
+				collect();
+				const all = Array.from(buttons);
+				const rows = all
+					.filter((button) => !transportToggles.has(button.getAttribute('data-testid') ?? ''))
+					.map((button) => button.textContent?.trim());
+				const toggles = new Set(
+					all
+						.map((button) => button.getAttribute('data-testid') ?? '')
+						.filter((testId) => transportToggles.has(testId))
+				);
+				cleanup();
+				return { rows, toggles: toggles.size };
+			};
+			const local = rowsFor(makeSession());
+			const ssh = rowsFor(sshSession());
+			const hosted = rowsFor(sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }));
+			expect(local.rows).toContain('Rename');
+			expect(local.rows).toContain('Create Worktree');
+			expect(local.rows).toContain('Configure Maestro Cue');
+			expect(ssh.rows).toEqual(local.rows);
+			expect(hosted.rows).toEqual(local.rows);
+			// The toggle is the transport switch itself: none for local, one for SSH and hosted.
+			expect([local.toggles, ssh.toggles, hosted.toggles]).toEqual([0, 1, 1]);
+		});
+
 		it("gives a hosted agent a local agent's menu: no address, Reconnect, or Start Host rows", () => {
 			for (const connection of [undefined, 'lost'] as const) {
 				mirror(connection);

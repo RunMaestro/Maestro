@@ -10,7 +10,6 @@ import {
 	addHistoryEntry,
 	readHarnessTierDefaults,
 	readStoredAiTabs,
-	readSettings,
 } from '../services/storage';
 import { listDesktopTabs } from '../services/session-command';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
@@ -38,11 +37,6 @@ import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
-import {
-	AGENT_LIFTED_CODE,
-	hostedAgentsEnabled,
-	liftedSendRefusal,
-} from '../../shared/maestro-lib/agents/lift-pointer';
 import type {
 	AgentError,
 	HistoryEntry,
@@ -60,6 +54,7 @@ import {
 	hostCallError,
 	peerAgentRef,
 	peerErrorCode,
+	liftedPeerTarget,
 	routeAgentTarget,
 	watchPeerConnection,
 	withPeerAgent,
@@ -372,15 +367,6 @@ export async function send(
 ): Promise<void> {
 	const route = routeAgentTarget(agentIdArg);
 	if (route.kind === 'peer') return sendToPeer(route.target, message, options);
-	if (options.effort !== undefined) {
-		emitErrorJson(
-			"--effort is for a peer's agent (peer:agent), where it applies to this one turn. For a local agent, set the effort with update-agent.",
-			'INVALID_OPTION'
-		);
-		process.exit(ExitCode.InvalidUsage);
-		return;
-	}
-
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
 	try {
@@ -397,13 +383,21 @@ export async function send(
 		exitWith(ExitCode.GeneralError);
 	}
 
-	// A lifted agent runs on its host now: a local turn would resume the session the host owns.
-	const liftedRefusal = liftedSendRefusal(agent, () =>
-		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
-	);
-	if (liftedRefusal) {
-		emitErrorJson(liftedRefusal, AGENT_LIFTED_CODE);
-		exitWith(ExitCode.GeneralError);
+	// A hosted agent's turns run on its host: the message goes there, as a desktop send does. A
+	// local turn would resume the session the host owns.
+	const hostRoute = liftedPeerTarget(agent);
+	if (hostRoute) return sendToPeer(hostRoute, message, options);
+
+	// Past this point the turn runs from this machine. `--model` applies to this one turn here
+	// too; `--effort` applies to one turn only on a host (a `peer:agent` target, or a hosted
+	// agent's own id above). For a local agent, set the effort with update-agent.
+	if (options.effort !== undefined) {
+		emitErrorJson(
+			"--effort is for an agent that runs on a host (peer:agent, or a hosted agent's own id), where it applies to this one turn. For a local agent, set the effort with update-agent.",
+			'INVALID_OPTION'
+		);
+		process.exit(ExitCode.InvalidUsage);
+		return;
 	}
 
 	// Validate agent type is supported for CLI spawning
@@ -924,6 +918,22 @@ async function sendToPeer(
 					throw hostCallError(peer, sent.error);
 				}
 				const receipt = (sent.value as Extract<PeerAgentActionResult, { kind: 'send' }>).receipt;
+				if (receipt.status === 'ran') {
+					// One of Maestro's own commands (`/history`, `/skills`): the host ran it for the tab,
+					// as its composer would. No turn runs, so there is no turn to wait for.
+					const result: SendAgentResult = {
+						success: true,
+						response: `The host on peer "${peer}" ran ${message.trim().split(/\s/, 1)[0]} for tab ${tabId}. What it wrote is in that tab's transcript: maestro-cli show agent ${ref}`,
+					};
+					return {
+						response: {
+							...buildResponse(agent.id, agent.name, result, agent.toolType as ToolType),
+							peer,
+							tabId,
+						},
+						ok: true,
+					};
+				}
 				if (receipt.status === 'queued') {
 					throw new PeerSendFailure(
 						'QUEUED_ON_PEER',

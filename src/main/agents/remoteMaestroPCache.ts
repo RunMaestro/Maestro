@@ -20,6 +20,11 @@
 
 interface RemoteMaestroPEntry {
 	available: boolean;
+	/**
+	 * Whether the remote maestro-p serves the steering relay (it advertised
+	 * `steer-relay` on `--version --capabilities`). Unknown until a probe says.
+	 */
+	canSteer?: boolean;
 	probedAt: number;
 }
 
@@ -32,12 +37,17 @@ const cache = new Map<string, RemoteMaestroPEntry>();
 export function setRemoteMaestroPAvailable(
 	remoteId: string,
 	available: boolean,
-	now: number = Date.now()
+	now: number = Date.now(),
+	canSteer?: boolean
 ): void {
 	if (!remoteId) {
 		return;
 	}
-	cache.set(remoteId, { available, probedAt: now });
+	cache.set(remoteId, {
+		available,
+		probedAt: now,
+		...(canSteer === undefined ? {} : { canSteer }),
+	});
 }
 
 /** Latest known availability for a remote, or `undefined` if never probed. */
@@ -46,6 +56,19 @@ export function getRemoteMaestroPAvailable(remoteId?: string | null): boolean | 
 		return undefined;
 	}
 	return cache.get(remoteId)?.available;
+}
+
+/**
+ * Whether the remote's maestro-p can be steered mid-turn (serves the steering
+ * relay), or `undefined` if no probe has said. A spawn opens a remote steering
+ * channel only on `true`: the relay flag reaches an older maestro-p as a claude
+ * flag, with the request frame read as a prompt.
+ */
+export function getRemoteMaestroPCanSteer(remoteId?: string | null): boolean | undefined {
+	if (!remoteId) {
+		return undefined;
+	}
+	return cache.get(remoteId)?.canSteer;
 }
 
 /** True when there is no cached result, or the cached one is older than the TTL. */

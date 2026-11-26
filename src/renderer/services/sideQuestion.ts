@@ -10,14 +10,23 @@
  *
  * `maestro-cli ask <agent> "<question>" --btw` reaches the same function, so a
  * question asked from a script shows the same card and gets the same answer.
+ *
+ * A hosted agent's tab lives on its Federation host, so the host forks its own
+ * tab (`askMirrorSideQuestion()`, the same `ask --btw` path) and the answer
+ * draws on the same card here. A tab kept from before the move, which the host
+ * lacks, forks over the record's SSH remote as an SSH agent's tab does. Only the
+ * transport differs.
  */
 
+import { resolveSideQuestionTarget } from '../../shared/sideQuestion';
 import type { Session } from '../types';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { codifyTurnSettings } from '../utils/providerTabSessions';
 import { useSessionStore } from '../stores/sessionStore';
 import { sideQuestionKey, useSideQuestionStore } from '../stores/sideQuestionStore';
+import { hostedTargetOf, isHostTab } from './hostedTurns';
+import { askMirrorSideQuestion } from './peerMirror';
 
 export interface SideQuestionOutcome {
 	success: boolean;
@@ -54,9 +63,22 @@ export async function askSideQuestion(options: {
 
 	if (!question) return fail('Type a question after /btw.');
 
+	// A host tab is forked by its host. A tab kept from before the move has no conversation there,
+	// so its own provider session is forked over the record's SSH remote, exactly as an SSH
+	// agent's is: a fork only reads the conversation and never writes it.
+	const hosted = hostedTargetOf(session);
+	if (hosted && isHostTab(hosted, tabId)) {
+		const reply = await askMirrorSideQuestion(hosted.peerId, hosted.agentId, tabId, question);
+		if ('error' in reply) return fail(reply.error);
+		if (!reply.answer) return fail('No answer came back.');
+		useSideQuestionStore.getState().resolveSideQuestion(requestId, reply.answer);
+		return { success: true, answer: reply.answer, tabId, agentName: session.name };
+	}
+
 	try {
 		const result = await window.maestro.sideQuestion.ask({
 			question,
+			ownerAgentId: session.id,
 			agentType: session.toolType,
 			cwd: session.cwd,
 			agentSessionId: tab?.agentSessionId ?? undefined,
@@ -94,20 +116,15 @@ export async function runRemoteSideQuestion(request: {
 }): Promise<SideQuestionOutcome> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === request.targetSessionId);
 	if (!session) return { success: false, error: `No agent with id ${request.targetSessionId}` };
-	if (session.toolType !== 'claude-code') {
-		return {
-			success: false,
-			error: `${session.name} cannot answer side questions (Claude Code agents only)`,
-			agentName: session.name,
-		};
-	}
-	const tabId = request.tabId ?? session.activeTabId;
-	if (!tabId || !session.aiTabs?.some((t) => t.id === tabId)) {
-		return {
-			success: false,
-			error: request.tabId ? `No AI tab ${request.tabId} on ${session.name}` : 'No AI tab to ask',
-			agentName: session.name,
-		};
-	}
-	return askSideQuestion({ session, tabId, question: request.question });
+	const target = resolveSideQuestionTarget(
+		{
+			name: session.name,
+			toolType: session.toolType,
+			activeTabId: session.activeTabId,
+			tabIds: (session.aiTabs ?? []).map((t) => t.id),
+		},
+		request.tabId
+	);
+	if (!target.ok) return { success: false, error: target.error, agentName: session.name };
+	return askSideQuestion({ session, tabId: target.tabId, question: request.question });
 }

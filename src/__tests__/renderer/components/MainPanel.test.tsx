@@ -25,6 +25,8 @@ import type { WindowState } from '../../../shared/window-types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
 import { createMockAITab, createMockFileTab, createMockSession } from '../../helpers';
 import { getBusyTabs } from '../../../renderer/utils/tabHelpers';
+import { projectHostedSession } from '../../../renderer/utils/hostedSession';
+import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import {
 	clearCapabilitiesCache,
@@ -840,28 +842,11 @@ describe('MainPanel', () => {
 			expect(screen.getByText('My Test Session')).toBeInTheDocument();
 		});
 
-		it('should display LOCAL badge for non-git repos', () => {
+		it('should display the LOCAL mode pill for a local agent', () => {
 			const session = createSession({ isGitRepo: false });
 			renderMainPanel({ activeSession: session });
 
-			expect(screen.getByText('LOCAL')).toBeInTheDocument();
-		});
-
-		it('should tag the LOCAL badge with the phone-layout hook class', () => {
-			const session = createSession({ isGitRepo: false });
-			renderMainPanel({ activeSession: session });
-
-			// The phone stylesheet retires the inert LOCAL badge by this class.
-			expect(screen.getByText('LOCAL')).toHaveClass('header-local-badge');
-		});
-
-		it('should not tag the git branch pill with the phone-layout hook class', async () => {
-			const session = createSession({ isGitRepo: true });
-			renderMainPanel({ activeSession: session });
-
-			// The git pill opens a menu, so it survives on a phone.
-			const branch = await screen.findByText(/GIT|main/);
-			expect(branch.closest('button')).not.toHaveClass('header-local-badge');
+			expect(screen.getByTestId('federation-badge-local')).toHaveTextContent('LOCAL');
 		});
 
 		it('should display GIT badge with branch name for git repos', async () => {
@@ -2070,12 +2055,11 @@ describe('MainPanel', () => {
 
 			renderMainPanel({ activeSession: session, setGitLogOpen: setGitLogOpen });
 
-			await waitFor(() => {
-				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
-			});
-
-			// The pill now opens the git dropdown; the log is one entry in it.
-			fireEvent.click(screen.getByText('my-ssh-remote'));
+			// The SSH agent gets the same branch pill a local one does; the remote's name is in the
+			// REMOTE mode pill's hover card, not a pill of its own.
+			expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
+			expect(screen.queryByText('my-ssh-remote')).not.toBeInTheDocument();
+			fireEvent.click(await screen.findByText(/main|GIT/));
 			expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
 
 			fireEvent.click(screen.getByTestId('git-pill-menu-log'));
@@ -2693,7 +2677,7 @@ describe('MainPanel', () => {
 
 			renderMainPanel({ activeSession: session });
 
-			// Should show LOCAL badge instead of git branch
+			// No branch pill: only the mode pill marks the agent
 			expect(screen.getByText('LOCAL')).toBeInTheDocument();
 			expect(screen.queryByText('main')).not.toBeInTheDocument();
 		});
@@ -3239,6 +3223,67 @@ describe('MainPanel', () => {
 			expect(
 				screen.getByText('Authentication token has expired. Please re-authenticate.')
 			).toBeInTheDocument();
+		});
+
+		it('draws the same banner for local, SSH, and hosted agents', () => {
+			const error = createAgentError({ timestamp: 7 });
+			const tab = { id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: 1 };
+			// Local and SSH: the error listener sets the tab's error from the turn that failed here.
+			const local = createSession({
+				inputMode: 'ai',
+				aiTabs: [{ ...tab, agentError: error }],
+				activeTabId: 'tab-1',
+			});
+			const sshFields = {
+				sshRemoteId: 'remote-1',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			};
+			const ssh = { ...local, ...sshFields };
+			// Hosted: the host's turn reports the error, and the host sync raises it on the tab.
+			const hosted = projectHostedSession(
+				createSession({
+					...sshFields,
+					inputMode: 'ai',
+					aiTabs: [{ ...tab, logs: [] }],
+					activeTabId: 'tab-1',
+					liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+				}),
+				{
+					agent: {
+						id: 'h1',
+						name: 'Host',
+						toolType: 'claude-code',
+						aiTabs: [{ id: 'tab-1', name: 'Tab 1', state: 'idle' }],
+					},
+					liveTurns: {
+						[liveTurnKey('h1', 'tab-1')]: {
+							startedAt: 1,
+							busy: false,
+							entries: [
+								{ id: 'e1', timestamp: 7, source: 'error', text: error.message, agentError: error },
+							],
+						},
+					},
+				}
+			);
+
+			const bannerOf = (session: Session) => {
+				const { unmount } = renderMainPanel({
+					activeSession: session,
+					onShowAgentErrorModal: vi.fn(),
+					onClearAgentError: vi.fn(),
+				});
+				const banner = screen
+					.getByText(error.message, { selector: 'span' })
+					.closest('div.border-b')!.outerHTML;
+				unmount();
+				return banner;
+			};
+			const localBanner = bannerOf(local);
+			expect(localBanner).toContain('View Details');
+			expect(localBanner).toContain('Dismiss error');
+			expect(bannerOf(ssh as Session)).toBe(localBanner);
+			expect(bannerOf(hosted)).toBe(localBanner);
 		});
 
 		it('should not display error banner when active tab has no error', () => {

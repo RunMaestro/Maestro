@@ -50,6 +50,10 @@ import { useDraftPersistence } from '../hooks/input/useDraftPersistence';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
 import type { SteerEligibility } from '../utils/executionQueue';
 import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
+import {
+	isProviderImageMediaType,
+	PROVIDER_IMAGE_MEDIA_TYPE_NAMES,
+} from '../../shared/maestro-lib/providers/capabilities';
 
 /** localStorage key for the room's phone composer fold (separate from AI chat's). */
 export const GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY = 'phone.groupChatComposer.collapsed';
@@ -62,18 +66,15 @@ export const GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY = 'phone.groupChatComposer.
 const MAX_IMAGE_SIZE_MB = 50;
 const MAX_IMAGE_SIZE = MAX_IMAGE_SIZE_MB * 1024 * 1024;
 
-/** Allowed image MIME types */
-const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-
 /**
  * The room's attach checks: a type allowlist and a size cap. Returns the
  * message the user is shown, or null to accept the file. AI chat applies
  * neither, so these stay with the room rather than in the shared input.
  */
 function checkGroupChatImageFile(file: File): string | null {
-	if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+	if (!isProviderImageMediaType(file.type)) {
 		logger.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
-		return 'Unsupported image type (PNG, JPEG, GIF or WebP)';
+		return `Unsupported image type (${PROVIDER_IMAGE_MEDIA_TYPE_NAMES})`;
 	}
 	if (file.size > MAX_IMAGE_SIZE) {
 		logger.warn(

@@ -155,7 +155,7 @@ export function LeftSidePanelSection({
 				<ToggleSettingRow
 					theme={theme}
 					title="Show location pills"
-					description="Display the REMOTE / LOCAL / GIT badges next to each agent in the left side bar. Turn off to simplify the agent rows."
+					description="Display the GIT badge next to git repository agents in the left side bar. The LOCAL / REMOTE / HOSTED mode pill always shows. Turn off to simplify the agent rows."
 					checked={showLeftPanelLocationPills}
 					onChange={setShowLeftPanelLocationPills}
 					ariaLabel="Show location pills in left side bar"

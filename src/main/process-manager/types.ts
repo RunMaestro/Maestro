@@ -10,6 +10,7 @@ import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { CodexAppServerSshLaunch } from '../codex-app-server/ssh-launch';
+import type { RemoteSteeringChannel } from './steering-client';
 import type { CodexAppServerProcessHandle } from '../codex-app-server/protocol';
 import type { HarnessControlHandle } from '../../shared/harness-control/types';
 import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
@@ -220,6 +221,8 @@ export interface ProcessConfig {
 	 *  beside the exec wrapper, set only when the turn wants app-server. The
 	 *  app-server spawner runs it; exec ignores it. */
 	codexAppServerSsh?: CodexAppServerSshLaunch;
+	/** Steering channel of a Claude TUI turn on an SSH remote; see RemoteSteeringChannel. */
+	remoteSteering?: RemoteSteeringChannel;
 }
 
 /**
@@ -304,6 +307,11 @@ export interface ManagedProcess {
 	/** Private remote prompt cleanup metadata, bound to sshRemotePidFile ownership.
 	 *  Never expose in Process Details, capture events or persisted diagnostics. */
 	sshRemotePromptArtifactPath?: string;
+	/**
+	 * Steering channel of a Claude TUI turn on an SSH remote, copied from the spawn
+	 * config. `steer()` delivers through it instead of the local socket.
+	 */
+	remoteSteering?: RemoteSteeringChannel;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),

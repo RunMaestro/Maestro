@@ -35,6 +35,7 @@ import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { isSessionRemote } from '../../utils/sessionHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue, sameTabRef } from '../../utils/panelLayout';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
@@ -530,7 +531,7 @@ export function useModalHandlers(
 				: undefined,
 		onInstall:
 			!isHistorical && errorSession ? () => handleInstallAfterError(errorSession.id) : undefined,
-		isRemote: Boolean(errorSession?.sessionSshRemoteConfig?.enabled || errorSession?.sshRemoteId),
+		isRemote: isSessionRemote(errorSession),
 	});
 
 	// ====================================================================

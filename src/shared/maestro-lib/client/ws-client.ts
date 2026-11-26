@@ -41,6 +41,7 @@ import {
 	type GoalRunLaunchInput,
 } from '../autorun/launch';
 import { parseAutoRunProgress } from '../autorun/progress';
+import { parseAutoRunBroadcastState } from '../../autoRunBroadcast';
 import {
 	parseGroupChatFrame,
 	parseGroupChatRecord,
@@ -53,7 +54,22 @@ import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agent
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
+import { parseWireAskerKey } from '../../crossAgentTypes';
+import { parseWireClosedTabs } from '../../closedTabHistory';
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
+import {
+	parseQueueSteerResult,
+	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
+	type QueueSteerResult,
+} from '../../chatSteering';
+import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	parseProjectTokenUsageReply,
+	projectTokenUsageRequest,
+	type ProjectTokenUsage,
+	type ProjectTokenUsageProject,
+} from '../../projectTokenUsage';
 import {
 	BridgeConnection,
 	CommandTimeoutError,
@@ -98,12 +114,14 @@ import type {
 	ConsultAskInput,
 	EventFilter,
 	GroupCreateInput,
+	HistoryEntryUpdates,
 	HistoryListOptions,
 	HostInfo,
 	MaestroClient,
 	MaestroEvent,
 	ProviderInfo,
 	QueuedTurn,
+	QueuedTurnEdit,
 	SettingsChange,
 	TabPatch,
 	TranscriptOptions,
@@ -113,11 +131,18 @@ import type {
 	Unsubscribe,
 	WsMaestroClientOptions,
 } from './types';
-import { normalizeOriginHost, normalizeTurnOverrides } from './types';
+import {
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnImages,
+	parseQueuedTurnSettings,
+} from './types';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** How long Stop waits for a host to confirm it stopped a consult. An older host never answers. */
+const CONSULT_CANCEL_TIMEOUT_MS = 10_000;
 /** The host's own consult bounds (`handleCrossAgentAsk` clamps again). */
 const DEFAULT_CONSULT_TIMEOUT_MS = 600_000;
 const MIN_CONSULT_TIMEOUT_MS = 10_000;
@@ -165,6 +190,8 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 	return items.filter(isObject).map((item): QueuedTurn => {
 		const command = asString(item.command);
 		const args = asString(item.commandArgs);
+		const turnSettings = parseQueuedTurnSettings(item.turnSettings);
+		const images = parseQueuedTurnImages(item.images);
 		return {
 			itemId: asString(item.id) ?? '',
 			tabId: asString(item.tabId) ?? '',
@@ -172,6 +199,8 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			kind: item.type === 'command' ? 'command' : 'message',
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
+			...(turnSettings ? { turnSettings } : {}),
+			...(images ? { images } : {}),
 		};
 	});
 }
@@ -370,6 +399,9 @@ class WsMaestroClient implements MaestroClient {
 		create: (agentId: string) => this.tabsCreate(agentId),
 		rename: (agentId: string, tabId: string, name: string) => this.tabsRename(agentId, tabId, name),
 		close: (agentId: string, tabId: string) => this.tabsClose(agentId, tabId),
+		closed: (agentId: string) => this.tabsClosed(agentId),
+		reopen: (agentId: string, target: { index?: number; tabId?: string }) =>
+			this.tabsReopen(agentId, target),
 		star: (agentId: string, tabId: string, starred: boolean) =>
 			this.tabsStar(agentId, tabId, starred),
 		update: (agentId: string, tabId: string, patch: TabPatch) =>
@@ -387,6 +419,13 @@ class WsMaestroClient implements MaestroClient {
 			remove: (agentId: string, itemId: string) => this.queueRemove(agentId, itemId),
 			setPaused: (agentId: string, itemId: string, paused: boolean) =>
 				this.queueSetPaused(agentId, itemId, paused),
+			merge: (agentId: string, itemId: string) => this.queueMerge(agentId, itemId),
+			steer: (agentId: string, itemId: string) => this.queueSteer(agentId, itemId),
+			edit: (agentId: string, itemId: string, edit: QueuedTurnEdit) =>
+				this.queueEdit(agentId, itemId, edit),
+			move: (agentId: string, itemId: string, toIndex: number, tabId?: string) =>
+				this.queueMove(agentId, itemId, toIndex, tabId),
+			sendNow: (agentId: string, itemId: string) => this.queueSendNow(agentId, itemId),
 		},
 		subscribe: (
 			agentId: string,
@@ -442,10 +481,21 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly consults = {
 		ask: (input: ConsultAskInput) => this.consultsAsk(input),
+		cancel: (input: { askerKey: string }) => this.consultsCancel(input),
 	};
 
 	readonly history = {
 		list: (agentId: string, options?: HistoryListOptions) => this.historyList(agentId, options),
+		remove: (agentId: string, entryId: string) => this.historyRemove(agentId, entryId),
+		update: (agentId: string, entryId: string, updates: HistoryEntryUpdates) =>
+			this.historyUpdate(agentId, entryId, updates),
+	};
+
+	readonly usage = {
+		projectTokens: (
+			projects: readonly ProjectTokenUsageProject[],
+			options?: { timeoutMs?: number }
+		) => this.usageProjectTokens(projects, options),
 	};
 
 	readonly settings = {
@@ -1001,7 +1051,12 @@ class WsMaestroClient implements MaestroClient {
 				this.emit({
 					type: 'autorun',
 					agentId,
-					event: { kind: 'state', at: this.now(), state: parseAutoRunProgress(frame.state) },
+					event: {
+						kind: 'state',
+						at: this.now(),
+						state: parseAutoRunProgress(frame.state),
+						frame: parseAutoRunBroadcastState(frame.state),
+					},
 				});
 				break;
 			}
@@ -1842,6 +1897,7 @@ class WsMaestroClient implements MaestroClient {
 		// A message over the client protocol is a hosted agent's turn: a desktop host runs it with
 		// `MAESTRO_HOSTED_TURN`, as `maestro-cli host` runs every turn.
 		message.hostedTurn = true;
+		if (input.held === true) message.held = true;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)
@@ -1893,6 +1949,8 @@ class WsMaestroClient implements MaestroClient {
 				queueLength,
 			});
 		}
+		// One of Maestro's own commands: the host ran it, and no turn will end, so none begins here.
+		if (reply.ran === true) return ok({ status: 'ran' });
 		this.beginTurn(agentId, asString(reply.tabId) ?? tabId);
 		return ok({ status: 'started' });
 	}
@@ -1930,7 +1988,8 @@ class WsMaestroClient implements MaestroClient {
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {
 		const sent = await this.send(
 			'turns.queue.list',
-			{ type: 'list_queue', sessionId: agentId },
+			// The images ride along as data URLs, so a hosted card draws them as a local one does.
+			{ type: 'list_queue', sessionId: agentId, inlineImages: true },
 			'list_queue_result'
 		);
 		if (!sent.ok) return sent;
@@ -1954,6 +2013,44 @@ class WsMaestroClient implements MaestroClient {
 		const checked = this.checkResult('turns.queue.remove', sent.value);
 		if (!checked.ok) return checked;
 		return ok({ removed: sent.value.removed === true });
+	}
+
+	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	private async historyRemove(
+		agentId: string,
+		entryId: string
+	): Promise<ClientResult<{ removed: boolean }>> {
+		const sent = await this.send(
+			'history.remove',
+			{ type: 'delete_history_entry', sessionId: agentId, entryId },
+			'delete_history_entry_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('history.remove', sent.value);
+		if (!checked.ok) return checked;
+		return ok({ removed: sent.value.removed === true });
+	}
+
+	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	private async historyUpdate(
+		agentId: string,
+		entryId: string,
+		updates: HistoryEntryUpdates
+	): Promise<ClientResult<{ updated: boolean }>> {
+		const sent = await this.send(
+			'history.update',
+			{
+				type: 'update_history_entry',
+				sessionId: agentId,
+				entryId,
+				...(updates.validated !== undefined ? { validated: updates.validated } : {}),
+			},
+			'update_history_entry_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('history.update', sent.value);
+		if (!checked.ok) return checked;
+		return ok({ updated: sent.value.updated === true });
 	}
 
 	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
@@ -1985,6 +2082,31 @@ class WsMaestroClient implements MaestroClient {
 		);
 	}
 
+	/**
+	 * Both host kinds answer it (a desktop and a headless host); an older host echoes it, which
+	 * reads as `unsupported`. The numbers are parsed as untrusted input.
+	 */
+	private async usageProjectTokens(
+		projects: readonly ProjectTokenUsageProject[],
+		options: { timeoutMs?: number } = {}
+	): Promise<ClientResult<ProjectTokenUsage>> {
+		const request = projectTokenUsageRequest(projects);
+		const sent = await this.send(
+			'usage.projectTokens',
+			{ ...request },
+			PROJECT_TOKEN_USAGE_REPLY,
+			options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('usage.projectTokens', sent.value);
+		if (!checked.ok) return checked;
+		const usage = parseProjectTokenUsageReply(sent.value, request.projects);
+		if (!usage) {
+			return this.fail('usage.projectTokens', 'failed', 'The host answered no token usage.');
+		}
+		return ok(usage);
+	}
+
 	/** The message `maestro-cli queue hold` sends a desktop, which a headless host answers too. */
 	private async queueSetPaused(
 		agentId: string,
@@ -2003,6 +2125,118 @@ class WsMaestroClient implements MaestroClient {
 			found: sent.value.found === true,
 			paused: typeof sent.value.paused === 'boolean' ? sent.value.paused : paused,
 		});
+	}
+
+	/** The message `maestro-cli queue merge` sends a desktop, which a headless host answers too. */
+	private async queueMerge(
+		agentId: string,
+		itemId: string
+	): Promise<ClientResult<{ merged: boolean; mergedIntoId?: string }>> {
+		const sent = await this.send(
+			'turns.queue.merge',
+			{ type: 'merge_queue_item', sessionId: agentId, itemId },
+			'merge_queue_item_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('turns.queue.merge', sent.value);
+		if (!checked.ok) return checked;
+		const mergedIntoId = sent.value.mergedIntoId;
+		return ok(
+			sent.value.merged === true && typeof mergedIntoId === 'string' && mergedIntoId
+				? { merged: true, mergedIntoId }
+				: { merged: false }
+		);
+	}
+
+	/**
+	 * The message `maestro-cli queue steer` sends a desktop: its renderer runs the steer and answers
+	 * with the outcome. Waits as long as the CLI does, because the host waits on the agent's socket.
+	 */
+	private async queueSteer(
+		agentId: string,
+		itemId: string
+	): Promise<ClientResult<QueueSteerResult>> {
+		const method: ClientMethod = 'turns.queue.steer';
+		const sent = await this.send(
+			method,
+			{ type: 'steer_queue_item', sessionId: agentId, itemId },
+			'steer_queue_item_result',
+			{ timeoutMs: QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS }
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const result = parseQueueSteerResult(sent.value.result);
+		return result
+			? ok(result)
+			: this.fail(method, 'invalid', 'The host answered the steer with no outcome.');
+	}
+
+	/** The message `maestro-cli queue edit` sends a desktop, which a headless host answers too. */
+	private async queueEdit(
+		agentId: string,
+		itemId: string,
+		edit: QueuedTurnEdit
+	): Promise<ClientResult<{ found: boolean }>> {
+		const method: ClientMethod = 'turns.queue.edit';
+		const sent = await this.send(
+			method,
+			{
+				type: 'edit_queue_item',
+				sessionId: agentId,
+				itemId,
+				text: edit.text,
+				...(edit.turnSettings ? { turnSettings: edit.turnSettings } : {}),
+				...(edit.images ? { images: edit.images } : {}),
+			},
+			'edit_queue_item_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		return ok({ found: sent.value.found === true });
+	}
+
+	/** The message `maestro-cli queue move` sends a desktop, which a headless host answers too. */
+	private async queueMove(
+		agentId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	): Promise<ClientResult<{ moved: boolean }>> {
+		const method: ClientMethod = 'turns.queue.move';
+		const sent = await this.send(
+			method,
+			{
+				type: 'move_queue_item',
+				sessionId: agentId,
+				itemId,
+				toIndex,
+				...(tabId ? { tabId } : {}),
+			},
+			'move_queue_item_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		return ok({ moved: sent.value.moved === true });
+	}
+
+	/** The message `maestro-cli queue send-now` sends a desktop, which a headless host answers too. */
+	private async queueSendNow(
+		agentId: string,
+		itemId: string
+	): Promise<ClientResult<{ sent: boolean }>> {
+		const method: ClientMethod = 'turns.queue.sendNow';
+		const sent = await this.send(
+			method,
+			{ type: 'send_queue_item_now', sessionId: agentId, itemId },
+			'send_queue_item_now_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		return ok({ sent: sent.value.sent === true });
 	}
 
 	// =======================================================================
@@ -2251,8 +2485,13 @@ class WsMaestroClient implements MaestroClient {
 				...(input.fromAgentId ? { fromSessionId: input.fromAgentId } : {}),
 				...(input.fromTabId ? { fromTabId: input.fromTabId } : {}),
 				withContext: input.withContext === true,
+				...(input.transcript ? { transcript: input.transcript } : {}),
+				...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),
+				...(input.askerKey ? { askerKey: input.askerKey } : {}),
 				timeoutMs,
 				...(input.handoffAnswer !== undefined ? { handoffAnswer: input.handoffAnswer } : {}),
+				...(input.sideQuestion === true ? { sideQuestion: true } : {}),
+				...(input.targetTabId ? { targetTabId: input.targetTabId } : {}),
 			},
 			'cross_agent_ask_result',
 			{ timeoutMs: timeoutMs + CONSULT_WAIT_GRACE_MS }
@@ -2267,6 +2506,66 @@ class WsMaestroClient implements MaestroClient {
 		}
 		const text = asString(reply.error);
 		return this.fail(method, classifyFailure(text), text ?? `${who} did not answer.`);
+	}
+
+	/** The agent's closed-tab stack on the host (`closed_tab_command` list), bounded. */
+	private async tabsClosed(agentId: string): Promise<ClientResult<ClosedTabSummary[]>> {
+		const method: ClientMethod = 'tabs.closed';
+		const sent = await this.send(
+			method,
+			{ type: 'closed_tab_command', action: 'list', sessionId: agentId },
+			'closed_tab_command_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		return checked.ok ? ok(parseWireClosedTabs(checked.value.closedTabs)) : checked;
+	}
+
+	/** Reopen a closed AI tab on the host in the background (`closed_tab_command` reopen). */
+	private async tabsReopen(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>> {
+		const method: ClientMethod = 'tabs.reopen';
+		const sent = await this.send(
+			method,
+			{
+				type: 'closed_tab_command',
+				action: 'reopen',
+				sessionId: agentId,
+				...(target.tabId ? { tabId: target.tabId } : { index: target.index ?? 0 }),
+				background: true,
+			},
+			'closed_tab_command_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const tabId = asString(checked.value.tabId);
+		if (!tabId || (checked.value.tabType !== undefined && checked.value.tabType !== 'ai')) {
+			return this.fail(method, 'rejected', 'The host did not reopen an AI tab.');
+		}
+		return ok({ tabId, ...(checked.value.wasDuplicate === true ? { wasDuplicate: true } : {}) });
+	}
+
+	/** Stop one remote asker's consults on the host (`cross_agent_cancel`). */
+	private async consultsCancel(input: {
+		askerKey: string;
+	}): Promise<ClientResult<{ canceled: number }>> {
+		const method: ClientMethod = 'consults.cancel';
+		const askerKey = parseWireAskerKey(input.askerKey);
+		if (!askerKey) return this.fail(method, 'invalid', 'The asker key is not valid.');
+		const sent = await this.send(
+			method,
+			{ type: 'cross_agent_cancel', askerKey },
+			'cross_agent_cancel_result',
+			{ timeoutMs: CONSULT_CANCEL_TIMEOUT_MS }
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const canceled = checked.value.canceled;
+		return ok({ canceled: typeof canceled === 'number' && canceled > 0 ? canceled : 0 });
 	}
 
 	// =======================================================================

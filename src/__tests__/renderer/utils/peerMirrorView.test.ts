@@ -30,6 +30,17 @@ const entry = (id: string, text: string, extra: Partial<LogEntryRecord> = {}): L
 });
 
 describe('mirrorLogEntry', () => {
+	it('keeps the steer mark on a message the host steered into its running turn (M4)', () => {
+		expect(mirrorLogEntry(entry('s1', 'go left', { source: 'user', steered: true })).steered).toBe(
+			true
+		);
+		// Only a real mark: anything else from the wire draws no header.
+		expect(
+			mirrorLogEntry(entry('s2', 'hi', { source: 'user', steered: 'yes' as unknown as boolean }))
+				.steered
+		).toBeUndefined();
+	});
+
 	it('copies the drawn fields and maps an unknown kind to a system line', () => {
 		expect(mirrorLogEntry(entry('e1', 'hi', { source: 'future-kind' })).source).toBe('system');
 		const mapped = mirrorLogEntry(
@@ -44,13 +55,35 @@ describe('mirrorLogEntry', () => {
 		expect(mapped.turnModel).toBe('gpt-5');
 	});
 
-	it('does not carry cross-agent jumps, recovery actions, or agent errors', () => {
+	it("carries the host's session recovery card, so the tab draws the same one", () => {
+		const recoveryAction = { lastUserPrompt: 'retry this', tabId: 't1' };
+		expect(
+			mirrorLogEntry(entry('e4', 'Session not found', { recoveryAction })).recoveryAction
+		).toEqual(recoveryAction);
+	});
+
+	it("carries the host's error, so the error card draws the same details", () => {
+		const agentError = {
+			type: 'auth_expired',
+			message: 'Login expired',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 7,
+			parsedJson: { error: 'expired' },
+		};
+		expect(
+			mirrorLogEntry(entry('e5', 'Login expired', { source: 'error', agentError } as never))
+				.agentError
+		).toEqual(agentError);
+	});
+
+	it('does not carry cross-agent jumps, malformed recovery actions, or malformed agent errors', () => {
 		const mapped = mirrorLogEntry(
 			entry('e3', 'x', {
 				metadata: { crossAgent: { requestId: 'r', fromSessionId: 'host-agent' } },
 				recoveryAction: { kind: 'resume' },
 				agentError: { type: 'unknown', message: 'boom' },
-			} as Partial<LogEntryRecord>)
+			} as unknown as Partial<LogEntryRecord>)
 		) as unknown as Record<string, unknown>;
 		expect(mapped.recoveryAction).toBeUndefined();
 		expect(mapped.agentError).toBeUndefined();
@@ -67,6 +100,29 @@ describe('tabs', () => {
 			mirrorTab({ id: 't1', state: 'idle', thinkingStartTime: 42 }).thinkingStartTime
 		).toBeUndefined();
 		expect(mirrorTab({ id: 't1', thinkingStartTime: 42 }).thinkingStartTime).toBeUndefined();
+	});
+
+	// Parity round 3, N2: a tab the host opened (another client, the CLI) shows the composer
+	// settings the host will run it with, so its pills match a local tab's.
+	it("carries the host tab's Save to History, thinking, read-only, model, and effort", () => {
+		expect(
+			mirrorTab({
+				id: 't1',
+				saveToHistory: true,
+				showThinking: 'sticky',
+				readOnlyMode: false,
+				customModel: 'opus',
+				customEffort: 'high',
+			})
+		).toMatchObject({
+			saveToHistory: true,
+			showThinking: 'sticky',
+			readOnlyMode: false,
+			customModel: 'opus',
+			customEffort: 'high',
+		});
+		const bare = mirrorTab({ id: 't1', showThinking: 'loud' });
+		expect('saveToHistory' in bare || 'showThinking' in bare || 'customModel' in bare).toBe(false);
 	});
 });
 
@@ -91,11 +147,36 @@ describe('mirrorQueuedItem', () => {
 		});
 	});
 
-	it('marks a held message paused and draws a host command as its text', () => {
-		const item = mirrorQueuedItem(queued('q2', { kind: 'command', text: '/x y', paused: true }));
-		expect(item.type).toBe('message');
-		expect(item.text).toBe('/x y');
-		expect(item.paused).toBe(true);
+	it('marks a held host command paused and draws it as the command card a local one is', () => {
+		expect(
+			mirrorQueuedItem(queued('q2', { kind: 'command', text: ' /x  y z ', paused: true }))
+		).toEqual({
+			id: 'q2',
+			timestamp: 100,
+			tabId: 't1',
+			type: 'command',
+			command: '/x',
+			commandArgs: 'y z',
+			paused: true,
+		});
+		expect(mirrorQueuedItem(queued('q3', { kind: 'command', text: '/clear' }))).toMatchObject({
+			command: '/clear',
+			commandArgs: '',
+		});
+	});
+
+	it('carries the images the host queued it with, so the card draws its thumbnails', () => {
+		const images = ['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'];
+		expect(mirrorQueuedItem(queued('q5', { images })).images).toEqual(images);
+		expect(mirrorQueuedItem(queued('q6', { images: [] }))).not.toHaveProperty('images');
+		expect(mirrorQueuedItem(queued('q7'))).not.toHaveProperty('images');
+	});
+
+	it('carries the model and effort the host will run it with', () => {
+		expect(
+			mirrorQueuedItem(queued('q4', { turnSettings: { model: 'm', effort: 'high' } })).turnSettings
+		).toEqual({ model: 'm', effort: 'high' });
+		expect(mirrorQueuedItem(queued('q5'))).not.toHaveProperty('turnSettings');
 	});
 });
 

@@ -17,6 +17,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
 import { setClaudeSessionOrigin } from '../../storage/claude-session-origins';
+import { discoverClaudeSkills } from '../../../shared/maestro-lib/agents/claude-skills';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -1460,118 +1461,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getSkills', SKILLS_LOG_CONTEXT),
 			async (projectPath: string) => {
-				const homeDir = os.homedir();
-				const skills: Array<{
-					name: string;
-					description: string;
-					tokenCount: number;
-					source: 'project' | 'user';
-				}> = [];
-
-				// Only treat "missing entry" filesystem errors as "no skill here";
-				// propagate permission/IO errors to the outer IPC handler so
-				// Sentry captures them instead of silently dropping skills.
-				const isMissingEntryError = (error: unknown): boolean => {
-					const code = (error as NodeJS.ErrnoException | undefined)?.code;
-					return code === 'ENOENT' || code === 'ENOTDIR';
-				};
-
-				/**
-				 * Parses a skill.md file to extract name, description, and token count.
-				 * Skills use YAML frontmatter with 'name' and 'description' fields.
-				 */
-				const parseSkillFile = async (
-					filePath: string,
-					skillDirName: string,
-					source: 'project' | 'user'
-				): Promise<{
-					name: string;
-					description: string;
-					tokenCount: number;
-					source: 'project' | 'user';
-				} | null> => {
-					try {
-						const content = await fs.readFile(filePath, 'utf-8');
-						const lines = content.split('\n');
-
-						let name = skillDirName; // Default to directory name
-						let description = 'No description';
-						let inFrontmatter = false;
-						let frontmatterContent = '';
-
-						// Parse YAML frontmatter
-						for (const line of lines) {
-							const trimmed = line.trim();
-							if (trimmed === '---') {
-								if (!inFrontmatter) {
-									inFrontmatter = true;
-									continue;
-								} else {
-									// End of frontmatter
-									break;
-								}
-							}
-							if (inFrontmatter) {
-								frontmatterContent += line + '\n';
-							}
-						}
-
-						// Extract name and description from frontmatter (simple YAML parsing)
-						const nameMatch = frontmatterContent.match(/^name:\s*(.+)$/m);
-						const descMatch = frontmatterContent.match(/^description:\s*(.+)$/m);
-
-						if (nameMatch) {
-							name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
-						}
-						if (descMatch) {
-							description = descMatch[1].trim().replace(/^["']|["']$/g, '');
-						}
-
-						// Approximate token count: ~4 characters per token
-						const tokenCount = Math.round(content.length / 4);
-
-						return { name, description, tokenCount, source };
-					} catch (error) {
-						if (isMissingEntryError(error)) return null;
-						throw error;
-					}
-				};
-
-				/**
-				 * Scans a skills directory for SKILL.md files. Claude Code writes the
-				 * canonical uppercase name; on case-insensitive filesystems
-				 * (Windows NTFS, default macOS APFS) `skill.md` happens to match,
-				 * but on case-sensitive filesystems (Linux, WSL) it does not - so
-				 * try the canonical name first and fall back to lowercase.
-				 */
-				const scanSkillsDir = async (dir: string, source: 'project' | 'user') => {
-					let entries;
-					try {
-						entries = await fs.readdir(dir, { withFileTypes: true });
-					} catch (error) {
-						if (isMissingEntryError(error)) return;
-						throw error;
-					}
-					for (const entry of entries) {
-						if (!entry.isDirectory()) continue;
-						for (const candidate of ['SKILL.md', 'skill.md']) {
-							const skillPath = path.join(dir, entry.name, candidate);
-							const skill = await parseSkillFile(skillPath, entry.name, source);
-							if (skill) {
-								skills.push(skill);
-								break;
-							}
-						}
-					}
-				};
-
-				// 1. Project-level skills
-				const projectSkillsDir = path.join(projectPath, '.claude', 'skills');
-				await scanSkillsDir(projectSkillsDir, 'project');
-
-				// 2. User-level skills (if Claude supports this location)
-				const userSkillsDir = path.join(homeDir, '.claude', 'skills');
-				await scanSkillsDir(userSkillsDir, 'user');
+				// The same reader a headless host's `/skills` uses (`discoverClaudeSkills`).
+				const skills = await discoverClaudeSkills(projectPath, os.homedir());
 
 				logger.info(
 					`Found ${skills.length} Claude skills for project: ${projectPath}`,

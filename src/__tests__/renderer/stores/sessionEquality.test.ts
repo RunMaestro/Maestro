@@ -20,8 +20,8 @@ import {
 	activeSessionChromeEquality,
 	delegationRosterEquality,
 } from '../../../renderer/stores/sessionEquality';
-import { createMockSession } from '../../helpers/mockSession';
 import type { AITab, PeerAgent, Session } from '../../../renderer/types';
+import { agentModeFields, createMockSession } from '../../helpers/mockSession';
 
 function tab(overrides: Partial<AITab> = {}): AITab {
 	return {
@@ -323,4 +323,46 @@ it('ignores parked token updates without hiding parked selections', () => {
 			],
 		})
 	).toBe(false);
+});
+
+// Parity round 3, N5: a Move to Host or Move Back (desktop or `maestro-cli lift` / `unlift`)
+// changes only the mode fields, and the Left Bar pill and the header pill must follow at once.
+describe('mode pill fields', () => {
+	const ssh = () => createMockSession({ id: 'a', ...agentModeFields('ssh') } as Partial<Session>);
+	const lifted = (base: Session): Session => ({
+		...base,
+		...agentModeFields('hosted'),
+	});
+
+	it('the Left Bar re-renders when an agent is lifted or moved back', () => {
+		const before = ssh();
+		const after = lifted(before);
+		expect(sidebarSessionEquality([before], [after])).toBe(false);
+		expect(sidebarSessionEquality([after], [{ ...after, liftedTo: undefined }])).toBe(false);
+		// The same pointer in a new object is no change.
+		expect(sidebarSessionEquality([after], [{ ...after, liftedTo: { ...after.liftedTo! } }])).toBe(
+			true
+		);
+	});
+
+	it('the Left Bar re-renders when the SSH remote or its connection mark changes', () => {
+		const before = ssh();
+		expect(sidebarSessionEquality([before], [{ ...before, sshConnectionFailed: true }])).toBe(
+			false
+		);
+		expect(
+			sidebarSessionEquality(
+				[before],
+				[{ ...before, sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' } }]
+			)
+		).toBe(false);
+	});
+
+	it('the header re-renders when the shown agent is lifted or its connection mark changes', () => {
+		const before = ssh();
+		expect(activeSessionChromeEquality(before, lifted(before))).toBe(false);
+		expect(activeSessionChromeEquality(before, { ...before, sshConnectionFailed: true })).toBe(
+			false
+		);
+	});
 });

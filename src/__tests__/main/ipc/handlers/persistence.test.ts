@@ -824,6 +824,9 @@ describe('persistence IPC handlers', () => {
 				'setListQueueCallback',
 				'setRemoveQueueItemCallback',
 				'setSetQueueItemPausedCallback',
+				'setEditQueueItemCallback',
+				'setMoveQueueItemCallback',
+				'setSendQueueItemNowCallback',
 				'setMergeQueueItemCallback',
 				'setSteerQueueItemCallback',
 			])

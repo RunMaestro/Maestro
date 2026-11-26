@@ -25,8 +25,10 @@ import { formatTimestamp, formatRelativeTime } from '../../shared/formatters';
 import { DURATION_MS } from '../../shared/duration';
 import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
-import { SshRemotePill } from './ui/SshRemotePill';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { AgentModePill } from './SessionList/AgentModePill';
+import { useSessionStore } from '../stores/sessionStore';
+import { findSessionForParticipantName } from '../../shared/group-chat-types';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -67,6 +69,12 @@ export function ParticipantCard({
 	const [confirmRemove, setConfirmRemove] = useState(false);
 	const [peekOpen, setPeekOpen] = useState(false);
 	const peekRef = useRef<HTMLPreElement>(null);
+	// The agent this participant was added from: its mode pill is the one the Left Bar draws.
+	const sourceAgent = useSessionStore((state) =>
+		participant.sourceSessionId
+			? state.sessions.find((s) => s.id === participant.sourceSessionId)
+			: findSessionForParticipantName(participant.name, state.sessions)
+	);
 
 	// Parse raw JSONL into formatted output
 	const formattedOutput = useMemo(() => {
@@ -179,6 +187,7 @@ export function ParticipantCard({
 				>
 					{participant.name}
 				</span>
+				{sourceAgent && <AgentModePill theme={theme} session={sourceAgent} />}
 				{/* Session ID pill */}
 				{isPending ? (
 					<span
@@ -207,12 +216,6 @@ export function ParticipantCard({
 					</button>
 				)}
 			</div>
-
-			{participant.sshRemoteName && (
-				<div className="flex mt-1.5">
-					<SshRemotePill remoteName={participant.sshRemoteName} size="sm" className="max-w-full" />
-				</div>
-			)}
 
 			{/* Stats row: message count + last time (left), agent type (right) */}
 			<div

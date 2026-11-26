@@ -8,7 +8,9 @@
  * instead of back to the agent that asked.
  */
 
+import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { buildRemoteAskerKey, CROSS_AGENT_ASK_TAB_ID } from '../../../shared/crossAgentTypes';
 import type * as MaestroClientModule from '../../../cli/services/maestro-client';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
@@ -33,6 +35,10 @@ vi.mock('../../../cli/services/consult-budget-guard', () => ({
 }));
 // Routes one test's target to a peer without dialing anything; null leaves routing alone.
 const peerRoute = vi.hoisted(() => ({ value: null as { peer: string; agent: string } | null }));
+// The peer host's bridge for one test: `withPeerAgent` hands its body this `sendCommand`.
+const peerBridge = vi.hoisted(() => ({
+	sendCommand: null as null | ((...args: unknown[]) => Promise<unknown>),
+}));
 vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../cli/services/peer-resolver')>();
 	return {
@@ -41,6 +47,16 @@ vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
 			peerRoute.value
 				? { kind: 'peer' as const, target: peerRoute.value }
 				: actual.routeAgentTarget(...args),
+		withPeerAgent: (...args: Parameters<typeof actual.withPeerAgent>) => {
+			const sendCommand = peerBridge.sendCommand;
+			if (!sendCommand) return actual.withPeerAgent(...args);
+			const [target, body] = args;
+			return body({
+				agent: { id: 'host-agent-1' },
+				peer: target.peer,
+				withBridge: (action: (client: unknown) => Promise<unknown>) => action({ sendCommand }),
+			} as never);
+		},
 	};
 });
 
@@ -119,9 +135,16 @@ describe('ask command', () => {
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('refuses a lifted agent with AGENT_LIFTED before touching the desktop', async () => {
+	// Addressed by its local id, a hosted agent answers where it runs: the question goes to its
+	// host over the `peer:agent` route, never refused and never asked of the local copy.
+	it('asks a hosted agent on its host by the local id', async () => {
 		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
-		const sendCommand = mockClient({ type: 'cross_agent_ask_result', success: true });
+		const localSend = mockClient({ type: 'cross_agent_ask_result', success: true });
+		const peerSend = vi.fn().mockResolvedValue({
+			type: 'cross_agent_ask_result',
+			success: true,
+			answer: 'in main',
+		});
 		vi.mocked(getSessionById).mockReturnValueOnce({
 			id: 'resolved-builder',
 			name: 'Builder',
@@ -130,15 +153,61 @@ describe('ask command', () => {
 			projectRoot: '/p',
 			liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
 		});
+		peerBridge.sendCommand = peerSend;
+		try {
+			await ask('builder', 'Where is the gate?', { json: true });
+		} finally {
+			peerBridge.sendCommand = null;
+		}
 
-		await ask('builder', 'Where is the gate?', { json: true });
+		expect(localSend).not.toHaveBeenCalled();
+		expect(peerSend.mock.calls[0][0]).toMatchObject({
+			type: 'cross_agent_ask',
+			sessionId: 'host-agent-1',
+			question: 'Where is the gate?',
+		});
+		expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({
+			success: true,
+			answer: 'in main',
+			peer: 'build-box',
+		});
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
 
-		const output = JSON.parse(logSpy.mock.calls[0][0]);
-		expect(output.success).toBe(false);
-		expect(output.code).toBe('AGENT_LIFTED');
-		expect(output.error).toContain('build-box:host-1');
-		expect(exitSpy).toHaveBeenCalledWith(1);
-		expect(sendCommand).not.toHaveBeenCalled();
+	// G2: from an agent's own shell, a hosted ask names its asker as a local ask does, so the host
+	// keeps one consult tab per asking (machine, agent), named after it.
+	it('names the calling agent to the host of a hosted agent, for its own consult tab', async () => {
+		process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
+		const peerSend = vi.fn().mockResolvedValue({ type: 'cross_agent_ask_result', success: true });
+		vi.mocked(getSessionById).mockImplementation(((id: string) =>
+			id === 'caller-agent'
+				? { id, name: 'Kensho', toolType: 'claude-code', cwd: '/k', projectRoot: '/k' }
+				: {
+						id: 'resolved-builder',
+						name: 'Builder',
+						toolType: 'claude-code',
+						cwd: '/p',
+						projectRoot: '/p',
+						liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+					}) as never);
+		peerBridge.sendCommand = peerSend;
+		try {
+			await ask('builder', 'Where is the gate?', {});
+		} finally {
+			peerBridge.sendCommand = null;
+			vi.mocked(getSessionById).mockImplementation(() => undefined);
+		}
+		expect(peerSend.mock.calls[0][0]).toMatchObject({
+			type: 'cross_agent_ask',
+			askerKey: buildRemoteAskerKey({
+				machine: os.hostname(),
+				agentId: 'caller-agent',
+				tabId: CROSS_AGENT_ASK_TAB_ID,
+			}),
+			fromAgentName: 'Kensho',
+		});
+		expect(peerSend.mock.calls[0][0]).not.toHaveProperty('fromSessionId');
 	});
 
 	it("refuses a target off the host from a hosted agent's turn, by name", async () => {
@@ -277,17 +346,47 @@ describe('ask command', () => {
 			expect(exitSpy).toHaveBeenCalledTimes(2);
 		});
 
-		it('refuses --btw for a peer agent, whose host has no desktop tab to fork', async () => {
-			const sendCommand = mockClient({});
+		it('asks a peer agent the same side question, which its host forks its own tab for', async () => {
+			const localSend = mockClient({});
+			const peerSend = vi.fn().mockResolvedValue({
+				type: 'cross_agent_ask_result',
+				success: true,
+				answer: 'teal',
+			});
 			peerRoute.value = { peer: 'build-box', agent: 'pedtome' };
+			peerBridge.sendCommand = peerSend;
 			try {
-				await ask('build-box:pedtome', 'q', { btw: true });
+				await ask('build-box:pedtome', 'favourite colour?', { btw: true, tab: 'tab-7' });
 			} finally {
 				peerRoute.value = null;
+				peerBridge.sendCommand = null;
 			}
 
-			expect(sendCommand).not.toHaveBeenCalled();
-			expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--btw forks a tab'));
+			expect(localSend).not.toHaveBeenCalled();
+			expect(peerSend.mock.calls[0][0]).toMatchObject({
+				type: 'cross_agent_ask',
+				sessionId: 'host-agent-1',
+				question: 'favourite colour?',
+				sideQuestion: true,
+				targetTabId: 'tab-7',
+			});
+			expect(logSpy).toHaveBeenCalledWith('teal');
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('refuses --tab without --btw for a peer agent too', async () => {
+			const peerSend = vi.fn();
+			peerRoute.value = { peer: 'build-box', agent: 'pedtome' };
+			peerBridge.sendCommand = peerSend;
+			try {
+				await ask('build-box:pedtome', 'q', { tab: 'tab-7' });
+			} finally {
+				peerRoute.value = null;
+				peerBridge.sendCommand = null;
+			}
+
+			expect(peerSend).not.toHaveBeenCalled();
+			expect(errorSpy).toHaveBeenCalledWith('Error: --tab only applies to --btw');
 			expect(exitSpy).toHaveBeenCalledTimes(1);
 		});
 	});

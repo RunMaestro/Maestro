@@ -1,95 +1,89 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook } from '@testing-library/react';
+/**
+ * Tests for useSessionRecovery: local, SSH, and hosted agents recover the same way. The prior
+ * conversation becomes the tab's pending context and the failed prompt is re-sent; only the send
+ * path's transport differs (a hosted send hands the context to the host, `sendHostedTurn()`).
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, act, cleanup } from '@testing-library/react';
+
+const mockNotifyToast = vi.fn();
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: (...args: unknown[]) => mockNotifyToast(...args) };
+});
+
 import { useSessionRecovery } from '../../../renderer/hooks/agent/useSessionRecovery';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { contextGroomingService } from '../../../renderer/services/contextGroomer';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
-vi.mock('../../../renderer/services/contextGroomer', () => ({
-	contextGroomingService: { groomContexts: vi.fn() },
-	buildContextTransferPrompt: vi.fn(() => 'Recover context'),
-}));
-
-beforeEach(() => {
-	vi.clearAllMocks();
-	useSessionStore.setState({
-		sessions: [
-			createMockSession({
-				id: 'recovery-agent',
-				toolType: 'claude-code',
-				providerOverrides: { codex: { customModel: 'gpt-work' } },
-				activeTabId: 'recovery-tab',
-				aiTabs: [
-					createMockAITab({
-						id: 'recovery-tab',
-						tabProvider: 'claude-code',
-						turnProvider: 'codex',
-						agentSessionId: null,
-						logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'Prior work' }],
-					}),
-				],
-			}),
-		],
+function seed(
+	liftedTo?: { peer: string; agentId: string; at: number },
+	sessionSshRemoteConfig?: { enabled: boolean; remoteId: string }
+) {
+	const tab = createMockAITab({
+		id: 'tab-1',
+		logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'earlier question' }],
 	});
-});
+	const session = createMockSession({
+		id: 'agent-1',
+		aiTabs: [tab],
+		activeTabId: 'tab-1',
+		...(liftedTo ? { liftedTo } : {}),
+		...(sessionSshRemoteConfig ? { sessionSshRemoteConfig } : {}),
+	});
+	useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+	return session;
+}
 
-describe('Ensemble session recovery', () => {
-	it('pins the failed provider while grooming and focus change', async () => {
-		let finish!: (value: never) => void;
-		vi.mocked(contextGroomingService.groomContexts).mockImplementationOnce(
-			() =>
-				new Promise((resolve) => {
-					finish = resolve;
-				})
-		);
-		const processInputRef = { current: vi.fn() };
-		const { result } = renderHook(() => useSessionRecovery({ processInputRef }));
-		await act(async () => {
-			const recovery = result.current.startRecovery({
-				sessionId: 'recovery-agent',
-				tabId: 'recovery-tab',
-				lastUserPrompt: 'continue',
-				groomContext: true,
+describe('useSessionRecovery', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSettingsStore.setState({ federationHostedAgents: true });
+	});
+
+	afterEach(() => {
+		cleanup();
+		useSettingsStore.setState({ federationHostedAgents: false });
+		useSessionStore.setState({ sessions: [] });
+	});
+
+	it.each(['local', 'ssh', 'hosted'] as const)(
+		'a %s agent recovers the same way: the prior conversation as context, the prompt re-sent',
+		async (mode) => {
+			seed(
+				mode === 'hosted' ? { peer: 'box', agentId: 'h1', at: 1 } : undefined,
+				mode === 'local' ? undefined : { enabled: true, remoteId: 'r1' }
+			);
+			const processInput = vi.fn();
+			const { result } = renderHook(() =>
+				useSessionRecovery({ processInputRef: { current: processInput } })
+			);
+
+			await act(async () => {
+				await result.current.startRecovery({
+					sessionId: 'agent-1',
+					tabId: 'tab-1',
+					lastUserPrompt: 'retry this',
+					groomContext: false,
+				});
+				await vi.waitFor(() => expect(processInput).toHaveBeenCalled());
 			});
-			useSessionStore.setState({ activeSessionId: 'another-agent' });
-			finish({ success: true, groomedLogs: [{ source: 'user', text: 'Prior work' }] } as never);
-			await recovery;
-		});
-		expect(contextGroomingService.groomContexts).toHaveBeenCalledWith(
-			expect.objectContaining({
-				targetAgent: 'codex',
-				sources: [expect.objectContaining({ agentType: 'codex' })],
-			}),
-			expect.any(Function)
-		);
-		expect(processInputRef.current).toHaveBeenCalledWith(
-			'continue',
-			expect.objectContaining({
-				sessionId: 'recovery-agent',
-				tabId: 'recovery-tab',
-				turnSettings: expect.objectContaining({ provider: 'codex', model: 'gpt-work' }),
-			})
-		);
-		expect(useSessionStore.getState().sessions[0].aiTabs[0].tabProvider).toBe('claude-code');
-	});
 
-	it('does not resend into another tab when the recovery tab closes during grooming', async () => {
-		vi.mocked(contextGroomingService.groomContexts).mockImplementationOnce(async () => {
-			useSessionStore.setState({ sessions: [] });
-			return { success: true, groomedLogs: [] } as never;
-		});
-		const processInputRef = { current: vi.fn() };
-		const { result } = renderHook(() => useSessionRecovery({ processInputRef }));
-		await act(async () => {
-			await result.current.startRecovery({
-				sessionId: 'recovery-agent',
-				tabId: 'recovery-tab',
-				lastUserPrompt: 'continue',
-				groomContext: true,
+			// The send path routes it (spawn here, over SSH, or to the host with the context,
+			// `sendHostedTurn()`); recovery itself is the same for every mode. The re-send carries
+			// the settings codified at the original send, pinned to the provider that failed.
+			expect(processInput).toHaveBeenCalledWith('retry this', {
+				sessionId: 'agent-1',
+				tabId: 'tab-1',
+				turnSettings: expect.objectContaining({ provider: 'claude-code' }),
 			});
-		});
-		expect(processInputRef.current).not.toHaveBeenCalled();
-		expect(result.current.recoveryError).toBe('Recovery tab was closed');
-	});
+			const context = useSessionStore.getState().sessions[0].aiTabs[0].pendingMergedContext;
+			expect(context).toContain('# Prior Conversation (Session Recovered)');
+			expect(context).toContain('User: earlier question');
+			expect(mockNotifyToast).not.toHaveBeenCalled();
+		}
+	);
 });

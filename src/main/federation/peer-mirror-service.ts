@@ -35,6 +35,7 @@
 import * as os from 'os';
 
 import { generateUUID } from '../../shared/uuid';
+import { withOwnHostAsLocal } from '../../shared/history';
 import {
 	PeerConnectError,
 	connectPeerClient,
@@ -72,12 +73,14 @@ import type {
 import type {
 	AgentPatchField,
 	ClientErrorCode,
+	HistoryEntryUpdates,
 	MaestroClient,
 	TurnEvent,
 } from '../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { HistoryEntry } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
+import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../shared/projectTokenUsage';
 
 /** Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk. */
 export const MIRROR_TURN_COALESCE_MS = 50;
@@ -258,6 +261,16 @@ export class PeerMirrorService {
 		}
 	}
 
+	/**
+	 * Whether this service holds a live connection to the peer on `remoteId` right now. The SSH
+	 * reachability tracker reads it: a held connection proves the remote is up, so a failed dial
+	 * beside it is a transport hiccup, not an outage.
+	 */
+	isRemoteConnected(remoteId: string): boolean {
+		const entry = this.entries.get(remoteId);
+		return !!entry && !entry.dropped && entry.state.connection === 'connected';
+	}
+
 	/** Every mirrored peer, in stored order. The same answer the CLI's `federation peers` prints. */
 	peers(): MirrorPeerSummary[] {
 		return [...this.entries.values()].map((entry) => summarizePeer(entry.state));
@@ -315,20 +328,15 @@ export class PeerMirrorService {
 	 * that is not attached is an error that names it.
 	 */
 	async history(peerId: string, agentId: string): Promise<HistoryEntry[]> {
-		const entry = this.entryForPeer(peerId);
-		const client = entry.connection?.client;
-		if (!client) {
-			throw new Error(
-				`Peer "${peerId}" is not connected.${entry.state.error ? ` ${entry.state.error}` : ''}`
-			);
-		}
+		const { client } = this.historyClient(peerId);
 		const key = `${peerId}\u0000${agentId}`;
 		const cached = this.historyCache.get(key);
 		if (cached) return cached;
 		const read = (async () => {
 			const listed = await client.history.list(agentId);
 			if (!listed.ok) throw new Error(`Peer "${peerId}": ${listed.error.message}`);
-			return listed.value;
+			// A turn sent from here carries this machine's name (`originHost`); it reads as local.
+			return withOwnHostAsLocal(listed.value, this.deps.originHost ?? os.hostname());
 		})();
 		this.historyCache.set(key, read);
 		// A failed read is not kept: the next open asks again.
@@ -336,6 +344,67 @@ export class PeerMirrorService {
 			if (this.historyCache.get(key) === read) this.historyCache.delete(key);
 		});
 		return read;
+	}
+
+	/**
+	 * Delete one entry of a mirrored agent's History on its host (the History panel's Delete, the
+	 * same edit `history:delete` makes for a local agent). False when the host's own History of
+	 * the agent has no such entry. The cached History is dropped either way, so the next page reads
+	 * what the host now holds.
+	 */
+	async historyRemove(peerId: string, agentId: string, entryId: string): Promise<boolean> {
+		const { entry, client } = this.historyClient(peerId);
+		const result = await client.history.remove(agentId, entryId);
+		this.forgetHistory(entry, agentId);
+		if (!result.ok) throw new Error(`Peer "${peerId}": ${result.error.message}`);
+		return result.value.removed;
+	}
+
+	/** Change one entry of a mirrored agent's History on its host (the History panel's Validate). */
+	async historyUpdate(
+		peerId: string,
+		agentId: string,
+		entryId: string,
+		updates: HistoryEntryUpdates
+	): Promise<boolean> {
+		const { entry, client } = this.historyClient(peerId);
+		const result = await client.history.update(agentId, entryId, updates);
+		this.forgetHistory(entry, agentId);
+		if (!result.ok) throw new Error(`Peer "${peerId}": ${result.error.message}`);
+		return result.value.updated;
+	}
+
+	/**
+	 * The token usage of `projects` on the host of the remote on `remoteId`, computed there
+	 * (`get_project_token_usage`): the Usage Dashboard counts an SSH or hosted agent's
+	 * conversations this way. Undefined, never a throw, when the remote has no host attached, the
+	 * host is older than the message, or it does not answer within `timeoutMs`: the caller leaves
+	 * those agents "not counted".
+	 */
+	async projectTokenUsage(
+		remoteId: string,
+		projects: ProjectTokenUsageProject[],
+		timeoutMs: number
+	): Promise<ProjectTokenUsage | undefined> {
+		const entry = this.entries.get(remoteId);
+		const usage = entry?.connection?.client.usage;
+		if (!entry || entry.dropped || entry.state.connection !== 'connected' || !usage) {
+			return undefined;
+		}
+		const result = await usage.projectTokens(projects, { timeoutMs });
+		return result.ok ? result.value : undefined;
+	}
+
+	/** The peer's client for a History call. A peer that is not attached is an error that names it. */
+	private historyClient(peerId: string): { entry: PeerEntry; client: MaestroClient } {
+		const entry = this.entryForPeer(peerId);
+		const client = entry.connection?.client;
+		if (!client) {
+			throw new Error(
+				`Peer "${peerId}" is not connected.${entry.state.error ? ` ${entry.state.error}` : ''}`
+			);
+		}
+		return { entry, client };
 	}
 
 	/**

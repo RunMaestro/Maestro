@@ -38,6 +38,8 @@ function sshRemoteName(
 	return target.kind === 'remote' ? target.remote.name : (config.remoteId ?? 'unknown');
 }
 import type { ProcessConfig } from '../process-manager/types';
+import type { GroupChatSpawn } from '../../shared/maestro-lib/groupchat/types';
+import { checkHostedAgentLaunch } from '../utils/hosted-launch-guard';
 
 export interface SpawnGroupChatAgentConfig extends Pick<
 	AgentLaunchInput,
@@ -117,6 +119,9 @@ export interface SpawnGroupChatAgentConfig extends Pick<
 	 * folder (the moderator's, a synthesis scratch dir).
 	 */
 	acceptWorkspaceTrust?: boolean;
+	/** The agent record this process runs as, and why: see `GroupChatSpawn.ownerAgentId`. */
+	ownerAgentId?: GroupChatSpawn['ownerAgentId'];
+	launchFeature?: GroupChatSpawn['launchFeature'];
 }
 
 export interface SpawnGroupChatAgentResult {
@@ -139,6 +144,10 @@ export interface SpawnGroupChatAgentResult {
 export async function spawnGroupChatAgent(
 	config: SpawnGroupChatAgentConfig
 ): Promise<SpawnGroupChatAgentResult> {
+	// A hosted agent's launch from here is reported unless its feature is a stateless helper.
+	if (config.ownerAgentId && config.launchFeature) {
+		checkHostedAgentLaunch(config.ownerAgentId, config.launchFeature);
+	}
 	// Snapshot private input before system delivery or SSH preparation yields.
 	config = {
 		...config,

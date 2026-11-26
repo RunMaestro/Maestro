@@ -17,6 +17,7 @@ import type { CueTurnLaunch } from '../../shared/cue/turn-settings';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
+import { checkHostedAgentLaunch } from '../utils/hosted-launch-guard';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -253,7 +254,9 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		launchConfig = { ...config, ...late };
 	}
 
-	// 4. Build spawn spec (agent args, SSH wrapping, etc.)
+	// 4. Build spawn spec (agent args, SSH wrapping, etc.). A hosted agent's run from here is
+	// reported: its turns belong to its host.
+	checkHostedAgentLaunch(session.id, 'cue-run');
 	const buildResult = await buildSpawnSpec(launchConfig, finalPrompt);
 	// A successful build hands its proofs to this executor before any cancellation
 	// return or setup callback can run. Prompt artifacts stay with the process sink.

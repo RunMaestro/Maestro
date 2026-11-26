@@ -329,7 +329,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	showLeftPanelLocationPills: {
 		description:
-			'Show the REMOTE / LOCAL / GIT location pills next to agents in the left side bar.',
+			'Show the GIT pill next to git repository agents in the left side bar. The LOCAL / REMOTE / HOSTED mode pill always shows.',
 		type: 'boolean',
 		default: true,
 		category: 'appearance',

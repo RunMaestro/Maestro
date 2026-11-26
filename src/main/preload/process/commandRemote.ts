@@ -4,6 +4,7 @@ import type { ConsultChain } from '../../../shared/consultBudget';
 import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { REMOTE_COMMAND_CLAIM_CHANNEL } from '../../../shared/remoteCommandReceipt';
+import type { RemoteAskerContext } from '../../../shared/crossAgentTypes';
 
 /**
  * Helper to log via the main process logger.
@@ -166,7 +167,7 @@ export function createCommandRemoteApi() {
 					consultChain?: ConsultChain;
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & RemoteAskerContext,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -182,7 +183,7 @@ export function createCommandRemoteApi() {
 					consultChain?: ConsultChain;
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & RemoteAskerContext,
 				responseChannel: string
 			) => {
 				log('Received remote:crossAgentAsk IPC', {

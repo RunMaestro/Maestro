@@ -14,6 +14,8 @@ import type { ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 export interface AiCommandSuggestRequest {
 	/** The user's plain-English description of what they want to do. */
 	request: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** Provider that owns the tab. */
 	agentType: string;
 	/** Directory the accepted command will run in. */

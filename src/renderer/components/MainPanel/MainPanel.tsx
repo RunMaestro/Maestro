@@ -47,7 +47,6 @@ import {
 } from '../../utils/tabHelpers';
 import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
-import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
@@ -398,12 +397,6 @@ export const MainPanel = React.memo(
 				activeSession?.terminalTabs,
 				activeSession?.browserTabs,
 			]
-		);
-
-		// SSH remote name for header display
-		const sshRemoteName = useSshRemoteName(
-			activeSession?.sessionSshRemoteConfig?.enabled,
-			activeSession?.sessionSshRemoteConfig?.remoteId
 		);
 
 		// Context window metrics (loading + calculation)
@@ -1225,7 +1218,6 @@ export const MainPanel = React.memo(
 								activeTab={activeTab}
 								theme={theme}
 								gitInfo={gitInfo}
-								sshRemoteName={sshRemoteName}
 								activeTabContextWindow={activeTabContextWindow}
 								activeTabContextTokens={activeTabContextTokens}
 								activeTabContextUsage={activeTabContextUsage}
@@ -1320,7 +1312,7 @@ export const MainPanel = React.memo(
 										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
 									}
 									colorBlindMode={colorBlindMode}
-									sshRemote={Boolean(filePreviewSshRemoteId)}
+									sshRemoteId={filePreviewSshRemoteId}
 									leadingSlot={
 										<PianolaDashboardTab
 											theme={theme}
@@ -1420,7 +1412,7 @@ export const MainPanel = React.memo(
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
-									sshRemote={Boolean(filePreviewSshRemoteId)}
+									sshRemoteId={filePreviewSshRemoteId}
 								/>
 							)
 						)}

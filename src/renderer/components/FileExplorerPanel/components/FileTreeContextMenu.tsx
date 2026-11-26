@@ -29,7 +29,7 @@ import { isMediaFile } from '../../../../shared/mediaTypes';
 import { isTalkableDocumentPath } from '../../../../shared/fileKinds';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
 import { isWebDesktop } from '../../../utils/runtimeContext';
-import { canRevealOnHost } from '../../../services/hostShell';
+import { hostShellAvailable } from '../../../services/hostShell';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
@@ -41,7 +41,6 @@ interface FileTreeContextMenuProps {
 	contextMenu: ContextMenuState;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
 	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
-	sshRemoteId: string | undefined;
 	/**
 	 * Absolute path of the tree's root folder. Names the empty-space menu, whose
 	 * actions target that root.
@@ -98,7 +97,6 @@ export function FileTreeContextMenu({
 	contextMenu,
 	contextMenuRef,
 	contextMenuPos,
-	sshRemoteId,
 	rootPath,
 	onFocusFileInGraph,
 	onGraphFolder,
@@ -162,10 +160,11 @@ export function FileTreeContextMenu({
 	const showDocumentGraph = !usePhoneLayout();
 	const isHtml = isFile && (nodeName.endsWith('.html') || nodeName.endsWith('.htm'));
 	const isMarkdown = isFile && (nodeName.endsWith('.md') || nodeName.endsWith('.markdown'));
-	// Media plays in the floating player, which only serves local files - over
-	// SSH there is nothing to stream, so the playback actions stay hidden.
-	const isMedia = isFile && !sshRemoteId && isMediaFile(nodeName);
-	const queueableCount = sshRemoteId ? 0 : selectedMediaCount;
+	// Media plays in the floating player. A file on the agent's remote is fetched
+	// to this machine first (services/fileActions), so the actions are the same
+	// in every mode.
+	const isMedia = isFile && isMediaFile(nodeName);
+	const queueableCount = selectedMediaCount;
 	// Same entry in three branches (folder, file, multi-selection): the count is
 	// already resolved per context, so the only thing that varies is the label.
 	const stageForAutoRunButton =
@@ -262,7 +261,7 @@ export function FileTreeContextMenu({
 							</button>
 						)}
 						{/* The host's opener: a browser gets Download to This Client instead */}
-						{canRevealOnHost(sshRemoteId) && (
+						{hostShellAvailable() && (
 							<button
 								onClick={onOpenInDefaultAppMulti}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -315,20 +314,17 @@ export function FileTreeContextMenu({
 									<span>New Folder</span>
 								</button>
 								{/* New Agent Here - opens the New Agent modal with this folder
-								    pre-filled as the working directory. Hidden over SSH: the
-								    path is remote, and a fresh agent starts out local, so
-								    seeding it would point the new agent at a local path that
-								    doesn't exist. */}
-								{!sshRemoteId && (
-									<button
-										onClick={onNewAgentHere}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<Bot className="w-3.5 h-3.5" style={iconStyle} />
-										<span>New Agent Here</span>
-									</button>
-								)}
+								    pre-filled as the working directory. For an SSH or hosted
+								    agent the folder is on its remote, so the new agent is
+								    seeded with that remote too. */}
+								<button
+									onClick={onNewAgentHere}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<Bot className="w-3.5 h-3.5" style={iconStyle} />
+									<span>New Agent Here</span>
+								</button>
 								{showDocumentGraph && onGraphFolder && (
 									<button
 										onClick={onGraphFolder}
@@ -451,8 +447,8 @@ export function FileTreeContextMenu({
 							</button>
 						)}
 
-						{/* Open in Maestro Browser - HTML files only, not over SSH */}
-						{isHtml && !sshRemoteId && onOpenBrowserTabAt && (
+						{/* Open in Maestro Browser - HTML files only */}
+						{isHtml && onOpenBrowserTabAt && (
 							<button
 								onClick={onOpenInMaestroBrowser}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -463,9 +459,9 @@ export function FileTreeContextMenu({
 							</button>
 						)}
 
-						{/* Open in Default App - files only, the host's opener: desktop and local
-						    only (a browser has Download to This Client below) */}
-						{isFile && canRevealOnHost(sshRemoteId) && (
+						{/* Open in Default App - files only; a remote file opens its fetched copy.
+						    The host's opener: desktop only (a browser has Download to This Client below) */}
+						{isFile && hostShellAvailable() && (
 							<button
 								onClick={onOpenInDefaultApp}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -476,15 +472,17 @@ export function FileTreeContextMenu({
 							</button>
 						)}
 
-						{/* Explicit host-to-client transfer in browser/Lite; SSH-to-desktop in full mode. */}
-						{isFile && (sshRemoteId || isWebDesktop()) && (
+						{/* Save a copy where the user picks, the same in every mode (a remote
+						    file is downloaded to that path). In browser/Lite it transfers
+						    the file from the host to this client instead. */}
+						{isFile && (
 							<button
 								onClick={onDownloadFile}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
 								<Download className="w-3.5 h-3.5" style={iconStyle} />
-								<span>{isWebDesktop() ? 'Download to This Client' : 'Download File'}</span>
+								<span>{isWebDesktop() ? 'Download to This Client' : 'Save a Copy…'}</span>
 							</button>
 						)}
 
@@ -513,8 +511,9 @@ export function FileTreeContextMenu({
 							<span>Copy File Name</span>
 						</button>
 
-						{/* Reveal in Finder / Explorer - the host's: desktop and local only */}
-						{canRevealOnHost(sshRemoteId) && (
+						{/* Reveal in Finder / Explorer - a remote file reveals its fetched copy; a
+						    remote folder is shown in the Files panel. The host's: desktop only. */}
+						{hostShellAvailable() && (
 							<button
 								onClick={onOpenInExplorer}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

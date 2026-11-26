@@ -13,13 +13,13 @@ import {
 } from '../../../../renderer/components/shared/SshRemoteSelector';
 
 describe('withSshRemoteChoice', () => {
-	it('enables SSH for a remote and defaults history sync off', () => {
+	it('enables SSH for a remote and defaults history sharing off, in both fields', () => {
 		expect(withSshRemoteChoice(undefined, 'box')).toEqual({
 			enabled: true,
 			remoteId: 'box',
 			workingDirOverride: undefined,
 			syncHistory: false,
-			shareHistoryToProjectDir: undefined,
+			shareHistoryToProjectDir: false,
 		});
 	});
 

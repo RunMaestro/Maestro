@@ -42,5 +42,7 @@ export function toSpawnGroupChatAgentConfig(
 		acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		appendSystemPrompt: spawn.appendSystemPrompt,
 		isResume: spawn.isResume,
+		ownerAgentId: spawn.ownerAgentId,
+		launchFeature: spawn.launchFeature,
 	};
 }

@@ -53,6 +53,12 @@ import { noteDirectDispatch } from '../../stores/retryStore';
 import { pendingTranslationSource } from '../../../shared/maestro-lib/translation/send';
 import { migrationHoldsTurns } from '../../../shared/maestro-lib/translation/session';
 import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
+import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
+import {
+	runMaestroBuiltinCommand,
+	runsOutsideComposer,
+} from '../../services/maestroBuiltinCommands';
+import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { logger } from '../../utils/logger';
 import type { ConsultChain } from '../../../shared/consultBudget';
 
@@ -359,6 +365,37 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// tab's provider, not the agent default.
 			session = projectTabProvider(session, targetTab).agent;
 
+			// A hosted agent's turns run on its Federation host, so the message goes there as
+			// typed (the composer's `sendHostedTurn()`), with the tab's own settings. The host
+			// expands a slash command and runs `/history` and `/skills` itself. A managed Pianola
+			// admission stays with its native owner. The receipt is the host's: it took the
+			// message, or it said why not in a toast.
+			const hostedTarget = pianolaDispatchId ? undefined : hostedTargetOf(session);
+			const sendToHost = async (namesTab = false) => {
+				const receipt = await sendHostedTurn(
+					session,
+					writeTabId,
+					command,
+					images ?? [],
+					namesTab ? { nameFrom: { text: command, label: 'remote' } } : {}
+				);
+				reportDelivery(!!receipt, receipt ? undefined : 'host-refused');
+			};
+
+			// Maestro's own commands run for the tab now, busy or not, as the composer runs them,
+			// and in every mode: here for a local or SSH agent, on the host for a hosted one.
+			const builtin = literalPrompt ? null : parseMaestroBuiltinCommand(command, session.toolType);
+			if (builtin && runsOutsideComposer(builtin) && writeTabId) {
+				if (hostedTarget) {
+					await sendToHost();
+					return;
+				}
+				if (runMaestroBuiltinCommand(builtin, { sessionId, tabId: writeTabId })) {
+					reportDelivery(true);
+					return;
+				}
+			}
+
 			const grokCommandScope = canonicalJson({
 				...getGrokCommandScope({ ...session, activeTabId: writeTabId ?? session.activeTabId }),
 				pid: undefined,
@@ -416,10 +453,22 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
+			// Slash text a local dispatch resolves as a command (queued, refused, or unknown) names
+			// nothing; anything else names the tab it lands in.
+			const commandText = command.trim();
+			const resolvesAsCommand =
+				commandText.startsWith('/') && (!literalPrompt || session.toolType === 'grok');
+
+			if (hostedTarget) {
+				// Named from the dispatched text as a local dispatch names it, so the tab and its
+				// History entries carry the same name in every mode.
+				await sendToHost(!resolvesAsCommand);
+				return;
+			}
+
 			// Maestro prompt commands share the ordinary queue's argument/template
 			// expansion and admitted spawn. A native advertisement is never a prompt.
-			const commandText = command.trim();
-			if (commandText.startsWith('/') && (!literalPrompt || session.toolType === 'grok')) {
+			if (resolvesAsCommand) {
 				const baseCommand = commandText.split(/\s/, 1)[0];
 				const matchingCommand =
 					!literalPrompt &&

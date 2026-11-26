@@ -1387,7 +1387,7 @@ describe('history IPC handlers', () => {
 			);
 		});
 
-		it('should still mirror when SSH is also enabled (local mirror is independent of SSH push)', async () => {
+		it('never mirrors an SSH agent on this machine: its project folder is on the remote', async () => {
 			registerHistoryHandlers({
 				safeSend: mockSafeSend,
 				getSessionById: () => ({
@@ -1398,6 +1398,82 @@ describe('history IPC handlers', () => {
 						syncHistory: true,
 						shareHistoryToProjectDir: true,
 					},
+				}),
+			});
+			const addCalls = (ipcMain.handle as any).mock.calls.filter(
+				([ch]: [string, Function]) => ch === 'history:add'
+			);
+			const addHandler = addCalls[addCalls.length - 1][1];
+
+			const entry = createMockEntry({ sessionId: 'session-1', projectPath: '/test/project' });
+			await addHandler({} as any, entry);
+
+			expect(sharedHistoryModule.writeEntryLocal).not.toHaveBeenCalled();
+		});
+
+		it('decides the mirror before the entry is written, so a save meanwhile cannot move it', async () => {
+			// The agent ran over SSH when the turn ended; an Edit Agent save to local
+			// lands while the entry is being written.
+			let current: Record<string, unknown> = {
+				id: 'session-1',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				},
+			};
+			vi.mocked(mockHistoryManager.addEntry!).mockImplementationOnce(async () => {
+				current = {
+					id: 'session-1',
+					sessionSshRemoteConfig: {
+						enabled: false,
+						remoteId: null,
+						shareHistoryToProjectDir: true,
+					},
+				};
+			});
+			registerHistoryHandlers({ safeSend: mockSafeSend, getSessionById: () => current });
+			const addCalls = (ipcMain.handle as any).mock.calls.filter(
+				([ch]: [string, Function]) => ch === 'history:add'
+			);
+			const addHandler = addCalls[addCalls.length - 1][1];
+
+			const entry = createMockEntry({ sessionId: 'session-1', projectPath: '/srv/project' });
+			await addHandler({} as any, entry);
+
+			expect(sharedHistoryModule.writeEntryLocal).not.toHaveBeenCalled();
+		});
+
+		it('never mirrors here when the caller pushes the entry to a remote', async () => {
+			registerHistoryHandlers({
+				safeSend: mockSafeSend,
+				getSessionById: () => ({
+					id: 'session-1',
+					sessionSshRemoteConfig: {
+						enabled: false,
+						remoteId: null,
+						shareHistoryToProjectDir: true,
+					},
+				}),
+			});
+			const addCalls = (ipcMain.handle as any).mock.calls.filter(
+				([ch]: [string, Function]) => ch === 'history:add'
+			);
+			const addHandler = addCalls[addCalls.length - 1][1];
+
+			const entry = createMockEntry({ sessionId: 'session-1', projectPath: '/srv/project' });
+			await addHandler({} as any, entry, { sshRemoteId: 'remote-1', remoteCwd: '/srv/project' });
+
+			expect(sharedHistoryModule.writeEntryLocal).not.toHaveBeenCalled();
+		});
+
+		it('mirrors a local agent whose sharing was stored in syncHistory (one setting, two fields)', async () => {
+			registerHistoryHandlers({
+				safeSend: mockSafeSend,
+				getSessionById: () => ({
+					id: 'session-1',
+					sessionSshRemoteConfig: { enabled: false, remoteId: null, syncHistory: true },
 				}),
 			});
 			const addCalls = (ipcMain.handle as any).mock.calls.filter(

@@ -1,6 +1,6 @@
 import type { TabConfigResult } from '../../../shared/desktopTabs';
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
-import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -89,6 +89,12 @@ import type {
 	SetQueueItemPausedResult,
 	MergeQueueItemCallback,
 	MergeQueueItemResult,
+	EditQueueItemCallback,
+	EditQueueItemResult,
+	MoveQueueItemCallback,
+	MoveQueueItemResult,
+	SendQueueItemNowCallback,
+	SendQueueItemNowResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -292,6 +298,9 @@ export interface WebServerCallbacks {
 	steerQueueItem: SteerQueueItemCallback | null;
 	setQueueItemPaused: SetQueueItemPausedCallback | null;
 	mergeQueueItem: MergeQueueItemCallback | null;
+	editQueueItem: EditQueueItemCallback | null;
+	moveQueueItem: MoveQueueItemCallback | null;
+	sendQueueItemNow: SendQueueItemNowCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -416,6 +425,9 @@ export class CallbackRegistry {
 		steerQueueItem: null,
 		setQueueItemPaused: null,
 		mergeQueueItem: null,
+		editQueueItem: null,
+		moveQueueItem: null,
+		sendQueueItemNow: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -874,6 +886,33 @@ export class CallbackRegistry {
 		if (!this.callbacks.mergeQueueItem)
 			return { success: false, merged: false, error: 'not configured' };
 		return this.callbacks.mergeQueueItem(sessionId, itemId);
+	}
+
+	async editQueueItem(
+		sessionId: string,
+		itemId: string,
+		edit: QueuedTurnEdit
+	): Promise<EditQueueItemResult> {
+		if (!this.callbacks.editQueueItem)
+			return { success: false, found: false, error: 'not configured' };
+		return this.callbacks.editQueueItem(sessionId, itemId, edit);
+	}
+
+	async moveQueueItem(
+		sessionId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	): Promise<MoveQueueItemResult> {
+		if (!this.callbacks.moveQueueItem)
+			return { success: false, moved: false, error: 'not configured' };
+		return this.callbacks.moveQueueItem(sessionId, itemId, toIndex, tabId);
+	}
+
+	async sendQueueItemNow(sessionId: string, itemId: string): Promise<SendQueueItemNowResult> {
+		if (!this.callbacks.sendQueueItemNow)
+			return { success: false, sent: false, error: 'not configured' };
+		return this.callbacks.sendQueueItemNow(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -1614,6 +1653,18 @@ export class CallbackRegistry {
 
 	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
 		this.callbacks.mergeQueueItem = callback;
+	}
+
+	setEditQueueItemCallback(callback: EditQueueItemCallback): void {
+		this.callbacks.editQueueItem = callback;
+	}
+
+	setMoveQueueItemCallback(callback: MoveQueueItemCallback): void {
+		this.callbacks.moveQueueItem = callback;
+	}
+
+	setSendQueueItemNowCallback(callback: SendQueueItemNowCallback): void {
+		this.callbacks.sendQueueItemNow = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMockSession } from '../../../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	createMockSession,
+	createModeSession,
+	type AgentMode,
+} from '../../../../helpers/mockSession';
 import { buildAgentPanelCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from '../../../../../renderer/components/QuickActionsModal/commands/contextCommands';
@@ -35,6 +40,18 @@ import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../../../renderer/stores/tabStore';
 import { HOLD_SEND_EVENT } from '../../../../../renderer/hooks/input/useInputKeyDown';
+import { openFolderInFileManager } from '../../../../../renderer/services/fileActions';
+
+vi.mock('../../../../../renderer/services/fileActions', () => ({
+	openFolderInFileManager: vi.fn(),
+}));
+
+// Whether this client can reach the host's file manager (false on the web interface).
+const hostShell = vi.hoisted(() => ({ available: true }));
+vi.mock('../../../../../renderer/services/hostShell', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/services/hostShell')>()),
+	hostShellAvailable: () => hostShell.available,
+}));
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -348,7 +365,6 @@ describe('QuickActions command builders', () => {
 				deleteSession: vi.fn(),
 				getOpenInLabel: () => 'Open',
 				platform: 'darwin',
-				openPath: vi.fn(),
 				onGoToNextUnread: vi.fn(),
 				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
@@ -357,7 +373,8 @@ describe('QuickActions command builders', () => {
 			expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab', 'openWorkingDirectory'])
 		);
 
-		// No host file manager to open (the web interface passes no openPath): no command.
+		// No host file manager to open (the web interface): no command.
+		hostShell.available = false;
 		expect(
 			buildNavigationCommands({
 				activeSession: session,
@@ -374,6 +391,7 @@ describe('QuickActions command builders', () => {
 				shortcuts: {},
 			}).map((a) => a.id)
 		).not.toContain('openWorkingDirectory');
+		hostShell.available = true;
 
 		expect(
 			buildNewTabCommands({
@@ -1846,5 +1864,149 @@ describe('Context: Preview Continuity palette entry', () => {
 			sessionId: 'agent-1',
 			tabId: 'tab-1',
 		});
+	});
+});
+
+describe('mode parity (local, SSH, hosted)', () => {
+	/** Every agent-scoped palette command the builders offer, as the palette lists it. */
+	function paletteFor(mode: AgentMode) {
+		const session = createModeSession(mode, {
+			id: 's1',
+			name: 'Atlas',
+			isGitRepo: true,
+			worktreeBranch: 'feat/x',
+			parentSessionId: 'parent',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+		});
+		const commands = [
+			...buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open in Finder',
+				platform: 'darwin',
+				shortcuts: {},
+			}),
+			...buildSessionManagementCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				sessions: [session],
+				setSessions,
+				setQuickActionOpen: close,
+				setRenameInstanceModalOpen: vi.fn(),
+				setRenameInstanceValue: vi.fn(),
+				deleteSession: vi.fn(),
+				openClearBookmarksConfirm: vi.fn(),
+			}),
+			...buildNewTabCommands({
+				activeSession: session,
+				onNewTab: vi.fn(),
+				setQuickActionOpen: close,
+			}),
+			...buildTabCommands({
+				activeSession: session,
+				isAiMode: true,
+				activeTabInfo: {
+					isTerminalMode: false,
+					hasActiveTab: true,
+					activeUnifiedIndex: 0,
+					unifiedTabCount: 1,
+					activeTabType: 'ai',
+				},
+				enterToSendAI: true,
+				onRenameTab: vi.fn(),
+				setQuickActionOpen: close,
+				shortcuts: {},
+				toggleInputMode: vi.fn(),
+			}),
+			...buildGitWorktreeCommands({
+				activeSession: session,
+				sessions: [createMockSession({ id: 'parent', name: 'Parent' }), session],
+				gitActions: {
+					isGitRepo: true,
+					branch: 'feat/x',
+					ahead: 0,
+					behind: 0,
+					canCreatePR: true,
+					canConfigureWorktrees: true,
+					changes: { fileCount: 1, additions: 2, deletions: 1, modified: 1 },
+					viewLog: vi.fn(),
+					viewDiff: vi.fn(),
+					pull: vi.fn(),
+					push: vi.fn(),
+					switchBranch: vi.fn(),
+					createPR: vi.fn(),
+					configureWorktrees: vi.fn(),
+				} as any,
+				setQuickActionOpen: close,
+				onQuickCreateWorktree: vi.fn(),
+				onOpenCreatePR: vi.fn(),
+				onRefreshGitFileState: vi.fn(),
+				shortcuts: {},
+				gitService: { getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
+				notifyToast: vi.fn(),
+				openUrl: vi.fn(),
+				logger: { error: vi.fn() },
+			}),
+		];
+		return commands.map(({ id, label, subtext, shortcut }) => ({ id, label, subtext, shortcut }));
+	}
+
+	it('offers local, SSH, and hosted agents the same commands', () => {
+		const [local, ssh, hosted] = AGENT_MODES.map(paletteFor);
+		expect(local.map((c) => c.id)).toContain('openWorkingDirectory');
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
+	});
+
+	it.each(AGENT_MODES)(
+		'%s: Open Working Directory opens the folder, or shows a remote one in the Files panel',
+		(mode) => {
+			const session = createModeSession(mode, { id: 's1', fullPath: '/work/atlas' });
+			const action = buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open in Finder',
+				platform: 'darwin',
+				shortcuts: {},
+			}).find((c) => c.id === 'openWorkingDirectory')!;
+			action.action();
+			expect(openFolderInFileManager).toHaveBeenCalledWith(
+				{ path: '/work/atlas', sshRemoteId: mode === 'local' ? undefined : 'r1' },
+				{ sessionId: 's1' }
+			);
+			expect(close).toHaveBeenCalledWith(false);
+		}
+	);
+
+	it('offers Open Working Directory for an SSH agent before its first spawn', () => {
+		const pending = createMockSession({
+			id: 's1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		} as any);
+		const ids = buildNavigationCommands({
+			activeSession: pending,
+			activeSessionId: 's1',
+			setQuickActionOpen: close,
+			setLeftSidebarOpen: vi.fn(),
+			setRightPanelOpen: vi.fn(),
+			addNewSession: vi.fn(),
+			deleteSession: vi.fn(),
+			getOpenInLabel: () => 'Open',
+			platform: 'darwin',
+			shortcuts: {},
+		}).map((a) => a.id);
+		expect(ids).toContain('openWorkingDirectory');
 	});
 });

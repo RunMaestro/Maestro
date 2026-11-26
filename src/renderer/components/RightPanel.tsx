@@ -54,6 +54,7 @@ import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { AutoRunProgressStats } from './AutoRun/AutoRunProgressStats';
 import { autoRunProgressPercent } from '../../shared/autorunProgress';
 import { describePendingDelegations } from '../../shared/autoRunDelegation';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import {
 	MIRRORED_RUN_CONTROL_TITLE,
 	useIsMirroredBatchRun,
@@ -467,7 +468,7 @@ export const RightPanel = memo(
 		const autoRunSharedProps = {
 			theme,
 			sessionId: session.id,
-			sshRemoteId: session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined,
+			sshRemoteId: getSessionSshRemoteId(session),
 			folderPath: session.autoRunFolderPath || null,
 			selectedFile: session.autoRunSelectedFile || null,
 			documentList: autoRunDocumentList,

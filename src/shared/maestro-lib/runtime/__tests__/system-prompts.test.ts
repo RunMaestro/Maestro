@@ -18,7 +18,8 @@ import {
 } from '../../../../__tests__/shared/maestro-lib/run/fakeGroupChatProvider';
 import { providerFor } from '../../../../__tests__/shared/maestro-lib/turns/fixtures';
 import { createAgentRepository } from '../../agents/repository';
-import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
+import { DEFAULT_TAB_DEFAULTS, MAX_CONSULT_TABS_PER_AGENT } from '../../agents/rules';
+import { CROSS_AGENT_ASK_TAB_ID, REMOTE_ASKER_SESSION_PREFIX } from '../../../crossAgentTypes';
 import { createEventBus } from '../../client/event-bus';
 import type { ClientResult } from '../../client/types';
 import type { GroupChatSpawn } from '../../groupchat/types';
@@ -237,9 +238,16 @@ describe('a headless consult', () => {
 		agentRecord('a2', 'Beta', work, { isPianola: true }),
 	];
 
-	/** The consult runtime over a real repository and a runner that records what it is handed. */
-	async function consults(settings: Record<string, unknown> = {}) {
-		writeStores(SESSIONS(), settings);
+	/**
+	 * The consult runtime over a real repository and a runner that records what it is handed. With
+	 * `hold`, each consult's process runs until `release()` ends them all.
+	 */
+	async function consults(
+		settings: Record<string, unknown> = {},
+		{ sessions = SESSIONS(), hold = false }: { sessions?: unknown[]; hold?: boolean } = {}
+	) {
+		writeStores(sessions, settings);
+		const held: Array<() => void> = [];
 		const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: dir } });
 		let id = 0;
 		const repository = createAgentRepository({
@@ -265,7 +273,9 @@ describe('a headless consult', () => {
 					observer: { onEnd(end: { exitCode: number; readText(): string }): void }
 				) => {
 					spawns.push(spawn);
-					setImmediate(() => observer.onEnd({ exitCode: 0, readText: () => 'Noted.' }));
+					const end = () => observer.onEnd({ exitCode: 0, readText: () => 'Noted.' });
+					if (hold) held.push(end);
+					else setImmediate(end);
 					return { success: true, pid: 4242 };
 				},
 				stop: () => '',
@@ -280,7 +290,12 @@ describe('a headless consult', () => {
 			registry: createProcessRegistry(),
 			fence: () => ({ ok: true }),
 			background,
-			historyWriter: { append: async () => ({ ok: true }) as never },
+			historyWriter: {
+				append: async () => ({ ok: true }) as never,
+				remove: async () => ({ ok: true, changed: false }),
+				update: async () => ({ ok: true, changed: false }),
+				drain: async () => undefined,
+			},
 			now: () => T0,
 			options: { bundledPromptsDir: BUNDLED_PROMPTS },
 		});
@@ -288,8 +303,73 @@ describe('a headless consult', () => {
 			value(await runtime.api.ask(input));
 			return spawns[spawns.length - 1];
 		};
-		return { ask, repository };
+		const release = () => held.splice(0).forEach((end) => end());
+		return { ask, repository, runtime, spawns, release };
 	}
+
+	it("never hands a running consult's tab to a new asker at the consult tab cap", async () => {
+		// Beta keeps the cap's worth of hidden consult tabs. The one asker A uses is the least
+		// recently used, so only the running-consult guard keeps it when asker B arrives.
+		const consultTab = (i: number, asker: string, at: number) => ({
+			id: `consult-${i}`,
+			agentSessionId: null,
+			name: `Asker ${i}`,
+			hidden: true,
+			createdAt: at,
+			logs: [{ id: `q-${i}`, timestamp: at, source: 'user', text: 'old' }],
+			consultOrigin: {
+				sourceSessionId: `${REMOTE_ASKER_SESSION_PREFIX}${asker}`,
+				sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+			},
+		});
+		const tabs = [
+			consultTab(0, 'box/agentA/tab', T0 - 1000),
+			...Array.from({ length: MAX_CONSULT_TABS_PER_AGENT - 1 }, (_, i) =>
+				consultTab(i + 1, `box/agent${i + 1}/tab`, T0 + 1000 + i)
+			),
+		];
+		const beta = agentRecord('a2', 'Beta', work);
+		const sessions = [
+			agentRecord('a1', 'Alpha', work),
+			{
+				...beta,
+				aiTabs: [...beta.aiTabs, ...tabs],
+				unifiedTabOrder: [
+					...beta.unifiedTabOrder,
+					...tabs.map((tab) => ({ type: 'ai', id: tab.id })),
+				],
+			},
+		];
+		const { runtime, repository, spawns, release } = await consults({}, { sessions, hold: true });
+
+		const askA = runtime.api.ask({
+			targetAgentId: 'a2',
+			question: 'A?',
+			askerKey: 'box/agentA/tab',
+		});
+		await vi.waitFor(() => expect(spawns).toHaveLength(1));
+		const askB = runtime.api.ask({
+			targetAgentId: 'a2',
+			question: 'B?',
+			askerKey: 'box/agentB/tab',
+		});
+		await vi.waitFor(() => expect(spawns).toHaveLength(2));
+
+		const ids = (repository.getAgent('a2')?.aiTabs ?? []).map((tab) => tab.id);
+		expect(ids).toContain('consult-0');
+		expect(ids).not.toContain('consult-1');
+
+		release();
+		value(await askA);
+		value(await askB);
+		// Both consults finished on tabs that still exist: A on its own, B on the slot it took.
+		const after = repository.getAgent('a2')?.aiTabs ?? [];
+		expect(after.map((tab) => tab.id)).toContain('consult-0');
+		expect(
+			after.filter((tab) => tab.consultOrigin?.sourceSessionId.endsWith('box/agentB/tab'))
+		).toHaveLength(1);
+		expect(after.filter((tab) => tab.consultOrigin)).toHaveLength(MAX_CONSULT_TABS_PER_AGENT);
+	});
 
 	it('gives the consulted agent its own system prompt', async () => {
 		const { ask } = await consults({ encoreFeatures: { concerto: true, pianola: true } });

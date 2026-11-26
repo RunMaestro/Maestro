@@ -97,6 +97,12 @@ export interface ClosedTabRecord extends UnknownFields {
 	/** Where the tab sat in the agent's `aiTabs` when it closed. */
 	index: number;
 	closedAt: number;
+	/**
+	 * The provider the tab's live session fields belong to (the agent's `toolType` at the close). A
+	 * reopen after a provider switch parks them under it. Absent in archives written before it was
+	 * kept: those are read as the agent's current provider.
+	 */
+	toolType?: string;
 }
 
 /** One agent, mirroring the persisted fields of the renderer's `Session`. */

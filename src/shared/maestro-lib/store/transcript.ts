@@ -17,6 +17,7 @@
  * Pure: no file access. Safe to import from the renderer.
  */
 
+import type { AgentError } from '../../types';
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
 import type { ContextTranslationRecord } from '../translation/types';
@@ -35,6 +36,13 @@ export const LOG_ENTRY_SOURCES = [
 
 /** Who or what produced a transcript entry. */
 export type LogEntrySource = (typeof LOG_ENTRY_SOURCES)[number];
+
+/**
+ * The `system` note a turn the person stopped ends on. One string for every mode: the desktop
+ * writes it when Stop ends a local or SSH turn (`turnInterrupt.ts`), and a host writes it into the
+ * transcript of an interrupted turn (`buildTurnTranscript()`), so a hosted tab reads the same.
+ */
+export const TURN_CANCELED_NOTE = 'Canceled by user';
 
 /** A tool call's progress, carried on `source: 'tool'` entries. */
 export interface LogEntryToolState extends UnknownFields {
@@ -55,6 +63,8 @@ export interface LogEntryRecord extends UnknownFields {
 	/** User messages: false while the agent has not accepted the message. */
 	delivered?: boolean;
 	readOnly?: boolean;
+	/** A user message steered into the turn already running (`SteeredMessageHeader`). */
+	steered?: boolean;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {
@@ -67,6 +77,16 @@ export interface LogEntryRecord extends UnknownFields {
 	turnProvider?: string;
 	turnEffort?: string;
 	contextTranslation?: ContextTranslationRecord;
+	/**
+	 * A "Session not found" entry's recovery card: the prompt that hit the dead session and the
+	 * tab to re-send it on, with the prior conversation as context.
+	 */
+	recoveryAction?: { lastUserPrompt: string; tabId: string };
+	/**
+	 * An error entry's structured error, as a local error entry carries it: the error card's
+	 * details, and on a hosted record the error banner (`projectHostedSession()`).
+	 */
+	agentError?: AgentError;
 }
 
 function isLogEntryRecord(value: unknown): value is LogEntryRecord {

@@ -17,6 +17,7 @@ import {
 	checkAgentImportInput,
 	checkAgentName,
 	closeTabRecord,
+	reopenTabRecord,
 	DEFAULT_TAB_DEFAULTS,
 	findConsultTabRecord,
 	groupsWithout,
@@ -374,6 +375,106 @@ describe('tabs', () => {
 		expect(next.activeTabId).toBe(added.id);
 	});
 
+	// G5: a reopen from a Federation peer brings an archived tab back in the background, and never
+	// opens one conversation twice, where a native binding decides what "the same" is.
+	describe('reopenTabRecord', () => {
+		const bound = (account: string): NativeSessionBinding =>
+			({
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 's1',
+				accountRef: account,
+				host: { kind: 'local', identity: 'h' },
+				cwd: '/p',
+			}) as NativeSessionBinding;
+		const base = {
+			id: 'a1',
+			aiTabs: [{ id: 't1', agentSessionId: 's1', logs: [] }],
+			unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+			activeTabId: 't1',
+		} as unknown as AgentRecord;
+
+		it('puts the tab back where it sat, in the background', () => {
+			const outcome = reopenTabRecord(
+				{ ...base, aiTabs: [] } as AgentRecord,
+				{ tab: { id: 't9', agentSessionId: 's9', logs: [] }, index: 3, closedAt: 1 } as never,
+				makeContext()
+			);
+			expect(outcome.tabId).toBe('t9');
+			expect(outcome.agent.aiTabs?.map((tab) => tab.id)).toEqual(['t9']);
+			expect(outcome.agent.activeTabId).toBe('t1');
+		});
+
+		it('answers the open tab of the same conversation instead of opening it twice', () => {
+			const outcome = reopenTabRecord(
+				base,
+				{ tab: { id: 't2', agentSessionId: 's1', logs: [] }, index: 1, closedAt: 1 } as never,
+				makeContext()
+			);
+			expect(outcome).toMatchObject({ tabId: 't1', wasDuplicate: true });
+		});
+
+		it('parks the session of the provider it closed under after a provider switch', () => {
+			const outcome = reopenTabRecord(
+				{ ...base, toolType: 'claude-code', aiTabs: [] } as unknown as AgentRecord,
+				{
+					tab: { id: 't2', agentSessionId: 'codex-thread', customModel: 'gpt', logs: [] },
+					index: 0,
+					closedAt: 1,
+					toolType: 'codex',
+				} as never,
+				makeContext()
+			);
+			const tab = outcome.agent.aiTabs![0];
+			expect(tab.agentSessionId).toBeNull();
+			expect(tab.providerSessions?.codex).toMatchObject({
+				agentSessionId: 'codex-thread',
+				customModel: 'gpt',
+			});
+		});
+
+		it('records the provider a tab closes under, for that park', () => {
+			const outcome = closeTabRecord(
+				{ ...agent(), toolType: 'codex' } as AgentRecord,
+				't2',
+				makeContext(),
+				DEFAULT_TAB_DEFAULTS
+			)!;
+			expect(outcome.closed.toolType).toBe('codex');
+		});
+
+		it('matches on the observed binding, not on the session id alone', () => {
+			const withBinding = {
+				...base,
+				aiTabs: [
+					{ id: 't1', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-a') },
+				],
+			} as unknown as AgentRecord;
+			const other = reopenTabRecord(
+				withBinding,
+				{
+					tab: { id: 't2', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-b') },
+					index: 1,
+					closedAt: 1,
+				} as never,
+				makeContext()
+			);
+			expect(other.wasDuplicate).toBeUndefined();
+			expect(other.agent.aiTabs?.map((tab) => tab.id)).toEqual(['t1', 't2']);
+			const same = reopenTabRecord(
+				withBinding,
+				{
+					tab: { id: 't2', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-a') },
+					index: 1,
+					closedAt: 1,
+				} as never,
+				makeContext()
+			);
+			expect(same).toMatchObject({ tabId: 't1', wasDuplicate: true });
+		});
+	});
+
 	describe('closeTabRecord', () => {
 		const ctx = () => makeContext();
 
@@ -482,6 +583,8 @@ describe('tabs', () => {
 					effort: 'high',
 					saveToHistory: false,
 					enterToSend: null,
+					agentSessionId: 'wizard-session',
+					mergedContext: 'Additional context',
 				})
 			).toEqual({
 				readOnlyMode: true,
@@ -490,7 +593,26 @@ describe('tabs', () => {
 				customEffort: 'high',
 				saveToHistory: false,
 				enterToSend: null,
+				agentSessionId: 'wizard-session',
+				pendingMergedContext: 'Additional context',
 			});
+		});
+
+		it("holds a merge's context for the tab's next turn", () => {
+			const held = applyTabPatch(tab('t'), { pendingMergedContext: 'Additional context' });
+			expect(held.ok && held.value.pendingMergedContext).toBe('Additional context');
+			expect(applyTabPatch(tab('t'), { pendingMergedContext: 7 }).ok).toBe(false);
+		});
+
+		it("adopts a provider session and drops the old one's binding", () => {
+			const binding = { provider: 'claude-code' } as never;
+			const source = tab('t', { agentSessionId: 'old', nativeSessionBinding: binding });
+			const adopted = applyTabPatch(source, { agentSessionId: 'wizard-session' });
+			expect(adopted.ok && adopted.value.agentSessionId).toBe('wizard-session');
+			expect(adopted.ok && 'nativeSessionBinding' in adopted.value).toBe(false);
+			// The same session again keeps its binding.
+			const same = applyTabPatch(source, { agentSessionId: 'old' });
+			expect(same.ok && same.value.nativeSessionBinding).toBe(binding);
 		});
 
 		it('writes valid values and clears a field on null, which is not false', () => {

@@ -4,14 +4,18 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { hasCapability } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
+// `federationHostedAgents` is mutable so the parity test can draw a hosted agent.
+const settingsMocks = vi.hoisted(() => ({ hostingOn: false }));
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: vi.fn((selector) =>
 		selector({
+			federationHostedAgents: settingsMocks.hostingOn,
 			shortcuts: {
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
@@ -159,7 +163,6 @@ const defaultProps = {
 		behind: 0,
 		uncommittedChanges: 0,
 	},
-	sshRemoteName: null,
 	activeTabContextWindow: 200000,
 	activeTabContextTokens: 50000,
 	activeTabContextUsage: 25,
@@ -259,7 +262,7 @@ describe('MainPanelHeader', () => {
 		expect(screen.getByText('main')).toBeInTheDocument();
 	});
 
-	it('renders LOCAL badge for non-git repo', () => {
+	it('renders the LOCAL mode pill and no branch pill for a non-git local agent', () => {
 		render(
 			<MainPanelHeader
 				{...defaultProps}
@@ -267,26 +270,13 @@ describe('MainPanelHeader', () => {
 				gitInfo={null}
 			/>
 		);
-		expect(screen.getByText('LOCAL')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-local')).toHaveTextContent('LOCAL');
+		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
 	});
 
-	it('renders SSH remote pill when SSH is configured', () => {
-		render(
-			<MainPanelHeader
-				{...defaultProps}
-				activeSession={makeSession({
-					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
-				} as any)}
-				sshRemoteName="prod-server"
-			/>
-		);
-		expect(screen.getByText('prod-server')).toBeInTheDocument();
-	});
-
-	it('shows the branch name alongside the SSH pill for remote/container git agents', () => {
-		// Regression for #1124: the SSH host pill replaced the branch badge, so
-		// agents running in a container over SSH lost the branch name that local
-		// agents show. Both the remote name and the branch must be visible.
+	it('draws an SSH git agent the same branch pill a local one gets, and no remote-name pill', () => {
+		// #1124 guarded the branch name next to a remote-name pill; the remote name is now only in
+		// the mode pill's hover card, so the branch pill is the one every mode draws.
 		render(
 			<MainPanelHeader
 				{...defaultProps}
@@ -294,7 +284,6 @@ describe('MainPanelHeader', () => {
 					isGitRepo: true,
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 				} as any)}
-				sshRemoteName="harness-sandbox"
 				gitInfo={{
 					branch: 'feature/login',
 					remote: '',
@@ -304,8 +293,9 @@ describe('MainPanelHeader', () => {
 				}}
 			/>
 		);
-		expect(screen.getByText('harness-sandbox')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
 		expect(screen.getByText('feature/login')).toBeInTheDocument();
+		expect(screen.queryByText('remote-1')).not.toBeInTheDocument();
 	});
 
 	it('does not render a branch badge for a non-git SSH agent', () => {
@@ -316,11 +306,10 @@ describe('MainPanelHeader', () => {
 					isGitRepo: false,
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 				} as any)}
-				sshRemoteName="prod-server"
 				gitInfo={null}
 			/>
 		);
-		expect(screen.getByText('prod-server')).toBeInTheDocument();
+		expect(screen.getByTestId('federation-badge-ssh')).toBeInTheDocument();
 		// No GIT fallback badge when the remote dir isn't a repo.
 		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
 	});
@@ -918,7 +907,7 @@ describe('MainPanelHeader', () => {
 						/>
 					);
 
-					fireEvent.mouseEnter(screen.getByText('LOCAL').closest('div')!);
+					fireEvent.mouseEnter(document.querySelector('.header-git-pill')!);
 					act(() => {
 						vi.advanceTimersByTime(500);
 					});
@@ -999,7 +988,7 @@ describe('MainPanelHeader', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByText('LOCAL'));
+			fireEvent.click(document.querySelector('.header-git-pill')!);
 
 			expect(screen.queryByTestId('git-pill-menu')).not.toBeInTheDocument();
 		});
@@ -1025,5 +1014,131 @@ describe('MainPanelHeader', () => {
 		render(<MainPanelHeader {...defaultProps} />);
 
 		expect(screen.queryByTestId('header-voice-pill')).not.toBeInTheDocument();
+	});
+});
+
+describe('MainPanelHeader: local, SSH, and hosted agents draw the same header', () => {
+	const ssh = { enabled: true, remoteId: 'remote-1' };
+	const modes = {
+		local: makeSession(),
+		ssh: makeSession({ sessionSshRemoteConfig: ssh } as Partial<Session>),
+		hosted: makeSession({
+			sessionSshRemoteConfig: ssh,
+			liftedTo: { peer: 'build-box', agentId: 'host-agent-1', at: 1 },
+		} as Partial<Session>),
+	};
+
+	afterEach(() => {
+		settingsMocks.hostingOn = false;
+	});
+
+	/** The header's markup with the mode pill taken out. */
+	function drawWithoutModePill(session: Session): string {
+		const { container, unmount } = render(
+			<MainPanelHeader {...defaultProps} activeSession={session} />
+		);
+		const clone = container.cloneNode(true) as HTMLElement;
+		clone
+			.querySelectorAll('[data-testid^="federation-badge-"]')
+			.forEach((badge) => badge.parentElement?.remove());
+		unmount();
+		return clone.innerHTML;
+	}
+
+	it('labels the mode with the Left Bar pill: LOCAL, REMOTE, HOSTED', () => {
+		settingsMocks.hostingOn = true;
+		const localView = render(<MainPanelHeader {...defaultProps} activeSession={modes.local} />);
+		expect(screen.getByTestId('federation-badge-local')).toHaveTextContent('LOCAL');
+		localView.unmount();
+		const sshView = render(<MainPanelHeader {...defaultProps} activeSession={modes.ssh} />);
+		expect(screen.getByTestId('federation-badge-ssh')).toHaveTextContent('REMOTE');
+		sshView.unmount();
+		render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);
+		expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('HOSTED');
+		// One pill per header, whatever the mode.
+		expect(screen.getAllByTestId(/^federation-badge-(local|ssh|hosted)$/)).toHaveLength(1);
+	});
+
+	it('draws everything else identically, the branch pill included', () => {
+		settingsMocks.hostingOn = true;
+		const local = drawWithoutModePill(modes.local);
+		const sshHeader = drawWithoutModePill(modes.ssh);
+		const hosted = drawWithoutModePill(modes.hosted);
+		expect(local).toContain('header-git-branch-text');
+		expect(sshHeader).toBe(local);
+		expect(hosted).toBe(local);
+	});
+
+	it("draws the same header when a hosted agent's host is out of reach (no banner)", () => {
+		settingsMocks.hostingOn = true;
+		const initial = usePeerMirrorStore.getState();
+		usePeerMirrorStore.setState({
+			order: ['build-box'],
+			peers: {
+				'build-box': {
+					peerId: 'build-box',
+					remoteId: 'remote-1',
+					name: 'build-box',
+					connection: 'lost',
+					error: 'ssh timed out',
+					agents: [],
+					groups: [],
+					liveTurns: {},
+					queues: {},
+					autoRuns: {},
+					staleTabs: {},
+				},
+			},
+		});
+		try {
+			const local = drawWithoutModePill(modes.local);
+			expect(drawWithoutModePill(modes.hosted)).toBe(local);
+			// The host's state rides the one pill: its hover card says how to reconnect.
+			render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);
+			expect(screen.getByTestId('federation-badge-hosted')).toHaveTextContent('HOSTED');
+		} finally {
+			usePeerMirrorStore.setState(initial, true);
+		}
+	});
+
+	it('hides the default account in every mode, and names a chosen account the same way', async () => {
+		settingsMocks.hostingOn = true;
+		const sessionsFor = (env?: Record<string, string>) =>
+			[modes.local, modes.ssh, modes.hosted].map((session) => ({
+				...session,
+				customEnvVars: env,
+			}));
+		// The default account (no CLAUDE_CONFIG_DIR): no label, here or on a remote,
+		// and never a path of this machine in a tooltip.
+		for (const session of sessionsFor()) {
+			const { container, unmount } = render(
+				<MainPanelHeader {...defaultProps} activeSession={session} activeTabContextWindow={0} />
+			);
+			await act(async () => {});
+			expect(screen.queryByLabelText(/^Provider profile:/)).not.toBeInTheDocument();
+			expect(container.innerHTML).not.toContain('/home/testuser');
+			unmount();
+		}
+		// An account the user chose: the same label and tooltip in every mode.
+		const seen: Array<[string | null, string | null]> = [];
+		for (const session of sessionsFor({ CLAUDE_CONFIG_DIR: '/srv/me/.claude-work' })) {
+			const { unmount } = render(
+				<MainPanelHeader {...defaultProps} activeSession={session} activeTabContextWindow={0} />
+			);
+			const label = await screen.findByLabelText(/^Provider profile:/);
+			seen.push([label.textContent, label.getAttribute('title')]);
+			unmount();
+		}
+		expect(seen[0][1]).toBe('/srv/me/.claude-work');
+		expect(seen[0][0]).not.toContain('@');
+		expect(seen[1]).toEqual(seen[0]);
+		expect(seen[2]).toEqual(seen[0]);
+	});
+
+	it('draws a hosted agent as the SSH agent it was while hosted agents are off', () => {
+		settingsMocks.hostingOn = false;
+		render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);
+		expect(screen.getByTestId('federation-badge-ssh')).toBeInTheDocument();
+		expect(screen.queryByTestId('federation-badge-hosted')).toBeNull();
 	});
 });

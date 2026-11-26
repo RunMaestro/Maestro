@@ -25,18 +25,34 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 import type { AITab, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
-import { removeMirrorQueuedItem, setMirrorQueuedItemPaused } from './peerMirror';
+import { notifyToast } from '../stores/notificationStore';
+import { handQueuedItemToHost } from './hostedQueuedTurn';
+import {
+	type HostMergeAnswer,
+	type HostQueueAnswer,
+	editMirrorQueuedItem,
+	mergeMirrorQueuedItem,
+	moveMirrorQueuedItem,
+	removeMirrorQueuedItem,
+	sendMirrorQueuedItemNow,
+	setMirrorQueuedItemPaused,
+} from './peerMirror';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import type { QueuedSlashCommand } from '../utils/executionQueue';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
+	applyQueuedItemEdit,
+	findQueuedMergeTarget,
+	getForceSendEligibility,
 	getQueueBusyContext,
 	mergeQueuedItemIntoPrevious,
+	reorderQueueItem,
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
+import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import { routeQueuedAutoItem } from './autoTurn';
 import { withoutDesignPickPageText } from '../utils/designModePicker';
@@ -321,6 +337,9 @@ function matchSlashCommand(
  * composer queues it, instead of as the literal text `/commit`. Callers whose
  * text was written by a program leave it off.
  *
+ * A hosted agent's item goes to its host at once (`handQueuedItemToHost()`): its host queues or
+ * runs it, and a refusal brings it back here held.
+ *
  * @returns The queued item, or null when the agent is gone or has no AI tab.
  */
 export function enqueuePromptForTab(
@@ -380,7 +399,45 @@ export function enqueuePromptForTab(
 	// On an agent set to the Auto model the prompt is routed as it is queued,
 	// like one the composer queues. A no-op on a named model.
 	routeQueuedAutoItem(sessionId, item);
+	// A hosted agent's host runs its turns: the item leaves this queue at once and goes there, as
+	// the composer's send does. Nothing waits here for a drain that would spawn on this machine.
+	handQueuedItemToHost(sessionId, item.id);
 	return item;
+}
+
+/** The host a queued item waits on, when it is a hosted agent's host queue item (`hostQueued`). */
+function hostQueuedItemTarget(
+	sessionId: string,
+	itemId: string
+): { peerId: string; agentId: string; item: QueuedItem; hostQueue: QueuedItem[] } | undefined {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const item = session?.executionQueue?.find((candidate) => candidate.id === itemId);
+	if (!item?.hostQueued) return undefined;
+	const target = hostedTargetOf(session);
+	if (!target) return undefined;
+	// The host's own items, in its order: a message can only merge into one the host holds.
+	const hostQueue = (session?.executionQueue ?? []).filter((candidate) => candidate.hostQueued);
+	return { peerId: target.peerId, agentId: target.agentId, item, hostQueue };
+}
+
+type HostQueueTarget = NonNullable<ReturnType<typeof hostQueuedItemTarget>>;
+
+/**
+ * A host's answer as a caller that reports the outcome needs it (`maestro-cli queue`, a client's
+ * hosted card reaching this desktop). The queued card's own click answers at once and lets the
+ * host's queue update redraw it; a script must not be told "done" before the host has spoken. A
+ * host that did not answer is an error, not a miss, so the caller gets the reason.
+ */
+async function settledHostAnswer<T extends HostQueueAnswer | HostMergeAnswer>(
+	answer: Promise<T>
+): Promise<Exclude<T, null>> {
+	const result = await answer;
+	if (result === null) {
+		throw new Error(
+			"The agent's host did not answer. It may be offline: check the agent in Maestro."
+		);
+	}
+	return result as Exclude<T, null>;
 }
 
 /**
@@ -391,18 +448,6 @@ export function enqueuePromptForTab(
  * trust `true`: the queue did not also start it. On `false` the item already
  * ran (or someone else removed it), and sending it again would send it twice.
  */
-/** The host a queued item waits on, when it is a hosted agent's host queue item (`hostQueued`). */
-function hostQueuedItemTarget(
-	sessionId: string,
-	itemId: string
-): { peerId: string; agentId: string; item: QueuedItem } | undefined {
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	const item = session?.executionQueue?.find((candidate) => candidate.id === itemId);
-	if (!item?.hostQueued) return undefined;
-	const target = hostedTargetOf(session);
-	return target ? { peerId: target.peerId, agentId: target.agentId, item } : undefined;
-}
-
 export function removeQueuedItem(sessionId: string, itemId: string): boolean {
 	// A hosted agent's host queue: the host removes it, and its update takes the card away.
 	const hosted = hostQueuedItemTarget(sessionId, itemId);
@@ -426,6 +471,18 @@ export function removeQueuedItem(sessionId: string, itemId: string): boolean {
 }
 
 /**
+ * `removeQueuedItem` for a caller that reports the outcome: a hosted agent's host item resolves
+ * with the host's answer instead of at once.
+ */
+export async function removeQueuedItemSettled(sessionId: string, itemId: string): Promise<boolean> {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		return settledHostAnswer(removeMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId));
+	}
+	return removeQueuedItem(sessionId, itemId);
+}
+
+/**
  * Hold or resume one queued item: the queued card's Hold / Resume, and
  * `maestro-cli queue hold|resume`. A held item keeps its place but nothing
  * dispatches it until it is resumed.
@@ -446,6 +503,33 @@ export function toggleQueuedItemPaused(sessionId: string, itemId: string): boole
 	return writeQueuedItemPaused(sessionId, itemId, (current) => !current);
 }
 
+/**
+ * `setQueuedItemPaused` for a caller that reports the outcome: a hosted agent's host item
+ * resolves with the host's answer instead of at once.
+ */
+export async function setQueuedItemPausedSettled(
+	sessionId: string,
+	itemId: string,
+	paused: boolean
+): Promise<boolean> {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) return settledHostAnswer(pauseOnHost(hosted, itemId, () => paused));
+	return setQueuedItemPaused(sessionId, itemId, paused);
+}
+
+function pauseOnHost(
+	hosted: HostQueueTarget,
+	itemId: string,
+	next: (current: boolean) => boolean
+): Promise<HostQueueAnswer> {
+	return setMirrorQueuedItemPaused(
+		hosted.peerId,
+		hosted.agentId,
+		itemId,
+		next(hosted.item.paused === true)
+	);
+}
+
 function writeQueuedItemPaused(
 	sessionId: string,
 	itemId: string,
@@ -453,12 +537,7 @@ function writeQueuedItemPaused(
 ): boolean {
 	const hosted = hostQueuedItemTarget(sessionId, itemId);
 	if (hosted) {
-		void setMirrorQueuedItemPaused(
-			hosted.peerId,
-			hosted.agentId,
-			itemId,
-			next(hosted.item.paused === true)
-		);
+		void pauseOnHost(hosted, itemId, next);
 		return true;
 	}
 	let found = false;
@@ -492,6 +571,14 @@ function writeQueuedItemPaused(
  * dispatch in between.
  */
 export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): string | null {
+	// A hosted agent's host queue: the host merges by the same rule, and its update redraws both.
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		const merge = mergeOnHost(hosted, itemId);
+		if (!merge) return null;
+		void merge.answer;
+		return merge.targetId;
+	}
 	let targetId: string | null = null;
 	updateSessionWith(sessionId, (s) => {
 		const result = mergeQueuedItemIntoPrevious(s.executionQueue ?? [], itemId);
@@ -500,6 +587,229 @@ export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): str
 		return { ...s, executionQueue: result.queue };
 	});
 	return targetId;
+}
+
+/**
+ * `mergeQueuedItemIntoAbove` for a caller that reports the outcome: a hosted agent's host item
+ * resolves with the host's answer instead of at once.
+ */
+export async function mergeQueuedItemIntoAboveSettled(
+	sessionId: string,
+	itemId: string
+): Promise<string | null> {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (!hosted) return mergeQueuedItemIntoAbove(sessionId, itemId);
+	const merge = mergeOnHost(hosted, itemId);
+	if (!merge) return null;
+	// The host names the message it merged into; the one this machine saw above is the fallback.
+	const answer = await settledHostAnswer(merge.answer);
+	if (typeof answer === 'string') return answer;
+	return answer ? merge.targetId : null;
+}
+
+/** The host merges by the same rule, so the message it folds into is the one above in its order. */
+function mergeOnHost(
+	hosted: HostQueueTarget,
+	itemId: string
+): { targetId: string; answer: Promise<HostMergeAnswer> } | null {
+	const above = findQueuedMergeTarget(hosted.hostQueue, itemId);
+	if (!above) return null;
+	return {
+		targetId: above.id,
+		answer: mergeMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId),
+	};
+}
+
+/**
+ * Rewrite one queued message in place: the queued card's Edit, the Execution Queue's Edit, and
+ * `maestro-cli queue edit`. The mention flags and the slash command are re-derived from the
+ * EDITED text (`resolveQueuedItemEdit`): a stale flag consults the wrong agent, and `/commit`
+ * left as a message is sent to the provider as literal text.
+ *
+ * `images` or `turnSettings` absent keeps the item's own (a script that only rewrites the text).
+ *
+ * @returns Whether the item was in the queue to change. A hosted agent's host item answers
+ * `true` at once: the host edits it by the same rule, and its queue update redraws the card.
+ */
+export function editQueuedItem(sessionId: string, itemId: string, edit: QueuedTurnEdit): boolean {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		void editOnHost(hosted, itemId, edit);
+		return true;
+	}
+	let found = false;
+	updateSessionWith(sessionId, (s) => {
+		const item = s.executionQueue?.find((queued) => queued.id === itemId);
+		if (!item || item.pendingAdmissionId) return s;
+		found = true;
+		const patch: QueuedItemEditPatch = {
+			text: edit.text,
+			images: edit.images ?? item.images ?? [],
+			turnSettings: edit.turnSettings ?? item.turnSettings ?? {},
+		};
+		const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
+		return {
+			...s,
+			executionQueue: applyQueuedItemEdit(
+				s.executionQueue,
+				itemId,
+				patch,
+				crossAgent,
+				slashCommand
+			),
+		};
+	});
+	return found;
+}
+
+/**
+ * `editQueuedItem` for a caller that reports the outcome: a hosted agent's host item resolves
+ * with the host's answer instead of at once.
+ */
+export async function editQueuedItemSettled(
+	sessionId: string,
+	itemId: string,
+	edit: QueuedTurnEdit
+): Promise<boolean> {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) return settledHostAnswer(editOnHost(hosted, itemId, edit));
+	return editQueuedItem(sessionId, itemId, edit);
+}
+
+function editOnHost(
+	hosted: HostQueueTarget,
+	itemId: string,
+	edit: QueuedTurnEdit
+): Promise<HostQueueAnswer> {
+	// The mirror holds the host item's images, so the edit's list is the whole list, as it is
+	// for a local item: an empty one clears them, and an absent one keeps the host's own.
+	return editMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId, {
+		text: edit.text,
+		...(edit.turnSettings ? { turnSettings: edit.turnSettings } : {}),
+		...(edit.images ? { images: edit.images } : {}),
+	});
+}
+
+/**
+ * Move one queued item to another place: the queued card's drag, the Execution Queue's drag, and
+ * `maestro-cli queue move`. Indices follow `reorderQueueItem`: with `tabId` they address that
+ * tab's items as its inline list draws them, without it the agent's whole queue.
+ *
+ * A hosted agent's host item moves on its host, by the same rule: the target place is read as the
+ * host item drawn there, and its queue update redraws the list. Since a hosted agent's turns go
+ * to its host as they are queued (`handQueuedItemToHost()`), the only cards this machine holds for
+ * one are a send the host refused (held here until Resume sends it again, to the end of the
+ * host's line) and a managed admission. Those move among themselves here. A move that crosses
+ * between the two lines is refused with a toast, never silently: the host cannot place a message
+ * it does not hold, and a held card's place among the host's means nothing once Resume sends it.
+ *
+ * @returns Whether the move was made (or handed to the host).
+ */
+export function reorderQueuedItems(
+	sessionId: string,
+	fromIndex: number,
+	toIndex: number,
+	tabId?: string
+): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session) return false;
+	const scoped = (session.executionQueue ?? []).filter((item) => !tabId || item.tabId === tabId);
+	const moved = scoped[fromIndex];
+	const target = scoped[toIndex];
+	if (!moved || !target || moved === target) return false;
+	const hostMove = moveOnHost(sessionId, moved, target, tabId);
+	if (hostMove !== undefined) {
+		if (!hostMove) return refuseCrossingMove(session);
+		void hostMove;
+		return true;
+	}
+	if (target.hostQueued) return refuseCrossingMove(session);
+	let changed = false;
+	updateSessionWith(sessionId, (s) => {
+		const executionQueue = reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId);
+		if (executionQueue === s.executionQueue) return s;
+		changed = true;
+		return { ...s, executionQueue };
+	});
+	return changed;
+}
+
+/** Say why a card cannot cross between this machine's held cards and its host's line. */
+function refuseCrossingMove(session: Pick<Session, 'liftedTo'>): false {
+	const host = hostedTargetOf(session)?.peerId ?? 'its host';
+	notifyToast({
+		color: 'theme',
+		title: 'Cannot move it there',
+		message: `A message held on this machine and the messages waiting on ${host} are two lines. Resume a held message to send it to the end of the host's line.`,
+	});
+	return false;
+}
+
+/**
+ * Move one queued item, named by id, to `toIndex`: the form `maestro-cli queue move` and a
+ * client's hosted card reach this desktop with. Same rule as the drag (`reorderQueuedItems`).
+ */
+export function moveQueuedItem(
+	sessionId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+): boolean {
+	const fromIndex = queuedItemIndex(sessionId, itemId, tabId);
+	if (fromIndex === -1) return false;
+	// Already there: nothing to do, and nothing failed.
+	if (fromIndex === toIndex) return true;
+	return reorderQueuedItems(sessionId, fromIndex, toIndex, tabId);
+}
+
+/**
+ * `moveQueuedItem` for a caller that reports the outcome: a hosted agent's host item resolves
+ * with the host's answer instead of at once.
+ */
+export async function moveQueuedItemSettled(
+	sessionId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+): Promise<boolean> {
+	const fromIndex = queuedItemIndex(sessionId, itemId, tabId);
+	if (fromIndex === -1) return false;
+	if (fromIndex === toIndex) return true;
+	const scoped = scopedQueue(sessionId, tabId);
+	const hostMove = moveOnHost(sessionId, scoped[fromIndex], scoped[toIndex], tabId);
+	if (hostMove === undefined) return reorderQueuedItems(sessionId, fromIndex, toIndex, tabId);
+	return hostMove ? settledHostAnswer(hostMove) : false;
+}
+
+/** The agent's queue as `reorderQueuedItems` indexes it: that tab's items with `tabId`. */
+function scopedQueue(sessionId: string, tabId?: string): QueuedItem[] {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	return (session?.executionQueue ?? []).filter((item) => !tabId || item.tabId === tabId);
+}
+
+function queuedItemIndex(sessionId: string, itemId: string, tabId?: string): number {
+	return scopedQueue(sessionId, tabId).findIndex((item) => item.id === itemId);
+}
+
+/**
+ * Move a hosted agent's host item on its host. Undefined when `moved` is not a host item (the
+ * move is local); false when the host cannot place it there (the target is not one the host
+ * holds); otherwise the host's answer. The target place is read as the host item drawn there.
+ */
+function moveOnHost(
+	sessionId: string,
+	moved: QueuedItem | undefined,
+	target: QueuedItem | undefined,
+	tabId?: string
+): Promise<HostQueueAnswer> | false | undefined {
+	if (!moved) return undefined;
+	const hosted = hostQueuedItemTarget(sessionId, moved.id);
+	if (!hosted) return undefined;
+	if (!target?.hostQueued) return false;
+	const hostScoped = hosted.hostQueue.filter((item) => !tabId || item.tabId === tabId);
+	const hostToIndex = hostScoped.findIndex((item) => item.id === target.id);
+	if (hostToIndex === -1) return false;
+	return moveMirrorQueuedItem(hosted.peerId, hosted.agentId, moved.id, hostToIndex, tabId);
 }
 
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */
@@ -539,6 +849,12 @@ export function sendQueuedItemNow(
 
 	const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
 	if (targetTabBusy) return false;
+	// A hosted agent's host item runs on its host, which applies this same rule to its own tabs.
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		void sendMirrorQueuedItemNow(hosted.peerId, hosted.agentId, itemId);
+		return true;
+	}
 	// Without the dispatch deps nothing could run it: leave it for the queue.
 	if (dispatch === dispatchThroughStore && !getDispatchDeps()) return false;
 
@@ -549,6 +865,32 @@ export function sendQueuedItemNow(
 		logger.error('[ForceSend] Dispatch failed, item returned to queue', undefined, err);
 	});
 	return true;
+}
+
+/**
+ * `sendQueuedItemNow` for a caller with no Force Send button (`maestro-cli queue send-now`, a
+ * client's hosted card reaching this desktop). It applies the rule the button does: beside
+ * another tab's turn it runs only when Forced Parallel Execution is on, which `sendQueuedItemNow`
+ * leaves to its callers (the button is not offered, and Quick Chat only sends to a free agent).
+ * A hosted agent's host item resolves with the host's answer instead of at once; the host applies
+ * the same rule with its own setting.
+ */
+export async function sendQueuedItemNowSettled(
+	sessionId: string,
+	itemId: string
+): Promise<boolean> {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const item = session?.executionQueue?.find((i) => i.id === itemId);
+	if (!session || !item) return false;
+	const eligibility = getForceSendEligibility(session, item, {
+		forcedParallelEnabled: useSettingsStore.getState().forcedParallelExecution,
+	});
+	if (!eligibility.canForce) return false;
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (hosted) {
+		return settledHostAnswer(sendMirrorQueuedItemNow(hosted.peerId, hosted.agentId, itemId));
+	}
+	return sendQueuedItemNow(sessionId, itemId);
 }
 
 /**
@@ -567,9 +909,10 @@ export function matchQueuedSlashCommand(session: Session, text: string): QueuedS
 	if (!commandText.startsWith('/')) return null;
 	const deps = getDispatchDeps();
 	if (!deps) return null;
-	const firstSpace = commandText.indexOf(' ');
-	const command = firstSpace === -1 ? commandText : commandText.slice(0, firstSpace);
-	const commandArgs = firstSpace === -1 ? '' : commandText.slice(firstSpace + 1).trim();
+	// Split at the first whitespace of any kind, as `buildQueuedMessageItem` does.
+	const firstWhitespace = commandText.search(/\s/);
+	const command = firstWhitespace === -1 ? commandText : commandText.slice(0, firstWhitespace);
+	const commandArgs = firstWhitespace === -1 ? '' : commandText.slice(firstWhitespace + 1).trim();
 	const match =
 		deps.customAICommands.find((cmd) => cmd.command === command) ??
 		deps.speckitCommands.find((cmd) => cmd.command === command) ??

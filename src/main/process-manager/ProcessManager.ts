@@ -38,7 +38,7 @@ import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
 import { STEERING_TURN_FINISHED_DETAIL, type SteeringResultFrame } from '../../shared/chatSteering';
-import { sendSteeringRequest } from './steering-client';
+import { sendRemoteSteeringRequest, sendSteeringRequest } from './steering-client';
 import { steerCodexAppServerTurn } from '../codex-app-server/steering';
 import { isPidAlive } from './utils/childProcessInfo';
 import { expandTilde } from '../../shared/pathUtils';
@@ -671,7 +671,8 @@ export class ProcessManager extends EventEmitter {
 	 *
 	 * Everything else is deliberately NOT decided here. Whether the turn is on
 	 * maestro-p at all is answered by whether a channel exists (the spawn opens one
-	 * only for a local interactive turn), and whether the TUI can accept keystroke
+	 * only for an interactive turn, on this machine or on an SSH remote whose
+	 * maestro-p serves the steering relay), and whether the TUI can accept keystroke
 	 * right now is answered by maestro-p, which is the only party holding the
 	 * screen. Re-deriving either would mean two places believing different things
 	 * about the same turn. A Codex process carries its own channel
@@ -711,6 +712,18 @@ export class ProcessManager extends EventEmitter {
 				refusal: 'unsupported-transport',
 				detail: 'This turn is running on Codex exec, which cannot accept steering.',
 			};
+		}
+		// A Claude TUI turn on an SSH remote listens on a socket on that host; the
+		// spawn recorded how to reach it. Without that record an SSH turn has no
+		// channel, and the local dial below finds none and refuses, as for any
+		// turn that opened no channel.
+		if (process.remoteSteering) {
+			return sendRemoteSteeringRequest({
+				channel: process.remoteSteering,
+				processKey: sessionId,
+				text,
+				id,
+			});
 		}
 		return sendSteeringRequest({ processKey: sessionId, text, id });
 	}

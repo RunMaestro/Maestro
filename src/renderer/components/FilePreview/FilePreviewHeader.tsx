@@ -23,11 +23,10 @@ import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
-import { isWebDesktop } from '../../utils/runtimeContext';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { getRevealLabel } from '../../utils/platformUtils';
-import { canRevealOnHost, openFileForUser, openFileForUserLabel } from '../../services/hostShell';
+import { hostShellAvailable, openFileForUserLabel } from '../../services/hostShell';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -36,6 +35,7 @@ import { PreviewTierChip } from './PreviewTierChip';
 import { FilePreviewActionsSheet } from './FilePreviewActionsSheet';
 import type { FilePreviewHeaderAction, FilePreviewHeaderStat } from './FilePreviewActionsSheet';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { openFileInDefaultApp, revealInFileManager } from '../../services/fileActions';
 
 interface FilePreviewHeaderProps {
 	file: { name: string; content: string; path: string };
@@ -273,12 +273,12 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			testId: 'html-render-toggle',
 		});
 	}
-	// Open in Maestro Browser - HTML files only, not over SSH (file:// can't
-	// reach the remote host). Mirrors the file-tree right-click action so
-	// JS-heavy local HTML renders in the full webview instead of the sandboxed
-	// preview iframe. Sits next to the HTML render toggle since both are
-	// "view this in a browser" actions.
-	if (toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser) {
+	// Open in Maestro Browser - HTML files only. Mirrors the file-tree
+	// right-click action so JS-heavy HTML renders in the full webview instead of
+	// the sandboxed preview iframe; a remote file opens its fetched copy. Sits
+	// next to the HTML render toggle since both are "view this in a browser"
+	// actions.
+	if (toolbarVisibility.openInBrowser && isHtml && onOpenInBrowser) {
 		actions.push({
 			kind: 'button',
 			key: 'openInBrowser',
@@ -363,29 +363,30 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 		});
 	}
 	// "Open in Default App" hands the file to the host's OS opener on the
-	// desktop, and downloads it to this device from a browser (whose user is not
-	// at the host). See services/hostShell.ts. Over SSH on the desktop it stays
-	// hidden: file:// cannot reach the remote host.
-	if (toolbarVisibility.openInDefault && hasDiskPath && (isWebDesktop() || !sshRemoteId)) {
+	// desktop (a remote file is fetched to this machine first), and downloads
+	// it to this device from a browser, whose user is not at the host. See
+	// services/fileActions.ts and services/hostShell.ts.
+	if (toolbarVisibility.openInDefault && hasDiskPath) {
 		actions.push({
 			kind: 'button',
 			key: 'openInDefault',
 			icon: ExternalLink,
 			label: openFileForUserLabel(),
 			onClick: () => {
-				void openFileForUser(file.path, { sshRemoteId });
+				void openFileInDefaultApp({ path: file.path, sshRemoteId });
 			},
 		});
 	}
-	// Reveal in Finder / Explorer / File Manager - the host's, so desktop and local only.
-	if (toolbarVisibility.revealInFolder && hasDiskPath && canRevealOnHost(sshRemoteId)) {
+	// Reveal in Finder / Explorer / File Manager. A remote file reveals its
+	// fetched copy. The host's file manager, so desktop only.
+	if (toolbarVisibility.revealInFolder && hasDiskPath && hostShellAvailable()) {
 		actions.push({
 			kind: 'button',
 			key: 'revealInFolder',
 			icon: FolderOpen,
 			label: getRevealLabel(window.maestro?.platform ?? ''),
 			onClick: () => {
-				window.maestro?.shell?.showItemInFolder(file.path);
+				void revealInFileManager({ path: file.path, sshRemoteId });
 			},
 			testId: 'reveal-in-folder-button',
 		});

@@ -219,19 +219,18 @@ describe('ShellCommandCard', () => {
 		expect(screen.getByText(/Output truncated/)).toBeTruthy();
 	});
 
-	it('shows the SSH remote name when the agent runs remotely', () => {
+	it('shows the directory alone, without the remote name, for a remote agent', () => {
 		renderCard(
 			makeLog({
 				shellCommand: {
 					command: 'uname -a',
 					cwd: '/srv/app',
-					remoteName: 'builder',
 					status: 'running',
 				},
 			})
 		);
 
-		expect(screen.getByText(/builder:/)).toBeTruthy();
+		expect(screen.getByTitle('/srv/app').textContent).toBe('/srv/app');
 	});
 
 	it('reports no output for a command that printed nothing', () => {

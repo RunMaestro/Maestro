@@ -34,12 +34,16 @@ import {
 	type FederationPeer,
 	type PeerClient,
 } from '../../shared/maestro-lib/client/peer-connection';
-import { peerAgentRef } from '../../shared/maestro-lib/agents/lift-pointer';
+import {
+	hostedAgentsEnabled,
+	hostedPointer,
+	peerAgentRef,
+} from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AITabRecord, AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isFederationRemote } from '../../shared/federationRemote';
 import { ExitCode } from '../exit-codes';
-import { readSshRemotes, resolveAgentId, resolveSshRemoteId } from './storage';
+import { readSettings, readSshRemotes, resolveAgentId, resolveSshRemoteId } from './storage';
 import { ACTIVE_TAB_KEYWORD, matchTabId } from './session-command';
 
 /** A `peer:agent` target, split on its first colon. */
@@ -171,6 +175,21 @@ export function routeAgentTarget(
 	const deps = withDefaults(overrides);
 	if (deps.isLocalAgent(target)) return { kind: 'local' };
 	return { kind: 'peer', target: parsed };
+}
+
+/**
+ * The peer agent a hosted agent's local id stands for, or undefined for an agent that runs here
+ * (local, SSH, or a lifted one while hosted agents are off). `send`, `dispatch` and `ask` address
+ * a hosted agent by its local id the way they address a local one: they take this route, so the
+ * turn runs on the host, as the desktop's own send does, instead of being refused.
+ */
+export function liftedPeerTarget(
+	agent: { liftedTo?: unknown } | undefined,
+	readHostedSetting: () => boolean = () =>
+		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
+): PeerTarget | undefined {
+	const pointer = agent ? hostedPointer(agent, readHostedSetting) : undefined;
+	return pointer ? { peer: pointer.peer, agent: pointer.agentId } : undefined;
 }
 
 /** The id a peer is shown and addressed by, and a remote `--all-peers` visits (shared). */

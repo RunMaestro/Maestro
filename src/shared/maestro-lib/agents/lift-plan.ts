@@ -23,6 +23,7 @@ import type { AgentImportInput, AgentImportQueuedMessage, AgentImportTab } from 
 import { aiTabsOf, visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import { transcriptOf } from '../store/transcript';
+import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
 import { liftBusyReason, peerAgentRef, readLiftedTo } from './lift-pointer';
 import { planLiftEnv, type SessionDirSelector } from './lift-env';
 import { sshRecordOf } from './rules';
@@ -200,7 +201,7 @@ function importTabOf(tab: AITabRecord): AgentImportTab {
 		...(stringField(tab.customModel) ? { model: tab.customModel } : {}),
 		...(stringField(tab.customEffort) ? { effort: tab.customEffort } : {}),
 		...(usageStats ? { usageStats } : {}),
-		logs: transcriptOf(tab),
+		logs: transcriptOf(tab).map(withInlineEntryImages),
 	};
 }
 
@@ -248,13 +249,14 @@ function planQueue(
 		const images = Array.isArray(item.images)
 			? item.images.filter((image): image is string => typeof image === 'string')
 			: [];
-		// A stored image reference names this machine's image store: only inline data moves.
-		const inline = images.filter((image) => image.startsWith('data:'));
-		if (inline.length < images.length) {
+		// A stored image reference names this machine's image store, which the host cannot read:
+		// it moves as its bytes. Only one that cannot be read here stays.
+		const { inline, unresolved } = inlineImageList(images);
+		if (unresolved > 0) {
 			stays.push({
 				kind: 'queued-image',
 				ref: id,
-				reason: `${images.length - inline.length} image(s) on this queued message are in this machine's image store and do not move.`,
+				reason: `${unresolved} image(s) on this queued message could not be read from this machine's image store and do not move.`,
 			});
 		}
 		queue.push({

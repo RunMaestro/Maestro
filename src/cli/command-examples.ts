@@ -96,6 +96,12 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],
 	'queue merge': ['maestro-cli queue merge <item-id> --agent <agent-id>'],
+	'queue edit': ['maestro-cli queue edit <item-id> --agent <agent-id> --text "Run the tests too"'],
+	'queue move': ['maestro-cli queue move <item-id> --agent <agent-id> --to 0'],
+	'queue send-now': ['maestro-cli queue send-now <item-id> --agent <agent-id>'],
+	'stats-project-tokens': [
+		'maestro-cli stats-project-tokens --provider claude-code --project /srv/app --json',
+	],
 	'group-chat steer': ['maestro-cli group-chat steer <chat> "Focus on the failing test"'],
 	'steer-auto-run send': [
 		'maestro-cli steer-auto-run send "Keep the public API unchanged" --agent <agent-id>',

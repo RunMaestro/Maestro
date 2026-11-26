@@ -784,6 +784,7 @@ describe('createWsMaestroClient', () => {
 				thinking: 'sticky',
 				model: null,
 				enterToSend: false,
+				agentSessionId: 'wizard-session',
 			});
 			expect(result).toEqual({ ok: true, value: undefined });
 			expect(bridge.sent('update_session_config')[0]).toMatchObject({
@@ -794,6 +795,7 @@ describe('createWsMaestroClient', () => {
 					showThinking: 'sticky',
 					customModel: null,
 					enterToSend: false,
+					agentSessionId: 'wizard-session',
 				},
 			});
 			expect(await client.tabs.update(A1, 'a1-t1', {})).toEqual({ ok: true, value: undefined });
@@ -867,6 +869,17 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual(['started']);
 		});
 
+		it('reports ran, and begins no turn, when the host ran one of its own commands', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false, ran: true })
+			);
+			const result = await client.turns.send(A1, A1_TAB, { text: '/history' });
+			expect(result).toEqual({ ok: true, value: { status: 'ran' } });
+			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ command: '/history' });
+			expect(turnKinds()).toEqual([]);
+		});
+
 		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {
 			bridge.typed.set(
 				'enqueue_command',
@@ -911,6 +924,18 @@ describe('createWsMaestroClient', () => {
 				turnOverrides: { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false },
 			});
 			for (const message of sent.slice(1)) expect(message).not.toHaveProperty('turnOverrides');
+		});
+
+		it('sends Queue Held as held: true, and leaves the field off a plain send', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: true })
+			);
+			await client.turns.send(A1, A1_TAB, { text: 'later', held: true });
+			await client.turns.send(A1, A1_TAB, { text: 'now' });
+			const sent = bridge.sent('enqueue_command');
+			expect(sent[0]).toMatchObject({ command: 'later', held: true });
+			expect(sent[1]).not.toHaveProperty('held');
 		});
 
 		it('preserves managed unknown queue receipts and never emits a native start', async () => {
@@ -1111,6 +1136,93 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		describe('usage.projectTokens', () => {
+			const projects = [{ provider: 'claude-code', projectPath: '/srv/app' }];
+			const record = {
+				sessionId: 's1',
+				agentType: 'claude-code',
+				projectPath: '/srv/app',
+				accountKey: 'default',
+				timestampMs: 5,
+				byModel: [],
+				inputTokens: 3,
+				outputTokens: 4,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				coverage: 'full',
+			};
+
+			it('sends get_project_token_usage and keeps only records that hold together', async () => {
+				bridge.typed.set(
+					'get_project_token_usage',
+					reply('project_token_usage_result', {
+						projects: [
+							{
+								status: 'read',
+								breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
+							},
+						],
+					})
+				);
+				expect(await client.usage!.projectTokens(projects)).toEqual({
+					ok: true,
+					value: { projects: [{ status: 'read', breakdowns: [record], complete: false }] },
+				});
+				expect(bridge.sent('get_project_token_usage')[0]).toMatchObject({ projects });
+			});
+
+			it('answers unsupported from a host that does not know the message', async () => {
+				const result = await client.usage!.projectTokens(projects);
+				expect(result).toMatchObject({
+					ok: false,
+					error: { code: 'unsupported', method: 'usage.projectTokens' },
+				});
+			});
+		});
+
+		describe('history.remove and history.update', () => {
+			it('deletes with delete_history_entry and reads back whether one was removed', async () => {
+				bridge.typed.set(
+					'delete_history_entry',
+					reply('delete_history_entry_result', { removed: true })
+				);
+				expect(await client.history.remove(A1, 'h1')).toEqual({
+					ok: true,
+					value: { removed: true },
+				});
+				expect(bridge.sent('delete_history_entry')[0]).toMatchObject({
+					sessionId: A1,
+					entryId: 'h1',
+				});
+			});
+
+			it('validates with update_history_entry, sending only validated', async () => {
+				bridge.typed.set(
+					'update_history_entry',
+					reply('update_history_entry_result', { updated: true })
+				);
+				expect(await client.history.update(A1, 'h1', { validated: false })).toEqual({
+					ok: true,
+					value: { updated: true },
+				});
+				expect(bridge.sent('update_history_entry')[0]).toEqual(
+					expect.objectContaining({ sessionId: A1, entryId: 'h1', validated: false })
+				);
+			});
+
+			it('reports a refused edit as a failure of its method', async () => {
+				bridge.typed.set('delete_history_entry', () => ({
+					type: 'delete_history_entry_result',
+					success: false,
+					error: 'No agent a1.',
+				}));
+				const result = await client.history.remove(A1, 'h1');
+				expect(!result.ok && result.error.method).toBe('history.remove');
+			});
+		});
+
 		it('holds and releases a queued item with set_queue_item_paused', async () => {
 			bridge.typed.set('set_queue_item_paused', (message) => ({
 				type: 'set_queue_item_paused_result',
@@ -1141,6 +1253,192 @@ describe('createWsMaestroClient', () => {
 			}));
 			const result = await client.turns.queue.setPaused(A1, 'q1', true);
 			expect(result.ok).toBe(false);
+		});
+
+		it('merges a queued item into the one above it with merge_queue_item', async () => {
+			bridge.typed.set('merge_queue_item', (message) =>
+				message.itemId === 'q2'
+					? { type: 'merge_queue_item_result', success: true, merged: true, mergedIntoId: 'q1' }
+					: { type: 'merge_queue_item_result', success: true, merged: false }
+			);
+
+			expect(await client.turns.queue.merge(A1, 'q2')).toEqual({
+				ok: true,
+				value: { merged: true, mergedIntoId: 'q1' },
+			});
+			expect(await client.turns.queue.merge(A1, 'q1')).toEqual({
+				ok: true,
+				value: { merged: false },
+			});
+			expect(bridge.sent('merge_queue_item')).toEqual([
+				expect.objectContaining({ sessionId: A1, itemId: 'q2' }),
+				expect.objectContaining({ sessionId: A1, itemId: 'q1' }),
+			]);
+		});
+
+		it("steers a queued item with steer_queue_item and reads the host's outcome", async () => {
+			bridge.typed.set('steer_queue_item', (message) =>
+				message.itemId === 'q2'
+					? {
+							type: 'steer_queue_item_result',
+							success: true,
+							result: { outcome: 'delivered', verdict: 'delivered' },
+						}
+					: {
+							type: 'steer_queue_item_result',
+							success: true,
+							result: { outcome: 'not-steerable', blockedReason: 'paused' },
+						}
+			);
+
+			expect(await client.turns.queue.steer(A1, 'q2')).toEqual({
+				ok: true,
+				value: { outcome: 'delivered', verdict: 'delivered' },
+			});
+			expect(await client.turns.queue.steer(A1, 'q1')).toEqual({
+				ok: true,
+				value: { outcome: 'not-steerable', blockedReason: 'paused' },
+			});
+			expect(bridge.sent('steer_queue_item')).toEqual([
+				expect.objectContaining({ sessionId: A1, itemId: 'q2' }),
+				expect.objectContaining({ sessionId: A1, itemId: 'q1' }),
+			]);
+		});
+
+		it('fails a steer the host refused or answered with no outcome', async () => {
+			bridge.typed.set('steer_queue_item', (message) =>
+				message.itemId === 'q2'
+					? { type: 'steer_queue_item_result', success: false, error: 'Renderer did not respond' }
+					: { type: 'steer_queue_item_result', success: true }
+			);
+			expect((await client.turns.queue.steer(A1, 'q2')).ok).toBe(false);
+			expect((await client.turns.queue.steer(A1, 'q1')).ok).toBe(false);
+		});
+
+		it('edits a queued item with edit_queue_item, sending only what the edit names', async () => {
+			bridge.typed.set('edit_queue_item', (message) => ({
+				type: 'edit_queue_item_result',
+				success: true,
+				found: message.itemId === 'q1',
+			}));
+			expect(
+				await client.turns.queue.edit(A1, 'q1', { text: 'new', turnSettings: { model: 'm' } })
+			).toEqual({ ok: true, value: { found: true } });
+			expect(await client.turns.queue.edit(A1, 'q9', { text: 'new' })).toEqual({
+				ok: true,
+				value: { found: false },
+			});
+			const sent = bridge.sent('edit_queue_item');
+			expect(sent[0]).toMatchObject({
+				sessionId: A1,
+				itemId: 'q1',
+				text: 'new',
+				turnSettings: { model: 'm' },
+			});
+			expect(sent[1]).not.toHaveProperty('turnSettings');
+			expect(sent[1]).not.toHaveProperty('images');
+		});
+
+		it('moves a queued item with move_queue_item, naming the tab only when given', async () => {
+			bridge.typed.set('move_queue_item', (message) => ({
+				type: 'move_queue_item_result',
+				success: true,
+				moved: message.itemId === 'q1',
+			}));
+			expect(await client.turns.queue.move(A1, 'q1', 0, 't1')).toEqual({
+				ok: true,
+				value: { moved: true },
+			});
+			expect(await client.turns.queue.move(A1, 'q9', 2)).toEqual({
+				ok: true,
+				value: { moved: false },
+			});
+			const sent = bridge.sent('move_queue_item');
+			expect(sent[0]).toMatchObject({ sessionId: A1, itemId: 'q1', toIndex: 0, tabId: 't1' });
+			expect(sent[1]).not.toHaveProperty('tabId');
+		});
+
+		it('sends a queued item now with send_queue_item_now', async () => {
+			bridge.typed.set('send_queue_item_now', (message) => ({
+				type: 'send_queue_item_now_result',
+				success: true,
+				sent: message.itemId === 'q1',
+			}));
+			expect(await client.turns.queue.sendNow(A1, 'q1')).toEqual({
+				ok: true,
+				value: { sent: true },
+			});
+			expect(await client.turns.queue.sendNow(A1, 'q9')).toEqual({
+				ok: true,
+				value: { sent: false },
+			});
+			expect(bridge.sent('send_queue_item_now')[0]).toMatchObject({ sessionId: A1, itemId: 'q1' });
+		});
+
+		it("reads a queued item's turn settings off the queue listing", async () => {
+			bridge.typed.set('list_queue', () => ({
+				type: 'list_queue_result',
+				success: true,
+				queues: [
+					{
+						sessionId: A1,
+						items: [
+							{
+								id: 'q1',
+								tabId: 't',
+								timestamp: 1,
+								type: 'message',
+								text: 'a',
+								turnSettings: { model: 'm', effort: 5 },
+							},
+							{ id: 'q2', tabId: 't', timestamp: 2, type: 'message', text: 'b' },
+						],
+					},
+				],
+			}));
+			const listed = await client.turns.queue.list(A1);
+			expect(listed.ok && listed.value.map((item) => item.turnSettings)).toEqual([
+				{ model: 'm' },
+				undefined,
+			]);
+		});
+
+		it("asks for a queued item's images and keeps only the data URLs", async () => {
+			bridge.typed.set('list_queue', () => ({
+				type: 'list_queue_result',
+				success: true,
+				queues: [
+					{
+						sessionId: A1,
+						items: [
+							{
+								id: 'q1',
+								tabId: 't',
+								timestamp: 1,
+								type: 'message',
+								text: 'a',
+								images: ['data:image/png;base64,AAAA', 'maestro-image://store/x.png', 7],
+							},
+							{ id: 'q2', tabId: 't', timestamp: 2, type: 'message', text: 'b', images: [] },
+						],
+					},
+				],
+			}));
+			const listed = await client.turns.queue.list(A1);
+			expect(bridge.sent('list_queue')[0]).toMatchObject({ sessionId: A1, inlineImages: true });
+			expect(listed.ok && listed.value.map((item) => item.images)).toEqual([
+				['data:image/png;base64,AAAA'],
+				undefined,
+			]);
+		});
+
+		it('reports a refused merge_queue_item as a failure', async () => {
+			bridge.typed.set('merge_queue_item', () => ({
+				type: 'merge_queue_item_result',
+				success: false,
+				error: 'Merge queue item not configured',
+			}));
+			expect((await client.turns.queue.merge(A1, 'q2')).ok).toBe(false);
 		});
 
 		it("reads a headless host's queue_changed into queue.changed, and drops one it cannot read", async () => {
@@ -1738,6 +2036,8 @@ describe('createWsMaestroClient', () => {
 					completedTasks: 0,
 					currentTaskIndex: 0,
 					documents: ['one'],
+					lockedDocuments: ['one', 7],
+					initialCompletedTasks: 'x',
 				},
 				timestamp: 1,
 			});
@@ -1747,7 +2047,19 @@ describe('createWsMaestroClient', () => {
 				kind: 'state',
 				state: { isRunning: true, documents: ['one'], tasksTotal: 2 },
 			});
-			expect(autoRunEvents()[1]).toMatchObject({ kind: 'state', state: null });
+			// The frame itself, read field by field, for a client that draws the same card.
+			expect(autoRunEvents()[0]).toMatchObject({
+				frame: {
+					isRunning: true,
+					totalTasks: 2,
+					completedTasks: 0,
+					currentTaskIndex: 0,
+					documents: ['one'],
+					lockedDocuments: ['one'],
+				},
+			});
+			expect(autoRunEvents()[0]).not.toHaveProperty('frame.initialCompletedTasks');
+			expect(autoRunEvents()[1]).toMatchObject({ kind: 'state', state: null, frame: null });
 			expect(events.every((event) => event.type !== 'turn')).toBe(true);
 		});
 
@@ -2295,6 +2607,22 @@ describe('createWsMaestroClient', () => {
 					withContext: false,
 					timeoutMs: 600_000,
 				}),
+			]);
+		});
+
+		it("asks a /btw side question of the host's tab on the same message", async () => {
+			await connect();
+			bridge.typed.set('cross_agent_ask', reply('cross_agent_ask_result', { answer: 'teal' }));
+			expect(
+				await client.consults.ask({
+					targetAgentId: 'a2',
+					question: 'colour?',
+					sideQuestion: true,
+					targetTabId: 't1',
+				})
+			).toEqual({ ok: true, value: { answer: 'teal' } });
+			expect(bridge.sent('cross_agent_ask')).toEqual([
+				expect.objectContaining({ sessionId: 'a2', sideQuestion: true, targetTabId: 't1' }),
 			]);
 		});
 

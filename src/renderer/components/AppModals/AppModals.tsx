@@ -127,6 +127,7 @@ export interface AppModalsProps {
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
+	newInstancePresetSshRemoteId?: string | null; // SSH remote the seeded working directory is on
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -651,6 +652,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		newInstancePresetWorkingDir,
+		newInstancePresetSshRemoteId,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -985,6 +987,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
 				newInstancePresetWorkingDir={newInstancePresetWorkingDir}
+				newInstancePresetSshRemoteId={newInstancePresetSshRemoteId}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}

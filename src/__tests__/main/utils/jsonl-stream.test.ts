@@ -140,6 +140,16 @@ describe('readFirstJsonlLine', () => {
 		expect(await readFirstJsonlLine(await write(`${header}\n{"id":"b"}\n`))).toBe(header);
 	});
 
+	it('reads no further than a byte bound, and returns null when no line ends within it', async () => {
+		const file = await write(`\n{"id":"a"}\r\n${'x'.repeat(4096)}\n`);
+		expect(await readFirstJsonlLine(file, { maxBytes: 64 })).toBe('{"id":"a"}');
+		const huge = await write(`{"cwd":"${'x'.repeat(4096)}"}\n`);
+		expect(await readFirstJsonlLine(huge, { maxBytes: 1024 })).toBeNull();
+		expect(await readFirstJsonlLine(await write('{"id":"a"}'), { maxBytes: 1024 })).toBe(
+			'{"id":"a"}'
+		);
+	});
+
 	it('returns null for a file with no lines', async () => {
 		expect(await readFirstJsonlLine(await write(''))).toBeNull();
 		expect(await readFirstJsonlLine(await write('\n  \n'))).toBeNull();

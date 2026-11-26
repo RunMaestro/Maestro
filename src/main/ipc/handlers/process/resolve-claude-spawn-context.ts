@@ -13,6 +13,7 @@ import {
 	type ClaudeSpawnEnvLayers,
 } from '../../../agents/claudeSpawnCore';
 import { ensureRemoteMaestroPProbed } from '../../../agents/probeRemoteMaestroP';
+import { getRemoteMaestroPCanSteer } from '../../../agents/remoteMaestroPCache';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
 import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
 import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
@@ -47,6 +48,13 @@ export interface ClaudeSpawnContext {
 	 * may accept claude's folder-trust prompt there (#1872).
 	 */
 	acceptWorkspaceTrust: boolean;
+	/**
+	 * For a TUI turn on an SSH remote: whether that remote's maestro-p serves the
+	 * steering relay (`undefined` when no probe has said, and for every other
+	 * turn). The SSH spawn opens a remote steering channel only on `true`, and the
+	 * `claudeInteractive` write-back names `false` so the Steer controls say why.
+	 */
+	remoteMaestroPCanSteer?: boolean;
 }
 
 type PersistedSessionRecord = {
@@ -145,6 +153,7 @@ export async function resolveClaudeSpawnContext(
 	// remote host (not a local script). Realized in the SSH block below.
 	let claudeResolvedRemote = false;
 	let acceptWorkspaceTrust = false;
+	let remoteMaestroPCanSteer: boolean | undefined;
 
 	// Resolve the Claude token source (maestro-p TUI vs `claude --print`)
 	// through the shared resolver. Token-mode fields are read from the
@@ -187,12 +196,14 @@ export async function resolveClaudeSpawnContext(
 		// Without this an unconfigured/interactive SSH agent resolves to the
 		// remote TUI on a cold cache and exits 127 when maestro-p is absent.
 		let remoteMaestroPAvailable: boolean | undefined;
+		let probedRemoteId: string | undefined;
 		if (isSshEnabled) {
 			const sshRemote = getSshRemoteConfig(createSshRemoteStoreAdapter(deps.settingsStore), {
 				sessionSshConfig: config.sessionSshRemoteConfig,
 			}).config;
 			if (sshRemote) {
 				remoteMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
+				probedRemoteId = sshRemote.id;
 			}
 		}
 
@@ -237,6 +248,10 @@ export async function resolveClaudeSpawnContext(
 		resolvedConfigDirKey = decision.configDirKey;
 		claudeDecisionRealBinPath = decision.claudeRealBinPath;
 		claudeResolvedRemote = !!decision.remote;
+		// Read after the probe above refreshed the cache, for the remote it probed.
+		if (claudeResolvedRemote && claudeResolvedMode === 'interactive') {
+			remoteMaestroPCanSteer = getRemoteMaestroPCanSteer(probedRemoteId);
+		}
 	}
 
 	// Resuming a Claude Code conversation under the API token source? Strip
@@ -271,5 +286,6 @@ export async function resolveClaudeSpawnContext(
 		claudeDecisionRealBinPath,
 		claudeResolvedRemote,
 		acceptWorkspaceTrust,
+		...(remoteMaestroPCanSteer === undefined ? {} : { remoteMaestroPCanSteer }),
 	};
 }

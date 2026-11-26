@@ -343,12 +343,14 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	// Token & cost usage aggregate for the Cost & Tokens dashboard. Reads each
 	// agent's on-disk session storage (not the stats DB), served through a
 	// per-session incremental cache. `force` bypasses the in-memory memo.
+	// `waitForRemote` waits for the count of agents on another computer; without
+	// it the local totals return at once and that count refreshes behind them.
 	ipcMain.handle(
 		'stats:get-token-usage',
 		withIpcErrorLogging(
 			handlerOpts('getTokenUsage'),
-			async (query: TokenUsageQuery = {}, force = false) => {
-				return getTokenUsageAggregate(query, force);
+			async (query: TokenUsageQuery = {}, force = false, waitForRemote = false) => {
+				return getTokenUsageAggregate(query, force, { waitForRemote: waitForRemote === true });
 			}
 		)
 	);

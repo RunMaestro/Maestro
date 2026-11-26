@@ -47,6 +47,27 @@ function aiTabEqual(a: AITab, b: AITab): boolean {
 }
 
 /**
+ * Whether two records draw the same mode pill (`AgentModePill`: LOCAL, REMOTE, or HOSTED, and the
+ * SSH connection mark). A Move to Host, a Move Back, or `maestro-cli lift` / `unlift` changes only
+ * these fields, so a surface that skips re-renders on unrelated changes must still compare them.
+ */
+function modeFieldsEqual(
+	a: Pick<Session, 'liftedTo' | 'sshRemoteId' | 'sessionSshRemoteConfig' | 'sshConnectionFailed'>,
+	b: Pick<Session, 'liftedTo' | 'sshRemoteId' | 'sessionSshRemoteConfig' | 'sshConnectionFailed'>
+): boolean {
+	const pa = a.liftedTo as { peer?: unknown; agentId?: unknown } | undefined;
+	const pb = b.liftedTo as { peer?: unknown; agentId?: unknown } | undefined;
+	return (
+		pa?.peer === pb?.peer &&
+		pa?.agentId === pb?.agentId &&
+		a.sshRemoteId === b.sshRemoteId &&
+		a.sessionSshRemoteConfig?.enabled === b.sessionSshRemoteConfig?.enabled &&
+		a.sessionSshRemoteConfig?.remoteId === b.sessionSshRemoteConfig?.remoteId &&
+		a.sshConnectionFailed === b.sshConnectionFailed
+	);
+}
+
+/**
  * Equality function for `useStoreWithEqualityFn(useSessionStore, s => s.sessions, ...)`.
  *
  * Returns true when the two arrays are sidebar-equivalent - i.e. nothing the
@@ -78,7 +99,8 @@ export function sidebarSessionEquality(a: Session[], b: Session[]): boolean {
 			x.isGitRepo !== y.isGitRepo ||
 			x.isLive !== y.isLive ||
 			x.inputMode !== y.inputMode ||
-			x.activeTabId !== y.activeTabId
+			x.activeTabId !== y.activeTabId ||
+			!modeFieldsEqual(x, y)
 		) {
 			return false;
 		}
@@ -255,9 +277,7 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 		a.customEffort !== b.customEffort ||
 		a.projectRoot !== b.projectRoot ||
 		a.fullPath !== b.fullPath ||
-		a.sshRemoteId !== b.sshRemoteId ||
-		a.sessionSshRemoteConfig?.remoteId !== b.sessionSshRemoteConfig?.remoteId ||
-		a.sessionSshRemoteConfig?.enabled !== b.sessionSshRemoteConfig?.enabled
+		!modeFieldsEqual(a, b)
 	) {
 		return false;
 	}

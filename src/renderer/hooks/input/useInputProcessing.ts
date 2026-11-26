@@ -51,6 +51,7 @@ import {
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { askSideQuestion } from '../../services/sideQuestion';
 import { parseSideQuestion } from '../../../shared/sideQuestion';
+import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { gitService } from '../../services/git';
 import {
 	queuedMentionFields,
@@ -76,7 +77,7 @@ import {
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
-import { steerQueuedItemOrExplain } from '../../services/chatSteering';
+import { steerHostedSentMessage, steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
@@ -128,7 +129,116 @@ export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
  * Module scope, not a ref: a ref belongs to one hook instance, and the guard
  * has to hold for the tab.
  */
-const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: string[] }>>();
+const composerSubmitsInFlight = new Map<string, ComposerSubmit[]>();
+
+/** What one composer submit read from the draft: the typed text and the staged images. */
+interface ComposerSubmit {
+	text: string;
+	images: string[];
+}
+
+/**
+ * Whether `submit` repeats one still in flight on the tab `key` names (`<agent id>:<tab id>`).
+ * Chips are never a repeat: they are read live, so any still staged were staged after the first
+ * submit took its own. One rule for every mode: a local, SSH, and hosted send all ask it.
+ */
+function isRepeatComposerSubmit(
+	key: string,
+	submit: ComposerSubmit,
+	hasDesignPicks: boolean
+): boolean {
+	if (hasDesignPicks) return false;
+	return (composerSubmitsInFlight.get(key) ?? []).some(
+		(prior) =>
+			(!submit.text.trim() || submit.text === prior.text) &&
+			(submit.images === prior.images || (submit.images.length === 0 && prior.images.length === 0))
+	);
+}
+
+/** Mark `submit` in flight on the tab `key` names. Call the returned release when it lands. */
+function holdComposerSubmit(key: string, submit: ComposerSubmit): () => void {
+	composerSubmitsInFlight.set(key, [...(composerSubmitsInFlight.get(key) ?? []), submit]);
+	return () => {
+		const remaining = (composerSubmitsInFlight.get(key) ?? []).filter((entry) => entry !== submit);
+		if (remaining.length > 0) composerSubmitsInFlight.set(key, remaining);
+		else composerSubmitsInFlight.delete(key);
+	};
+}
+
+/**
+ * Whether a hosted agent's send runs on this machine, as it does for a local or SSH agent, instead
+ * of going to the host. `/wizard` and a message to a running wizard do: the wizard panel draws in
+ * this window's composer and its own conversation spawns over the SSH remote the hosted record
+ * keeps, so it runs on the host's machine; its tab name and provider session go to the host tab
+ * when it ends (`settleHostedWizardTab()`). `/history` and `/skills` go to the host as the typed
+ * text, and the host runs them for the tab (`parseMaestroBuiltinCommand()`); `/btw` is asked of the
+ * host before this (`askSideQuestion()`). A held send goes too: the host queues it paused.
+ */
+export function hostedSendRunsHere(
+	text: string,
+	opts: {
+		toolType: Session['toolType'];
+		isWizardActive: boolean;
+		handles: { wizard: boolean };
+	}
+): boolean {
+	if (opts.isWizardActive) return true;
+	const builtin = parseMaestroBuiltinCommand(text, opts.toolType);
+	return builtin?.name === '/wizard' && opts.handles.wizard;
+}
+
+/**
+ * The prompt command a slash message names: one of the user's custom AI commands, or one the
+ * agent advertised with a prompt (never for Grok, whose slash text is its own native command).
+ */
+function findPromptCommand(
+	baseCommand: string,
+	customAICommands: readonly CustomAICommand[],
+	session: Pick<Session, 'toolType' | 'agentCommands'>
+): Pick<CustomAICommand, 'command' | 'description' | 'prompt'> | undefined {
+	const custom = customAICommands.find((cmd) => cmd.command === baseCommand);
+	if (custom) return custom;
+	if (session.toolType === 'grok') return undefined;
+	const advertised = session.agentCommands?.find(
+		(cmd) => cmd.command === baseCommand && cmd.prompt
+	);
+	return advertised
+		? {
+				command: advertised.command,
+				description: advertised.description,
+				prompt: advertised.prompt!,
+			}
+		: undefined;
+}
+
+/**
+ * Whether a composer send names its tab from `text`, in every mode. A local send returns before
+ * the namer for Maestro's own commands, a matched prompt command, and any Grok slash command; the
+ * rest (a message, or slash text the agent takes as typed) is named. A hosted send asks the same.
+ */
+export function composerSendNamesTab(
+	text: string,
+	customAICommands: readonly CustomAICommand[],
+	session: Pick<Session, 'toolType' | 'agentCommands'>
+): boolean {
+	const command = text.trim();
+	if (!command.startsWith('/')) return true;
+	if (parseMaestroBuiltinCommand(command, session.toolType)) return false;
+	if (session.toolType === 'grok') return false;
+	const baseCommand = command.split(/\s/, 1)[0];
+	return !findPromptCommand(baseCommand, customAICommands, session);
+}
+
+/**
+ * The recall history (Up arrow in the composer) with `typed` added, as every send adds what the
+ * user typed: trimmed, skipped when empty or the same as the newest entry. Same array back then.
+ */
+function withRecallEntry(history: readonly string[] | undefined, typed: string): string[] {
+	const current = history ? [...history] : [];
+	const text = typed.trim();
+	if (!text || current[current.length - 1] === text) return current;
+	return [...current, text];
+}
 
 /**
  * Dependencies for the useInputProcessing hook.
@@ -528,18 +638,105 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
+			// Built-in /btw side question (AI mode, Claude Code only). Handled ahead of
+			// the hosted send and the queue further down, because it must run NOW even
+			// while the tab is busy: it forks the tab's session instead of adding a turn
+			// to it, and the answer goes to a card above the composer, never into the
+			// transcript. A hosted agent's host forks its own tab (`askSideQuestion()`
+			// routes it), and the same card draws the answer here.
+			// Not while the wizard is active: its panel replaces the composer, so the
+			// card would never render and the answer would be lost.
+			const sideQuestion =
+				activeSession.inputMode === 'ai'
+					? parseSideQuestion(stripShellCommandEscape(effectiveInputValue))
+					: null;
+			if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
+				const targetTab = resolveTargetTab(activeSession);
+				if (targetTab) {
+					clearComposerText();
+					void askSideQuestion({
+						session: activeSession,
+						tabId: targetTab.id,
+						question: sideQuestion,
+					});
+					return;
+				}
+			}
+
 			// A hosted agent's turns run on its Federation host: the message, its images, and this
 			// tab's own settings go there (`sendHostedTurn()`), and the host queues it when the tab is
 			// busy. Nothing spawns here. The draft clears only once the host took it, so a host that
-			// is down leaves it in place.
-			if (activeSession.inputMode === 'ai' && hostedTargetOf(activeSession)) {
+			// is down leaves it in place. `/wizard` and a running wizard take the path below, as
+			// they do for every agent (`hostedSendRunsHere()`).
+			if (
+				activeSession.inputMode === 'ai' &&
+				hostedTargetOf(activeSession) &&
+				!hostedSendRunsHere(stripShellCommandEscape(effectiveInputValue), {
+					toolType: activeSession.toolType,
+					isWizardActive: !!isWizardActive,
+					handles: { wizard: !!onWizardCommand },
+				})
+			) {
 				const text = stripShellCommandEscape(effectiveInputValue);
-				const sent = await sendHostedTurn(activeSession, targetTabId, text, effectiveImages);
-				if (sent && isComposerSubmit) {
+
+				// Design Mode chips expand into the message exactly as a local send expands them:
+				// each chip's block ahead of the typed text, its screenshot after the staged images.
+				let hostedText = text;
+				let hostedImages = effectiveImages;
+				if (designPicks.length > 0) {
+					const expanded = expandDesignPicks(designPicks, text);
+					hostedText = expanded.text;
+					if (expanded.images.length > 0) hostedImages = [...effectiveImages, ...expanded.images];
+				}
+
+				// The host round trip is the window a second Enter lands in (key repeat, the send
+				// button). Same content guard the local path uses, so it is not sent twice.
+				const hostedKey = `${activeSession.id}:${targetTabId ?? ''}`;
+				const hostedSubmit = { text, images: effectiveImages };
+				if (
+					isComposerSubmit &&
+					isRepeatComposerSubmit(hostedKey, hostedSubmit, designPicks.length > 0)
+				) {
+					logger.info(
+						'[processInput] Ignoring a repeat composer submit while the first is in flight'
+					);
+					return;
+				}
+				const releaseSubmit = isComposerSubmit
+					? holdComposerSubmit(hostedKey, hostedSubmit)
+					: undefined;
+				let receipt: Awaited<ReturnType<typeof sendHostedTurn>> = null;
+				try {
+					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
+						held: options?.hold === true,
+						// Named from what the user typed, as a local send is (chips only: their blocks).
+						...(composerSendNamesTab(text, customAICommands, activeSession)
+							? { nameFrom: { text: text.trim() ? text : hostedText } }
+							: {}),
+					});
+				} finally {
+					releaseSubmit?.();
+				}
+				// Steer Running Turn: the host queued the draft behind its running turn, which is
+				// what a steer starts from, as the local path above queues it first.
+				if (options?.steer && receipt?.status === 'queued' && targetTabId) {
+					void steerHostedSentMessage(activeSession, targetTabId, receipt.itemId);
+				}
+				if (receipt && isComposerSubmit) {
 					setInputValue('');
 					if (!usingOverrideImages) setStagedImages([]);
+					clearSentDesignPicks();
 					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
+				}
+				// Up arrow recalls it, as it recalls a message a local send took.
+				if (receipt) {
+					updateSessionWith(activeSession.id, (s) => {
+						const aiCommandHistory = withRecallEntry(s.aiCommandHistory, text);
+						return aiCommandHistory.length === (s.aiCommandHistory?.length ?? 0)
+							? s
+							: { ...s, aiCommandHistory };
+					});
 				}
 				return;
 			}
@@ -556,27 +753,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (effectiveInputValue.trim().startsWith('/')) {
 				const commandText = effectiveInputValue.trim();
 				const isTerminalMode = activeSession.inputMode === 'terminal';
-
-				// Built-in /btw side question (AI mode, Claude Code only). Handled here,
-				// ahead of the queue further down, because it must run NOW even while
-				// the tab is busy: it forks the tab's session instead of adding a turn
-				// to it, and the answer goes to a card above the composer, never into
-				// the transcript.
-				// Not while the wizard is active: its panel replaces the composer, so
-				// the card would never render and the answer would be lost.
-				const sideQuestion = isTerminalMode ? null : parseSideQuestion(commandText);
-				if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
-					const targetTab = resolveTargetTab(activeSession);
-					if (targetTab) {
-						clearComposerText();
-						void askSideQuestion({
-							session: activeSession,
-							tabId: targetTab.id,
-							question: sideQuestion,
-						});
-						return;
-					}
-				}
 
 				// Handle built-in /history command (only in AI mode)
 				// This is intercepted here because it requires Maestro to handle the synopsis generation
@@ -634,23 +810,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: commandText.substring(0, firstWhitespaceIndex);
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
-					const matchingAgentCommand =
-						activeSession.toolType === 'grok'
-							? undefined
-							: getAgentCommands(
-									activeSession,
-									resolveTargetTab(activeSession),
-									submittedProvider
-								)?.find((cmd) => cmd.command === baseCommand && cmd.prompt);
-					const matchingCustomCommand =
-						customAICommands.find((cmd) => cmd.command === baseCommand) ||
-						(matchingAgentCommand
-							? {
-									command: matchingAgentCommand.command,
-									description: matchingAgentCommand.description,
-									prompt: matchingAgentCommand.prompt!,
-								}
-							: undefined);
+					// The agent's advertised commands count only for the provider this send runs on.
+					const matchingCustomCommand = findPromptCommand(baseCommand, customAICommands, {
+						toolType: activeSession.toolType,
+						agentCommands: getAgentCommands(
+							activeSession,
+							resolveTargetTab(activeSession),
+							submittedProvider
+						),
+					});
 					// Any other Grok slash text is a native command: admitted against this
 					// tab's live catalog, or refused here keeping the draft, images and target.
 					// No naming, mention consult, Claude skill scan or ordinary prompt follows.
@@ -830,18 +998,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const namingText = typedText.trim() ? typedText : effectiveInputValue;
 
 			// Only a composer submit reads the draft, so only it can read it twice.
-			// Chips are never a repeat: they are read live, so any still staged were
-			// staged after the first submit took its own.
 			const inFlightKey = `${activeSession.id}:${targetTabId ?? ''}`;
 			const submitted = { text: typedText, images: typedImages };
-			const isRepeatOfInFlight = (composerSubmitsInFlight.get(inFlightKey) ?? []).some(
-				(prior) =>
-					designPicks.length === 0 &&
-					(!submitted.text.trim() || submitted.text === prior.text) &&
-					(submitted.images === prior.images ||
-						(submitted.images.length === 0 && prior.images.length === 0))
-			);
-			if (currentMode === 'ai' && isComposerSubmit && isRepeatOfInFlight) {
+			if (
+				currentMode === 'ai' &&
+				isComposerSubmit &&
+				isRepeatComposerSubmit(inFlightKey, submitted, designPicks.length > 0)
+			) {
 				logger.info(
 					'[processInput] Ignoring a repeat composer submit while the first is in flight'
 				);
@@ -899,10 +1062,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				}));
 			};
 			const probeForSubmit = async (tabId: string | undefined) => {
-				if (isComposerSubmit) {
-					const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
-					composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
-				}
+				const releaseSubmit = isComposerSubmit
+					? holdComposerSubmit(inFlightKey, submitted)
+					: undefined;
 				try {
 					if (isComposerSubmit && !isWebDesktop()) {
 						clearComposer();
@@ -924,13 +1086,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					}
 					return state;
 				} finally {
-					if (isComposerSubmit) {
-						const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
-							(entry) => entry !== submitted
-						);
-						if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
-						else composerSubmitsInFlight.delete(inFlightKey);
-					}
+					releaseSubmit?.();
 				}
 			};
 
@@ -1555,16 +1711,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Add command to history (separate histories for AI and terminal modes).
 				// What the user typed, not the chips expanded around it.
 				const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
-				const currentHistory =
-					currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
-				const newHistory = [...currentHistory];
-				const historyText = typedText.trim();
-				if (
-					historyText &&
-					(newHistory.length === 0 || newHistory[newHistory.length - 1] !== historyText)
-				) {
-					newHistory.push(historyText);
-				}
+				const newHistory = withRecallEntry(
+					currentMode === 'ai' ? s.aiCommandHistory : s.shellCommandHistory,
+					typedText
+				);
 
 				// For terminal mode (legacy), add to shellLogs
 				if (currentMode !== 'ai') {

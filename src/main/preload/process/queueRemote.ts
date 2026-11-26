@@ -3,7 +3,7 @@ import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
-import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
 export function createQueueRemoteApi() {
 	return {
@@ -95,6 +95,8 @@ export function createQueueRemoteApi() {
 				queuePosition?: number;
 				queueLength?: number;
 				itemId?: string;
+				/** The text was one of Maestro's own commands, run for the tab: no turn started. */
+				ran?: boolean;
 				error?: string;
 			}
 		): void => {
@@ -212,6 +214,110 @@ export function createQueueRemoteApi() {
 		sendRemoteMergeQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "edit queue item" from the CLI (`queue edit`) or a
+		 * client's hosted queued card. Renderer replies via sendRemoteEditQueueItemResponse.
+		 */
+		onRemoteEditQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				edit: QueuedTurnEdit,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				itemId: string,
+				edit: QueuedTurnEdit,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, itemId, edit, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, found: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:editQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:editQueueItem', handler);
+		},
+
+		sendRemoteEditQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "move queue item" from the CLI (`queue move`) or a
+		 * client's hosted queued card's drag. `tabId` is null for a whole-queue
+		 * move. Renderer replies via sendRemoteMoveQueueItemResponse.
+		 */
+		onRemoteMoveQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, itemId, toIndex, tabId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, moved: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:moveQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:moveQueueItem', handler);
+		},
+
+		sendRemoteMoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; moved: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "send queue item now" from the CLI (`queue send-now`)
+		 * or a client's hosted queued card's Force Send. Renderer replies via
+		 * sendRemoteSendQueueItemNowResponse.
+		 */
+		onRemoteSendQueueItemNow: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					callback(sessionId, itemId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, sent: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:sendQueueItemNow', handler);
+			return () => ipcRenderer.removeListener('remote:sendQueueItemNow', handler);
+		},
+
+		sendRemoteSendQueueItemNowResponse: (
+			responseChannel: string,
+			result: { success: boolean; sent: boolean; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

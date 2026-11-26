@@ -16,23 +16,36 @@ export function extractSessionIdFromFilename(filename: string): string | null {
 
 export async function listCodexSessionFiles(
 	sessionsDir: string,
-	nativeFs?: TranslationFs
+	nativeFs?: TranslationFs,
+	/**
+	 * Counts the folders that are there but could not be listed, whose rollouts are
+	 * therefore missed. Local scans only: a `nativeFs` scan throws instead.
+	 */
+	unreadable?: { dirs: number }
 ): Promise<Array<{ filePath: string; filename: string }>> {
 	const paths = nativeFs?.paths ?? path;
 	const filesystem = nativeFs ?? fs;
 	const sessionFiles: Array<{ filePath: string; filename: string }> = [];
+	const missed = (error: unknown): void => {
+		if (unreadable && (error as NodeJS.ErrnoException)?.code !== 'ENOENT') unreadable.dirs++;
+	};
 
+	// A missing root is an account with no rollouts; one that is there but cannot be listed
+	// misses all of them, and says so.
+	let years: string[];
 	try {
 		if (nativeFs) {
 			if (!(await nativeFs.exists(sessionsDir))) return [];
 		} else await fs.access(sessionsDir);
+		years = await filesystem.readdir(sessionsDir);
 	} catch (error) {
 		if (nativeFs) throw error;
+		const code = (error as NodeJS.ErrnoException)?.code;
+		if (code !== 'ENOENT' && code !== 'ENOTDIR') missed(error);
 		return [];
 	}
 
 	// Scan YYYY directories
-	const years = await filesystem.readdir(sessionsDir);
 	for (const year of years) {
 		if (!/^\d{4}$/.test(year)) continue;
 
@@ -42,11 +55,19 @@ export async function listCodexSessionFiles(
 			if (!yearStat.isDirectory()) continue;
 		} catch (error) {
 			if (nativeFs) throw error;
+			missed(error);
 			continue;
 		}
 
-		// Scan MM directories
-		const months = await filesystem.readdir(yearDir);
+		// Scan MM directories; an unlisted year misses only its own rollouts.
+		let months: string[];
+		try {
+			months = await filesystem.readdir(yearDir);
+		} catch (error) {
+			if (nativeFs) throw error;
+			missed(error);
+			continue;
+		}
 		for (const month of months) {
 			if (!/^\d{2}$/.test(month)) continue;
 
@@ -56,11 +77,19 @@ export async function listCodexSessionFiles(
 				if (!monthStat.isDirectory()) continue;
 			} catch (error) {
 				if (nativeFs) throw error;
+				missed(error);
 				continue;
 			}
 
-			// Scan DD directories
-			const days = await filesystem.readdir(monthDir);
+			// Scan DD directories; an unlisted month misses only its own rollouts.
+			let days: string[];
+			try {
+				days = await filesystem.readdir(monthDir);
+			} catch (error) {
+				if (nativeFs) throw error;
+				missed(error);
+				continue;
+			}
 			for (const day of days) {
 				if (!/^\d{2}$/.test(day)) continue;
 
@@ -81,6 +110,7 @@ export async function listCodexSessionFiles(
 					}
 				} catch (error) {
 					if (nativeFs) throw error;
+					missed(error);
 					continue;
 				}
 			}

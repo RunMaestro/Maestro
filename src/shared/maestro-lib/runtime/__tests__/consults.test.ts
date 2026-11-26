@@ -372,6 +372,20 @@ describe('runtime consults', () => {
 			);
 			expect(promptOf(provider.callsFor('consult')[1].spec)).toContain('We chose Postgres.');
 		});
+
+		it('uses the context and name an asker on another machine sends, as it would its own tab', async () => {
+			const runtime = await start(ANSWER);
+			value(
+				await runtime.consults.ask({
+					targetAgentId: 'a2',
+					question: 'What did we pick?',
+					transcript: [{ source: 'user', text: 'We chose Postgres.', timestamp: 1 }],
+					fromAgentName: 'Laptop Agent',
+				})
+			);
+			expect(promptOf(provider.callsFor('consult')[0].spec)).toContain('We chose Postgres.');
+			expect(consultTab('a2').name).toBe('↩ Laptop Agent');
+		});
 	});
 
 	describe('continuity and failure (B17, B18)', () => {
@@ -435,6 +449,22 @@ describe('runtime consults', () => {
 				).code
 			).toBe('invalid');
 			expect(provider.calls).toEqual([]);
+		});
+
+		it('never answers a /btw side question as a consult: no consult tab, no consult turn', async () => {
+			const runtime = await start();
+			const refused = errorOf(
+				await runtime.consults.ask({
+					targetAgentId: 'a2',
+					question: 'which file?',
+					sideQuestion: true,
+					targetTabId: 'missing',
+				})
+			);
+			// The side questions answer it (here: the tab is not Beta's), never the consult path.
+			expect(refused.message).toBe('No AI tab missing on Beta');
+			expect(provider.calls).toEqual([]);
+			expect(consultTab('a2')).toBeUndefined();
 		});
 
 		it('refuses a target with no directory to run in', async () => {

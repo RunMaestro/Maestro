@@ -14,12 +14,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, QueuedItem } from '../../../renderer/types';
 
+// A hosted agent's queue actions go to its host; the test reads which one went.
+const removeMirrorQueuedItem = vi.fn(async () => undefined);
+const moveMirrorQueuedItem = vi.fn(async () => undefined);
+vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
+	removeMirrorQueuedItem: (...args: unknown[]) => removeMirrorQueuedItem(...(args as [])),
+	moveMirrorQueuedItem: (...args: unknown[]) => moveMirrorQueuedItem(...(args as [])),
+}));
+
 // ============================================================================
-// Imports (after mocks - no external mocks needed for this hook)
+// Imports (after mocks)
 // ============================================================================
 
 import { useQueueHandlers } from '../../../renderer/hooks/agent/useQueueHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 
 // ============================================================================
 // Helpers
@@ -219,6 +230,40 @@ describe('useQueueHandlers', () => {
 			expect(a.executionQueue[0].turnSettings).toEqual({ model: 'opus' });
 			expect(b.executionQueue[0].turnSettings).toBeUndefined();
 			expect(b.executionQueue[0].text).toBe('Test message');
+		});
+	});
+
+	describe("a hosted agent's Execution Queue", () => {
+		afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+		it('removes and reorders on the host, as the inline card does', () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			const queue = [
+				createQueuedItem({ id: 'h1', hostQueued: true }),
+				createQueuedItem({ id: 'h2', hostQueued: true }),
+			];
+			useSessionStore.setState({
+				sessions: [
+					createSession({
+						id: 'sess-1',
+						liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 },
+						executionQueue: queue,
+					} as Partial<Session>),
+				],
+			});
+			removeMirrorQueuedItem.mockClear();
+			moveMirrorQueuedItem.mockClear();
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleRemoveQueueItem('sess-1', 'h1');
+				result.current.handleReorderQueueItems('sess-1', 1, 0);
+			});
+
+			expect(removeMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h1');
+			expect(moveMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h2', 0, undefined);
+			// The host's queue update redraws the list; this copy is not edited first.
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual(queue);
 		});
 	});
 
@@ -1048,6 +1093,10 @@ describe('useQueueHandlers', () => {
 
 			expect(steer).not.toHaveBeenCalled();
 			expect(updated.executionQueue).toEqual([item]);
+			// The card was drawn as steerable, so the click says why it did nothing.
+			expect(useNotificationStore.getState().toasts).toContainEqual(
+				expect.objectContaining({ title: 'Could not steer this turn' })
+			);
 		});
 
 		it('does not steer a non-Claude agent', async () => {

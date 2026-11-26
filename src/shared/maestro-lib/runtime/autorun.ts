@@ -655,8 +655,11 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 					currentTaskIndex: 0,
 					totalDocuments: names.length,
 					currentDocumentIndex: 0,
-					totalTasksAcrossAllDocs: scan.initialTotalTasks,
-					completedTasksAcrossAllDocs: 0,
+					// As the desktop runner starts a run: tasks checked before it count as done, and are
+					// the baseline its pace (the REMAINING estimate) is measured from.
+					totalTasksAcrossAllDocs: scan.initialTotalTasks + scan.initialCheckedTasks,
+					completedTasksAcrossAllDocs: scan.initialCheckedTasks,
+					initialCompletedTasks: scan.initialCheckedTasks,
 					documents: names,
 					startTime: startedAt,
 					loopEnabled: playbook.loopEnabled,

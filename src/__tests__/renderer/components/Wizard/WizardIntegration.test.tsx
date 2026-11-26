@@ -1476,7 +1476,7 @@ describe('Wizard Integration Tests', () => {
 			});
 		});
 
-		it('should show SSH remote hint and hide browse button for remote sessions', async () => {
+		it('draws the same directory field, Browse included, for an agent on an SSH remote', async () => {
 			// Mock SSH remote config lookup
 			mockMaestro.sshRemote.getConfigs.mockResolvedValue({
 				success: true,
@@ -1508,19 +1508,13 @@ describe('Wizard Integration Tests', () => {
 				expect(screen.getByText('Choose Project Directory')).toBeInTheDocument();
 			});
 
-			// Browse button should be hidden (not just disabled)
-			expect(screen.queryByRole('button', { name: /browse/i })).not.toBeInTheDocument();
-
-			// SSH hint should be visible with server name
-			await waitFor(() => {
-				expect(screen.getByText(/Test Server/)).toBeInTheDocument();
-			});
-			expect(screen.getByText(/path will be validated as you type/)).toBeInTheDocument();
-
-			// Placeholder should mention the remote host
-			// Use exact label text to avoid matching "Choose Project Directory" header
+			// The field is the one a local agent gets: Browse is there, the placeholder is the
+			// same, and nothing on it names the transport or the host (docs/parity).
+			expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+			expect(screen.queryByText(/path will be validated as you type/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/Test Server/)).not.toBeInTheDocument();
 			const input = screen.getByLabelText('Project Directory');
-			expect(input).toHaveAttribute('placeholder', expect.stringContaining('Test Server'));
+			expect(input).toHaveAttribute('placeholder', '/path/to/your/project');
 		});
 
 		it('should show directory not found error when remote path does not exist', async () => {

@@ -23,6 +23,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CreatePRModal } from '../../../renderer/components/CreatePRModal';
 import { usePRCreationStore, prRunKey } from '../../../renderer/stores/prCreationStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
 
 // Escape/layer registration is not what these tests are about.
 vi.mock('../../../renderer/hooks/ui/useModalLayer', () => ({
@@ -178,12 +179,33 @@ describe('CreatePRModal', () => {
 		expect(usePRCreationStore.getState().runs[KEY]?.status).toBe('running');
 	});
 
-	it('opens a remote PR without a local gh and forwards the SSH remote', async () => {
-		checkGhCli.mockResolvedValue({ installed: false, authenticated: false });
+	it.each(AGENT_MODES)(
+		'checks gh where the PR is created, and warns the same way, for a %s agent',
+		async (mode) => {
+			const { sshRemoteId } = agentModeFields(mode);
+			checkGhCli.mockResolvedValue({ installed: false, authenticated: false });
+			renderModal({ sshRemoteId });
+
+			expect(await screen.findByText('GitHub CLI not installed')).toBeInTheDocument();
+			expect(checkGhCli).toHaveBeenCalledWith(undefined, sshRemoteId);
+			expect(status).toHaveBeenCalledWith(WORKTREE, sshRemoteId);
+			expect(screen.queryByRole('button', { name: /create pr/i })).toBeDisabled();
+		}
+	);
+
+	it.each(AGENT_MODES)('tells a %s agent to authenticate in its own terminal', async (mode) => {
+		checkGhCli.mockResolvedValue({ installed: true, authenticated: false });
+		renderModal({ sshRemoteId: agentModeFields(mode).sshRemoteId });
+
+		expect(await screen.findByText('GitHub CLI not authenticated')).toBeInTheDocument();
+		expect(screen.getByText(/in this agent's terminal to authenticate/)).toBeInTheDocument();
+	});
+
+	it('forwards the SSH remote to the create request', async () => {
 		renderModal({ sshRemoteId: 'ssh-remote-1' });
 		await clickCreatePR();
 
-		expect(checkGhCli).not.toHaveBeenCalled();
+		expect(checkGhCli).toHaveBeenCalledWith(undefined, 'ssh-remote-1');
 		expect(createPR).toHaveBeenCalledWith(
 			WORKTREE,
 			'main',

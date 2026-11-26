@@ -26,7 +26,11 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
+import {
+	consumeGroupChatAutoRun,
+	getAutoRunSessionsForGroupChat,
+	hasGroupChatAutoRun,
+} from '../../utils/groupChatAutoRunRegistry';
 import { archiveGroupChat, stopGroupChatWork } from '../../services/remoteGroupChat';
 import { steerGroupChatQueuedItem } from '../../services/groupChatSteering';
 import { logger } from '../../utils/logger';
@@ -310,6 +314,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 						sessions.some((s) => s.id === sid && s.name === participantName)
 					);
 					if (matchingSessionId) {
+						// The chat is done waiting (a report or its timeout): a later run of
+						// this agent must not report to it.
+						consumeGroupChatAutoRun(matchingSessionId);
 						useBatchStore.getState().dispatchBatch({
 							type: 'COMPLETE_BATCH',
 							sessionId: matchingSessionId,
@@ -320,6 +327,15 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				// Fallback: resolve by participant name if registry entry was already consumed
 				const session = useSessionStore.getState().sessions.find((s) => s.name === participantName);
 				if (!session) return;
+				// This chat holds no entry for the agent, so a run still going on it, or
+				// one another chat is waiting on, is not this chat's run. That is the case
+				// when this chat's request was refused because the agent was busy.
+				if (
+					hasGroupChatAutoRun(session.id) ||
+					useBatchStore.getState().batchRunStates[session.id]?.isRunning
+				) {
+					return;
+				}
 				useBatchStore.getState().dispatchBatch({
 					type: 'COMPLETE_BATCH',
 					sessionId: session.id,

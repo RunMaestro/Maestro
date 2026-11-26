@@ -741,6 +741,35 @@ Merge a queued message into the message above it on the same tab, like the Merge
 maestro-cli queue merge <item-id> --agent <agent-id>
 ```
 
+## `maestro-cli queue edit <item-id>`
+
+Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.
+
+| Option              | Description                                      | Default |
+| ------------------- | ------------------------------------------------ | ------- |
+| `-a, --agent <id>`  | Agent whose queue the item belongs to (required) | -       |
+| `-t, --text <text>` | The new message text (required)                  | -       |
+| `--model <model>`   | Model the message runs with                      | -       |
+| `--effort <effort>` | Effort the message runs with                     | -       |
+
+## `maestro-cli queue move <item-id>`
+
+Move a queued item to another place, like dragging its queued card. --to counts from 0 (the first item that waits); with --tab it counts only that tab's items, as the tab's queue list draws them.
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required)  | -       |
+| `--to <position>`  | Where the item goes, 0 being the first (required) | -       |
+| `--tab <tab-id>`   | Count positions among this tab's items only       | -       |
+
+## `maestro-cli queue send-now <item-id>`
+
+Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on.
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
 ## `maestro-cli queue steer <item-id>`
 
 Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.
@@ -1459,7 +1488,7 @@ maestro-cli auto-run ./phase-01.md --agent <agent-id> --save-as "Release prep"
 
 ## `maestro-cli stop-auto-run`
 
-Stop the active Auto Run for an agent
+Stop the active Auto Run for an agent (on a run already stopping, end it now)
 
 | Option             | Description                    | Default |
 | ------------------ | ------------------------------ | ------- |
@@ -1498,7 +1527,7 @@ maestro-cli skip-auto-run --agent <agent-id>
 
 ## `maestro-cli abort-auto-run`
 
-Abort an error-paused Auto Run
+Abort an error-paused Auto Run (on a run already stopping, end it now)
 
 | Option             | Description                    | Default |
 | ------------------ | ------------------------------ | ------- |
@@ -7454,6 +7483,16 @@ Show token usage, cost, and tokens per second (average and peak) per provider an
 ```bash
 maestro-cli stats-tokens --range week --json
 ```
+
+## `maestro-cli stats-project-tokens`
+
+Show the token usage this machine's host answers a peer for projects kept here (SSH and hosted agents)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `--provider <id>`  | Provider id (claude-code, codex, ...)                     | -       |
+| `--project <path>` | Working directory on this machine (repeatable)            | `[]`    |
+| `--json`           | Output the conversations and unreadable providers as JSON | -       |
 
 ## `maestro-cli stats-indexing`
 

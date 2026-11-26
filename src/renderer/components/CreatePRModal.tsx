@@ -175,13 +175,9 @@ export function CreatePRModal({
 	}, [isOpen, availableBranches, runKey]);
 
 	const checkGhCli = async () => {
-		// A remote PR runs gh on the SSH host, which reports its own errors on create
-		if (sshRemoteId) {
-			setGhCliStatus({ installed: true, authenticated: true });
-			return;
-		}
+		// Checked where the PR is created: on the SSH remote for a remote agent.
 		try {
-			const status = await window.maestro.git.checkGhCli();
+			const status = await window.maestro.git.checkGhCli(undefined, sshRemoteId);
 			setGhCliStatus(status);
 		} catch {
 			setGhCliStatus({ installed: false, authenticated: false });
@@ -190,7 +186,7 @@ export function CreatePRModal({
 
 	const checkUncommittedChanges = async () => {
 		try {
-			const result = await window.maestro.git.status(worktreePath);
+			const result = await window.maestro.git.status(worktreePath, sshRemoteId);
 			const lines = result.stdout
 				.trim()
 				.split('\n')
@@ -309,7 +305,7 @@ export function CreatePRModal({
 									>
 										gh auth login
 									</code>{' '}
-									in your terminal to authenticate.
+									in this agent's terminal to authenticate.
 								</p>
 							</div>
 						</div>

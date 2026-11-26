@@ -14,10 +14,12 @@
  * - **Cost evidence.** Reported amounts, partial ledgers and unavailable costs
  *   remain distinct; a compatibility zero never overrides canonical
  *   missing-cost evidence.
- * - **Coverage.** The totals read local transcripts only: agents over SSH and
- *   providers with no transcript storage are not counted, and some providers
- *   report partial token data. The footer says which, from the aggregate's
- *   `excluded` and `coverageByAgent`.
+ * - **Coverage.** An agent whose conversations are stored on another computer
+ *   is counted on that computer and merged in, so every agent adds up the same
+ *   way. The footer names what is still not counted (an agent whose computer
+ *   could not answer, a provider with no transcript storage) and which
+ *   providers report partial token data, from the aggregate's `excluded` and
+ *   `coverageByAgent`.
  * - **Attribution.** A conversation's tokens land on the slice of its LAST
  *   activity (the per-session parse has no per-message timestamps to split by),
  *   and the footer says so.
@@ -447,9 +449,15 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 /**
  * The footer's coverage sentences: what the totals leave out and where the
  * data is partial, read from the aggregate rather than hard-coded so a new
- * provider (or a user with no SSH agents) gets an accurate line.
+ * provider (or a user whose agents all run here) gets an accurate line. The
+ * line names agents and where their transcripts are, never the agent's mode: a
+ * remote and a hosted agent read the same.
  */
-export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
+export function tokenCoverageNotes(
+	data: TokenUsageAggregate,
+	/** The read that would have counted the agents still being read failed: they are not counted. */
+	options: { readFailed?: boolean } = {}
+): string[] {
 	const notes: string[] = [];
 	const partial = Object.entries(data.coverageByAgent)
 		.filter(([, coverage]) => coverage === 'partial')
@@ -460,14 +468,68 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 		);
 	}
 	const skipped: string[] = [];
-	if (data.excluded.remoteProjects > 0) skipped.push('agents running over SSH');
+	// Agents on another computer are counted there; only the ones that computer
+	// could not answer for are named, and removed agents whose computer nothing
+	// here can reach are counted as one group.
+	const pending = data.excluded.pendingAgents ?? [];
+	const unread = [
+		...(data.excluded.notCountedAgents ?? []),
+		...(options.readFailed ? pending : []),
+	];
+	const removed = data.excluded.remoteProjects;
+	if (removed > 0) unread.push(removed === 1 ? '1 removed agent' : `${removed} removed agents`);
+	if (unread.length > 0) {
+		skipped.push(`${unread.join(', ')} (conversations on another computer that could not be read)`);
+	}
+	// Not listed at all (an account or folder that failed to read): left out whole.
+	const unreadHere = data.excluded.unreadAgents ?? [];
+	if (unreadHere.length > 0) {
+		skipped.push(`${unreadHere.join(', ')} (conversations that could not be read)`);
+	}
+	// Counted, but short by the conversations whose transcripts are too large or
+	// unreadable: named with how many, wherever those transcripts are.
+	for (const { name, conversations } of data.excluded.partialAgents ?? []) {
+		skipped.push(
+			`${conversations === 1 ? '1 conversation' : `${conversations} conversations`} of ${name} (too large or unreadable)`
+		);
+	}
+	if (pending.length > 0 && !options.readFailed) {
+		skipped.push(`${pending.join(', ')} (conversations on another computer, still being read)`);
+	}
 	if (data.excluded.unsupportedAgents.length > 0) {
-		skipped.push(data.excluded.unsupportedAgents.map(getAgentDisplayName).join(', '));
+		skipped.push(
+			`${data.excluded.unsupportedAgents.map(getAgentDisplayName).join(', ')} (no transcripts to read)`
+		);
 	}
 	if (skipped.length > 0) {
-		notes.push(`Not counted: ${skipped.join('; ')} (no local transcripts to read).`);
+		notes.push(`Not counted: ${skipped.join('; ')}.`);
 	}
 	return notes;
+}
+
+/** Re-read the transcripts now: the footer's control, and the empty state's while something is left out. */
+function TokenRefreshButton({
+	theme,
+	refreshing,
+	onRefresh,
+}: {
+	theme: Theme;
+	refreshing: boolean;
+	onRefresh: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onRefresh}
+			disabled={refreshing}
+			className="flex items-center gap-1.5 px-2 py-1 rounded transition-opacity hover:opacity-80 disabled:opacity-50"
+			style={{ color: theme.colors.textDim }}
+			data-testid="token-stats-refresh"
+		>
+			<RefreshCw size={12} className={refreshing ? 'animate-spin' : undefined} />
+			{refreshing ? 'Refreshing' : 'Refresh'}
+		</button>
+	);
 }
 
 export const TokenStats = memo(function TokenStats({
@@ -492,23 +554,57 @@ export const TokenStats = memo(function TokenStats({
 
 	const empty = !data || data.totals.sessionCount === 0;
 	if (loading || empty) {
+		// Nothing counted can still mean something was left out (every agent is on a computer
+		// that did not answer), so the empty state names it too.
+		const notCounted = data
+			? tokenCoverageNotes(data, { readFailed: !!error }).filter((note) =>
+					note.startsWith('Not counted')
+				)
+			: [];
+		const emptyMessage =
+			notCounted.length > 0
+				? `No token usage in this range. ${notCounted.join(' ')}`
+				: 'No token usage in this range. Run an agent and its token consumption shows up here.';
+		// Something left out may be counted on a later read (a computer that answers now).
+		const emptyAction =
+			notCounted.length > 0 ? (
+				<TokenRefreshButton
+					theme={theme}
+					refreshing={refreshing}
+					onRefresh={() => void forceRefresh()}
+				/>
+			) : undefined;
+		// A failed refresh over a result that named what it left out keeps that note, under the
+		// error and its Retry, instead of the bare error.
+		const keepNote = !loading && !!error && notCounted.length > 0;
 		return (
 			<DashboardPanelState
 				theme={theme}
 				loading={loading}
 				error={error}
-				empty={empty}
-				emptyMessage="No token usage in this range. Run an agent and its token consumption shows up here."
+				empty={empty && !keepNote}
+				emptyMessage={emptyMessage}
+				emptyAction={emptyAction}
 				loadingMessage="Reading agent transcripts..."
 				onRetry={() => void forceRefresh()}
 				testId="token-stats"
-			/>
+			>
+				{keepNote ? (
+					<div
+						className="flex flex-col items-center justify-center gap-2 text-center text-sm"
+						data-testid="token-stats-empty"
+					>
+						<span>{emptyMessage}</span>
+						{emptyAction}
+					</div>
+				) : undefined}
+			</DashboardPanelState>
 		);
 	}
 
 	const { totals } = data;
 	const accentColor = colorBlindMode ? COLORBLIND_AGENT_PALETTE[0] : theme.colors.accent;
-	const coverageNotes = tokenCoverageNotes(data);
+	const coverageNotes = tokenCoverageNotes(data, { readFailed: !!error });
 
 	return (
 		<DashboardPanelState
@@ -632,9 +728,8 @@ export const TokenStats = memo(function TokenStats({
 				>
 					<div className="flex flex-col gap-0.5 min-w-0 flex-1" data-testid="token-stats-coverage">
 						<span>
-							{formatNumber(totals.sessionCount)} conversations read from local agent transcripts.
-							Each conversation&apos;s tokens count toward the {data.granularity} of its last
-							activity.
+							{formatNumber(totals.sessionCount)} conversations read from agent transcripts. Each
+							conversation&apos;s tokens count toward the {data.granularity} of its last activity.
 						</span>
 						{totals.costEstimated && (
 							<span>Costs marked ~ are estimated from published model rates.</span>
@@ -646,17 +741,11 @@ export const TokenStats = memo(function TokenStats({
 							<span key={note}>{note}</span>
 						))}
 					</div>
-					<button
-						type="button"
-						onClick={() => void forceRefresh()}
-						disabled={refreshing}
-						className="flex items-center gap-1.5 px-2 py-1 rounded transition-opacity hover:opacity-80 disabled:opacity-50"
-						style={{ color: theme.colors.textDim }}
-						data-testid="token-stats-refresh"
-					>
-						<RefreshCw size={12} className={refreshing ? 'animate-spin' : undefined} />
-						{refreshing ? 'Refreshing' : 'Refresh'}
-					</button>
+					<TokenRefreshButton
+						theme={theme}
+						refreshing={refreshing}
+						onRefresh={() => void forceRefresh()}
+					/>
 				</div>
 			</div>
 		</DashboardPanelState>

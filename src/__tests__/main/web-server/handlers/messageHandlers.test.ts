@@ -67,6 +67,10 @@ vi.mock('../../../../main/feedback', () => ({
 	}),
 	subscribeFeedbackIssue: vi.fn().mockResolvedValue({ success: true }),
 }));
+const cancelCrossAgentRequestsForSource = vi.hoisted(() => vi.fn(() => 2));
+vi.mock('../../../../main/cross-agent/cross-agent-router', () => ({
+	cancelCrossAgentRequestsForSource,
+}));
 vi.mock('../../../../main/debug-package', () => ({
 	generateDebugPackage: vi.fn().mockResolvedValue({
 		success: true,
@@ -635,6 +639,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeQueueItem: vi
 			.fn()
 			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
+		editQueueItem: vi.fn().mockResolvedValue({ success: true, found: true }),
+		moveQueueItem: vi.fn().mockResolvedValue({ success: true, moved: true }),
+		sendQueueItemNow: vi.fn().mockResolvedValue({ success: true, sent: true }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -1131,6 +1138,43 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
 		});
 
+		it('forwards the context, name, and hand-off of an asker on another machine (Federation)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, 'junk'],
+				fromAgentName: ' Laptop Agent ',
+				askerKey: 'laptop/agent-a/tab-1',
+				handoffAnswer: 'the plan',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({
+						transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
+						fromAgentName: 'Laptop Agent',
+						askerKey: 'laptop/agent-a/tab-1',
+						handoffAnswer: 'the plan',
+					})
+				);
+			});
+		});
+
+		it('drops an asker key it cannot read, so the consult shares the stand-in tab (G2)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				askerKey: 'session-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.consultAgent as any).mock.calls[0][0]).not.toHaveProperty('askerKey');
+		});
+
 		it('consults the target and returns the answer without touching its open tab', async () => {
 			handler.handleMessage(client, {
 				type: 'cross_agent_ask',
@@ -1200,6 +1244,79 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not found');
+		});
+
+		// G4: a wire hand-off may run writable (`crossAgentHandoffsWritable`, default on), so it must
+		// never be open to a client that may not send a turn. Today no client kind is refused a send
+		// (Web Login accounts are equal operators, the CLI and a Federation peer present the CLI
+		// secret), so every kind may do both. Pinned per kind: a gate added to `send_command` for one
+		// kind fails here until the wire hand-off carries the same gate.
+		describe.each([
+			['a web-desktop or phone client (URL token only)', {}],
+			[
+				'a Web Login account',
+				{ user: { id: 'u1', username: 'ann', displayName: 'Ann' }, sessionId: 's1' },
+			],
+			['maestro-cli or a Federation peer (CLI secret)', { cli: true, cliAuthenticated: true }],
+		] as Array<[string, Partial<WebClient>]>)('as %s', (_kind, fields) => {
+			it('may hand off on the wire only as far as it may send a turn', async () => {
+				const kindClient = { ...createMockClient('kind-client'), ...fields };
+				handler.handleMessage(kindClient, {
+					type: 'send_command',
+					sessionId: 'session-1',
+					command: 'do it',
+					inputMode: 'ai',
+				});
+				handler.handleMessage(kindClient, {
+					type: 'cross_agent_ask',
+					sessionId: 'session-1',
+					question: 'then pass it on',
+					handoffAnswer: 'the plan',
+				});
+
+				await vi.waitFor(() => {
+					expect(callbacks.consultAgent).toHaveBeenCalled();
+				});
+				const handedOff = (callbacks.consultAgent as any).mock.calls.some(
+					([params]: [{ handoffAnswer?: string }]) => params.handoffAnswer === 'the plan'
+				);
+				const sent = (callbacks.executeCommand as any).mock.calls.length > 0;
+				expect(handedOff).toBe(true);
+				expect(sent).toBe(handedOff);
+			});
+		});
+
+		// G1: Stop on an asker on another machine ends its consults here, and only its own.
+		it('stops the consults one remote asker has running, keyed on its asker key', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, {
+				type: 'cross_agent_cancel',
+				askerKey: 'laptop/agent-a/tab-1',
+				requestId: 'r-stop',
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).toHaveBeenCalledWith(
+				'remote-asker:laptop/agent-a/tab-1'
+			);
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'cross_agent_cancel_result',
+				requestId: 'r-stop',
+				success: true,
+				canceled: 2,
+			});
+		});
+
+		it('stops nothing for a key it cannot read, never the shared stand-in tab', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, { type: 'cross_agent_cancel', askerKey: 'cli-ask' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).not.toHaveBeenCalled();
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0]).success).toBe(false);
 		});
 
 		it('clamps an absurd timeout instead of holding a process for a day', async () => {
@@ -4465,6 +4582,33 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('replies ran when the renderer ran one of its own commands, so no turn is awaited', async () => {
+			vi.mocked(callbacks.enqueueCommand).mockResolvedValueOnce({
+				success: true,
+				tabId: 'tab-1',
+				queued: false,
+				ran: true,
+			});
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: '/history',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response).toMatchObject({
+					type: 'enqueue_command_result',
+					success: true,
+					queued: false,
+					ran: true,
+					tabId: 'tab-1',
+				});
+			});
+		});
+
 		it('forwards a dispatch --queue --routing to the callback', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',
@@ -4724,6 +4868,133 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('merge_queue_item_result');
 			expect(response.success).toBe(false);
 			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Edit Queue Item (queue edit, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the checked edit and answers whether the item was there', async () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: 'rewritten',
+				turnSettings: { model: 'm' },
+			} as never);
+
+			await vi.waitFor(() => {
+				expect(callbacks.editQueueItem).toHaveBeenCalledWith('session-1', 'item-9', {
+					text: 'rewritten',
+					turnSettings: { model: 'm' },
+				});
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('edit_queue_item_result');
+				expect(response).toMatchObject({ success: true, found: true });
+			});
+		});
+
+		it('rejects a missing itemId or an empty text without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				text: 'x',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'edit_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: ' ',
+			} as never);
+			expect(lastSend()).toMatchObject({ success: false, error: 'Missing text' });
+			expect(callbacks.editQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Move Queue Item (queue move, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the move and answers whether it took', async () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: 0,
+				tabId: 'tab-1',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.moveQueueItem).toHaveBeenCalledWith('session-1', 'item-9', 0, 'tab-1');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'move_queue_item_result',
+					success: true,
+					moved: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId or a bad place without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				toIndex: 0,
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'move_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: -1,
+			} as never);
+			expect(lastSend()).toMatchObject({
+				success: false,
+				error: 'toIndex must be a whole number, 0 or more',
+			});
+			expect(callbacks.moveQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Send Queue Item Now (queue send-now, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the send and answers whether it started', async () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.sendQueueItemNow).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'send_queue_item_now_result',
+					success: true,
+					sent: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'send_queue_item_now_result', success: false });
+			expect(callbacks.sendQueueItemNow).not.toHaveBeenCalled();
 		});
 	});
 

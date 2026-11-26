@@ -1,6 +1,9 @@
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
 import { areUnreadFiltersActive, toggleAllUnreadFilters } from '../../../services/unreadFilters';
+import { getSessionSshRemoteId } from '../../../utils/sessionHelpers';
+import { openFolderInFileManager } from '../../../services/fileActions';
+import { hostShellAvailable } from '../../../services/hostShell';
 
 interface BuildNavigationCommandsArgs {
 	activeSession: Session | undefined;
@@ -13,7 +16,6 @@ interface BuildNavigationCommandsArgs {
 	openWizard?: () => void;
 	getOpenInLabel: (platform: string) => string;
 	platform: string;
-	openPath?: (path: string) => void;
 	// Shared with the Alt+Cmd+Down keyboard shortcut so both invocation paths
 	// use the same sidebar-visible ordering and current-session clear semantics.
 	onGoToNextUnread?: () => void;
@@ -50,7 +52,6 @@ export function buildNavigationCommands({
 	openWizard,
 	getOpenInLabel,
 	platform,
-	openPath,
 	onGoToNextUnread,
 	onGoToPreviousUnread,
 	onNavBack,
@@ -156,13 +157,22 @@ export function buildNavigationCommands({
 		});
 	}
 
-	if (activeSession && !activeSession.sshRemote && openPath) {
+	// The same command in every mode on the desktop. A remote working directory has no location
+	// on this computer, so the service shows it in the Files panel and says so. A browser has
+	// no file manager on the host to open.
+	if (activeSession && hostShellAvailable()) {
 		commands.push({
 			id: 'openWorkingDirectory',
 			label: `${getOpenInLabel(platform)}: Working Directory`,
 			subtext: activeSession.projectRoot,
 			action: () => {
-				openPath?.(activeSession.fullPath || activeSession.projectRoot);
+				void openFolderInFileManager(
+					{
+						path: activeSession.fullPath || activeSession.projectRoot,
+						sshRemoteId: getSessionSshRemoteId(activeSession),
+					},
+					{ sessionId: activeSession.id }
+				);
 				setQuickActionOpen(false);
 			},
 		});

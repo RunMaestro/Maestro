@@ -1,18 +1,21 @@
 /**
- * FederationBadge - the Left Bar's mark of HOW an agent on another machine runs, with a hover
- * card that explains the difference.
+ * FederationBadge - the one mark of WHERE an agent's turns run: `LOCAL`, `REMOTE`, or `HOSTED`,
+ * with a hover card that explains the difference. It is the only visual difference between the
+ * three modes; every surface that shows a mode draws this pill (through `AgentModePill`).
  *
- * - `ssh`: an SSH agent. This Maestro starts each turn over SSH, so the work stops when this
- *   machine sleeps or loses the connection.
+ * - `local`: this Maestro starts each turn on this machine.
+ * - `ssh` (`REMOTE`): this Maestro starts each turn over SSH, so the work stops when this machine
+ *   sleeps or loses the connection. Red while the SSH connection failed or automatic Federation
+ *   could not move it.
  * - `hosted`: an agent owned by the Maestro host on the remote (a local row that points at it).
- *   Turns, the queue, Auto Run, and Cue keep running there while this machine is off. The badge
- *   also carries the host's connection: accent while connected, warning while (re)connecting, error
- *   while the host is out of reach (the hover card says why).
+ *   Turns, the queue, Auto Run, and Cue keep running there while this machine is off. The pill
+ *   also carries the host's connection: accent while connected, warning while (re)connecting,
+ *   error while the host is out of reach (the hover card says why).
  *
  * Users see "Hosted", not "Federated": the word names what they get (the agent keeps working while
  * this machine sleeps), where "federation" names the mechanism. Federation is opportunistic, so the
- * card on an SSH agent also says what the next step is (Move to Host, which sets a host up first
- * when the remote has none). A local agent gets no badge.
+ * card on a remote agent also says what the next step is (Move to Host, which sets a host up first
+ * when the remote has none).
  *
  * An SSH agent whose remote is down (the main process confirmed it with a probe) keeps the same
  * chip in the same place, in the error color with the label struck through. That is the whole
@@ -24,6 +27,7 @@ import { memo } from 'react';
 import type { Theme } from '../../types';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { MiniBadge } from '../ui/MiniBadge';
+import { agentModePillLabel } from '../../utils/agentModeLabels';
 import type { AutoFederationAgentState } from '../../../shared/federationAuto';
 import type { PeerMirrorConnection } from '../../../shared/maestro-lib/client/peer-mirror';
 import { formatTimestamp } from '../../../shared/formatters';
@@ -45,9 +49,12 @@ export interface FederationBadgeAuto {
 }
 
 export type FederationBadgeMode =
+	| { kind: 'local' }
 	| {
 			kind: 'ssh';
 			remoteName?: string;
+			/** The last SSH run could not reach the remote. */
+			connectionFailed?: boolean;
 			hostReady: boolean;
 			canFederate: boolean;
 			auto?: FederationBadgeAuto;
@@ -83,6 +90,13 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	/** The remote is down: the line the card shows in the error color. */
 	unreachable?: string;
 } {
+	if (mode.kind === 'local') {
+		return {
+			label: agentModePillLabel('local'),
+			title: 'Local agent',
+			lines: ['This Maestro starts every turn on this machine.'],
+		};
+	}
 	if (mode.kind === 'hosted') {
 		const tone = hostedConnectionTone(mode.connection);
 		const status =
@@ -91,11 +105,11 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 				: tone === 'pending'
 					? [`Connecting to ${mode.peerName}.`]
 					: [
-							`Not connected to ${mode.peerName}. Showing the last known state. Reconnect from the banner in its view.`,
+							`Not connected to ${mode.peerName}. Showing the last known state. To reconnect, run Reconnect Federation Peer from Quick Actions.`,
 							...(mode.error ? [mode.error] : []),
 						];
 		return {
-			label: 'Hosted',
+			label: agentModePillLabel('hosted'),
 			title: `Hosted on ${mode.peerName}`,
 			lines: [
 				'Keeps running while this machine sleeps or is off.',
@@ -118,9 +132,10 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 				? 'Maestro could not move it onto the host automatically:'
 				: manualNext;
 	return {
-		label: 'SSH',
-		title: `SSH agent${where}`,
+		label: agentModePillLabel('remote'),
+		title: `Remote agent${where} (SSH)`,
 		lines: [
+			...(mode.connectionFailed ? [`Could not reach the remote${where} over SSH.`] : []),
 			'Stops when this machine sleeps or disconnects: this Maestro starts every turn over SSH.',
 			"A hosted agent runs on the remote's own Maestro host instead and keeps working with this machine off.",
 			next,
@@ -146,15 +161,17 @@ export const FederationBadge = memo(function FederationBadge({
 	const copy = federationBadgeCopy(mode);
 	const tone = mode.kind === 'hosted' ? hostedConnectionTone(mode.connection) : undefined;
 	const color =
-		tone !== undefined
-			? tone === 'live'
-				? theme.colors.accent
-				: tone === 'pending'
-					? theme.colors.warning
-					: theme.colors.error
-			: copy.blocked || copy.unreachable
-				? theme.colors.error
-				: theme.colors.warning;
+		mode.kind === 'local'
+			? theme.colors.textDim
+			: tone !== undefined
+				? tone === 'live'
+					? theme.colors.accent
+					: tone === 'pending'
+						? theme.colors.warning
+						: theme.colors.error
+				: copy.blocked || copy.unreachable || (mode.kind === 'ssh' && mode.connectionFailed)
+					? theme.colors.error
+					: theme.colors.warning;
 	return (
 		<HoverTooltip
 			theme={theme}

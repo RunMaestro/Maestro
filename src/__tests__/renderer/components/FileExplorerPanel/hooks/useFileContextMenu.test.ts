@@ -4,6 +4,8 @@ import { useFileContextMenu } from '../../../../../renderer/components/FileExplo
 import type { FileNode } from '../../../../../renderer/types/fileTree';
 import * as pathHelpers from '../../../../../renderer/components/FileExplorerPanel/utils/pathHelpers';
 import * as modalStore from '../../../../../renderer/stores/modalStore';
+import { useCenterFlashStore } from '../../../../../renderer/stores/centerFlashStore';
+import { AGENT_MODES } from '../../../../helpers';
 
 vi.mock('../../../../../renderer/hooks/ui/useClickOutside', () => ({
 	useClickOutside: vi.fn(),
@@ -43,7 +45,8 @@ vi.mock('../../../../../renderer/utils/flashCopiedToClipboard', () => ({
 }));
 
 const notifyToast = vi.fn();
-vi.mock('../../../../../renderer/stores/notificationStore', () => ({
+vi.mock('../../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/stores/notificationStore')>()),
 	notifyToast: (...args: unknown[]) => notifyToast(...args),
 }));
 
@@ -116,6 +119,7 @@ const mockMaestro = {
 			results: paths.map((path) => ({ path, success: true })),
 		})),
 		downloadRemoteFile: vi.fn().mockResolvedValue({ success: true, path: '/local/App.tsx' }),
+		copyPath: vi.fn().mockResolvedValue({ success: true }),
 		compressFolder: vi
 			.fn()
 			.mockResolvedValue({ success: true, path: '/project/docs.zip', name: 'docs.zip' }),
@@ -242,7 +246,7 @@ describe('useFileContextMenu', () => {
 		expect(result.current.contextMenu).toBeNull();
 	});
 
-	it('handleOpenInDefaultApp calls shell.openPath', () => {
+	it('handleOpenInDefaultApp calls shell.openPath', async () => {
 		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
 		const e = {
 			clientX: 10,
@@ -256,10 +260,12 @@ describe('useFileContextMenu', () => {
 		act(() => {
 			result.current.handleOpenInDefaultApp();
 		});
-		expect(mockMaestro.shell.openPath).toHaveBeenCalledWith('/project/App.tsx');
+		await vi.waitFor(() =>
+			expect(mockMaestro.shell.openPath).toHaveBeenCalledWith('/project/App.tsx')
+		);
 	});
 
-	it('handleDownloadFile downloads the remote file to the chosen local path', async () => {
+	it('handleDownloadFile (Save a Copy) downloads a remote file to the chosen local path', async () => {
 		const onShowFlash = vi.fn();
 		const { result } = renderHook(() =>
 			useFileContextMenu({ ...defaultArgs, sshRemoteId: 'remote-1', onShowFlash })
@@ -278,14 +284,14 @@ describe('useFileContextMenu', () => {
 		});
 		expect(mockMaestro.dialog.saveFile).toHaveBeenCalledWith({
 			defaultPath: 'App.tsx',
-			title: 'Download File',
+			title: 'Save a Copy',
 		});
 		expect(mockMaestro.fs.downloadRemoteFile).toHaveBeenCalledWith(
 			'/project/src/App.tsx',
 			'remote-1',
 			'/local/App.tsx'
 		);
-		expect(onShowFlash).toHaveBeenCalledWith('Downloaded "App.tsx"');
+		expect(onShowFlash).toHaveBeenCalledWith('Saved a copy of "App.tsx"');
 		expect(result.current.contextMenu).toBeNull();
 	});
 
@@ -309,7 +315,7 @@ describe('useFileContextMenu', () => {
 		expect(mockMaestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
-	it('handleDownloadFile is a no-op for local sessions (no sshRemoteId)', async () => {
+	it('handleDownloadFile (Save a Copy) copies a local file to the chosen path', async () => {
 		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
 		const e = {
 			clientX: 10,
@@ -323,11 +329,17 @@ describe('useFileContextMenu', () => {
 		await act(async () => {
 			await result.current.handleDownloadFile();
 		});
-		expect(mockMaestro.dialog.saveFile).not.toHaveBeenCalled();
+		expect(mockMaestro.dialog.saveFile).toHaveBeenCalledWith({
+			defaultPath: 'App.tsx',
+			title: 'Save a Copy',
+		});
+		expect(mockMaestro.fs.copyPath).toHaveBeenCalledWith('/project/src/App.tsx', '/local/App.tsx', {
+			overwrite: true,
+		});
 		expect(mockMaestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
-	it('handleOpenInExplorer calls shell.showItemInFolder', () => {
+	it('handleOpenInExplorer calls shell.showItemInFolder', async () => {
 		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
 		const e = {
 			clientX: 10,
@@ -341,7 +353,9 @@ describe('useFileContextMenu', () => {
 		act(() => {
 			result.current.handleOpenInExplorer();
 		});
-		expect(mockMaestro.shell.showItemInFolder).toHaveBeenCalledWith('/project/src/App.tsx');
+		await vi.waitFor(() =>
+			expect(mockMaestro.shell.showItemInFolder).toHaveBeenCalledWith('/project/src/App.tsx')
+		);
 	});
 
 	it('handlePreviewFile calls handleFileClick', async () => {
@@ -454,8 +468,35 @@ describe('useFileContextMenu', () => {
 		expect(openModal).toHaveBeenCalledWith('newInstance', {
 			duplicatingSessionId: null,
 			presetWorkingDir: '/project/docs',
+			presetSshRemoteId: null,
 		});
 		expect(result.current.contextMenu).toBeNull();
+	});
+
+	it('handleNewAgentHere seeds the SSH remote for an SSH or hosted agent', () => {
+		const openModal = vi.fn();
+		vi.mocked(modalStore.useModalStore.getState).mockReturnValueOnce({ openModal } as any);
+
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, sshRemoteId: 'remote-1' })
+		);
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, folderNode, 'docs', 0);
+		});
+		act(() => {
+			result.current.handleNewAgentHere();
+		});
+		expect(openModal).toHaveBeenCalledWith('newInstance', {
+			duplicatingSessionId: null,
+			presetWorkingDir: '/project/docs',
+			presetSshRemoteId: 'remote-1',
+		});
 	});
 
 	it('handleNewAgentHere joins nested folder paths with the base separator', () => {
@@ -481,6 +522,7 @@ describe('useFileContextMenu', () => {
 		expect(openModal).toHaveBeenCalledWith('newInstance', {
 			duplicatingSessionId: null,
 			presetWorkingDir: 'C:\\Users\\Test\\src\\renderer',
+			presetSshRemoteId: null,
 		});
 	});
 
@@ -505,7 +547,7 @@ describe('useFileContextMenu', () => {
 		expect(result.current.contextMenu).toBeNull();
 	});
 
-	it('handleOpenInMaestroBrowser encodes the file:// URL', () => {
+	it('handleOpenInMaestroBrowser encodes the file:// URL', async () => {
 		const onOpenBrowserTabAt = vi.fn();
 		const { result } = renderHook(() => useFileContextMenu({ ...defaultArgs, onOpenBrowserTabAt }));
 		const htmlNode: FileNode = { name: 'index.html', type: 'file' };
@@ -521,12 +563,14 @@ describe('useFileContextMenu', () => {
 		act(() => {
 			result.current.handleOpenInMaestroBrowser();
 		});
-		expect(onOpenBrowserTabAt).toHaveBeenCalledWith('file:///project/public/index.html', {
-			title: 'index.html',
-		});
+		await vi.waitFor(() =>
+			expect(onOpenBrowserTabAt).toHaveBeenCalledWith('file:///project/public/index.html', {
+				title: 'index.html',
+			})
+		);
 	});
 
-	it('handleOpenInMaestroBrowser preserves Windows drive-letter file:// URLs', () => {
+	it('handleOpenInMaestroBrowser preserves Windows drive-letter file:// URLs', async () => {
 		const onOpenBrowserTabAt = vi.fn();
 		const windowsSession = { ...session, fullPath: 'C:\\Users\\Test Project' } as any;
 		const { result } = renderHook(() =>
@@ -545,10 +589,81 @@ describe('useFileContextMenu', () => {
 		act(() => {
 			result.current.handleOpenInMaestroBrowser();
 		});
-		expect(onOpenBrowserTabAt).toHaveBeenCalledWith(
-			'file:///C:/Users/Test%20Project/public/index.html',
-			{ title: 'index.html' }
+		await vi.waitFor(() =>
+			expect(onOpenBrowserTabAt).toHaveBeenCalledWith(
+				'file:///C:/Users/Test%20Project/public/index.html',
+				{ title: 'index.html' }
+			)
 		);
+	});
+
+	// One set of actions for a local, an SSH, and a hosted agent. A remote file is
+	// fetched to this machine first and the OS gets the fetched copy; a remote
+	// folder, which has no location here, is shown in the Files panel instead.
+	describe.each(AGENT_MODES)('in %s mode', (mode) => {
+		const sshRemoteId = mode === 'local' ? undefined : 'r1';
+		const copy = (p: string) => (mode === 'local' ? `/project/${p}` : '/local/App.tsx');
+		const menuEvent = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+
+		it('opens, reveals, and browses a file through a copy on this machine', async () => {
+			const onOpenBrowserTabAt = vi.fn();
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, sshRemoteId, onOpenBrowserTabAt })
+			);
+			const htmlNode: FileNode = { name: 'App.html', type: 'file' };
+			const run = async (action: () => void) => {
+				act(() => result.current.openContextMenu(menuEvent, htmlNode, 'src/App.html', 0));
+				act(action);
+			};
+			await run(() => result.current.handleOpenInDefaultApp());
+			await vi.waitFor(() =>
+				expect(mockMaestro.shell.openPath).toHaveBeenCalledWith(copy('src/App.html'))
+			);
+			await run(() => result.current.handleOpenInExplorer());
+			await vi.waitFor(() =>
+				expect(mockMaestro.shell.showItemInFolder).toHaveBeenCalledWith(copy('src/App.html'))
+			);
+			await run(() => result.current.handleOpenInMaestroBrowser());
+			await vi.waitFor(() =>
+				expect(onOpenBrowserTabAt).toHaveBeenCalledWith(`file://${copy('src/App.html')}`, {
+					title: 'App.html',
+				})
+			);
+			expect(mockMaestro.fs.downloadRemoteFile).toHaveBeenCalledTimes(mode === 'local' ? 0 : 3);
+		});
+
+		it('opens every file of a multi-selection in its default app', async () => {
+			const selectedPathsRef = { current: new Set(['README.md', 'diagram.pdf']) };
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, sshRemoteId, selectedPathsRef })
+			);
+			act(() => result.current.handleOpenInDefaultAppMulti());
+			await vi.waitFor(() => expect(mockMaestro.shell.openPath).toHaveBeenCalledTimes(2));
+			expect(mockMaestro.fs.downloadRemoteFile).toHaveBeenCalledTimes(mode === 'local' ? 0 : 2);
+		});
+
+		it('reveals a folder: in the file manager locally, in the Files panel when remote', async () => {
+			const { result } = renderHook(() => useFileContextMenu({ ...defaultArgs, sshRemoteId }));
+			act(() => result.current.openContextMenu(menuEvent, folderNode, 'docs', 0));
+			act(() => result.current.handleOpenInExplorer());
+			if (mode === 'local') {
+				await vi.waitFor(() =>
+					expect(mockMaestro.shell.showItemInFolder).toHaveBeenCalledWith('/project/docs')
+				);
+			} else {
+				// 🔒 A remote folder has no location on this computer.
+				await vi.waitFor(() =>
+					expect(useCenterFlashStore.getState().active?.message).toMatch(/remote host|Files panel/)
+				);
+				expect(mockMaestro.shell.showItemInFolder).not.toHaveBeenCalled();
+				expect(mockMaestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
+			}
+		});
 	});
 
 	it('handlePreviewAllInFolder opens modal when files exceed threshold', () => {

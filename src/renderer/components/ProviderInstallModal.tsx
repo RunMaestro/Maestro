@@ -12,9 +12,10 @@
  * appears and resends the turn that failed. The PTY is the same `LoginTerminal`
  * the provider re-auth and GitHub login dialogs use.
  *
- * Local agents only: a missing CLI on an SSH remote is reported by the SSH
- * error bank and never reaches this dialog, since an install from here would
- * land on the wrong machine.
+ * The install runs where the agent's turns run: for an agent on an SSH remote
+ * (a hosted agent's host is that remote too) the shell starts on the remote,
+ * as the re-auth dialog's does, and types that remote's POSIX command. The
+ * dialog itself is the same in every mode.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -23,6 +24,7 @@ import { Modal } from './ui/Modal';
 import {
 	LoginTerminal,
 	loginPtySessionId,
+	loginTerminalSshConfig,
 	resolveLoginShell,
 	type LoginTerminalStatus,
 } from './LoginTerminal';
@@ -35,7 +37,11 @@ import {
 	getAgentDisplayName,
 	loginShellSyntaxFor,
 } from '../../shared/agentMetadata';
-import { agentCliLabel, getAgentInstallInfo, toInstallPlatform } from '../../shared/agentInstall';
+import {
+	agentCliLabel,
+	agentInstallPlatform,
+	getAgentInstallInfo,
+} from '../../shared/agentInstall';
 import type { ToolType } from '../../shared/types';
 import type { Session, Theme } from '../types';
 
@@ -83,7 +89,17 @@ export function ProviderInstallModal({
 
 	const agentName = getAgentDisplayName(targetAgentId);
 	const info = getAgentInstallInfo(targetAgentId);
-	const platform = toInstallPlatform(getPlatform());
+	const sshConfig = useMemo(
+		() =>
+			loginTerminalSshConfig({
+				sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				sshRemoteId: session.sshRemoteId,
+				remoteCwd: session.remoteCwd,
+			}),
+		[session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]
+	);
+	const remote = Boolean(sshConfig?.enabled);
+	const platform = agentInstallPlatform(remote, getPlatform());
 	const installCommand = info && platform ? (info.commands[platform] ?? null) : null;
 
 	const [phase, setPhase] = useState<Phase>(() =>
@@ -94,14 +110,18 @@ export function ProviderInstallModal({
 		loginPtySessionId(`install-${session.id}`)
 	);
 
-	// The CLI is spawned as a native process, so the install must not land in WSL.
-	const installShell = useMemo(() => resolveLoginShell(defaultShell, false), [defaultShell]);
+	// The CLI is spawned as a native process, so a local install must not land in WSL.
+	const installShell = useMemo(
+		() => resolveLoginShell(defaultShell, remote),
+		[defaultShell, remote]
+	);
 
 	const commandLine = useMemo(() => {
 		if (!installCommand) return null;
-		const syntax = loginShellSyntaxFor(installShell ?? '', isWindowsPlatform());
+		// An SSH remote runs a posix shell regardless of this machine.
+		const syntax = remote ? 'posix' : loginShellSyntaxFor(installShell ?? '', isWindowsPlatform());
 		return exitWithCommandStatus(installCommand, syntax);
-	}, [installCommand, installShell]);
+	}, [installCommand, installShell, remote]);
 
 	const handleExit = useCallback(
 		(code: number) => {
@@ -261,6 +281,7 @@ export function ProviderInstallModal({
 							shell: installShell,
 							shellArgs,
 							shellEnvVars,
+							sshConfig,
 							cwd: effectiveSession.cwd || effectiveSession.projectRoot,
 							toolType: targetAgentId,
 							customEnvVars: effectiveSession.customEnvVars,

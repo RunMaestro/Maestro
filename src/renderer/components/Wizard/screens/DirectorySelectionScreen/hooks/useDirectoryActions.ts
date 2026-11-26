@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { PLAYBOOKS_DIR } from '../../../../../../shared/maestro-paths';
 import { joinPath } from '../../../../../../shared/formatters';
 import { gitService } from '../../../../../services/git';
+import { pickDirectory } from '../../../../../services/pathPicker';
 import { logger } from '../../../../../utils/logger';
 import { captureException } from '../../../../../utils/sentry';
 import { isRecoverableAutoRunDocsError } from '../utils/existingDocs';
@@ -19,6 +20,11 @@ interface UseDirectoryActionsParams {
 	setExistingDocsChoice: (choice: 'continue' | 'fresh' | null) => void;
 	setInitRepoError: (error: string | null) => void;
 	getSshRemoteId: () => string | undefined;
+	/**
+	 * Where Browse looks (`pickDirectory()`): omitted for this machine, the SSH remote's id for an
+	 * agent on a remote, `null` while SSH is chosen but no remote is picked yet.
+	 */
+	pickerRemoteId?: string | null;
 	validateDirectory: (path: string) => Promise<void>;
 	focusInput: () => void;
 	focusContinue: () => void;
@@ -38,6 +44,7 @@ export function useDirectoryActions({
 	setExistingDocsChoice,
 	setInitRepoError,
 	getSshRemoteId,
+	pickerRemoteId,
 	validateDirectory,
 	focusInput,
 	focusContinue,
@@ -51,7 +58,10 @@ export function useDirectoryActions({
 		setIsBrowsing(true);
 
 		try {
-			const selectedPath = await window.maestro.dialog.selectFolder();
+			const selectedPath = await pickDirectory({
+				sshRemoteId: pickerRemoteId,
+				title: 'Select Project Directory',
+			});
 			if (selectedPath) {
 				setDirectoryPath(selectedPath);
 				await validateDirectory(selectedPath);
@@ -63,7 +73,7 @@ export function useDirectoryActions({
 		}
 
 		setIsBrowsing(false);
-	}, [focusContinue, setDirectoryError, setDirectoryPath, validateDirectory]);
+	}, [focusContinue, pickerRemoteId, setDirectoryError, setDirectoryPath, validateDirectory]);
 
 	const handleInitRepo = useCallback(async () => {
 		if (!directoryPath.trim() || isInitializingRepo || isValidating) return;

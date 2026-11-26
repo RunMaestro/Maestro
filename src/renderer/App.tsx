@@ -155,6 +155,7 @@ import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useAutoRunRestartResume } from './hooks/batch/useAutoRunRestartResume';
+import { useGroupChatAutoRunTrigger } from './hooks/groupChat/useGroupChatAutoRunTrigger';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
@@ -183,10 +184,12 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { registerMaestroBuiltinCommandHandlers } from './services/maestroBuiltinCommands';
 import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
 import {
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
+	reorderQueuedItems,
 	toggleQueuedItemPaused,
 } from './services/queuedPrompt';
 import {
@@ -235,8 +238,7 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
-import { resolveQueuedItemEdit } from './services/queuedPrompt';
+import { editQueuedItem } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -294,6 +296,7 @@ function MaestroConsoleInner() {
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		newInstancePresetWorkingDir,
+		newInstancePresetSshRemoteId,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -1823,6 +1826,8 @@ function MaestroConsoleInner() {
 	// Starts the Auto Runs the update modal saved before the app restarted, at
 	// the document and loop pass each one stopped on. Primary window only.
 	useAutoRunRestartResume({ enabled: isLifecycleOwner, sessionsLoaded, startBatchRun });
+	// A group chat moderator's `!autorun` starts the participant's run here.
+	useGroupChatAutoRunTrigger({ enabled: isLifecycleOwner, startBatchRun });
 
 	// --- AGENT CAPABILITY CACHE PRIMING ---
 	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
@@ -1846,33 +1851,20 @@ function MaestroConsoleInner() {
 		mergeQueuedItemIntoAbove(activeSessionIdRef.current, itemId);
 	}, []);
 
-	// Edit a queued message's prompt text and attached images in place.
+	// Edit a queued message's prompt text and attached images in place. Same
+	// service `maestro-cli queue edit` reaches; a hosted card's edit goes to its host.
 	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => {
-			const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
-			return {
-				...s,
-				executionQueue: applyQueuedItemEdit(
-					s.executionQueue,
-					itemId,
-					patch,
-					crossAgent,
-					slashCommand
-				),
-			};
-		});
+		editQueuedItem(activeSessionIdRef.current, itemId, patch);
 	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that
-	// tab's items; reorderQueueItem rearranges them while keeping other tabs'
+	// tab's items; reorderQueuedItems rearranges them while keeping other tabs'
 	// queued items in their absolute positions (see the helper for details).
+	// Same service `maestro-cli queue move` reaches; a hosted card's move goes to its host.
 	const handleReorderQueuedItem = useCallback(
 		(fromIndex: number, toIndex: number, tabId?: string) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId),
-			}));
+			reorderQueuedItems(activeSessionIdRef.current, fromIndex, toIndex, tabId);
 		},
 		[]
 	);
@@ -1961,6 +1953,16 @@ function MaestroConsoleInner() {
 		setInputValueRef,
 		inputRef,
 	});
+
+	// A send that names its own tab (a Federation client's hosted agent, `dispatch --queue`) runs
+	// `/history` and `/skills` there, as the composer runs them on the active tab.
+	useEffect(() => {
+		registerMaestroBuiltinCommandHandlers({
+			history: handleHistoryCommand,
+			skills: handleSkillsCommand,
+		});
+		return () => registerMaestroBuiltinCommandHandlers(null);
+	}, [handleHistoryCommand, handleSkillsCommand]);
 
 	// Combine built-in slash commands with custom AI commands, bundled methodology
 	// commands, and agent-specific commands for autocomplete.
@@ -3616,6 +3618,7 @@ function MaestroConsoleInner() {
 						duplicatingSessionId={duplicatingSessionId}
 						newInstancePresetGroupId={newInstancePresetGroupId}
 						newInstancePresetWorkingDir={newInstancePresetWorkingDir}
+						newInstancePresetSshRemoteId={newInstancePresetSshRemoteId}
 						onCloseEditAgentModal={handleCloseEditAgentModal}
 						onSaveEditAgent={handleSaveEditAgent}
 						editAgentSession={editAgentSession}

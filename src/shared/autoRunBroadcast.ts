@@ -123,3 +123,92 @@ export interface OrphanedAutoRun<State = Partial<AutoRunBroadcastState>, Config 
 	/** The last state the dead loop published, if it published any. */
 	state?: State;
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const wireNumber = (value: unknown): number | undefined =>
+	typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const wireString = (value: unknown): string | undefined =>
+	typeof value === 'string' && value !== '' ? value : undefined;
+
+const wireBoolean = (value: unknown): boolean | undefined =>
+	typeof value === 'boolean' ? value : undefined;
+
+const wireStrings = (value: unknown): string[] | undefined =>
+	Array.isArray(value)
+		? value.filter((entry): entry is string => typeof entry === 'string')
+		: undefined;
+
+function wireDelegations(value: unknown): AutoRunPendingDelegation[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out: AutoRunPendingDelegation[] = [];
+	for (const entry of value) {
+		if (!isRecord(entry)) continue;
+		const callbackId = wireString(entry.callbackId);
+		const targetAgentId = wireString(entry.targetAgentId);
+		const targetTabId = wireString(entry.targetTabId);
+		const startedAt = wireNumber(entry.startedAt);
+		if (!callbackId || !targetAgentId || !targetTabId || startedAt === undefined) continue;
+		out.push({
+			callbackId,
+			targetAgentId,
+			targetTabId,
+			targetName: wireString(entry.targetName) ?? targetAgentId,
+			subject: typeof entry.subject === 'string' ? entry.subject : '',
+			startedAt,
+		});
+	}
+	return out;
+}
+
+/**
+ * Read an `autorun_state` frame that came from another machine (a Federation host), field by
+ * field, into the shape a full mirror of the Auto Run card draws (`buildMirroredBatchState()`).
+ * A field of the wrong type is dropped, so a frame from a host built before a field existed, or
+ * a damaged one, draws less detail instead of crashing the card. `null` means no run: the host
+ * sends `null` when it clears the state, and a payload that is not an object says nothing.
+ */
+export function parseAutoRunBroadcastState(raw: unknown): AutoRunBroadcastState | null {
+	if (!isRecord(raw)) return null;
+	const optional: Partial<AutoRunBroadcastState> = {
+		isStopping: wireBoolean(raw.isStopping),
+		totalDocuments: wireNumber(raw.totalDocuments),
+		currentDocumentIndex: wireNumber(raw.currentDocumentIndex),
+		totalTasksAcrossAllDocs: wireNumber(raw.totalTasksAcrossAllDocs),
+		completedTasksAcrossAllDocs: wireNumber(raw.completedTasksAcrossAllDocs),
+		errorPaused: wireBoolean(raw.errorPaused),
+		errorMessage: wireString(raw.errorMessage),
+		errorType: wireString(raw.errorType),
+		errorRecoverable: wireBoolean(raw.errorRecoverable),
+		errorDocumentIndex: wireNumber(raw.errorDocumentIndex),
+		errorTaskDescription: wireString(raw.errorTaskDescription),
+		goalMode: wireBoolean(raw.goalMode),
+		goalProgress: wireNumber(raw.goalProgress),
+		goalRationale: wireString(raw.goalRationale),
+		goalIteration: wireNumber(raw.goalIteration),
+		pendingDelegations: wireDelegations(raw.pendingDelegations),
+		documents: wireStrings(raw.documents),
+		lockedDocuments: wireStrings(raw.lockedDocuments),
+		currentDocTasksTotal: wireNumber(raw.currentDocTasksTotal),
+		currentDocTasksCompleted: wireNumber(raw.currentDocTasksCompleted),
+		worktreeActive: wireBoolean(raw.worktreeActive),
+		worktreeBranch: wireString(raw.worktreeBranch),
+		startTime: wireNumber(raw.startTime),
+		loopEnabled: wireBoolean(raw.loopEnabled),
+		loopIteration: wireNumber(raw.loopIteration),
+		initialCompletedTasks: wireNumber(raw.initialCompletedTasks),
+	};
+	const state: AutoRunBroadcastState = {
+		isRunning: raw.isRunning === true,
+		totalTasks: wireNumber(raw.totalTasks) ?? 0,
+		completedTasks: wireNumber(raw.completedTasks) ?? 0,
+		currentTaskIndex: wireNumber(raw.currentTaskIndex) ?? 0,
+	};
+	for (const [key, value] of Object.entries(optional)) {
+		if (value !== undefined) (state as unknown as Record<string, unknown>)[key] = value;
+	}
+	return state;
+}

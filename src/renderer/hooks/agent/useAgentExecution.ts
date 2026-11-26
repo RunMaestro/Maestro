@@ -37,6 +37,7 @@ import {
 	useCrossAgentInFlightStore,
 } from '../../stores/crossAgentInFlightStore';
 import { logger } from '../../utils/logger';
+import { AUTO_RUN_TURN_ABORTED } from '../batch/internal/autoRunTurnAbort';
 import { armEffortFallback, settleEffortFallback } from '../../services/effortRejection';
 
 /**
@@ -99,6 +100,11 @@ export interface SpawnAgentOptions {
 	 * `src/shared/autoRunDelegation.ts`).
 	 */
 	autoRunId?: string;
+	/**
+	 * Aborted when the Auto Run is force-ended while this turn is awaited: the spawn settles as
+	 * failed and releases its listeners, its watchdog, and its queue-drain wait.
+	 */
+	abortSignal?: AbortSignal;
 }
 
 /**
@@ -364,6 +370,31 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						cleanup();
 						resolve(result);
 					};
+
+					// A force-ended Auto Run stops waiting for this turn: whatever this
+					// promise still holds (its exit, its queue-drain wait) is let go, and the
+					// process is killed by its exact key. The run's kill lists live processes
+					// only, so a spawn still being registered would otherwise be missed.
+					const abortSignal = options?.abortSignal;
+					let spawnIssued = false;
+					if (abortSignal) {
+						const onAbort = () => {
+							if (spawnIssued) window.maestro.process.kill(targetSessionId).catch(() => {});
+							resolveOnce({
+								success: false,
+								error: AUTO_RUN_TURN_ABORTED,
+								response: responseText,
+								agentSessionId,
+								usageStats: taskUsageStats,
+							});
+						};
+						if (abortSignal.aborted) {
+							onAbort();
+							return;
+						}
+						abortSignal.addEventListener('abort', onAbort, { once: true });
+						cleanupFns.push(() => abortSignal.removeEventListener('abort', onAbort));
+					}
 
 					// Set up listeners for this specific agent run
 					cleanupFns.push(
@@ -736,6 +767,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					}
 
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
+					spawnIssued = true;
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,

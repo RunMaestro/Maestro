@@ -86,7 +86,7 @@ export type QueueEvent<T extends QueueItem> =
 	 */
 	| { type: 'dispatch-failed'; item: T; error: Error; held: boolean }
 	| { type: 'removed'; item: T }
-	/** A pause or resume changed the item. */
+	/** A pause, a resume, or a merge into it changed the item. */
 	| { type: 'updated'; item: T };
 
 export interface ExecutionQueueOptions<T extends QueueItem> {
@@ -162,6 +162,83 @@ export function nextRunnable<T extends QueueItem>(queue: readonly T[]): T | unde
 }
 
 /**
+ * The item a "merge into the message above" folds `itemId` into: the nearest EARLIER item for
+ * the same tab, since that is the card drawn directly above it in the tab's queue. Null when
+ * there is none, or when either side cannot merge (`isMergeable`). The desktop's queued card,
+ * its Execution Queue, and a headless host's queue all use this rule.
+ */
+export function findQueueMergeTarget<T extends Pick<QueueItem, 'id' | 'tabId'>>(
+	queue: readonly T[],
+	itemId: string,
+	isMergeable: (item: T) => boolean = () => true
+): T | null {
+	const index = queue.findIndex((candidate) => candidate.id === itemId);
+	if (index <= 0) return null;
+	const item = queue[index];
+	if (!isMergeable(item)) return null;
+	for (let i = index - 1; i >= 0; i--) {
+		if (queue[i].tabId !== item.tabId) continue;
+		return isMergeable(queue[i]) ? queue[i] : null;
+	}
+	return null;
+}
+
+/**
+ * `queue` with one item moved, the queued card's drag (Array.splice semantics: take it out at
+ * `fromIndex`, put it back at `toIndex`). With `inScope`, both indices address only the items it
+ * accepts (one tab's cards, as the tab's list draws them): those are reordered among themselves
+ * and written back into the slots they held, so every other item keeps its absolute place.
+ * Out-of-range and no-op moves return `queue` itself (same reference). The desktop queue, its
+ * Execution Queue, and a headless host's queue all move by this rule.
+ */
+export function moveQueueEntry<T>(
+	queue: readonly T[],
+	fromIndex: number,
+	toIndex: number,
+	inScope?: (item: T) => boolean
+): readonly T[] {
+	const slots: number[] = [];
+	queue.forEach((item, index) => {
+		if (!inScope || inScope(item)) slots.push(index);
+	});
+	const len = slots.length;
+	if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) {
+		return queue;
+	}
+	const scoped = slots.map((slot) => queue[slot]);
+	const [moved] = scoped.splice(fromIndex, 1);
+	scoped.splice(toIndex, 0, moved);
+	const next = [...queue];
+	slots.forEach((slot, index) => {
+		next[slot] = scoped[index];
+	});
+	return next;
+}
+
+/**
+ * The text of two merged messages: exactly one blank line between them, so the second reads as
+ * its own paragraph. Trailing whitespace of the first and leading blank lines of the second are
+ * dropped (the second's own indentation is kept); an empty side is left out.
+ */
+export function joinMergedQueueText(upper: string | undefined, lower: string | undefined): string {
+	return [upper?.replace(/\s+$/, ''), lower?.replace(/^(\s*\n)+/, '')]
+		.filter((text) => text && text.trim())
+		.join('\n\n');
+}
+
+/**
+ * The images of two merged messages: the upper message's, then the lower's, in attachment order.
+ * `undefined` when neither carries any, so a merged text-only message stays text-only.
+ */
+export function joinMergedQueueImages(
+	upper: readonly string[] | undefined,
+	lower: readonly string[] | undefined
+): string[] | undefined {
+	const images = [...(upper ?? []), ...(lower ?? [])];
+	return images.length > 0 ? images : undefined;
+}
+
+/**
  * A write turn may start beside running work only when all of that work, and everything
  * waiting, is read-only: no two writers share a working directory.
  */
@@ -176,6 +253,8 @@ function canWriteBypassQueue<T extends QueueItem>(item: T, view: QueueView<T>): 
  * bridge-connection hold, which the TUI does not have. The Auto Run hold arrives as `holdsTree`.
  */
 export function decideSubmit<T extends QueueItem>(item: T, view: QueueView<T>): 'run' | 'queue' {
+	// Queue Held: a message submitted paused waits, even on an idle tab, until someone resumes it.
+	if (item.paused) return 'queue';
 	// A retry counting down holds the tab even though the tab reads idle: sending now burns
 	// against the same wall. This outranks force-parallel, which only skips tab serialization.
 	if (view.isRetryHeld?.(item.tabId)) return 'queue';
@@ -230,6 +309,37 @@ export interface ExecutionQueue<T extends QueueItem> {
 	setPaused(id: string, paused: boolean): boolean;
 	/** Take a waiting item out. Returns false when it is not waiting (it may already be running). */
 	remove(id: string): boolean;
+	/**
+	 * Put an item that left the queue back at its head: a steer the agent never took. The head,
+	 * because the person asked for it sooner than anything behind it. It runs when its tab is free,
+	 * unless it comes back paused.
+	 */
+	returnToFront(item: T): void;
+	/**
+	 * Fold a waiting item into the waiting item above it on the same tab (`findQueueMergeTarget`):
+	 * the queued card's Merge. `combine` builds the upper item that remains (it keeps its id and
+	 * place); the lower one leaves the queue. Returns the upper item's id, or null when there is
+	 * no waiting item above it to merge into.
+	 */
+	merge(id: string, combine: (upper: T, lower: T) => T): string | null;
+	/**
+	 * Rewrite a waiting item in place (the queued card's Edit). `change` builds the new item; it
+	 * keeps its id and place. Returns false when no waiting item has that id.
+	 */
+	update(id: string, change: (item: T) => T): boolean;
+	/**
+	 * Move a waiting item to `toIndex` (the queued card's drag, `moveQueueEntry`). With `tabId`,
+	 * the index counts only that tab's waiting items. Returns false when no waiting item has that
+	 * id, or the index is out of range.
+	 */
+	move(id: string, toIndex: number, tabId?: string): boolean;
+	/**
+	 * Run a waiting item now instead of in its turn (the queued card's Force Send). Never over a
+	 * turn on its own tab; beside another tab's turn it runs `forceParallel`. Never past an Auto
+	 * Run's working-tree hold either, unless the item only reads or is already `forceParallel`.
+	 * Returns false when no waiting item has that id, its tab is busy, or the tree hold keeps it.
+	 */
+	sendNow(id: string): boolean;
 	/** Look at the queue again, for a hold that cleared (a retry that landed). */
 	drain(): void;
 	/** Resolves when no turn is running or starting. Items may still wait, held or blocked. */
@@ -452,6 +562,62 @@ export function createExecutionQueue<T extends QueueItem>(
 			emit({ type: 'removed', item: entry.item });
 			// A removed head can unblock what is behind it.
 			drain();
+			return true;
+		},
+
+		returnToFront(item) {
+			if (disposed) return;
+			entries.unshift({ item, state: 'queued' });
+			emit({ type: 'queued', item, position: 0 });
+			drain();
+		},
+
+		merge(id, combine) {
+			const upper = findQueueMergeTarget(waiting(), id);
+			const lowerIndex = entries.findIndex((e) => e.state === 'queued' && e.item.id === id);
+			const upperEntry = upper && entries.find((e) => e.state === 'queued' && e.item === upper);
+			if (!upperEntry || lowerIndex === -1) return null;
+			const [lowerEntry] = entries.splice(lowerIndex, 1);
+			clearCollisions(lowerEntry.item.id);
+			upperEntry.item = { ...combine(upperEntry.item, lowerEntry.item), id: upperEntry.item.id };
+			emit({ type: 'removed', item: lowerEntry.item });
+			emit({ type: 'updated', item: upperEntry.item });
+			return upperEntry.item.id;
+		},
+
+		update(id, change) {
+			const entry = entries.find((e) => e.state === 'queued' && e.item.id === id);
+			if (!entry) return false;
+			entry.item = { ...change(entry.item), id: entry.item.id };
+			emit({ type: 'updated', item: entry.item });
+			return true;
+		},
+
+		move(id, toIndex, tabId) {
+			// Only waiting entries move; one being started keeps its slot.
+			const inScope = (entry: Entry<T>) =>
+				entry.state === 'queued' && (tabId === undefined || entry.item.tabId === tabId);
+			const scoped = entries.filter(inScope);
+			const fromIndex = scoped.findIndex((entry) => entry.item.id === id);
+			if (fromIndex === -1 || toIndex < 0 || toIndex >= scoped.length) return false;
+			const next = moveQueueEntry(entries, fromIndex, toIndex, inScope);
+			if (next === entries) return true;
+			entries.splice(0, entries.length, ...next);
+			const moved = entries.find((entry) => entry.item.id === id);
+			if (moved) emit({ type: 'updated', item: moved.item });
+			// A new head can be runnable where the old one was held.
+			drain();
+			return true;
+		},
+
+		sendNow(id) {
+			if (disposed) return false;
+			const entry = entries.find((e) => e.state === 'queued' && e.item.id === id);
+			if (!entry) return false;
+			if (active.has(entry.item.tabId) || starting.has(entry.item.tabId)) return false;
+			if (blockedByTreeHold(entry.item, view())) return false;
+			if (busyTurns().length > 0) entry.item = { ...entry.item, forceParallel: true };
+			void dispatch(entry, true);
 			return true;
 		},
 

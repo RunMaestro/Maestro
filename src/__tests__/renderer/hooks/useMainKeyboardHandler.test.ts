@@ -31,6 +31,7 @@ vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 import { eventMatchesShortcutKeys } from '../../../renderer/utils/shortcutMatch';
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
+import { AGENT_MODES, createMockAITab, createModeSession, type AgentMode } from '../../helpers';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -5858,5 +5859,157 @@ describe('group chat chords that must act on the room', () => {
 			expect(organizerRequests).not.toHaveBeenCalled();
 			expect(recordShortcutUsage).not.toHaveBeenCalled();
 		});
+	});
+});
+
+/**
+ * docs/parity/agent-ux-parity.md, "Keyboard shortcuts": every shipped chord does the
+ * same thing whether the active agent is local, SSH, or hosted. The handler reads no
+ * mode field; this presses each chord once per mode and compares what it did.
+ */
+describe('useMainKeyboardHandler - mode parity (local, SSH, hosted)', () => {
+	/** Mode fields stripped so a recorded session compares across modes. */
+	const MODE_FIELDS = ['sshRemoteId', 'sessionSshRemoteConfig', 'liftedTo'];
+
+	function modeAgent(mode: AgentMode) {
+		const tab = createMockAITab({ id: 'tab-1', name: 'Tab 1', createdAt: 0 });
+		return createModeSession(mode, {
+			id: 'agent-1',
+			aiTabs: [tab],
+			activeTabId: tab.id,
+			unifiedTabOrder: [{ type: 'ai', id: tab.id }],
+		});
+	}
+
+	function comparable(value: unknown): string {
+		return JSON.stringify(value, (key, v) =>
+			MODE_FIELDS.includes(key) || typeof v === 'function' ? undefined : v
+		);
+	}
+
+	/**
+	 * Presses one chord with `mode` active. Every ctx handler is a recorder, so the
+	 * result is the list of handlers the chord reached (with their arguments), the
+	 * session list a `setSessions` updater produced, and the store state after.
+	 */
+	function pressIn(mode: AgentMode, id: string): string {
+		const agent = modeAgent(mode);
+		const calls: string[] = [];
+		const RETURNS: Record<string, unknown> = {
+			handleSidebarNavigation: false,
+			handleEnterToActivate: false,
+			handleTabNavigation: false,
+			handleEscapeInMain: false,
+			hasActiveSessionCapability: true,
+			recordShortcutUsage: { newLevel: null },
+			handleCloseCurrentTab: { type: 'ai', tabId: 'tab-1' },
+		};
+		const recorder = (name: string) =>
+			vi.fn((...args: unknown[]) => {
+				const shown = args.map((arg) =>
+					typeof arg === 'function' && name === 'setSessions'
+						? comparable((arg as (s: unknown[]) => unknown)([agent]))
+						: comparable(arg)
+				);
+				calls.push(`${name}(${shown.join(', ')})`);
+				return RETURNS[name];
+			});
+		const base = createMockContext({
+			activeSession: agent,
+			sessions: [agent],
+			visibleSessions: [agent],
+			isShortcut: (_e: KeyboardEvent, shortcutId: string) =>
+				shortcutId === id && id in DEFAULT_SHORTCUTS,
+			isTabShortcut: (_e: KeyboardEvent, shortcutId: string) =>
+				shortcutId === id && id in TAB_SHORTCUTS,
+			activeFocus: 'main',
+			activeRightTab: 'files',
+			leftSidebarOpen: true,
+			encoreFeatures: {},
+			stagedImages: [],
+			groupChatStagedImages: [],
+			inputRef: { current: null },
+			logsEndRef: { current: null },
+			mainPanelRef: { current: null },
+			rightPanelRef: { current: null },
+			sidebarContainerRef: { current: null },
+			terminalOutputRef: { current: null },
+			fileTreeFilterInputRef: { current: null },
+		});
+		const ctx = new Proxy(base, {
+			get(target, key: string) {
+				if (
+					key in RETURNS ||
+					/^(handle|set|toggle|navigate|goTo|open|perform|reopen|delete|cycle|flush|on)[A-Z]/.test(
+						key
+					)
+				) {
+					if (!(key in recorders)) recorders[key] = recorder(key);
+					return recorders[key];
+				}
+				return (target as Record<string, unknown>)[key];
+			},
+		});
+		const recorders: Record<string, ReturnType<typeof recorder>> = {};
+
+		const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = ctx as never;
+		const event = new KeyboardEvent('keydown', { key: 'F8', bubbles: true, cancelable: true });
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		unmount();
+
+		const store = useSessionStore.getState();
+		return comparable({
+			prevented: event.defaultPrevented,
+			calls,
+			sessions: store.sessions,
+			activeSessionId: store.activeSessionId,
+			modal: useModalStore.getState(),
+			ui: useUIStore.getState(),
+		});
+	}
+
+	const SHORTCUT_IDS = [...Object.keys(DEFAULT_SHORTCUTS), ...Object.keys(TAB_SHORTCUTS)];
+	let initial: { modal: unknown; ui: unknown; settings: unknown };
+
+	beforeEach(() => {
+		initial = {
+			modal: useModalStore.getState(),
+			ui: useUIStore.getState(),
+			settings: useSettingsStore.getState(),
+		};
+		publishGitShortcutActions({
+			isGitRepo: true,
+			canCreatePR: true,
+			pull: vi.fn(),
+			push: vi.fn(),
+			switchBranch: vi.fn(),
+			createPR: vi.fn(),
+		} as never);
+	});
+
+	afterEach(() => {
+		publishGitShortcutActions(null);
+	});
+
+	function resetStores() {
+		useModalStore.setState(initial.modal as never, true);
+		useUIStore.setState(initial.ui as never, true);
+		useSettingsStore.setState(initial.settings as never, true);
+	}
+
+	it('presses every shipped chord to the same effect in all three modes', () => {
+		expect(SHORTCUT_IDS.length).toBeGreaterThan(50);
+		for (const id of SHORTCUT_IDS) {
+			const outcomes = AGENT_MODES.map((mode) => {
+				resetStores();
+				return pressIn(mode, id);
+			});
+			expect({ id, ssh: outcomes[1] }).toEqual({ id, ssh: outcomes[0] });
+			expect({ id, hosted: outcomes[2] }).toEqual({ id, hosted: outcomes[0] });
+		}
+		resetStores();
 	});
 });

@@ -5,7 +5,7 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SessionFederationBadge } from '../../../../renderer/components/SessionList/SessionFederationBadge';
+import { AgentModePill } from '../../../../renderer/components/SessionList/AgentModePill';
 import { useSshOutageStore } from '../../../../renderer/stores/sshOutageStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -28,9 +28,9 @@ afterEach(() => {
 	useSshOutageStore.setState({ outages: {} });
 });
 
-describe('SessionFederationBadge', () => {
+describe('AgentModePill', () => {
 	it('shows the amber, unstruck chip while the remote is reachable', () => {
-		render(<SessionFederationBadge theme={mockTheme} session={session} />);
+		render(<AgentModePill theme={mockTheme} session={session} />);
 		const badge = screen.getByTestId('federation-badge-ssh');
 		expect(badge).toHaveStyle({ color: mockTheme.colors.warning });
 		expect(badge.style.textDecoration).toBe('');
@@ -38,10 +38,10 @@ describe('SessionFederationBadge', () => {
 
 	it('turns red and struck through when its remote is down, without surfacing the dialog', () => {
 		useSshOutageStore.getState().applyReachability(downEvent);
-		render(<SessionFederationBadge theme={mockTheme} session={session} />);
+		render(<AgentModePill theme={mockTheme} session={session} />);
 
 		const badge = screen.getByTestId('federation-badge-ssh');
-		expect(badge).toHaveTextContent('SSH');
+		expect(badge).toHaveTextContent('REMOTE');
 		expect(badge).toHaveStyle({ color: mockTheme.colors.error });
 		expect(badge.style.textDecoration).toBe('line-through');
 
@@ -57,7 +57,7 @@ describe('SessionFederationBadge', () => {
 
 	it('ignores an outage on a different remote', () => {
 		useSshOutageStore.getState().applyReachability({ ...downEvent, remoteId: 'remote-2' });
-		render(<SessionFederationBadge theme={mockTheme} session={session} />);
+		render(<AgentModePill theme={mockTheme} session={session} />);
 		expect(screen.getByTestId('federation-badge-ssh')).toHaveStyle({
 			color: mockTheme.colors.warning,
 		});
@@ -65,7 +65,7 @@ describe('SessionFederationBadge', () => {
 
 	it('goes back to amber when the remote recovers', () => {
 		useSshOutageStore.getState().applyReachability(downEvent);
-		render(<SessionFederationBadge theme={mockTheme} session={session} />);
+		render(<AgentModePill theme={mockTheme} session={session} />);
 		expect(screen.getByTestId('federation-badge-ssh').style.textDecoration).toBe('line-through');
 
 		act(() => {

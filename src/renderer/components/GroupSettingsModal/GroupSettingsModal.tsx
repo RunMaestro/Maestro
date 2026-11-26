@@ -662,7 +662,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 							additionalDirectories={{
 								directories: own.additionalDirectories,
 								onChange: (directories) => setField('additionalDirectories', directories),
-								disableBrowse: sshRemoteChosen,
+								sshRemoteId: sshRemoteChosen ? (ac.sshRemoteConfig?.remoteId ?? null) : undefined,
 								nativelyEnforced:
 									!!selectedAgentConfig?.capabilities?.supportsAdditionalDirectories,
 							}}

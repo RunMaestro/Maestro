@@ -23,6 +23,7 @@ import type { AITab, LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
+import { consultTabToReplace } from '../../../shared/maestro-lib/agents/rules';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
 import {
@@ -40,6 +41,8 @@ import {
 	resolveTabProvider,
 	updateProviderSlot,
 } from '../../utils/providerTabSessions';
+import { hostedTargetOf, type HostedTarget } from '../../services/hostedTurns';
+import { askMirrorConsult, cancelMirrorConsult } from '../../services/peerMirror';
 import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
@@ -121,6 +124,11 @@ export interface SendCrossAgentRequestOptions {
 	 * transcript BEFORE that turn, so the answer is not sent twice.
 	 */
 	handoffAnswer?: string;
+	/**
+	 * The context, already windowed, for an asker this machine does not hold (a consult a
+	 * Federation peer asked of this desktop). Wins over windowing `sourceLogs`.
+	 */
+	contextTranscript?: CrossAgentTranscriptEntry[];
 	managedQueue?: { dispatchId: string; generation: string; handoff?: boolean };
 	/**
 	 * The consulted agent's place in a consult chain, when the consult was
@@ -230,6 +238,34 @@ export function buildCrossAgentLogEntry(
 }
 
 /**
+ * Consult tabs a consult is running in now, as `targetSessionId -> tabId -> count`. A consult tab
+ * is never marked busy (the consult is a background process, not a turn of that tab), so this is
+ * how the consult tab cap (`consultTabToReplace`) leaves a running consult's tab alone. Held from
+ * `ensureConsultTab` until the consult's terminal chunk, or until its send fails.
+ */
+const consultTabsInUse = new Map<string, Map<string, number>>();
+
+function holdConsultTab(targetSessionId: string, tabId: string): void {
+	let tabs = consultTabsInUse.get(targetSessionId);
+	if (!tabs) {
+		tabs = new Map();
+		consultTabsInUse.set(targetSessionId, tabs);
+	}
+	tabs.set(tabId, (tabs.get(tabId) ?? 0) + 1);
+}
+
+/** Release one hold taken by `ensureConsultTab`. Safe for a tab never held. */
+export function releaseConsultTab(targetSessionId: string, tabId: string | undefined): void {
+	if (!tabId) return;
+	const tabs = consultTabsInUse.get(targetSessionId);
+	const count = tabs?.get(tabId);
+	if (!tabs || count === undefined) return;
+	if (count > 1) tabs.set(tabId, count - 1);
+	else tabs.delete(tabId);
+	if (tabs.size === 0) consultTabsInUse.delete(targetSessionId);
+}
+
+/**
  * Find-or-create the consult tab on the TARGET agent for this (source tab ->
  * target) pairing, and append the user's question to it.
  *
@@ -290,7 +326,22 @@ export function ensureConsultTab(opts: {
 		// consult must leave the target's view exactly as the user left it. Missing
 		// activeGroupId in particular would silently pop the target out of a tiled
 		// group it was displaying.
-		const created = createTab(session, {
+		// At the cap, the least recently used hidden consult tab gives up its slot (the same rule
+		// a headless host applies), and the new pairing starts on a fresh tab of its own.
+		const inUse = consultTabsInUse.get(opts.targetSessionId);
+		const replaced = consultTabToReplace(session.aiTabs, {
+			inUseTabIds: inUse ? new Set(inUse.keys()) : undefined,
+		});
+		const base = replaced
+			? {
+					...session,
+					aiTabs: session.aiTabs.filter((t) => t.id !== replaced.id),
+					unifiedTabOrder: session.unifiedTabOrder.filter(
+						(ref) => !(ref.type === 'ai' && ref.id === replaced.id)
+					),
+				}
+			: session;
+		const created = createTab(base, {
 			name: buildConsultTabName(opts.sourceAgentName),
 			logs: [questionEntry],
 			saveToHistory: false,
@@ -324,6 +375,8 @@ export function ensureConsultTab(opts: {
 	});
 
 	if (!resolvedTabId || !targetProvider) return null;
+	// The consult now runs in this tab: the cap must not hand its slot to another pairing.
+	holdConsultTab(opts.targetSessionId, resolvedTabId);
 	return { targetTabId: resolvedTabId, targetProvider, resumeAgentSessionId };
 }
 
@@ -509,6 +562,249 @@ async function enrichConsultDetail(opts: {
 }
 
 /**
+ * Land one consult chunk: the attribution bubble on the asking tab, the persisted answer on the
+ * target's consult tab (when this machine keeps it), and, on the terminal chunk, the target's
+ * History, the consult hold, a blocked caller, and the live indicator. Module scope so a consult
+ * answered by a Federation host (one terminal chunk, see {@link sendHostedConsult}) lands through
+ * the same code as a streamed local one.
+ */
+export function applyCrossAgentChunk(
+	chunk: CrossAgentResponseChunk,
+	spawnBackgroundSynopsis?: SpawnBackgroundSynopsisFn
+): void {
+	const map = pendingRequests;
+	let tracked = map.get(chunk.requestId);
+	if (!tracked) {
+		// Chunk for a request this instance didn't register (e.g. a reload
+		// mid-flight). Fall back to the chunk's own ids so the response still
+		// lands, on a fresh entry - including the consult tab if the chunk names one.
+		tracked = {
+			sourceSessionId: chunk.sourceSessionId,
+			sourceTabId: chunk.sourceTabId,
+			logEntryId: generateId(),
+			targetSessionId: chunk.targetSessionId,
+			targetTabId: chunk.targetTabId,
+			targetLogEntryId: generateId(),
+			accumulated: '',
+		};
+		map.set(chunk.requestId, tracked);
+	}
+
+	const { accumulated, displayText } = accumulateCrossAgentChunk(tracked.accumulated, chunk);
+	tracked.accumulated = accumulated;
+
+	const entryId = tracked.logEntryId;
+	const sourceTabId = tracked.sourceTabId;
+
+	// 1. The attribution bubble on the SOURCE tab (what the user reads inline).
+	updateSessionWith(tracked.sourceSessionId, (session) => {
+		const tab = session.aiTabs.find((t) => t.id === sourceTabId);
+		if (!tab) return session; // Source tab was closed; nothing to update.
+
+		const existingIndex = tab.logs.findIndex((l) => l.id === entryId);
+		const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
+		const entry = buildCrossAgentLogEntry(entryId, timestamp, displayText, chunk);
+
+		const nextLogs =
+			existingIndex >= 0
+				? tab.logs.map((l, i) => (i === existingIndex ? entry : l))
+				: [...tab.logs, entry];
+
+		return {
+			...session,
+			aiTabs: session.aiTabs.map((t) => (t.id === tab.id ? { ...t, logs: nextLogs } : t)),
+		};
+	});
+
+	// 2. The persisted copy on the TARGET's consult tab (what the jump arrow
+	// lands on, and what makes the target "remember it was consulted"). Written
+	// as a native `ai` answer - no crossAgent provenance, since from the target's
+	// point of view this IS its own reply.
+	const targetTabId = tracked.targetTabId;
+	if (targetTabId) {
+		const answerId = tracked.targetLogEntryId;
+		updateSessionWith(chunk.targetSessionId, (session) => {
+			const updateTab = (tab: AITab): AITab => {
+				if (tab.id !== targetTabId) return tab;
+				const existingIndex = tab.logs.findIndex((l) => l.id === answerId);
+				const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
+				const answer: LogEntry = {
+					id: answerId,
+					timestamp,
+					source: chunk.error ? 'error' : 'ai',
+					text: displayText,
+					turnProvider: chunk.targetToolType,
+				};
+				const nextLogs =
+					existingIndex >= 0
+						? tab.logs.map((l, i) => (i === existingIndex ? answer : l))
+						: [...tab.logs, answer];
+				// On success, store the target's captured provider session id so the
+				// next mention from this source tab resumes it (continuity).
+				const updated = { ...tab, logs: nextLogs };
+				return chunk.done && chunk.targetAgentSessionId
+					? updateProviderSlot(updated, session, chunk.targetToolType, {
+							agentSessionId: chunk.targetAgentSessionId,
+						})
+					: updated;
+			};
+			return {
+				...session,
+				aiTabs: session.aiTabs.map(updateTab),
+				orphanedThinkingTabs: session.orphanedThinkingTabs?.map(updateTab),
+				closedTabHistory: session.closedTabHistory?.map((entry) => ({
+					...entry,
+					tab: updateTab(entry.tab),
+				})),
+				unifiedClosedTabHistory: session.unifiedClosedTabHistory?.map((entry) =>
+					entry.type === 'ai' ? { ...entry, tab: updateTab(entry.tab) } : entry
+				),
+			};
+		});
+	}
+
+	if (chunk.done) {
+		// The target now has a durable record of the consult, attributed to the
+		// caller so its History shows who consulted it (and about what).
+		recordConsultHistory(tracked, chunk, spawnBackgroundSynopsis);
+		map.delete(chunk.requestId);
+		releaseConsultTab(chunk.targetSessionId, tracked.targetTabId);
+		const completion: CrossAgentCompletion = {
+			text: accumulated,
+			error: chunk.error,
+			canceled: chunk.canceled,
+			targetTabId: tracked.targetTabId,
+			targetAgentSessionId: chunk.targetAgentSessionId,
+			targetToolType: chunk.targetToolType,
+		};
+		rememberCompletion(chunk.requestId, completion);
+		// Release the source turn's consult hold (when it has one) so the agent
+		// that asked gets this reply and can finish its answer. Keyed on the
+		// chunk's own ids, not `tracked`, so it still lands after a reload lost
+		// the request bookkeeping.
+		settleConsultHold({
+			sourceSessionId: chunk.sourceSessionId,
+			sourceTabId: chunk.sourceTabId,
+			targetSessionId: chunk.targetSessionId,
+			targetAgentName: chunk.targetAgentName,
+			text: accumulated,
+			error: chunk.error,
+			canceled: chunk.canceled,
+		});
+		// Hand the answer to a caller blocked on it (`maestro-cli ask`). Runs
+		// after the transcript writes so the consult tab already holds the text
+		// the caller is about to be given.
+		tracked.onComplete?.(completion);
+		// Drop it from the live "N agents responding…" indicator.
+		useCrossAgentInFlightStore.getState().finish(chunk.requestId);
+	}
+}
+
+/**
+ * Hosted consults this machine waits on, by request id. Stop on the asking tab ends the wait
+ * here ({@link cancelHostedConsults}), since no `cross-agent-*` process runs on this machine
+ * for main's consult registry to stop.
+ */
+const hostedConsults = new Map<
+	string,
+	{ sourceSessionId: string; sourceTabId: string; stop: () => void }
+>();
+
+/**
+ * Consult a hosted agent on its Federation host (`askMirrorConsult`). The host runs the consult
+ * in its own hidden consult tab and records it in its History. Its answer lands here as one
+ * terminal chunk through {@link applyCrossAgentChunk}, so the asking tab shows the same bubble,
+ * releases the same hold, and clears the same indicator as for a local target. Never rejects:
+ * a host that cannot answer is a failed consult in the bubble, as a local one is.
+ */
+function sendHostedConsult(
+	opts: SendCrossAgentRequestOptions,
+	target: Session,
+	host: HostedTarget,
+	transcript: CrossAgentTranscriptEntry[],
+	subject: string
+): Promise<void> {
+	const requestId = `hosted-consult-${generateId()}`;
+	pendingRequests.set(requestId, {
+		sourceSessionId: opts.sourceSessionId,
+		sourceTabId: opts.sourceTabId,
+		logEntryId: generateId(),
+		targetSessionId: opts.targetSessionId,
+		targetLogEntryId: generateId(),
+		sourceAgentName: opts.sourceAgentName,
+		subject,
+		accumulated: '',
+		onComplete: opts.onComplete,
+	});
+	useCrossAgentInFlightStore.getState().start({
+		requestId,
+		sourceSessionId: opts.sourceSessionId,
+		sourceTabId: opts.sourceTabId,
+		targetSessionId: opts.targetSessionId,
+		targetAgentName: target.name,
+		targetToolType: target.toolType,
+		startedAt: Date.now(),
+	});
+
+	let settled = false;
+	const finish = (fields: Partial<CrossAgentResponseChunk>): void => {
+		if (settled) return;
+		settled = true;
+		hostedConsults.delete(requestId);
+		applyCrossAgentChunk({
+			requestId,
+			sourceSessionId: opts.sourceSessionId,
+			sourceTabId: opts.sourceTabId,
+			targetSessionId: opts.targetSessionId,
+			targetAgentName: target.name,
+			targetToolType: target.toolType,
+			chunk: '',
+			done: true,
+			...fields,
+		});
+	};
+	// The host keeps one consult tab per asking (machine, agent, tab), as this machine keeps one per
+	// asking tab, so a follow-up from this tab continues its own thread there.
+	const asker = { agentId: opts.sourceSessionId, tabId: opts.sourceTabId };
+	hostedConsults.set(requestId, {
+		sourceSessionId: opts.sourceSessionId,
+		sourceTabId: opts.sourceTabId,
+		// Stop ends the wait here at once and the run on the host, so the host records the consult
+		// as stopped, as main records a local target's.
+		stop: () => {
+			finish({ canceled: true });
+			void cancelMirrorConsult(host.peerId, host.agentId, asker);
+		},
+	});
+
+	return askMirrorConsult(host.peerId, host.agentId, {
+		question: opts.userPrompt,
+		...(transcript.length > 0 ? { transcript } : {}),
+		fromAgentName: opts.sourceAgentName,
+		asker,
+		...(opts.handoffAnswer !== undefined ? { handoffAnswer: opts.handoffAnswer } : {}),
+	}).then((reply) => {
+		if ('error' in reply) finish({ error: reply.error });
+		else finish({ chunk: reply.answer, targetAgentName: reply.agentName ?? target.name });
+	});
+}
+
+/**
+ * Stop the hosted consults an asking agent waits on: every tab of it, or only `sourceTabId`. Each
+ * one ends as a stopped consult in its bubble, as main's `crossAgent.cancel` ends a local one;
+ * an answer the host sends later is dropped. Returns how many it stopped.
+ */
+export function cancelHostedConsults(sourceSessionId: string, sourceTabId?: string | null): number {
+	const stopping = [...hostedConsults.values()].filter(
+		(consult) =>
+			consult.sourceSessionId === sourceSessionId &&
+			(!sourceTabId || consult.sourceTabId === sourceTabId)
+	);
+	for (const consult of stopping) consult.stop();
+	return stopping.length;
+}
+
+/**
  * Fire a cross-agent consult at ONE resolved target. Fire-and-forget: the
  * caller's chat is never blocked.
  *
@@ -523,12 +819,20 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promi
 	// synchronously, from the user's question (mentions stripped), at summary
 	// length: the History line is CSS-clamped, and the pill cuts its own label.
 	const subject = deriveConsultSubject(opts.userPrompt, CONSULT_SUMMARY_MAX_LENGTH);
-	const windowed = selectContextWindow(opts.sourceLogs, strategy);
-	const transcript: CrossAgentTranscriptEntry[] = windowed.map((l) => ({
-		source: l.source,
-		text: l.text,
-		timestamp: l.timestamp,
-	}));
+	const transcript: CrossAgentTranscriptEntry[] =
+		opts.contextTranscript ??
+		selectContextWindow(opts.sourceLogs, strategy).map((l) => ({
+			source: l.source,
+			text: l.text,
+			timestamp: l.timestamp,
+		}));
+
+	// A hosted target answers on its host, which keeps the consult tab and the History entry, as
+	// this machine does for a local target. Only the transport differs: the asking tab draws the
+	// same bubble, hold, and indicator. A Pianola-managed consult stays with main's queue.
+	const target = useSessionStore.getState().sessions.find((s) => s.id === opts.targetSessionId);
+	const host = opts.managedQueue ? undefined : hostedTargetOf(target);
+	if (target && host) return sendHostedConsult(opts, target, host, transcript, subject);
 
 	// Find-or-create the consult tab on the target BEFORE dispatch, so the
 	// question is persisted immediately and we know which provider session to
@@ -609,10 +913,9 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promi
 					onComplete: opts.onComplete,
 				});
 			}
-			// Register for the live "N agents responding…" indicator. Resolve
-			// the target's display name/tool type now (it came from the same
-			// sessions list) rather than waiting on the first response chunk.
-			const target = useSessionStore.getState().sessions.find((s) => s.id === opts.targetSessionId);
+			// Register for the live "N agents responding…" indicator. The target's
+			// display name/tool type come from the record read before the send,
+			// rather than waiting on the first response chunk.
 			useCrossAgentInFlightStore.getState().start({
 				requestId,
 				sourceSessionId: opts.sourceSessionId,
@@ -635,6 +938,8 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promi
 			// A rejected send never produces a chunk, so nothing else will ever
 			// settle a caller blocked on the answer - or the source turn's consult
 			// hold, which would otherwise wait on this target forever.
+			// No chunk will ever release the consult tab this send held.
+			releaseConsultTab(opts.targetSessionId, consult?.targetTabId);
 			if (opts.managedQueue) throw err; // native uncertainty owns the held queue row
 			const error = err instanceof Error ? err.message : String(err);
 			settleConsultHold({
@@ -666,131 +971,7 @@ export function useCrossAgentDispatch(
 	spawnSynopsisRef.current = spawnBackgroundSynopsis;
 
 	const applyChunk = useCallback((chunk: CrossAgentResponseChunk): void => {
-		const map = pendingRequests;
-		let tracked = map.get(chunk.requestId);
-		if (!tracked) {
-			// Chunk for a request this instance didn't register (e.g. a reload
-			// mid-flight). Fall back to the chunk's own ids so the response still
-			// lands, on a fresh entry - including the consult tab if the chunk names one.
-			tracked = {
-				sourceSessionId: chunk.sourceSessionId,
-				sourceTabId: chunk.sourceTabId,
-				logEntryId: generateId(),
-				targetSessionId: chunk.targetSessionId,
-				targetTabId: chunk.targetTabId,
-				targetLogEntryId: generateId(),
-				accumulated: '',
-			};
-			map.set(chunk.requestId, tracked);
-		}
-
-		const { accumulated, displayText } = accumulateCrossAgentChunk(tracked.accumulated, chunk);
-		tracked.accumulated = accumulated;
-
-		const entryId = tracked.logEntryId;
-		const sourceTabId = tracked.sourceTabId;
-
-		// 1. The attribution bubble on the SOURCE tab (what the user reads inline).
-		updateSessionWith(tracked.sourceSessionId, (session) => {
-			const tab = session.aiTabs.find((t) => t.id === sourceTabId);
-			if (!tab) return session; // Source tab was closed; nothing to update.
-
-			const existingIndex = tab.logs.findIndex((l) => l.id === entryId);
-			const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
-			const entry = buildCrossAgentLogEntry(entryId, timestamp, displayText, chunk);
-
-			const nextLogs =
-				existingIndex >= 0
-					? tab.logs.map((l, i) => (i === existingIndex ? entry : l))
-					: [...tab.logs, entry];
-
-			return {
-				...session,
-				aiTabs: session.aiTabs.map((t) => (t.id === tab.id ? { ...t, logs: nextLogs } : t)),
-			};
-		});
-
-		// 2. The persisted copy on the TARGET's consult tab (what the jump arrow
-		// lands on, and what makes the target "remember it was consulted"). Written
-		// as a native `ai` answer - no crossAgent provenance, since from the target's
-		// point of view this IS its own reply.
-		const targetTabId = tracked.targetTabId;
-		if (targetTabId) {
-			const answerId = tracked.targetLogEntryId;
-			updateSessionWith(chunk.targetSessionId, (session) => {
-				const updateTab = (tab: AITab): AITab => {
-					if (tab.id !== targetTabId) return tab;
-					const existingIndex = tab.logs.findIndex((l) => l.id === answerId);
-					const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
-					const answer: LogEntry = {
-						id: answerId,
-						timestamp,
-						source: chunk.error ? 'error' : 'ai',
-						text: displayText,
-						turnProvider: chunk.targetToolType,
-					};
-					const nextLogs =
-						existingIndex >= 0
-							? tab.logs.map((l, i) => (i === existingIndex ? answer : l))
-							: [...tab.logs, answer];
-					// On success, store the target's captured provider session id so the
-					// next mention from this source tab resumes it (continuity).
-					const updated = { ...tab, logs: nextLogs };
-					return chunk.done && chunk.targetAgentSessionId
-						? updateProviderSlot(updated, session, chunk.targetToolType, {
-								agentSessionId: chunk.targetAgentSessionId,
-							})
-						: updated;
-				};
-				return {
-					...session,
-					aiTabs: session.aiTabs.map(updateTab),
-					orphanedThinkingTabs: session.orphanedThinkingTabs?.map(updateTab),
-					closedTabHistory: session.closedTabHistory?.map((entry) => ({
-						...entry,
-						tab: updateTab(entry.tab),
-					})),
-					unifiedClosedTabHistory: session.unifiedClosedTabHistory?.map((entry) =>
-						entry.type === 'ai' ? { ...entry, tab: updateTab(entry.tab) } : entry
-					),
-				};
-			});
-		}
-
-		if (chunk.done) {
-			// The target now has a durable record of the consult, attributed to the
-			// caller so its History shows who consulted it (and about what).
-			recordConsultHistory(tracked, chunk, spawnSynopsisRef.current);
-			map.delete(chunk.requestId);
-			const completion: CrossAgentCompletion = {
-				text: accumulated,
-				error: chunk.error,
-				canceled: chunk.canceled,
-				targetTabId: tracked.targetTabId,
-				targetAgentSessionId: chunk.targetAgentSessionId,
-				targetToolType: chunk.targetToolType,
-			};
-			rememberCompletion(chunk.requestId, completion);
-			// Release the source turn's consult hold (when it has one) so the agent
-			// that asked gets this reply and can finish its answer. Keyed on the
-			// chunk's own ids, not `tracked`, so it still lands after a reload lost
-			// the request bookkeeping.
-			settleConsultHold({
-				sourceSessionId: chunk.sourceSessionId,
-				sourceTabId: chunk.sourceTabId,
-				targetSessionId: chunk.targetSessionId,
-				targetAgentName: chunk.targetAgentName,
-				text: accumulated,
-				error: chunk.error,
-				canceled: chunk.canceled,
-			});
-			// Hand the answer to a caller blocked on it (`maestro-cli ask`). Runs
-			// after the transcript writes so the consult tab already holds the text
-			// the caller is about to be given.
-			tracked.onComplete?.(completion);
-			// Drop it from the live "N agents responding…" indicator.
-			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
-		}
+		applyCrossAgentChunk(chunk, spawnSynopsisRef.current);
 	}, []);
 
 	useEffect(() => {

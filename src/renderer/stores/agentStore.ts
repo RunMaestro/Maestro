@@ -69,6 +69,8 @@ import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { hostedTargetOf, openHostedTab } from '../services/hostedTurns';
+import { isQueuedItemForHost, sendTakenItemToHost } from '../services/hostedQueuedTurn';
 import {
 	dispatchCrossAgentMentionsForMessage,
 	dispatchCrossAgentMentions,
@@ -88,7 +90,7 @@ import {
 	SPAWN_COLLISION_MAX_ATTEMPTS,
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
-import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
+import { queuedItemNamingText, requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 import { admitGrokNativeCommand, getGrokSlashCommandRefusal } from '../slashCommands';
 import type { GrokAcpNativeCommandIntent } from '../../shared/maestro-lib/grok/acp-turn';
 import {
@@ -392,6 +394,18 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// Clear the error state
 		get().clearAgentError(sessionId);
 
+		// A hosted agent's tabs live on its host: the host opens the new tab, as New Tab does, with
+		// the same Save to History and thinking a local new tab gets here.
+		if (hostedTargetOf(session)) {
+			void openHostedTab(session, {
+				fields: {
+					...(options?.saveToHistory !== undefined ? { saveToHistory: options.saveToHistory } : {}),
+					...(options?.showThinking !== undefined ? { showThinking: options.showThinking } : {}),
+				},
+			});
+			return;
+		}
+
 		// Create a new tab in the session
 		updateSession(sessionId, (s) => {
 			const result = createTab(s, {
@@ -458,6 +472,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		)
 			return false;
 		if (migrationHoldsTurns(session.providerMigration)) return false;
+
+		// A hosted agent's turns run on its Federation host, and main refuses a spawn here. Whatever
+		// queued this item (a snooze, a review, a web client, one left from before the move), it goes
+		// to the host the way the composer's send does. The tab the dequeue marked running is
+		// released first: the host's update draws the turn.
+		if (isQueuedItemForHost(session, item)) {
+			updateSessionWith(sessionId, (s) =>
+				applyQueuedItemAbort(s, item, queuedItemOwnerTabId(s, item))
+			);
+			return sendTakenItemToHost(sessionId, item);
+		}
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that
@@ -625,14 +650,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// way the composer does. A released consult hold (`agentContext`) is
 		// skipped: its text is Maestro's own "X replied" note, not something the
 		// user asked for, and the message it continues was named when it was sent.
-		if (
-			!managedQueue &&
-			item.type === 'message' &&
-			item.text?.trim() &&
-			!item.agentContext &&
-			!item.awaitingConsult
-		) {
-			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		const namingText = managedQueue ? undefined : queuedItemNamingText(item);
+		if (namingText) {
+			requestTabAutoNameForMessage(session, targetTab.id, namingText, 'queue');
 		}
 
 		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message

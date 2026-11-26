@@ -206,6 +206,10 @@ export function registerCommandCallbacks(
 					...(params.consultChain ? { consultChain: params.consultChain } : {}),
 					sideQuestion: params.sideQuestion,
 					targetTabId: params.targetTabId,
+					transcript: params.transcript,
+					fromAgentName: params.fromAgentName,
+					askerKey: params.askerKey,
+					handoffAnswer: params.handoffAnswer,
 				},
 			],
 		});

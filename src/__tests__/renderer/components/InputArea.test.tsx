@@ -10,7 +10,16 @@ import { resolveDictationTarget } from '../../../renderer/services/dictation';
 import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Session } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import { createMockDesignPick } from '../../helpers/mockTab';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -3050,5 +3059,72 @@ describe('InputArea on a phone', () => {
 		render(<InputArea {...createDefaultProps()} />);
 		expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
 		expect(screen.getByRole('textbox')).toBeInTheDocument();
+	});
+});
+
+// docs/parity/agent-ux-parity.md, Composer: the send column, the Attach Image control, the
+// staged image strip, and the model, effort, and thinking pills are one composer in every
+// mode. Rendered for a local, an SSH, and a hosted agent, the DOM is identical.
+describe('InputArea mode parity', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
+		useSettingsStore.setState({ federationHostedAgents: true } as any);
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+	});
+
+	afterEach(() => {
+		useSettingsStore.setState({ federationHostedAgents: false } as any);
+		usePeerMirrorStore.setState({ peers: {} } as any);
+	});
+
+	it('draws the same composer for a local, an SSH, and a hosted agent', async () => {
+		// The thinking toggle shows for a provider that can stream its reasoning.
+		const capabilities = await import('../../../renderer/hooks/agent/useAgentCapabilities');
+		const original = vi.mocked(capabilities.useAgentCapabilities).getMockImplementation()!;
+		vi.mocked(capabilities.useAgentCapabilities).mockImplementation((...args) => {
+			const value = original(...args);
+			return {
+				...value,
+				hasCapability: (cap: Parameters<typeof value.hasCapability>[0]) =>
+					cap === 'supportsThinkingDisplay' || value.hasCapability(cap),
+			};
+		});
+		const markup = AGENT_MODES.map((mode) => {
+			const session = createMockSession({ ...agentModeFields(mode), inputMode: 'ai' });
+			const props = createDefaultProps({
+				session,
+				inputValue: 'hello',
+				stagedImages: ['data:image/png;base64,AA'],
+				supportsThinking: true,
+				tabShowThinking: 'on',
+				onToggleTabShowThinking: vi.fn(),
+				currentModel: 'opus',
+				currentEffort: 'high',
+				availableModels: ['opus', 'sonnet'],
+				availableEfforts: ['low', 'high'],
+				onModelChange: vi.fn(),
+				onEffortChange: vi.fn(),
+			});
+			const { container, unmount } = render(<InputArea {...props} />);
+			// The controls the Composer rows name are present in every mode.
+			expect(screen.getByTitle('Send message')).toBeInTheDocument();
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+			expect(screen.getByTitle('Change model')).toBeInTheDocument();
+			expect(screen.getByTitle('Change effort level')).toBeInTheDocument();
+			expect(screen.getByTitle(/^Thinking/)).toBeInTheDocument();
+			const html = container.innerHTML;
+			unmount();
+			return html;
+		});
+		vi.mocked(capabilities.useAgentCapabilities).mockImplementation(original);
+		expect(markup[1]).toBe(markup[0]);
+		expect(markup[2]).toBe(markup[0]);
 	});
 });

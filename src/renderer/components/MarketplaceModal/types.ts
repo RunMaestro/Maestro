@@ -8,8 +8,12 @@ export interface MarketplaceModalProps {
 	onClose: () => void;
 	autoRunFolderPath: string;
 	sessionId: string;
-	/** SSH remote ID for importing to remote hosts */
-	sshRemoteId?: string;
+	/**
+	 * The agent's `pathPickerRemoteId()`: where Browse lists and the import writes. `null` is an
+	 * SSH agent whose remote is not resolved yet: Browse says so and the import fails with that
+	 * reason, so nothing is written to this machine's disk instead.
+	 */
+	sshRemoteId?: string | null;
 	onImportComplete: (folderName: string) => void;
 }
 
@@ -63,8 +67,6 @@ export interface PlaybookDetailViewProps {
 	isLoadingDocument: boolean;
 	targetFolderName: string;
 	isImporting: boolean;
-	/** Whether this is a remote SSH session (disables local folder browsing) */
-	isRemoteSession: boolean;
 	runningVersion: string;
 	onBack: () => void;
 	onSelectDocument: (filename: string) => void;

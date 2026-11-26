@@ -676,6 +676,70 @@ describe('app-lifecycle/quit-handler', () => {
 			vi.useRealTimers();
 		});
 
+		it('holds the hard exit until opened remote copies have sent their saved changes', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			let landWrites!: () => void;
+			const flushPendingRemoteWrites = vi.fn(
+				() => new Promise<void>((resolve) => (landWrites = resolve))
+			);
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites,
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(750);
+			expect(flushPendingRemoteWrites).toHaveBeenCalledTimes(1);
+			expect(process.kill).not.toHaveBeenCalled();
+
+			landWrites();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('holds a second quit request behind the remote-copy wait too', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+			await vi.advanceTimersByTimeAsync(1000);
+
+			const again = { preventDefault: vi.fn() };
+			beforeQuitHandler!(again);
+			expect(again.preventDefault).toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
+			vi.useRealTimers();
+		});
+
+		it('stops waiting for remote copy writes after the bound', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				// A dead connection: the writes never settle.
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS - 1);
+			expect(process.kill).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
 		it('should not run cleanup or arm the timer twice on a re-entrant before-quit', async () => {
 			vi.useFakeTimers();
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');

@@ -412,10 +412,11 @@ export interface LogEntry {
 		 * REQUEST at least as much as the command line.
 		 */
 		request?: string;
-		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
+		/**
+		 * Directory the command ran in (the agent's cwd, or the remote's). The remote's name is not
+		 * kept: the mode pill is the one mark of where an agent runs.
+		 */
 		cwd: string;
-		/** SSH remote name when the agent runs remotely, else undefined. */
-		remoteName?: string;
 		status: 'running' | 'finished' | 'cancelled';
 		exitCode?: number;
 		/** Wall-clock duration in ms, set on finish. */
@@ -1043,6 +1044,13 @@ export interface AITab {
 	 */
 	hidden?: boolean;
 	/**
+	 * On a hosted agent's tab: the `liftedTo.at` of the hosting during which the host reported
+	 * this tab (`projectHostedSession()`). A tab the host reported and then stopped listing was
+	 * closed on the host, so the record drops it too; a tab without it (or from an earlier
+	 * hosting) is a conversation kept from before the move, and stays.
+	 */
+	hostSeenAt?: number;
+	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
 	 * and is deleted when the next chat starts; a kept one is an ordinary tab.
@@ -1627,6 +1635,8 @@ export interface Session {
 		fileCount: number;
 		folderCount: number;
 		totalSize: number;
+		/** The size walk stopped counting files at its cap: the footer shows "N+". */
+		fileCountCapped?: boolean;
 	};
 	/** True when the last file tree load hit the entry cap and stopped early. */
 	fileTreeTruncated?: boolean;
@@ -1949,6 +1959,12 @@ export interface Session {
 		mode: 'interactive' | 'api';
 		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
+		/**
+		 * Why the most recent TUI turn has no steering channel when the settings say
+		 * it should (its SSH remote's maestro-p predates the steering relay). Absent
+		 * when the turn can be steered. Written by the spawner with `mode`.
+		 */
+		steeringUnavailable?: import('../../shared/chatSteering').SteeringUnavailableReason;
 	};
 }
 

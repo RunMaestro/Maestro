@@ -652,6 +652,8 @@ export function createConsultService() {
 					// for agents without the native flag (already in that transcript).
 					appendSystemPrompt,
 					isResume: !!resumeAgentSessionId && !!agent.resumeArgs,
+					ownerAgentId: request.targetSessionId,
+					launchFeature: 'consult',
 				},
 				observer
 			);

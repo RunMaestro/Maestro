@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { isUtf8 } from 'node:buffer';
 import { posix } from 'node:path';
 import * as path from 'path';
@@ -261,7 +262,11 @@ async function execRemoteCommand(
 	remoteCommand: string,
 	deps: RemoteFsDeps = defaultDeps,
 	input?: string,
-	retry: boolean = true
+	/**
+	 * `retry: false` for a command that must not run twice: after a dropped
+	 * connection the first run may still be going on the remote.
+	 */
+	{ retry = true }: { retry?: boolean } = {}
 ): Promise<ExecResult> {
 	const { baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
 	// A lost write acknowledgement leaves ownership uncertain. Replaying a
@@ -1550,7 +1555,7 @@ export async function symlinkRemote(
 		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(targetPath)} ${shellEscapeRemotePath(linkPath)}`,
 		deps,
 		undefined,
-		false
+		{ retry: false }
 	);
 	if (result.exitCode === 73) {
 		return { success: false, code: 'EEXIST', error: `Path already exists: ${linkPath}` };
@@ -1730,6 +1735,164 @@ export async function writeFileRemote(
 	return { success: true };
 }
 
+/** Exit status of {@link replaceFileRemoteIfUnchanged}'s script when the remote file is not the expected one. */
+const REPLACE_IF_UNCHANGED_CHANGED = 3;
+/** Exit status of a remote hash script when the remote has no SHA-256 tool. */
+const REMOTE_SHA256_NO_TOOL = 5;
+
+/**
+ * The lines of a remote `/bin/sh` script that define `sum <file>` (the file's
+ * SHA-256 in hex, from `sha256sum` or `shasum`), and exit
+ * {@link REMOTE_SHA256_NO_TOOL} when the host has neither. The file goes in on
+ * stdin, so its name never reaches the output (GNU `sha256sum` escapes a name
+ * with a backslash by prefixing the line), and a file that cannot be read makes
+ * `sum` fail instead of printing nothing.
+ */
+const REMOTE_SHA256_PRELUDE = [
+	'sum() { if command -v sha256sum >/dev/null 2>&1; then __d=$(sha256sum < "$1") || return 1; else __d=$(shasum -a 256 < "$1") || return 1; fi; printf "%s\\n" "${__d%% *}"; }',
+	'command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || exit ' +
+		REMOTE_SHA256_NO_TOOL,
+];
+
+/**
+ * The line of a remote `/bin/sh` script that defines `gone <path>`: succeeds
+ * when the path is confirmed not to be a regular file (it is absent, or is
+ * something else), and fails, saying so on stderr, when the path cannot be
+ * looked up (a folder on the way cannot be searched). An access error is
+ * retryable; only a confirmed absence reads as the remote file having changed.
+ * The nearest folder above the path that can be stat-ed decides: if it can be
+ * searched, the next name below it really is not there.
+ */
+const REMOTE_PATH_GONE_PRELUDE =
+	'gone() { if [ -e "$1" ] || [ -L "$1" ]; then return 0; fi; __p=$1; while :; do __p=$(dirname -- "$__p"); if [ -d "$__p" ]; then [ -x "$__p" ] && return 0; echo "Permission denied: cannot reach $1" >&2; return 1; fi; case $__p in /|.) return 0;; esac; done; }';
+
+function noRemoteSha256Message(filePath: string): string {
+	return `The remote host has no sha256sum or shasum to check ${filePath}`;
+}
+
+/**
+ * The SHA-256 (lowercase hex) of a remote file, taken ON the remote, so the
+ * file's bytes never cross the connection. `null` when there is no regular
+ * file at the path.
+ */
+export async function sha256FileRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string | null>> {
+	const script = [
+		`f=${shellEscapeRemotePath(filePath)}`,
+		...REMOTE_SHA256_PRELUDE,
+		REMOTE_PATH_GONE_PRELUDE,
+		'if [ ! -f "$f" ]; then gone "$f" && exit 0; exit 1; fi',
+		'sum "$f" || exit 1',
+	].join('\n');
+	const result = await execRemoteCommand(sshRemote, `/bin/sh -c ${shellEscape(script)}`, deps);
+	if (result.exitCode === REMOTE_SHA256_NO_TOOL) {
+		return { success: false, error: noRemoteSha256Message(filePath) };
+	}
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to read file: ${filePath}`;
+		return {
+			success: false,
+			error: error.includes('Permission denied') ? `Permission denied: ${filePath}` : error,
+		};
+	}
+	const digest = result.stdout.trim();
+	if (digest === '') return { success: true, data: null };
+	if (!/^[0-9a-f]{64}$/.test(digest)) {
+		return { success: false, error: `Unexpected hash output for ${filePath}` };
+	}
+	return { success: true, data: digest };
+}
+
+/**
+ * Write `content` over a remote file only if the file still holds the bytes
+ * whose SHA-256 is `expectedSha256` (the write-back of a copy opened in another
+ * app). One SSH round trip:
+ *
+ * 1. The bytes go to a temp file on the remote first, and are hashed there: an
+ *    upload cut short (even at a base64 boundary) is refused before the
+ *    target is touched.
+ * 2. The target is hashed there and compared with `expectedSha256`; a target
+ *    that changed, or is confirmed gone, is left alone and reported as
+ *    `changed`. A target that cannot be read or reached is a failure, not a
+ *    change, so the next save tries again.
+ * 3. The temp file is copied INTO the target (not moved over it), which keeps
+ *    the target's mode, owner, ACLs, and hard links, and needs no write
+ *    permission on the folder. That copy truncates the target first, so the
+ *    script ignores a hang-up from there on: a connection that drops mid-copy
+ *    (sshd sends SIGHUP to the session) no longer kills it. A copy that fails
+ *    (the target's disk is full) puts the target's earlier bytes back from a
+ *    private temp copy (mode 0600), and reports the failure.
+ *
+ * Steps 2 and 3 run back to back on the remote host, which leaves the window for
+ * another writer at the remote's own speed instead of an SSH round trip. A
+ * target that already holds `content` (a retried write that had landed) counts
+ * as written.
+ */
+export async function replaceFileRemoteIfUnchanged(
+	filePath: string,
+	content: Buffer,
+	expectedSha256: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void> & { changed?: boolean }> {
+	if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+		throw new RangeError('expectedSha256 must be a lowercase SHA-256 hex digest');
+	}
+	const contentSha256 = createHash('sha256').update(content).digest('hex');
+	const script = [
+		`f=${shellEscapeRemotePath(filePath)}`,
+		...REMOTE_SHA256_PRELUDE,
+		REMOTE_PATH_GONE_PRELUDE,
+		'tmp=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
+		'trap \'rm -f "$tmp"\' EXIT',
+		'base64 -d > "$tmp" || exit 1',
+		'got=$(sum "$tmp") || exit 1',
+		`[ "$got" = ${contentSha256} ] || { echo "The upload did not arrive whole" >&2; exit 1; }`,
+		`if [ ! -f "$f" ]; then gone "$f" && exit ${REPLACE_IF_UNCHANGED_CHANGED}; exit 1; fi`,
+		'cur=$(sum "$f") || exit 1',
+		`[ "$cur" = ${contentSha256} ] && exit 0`,
+		`[ "$cur" = ${expectedSha256} ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
+		// The target's bytes now, to put back if the copy into it fails midway. The
+		// backup is made by mktemp (mode 0600) and copied INTO, so it never takes
+		// the target's mode where other users could read it.
+		'orig=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
+		'trap \'rm -f "$tmp" "$orig"\' EXIT',
+		'cp "$f" "$orig" || exit 1',
+		// Ignored signals are inherited, so the `cat` survives the hang-up too.
+		"trap '' HUP PIPE",
+		'if ! cat "$tmp" > "$f"; then',
+		'  if cp "$orig" "$f"; then echo "Could not write the file (is the disk full?); it was left as it was" >&2; else echo "Could not write the file, and could not put it back as it was" >&2; fi',
+		'  exit 1',
+		'fi',
+	].join('\n');
+	// Never run twice: a retry after a dropped connection would hash the target
+	// while the first run's copy (which survives the hang-up) is still writing it,
+	// and read its own half-written bytes as a change by someone else. A failure
+	// is reported instead; the next save finds the copy landed and counts it.
+	const result = await execRemoteCommand(
+		sshRemote,
+		`/bin/sh -c ${shellEscape(script)}`,
+		deps,
+		content.toString('base64'),
+		{ retry: false }
+	);
+	if (result.exitCode === 0) return { success: true };
+	if (result.exitCode === REPLACE_IF_UNCHANGED_CHANGED) {
+		return { success: false, changed: true, error: `The remote file changed: ${filePath}` };
+	}
+	if (result.exitCode === REMOTE_SHA256_NO_TOOL) {
+		return { success: false, error: `${noRemoteSha256Message(filePath)} before writing` };
+	}
+	const error = result.stderr || `Failed to write file: ${filePath}`;
+	return {
+		success: false,
+		error: error.includes('Permission denied') ? `Permission denied: ${filePath}` : error,
+	};
+}
+
 /**
  * Replace a remote file through a private temporary file in the same directory.
  * Payload bytes travel as base64 on stdin. Optional sync flushes before and
@@ -1766,7 +1929,7 @@ export async function writeFileAtomicRemote(
 		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(filePath)} ${Buffer.byteLength(content)}`,
 		deps,
 		Buffer.from(content).toString('base64'),
-		false
+		{ retry: false }
 	);
 	return result.exitCode === 0
 		? { success: true }
@@ -1806,7 +1969,7 @@ export async function createExclusiveRemote(
 		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(filePath)} ${Buffer.byteLength(content)}`,
 		deps,
 		Buffer.from(content).toString('base64'),
-		false
+		{ retry: false }
 	);
 	if (result.exitCode === 73) {
 		return { success: false, code: 'EEXIST', error: `Path already exists: ${filePath}` };
@@ -1943,7 +2106,9 @@ export async function deleteRemote(
 	const remoteCommand = `rm ${rmFlags} ${escapedPath}`;
 
 	// A lost reply may follow a successful unlink; retrying could delete a new owner's file.
-	const result = await execRemoteCommand(sshRemote, remoteCommand, deps, undefined, false);
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps, undefined, {
+		retry: false,
+	});
 
 	if (result.exitCode !== 0) {
 		const error = result.stderr || `Failed to delete: ${targetPath}`;
@@ -2187,6 +2352,53 @@ export interface ListTreeOptions {
 	 * to `maxDepth`. Omit for unlimited.
 	 */
 	maxFiles?: number;
+	/**
+	 * Fail instead of leaving out a part of the tree the walk cannot read. Without it an
+	 * unreadable subfolder is skipped quietly (the file explorer's view: show what can be read).
+	 * With it the listing fails with a message that names the first unreadable path, which is
+	 * what a copy of the folder needs: a copy that silently lacks a subfolder is a wrong copy.
+	 * The symlink-loop reports of `find -L` are not failures: the loop is listed once, as the
+	 * walk without `strict` lists it.
+	 */
+	strict?: boolean;
+	/**
+	 * Also report each listed file's size in bytes (`ListTreeResult.fileSizes`), so a caller can
+	 * refuse a tree that is too large before it fetches a byte. Read by a separate `stat` walk: a
+	 * file `stat` cannot read keeps its place in `files` with an unknown (`null`) size.
+	 */
+	withSizes?: boolean;
+}
+
+/**
+ * Whether one `find -L` error line (under `LC_ALL=C`) is a symlink-loop report, which the walk
+ * already skipped. Read from the line's structure, never from words anywhere in it: a path is
+ * remote text, and a folder named "causes a cycle" must not hide its own permission error.
+ * GNU opens the line with the diagnostic (every path in it starts with a quote or `./`); BSD and
+ * the ELOOP case end it with the reason, after the final `: `, which a quoted path cannot reach.
+ */
+function isFindLoopReport(line: string): boolean {
+	if (line.startsWith('find: File system loop detected; ')) return true;
+	const reason = line.slice(line.lastIndexOf(': ') + 2);
+	return reason === 'directory causes a cycle' || reason === 'Too many levels of symbolic links';
+}
+
+/**
+ * The first real failure in a strict walk's `find` errors (run under `LC_ALL=C`), as a message
+ * that names the path, or `null` when every report is a symlink loop. The path comes off the
+ * remote, so it is only ever shown, quoted, and cut to a readable length.
+ */
+export function strictListingFailure(stderr: string, rootPath: string): string | null {
+	for (const raw of stderr.split('\n')) {
+		const line = raw.replace(/\r$/, '').trim();
+		if (!line || isFindLoopReport(line)) continue;
+		// GNU: find: './secret': Permission denied. BSD: find: ./secret: Permission denied.
+		const match = /^find:\s*['\u2018`"]?(.*?)['\u2019`"]?:\s*([^:]+)$/.exec(line);
+		const where = match ? match[1].replace(/^\.\/?/, '') : '';
+		const why = match ? match[2].trim() : line;
+		const shown = (where || rootPath).slice(0, 200);
+		return `Cannot read "${shown}" in ${rootPath} (${why}), so the folder cannot be copied whole`;
+	}
+	return null;
 }
 
 /**
@@ -2200,6 +2412,11 @@ export interface ListTreeResult {
 	files: string[];
 	/** True iff the file list was truncated by the `maxFiles` cap. */
 	truncated: boolean;
+	/**
+	 * With `withSizes`: each file's size in bytes, in the order of `files`, or `null` when the
+	 * remote could not report it.
+	 */
+	fileSizes?: (number | null)[];
 }
 
 /**
@@ -2256,17 +2473,33 @@ export async function listTreeRemote(
 
 	const pruneClause = pruneTerms.length > 0 ? `\\( ${pruneTerms.join(' -o ')} \\) -prune -o` : '';
 
-	const dirFind = `find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type d -print 2>/dev/null`;
+	// Both finds walk the same tree with the same prune and depth, so the directory walk's
+	// errors are every unreadable folder. A strict walk keeps them (in a remote temp file, so they
+	// never mix into the listing) and prints them after the files; `LC_ALL=C` keeps the wording
+	// the loop filter reads. A file that cannot be read is not the walk's to find: the read fails.
+	const strict = options.strict === true;
+	const dirErrors = strict ? '2>"$__maestro_err"' : '2>/dev/null';
+	const dirFind = `${strict ? 'LC_ALL=C ' : ''}find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type d -print ${dirErrors}`;
 
 	const headTail = maxFiles !== undefined ? ` | head -n ${maxFiles + 1}` : '';
 	const fileFind = `find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type f -print 2>/dev/null${headTail}`;
 
 	const SEP = '__MAESTRO_FIND_SEP__';
+	const ERR_SEP = '__MAESTRO_FIND_ERR__';
+	const SIZE_SEP = '__MAESTRO_FIND_SIZES__';
+	// Sizes: GNU `stat -c` first, then BSD `stat -f` (macOS), as `listFilesWithStatsRemote()`.
+	const withSizes = options.withSizes === true;
+	const sizeFind =
+		`if stat -c %s . >/dev/null 2>&1; then __o=-c; __f='%s %n'; else __o=-f; __f='%z %N'; fi; ` +
+		`find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type f -exec stat -L "$__o" "$__f" {} + 2>/dev/null${headTail}`;
 	const remoteCommand =
 		`cd ${escapedRoot} 2>/dev/null || { echo "__CD_ERROR__"; exit 0; }; ` +
+		(strict ? `__maestro_err=$(mktemp 2>/dev/null) || { echo "__TMP_ERROR__"; exit 0; }; ` : '') +
 		`${dirFind}; ` +
 		`echo "${SEP}"; ` +
-		`${fileFind}`;
+		`${fileFind}` +
+		(withSizes ? `; echo "${SIZE_SEP}"; ${sizeFind}` : '') +
+		(strict ? `; echo "${ERR_SEP}"; cat "$__maestro_err"; rm -f "$__maestro_err"` : '');
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
@@ -2280,16 +2513,46 @@ export async function listTreeRemote(
 	if (result.stdout.startsWith('__CD_ERROR__')) {
 		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
 	}
+	if (strict && result.stdout.startsWith('__TMP_ERROR__')) {
+		return { success: false, error: `Could not check every folder under ${rootPath} is readable` };
+	}
+
+	let stdout = result.stdout;
+	if (strict) {
+		// Every listed line starts with `./`, so the first marker line is the real one.
+		const errLine = `\n${ERR_SEP}\n`;
+		const errIdx = `\n${stdout}`.indexOf(errLine);
+		if (errIdx < 0) {
+			return {
+				success: false,
+				error: `Could not check every folder under ${rootPath} is readable`,
+			};
+		}
+		const failure = strictListingFailure(`\n${stdout}`.slice(errIdx + errLine.length), rootPath);
+		if (failure) return { success: false, error: failure };
+		stdout = `\n${stdout}`.slice(1, errIdx + 1);
+	}
 
 	// A root with no subdirectories prints the separator as the FIRST line, with
 	// no newline before it. Prefix one so the separator is always found;
 	// otherwise every file lands in the directory section and the file list is
 	// empty (a flat Auto Run playbook folder showed no documents over SSH).
-	const output = `\n${result.stdout}`;
+	const output = `\n${stdout}`;
 	const sepLine = `\n${SEP}\n`;
 	const sepIdx = output.indexOf(sepLine);
 	const dirSection = sepIdx >= 0 ? output.slice(0, sepIdx) : output;
-	const fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
+	let fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
+	// Every listed line starts with `./`, so the first marker line is the real one.
+	let sizeSection = '';
+	if (withSizes) {
+		const sizeLine = `\n${SIZE_SEP}\n`;
+		const padded = `\n${fileSection}`;
+		const sizeIdx = padded.indexOf(sizeLine);
+		if (sizeIdx >= 0) {
+			sizeSection = padded.slice(sizeIdx + sizeLine.length);
+			fileSection = padded.slice(1, sizeIdx + 1);
+		}
+	}
 
 	const stripPrefix = (line: string): string => (line.startsWith('./') ? line.slice(2) : line);
 
@@ -2304,7 +2567,14 @@ export async function listTreeRemote(
 	}
 	const files = fileLines.map(stripPrefix).filter(Boolean);
 
-	return { success: true, data: { directories, files, truncated } };
+	if (!withSizes) return { success: true, data: { directories, files, truncated } };
+	const sizeOf = new Map<string, number>();
+	for (const line of sizeSection.split('\n')) {
+		const match = /^(\d+) \.\/(.+)$/.exec(line.replace(/\r$/, ''));
+		if (match) sizeOf.set(match[2], parseInt(match[1], 10));
+	}
+	const fileSizes = files.map((file) => sizeOf.get(file) ?? null);
+	return { success: true, data: { directories, files, truncated, fileSizes } };
 }
 
 /** One regular file from {@link listFilesWithStatsRemote}. Times are milliseconds. */

@@ -45,6 +45,12 @@ export type ProcessTypeTag =
 	/** An ephemeral `cross-agent-*` consult spawned by an `@mention`. */
 	| 'consult';
 
+/** The fields of an agent its mode pill reads. */
+export type ModeAgent = Pick<
+	Session,
+	'id' | 'liftedTo' | 'sessionSshRemoteConfig' | 'sshConnectionFailed'
+>;
+
 export interface ProcessNode {
 	id: string;
 	type: 'group' | 'session' | 'process' | 'groupchat';
@@ -66,7 +72,11 @@ export interface ProcessNode {
 	participantName?: string;
 	command?: string;
 	args?: string[];
-	sshRemote?: { name: string; host: string };
+	/**
+	 * A session row's agent, for its mode pill (`AgentModePill`): the one mark of mode, the same
+	 * as the Left Bar row. Never a remote's name or a transport badge of its own.
+	 */
+	modeAgent?: ModeAgent;
 	countLabel?: string;
 	cueRunId?: string;
 	cueSubscriptionName?: string;

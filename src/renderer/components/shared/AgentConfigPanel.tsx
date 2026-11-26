@@ -34,6 +34,7 @@ import {
 	type HarnessControlMode,
 } from '../../../shared/maestro-lib/providers/native-control';
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
+import { useRemoteAgentDetection } from '../../hooks/agent/useRemoteAgentDetection';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
 import { AgentEnvVarsSection, type AgentEnvVarsSectionProps } from './AgentEnvVarsSection';
@@ -79,6 +80,18 @@ const CLAUDE_TOKEN_MODE_OPTIONS: { value: ClaudeTokenMode; label: string }[] = [
 	{ value: 'interactive', label: 'TUI Wrapper' },
 	{ value: 'dynamic', label: 'Dynamic' },
 ];
+
+/**
+ * Why a token source cannot run for this agent, shown when it is chosen (and
+ * while a stored choice falls back to claude -p). The options stay in the list
+ * in every mode; only the machine the turns run on decides what works.
+ */
+const CLAUDE_TOKEN_MODE_REFUSALS = {
+	dynamic:
+		'Dynamic is not available for this agent: it switches on the plan-limit usage this computer reads, and this agent runs on another computer, whose account that usage does not describe. Turns use claude -p.',
+	interactive:
+		'TUI Wrapper is not available for this agent: maestro-p was not found on the PATH of the computer this agent runs on. Turns use claude -p.',
+} as const;
 
 const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
 	api: 'Run every turn through claude --print. Signed in with a Claude plan, it draws from your plan limits; with an API key set, it bills that key.',
@@ -675,7 +688,7 @@ export function AgentConfigPanel({
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
 	// Probe the SSH remote for maestro-p. When it's known-absent the remote can't
-	// run the TUI, so the TUI option is disabled and the agent defaults to API
+	// run the TUI, so choosing it is refused and the agent runs claude -p
 	// (mirrors resolveClaudeSpawnMode, which falls a remote TUI spawn back to api).
 	// undefined = unknown (not SSH, still probing, or unreachable): stay optimistic.
 	const {
@@ -684,6 +697,20 @@ export function AgentConfigPanel({
 		refresh: refreshRemoteMaestroP,
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
+	// Detection runs where the agent runs: this computer for a local agent, the
+	// SSH remote (over SSH) for a remote or hosted one. The Path field and the
+	// Detect button read and act on that one answer in every mode.
+	const remoteDetection = useRemoteAgentDetection(agent.id, isSshEnabled ? sshRemoteId : undefined);
+	const detectedPath = isSshEnabled ? remoteDetection.path : agent.path;
+	const redetectAgent = isSshEnabled
+		? () => {
+				remoteDetection.redetect();
+				refreshRemoteMaestroP();
+			}
+		: onRefreshAgent;
+	const redetectingAgent = isSshEnabled
+		? remoteDetection.detecting || remoteMaestroPProbing
+		: refreshingAgent;
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -694,32 +721,57 @@ export function AgentConfigPanel({
 		{ enableMaestroP, maestroPMode },
 		{ sshEnabled: isSshEnabled, sshMaestroPAvailable: remoteMaestroPAvailable }
 	);
-	// SSH-remote agents only offer TUI / API, never Dynamic: the auto-switch
-	// reads a LOCAL usage snapshot that says nothing about the remote account's
-	// quota, so there's no honest signal to switch on. Drop the Dynamic segment
-	// and, when a stored Dynamic value meets SSH, display (and behave) as API -
-	// mirroring resolveClaudeSpawnMode, which falls a dynamic+SSH spawn back to
-	// api. Also drop TUI when the remote has no maestro-p to run it. The stored
-	// preference is left untouched so disabling SSH restores it.
-	const claudeTokenModeOptions = isSshEnabled
-		? CLAUDE_TOKEN_MODE_OPTIONS.filter(
-				(o) => o.value !== 'dynamic' && !(remoteMaestroPMissing && o.value === 'interactive')
-			)
-		: CLAUDE_TOKEN_MODE_OPTIONS;
-	const displayClaudeTokenMode: ClaudeTokenMode =
-		isSshEnabled &&
-		(claudeTokenMode === 'dynamic' || (remoteMaestroPMissing && claudeTokenMode === 'interactive'))
-			? 'api'
-			: claudeTokenMode;
+	// Every agent is offered the same three sources. A source that cannot run
+	// where this agent runs is refused with its reason when chosen: Dynamic reads
+	// a LOCAL usage snapshot that says nothing about a remote account's quota,
+	// and the TUI needs maestro-p on the remote's PATH. A stored choice that
+	// cannot run displays (and behaves) as claude -p, mirroring
+	// resolveClaudeSpawnMode, and says why; the stored preference is left
+	// untouched so disabling SSH restores it.
+	const claudeTokenModeRefusal = (mode: ClaudeTokenMode): string | null =>
+		isSshEnabled && mode === 'dynamic'
+			? CLAUDE_TOKEN_MODE_REFUSALS.dynamic
+			: remoteMaestroPMissing && mode === 'interactive'
+				? CLAUDE_TOKEN_MODE_REFUSALS.interactive
+				: null;
+	const [refusedClaudeTokenMode, setRefusedClaudeTokenMode] = useState<ClaudeTokenMode | null>(
+		null
+	);
+	const shownClaudeTokenModeRefusal = claudeTokenModeRefusal(
+		refusedClaudeTokenMode ?? claudeTokenMode
+	);
+	const displayClaudeTokenMode: ClaudeTokenMode = claudeTokenModeRefusal(claudeTokenMode)
+		? 'api'
+		: claudeTokenMode;
 	const showMaestroPDetails = displayClaudeTokenMode !== 'api';
+	// The Maestro-P Path field is the same field in every mode. An agent on a
+	// remote runs maestro-p from that computer's PATH (REMOTE_MAESTRO_P_COMMAND),
+	// so an override, a path on this computer, is refused there with its reason.
+	const maestroPPathField = isSshEnabled
+		? {
+				value: '',
+				disabled: true,
+				placeholder: 'maestro-p',
+				hint: 'This agent runs maestro-p from the PATH of the computer it runs on, so it cannot be overridden here.',
+			}
+		: {
+				value: maestroPPath,
+				disabled: false,
+				placeholder: detectedMaestroPPath ?? '/path/to/maestro-p',
+				hint: detectedMaestroPPath
+					? `Auto-detected: ${detectedMaestroPPath}. Override only if you want a different build.`
+					: 'No bundled maestro-p found. Point this at a built copy or rebuild Maestro.',
+			};
 
 	// Multi-install chooser state. `activePath` is whatever the Path field
 	// currently resolves to; it may be a hand-typed wrapper (or a tilde path
 	// that detection reports in expanded form), in which case it won't match
 	// any detected option and we surface it as an explicit "Custom" entry
 	// rather than letting the <select> silently display the first option.
-	const detectedPaths = agent.allPaths ?? [];
-	const activePath = customPath || agent.path || '';
+	// Detection lists every installation where the agent runs (the SSH remote
+	// for a remote or hosted agent), so the chooser shows in every mode.
+	const detectedPaths = isSshEnabled ? remoteDetection.allPaths : (agent.allPaths ?? []);
+	const activePath = customPath || detectedPath || '';
 	const activePathIsDetected = detectedPaths.includes(activePath);
 
 	return (
@@ -731,8 +783,7 @@ export function AgentConfigPanel({
 					environment variables below; model and effort discovery follows that selection.
 				</p>
 			)}
-			{/* Path input - pre-filled with detected path, editable to override */}
-			{/* When SSH is enabled and no custom path is set, show the remote binary name instead of local path */}
+			{/* Path input - pre-filled with the path detected where the agent runs, editable to override */}
 			<div
 				className={`${padding} rounded border`}
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -742,17 +793,17 @@ export function AgentConfigPanel({
 					style={{ color: theme.colors.textDim }}
 				>
 					<span>
-						{isSshEnabled ? 'Remote Command' : 'Path'}
+						Path
 						<FederationFieldBadge field="customPath" className="ml-2" />
 					</span>
-					{onRefreshAgent && !isSshEnabled && (
+					{onRefreshAgent && redetectAgent && (
 						<button
-							onClick={onRefreshAgent}
+							onClick={redetectAgent}
 							className="p-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1"
 							title="Re-detect agent path"
 							style={{ color: theme.colors.textDim }}
 						>
-							<RefreshCw className={`w-3 h-3 ${refreshingAgent ? 'animate-spin' : ''}`} />
+							<RefreshCw className={`w-3 h-3 ${redetectingAgent ? 'animate-spin' : ''}`} />
 							<span className="text-xs">Detect</span>
 						</button>
 					)}
@@ -760,15 +811,14 @@ export function AgentConfigPanel({
 				<div className="flex gap-2">
 					<input
 						type="text"
-						// Over SSH the default is the remote binary name, shown as a placeholder so
-						// the field stays editable (an empty customPath means "use the default").
-						// Locally the field pre-fills with the detected path so it can be overridden.
-						aria-label={isSshEnabled ? 'Remote Command' : 'Path'}
-						value={customPath || (isSshEnabled ? '' : agent.path) || ''}
+						// Pre-fills with the path detected where the agent runs, so it can be
+						// overridden (an empty customPath means "use the detected binary").
+						aria-label="Path"
+						value={customPath || detectedPath || ''}
 						onChange={(e) => onCustomPathChange(e.target.value)}
 						onBlur={() => onCustomPathBlur()}
 						onClick={(e) => e.stopPropagation()}
-						placeholder={isSshEnabled ? agent.binaryName : `/path/to/${agent.binaryName}`}
+						placeholder={`/path/to/${agent.binaryName}`}
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 						style={{
 							borderColor: theme.colors.border,
@@ -778,10 +828,10 @@ export function AgentConfigPanel({
 				</div>
 				{/*
 				 * Multi-install chooser (e.g. nvm-managed codex alongside a
-				 * codex-multi-auth-codex wrapper). Only shown for local agents
-				 * when detection found more than one valid binary.
+				 * codex-multi-auth-codex wrapper). Shown whenever detection found
+				 * more than one valid binary.
 				 */}
-				{!isSshEnabled && detectedPaths.length > 1 && (
+				{detectedPaths.length > 1 && (
 					<div className="mt-2">
 						<label
 							className="block text-xs font-medium mb-1"
@@ -828,9 +878,7 @@ export function AgentConfigPanel({
 					</div>
 				)}
 				<p className="text-xs opacity-50 mt-2">
-					{isSshEnabled
-						? `Remote command/binary for ${agent.binaryName}. Leave empty to use default.`
-						: `Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`}
+					{`Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`}
 				</p>
 			</div>
 
@@ -839,10 +887,10 @@ export function AgentConfigPanel({
 			    (start on the TUI, switch to claude --print when the 5-hour or weekly
 			    window is near its limit, then snap back once both windows reset).
 			    The mode does not pick the bill: signed in with a plan, both draw
-			    from the same plan limits; an API key in the env bills that key. Over SSH only
-			    API / TUI are offered (Dynamic needs a local quota snapshot that
-			    doesn't reflect the remote account) and maestro-p runs on the remote
-			    host's PATH, so the local Maestro-P Path override is hidden. */}
+			    from the same plan limits; an API key in the env bills that key. Every
+			    agent is offered the same three sources; one that cannot run where the
+			    agent runs (Dynamic, or the TUI without maestro-p, on a remote) is
+			    refused with its reason when chosen. */}
 			{agent.id === 'claude-code' && onEnableMaestroPChange && (
 				<div
 					className={`${padding} rounded border`}
@@ -853,27 +901,16 @@ export function AgentConfigPanel({
 							Claude Token Source
 						</span>
 						<FederationFieldBadge field={['enableMaestroP', 'maestroPMode']} />
-						{isSshEnabled && (
-							<button
-								type="button"
-								onClick={(e) => {
-									e.stopPropagation();
-									refreshRemoteMaestroP();
-								}}
-								disabled={remoteMaestroPProbing}
-								title="Re-check whether maestro-p is installed on the remote host"
-								className="flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded border disabled:opacity-50"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-							>
-								<RefreshCw className={`w-3 h-3 ${remoteMaestroPProbing ? 'animate-spin' : ''}`} />
-								Re-check
-							</button>
-						)}
 					</div>
 					<ToggleButtonGroup
-						options={claudeTokenModeOptions}
+						options={CLAUDE_TOKEN_MODE_OPTIONS}
 						value={displayClaudeTokenMode}
 						onChange={(mode) => {
+							if (claudeTokenModeRefusal(mode)) {
+								setRefusedClaudeTokenMode(mode);
+								return;
+							}
+							setRefusedClaudeTokenMode(null);
 							const src = toClaudeTokenModeSource(mode);
 							onEnableMaestroPChange(src.enableMaestroP);
 							onMaestroPModeChange?.(src.maestroPMode);
@@ -882,33 +919,33 @@ export function AgentConfigPanel({
 					/>
 					<p className="text-xs opacity-50 mt-2">
 						{CLAUDE_TOKEN_MODE_HINTS[displayClaudeTokenMode]}
-						{isSshEnabled && displayClaudeTokenMode === 'interactive'
-							? ' Runs maestro-p on the remote host (must be on its PATH).'
-							: ''}
 					</p>
-					{remoteMaestroPMissing && (
+					{shownClaudeTokenModeRefusal && (
 						<p
 							className="text-xs mt-2"
+							role="status"
 							style={{ color: theme.colors.warning ?? theme.colors.accent }}
 						>
-							TUI (Max plan) is unavailable: maestro-p was not found on the remote host&apos;s PATH.{' '}
-							<button
-								type="button"
-								onClick={(e) => {
-									e.stopPropagation();
-									openUrl(MAESTRO_P_INSTALL_URL, { ctrlKey: e.ctrlKey || e.metaKey });
-								}}
-								className="underline hover:no-underline"
-								style={{ color: 'inherit' }}
-							>
-								Install maestro-p
-							</button>{' '}
-							there to drive the Claude TUI, or use API.
+							{shownClaudeTokenModeRefusal}
+							{shownClaudeTokenModeRefusal === CLAUDE_TOKEN_MODE_REFUSALS.interactive && (
+								<>
+									{' '}
+									<button
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											openUrl(MAESTRO_P_INSTALL_URL, { ctrlKey: e.ctrlKey || e.metaKey });
+										}}
+										className="underline hover:no-underline"
+										style={{ color: 'inherit' }}
+									>
+										Install maestro-p
+									</button>
+								</>
+							)}
 						</p>
 					)}
-					{/* Local Maestro-P Path override is local-only: over SSH maestro-p
-					    is resolved as a bare command on the remote PATH, so hide it. */}
-					{showMaestroPDetails && !isSshEnabled && (
+					{showMaestroPDetails && (
 						<div className="mt-3">
 							<label
 								className="block text-xs font-medium mb-2"
@@ -919,19 +956,17 @@ export function AgentConfigPanel({
 							</label>
 							<input
 								type="text"
-								value={maestroPPath}
+								aria-label="Maestro-P Path (optional)"
+								value={maestroPPathField.value}
+								disabled={maestroPPathField.disabled}
 								onChange={(e) => onMaestroPPathChange?.(e.target.value)}
 								onBlur={() => onMaestroPPathBlur?.()}
 								onClick={(e) => e.stopPropagation()}
-								placeholder={detectedMaestroPPath ?? '/path/to/maestro-p'}
-								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								placeholder={maestroPPathField.placeholder}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono disabled:opacity-50"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							/>
-							<p className="text-xs opacity-50 mt-2">
-								{detectedMaestroPPath
-									? `Auto-detected: ${detectedMaestroPPath}. Override only if you want a different build.`
-									: 'No bundled maestro-p found. Point this at a built copy or rebuild Maestro.'}
-							</p>
+							<p className="text-xs opacity-50 mt-2">{maestroPPathField.hint}</p>
 						</div>
 					)}
 				</div>
@@ -962,9 +997,6 @@ export function AgentConfigPanel({
 						codex exec is the default and runs every turn. codex app-server is experimental: it runs
 						local interactive chat turns so a queued message can steer a turn that is already
 						running. SSH, image, Auto Run, and Cue turns keep using codex exec.
-						{isSshEnabled && codexTransport === 'app-server'
-							? ' This agent runs over SSH, so its turns use codex exec.'
-							: ''}
 					</p>
 				</div>
 			)}

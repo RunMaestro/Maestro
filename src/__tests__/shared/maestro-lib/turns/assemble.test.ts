@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	assembleAutoRunTurn,
+	assembleSideQuestionTurn,
 	assembleTurn,
 	type AssembledTurn,
 	type TurnAgent,
@@ -16,6 +17,13 @@ import {
 import { READ_ONLY_PLAN_INSTRUCTION } from '../../../../shared/maestro-lib/turns/prompt';
 import { embedSystemPromptInPrompt } from '../../../../shared/embeddedSystemPrompt';
 import { FIXED_NOW, makeAgent, makeContext, makeTab } from './fixtures';
+import {
+	applyAgentConfigOverrides,
+	buildAgentArgs,
+	filterYoloArgs,
+} from '../../../../shared/maestro-lib/launch/agent-args';
+import { buildSideQuestionPrompt } from '../../../../shared/sideQuestion';
+import { AGENT_MODES, agentModeFields } from '../../../helpers/mockSession';
 
 const SEP = '\n\n---\n\n';
 
@@ -708,5 +716,75 @@ describe('assembleAutoRunTurn', () => {
 			makeContext('terminal')
 		);
 		expect(result).toMatchObject({ ok: false, reason: 'no-batch-mode' });
+	});
+});
+
+describe('a /btw side question (assembleSideQuestionTurn, M6)', () => {
+	/**
+	 * The arguments the desktop's `sideQuestion:ask` builds through `groomContext`: the provider's
+	 * own, read-only, the fork, the config overrides, then every tool off.
+	 */
+	function desktopSideQuestionArgs(
+		agent: TurnAgent,
+		resumeSessionId?: string,
+		model?: string
+	): string[] {
+		const provider = makeContext().provider;
+		const built = buildAgentArgs(provider, {
+			baseArgs: filterYoloArgs(provider.args ?? [], provider),
+			prompt: 'q',
+			cwd: agent.cwd,
+			readOnlyMode: true,
+			permissionMode: 'readonly',
+			agentSessionId: resumeSessionId,
+			ephemeralFork: true,
+		});
+		const resolved = applyAgentConfigOverrides(provider, built, {
+			agentConfigValues: {},
+			sessionCustomModel: model,
+		});
+		return [...resolved.args, ...(provider.noToolsArgs ?? [])];
+	}
+
+	it.each(AGENT_MODES)(
+		"gives a %s agent's tab the desktop's read-only, tool-less throwaway fork",
+		(mode) => {
+			const agent = makeAgent({
+				...(agentModeFields(mode) as Partial<TurnAgent>),
+				nudgeMessage: 'be brief',
+				newSessionMessage: 'rules',
+			});
+			const result = assembleSideQuestionTurn(
+				agent,
+				{ question: 'which file?', resumeSessionId: 'sess-1', model: 'opus' },
+				makeContext()
+			);
+			if (!result.ok) throw new Error(result.message);
+			const turn = result.turn;
+			expect(turn.launch.args).toEqual(desktopSideQuestionArgs(agent, 'sess-1', 'opus'));
+			expect(turn.prompt).toBe(buildSideQuestionPrompt('which file?'));
+			expect(turn.systemPrompt).toBeUndefined();
+			expect(turn.readOnly).toBe(true);
+			expect(turn.resumeSessionId).toBe('sess-1');
+		}
+	);
+
+	it('saves no session for a tab with none, and refuses a provider that cannot fork', () => {
+		const fresh = assembleSideQuestionTurn(makeAgent(), { question: 'q' }, makeContext());
+		if (!fresh.ok) throw new Error(fresh.message);
+		expect(fresh.turn.launch.args).toEqual(desktopSideQuestionArgs(makeAgent()));
+		expect(fresh.turn.launch.args).toContain('--no-session-persistence');
+		expect(fresh.turn.launch.args).not.toContain('--fork-session');
+
+		const codex = assembleSideQuestionTurn(
+			makeAgent({ toolType: 'codex' }),
+			{ question: 'q', resumeSessionId: 's' },
+			makeContext('codex')
+		);
+		expect(codex).toMatchObject({
+			ok: false,
+			reason: 'no-fork',
+			message: expect.stringContaining('cannot fork a session'),
+		});
 	});
 });

@@ -320,12 +320,32 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		const sessions = [twoTabSession()];
 		const { setSessions } = setup(sessions);
 
-		dispatchPatch('session-1', { tabId: 'tab-1', starred: true, logs: [], agentSessionId: 'x' });
+		dispatchPatch('session-1', { tabId: 'tab-1', starred: true, logs: [], name: 'x' });
 		await flush();
 
 		const [updated] = applyUpdate(setSessions, sessions);
 		expect(updated.aiTabs[0].starred).toBe(true);
+		expect(updated.aiTabs[0].name).toBe(sessions[0].aiTabs[0].name);
+		expect(updated.aiTabs[0].logs).toBe(sessions[0].aiTabs[0].logs);
+	});
+
+	it("adopts the provider session a wizard that ran elsewhere hands the tab, dropping the old one's binding", async () => {
+		const sessions = [twoTabSession()];
+		sessions[0].aiTabs[1] = {
+			...sessions[0].aiTabs[1],
+			agentSessionId: 'old',
+			nativeSessionBinding: { provider: 'claude-code' } as never,
+		};
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { tabId: 'tab-2', agentSessionId: 'wizard-session' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.aiTabs[1].agentSessionId).toBe('wizard-session');
+		expect(updated.aiTabs[1].nativeSessionBinding).toBeUndefined();
 		expect(updated.aiTabs[0].agentSessionId).toBe(sessions[0].aiTabs[0].agentSessionId);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
 	});
 
 	it('rejects an unknown tab instead of silently patching nothing', async () => {

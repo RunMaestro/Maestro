@@ -693,6 +693,7 @@ interface MaestroAPI {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: import('../shared/chatSteering').SteeringUnavailableReason;
 				}
 			) => void
 		) => () => void;
@@ -1110,7 +1111,7 @@ interface MaestroAPI {
 					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & import('../shared/crossAgentTypes').RemoteAskerContext,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -1156,6 +1157,8 @@ interface MaestroAPI {
 				queuePosition?: number;
 				queueLength?: number;
 				itemId?: string;
+				/** The text was one of Maestro's own commands, run for the tab: no turn started. */
+				ran?: boolean;
 				error?: string;
 				/** Machine-readable failure cause, so main can react to a specific one
 				 *  (dispatch callbacks retry agent-level on `tab-not-found`). */
@@ -1194,6 +1197,38 @@ interface MaestroAPI {
 		sendRemoteMergeQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		) => void;
+		onRemoteEditQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				edit: import('../shared/maestro-lib/client/types').QueuedTurnEdit,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteEditQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; error?: string }
+		) => void;
+		onRemoteMoveQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteMoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; moved: boolean; error?: string }
+		) => void;
+		onRemoteSendQueueItemNow: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSendQueueItemNowResponse: (
+			responseChannel: string,
+			result: { success: boolean; sent: boolean; error?: string }
 		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
@@ -1913,7 +1948,10 @@ interface MaestroAPI {
 			ref: string,
 			filePath: string
 		) => Promise<{ content?: string; error?: string }>;
-		checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{ installed: boolean; authenticated: boolean }>;
 		createGist: (
 			filename: string,
 			content: string,
@@ -1981,7 +2019,10 @@ interface MaestroAPI {
 			branch?: string;
 			error?: string;
 		}>;
-		checkGhCli: (ghPath?: string) => Promise<{
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{
 			installed: boolean;
 			authenticated: boolean;
 		}>;
@@ -2162,6 +2203,14 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
+		watchRemoteCopy: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<import('../shared/types').RemoteCopyWatchResult>;
+		downloadRemoteFolder: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<{ success: boolean; path: string; fileCount: number }>;
 		writeFile: (
 			filePath: string,
 			content: string,
@@ -2192,6 +2241,7 @@ interface MaestroAPI {
 			totalSize: number;
 			fileCount: number;
 			folderCount: number;
+			fileCountCapped?: boolean;
 		}>;
 		fetchImageAsBase64: (url: string) => Promise<string | null>;
 		rename: (
@@ -4001,7 +4051,12 @@ interface MaestroAPI {
 			callback: (groupChatId: string, sessionId: string) => void
 		) => () => void;
 		onAutoRunTriggered: (
-			callback: (groupChatId: string, participantName: string, filename?: string) => void
+			callback: (
+				groupChatId: string,
+				participantName: string,
+				filename?: string,
+				agentId?: string
+			) => void
 		) => () => void;
 		onAutoRunBatchComplete: (
 			callback: (groupChatId: string, participantName: string) => void
@@ -4385,10 +4440,12 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
-		// transcripts; `force` bypasses the accessor's in-memory memo.
+		// transcripts; `force` bypasses the accessor's in-memory memo;
+		// `waitForRemote` resolves once agents on another computer are counted.
 		getTokenUsage: (
 			query?: import('../shared/tokenUsage').TokenUsageQuery,
-			force?: boolean
+			force?: boolean,
+			waitForRemote?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Progress of the long transcript scans behind the usage caches
 		getIndexingState: () => Promise<import('../shared/statsIndexing').StatsIndexingState>;
@@ -4916,6 +4973,7 @@ interface MaestroAPI {
 	tabNaming: {
 		generateTabName: (config: {
 			userMessage: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			// The agent the tab belongs to; scopes the Local Models "unavailable" notice.
@@ -4954,6 +5012,7 @@ interface MaestroAPI {
 	aiCommand: {
 		suggest: (config: {
 			request: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			isGitRepo?: boolean;
@@ -4987,6 +5046,7 @@ interface MaestroAPI {
 	sideQuestion: {
 		ask: (config: {
 			question: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			agentSessionId?: string;

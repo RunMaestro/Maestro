@@ -14,7 +14,9 @@ import { isAbsolutePath } from '../../../shared/formatters';
 import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
 import type { MediaOpenMode } from '../tabs/internal/types';
 import { logger } from '../../utils/logger';
-import { hostShellAvailable, openFileForUser } from '../../services/hostShell';
+import { notifyToast } from '../../stores/notificationStore';
+import { openFileInDefaultApp, resolveOpenSource } from '../../services/fileActions';
+import { hostShellAvailable } from '../../services/hostShell';
 
 /**
  * If a remote-file loading tab is still in flight in the target session,
@@ -375,19 +377,41 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 			const sshRemoteId = isAbsoluteInput && !sessionSshRemoteId ? undefined : sessionSshRemoteId;
 
-			// Check if file should be opened externally (only for local files)
-			if (!sshRemoteId && shouldOpenExternally(node.name)) {
-				// Show confirmation modal before opening externally (use openModal atomically)
+			// A file Maestro cannot preview opens in this machine's default app,
+			// after the same confirmation in every mode. A remote file is fetched
+			// first (openFileInDefaultApp), so the prompt means the same thing.
+			if (shouldOpenExternally(node.name)) {
 				useModalStore.getState().openModal('confirm', {
 					message: hostShellAvailable()
 						? `Open "${node.name}" in external application?`
 						: `Download "${node.name}" to this client?`,
 					onConfirm: async () => {
-						await openFileForUser(fullPath);
+						await openFileInDefaultApp({ path: fullPath, sshRemoteId });
 					},
 				});
 				return;
 			}
+
+			// Media plays from this disk only, so a remote media file is fetched and
+			// handed to the player as its local copy. Everything else reads in place.
+			const source = await resolveOpenSource({ path: fullPath, sshRemoteId }, node.name).catch(
+				(error) => {
+					logger.error(
+						`Failed to fetch file: ${error instanceof Error ? error.message : String(error)}`,
+						undefined,
+						error
+					);
+					notifyToast({
+						color: 'red',
+						title: 'Open failed',
+						message: error instanceof Error ? error.message : 'Could not fetch the remote file',
+					});
+					return null;
+				}
+			);
+			if (!source) return;
+			const readPath = source.path;
+			const readRemoteId = source.sshRemoteId;
 
 			// Pin the originating session so the loading tab and final content
 			// land in the agent the user clicked from, even if they switch agents
@@ -399,14 +423,14 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			// the user switches agents). The tab also carries the requestId we
 			// use to cancel the SSH read if the user closes it mid-load.
 			let loadRequestId: string | undefined;
-			if (sshRemoteId) {
+			if (readRemoteId) {
 				loadRequestId = generateId();
 				onOpenFileTab?.(
 					{
-						path: fullPath,
+						path: readPath,
 						name: node.name,
 						content: '',
-						sshRemoteId,
+						sshRemoteId: readRemoteId,
 						isLoading: true,
 						loadRequestId,
 					},
@@ -422,8 +446,8 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				// Promise.all and the catch path would log "Failed to read
 				// file:" with the read content thrown away).
 				const [contentResult, statResult] = await Promise.allSettled([
-					window.maestro.fs.readFile(fullPath, sshRemoteId, loadRequestId),
-					window.maestro.fs.stat(fullPath, sshRemoteId),
+					window.maestro.fs.readFile(readPath, readRemoteId, loadRequestId),
+					window.maestro.fs.stat(readPath, readRemoteId),
 				]);
 
 				if (contentResult.status === 'rejected') {
@@ -437,7 +461,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 						contentResult.reason
 					);
 					if (loadRequestId) {
-						closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
+						closeLoadingTabIfStillLoading(targetSessionId, readPath, loadRequestId);
 					}
 					return;
 				}
@@ -450,7 +474,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				// closure for the loading tab if it's still hanging around.
 				if (content === null) {
 					if (loadRequestId) {
-						closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
+						closeLoadingTabIfStillLoading(targetSessionId, readPath, loadRequestId);
 					}
 					return;
 				}
@@ -459,7 +483,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				if (statResult.status === 'rejected') {
 					// Non-fatal - content is fine, just log so the failure is visible.
 					logger.warn(
-						`fs.stat failed for ${fullPath}: ${
+						`fs.stat failed for ${readPath}: ${
 							statResult.reason instanceof Error
 								? statResult.reason.message
 								: String(statResult.reason)
@@ -474,10 +498,10 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				// flips isLoading off; for local files it opens the tab fresh.
 				onOpenFileTab?.(
 					{
-						path: fullPath,
+						path: readPath,
 						name: node.name,
 						content,
-						sshRemoteId,
+						sshRemoteId: readRemoteId,
 						lastModified,
 					},
 					{ targetSessionId, mediaMode: options?.mediaMode }
@@ -491,7 +515,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				);
 				// Don't strand a loading tab if the SSH read errored out.
 				if (loadRequestId) {
-					closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
+					closeLoadingTabIfStillLoading(targetSessionId, readPath, loadRequestId);
 				}
 			}
 		},

@@ -942,6 +942,50 @@ describe('useBatchProcessor hook', () => {
 			useSettingsStore.setState({ autoRunDisabled: false });
 		});
 
+		it('starts a hosted agent run on its host, never here', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			const actOnHost = vi.fn().mockResolvedValue({ ok: true, result: { kind: 'auto-run' } });
+			maestro.federation = { act: actOnHost };
+			try {
+				const sessions = [createMockSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } })];
+				const groups = [createMockGroup()];
+
+				useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+				const { result } = renderHook(() =>
+					useBatchProcessor({
+						groups,
+						onUpdateSession: mockOnUpdateSession,
+						onSpawnAgent: mockOnSpawnAgent,
+						onAddHistoryEntry: mockOnAddHistoryEntry,
+					})
+				);
+
+				await act(async () => {
+					await result.current.startBatchRun(
+						sessions[0].id,
+						{
+							documents: [{ filename: 'test', resetOnCompletion: false }],
+							prompt: 'Test prompt',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					);
+				});
+
+				expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+				expect(actOnHost).toHaveBeenCalledWith('box', 'h1', {
+					kind: 'auto-run',
+					launch: { documents: [{ file: '/test/folder/test.md' }], prompt: 'Test prompt' },
+				});
+				// The host's frames draw the run; nothing runs here.
+				expect(result.current.batchRunStates[sessions[0].id]?.isRunning ?? false).toBe(false);
+			} finally {
+				delete maestro.federation;
+				useSettingsStore.setState({ federationHostedAgents: false });
+			}
+		});
+
 		it('should not start if session is not found', async () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];
@@ -1472,6 +1516,55 @@ describe('useBatchProcessor hook', () => {
 			// Give the loop additional ticks to (incorrectly) re-enter the inner while.
 			await new Promise((r) => setTimeout(r, 50));
 
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
+		it('ends a stopping document run whose turn never settles on a second stop', async () => {
+			// The same sequence a goal run hung on: stop (waits for the turn), the turn never
+			// settles, then stop again. The second stop is the CLI's way to Force Kill.
+			const sessions = [createMockSession()];
+			mockReadDoc.mockResolvedValue({ success: true, content: '# Tasks\n- [ ] Task 1' });
+			mockOnSpawnAgent.mockReturnValue(new Promise(() => {}));
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0].id });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+			let finished = false;
+			act(() => {
+				void result.current
+					.startBatchRun(
+						'test-session-id',
+						{
+							documents: [{ filename: 'tasks', resetOnCompletion: false }],
+							prompt: 'Test',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					)
+					.then(() => {
+						finished = true;
+					});
+			});
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+
+			act(() => result.current.stopBatchRun('test-session-id'));
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').isStopping).toBe(true)
+			);
+			expect(finished).toBe(false);
+
+			await act(async () => {
+				result.current.stopBatchRun('test-session-id');
+			});
+
+			await waitFor(() => expect(finished).toBe(true));
+			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
+			expect(mockOnSpawnAgent.mock.calls[0][3].abortSignal.aborted).toBe(true);
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
 
@@ -6696,12 +6789,15 @@ describe('useBatchProcessor hook', () => {
 
 		// Every task spawn carries its run's id so a dispatch it makes reports back.
 		const AUTO_RUN_ID = expect.stringMatching(/^autorun-/);
+		// And the signal a force-end aborts, so the run is never stuck on a turn that never settles.
+		const ABORT_SIGNAL = expect.any(AbortSignal);
 
 		it('forwards config.model and config.effort to onSpawnAgent', async () => {
 			await startRun({ model: 'opus', effort: 'high' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 				effortOverride: 'high',
 			});
@@ -6712,6 +6808,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 			});
 		});
@@ -6721,6 +6818,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 				effortOverride: undefined,
 			});
@@ -6734,6 +6832,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'sonnet',
 				effortOverride: undefined,
 			});
@@ -6747,6 +6846,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});
@@ -6761,6 +6861,7 @@ describe('useBatchProcessor hook', () => {
 			// the spawn falls through to the agent's own configured values.
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});

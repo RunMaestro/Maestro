@@ -12,6 +12,7 @@ import type { AdditionalDirectory, Session, ToolType, ProcessConfig } from '../t
 import { createMergedSession } from './tabHelpers';
 import { prepareMaestroSystemPrompt } from './spawnHelpers';
 import { logger } from './logger';
+import { sharesHistoryInProject } from '../../shared/historySharing';
 
 /**
  * Options for creating a session for a specific agent type.
@@ -326,6 +327,7 @@ export interface SessionSshInfo {
 		remoteId: string | null;
 		workingDirOverride?: string;
 		syncHistory?: boolean;
+		shareHistoryToProjectDir?: boolean;
 	};
 }
 
@@ -340,7 +342,8 @@ export interface SessionSshInfo {
  * to ensure SSH operations work correctly for all session types.
  *
  * @param session - Session object or partial with SSH fields
- * @returns The effective SSH remote ID, or undefined for local sessions
+ * @returns The effective SSH remote ID, or undefined for local sessions (including one whose
+ * `sessionSshRemoteConfig` still names a remote while `enabled` is false)
  *
  * @example
  * // WRONG - fails for terminal-only SSH sessions
@@ -356,7 +359,9 @@ export interface SessionSshInfo {
 export function getSessionSshRemoteId(
 	session: SessionSshInfo | null | undefined
 ): string | undefined {
-	if (!session) return undefined;
+	// A remote id left on an agent with SSH switched off is stale: that agent runs on this
+	// machine, so its file operations must not go to the remote it used to run on.
+	if (!session || !isSessionRemote(session)) return undefined;
 	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 }
 
@@ -378,6 +383,9 @@ export function getSessionSshRemoteId(
  */
 export function isSessionRemote(session: SessionSshInfo | null | undefined): boolean {
 	if (!session) return false;
+	// SSH switched off in the agent's settings wins over the last spawn's `sshRemoteId`, which
+	// stays on the record until the next spawn: that agent now runs on this machine.
+	if (session.sessionSshRemoteConfig?.enabled === false) return false;
 	return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
 }
 
@@ -386,7 +394,7 @@ export function isSessionRemote(session: SessionSshInfo | null | undefined): boo
  *
  * Returns the context needed for cross-host history sync when:
  * - The session uses an SSH remote
- * - The syncHistory setting is explicitly enabled
+ * - History sharing is explicitly enabled ({@link sharesHistoryInProject})
  *
  * @param session - Session with SSH remote fields and cwd
  * @returns Shared context object, or undefined if not applicable
@@ -399,10 +407,11 @@ export function buildSharedHistoryContext(
 	const config = session.sessionSshRemoteConfig;
 	if (!config?.enabled || !config.remoteId) return undefined;
 
-	// Respect the syncHistory toggle (opt-in, defaults to false)
-	if (!config.syncHistory) return undefined;
+	// Respect the History sharing toggle (opt-in, defaults to false)
+	if (!sharesHistoryInProject(config)) return undefined;
 
-	const remoteCwd = session.cwd;
+	// The folder the agent works in on the remote: its override when set, as its turns use.
+	const remoteCwd = config.workingDirOverride || session.cwd;
 	if (!remoteCwd) return undefined;
 
 	return {

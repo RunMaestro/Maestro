@@ -91,6 +91,146 @@ export interface CrossAgentTranscriptEntry {
 }
 
 /**
+ * What a consult carries for an asker the answering machine does not hold: a local agent
+ * consulting a hosted agent, asked of its Federation host. The host has no tab of the asker,
+ * so the asker sends its own windowed context and name; a hand-off sends the answer to act on.
+ */
+export interface RemoteAskerContext {
+	/** The asker's windowed transcript. Wins over reading the asker's tab. */
+	transcript?: CrossAgentTranscriptEntry[];
+	/** The asker's display name: names the consult tab and the History entry. */
+	fromAgentName?: string;
+	/** A HAND-OFF: the asker's final answer, which the target acts on (`ConsultAskInput`). */
+	handoffAnswer?: string;
+	/**
+	 * Who is asking, as (asking machine, asking agent, asking tab): `buildRemoteAskerKey()`. The
+	 * host keeps one consult tab per key, so a follow-up from the same asker continues its own
+	 * thread, as a local asker's does. Absent (an older client): every such asker shares one tab.
+	 */
+	askerKey?: string;
+}
+
+/** The longest asker key a consult accepts off the wire (`buildRemoteAskerKey()` stays under it). */
+export const MAX_WIRE_ASKER_KEY = 256;
+/** The longest ENCODED part of an asker key, so the three always fit in {@link MAX_WIRE_ASKER_KEY}. */
+const MAX_ASKER_KEY_PART = 80;
+/**
+ * The source-agent id a remote asker's consult tab is keyed on: this prefix, then its key. No
+ * agent id on this machine starts with it, so a remote asker can only ever find a consult tab
+ * made for a remote asker, never a local agent's tab or a local asker's consult tab.
+ */
+export const REMOTE_ASKER_SESSION_PREFIX = 'remote-asker:';
+/** Printable ASCII with no space or `:` beyond the separators: what `encodeURIComponent` emits. */
+const ASKER_KEY_PATTERN =
+	/^[A-Za-z0-9\-_.!~*'()%]+\/[A-Za-z0-9\-_.!~*'()%]+\/[A-Za-z0-9\-_.!~*'()%]+$/;
+
+/**
+ * The asker key a consult of an agent on another machine carries: the asking machine (its
+ * hostname), the asking agent, and the asking tab. Each part is URI-encoded and bounded after
+ * encoding, so the key is plain ASCII that `parseWireAskerKey()` accepts.
+ */
+export function buildRemoteAskerKey(parts: {
+	machine: string;
+	agentId: string;
+	tabId: string;
+}): string {
+	// Bounded after encoding, one whole character at a time: a non-ASCII name encodes to several
+	// bytes per character, and a key past the wire bound would be dropped for the shared thread.
+	const part = (value: string): string => {
+		let encoded = '';
+		for (const char of value.trim()) {
+			let piece: string;
+			try {
+				piece = encodeURIComponent(char);
+			} catch {
+				continue; // A lone surrogate has no encoding; it names nothing.
+			}
+			if (encoded.length + piece.length > MAX_ASKER_KEY_PART) break;
+			encoded += piece;
+		}
+		return encoded || '-';
+	};
+	return `${part(parts.machine)}/${part(parts.agentId)}/${part(parts.tabId)}`;
+}
+
+/**
+ * Read an asker key off the wire: the shape `buildRemoteAskerKey()` makes, bounded. Undefined for
+ * anything else, so the consult falls back to the shared remote-asker tab instead of failing.
+ */
+export function parseWireAskerKey(value: unknown): string | undefined {
+	if (typeof value !== 'string' || value.length > MAX_WIRE_ASKER_KEY) return undefined;
+	return ASKER_KEY_PATTERN.test(value) ? value : undefined;
+}
+
+/**
+ * The consult-tab key for an asker on another machine. With a valid key it is that asker's own
+ * (`REMOTE_ASKER_SESSION_PREFIX` + key, the constant ask tab); without one it is the shared
+ * stand-in every unattributed caller uses.
+ */
+export function remoteAskerConsultKey(askerKey: string | undefined): {
+	sourceSessionId: string;
+	sourceTabId: string;
+} {
+	return {
+		sourceSessionId: askerKey
+			? `${REMOTE_ASKER_SESSION_PREFIX}${askerKey}`
+			: CROSS_AGENT_ASK_SESSION_ID,
+		sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+	};
+}
+
+/** The most transcript entries a consult accepts off the wire. A windowed context is far smaller. */
+export const MAX_WIRE_TRANSCRIPT_ENTRIES = 200;
+/** The longest text one wire transcript entry keeps. An entry a real asker sends is far shorter. */
+export const MAX_WIRE_TRANSCRIPT_TEXT = 100_000;
+/** The longest `source` a wire transcript entry may name (`user`, `ai`, `system`, ...). */
+export const MAX_WIRE_TRANSCRIPT_SOURCE = 32;
+/** The longest asker name a consult accepts off the wire: it names a tab and a History entry. */
+export const MAX_WIRE_AGENT_NAME = 120;
+/** The longest hand-off answer a consult accepts off the wire. */
+export const MAX_WIRE_HANDOFF_ANSWER = 400_000;
+
+/**
+ * Read a consult's transcript off the wire (`consults.ask` from an asker on another machine).
+ * Keeps only well-formed entries, each bounded: this text comes from another machine and goes
+ * into a prompt. Undefined when the field is absent or holds none, so the caller falls back to
+ * the context it reads itself.
+ */
+export function parseWireTranscript(value: unknown): CrossAgentTranscriptEntry[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const entries: CrossAgentTranscriptEntry[] = [];
+	for (const raw of value.slice(-MAX_WIRE_TRANSCRIPT_ENTRIES)) {
+		if (!raw || typeof raw !== 'object') continue;
+		const entry = raw as Record<string, unknown>;
+		if (typeof entry.source !== 'string' || entry.source.length > MAX_WIRE_TRANSCRIPT_SOURCE) {
+			continue;
+		}
+		entries.push({
+			source: entry.source,
+			...(typeof entry.text === 'string'
+				? { text: entry.text.slice(0, MAX_WIRE_TRANSCRIPT_TEXT) }
+				: {}),
+			...(typeof entry.timestamp === 'number' && Number.isFinite(entry.timestamp)
+				? { timestamp: entry.timestamp }
+				: {}),
+		});
+	}
+	return entries.length > 0 ? entries : undefined;
+}
+
+/** Read the asker's display name off the wire: trimmed and bounded, or undefined when empty. */
+export function parseWireAgentName(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const name = value.trim().slice(0, MAX_WIRE_AGENT_NAME).trim();
+	return name || undefined;
+}
+
+/** Read a hand-off answer off the wire, bounded. Undefined when the field is not a string. */
+export function parseWireHandoffAnswer(value: unknown): string | undefined {
+	return typeof value === 'string' ? value.slice(0, MAX_WIRE_HANDOFF_ANSWER) : undefined;
+}
+
+/**
  * A single cross-agent dispatch: the user pinged `@target` from a source
  * agent's chat. Carries the windowed source transcript plus the user's prompt
  * so the target agent can answer with context.

@@ -3,7 +3,7 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
  * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused,
- * merge_queue_item.
+ * merge_queue_item, edit_queue_item, move_queue_item, send_queue_item_now.
  */
 
 import { logger } from '../../../utils/logger';
@@ -28,7 +28,12 @@ import { dispatchSupervision } from './dispatchSupervision';
 import { generateUUID } from '../../../../shared/uuid';
 import { newTabAdmission } from './tabs';
 import * as pianolaStore from '../../../pianola/pianola-store-main';
-import { normalizeTurnOverrides } from '../../../../shared/maestro-lib/client/types';
+import {
+	normalizeTurnOverrides,
+	parseQueuedTurnEdit,
+} from '../../../../shared/maestro-lib/client/types';
+import { resolveToDataUrl } from '../../../storage/session-image-store';
+import type { QueueSessionSnapshot } from '../../types';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -285,6 +290,7 @@ export function handleEnqueueCommand(
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 				...(result.queueLength !== undefined ? { queueLength: result.queueLength } : {}),
 				...(result.itemId ? { itemId: result.itemId } : {}),
+				...(result.ran ? { ran: true } : {}),
 				...(result.error ? { error: result.error } : {}),
 				requestId: message.requestId,
 			});
@@ -307,9 +313,34 @@ export function handleEnqueueCommand(
 }
 
 /**
+ * A queue snapshot's images for the client that reads it. A Federation client asks for them
+ * (`inlineImages`): each store ref becomes the data URL it names, since the client cannot read this
+ * machine's store, and a ref whose file is gone is dropped, as a spawn drops it. Any other reader
+ * (`maestro-cli queue list`) gets the items without them, as before.
+ */
+export async function withQueueImages(
+	queues: QueueSessionSnapshot[],
+	inline: boolean
+): Promise<QueueSessionSnapshot[]> {
+	return Promise.all(
+		queues.map(async (queue) => ({
+			...queue,
+			items: await Promise.all(
+				queue.items.map(async ({ images, ...item }) => {
+					if (!inline || !images?.length) return item;
+					const resolved = await Promise.all(images.map((image) => resolveToDataUrl(image)));
+					const inlined = resolved.filter((image): image is string => image !== null);
+					return inlined.length > 0 ? { ...item, images: inlined } : item;
+				})
+			),
+		}))
+	);
+}
+
+/**
  * Handle list_queue message - return a snapshot of the renderer's execution
- * queue(s). Used by `maestro-cli queue list`. When sessionId is omitted, every
- * session with queued items is returned.
+ * queue(s). Used by `maestro-cli queue list` and a Federation client's queue
+ * read. When sessionId is omitted, every session with queued items is returned.
  */
 export function handleListQueue(
 	ctx: MessageHandlerContext,
@@ -329,11 +360,12 @@ export function handleListQueue(
 	}
 	ctx.callbacks
 		.listQueue(sessionId)
-		.then((result) => {
+		.then(async (result) => {
+			const queues = await withQueueImages(result.queues, message.inlineImages === true);
 			ctx.send(client, {
 				type: 'list_queue_result',
 				success: result.success,
-				queues: result.queues,
+				queues,
 				...(result.error ? { error: result.error } : {}),
 				requestId: message.requestId,
 			});
@@ -560,6 +592,132 @@ export function handleMergeQueueItem(
 				success: false,
 				merged: false,
 				error: `Failed to merge queue item: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle edit_queue_item message - rewrite a queued message in place, the same
+ * thing the queued card's Edit does. Used by `maestro-cli queue edit` and by a
+ * client's hosted queued card.
+ */
+export function handleEditQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: { success: boolean; found: boolean; error?: string }) =>
+		ctx.send(client, { type: 'edit_queue_item_result', ...result, requestId: message.requestId });
+	if (!sessionId || !itemId) {
+		reply({ success: false, found: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	const parsed = parseQueuedTurnEdit(message);
+	if ('error' in parsed) {
+		reply({ success: false, found: false, error: parsed.error });
+		return;
+	}
+	if (!ctx.callbacks.editQueueItem) {
+		reply({ success: false, found: false, error: 'Edit queue item not configured' });
+		return;
+	}
+	ctx.callbacks
+		.editQueueItem(sessionId, itemId, parsed.edit)
+		.then(reply)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'edit_queue_item', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				found: false,
+				error: `Failed to edit queue item: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle move_queue_item message - move a queued item to another place, the same
+ * thing the queued card's drag does. Used by `maestro-cli queue move` and by a
+ * client's hosted queued card. With `tabId`, `toIndex` counts that tab's items only.
+ */
+export function handleMoveQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const tabId = typeof message.tabId === 'string' && message.tabId ? message.tabId : undefined;
+	const toIndex = message.toIndex;
+	const reply = (result: { success: boolean; moved: boolean; error?: string }) =>
+		ctx.send(client, { type: 'move_queue_item_result', ...result, requestId: message.requestId });
+	if (!sessionId || !itemId) {
+		reply({ success: false, moved: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	if (typeof toIndex !== 'number' || !Number.isInteger(toIndex) || toIndex < 0) {
+		reply({ success: false, moved: false, error: 'toIndex must be a whole number, 0 or more' });
+		return;
+	}
+	if (!ctx.callbacks.moveQueueItem) {
+		reply({ success: false, moved: false, error: 'Move queue item not configured' });
+		return;
+	}
+	ctx.callbacks
+		.moveQueueItem(sessionId, itemId, toIndex, tabId)
+		.then(reply)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'move_queue_item', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				moved: false,
+				error: `Failed to move queue item: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle send_queue_item_now message - run a queued item now instead of in its
+ * turn, the same thing the queued card's Force Send does. Used by
+ * `maestro-cli queue send-now` and by a client's hosted queued card.
+ */
+export function handleSendQueueItemNow(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: { success: boolean; sent: boolean; error?: string }) =>
+		ctx.send(client, {
+			type: 'send_queue_item_now_result',
+			...result,
+			requestId: message.requestId,
+		});
+	if (!sessionId || !itemId) {
+		reply({ success: false, sent: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	if (!ctx.callbacks.sendQueueItemNow) {
+		reply({ success: false, sent: false, error: 'Send queue item now not configured' });
+		return;
+	}
+	ctx.callbacks
+		.sendQueueItemNow(sessionId, itemId)
+		.then(reply)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'send_queue_item_now', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				sent: false,
+				error: `Failed to send queue item now: ${error.message}`,
 			});
 		});
 }

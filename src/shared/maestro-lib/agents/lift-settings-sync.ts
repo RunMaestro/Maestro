@@ -476,9 +476,10 @@ export const AGENT_PATCH_FEDERATION: Readonly<Record<AgentPatchField, Federation
 };
 
 /**
- * Every tab field `tabs.update` takes. None is shared: a tab is one conversation several conductors
- * may type into, so each keeps their own choice (`TurnOverrides`, or on screen only). The tab name,
- * which `tabs.rename` sets, is the one shared tab field.
+ * Every tab field `tabs.update` takes. The settings are personal: a tab is one conversation several
+ * conductors may type into, so each keeps their own choice (`TurnOverrides`, or on screen only).
+ * Shared are the conversation itself (`agentSessionId`, which a wizard that ran elsewhere hands the
+ * tab) and the tab name, which `tabs.rename` sets.
  */
 export const TAB_PATCH_FEDERATION: Readonly<Record<keyof TabPatch, FederationSettingRule>> = {
 	model: { scope: 'personal', why: 'Sent with each message as `TurnOverrides.model`.' },
@@ -490,6 +491,14 @@ export const TAB_PATCH_FEDERATION: Readonly<Record<keyof TabPatch, FederationSet
 	},
 	thinking: { scope: 'personal', why: 'How this conductor shows the transcript; never sent.' },
 	enterToSend: { scope: 'personal', why: "This conductor's keyboard habit; never sent." },
+	agentSessionId: {
+		scope: 'shared',
+		why: 'The conversation the host resumes on the next turn, for every conductor.',
+	},
+	mergedContext: {
+		scope: 'shared',
+		why: "Context the conversation's next turn carries (a merge), whoever sends it.",
+	},
 };
 
 /** Every personal tab choice a message can carry, so a new one is a compile error here too. */

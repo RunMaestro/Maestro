@@ -92,6 +92,13 @@ import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
 import { syncTokenProxy } from '../../local-models/proxy/service';
+import {
+	getCueHistoryBuckets,
+	getCueHistoryEntries,
+	getCueHistoryFingerprint,
+	getCueHistoryGroupRuns,
+	getCueHistoryGroups,
+} from '../../cue/stats/cue-stats-query';
 import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
@@ -106,6 +113,7 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
+import { getPeerMirrorService } from '../../federation';
 import { resolveSessionWindow } from './session-window';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
@@ -156,6 +164,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 			deps.settingsStore.get('federationHostedAgents', false) === true,
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
+		// A hosted agent's Cue runs run here: its History panel lists them as a local agent's does.
+		getCueHistoryEntries,
+		getCueHistoryGroups,
 	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its
@@ -198,18 +209,25 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// History operations - extracted to src/main/ipc/handlers/history.ts
 	// Uses HistoryManager singleton for per-session storage
+	const readSessionRecords = (): Array<Record<string, unknown>> =>
+		(deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
+			(s) => typeof s === 'object' && s !== null
+		);
 	registerHistoryHandlers({
 		safeSend: deps.safeSend,
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
 		getMaxEntries: () =>
 			resolveHistoryEntryLimit(deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION)),
 		getSshRemoteById,
-		getSessionById: (id: string) => {
-			const sessions = (
-				deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>
-			).filter((s) => typeof s === 'object' && s !== null);
-			return sessions.find((s) => s.id === id);
-		},
+		getSessionById: (id: string) => readSessionRecords().find((s) => s.id === id),
+		// Cue runs live in `cue_events`, not the JSONL file: without these the History panel of
+		// every agent (local, SSH, or hosted) lists no Cue run at all.
+		getAllSessions: readSessionRecords,
+		getCueHistoryEntries,
+		getCueHistoryGroups,
+		getCueHistoryGroupRuns,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 
 	// Director's Notes - unified history + synopsis generation
@@ -218,6 +236,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		getMainWindow: deps.getMainWindow,
+		// Cue runs live in `cue_events`, never in the JSONL History. Without these
+		// Director's Notes reports zero Cue activity and its graph has no CUE bars.
+		getCueHistoryEntries,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 
 	// Cross-agent @mention dispatch - streams a target agent's response back
@@ -605,7 +628,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				deps.settingsStore.get('encoreFeatures')
 			),
 			getSshRemoteById,
-			deps.getProcessManager()
+			deps.getProcessManager(),
+			{
+				hostingEnabled: () => deps.settingsStore.get('federationHostedAgents', false) === true,
+				peers: () => getPeerMirrorService()?.snapshot().peers ?? [],
+			}
 		)
 	);
 
@@ -631,7 +658,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	setupLoggerEventForwarding(deps.getMainWindow);
 
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
-	registerFilesystemHandlers();
+	registerFilesystemHandlers({ safeSend: deps.safeSend });
 
 	// Parquet preview handlers. Registered HERE, not only in registerAllHandlers()
 	// - that function is dead code, so a registration that lives solely there
@@ -713,5 +740,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
 		debugPackageDeps: deps.debugPackageDeps,
+		// Lets the feedback conversation prompt say whether maestro-cli is installed.
+		getMaestroCliManager: () => deps.maestroCliManager,
 	});
 }

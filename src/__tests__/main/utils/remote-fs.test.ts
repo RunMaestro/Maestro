@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,12 +25,15 @@ import {
 	writeFileRemote,
 	writeFileAtomicRemote,
 	createExclusiveRemote,
+	replaceFileRemoteIfUnchanged,
+	sha256FileRemote,
 	existsRemote,
 	mkdirRemote,
 	compressFolderRemote,
 	listDirWithStatsRemote,
 	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
+	strictListingFailure,
 	deleteManyRemote,
 	__resetHostLimitersForTest,
 	type RemoteFsDeps,
@@ -333,6 +337,137 @@ describe('remote-fs', () => {
 			expect(result.success).toBe(true);
 			expect(result.data?.directories).toEqual([]);
 			expect(result.data?.files).toEqual(['Phase-01-Initial-Setup.md', 'Phase-02-Build.md']);
+		});
+
+		// A copy of the folder needs every part of it: `strict` fails the listing on a
+		// subfolder the walk cannot read, naming it, and still lists a symlink loop once.
+		describe('strict', () => {
+			const runStrict = (root: string) => {
+				const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+				return { deps, list: () => listTreeRemote(root, { strict: true }, baseConfig, deps) };
+			};
+
+			it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+				'under a real shell: an unreadable subfolder fails, naming it; a symlink loop does not',
+				async () => {
+					const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-strict-')));
+					const locked = path.join(base, 'tree', 'locked');
+					try {
+						const root = path.join(base, 'tree');
+						fs.mkdirSync(path.join(root, 'open'), { recursive: true });
+						fs.writeFileSync(path.join(root, 'open', 'a.md'), 'a');
+						fs.symlinkSync(root, path.join(root, 'open', 'loop'));
+						// Captures the generated script, then runs it as the remote would.
+						const run = async (dir: string) => {
+							const { deps, list } = runStrict(dir);
+							await list();
+							const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(
+								-1
+							) as string;
+							const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+							const replay = createMockDeps({
+								stdout: out.stdout,
+								stderr: out.stderr,
+								exitCode: 0,
+							});
+							return listTreeRemote(dir, { strict: true }, baseConfig, replay);
+						};
+
+						const loopOnly = await run(root);
+						expect(loopOnly.success).toBe(true);
+						expect(loopOnly.data?.files).toContain('open/a.md');
+
+						fs.mkdirSync(locked);
+						fs.writeFileSync(path.join(locked, 'secret.md'), 's');
+						fs.chmodSync(locked, 0o000);
+						const blocked = await run(root);
+						expect(blocked.success).toBe(false);
+						expect(blocked.error).toContain('"locked"');
+						expect(blocked.error).toContain('Permission denied');
+						expect(blocked.error).toContain('cannot be copied whole');
+					} finally {
+						if (fs.existsSync(locked)) fs.chmodSync(locked, 0o700);
+						fs.rmSync(base, { recursive: true, force: true });
+					}
+				}
+			);
+
+			it.skipIf(process.platform === 'win32')(
+				'under a real shell: withSizes reports each file size, names with spaces included',
+				async () => {
+					const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-sizes-')));
+					try {
+						fs.mkdirSync(path.join(base, 'sub'));
+						fs.writeFileSync(path.join(base, 'a b.md'), 'hello');
+						fs.writeFileSync(path.join(base, 'sub', 'c.bin'), Buffer.alloc(1234));
+						const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+						await listTreeRemote(base, { strict: true, withSizes: true }, baseConfig, deps);
+						const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(
+							-1
+						) as string;
+						const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+						const result = await listTreeRemote(
+							base,
+							{ strict: true, withSizes: true },
+							baseConfig,
+							createMockDeps({ stdout: out.stdout, stderr: '', exitCode: 0 })
+						);
+						expect(result.success).toBe(true);
+						const sizeOf = Object.fromEntries(
+							result.data!.files.map((file, i) => [file, result.data!.fileSizes![i]])
+						);
+						expect(sizeOf).toEqual({ 'a b.md': 5, 'sub/c.bin': 1234 });
+					} finally {
+						fs.rmSync(base, { recursive: true, force: true });
+					}
+				}
+			);
+
+			it('withSizes keeps a file stat could not read, with an unknown size', async () => {
+				const stdout = `${SEP}\n./a.md\n./b.md\n__MAESTRO_FIND_SIZES__\n7 ./a.md\n`;
+				const result = await listTreeRemote(
+					'/project',
+					{ withSizes: true },
+					baseConfig,
+					createMockDeps({ stdout, stderr: '', exitCode: 0 })
+				);
+				expect(result.data?.files).toEqual(['a.md', 'b.md']);
+				expect(result.data?.fileSizes).toEqual([7, null]);
+			});
+
+			it('without strict, an unreadable subfolder is still skipped quietly (the explorer view)', async () => {
+				const { deps } = runStrict('/project');
+				await listTreeRemote('/project', {}, baseConfig, deps);
+				const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+				expect(command).not.toContain('mktemp');
+				expect(command).not.toContain('__MAESTRO_FIND_ERR__');
+			});
+
+			it('fails when the remote cannot make the temp file the errors go to', async () => {
+				const result = await listTreeRemote(
+					'/project',
+					{ strict: true },
+					baseConfig,
+					createMockDeps({ stdout: '__TMP_ERROR__\n', stderr: '', exitCode: 0 })
+				);
+				expect(result).toEqual({
+					success: false,
+					error: 'Could not check every folder under /project is readable',
+				});
+			});
+
+			it('a hostile name in the listing cannot end the listing early', async () => {
+				const stdout = `./__MAESTRO_FIND_ERR__\n${SEP}\n./a.md\n__MAESTRO_FIND_ERR__\n`;
+				const result = await listTreeRemote(
+					'/project',
+					{ strict: true },
+					baseConfig,
+					createMockDeps({ stdout, stderr: '', exitCode: 0 })
+				);
+				expect(result.success).toBe(true);
+				expect(result.data?.directories).toEqual(['__MAESTRO_FIND_ERR__']);
+				expect(result.data?.files).toEqual(['a.md']);
+			});
 		});
 
 		it('detects truncation when file count exceeds maxFiles', async () => {
@@ -2669,6 +2804,359 @@ finally:
 		});
 	});
 
+	describe('sha256FileRemote', () => {
+		const run = (command: string) => {
+			const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+			return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
+		};
+		const deps = (): RemoteFsDeps => ({
+			buildSshArgs: vi.fn().mockReturnValue(['host']),
+			execSsh: vi.fn(async (_ssh: string, args: string[]) => run(args.at(-1)!)),
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'hashes the file on the remote, sending nothing back but the digest, and reads a missing file as null',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sha-'));
+				try {
+					const file = path.join(dir, "it's here.md");
+					fs.writeFileSync(file, 'fetched');
+					const remote = deps();
+					const result = await sha256FileRemote(file, baseConfig, remote);
+					expect(result).toEqual({
+						success: true,
+						data: createHash('sha256').update('fetched').digest('hex'),
+					});
+					// No payload on stdin, and none of the file's bytes on stdout.
+					expect((remote.execSsh as any).mock.calls[0][2]).toBeUndefined();
+					await expect(
+						sha256FileRemote(path.join(dir, 'gone.md'), baseConfig, deps())
+					).resolves.toEqual({ success: true, data: null });
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'hashes a file whose name holds a backslash, and fails on a file it cannot read',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sha-'));
+				try {
+					const file = path.join(dir, 'back\\slash.md');
+					fs.writeFileSync(file, 'fetched');
+					await expect(sha256FileRemote(file, baseConfig, deps())).resolves.toEqual({
+						success: true,
+						data: createHash('sha256').update('fetched').digest('hex'),
+					});
+					// Root reads every file, so the unreadable case needs a normal user.
+					if (process.getuid?.() === 0) return;
+					fs.chmodSync(file, 0o000);
+					const unreadable = await sha256FileRemote(file, baseConfig, deps());
+					expect(unreadable.success).toBe(false);
+					expect(unreadable.error).toContain('Permission denied');
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it('says so when the remote has no hash tool', async () => {
+			const result = await sha256FileRemote(
+				'/srv/a.md',
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 5 })
+			);
+			expect(result).toEqual({
+				success: false,
+				error: 'The remote host has no sha256sum or shasum to check /srv/a.md',
+			});
+		});
+	});
+
+	describe('replaceFileRemoteIfUnchanged', () => {
+		const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
+
+		/** Deps that run the generated command with this machine's sh, as the remote would. */
+		function runLocally(
+			env?: NodeJS.ProcessEnv,
+			arrived: (input: string) => string = (input) => input
+		): RemoteFsDeps {
+			return {
+				buildSshArgs: vi.fn().mockReturnValue(['host']),
+				execSsh: vi.fn(async (_ssh: string, args: string[], input?: string) => {
+					const out = spawnSync('sh', ['-c', args.at(-1)!], {
+						input: input === undefined ? undefined : arrived(input),
+						encoding: 'utf8',
+						env,
+					});
+					return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
+				}),
+			};
+		}
+
+		let dir: string;
+		beforeEach(() => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-replace-'));
+		});
+		afterEach(() => {
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'writes over the file only while it holds the expected bytes',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o640);
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result).toEqual({ success: true });
+				expect(fs.readFileSync(file, 'utf8')).toBe('edited');
+				// Written into the file, so its mode is the user's, not a temp file's.
+				expect(fs.statSync(file).mode & 0o777).toBe(0o640);
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'leaves a file that changed alone and says so',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'someone else');
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result).toMatchObject({ success: false, changed: true });
+				expect(fs.readFileSync(file, 'utf8')).toBe('someone else');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'reads a file that was deleted as changed, and a retried write that landed as written',
+			async () => {
+				const gone = await replaceFileRemoteIfUnchanged(
+					path.join(dir, 'gone.md'),
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(gone).toMatchObject({ success: false, changed: true });
+				expect(fs.existsSync(path.join(dir, 'gone.md'))).toBe(false);
+
+				const file = path.join(dir, 'landed.md');
+				fs.writeFileSync(file, 'edited');
+				const again = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(again).toEqual({ success: true });
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'finishes the copy into the file when the connection hangs up during it',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				// A `cat` that hangs up the script and itself, as a dropped SSH session
+				// does, after the target was already opened (and truncated) for it.
+				const bin = path.join(dir, 'bin');
+				fs.mkdirSync(bin);
+				const realCat = spawnSync('sh', ['-c', 'command -v cat'], {
+					encoding: 'utf8',
+				}).stdout.trim();
+				fs.writeFileSync(
+					path.join(bin, 'cat'),
+					`#!/bin/sh\nkill -HUP $PPID\nkill -HUP $$\nexec ${realCat} "$@"\n`,
+					{ mode: 0o755 }
+				);
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited after the hang-up'),
+					sha('fetched'),
+					baseConfig,
+					runLocally({ ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` })
+				);
+				expect(fs.readFileSync(file, 'utf8')).toBe('edited after the hang-up');
+				expect(result).toEqual({ success: true });
+			}
+		);
+
+		it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+			'reads a target it cannot read as a failure, never as a change by someone else',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o200);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result.success).toBe(false);
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('Permission denied');
+			}
+		);
+
+		/** A PATH with `tool` replaced by `body` (a sh script; `$REAL` is the real one). */
+		function pathWithShim(tool: string, body: string): NodeJS.ProcessEnv {
+			const bin = path.join(dir, 'bin');
+			fs.mkdirSync(bin, { recursive: true });
+			const real = spawnSync('sh', ['-c', `command -v ${tool}`], {
+				encoding: 'utf8',
+			}).stdout.trim();
+			fs.writeFileSync(path.join(bin, tool), `#!/bin/sh\nREAL=${real}\n${body}\n`, {
+				mode: 0o755,
+			});
+			return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` };
+		}
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses an upload cut short, even at a base64 boundary, and leaves the file alone',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited and longer'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(undefined, (input) => input.slice(0, 8))
+				);
+				expect(result).toMatchObject({ success: false });
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('The upload did not arrive whole');
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'puts the file back as it was when the copy into it fails midway',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				// The copy into the target writes a prefix and fails (a full disk); the
+				// copy that puts the earlier bytes back works.
+				const env = pathWithShim('cat', 'head -c 3 "$1"\nexit 1');
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(env)
+				);
+				expect(result.success).toBe(false);
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('it was left as it was');
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			"keeps its backup of the file private, whatever the file's own mode",
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o644);
+				// Note the mode of each copy's destination before it is written.
+				const log = path.join(dir, 'modes.log');
+				const env = pathWithShim(
+					'cp',
+					`ls -l "$2" | cut -c1-10 >> ${JSON.stringify(log)}\nexec "$REAL" "$@"`
+				);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(env)
+				);
+				expect(result).toEqual({ success: true });
+				expect(fs.readFileSync(log, 'utf8').split('\n')[0]).toBe('-rw-------');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+			'reads a file in a folder it cannot search as a failure, never as deleted',
+			async () => {
+				const sub = path.join(dir, 'locked');
+				fs.mkdirSync(sub);
+				const file = path.join(sub, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(sub, 0o600);
+				try {
+					const hashed = await sha256FileRemote(file, baseConfig, runLocally());
+					expect(hashed.success).toBe(false);
+					expect(hashed.error).toContain('Permission denied');
+					const written = await replaceFileRemoteIfUnchanged(
+						file,
+						Buffer.from('edited'),
+						sha('fetched'),
+						baseConfig,
+						runLocally()
+					);
+					expect(written.success).toBe(false);
+					expect(written.changed).toBeUndefined();
+				} finally {
+					fs.chmodSync(sub, 0o700);
+				}
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it('never runs the write twice after a dropped connection', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'client_loop: send disconnect: Broken pipe',
+				exitCode: 255,
+			});
+			const result = await replaceFileRemoteIfUnchanged(
+				'/srv/a.md',
+				Buffer.from('edited'),
+				sha('fetched'),
+				baseConfig,
+				deps
+			);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			expect(result.success).toBe(false);
+			expect(result.changed).toBeUndefined();
+		});
+
+		it('streams the bytes on stdin and refuses a malformed digest', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await replaceFileRemoteIfUnchanged(
+				'/srv/a.md',
+				Buffer.from('edited'),
+				sha('x'),
+				baseConfig,
+				deps
+			);
+			expect((deps.execSsh as any).mock.calls[0][2]).toBe(Buffer.from('edited').toString('base64'));
+			await expect(
+				replaceFileRemoteIfUnchanged('/srv/a.md', Buffer.from(''), 'nope', baseConfig, deps)
+			).rejects.toThrow(RangeError);
+		});
+	});
+
 	describe('writeFileRemote', () => {
 		it('writes content successfully using base64 encoding', async () => {
 			const deps = createMockDeps({
@@ -3535,5 +4023,46 @@ finally:
 			);
 			expect(result).toEqual({ success: false, error: 'cat: a.md: Permission denied' });
 		});
+	});
+});
+
+describe('strictListingFailure', () => {
+	it('names the path of a GNU or a BSD permission failure', () => {
+		expect(strictListingFailure("find: './a/locked': Permission denied\n", '/srv/x')).toBe(
+			'Cannot read "a/locked" in /srv/x (Permission denied), so the folder cannot be copied whole'
+		);
+		expect(
+			strictListingFailure('find: \u2018./locked\u2019: Permission denied', '/srv/x')
+		).toContain('"locked"');
+		expect(strictListingFailure('find: ./locked: Permission denied', '/srv/x')).toContain(
+			'"locked"'
+		);
+	});
+
+	it('does not count a symlink loop (GNU or BSD) as a failure', () => {
+		expect(
+			strictListingFailure(
+				"find: File system loop detected; './a/loop' is part of the same file system loop as '.'.\n" +
+					'find: ./b/loop: directory causes a cycle\n' +
+					"find: './c': Too many levels of symbolic links\n",
+				'/srv/x'
+			)
+		).toBeNull();
+	});
+
+	it('a folder named like a loop report does not hide its own permission error', () => {
+		for (const line of [
+			"find: './causes a cycle': Permission denied",
+			"find: './x: Too many levels of symbolic links': Permission denied",
+			"find: './File system loop detected; y': Permission denied",
+			'find: ./directory causes a cycle: Permission denied',
+		]) {
+			expect(strictListingFailure(line, '/srv/x'), line).toContain('Permission denied');
+		}
+	});
+
+	it('cuts a long hostile name to a readable length', () => {
+		const message = strictListingFailure(`find: './${'x'.repeat(5000)}': Permission denied`, '/r');
+		expect(message!.length).toBeLessThan(400);
 	});
 });

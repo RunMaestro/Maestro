@@ -5,11 +5,12 @@ import {
 	useAutoAgentName,
 	useDirectoryActions,
 	useDirectoryKeyboard,
-	useDirectorySshRemoteHost,
 	useDirectoryValidation,
 	useSkipPlaybookLaunch,
 } from '../../../../../../renderer/components/Wizard/screens/DirectorySelectionScreen/hooks';
 import { useSessionStore } from '../../../../../../renderer/stores/sessionStore';
+import { AGENT_MODES } from '../../../../../helpers/mockSession';
+import { MODE_REMOTE_ID, browseAndPick, resetPathPicker } from '../../../../../helpers/pathPicker';
 
 const sentryMocks = vi.hoisted(() => ({
 	captureException: vi.fn(),
@@ -129,57 +130,41 @@ describe('DirectorySelectionScreen hooks', () => {
 		expect(params.announce).toHaveBeenCalledWith('Directory validated. Git repository detected.');
 	});
 
-	it('loads SSH remote host labels and resets when remote is disabled', async () => {
-		const { result, rerender } = renderHook(
-			({ enabled }) =>
-				useDirectorySshRemoteHost(enabled ? { enabled: true, remoteId: 'remote-1' } : undefined),
-			{ initialProps: { enabled: true } }
-		);
+	it.each(AGENT_MODES)(
+		'%s: Browse picks the project directory on the machine the agent will run on',
+		async (mode) => {
+			const setDirectoryPath = vi.fn();
+			const validateDirectory = vi.fn().mockResolvedValue(undefined);
+			const { result } = renderHook(() =>
+				useDirectoryActions({
+					directoryPath: '',
+					existingDocsChoice: null,
+					isValidating: false,
+					canProceedToNext: () => true,
+					nextStep: vi.fn(),
+					setDirectoryPath,
+					setIsGitRepo: vi.fn(),
+					setDirectoryError: vi.fn(),
+					setHasExistingAutoRunDocs: vi.fn(),
+					setExistingDocsChoice: vi.fn(),
+					setInitRepoError: vi.fn(),
+					getSshRemoteId: () => (mode === 'local' ? undefined : MODE_REMOTE_ID),
+					pickerRemoteId: mode === 'local' ? undefined : MODE_REMOTE_ID,
+					validateDirectory,
+					focusInput: vi.fn(),
+					focusContinue: vi.fn(),
+					announce: vi.fn(),
+				})
+			);
 
-		await act(async () => {
-			await Promise.resolve();
-		});
-		expect(result.current).toBe('Remote One');
+			await browseAndPick(mode, () => void result.current.handleBrowse(), '/picked/project');
 
-		rerender({ enabled: false });
-		expect(result.current).toBeNull();
-	});
-
-	it('clears SSH remote host labels on lookup misses and reports lookup failures', async () => {
-		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
-			success: true,
-			configs: [],
-		});
-
-		const { result, rerender } = renderHook(
-			({ remoteId }) => useDirectorySshRemoteHost({ enabled: true, remoteId }),
-			{ initialProps: { remoteId: 'missing-remote' } }
-		);
-
-		await act(async () => {
-			await Promise.resolve();
-		});
-		expect(result.current).toBe('');
-		expect(sentryMocks.captureMessage).toHaveBeenCalledWith(
-			'Wizard SSH remote host lookup missed',
-			expect.objectContaining({
-				extra: expect.objectContaining({ remoteId: 'missing-remote' }),
-			})
-		);
-
-		vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValueOnce(new Error('ssh down'));
-		rerender({ remoteId: 'remote-error' });
-		await act(async () => {
-			await Promise.resolve();
-		});
-		expect(result.current).toBe('');
-		expect(sentryMocks.captureException).toHaveBeenCalledWith(
-			expect.objectContaining({ message: 'ssh down' }),
-			expect.objectContaining({
-				extra: expect.objectContaining({ remoteId: 'remote-error' }),
-			})
-		);
-	});
+			expect(setDirectoryPath).toHaveBeenCalledWith('/picked/project');
+			expect(validateDirectory).toHaveBeenCalledWith('/picked/project');
+			expect(result.current.isBrowsing).toBe(false);
+			resetPathPicker();
+		}
+	);
 
 	it('handles browse, git init, existing-doc modal decisions, and cancellation', async () => {
 		const focusInput = vi.fn();

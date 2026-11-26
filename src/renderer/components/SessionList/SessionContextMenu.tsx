@@ -332,8 +332,8 @@ export function SessionContextMenu({
 	const delegationGraph = useDelegationGraphModel({ kind: 'agent', sessionId: session.id });
 	// Federation (FED-SSH-06): Move to Host for an SSH agent whose remote takes part (it sets a host
 	// up first when there is none), and its reverse, Move Back from Host, for a hosted agent. Those
-	// are the only Federation rows: the host connection (reconnect, start the host) lives in the
-	// hosted view's disconnected banner and the palette.
+	// are the only Federation rows: the host connection (reconnect) lives in Quick Actions, and its
+	// state rides the mode pill's color and hover card.
 	const federationStatus = useAgentFederationStatus(session);
 	const hosted = federationStatus.kind === 'moved' ? federationStatus : undefined;
 

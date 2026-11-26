@@ -68,7 +68,8 @@ import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebUrl } from '../../../shared/urlRoutingHint';
 import { isWebDesktop } from '../../utils/runtimeContext';
-import { openFileForUser, openFileForUserLabel } from '../../services/hostShell';
+import { openFileForUserLabel } from '../../services/hostShell';
+import { openFileInDefaultApp } from '../../services/fileActions';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
@@ -2812,30 +2813,10 @@ export const FilePreview = React.memo(
 								    (an SSH file is copied down first); in a browser it is
 								    downloaded to this device. See services/hostShell.ts. */}
 								<button
-									onClick={async () => {
-										// Local files, and every file from a browser, go through the
-										// one host-shell rule.
-										if (!sshRemoteId || isWebDesktop()) {
-											void openFileForUser(file.path, { sshRemoteId });
-											return;
-										}
-										try {
-											notifyCenterFlash({ message: 'Downloading…', color: 'theme' });
-											const { path: localPath } = await window.maestro.fs.downloadRemoteFile(
-												file.path,
-												sshRemoteId
-											);
-											await window.maestro.shell.openPath(localPath);
-										} catch (error) {
-											notifyToast({
-												color: 'red',
-												title: 'Open failed',
-												message:
-													error instanceof Error
-														? error.message
-														: 'Could not download the remote file',
-											});
-										}
+									onClick={() => {
+										// A remote file is fetched to this machine first; a browser downloads
+										// it to this device. The outcome is the same in every mode.
+										void openFileInDefaultApp({ path: file.path, sshRemoteId });
 									}}
 									className="mt-4 px-4 py-2 rounded text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
 									style={{
@@ -2843,7 +2824,7 @@ export const FilePreview = React.memo(
 										color: theme.colors.accentForeground,
 									}}
 								>
-									{sshRemoteId && !isWebDesktop() ? 'Download & Open' : openFileForUserLabel()}
+									{openFileForUserLabel()}
 								</button>
 							</div>
 						</div>

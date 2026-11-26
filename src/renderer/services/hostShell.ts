@@ -46,25 +46,29 @@ export function openFileForUserLabel(): string {
 /**
  * Open a host file the way this person's computer would: in its default app on
  * the desktop, or downloaded to this device from a browser. A failed download
- * says why; the desktop path is unchanged.
+ * says why; the desktop path is unchanged. Resolves whether the file was handed
+ * over (always true on the desktop, where `shell.openPath` reports its own
+ * failures).
  */
 export async function openFileForUser(
 	path: string,
 	options: { sshRemoteId?: string | null } = {}
-): Promise<void> {
+): Promise<boolean> {
 	if (hostShellAvailable()) {
 		await window.maestro.shell.openPath(path);
-		return;
+		return true;
 	}
 	const name = getBasename(path);
 	try {
 		await downloadHostFile(path, name, options.sshRemoteId ?? undefined);
 		notifyCenterFlash({ message: `Downloaded "${name}" to this client`, color: 'theme' });
+		return true;
 	} catch (error) {
 		notifyToast({
 			color: 'red',
 			title: 'Download failed',
 			message: error instanceof Error ? error.message : String(error),
 		});
+		return false;
 	}
 }

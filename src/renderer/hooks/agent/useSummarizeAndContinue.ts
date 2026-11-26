@@ -25,6 +25,7 @@ import type { Session, LogEntry, AITab, ToolType } from '../../types';
 import type { SummarizeProgress, SummarizeResult } from '../../types/contextMerge';
 import { contextSummarizationService } from '../../services/contextSummarizer';
 import { createTabAtPosition } from '../../utils/tabHelpers';
+import { formatLogsForContextInjection } from '../../utils/contextExtractor';
 import { useOperationStore, selectIsAnySummarizing } from '../../stores/operationStore';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -36,6 +37,7 @@ import { describeContinuationRouting } from '../../../shared/continuationRouting
 import { readTabContextUsage } from '../../utils/contextUsage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabContextOpResult } from '../../../shared/tabContextOps';
+import { hostedTargetOf, startHostedConversation } from '../../services/hostedTurns';
 
 // Re-export types from the canonical store location
 export type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
@@ -60,11 +62,12 @@ export interface UseSummarizeAndContinueResult {
 	isAnySummarizing: boolean;
 	/**
 	 * Start the summarization process for a specific tab of `sessionId`
-	 * (default: the active agent).
+	 * (default: the active agent). `background` opens the compacted tab without showing it.
 	 */
 	startSummarize: (
 		sourceTabId: string,
-		sessionId?: string
+		sessionId?: string,
+		options?: { background?: boolean }
 	) => Promise<{
 		newTabId: string;
 		updatedSession: Session;
@@ -197,14 +200,14 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 	const startSummarize = useCallback(
 		async (
 			sourceTabId: string,
-			sessionId?: string
+			sessionId?: string,
+			options: { background?: boolean } = {}
 		): Promise<{ newTabId: string; updatedSession: Session; systemLogEntry: LogEntry } | null> => {
 			const state = useSessionStore.getState();
 			const session = sessionId ? selectSessionById(sessionId)(state) : selectActiveSession(state);
 			if (!session) {
 				return null;
 			}
-
 			const sourceTab = session.aiTabs.find((t) => t.id === sourceTabId);
 			if (!sourceTab) {
 				return null;
@@ -273,24 +276,62 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 
 				// Create the new compacted tab
 				const compactedTabName = contextSummarizationService.formatCompactedTabName(sourceTab.name);
+				// The compacted tab starts a new provider session, so the summary has to reach the
+				// provider as context on its first turn, the way merge and recovery hand theirs over
+				// (`pendingMergedContext`). A local send prepends it; a hosted send hands it to the host.
+				const summaryText = formatLogsForContextInjection(summarizeResult.summarizedLogs).text;
+				const pendingMergedContext = summaryText
+					? `Summary of the earlier conversation this tab continues:\n\n${summaryText}`
+					: undefined;
 
-				const tabResult = createTabAtPosition(session, {
-					afterTabId: sourceTabId,
-					name: compactedTabName,
-					logs: summarizeResult.summarizedLogs,
-					saveToHistory: sourceTab.saveToHistory,
-				});
+				// A hosted agent's tab lives on its host: the host opens it right after the source and
+				// takes its name, and the summary draws here as the tab's transcript, as it does in a
+				// local tab (`startHostedConversation()`). A refusal (host down) toasts; nothing opens.
+				let newTabId: string;
+				let updatedSession: Session;
+				if (hostedTargetOf(session)) {
+					const hostTabId = await startHostedConversation(session, {
+						afterTabId: sourceTabId,
+						name: compactedTabName,
+						fields: {
+							logs: summarizeResult.summarizedLogs,
+							saveToHistory: sourceTab.saveToHistory,
+							...(pendingMergedContext ? { pendingMergedContext } : {}),
+						},
+						...(options.background ? { background: true } : {}),
+					});
+					if (!hostTabId) {
+						throw new Error(`The host did not open the compacted tab for ${session.name}.`);
+					}
+					newTabId = hostTabId;
+					updatedSession = selectSessionById(session.id)(useSessionStore.getState()) ?? session;
+				} else {
+					const tabResult = createTabAtPosition(session, {
+						afterTabId: sourceTabId,
+						name: compactedTabName,
+						logs: summarizeResult.summarizedLogs,
+						saveToHistory: sourceTab.saveToHistory,
+					});
 
-				if (!tabResult) {
-					throw new Error('Failed to create compacted tab');
+					if (!tabResult) {
+						throw new Error('Failed to create compacted tab');
+					}
+					tabResult.tab.tabProvider = launchSession.toolType;
+					newTabId = tabResult.tab.id;
+					updatedSession = pendingMergedContext
+						? {
+								...tabResult.session,
+								aiTabs: tabResult.session.aiTabs.map((tab) =>
+									tab.id === newTabId ? { ...tab, pendingMergedContext } : tab
+								),
+							}
+						: tabResult.session;
 				}
-
-				tabResult.tab.tabProvider = launchSession.toolType;
 
 				// Calculate final result
 				const finalResult: SummarizeResult = {
 					success: true,
-					newTabId: tabResult.tab.id,
+					newTabId,
 					originalTokens: summarizeResult.originalTokens,
 					compactedTokens: summarizeResult.compactedTokens,
 					reductionPercent: Math.round(
@@ -318,10 +359,10 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 				);
 
 				return {
-					newTabId: tabResult.tab.id,
+					newTabId,
 					updatedSession: {
-						...tabResult.session,
-						activeTabId: tabResult.tab.id, // Switch to the new tab
+						...updatedSession,
+						activeTabId: newTabId, // Switch to the new tab
 					},
 					systemLogEntry,
 				};
@@ -402,7 +443,6 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			if (!session) return { success: false, error: `Agent not found: ${sessionId}` };
 			const targetTab = session.aiTabs.find((t) => t.id === targetTabId);
 			const subject = { sessionId, tabId: targetTabId };
-
 			if (!targetTab || !canSummarize(session.contextUsage, targetTab.logs)) {
 				const message = `Context too small. Need at least ${contextSummarizationService.getMinContextUsagePercent()}% usage, ~2k tokens, or 8+ messages to compact.`;
 				notifyToast({
@@ -424,7 +464,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			const { setSessions } = useSessionStore.getState();
 
 			try {
-				const result = await startSummarize(targetTabId, sessionId);
+				const result = await startSummarize(targetTabId, sessionId, options);
 				if (!result) {
 					// startSummarize returned null after setting an error state in
 					// operationStore. Pull the actual error so the toast can

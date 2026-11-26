@@ -88,7 +88,7 @@ const aggregate: TokenUsageAggregate = {
 	} as TokenUsageAggregate['series'],
 	speed: emptyTokenSpeedSummary(),
 	coverageByAgent: {},
-	excluded: { unsupportedAgents: [], remoteProjects: 0 },
+	excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
 	granularity: 'day',
 	windowStartMs: 1_700_000_000_000,
 	windowEndMs: 1_700_086_400_000,
@@ -415,7 +415,7 @@ describe('Grok token presentation', () => {
 		expect(screen.getByRole('group', { name: 'Input Tokens: 60' })).toBeInTheDocument();
 		expect(screen.getByText('30% of input served from cache')).toBeInTheDocument();
 		expect(screen.getByTestId('token-stats')).toHaveTextContent(
-			'2 conversations read from local agent transcripts.'
+			'2 conversations read from agent transcripts.'
 		);
 		for (const a of ['alpha', 'beta']) {
 			const row = within(screen.getByTestId('token-by-account')).getByText(`Grok ${a}`);
@@ -460,12 +460,132 @@ describe('TokenStats framing', () => {
 	it('lists partial providers and what is not counted', async () => {
 		mountWith({
 			coverageByAgent: { 'claude-code': 'full', codex: 'partial' },
-			excluded: { unsupportedAgents: ['grok'], remoteProjects: 1 },
+			excluded: { unsupportedAgents: ['grok'], remoteProjects: 1, notCountedAgents: ['Build Box'] },
 		});
 		const coverage = await screen.findByTestId('token-stats-coverage');
 		expect(coverage.textContent).toContain('Partial token data for Codex');
-		expect(coverage.textContent).toContain('agents running over SSH');
-		expect(coverage.textContent).toContain('Grok');
+		expect(coverage.textContent).toContain(
+			'Not counted: Build Box, 1 removed agent (conversations on another computer that could not be read); Grok CLI (no transcripts to read).'
+		);
+		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
+	});
+
+	it('names what is not counted even when nothing was counted', async () => {
+		mountWith({
+			totals: makeTotals({ sessionCount: 0 }),
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+		});
+		const empty = await screen.findByText(/No token usage in this range\./);
+		expect(empty.textContent).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+	});
+
+	it('says nothing is left out once every agent on another computer is counted', async () => {
+		mountWith({
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
+		});
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).not.toContain('Not counted');
+	});
+
+	it('shows local totals while a computer is still counting, then fills its rows in', async () => {
+		const first = {
+			...aggregate,
+			totals: makeTotals({ sessionCount: 3 }),
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: ['Build Box'],
+				remoteRefreshing: true,
+			},
+		};
+		let land: (value: TokenUsageAggregate) => void = () => undefined;
+		const landed = new Promise<TokenUsageAggregate>((resolve) => (land = resolve));
+		const getTokenUsage = vi.fn((_query: unknown, _force: boolean, waitForRemote?: boolean) =>
+			waitForRemote ? landed : Promise.resolve(first)
+		);
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).toContain(
+			'Not counted: Build Box (conversations on another computer, still being read).'
+		);
+		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
+		// The dashboard asks once more, waiting for the remote count.
+		await waitFor(() => expect(getTokenUsage).toHaveBeenCalledTimes(2));
+		expect(getTokenUsage.mock.calls[1][2]).toBe(true);
+
+		land({
+			...aggregate,
+			totals: makeTotals({ sessionCount: 5 }),
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: [],
+				remoteRefreshing: false,
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('token-stats-coverage').textContent).not.toContain('Not counted')
+		);
+		expect(getTokenUsage).toHaveBeenCalledTimes(2);
+	});
+
+	it('offers a refresh in the empty state while something is not counted, and reads again on it', async () => {
+		const getTokenUsage = vi.fn().mockResolvedValue({
+			...aggregate,
+			totals: makeTotals({ sessionCount: 0 }),
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+		});
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+		await screen.findByText(/No token usage in this range\./);
+		fireEvent.click(screen.getByTestId('token-stats-refresh'));
+		await waitFor(() => expect(getTokenUsage).toHaveBeenCalledTimes(2));
+		expect(getTokenUsage.mock.calls[1][1]).toBe(true);
+	});
+
+	it('keeps the not-counted note and Retry when a refresh of an empty result fails', async () => {
+		const getTokenUsage = vi
+			.fn()
+			.mockResolvedValueOnce({
+				...aggregate,
+				totals: makeTotals({ sessionCount: 0 }),
+				excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+			})
+			.mockRejectedValue(new Error('host went away'));
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+		await screen.findByText(/No token usage in this range\./);
+		fireEvent.click(screen.getByTestId('token-stats-refresh'));
+		await screen.findByText(/host went away/);
+		expect(screen.getByTestId('token-stats-empty').textContent).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+		expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+	});
+
+	it('names agents still being read as not counted once the read for them failed', () => {
+		const data = {
+			...aggregate,
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: ['Build Box'],
+				remoteRefreshing: true,
+			},
+		};
+		expect(tokenCoverageNotes(data).join(' ')).toContain('still being read');
+		const failed = tokenCoverageNotes(data, { readFailed: true }).join(' ');
+		expect(failed).not.toContain('still being read');
+		expect(failed).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
 	});
 
 	it('shows the error, not an empty state, when the read fails', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Session } from '../../../renderer/types';
-import { createMockAITab, createMockSession } from '../../helpers';
+import { AGENT_MODES, agentModeFields, createMockAITab, createMockSession } from '../../helpers';
 import {
 	buildSendMenuModel,
 	getSteerSupport,
@@ -152,9 +152,51 @@ describe('getSteerSupport', () => {
 		});
 	});
 
-	it('calls an SSH Claude agent unsupported', () => {
-		const support = getSteerSupport(workingSession({ sshRemoteId: 'remote-1' }));
-		expect(support).toMatchObject({ kind: 'unsupported', reason: 'ssh-remote' });
+	it('supports an SSH Claude TUI agent as it supports a local one', () => {
+		expect(getSteerSupport(workingSession({ sshRemoteId: 'remote-1' }))).toEqual({
+			kind: 'supported',
+		});
+	});
+
+	it('names an SSH remote whose maestro-p is too old to relay a steer', () => {
+		const support = getSteerSupport(
+			workingSession({
+				sshRemoteId: 'remote-1',
+				claudeInteractive: {
+					mode: 'interactive',
+					modeReason: 'auto',
+					steeringUnavailable: 'maestro-p-outdated',
+				},
+			})
+		);
+		expect(support).toMatchObject({ kind: 'unsupported', reason: 'maestro-p-outdated' });
+		expect(support.kind !== 'supported' && support.detail).toContain(
+			'Update maestro-p on this remote to steer'
+		);
+	});
+
+	it('ignores a stale outdated-maestro-p record once the agent no longer runs on the remote', () => {
+		const stale = {
+			claudeInteractive: {
+				mode: 'interactive' as const,
+				modeReason: 'auto' as const,
+				steeringUnavailable: 'maestro-p-outdated' as const,
+			},
+		};
+		expect(getSteerSupport(workingSession(stale))).toEqual({ kind: 'supported' });
+	});
+
+	it('supports a local native-control agent and calls an SSH one fixable (F2 lock)', () => {
+		const native = {
+			toolType: 'copilot-cli' as const,
+			harnessControlMode: 'native' as const,
+			claudeInteractive: undefined,
+		};
+		expect(getSteerSupport(workingSession(native))).toEqual({ kind: 'supported' });
+		expect(getSteerSupport(workingSession({ ...native, sshRemoteId: 'remote-1' }))).toMatchObject({
+			kind: 'fixable',
+			reason: 'native-local-only',
+		});
 	});
 
 	it('supports an SSH Codex agent on app-server, and calls one on exec fixable', () => {
@@ -198,6 +240,78 @@ describe('buildSendMenuModel', () => {
 		expect(rowFor(session, 'queue').enabled).toBe(true);
 		expect(rowFor(session, 'hold').enabled).toBe(true);
 	});
+
+	it('local, SSH, and hosted agents get the same Queue, Force Send, and Queue Held rows', () => {
+		const draft = { text: 'hi', imageCount: 0 };
+		const opts = { forcedParallelEnabled: true };
+		const local = buildSendMenuModel(workingSession(), draft, opts);
+		const ssh = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, opts);
+		const hosted = buildSendMenuModel(workingSession(), draft, { ...opts, hosted: true });
+		const rows = (model: typeof local) => model.rows.filter((row) => row.action !== 'steer');
+		expect(rows(ssh)).toEqual(rows(local));
+		expect(rows(hosted)).toEqual(rows(local));
+		expect(hosted.rows.find((row) => row.action === 'hold')).toEqual({
+			action: 'hold',
+			enabled: true,
+		});
+	});
+
+	it('a hosted agent steers as a local agent does, though its record keeps its SSH remote', () => {
+		const draft = { text: 'also check the retry path', imageCount: 0 };
+		const opts = { forcedParallelEnabled: true };
+		const local = buildSendMenuModel(workingSession(), draft, opts);
+		// The host runs the turn on its own machine: the record's SSH remote is not the turn's hop.
+		const hosted = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, {
+			...opts,
+			hosted: true,
+		});
+		const ssh = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, opts);
+		expect(hosted.rows).toEqual(local.rows);
+		expect(hosted.steerSupport).toEqual({ kind: 'supported' });
+		expect(ssh.rows).toEqual(local.rows);
+	});
+
+	it.each(AGENT_MODES)('keeps the Steer row in the menu for a %s agent', (mode) => {
+		const session = workingSession(agentModeFields(mode));
+		const model = buildSendMenuModel(
+			session,
+			{ text: 'also check the retry path', imageCount: 0 },
+			{ forcedParallelEnabled: true, hosted: mode === 'hosted' }
+		);
+		expect(model.rows.map((row) => row.action)).toEqual(['queue', 'force', 'steer', 'hold']);
+		// Parity F1: an SSH turn steers through the remote's maestro-p, so the row is
+		// live in every mode, with the same support classification.
+		expect(model.rows.find((row) => row.action === 'steer')).toEqual({
+			action: 'steer',
+			enabled: true,
+		});
+		expect(model.steerSupport).toEqual({ kind: 'supported' });
+	});
+
+	it.each(AGENT_MODES)(
+		'gives a %s agent the same dead Steer row and reason for each blocked case',
+		(mode) => {
+			const cases: Array<Partial<Session>> = [
+				{ toolType: 'opencode' },
+				{ toolType: 'codex' },
+				{ claudeInteractive: { mode: 'api', modeReason: 'auto' }, maestroPMode: undefined },
+			];
+			for (const blocked of cases) {
+				const local = buildSendMenuModel(
+					workingSession(blocked),
+					{ text: 'also check the retry path', imageCount: 0 },
+					{ forcedParallelEnabled: true }
+				);
+				const model = buildSendMenuModel(
+					workingSession({ ...blocked, ...agentModeFields(mode) }),
+					{ text: 'also check the retry path', imageCount: 0 },
+					{ forcedParallelEnabled: true, hosted: mode === 'hosted' }
+				);
+				expect(model.rows).toEqual(local.rows);
+				expect(model.steerSupport).toEqual(local.steerSupport);
+			}
+		}
+	);
 
 	it('reports whether any tab works, for a right-click on an idle agent', () => {
 		const opts = { forcedParallelEnabled: true };

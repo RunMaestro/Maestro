@@ -29,7 +29,7 @@
  */
 
 import { formatSessionId } from '../store/tab-display';
-import type { LogEntryRecord } from '../store/transcript';
+import { TURN_CANCELED_NOTE, type LogEntryRecord } from '../store/transcript';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import type { NativeSessionBinding } from '../agents/providerSwap';
 import type { AgentRepository, TabWriteGuard } from '../agents/repository';
@@ -186,6 +186,16 @@ export function buildTurnTranscript(turn: RecordedTurn, ctx: RuleContext): LogEn
 			timestamp: turn.endedAt,
 			source: 'error',
 			text: turn.completed.error?.message ?? describeCrash(turn.completed.exit),
+			...(turn.completed.error ? { agentError: turn.completed.error } : {}),
+		});
+	}
+	// A turn the person stopped ends on the note a local Stop writes, so every mode reads the same.
+	if (turn.completed.outcome === 'interrupted') {
+		entries.push({
+			id: ctx.newId(),
+			timestamp: turn.endedAt,
+			source: 'system',
+			text: TURN_CANCELED_NOTE,
 		});
 	}
 	return entries;

@@ -9,6 +9,9 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { ProcessMonitor } from '../../../renderer/components/ProcessMonitor';
 import type { Session, Group, Theme } from '../../../renderer/types';
+import { createModeSession, type AgentMode } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -835,72 +838,57 @@ describe('ProcessMonitor', () => {
 		});
 	});
 
-	describe('SSH/Local indicator', () => {
-		it('should not render any locality badge on session row for local sessions', async () => {
+	describe('Mode parity (local, SSH, hosted)', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: false });
+		});
+
+		/** The rows' mode pills and the list's markup with the pills taken out. */
+		async function drawMonitor(mode: AgentMode) {
 			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
 			getActiveProcessesMock().mockResolvedValue([process]);
-
-			const session = createSession();
-			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
-
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			const session = createSession({
+				sshRemoteId,
+				sessionSshRemoteConfig,
+				liftedTo,
+				...(mode === 'local'
+					? {}
+					: { sshRemote: { id: 'r1', name: 'build-box', host: '10.0.0.5' } }),
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const { container, unmount } = render(
+				<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />
+			);
 			await waitFor(() => {
 				expect(
 					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
 				).toBeInTheDocument();
 			});
+			const pills = [...container.querySelectorAll('[data-testid^="federation-badge-"]')].map(
+				(pill) => pill.textContent
+			);
+			const clone = container.cloneNode(true) as HTMLElement;
+			clone
+				.querySelectorAll('[data-testid^="federation-badge-"]')
+				.forEach((badge) => badge.parentElement?.remove());
+			const html = clone.innerHTML;
+			unmount();
+			return { pills, html };
+		}
 
-			expect(screen.queryByText('Local')).not.toBeInTheDocument();
-			expect(screen.queryByTitle('Running locally')).not.toBeInTheDocument();
-		});
-
-		it('should show SSH badge on session row for SSH sessions', async () => {
-			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
-			getActiveProcessesMock().mockResolvedValue([process]);
-
-			const session = createSession({
-				sshRemote: { id: 'remote-1', name: 'dev-box', host: '192.168.1.100' },
-			});
-			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('SSH: dev-box')).toBeInTheDocument();
-				// Both session row and process row have SSH badges with this title
-				const sshTitles = screen.getAllByTitle('SSH: dev-box (192.168.1.100)');
-				expect(sshTitles.length).toBeGreaterThanOrEqual(1);
-			});
-		});
-
-		it('should show SSH badge on process row for SSH sessions', async () => {
-			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
-			getActiveProcessesMock().mockResolvedValue([process]);
-
-			const session = createSession({
-				sshRemote: { id: 'remote-1', name: 'prod-server', host: '10.0.0.5' },
-			});
-			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
-
-			await waitFor(() => {
-				// Process row should have the SSH badge
-				const sshBadges = screen.getAllByText('SSH');
-				expect(sshBadges.length).toBeGreaterThanOrEqual(1);
-			});
-		});
-
-		it('should not show SSH badge on process row for local sessions', async () => {
-			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
-			getActiveProcessesMock().mockResolvedValue([process]);
-
-			const session = createSession();
-			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
-
-			await waitFor(() => {
-				expect(
-					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
-				).toBeInTheDocument();
-			});
-
-			// No SSH badge should appear on process rows
-			expect(screen.queryByText('SSH')).not.toBeInTheDocument();
+		it("draws the agent's Left Bar mode pill on its row and nothing else differs", async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			const local = await drawMonitor('local');
+			const ssh = await drawMonitor('ssh');
+			const hosted = await drawMonitor('hosted');
+			// One pill per agent row; the process row under it draws none.
+			expect([local.pills, ssh.pills, hosted.pills]).toEqual([['LOCAL'], ['REMOTE'], ['HOSTED']]);
+			// The remote's name and a transport badge are not drawn: the pill is the one mark of mode.
+			expect(ssh.html).not.toContain('build-box');
+			expect(ssh.html).not.toMatch(/>SSH</);
+			expect(ssh.html).toBe(local.html);
+			expect(hosted.html).toBe(local.html);
 		});
 	});
 
