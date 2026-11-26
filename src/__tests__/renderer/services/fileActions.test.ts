@@ -11,6 +11,7 @@ import {
 	__resetFileActionsForTests,
 	cachedLocalCopy,
 	fetchLocalCopy,
+	fetchLocalFolderCopy,
 	openFileInDefaultApp,
 	openFileInMaestroBrowser,
 	openFolderInFileManager,
@@ -28,6 +29,7 @@ const LOCAL_COPY = '/tmp/maestro-remote-downloads/abc/report.pdf';
 const remoteIdFor = (mode: AgentMode) => (mode === 'local' ? undefined : 'r1');
 
 let downloadRemoteFile: ReturnType<typeof vi.fn>;
+let downloadRemoteFolder: ReturnType<typeof vi.fn>;
 let openPath: ReturnType<typeof vi.fn>;
 let showItemInFolder: ReturnType<typeof vi.fn>;
 let copyPath: ReturnType<typeof vi.fn>;
@@ -38,6 +40,11 @@ beforeEach(() => {
 	__resetFileActionsForTests();
 	useCenterFlashStore.getState().setActive(null);
 	downloadRemoteFile = vi.fn().mockResolvedValue({ success: true, path: LOCAL_COPY });
+	downloadRemoteFolder = vi.fn().mockResolvedValue({
+		success: true,
+		path: '/tmp/maestro-remote-downloads/abc/src',
+		fileCount: 3,
+	});
 	openPath = vi.fn().mockResolvedValue(undefined);
 	showItemInFolder = vi.fn().mockResolvedValue(undefined);
 	copyPath = vi.fn().mockResolvedValue({ success: true });
@@ -45,7 +52,7 @@ beforeEach(() => {
 	(window as any).maestro = {
 		...original,
 		shell: { ...original.shell, openPath, showItemInFolder },
-		fs: { ...original.fs, downloadRemoteFile, copyPath },
+		fs: { ...original.fs, downloadRemoteFile, downloadRemoteFolder, copyPath },
 		dialog: { ...original.dialog, saveFile },
 	};
 });
@@ -108,6 +115,15 @@ describe.each(AGENT_MODES)('file actions in %s mode', (mode) => {
 		if (mode !== 'local') expect(cachedLocalCopy(target)).toBeUndefined();
 		await fetchLocalCopy(target, { quiet: true });
 		expect(cachedLocalCopy(target)).toBe(expected);
+	});
+
+	it('fetches a folder whole and remembers its copy for a drag', async () => {
+		const folder = { path: '/work/src', sshRemoteId };
+		const expectedFolder = mode === 'local' ? '/work/src' : '/tmp/maestro-remote-downloads/abc/src';
+		await expect(fetchLocalFolderCopy(folder, { quiet: true })).resolves.toBe(expectedFolder);
+		expect(cachedLocalCopy(folder)).toBe(expectedFolder);
+		expect(downloadRemoteFolder).toHaveBeenCalledTimes(mode === 'local' ? 0 : 1);
+		expect(downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
 	it('opens a folder: in the file manager locally, in the Files panel when remote', async () => {

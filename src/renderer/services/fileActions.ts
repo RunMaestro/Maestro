@@ -49,10 +49,11 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 /**
- * The local copy a previous fetch left for this file, read synchronously.
+ * The local copy a previous fetch left for this file or folder, read
+ * synchronously.
  *
  * For callers that cannot await, such as an OS drag that must name its files in
- * the same event. A local file is its own copy.
+ * the same event. A local path is its own copy.
  */
 export function cachedLocalCopy(target: FileActionTarget): string | undefined {
 	if (!isRemote(target)) return target.path;
@@ -67,16 +68,42 @@ export function cachedLocalCopy(target: FileActionTarget): string | undefined {
  * again for a remote file, because the copy is what the user is about to see and
  * the remote file may have changed. Rejects when the fetch fails.
  */
-export async function fetchLocalCopy(
+export function fetchLocalCopy(
 	target: FileActionTarget,
 	options: { quiet?: boolean } = {}
+): Promise<string> {
+	return fetchCopy(target, options, (remote) =>
+		window.maestro.fs.downloadRemoteFile(remote.path, remote.sshRemoteId)
+	);
+}
+
+/**
+ * A folder on THIS machine holding a copy of the folder's whole tree.
+ *
+ * Local: the path itself. Remote: the tree is fetched to the temp folder (same
+ * flash and cache as {@link fetchLocalCopy}, so {@link cachedLocalCopy} finds
+ * it). Rejects when the fetch fails or the folder is too large to copy whole.
+ */
+export function fetchLocalFolderCopy(
+	target: FileActionTarget,
+	options: { quiet?: boolean } = {}
+): Promise<string> {
+	return fetchCopy(target, options, (remote) =>
+		window.maestro.fs.downloadRemoteFolder(remote.path, remote.sshRemoteId)
+	);
+}
+
+async function fetchCopy(
+	target: FileActionTarget,
+	options: { quiet?: boolean },
+	download: (remote: FileActionTarget & { sshRemoteId: string }) => Promise<{ path: string }>
 ): Promise<string> {
 	if (!isRemote(target)) return target.path;
 	const flashId = options.quiet
 		? null
 		: notifyCenterFlash({ message: 'Downloading…', color: 'theme', duration: 0 });
 	try {
-		const { path } = await window.maestro.fs.downloadRemoteFile(target.path, target.sshRemoteId);
+		const { path } = await download(target);
 		localCopies.set(copyKey(target), path);
 		return path;
 	} finally {

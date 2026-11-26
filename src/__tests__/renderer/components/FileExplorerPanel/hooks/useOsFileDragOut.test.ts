@@ -7,6 +7,7 @@ import {
 	__resetFileActionsForTests,
 	fetchLocalCopy,
 } from '../../../../../renderer/services/fileActions';
+import { AGENT_MODES, createModeSession } from '../../../../helpers';
 
 vi.mock('../../../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -28,7 +29,13 @@ const session = {
 
 const startDragOut = vi.fn();
 const downloadRemoteFile = vi.fn();
-(window as any).maestro = { fs: { startDragOut, downloadRemoteFile } };
+const downloadRemoteFolder = vi.fn();
+(window as any).maestro = { fs: { startDragOut, downloadRemoteFile, downloadRemoteFolder } };
+
+/** Let the fire-and-forget fetch inside the drag handler settle. */
+async function settleFetch(): Promise<void> {
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+}
 
 function makeDragEvent(altKey: boolean): React.DragEvent {
 	return {
@@ -144,16 +151,73 @@ describe('useOsFileDragOut', () => {
 		expect(downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
-	it('remote: folders are unsupported and flash an explanation instead of dragging', () => {
+	it('remote: a folder is fetched whole, then drags out from its local copy', async () => {
+		downloadRemoteFolder.mockResolvedValue({ success: true, path: '/tmp/k/src', fileCount: 1 });
 		const onShowFlash = vi.fn();
 		const { result } = renderHook(() =>
 			useOsFileDragOut({ session, sshRemoteId: 'remote-1', onShowFlash })
 		);
+		await act(async () => {
+			result.current.handleOsDragStart(makeDragEvent(true), ['src']);
+			await settleFetch();
+		});
+		expect(downloadRemoteFolder).toHaveBeenCalledWith('/project/src', 'remote-1');
+		expect(downloadRemoteFile).not.toHaveBeenCalled();
+		expect(startDragOut).not.toHaveBeenCalled();
+		expect(onShowFlash).toHaveBeenCalledWith('Ready - drag "src" to Finder again');
+
 		act(() => {
 			result.current.handleOsDragStart(makeDragEvent(true), ['src']);
 		});
+		expect(startDragOut).toHaveBeenCalledWith(['/tmp/k/src']);
+		expect(downloadRemoteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	it('remote: a folder too large to copy says why instead of dragging', async () => {
+		downloadRemoteFolder.mockRejectedValue(new Error('The folder has more than 2000 files'));
+		const onShowFlash = vi.fn();
+		const { result } = renderHook(() =>
+			useOsFileDragOut({ session, sshRemoteId: 'remote-1', onShowFlash })
+		);
+		await act(async () => {
+			result.current.handleOsDragStart(makeDragEvent(true), ['src']);
+			await settleFetch();
+		});
 		expect(startDragOut).not.toHaveBeenCalled();
-		expect(downloadRemoteFile).not.toHaveBeenCalled();
-		expect(onShowFlash).toHaveBeenCalledWith(expect.stringContaining('files, not folders'));
+		expect(onShowFlash).toHaveBeenLastCalledWith(
+			'Failed to prepare for drag-out: The folder has more than 2000 files'
+		);
+	});
+
+	describe.each(AGENT_MODES)('in %s mode', (mode) => {
+		it('drags a folder and a file out to the OS, named as they are in the tree', async () => {
+			const modeSession = createModeSession(mode, {
+				fullPath: '/project',
+				fileTree: session.fileTree,
+			});
+			const sshRemoteId =
+				modeSession.sshRemoteId || modeSession.sessionSshRemoteConfig?.remoteId || undefined;
+			downloadRemoteFolder.mockResolvedValue({ success: true, path: '/tmp/k/src', fileCount: 1 });
+			downloadRemoteFile.mockResolvedValue({ success: true, path: '/tmp/k/notes.md' });
+			const { result } = renderHook(() =>
+				useOsFileDragOut({ session: modeSession, sshRemoteId, onShowFlash: vi.fn() })
+			);
+
+			// A remote copy is fetched on the first gesture and handed over on the
+			// next; a local one is handed over at once. Either way the OS gets the
+			// same folder and file, never a partial one.
+			await act(async () => {
+				result.current.handleOsDragStart(makeDragEvent(true), ['src', 'notes.md']);
+				await settleFetch();
+			});
+			if (startDragOut.mock.calls.length === 0) {
+				act(() => {
+					result.current.handleOsDragStart(makeDragEvent(true), ['src', 'notes.md']);
+				});
+			}
+			expect(startDragOut).toHaveBeenCalledTimes(1);
+			const dragged = startDragOut.mock.calls[0][0] as string[];
+			expect(dragged.map((p) => p.split('/').pop())).toEqual(['src', 'notes.md']);
+		});
 	});
 });

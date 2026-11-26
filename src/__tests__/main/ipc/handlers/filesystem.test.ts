@@ -104,6 +104,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	writeFileRemote: vi.fn(),
 	existsRemote: vi.fn(),
 	readBinaryFileRemoteAsBase64: vi.fn(),
+	listTreeRemote: vi.fn(),
 }));
 
 // The header sniff reads real bytes off disk; each test decides the verdict.
@@ -120,7 +121,7 @@ import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesy
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
-import { readBinaryFileRemoteAsBase64 } from '../../../../main/utils/remote-fs';
+import { listTreeRemote, readBinaryFileRemoteAsBase64 } from '../../../../main/utils/remote-fs';
 import { isSqliteDatabaseFile } from '../../../../main/sqlite/sqlite-detect';
 import {
 	readDirRemote,
@@ -196,6 +197,64 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
 			const result = await handler({}, '/work/a/notes.pdf', 'r1', '/Users/me/notes.pdf');
 			expect(result).toEqual({ success: true, path: '/Users/me/notes.pdf' });
+		});
+	});
+
+	describe('fs:downloadRemoteFolder', () => {
+		beforeEach(() => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockImplementation(async (remotePath) => ({
+				success: true,
+				data: Buffer.from(`bytes of ${remotePath}`).toString('base64'),
+			}));
+		});
+
+		it('copies the whole tree into a fresh temp folder named like the remote folder', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: ['lib'], files: ['a.ts', 'lib/b.ts'], truncated: false },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			const result = await handler({}, '/work/src/', 'r1');
+
+			expect(result.path).toMatch(/^\/tmp\/maestro-remote-downloads\/[0-9a-f]{12}\/src$/);
+			expect(result.fileCount).toBe(2);
+			// A stale copy is replaced, never merged into.
+			expect(fs.rm).toHaveBeenCalledWith(result.path, { recursive: true, force: true });
+			expect(listTreeRemote).toHaveBeenCalledWith(
+				'/work/src/',
+				expect.objectContaining({ maxFiles: 2000 }),
+				{ id: 'r1' }
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(result.path, 'lib', 'b.ts'),
+				Buffer.from('bytes of /work/src/lib/b.ts')
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(result.path, 'a.ts'),
+				Buffer.from('bytes of /work/src/a.ts')
+			);
+		});
+
+		it('refuses a folder too large to copy whole', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts'], truncated: true },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(/more than 2000 files/);
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('refuses a listed path that would land outside the folder', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['../../etc/evil'], truncated: false },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(/outside the folder/);
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
 		});
 	});
 
