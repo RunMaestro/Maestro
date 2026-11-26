@@ -481,6 +481,11 @@ export function tokenCoverageNotes(
 	if (unread.length > 0) {
 		skipped.push(`${unread.join(', ')} (conversations on another computer that could not be read)`);
 	}
+	// Not listed at all (an account or folder that failed to read): left out whole.
+	const unreadHere = data.excluded.unreadAgents ?? [];
+	if (unreadHere.length > 0) {
+		skipped.push(`${unreadHere.join(', ')} (conversations that could not be read)`);
+	}
 	// Counted, but short by the conversations whose transcripts are too large or
 	// unreadable: named with how many, wherever those transcripts are.
 	for (const { name, conversations } of data.excluded.partialAgents ?? []) {
@@ -556,31 +561,44 @@ export const TokenStats = memo(function TokenStats({
 					note.startsWith('Not counted')
 				)
 			: [];
+		const emptyMessage =
+			notCounted.length > 0
+				? `No token usage in this range. ${notCounted.join(' ')}`
+				: 'No token usage in this range. Run an agent and its token consumption shows up here.';
+		// Something left out may be counted on a later read (a computer that answers now).
+		const emptyAction =
+			notCounted.length > 0 ? (
+				<TokenRefreshButton
+					theme={theme}
+					refreshing={refreshing}
+					onRefresh={() => void forceRefresh()}
+				/>
+			) : undefined;
+		// A failed refresh over a result that named what it left out keeps that note, under the
+		// error and its Retry, instead of the bare error.
+		const keepNote = !loading && !!error && notCounted.length > 0;
 		return (
 			<DashboardPanelState
 				theme={theme}
 				loading={loading}
 				error={error}
-				empty={empty}
-				emptyMessage={
-					notCounted.length > 0
-						? `No token usage in this range. ${notCounted.join(' ')}`
-						: 'No token usage in this range. Run an agent and its token consumption shows up here.'
-				}
-				// Something left out may be counted on a later read (a computer that answers now).
-				emptyAction={
-					notCounted.length > 0 ? (
-						<TokenRefreshButton
-							theme={theme}
-							refreshing={refreshing}
-							onRefresh={() => void forceRefresh()}
-						/>
-					) : undefined
-				}
+				empty={empty && !keepNote}
+				emptyMessage={emptyMessage}
+				emptyAction={emptyAction}
 				loadingMessage="Reading agent transcripts..."
 				onRetry={() => void forceRefresh()}
 				testId="token-stats"
-			/>
+			>
+				{keepNote ? (
+					<div
+						className="flex flex-col items-center justify-center gap-2 text-center text-sm"
+						data-testid="token-stats-empty"
+					>
+						<span>{emptyMessage}</span>
+						{emptyAction}
+					</div>
+				) : undefined}
+			</DashboardPanelState>
 		);
 	}
 

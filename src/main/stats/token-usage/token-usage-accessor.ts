@@ -316,7 +316,9 @@ async function loadRemote(force: boolean, waitForRemote: boolean): Promise<Remot
 		Date.now() - remoteMemo.computedAt < MEMO_TTL_MS &&
 		askedAbout(remoteMemo, agents)
 	) {
-		return { agents, entry: remoteMemo, refreshing: false };
+		if (!remoteInflight) return { agents, entry: remoteMemo, refreshing: false };
+		// A forced refresh is still reading: say so, and let a waited read join it below.
+		if (!waitForRemote) return { agents, entry: remoteMemo, refreshing: true };
 	}
 	const refresh = refreshRemote(agents);
 	if (waitForRemote) {
@@ -387,6 +389,9 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<LocalCollectio
 	});
 	cache.prune(local.liveKeys);
 	excluded.partialAgents = localPartialAgents(local.skippedProjects);
+	// A project whose listing failed is in no total: name it, so the totals are never quietly short.
+	const unread = [...new Set(nameLocalProjects(local.failedProjects).values())];
+	if (unread.length > 0) excluded.unreadAgents = unread;
 	return { breakdowns: local.breakdowns, excluded, remotePairs };
 }
 
@@ -397,7 +402,21 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<LocalCollectio
 function localPartialAgents(
 	skippedProjects: ReadonlyMap<string, number>
 ): Array<{ name: string; conversations: number }> {
-	if (skippedProjects.size === 0) return [];
+	const names = nameLocalProjects(skippedProjects.keys());
+	return [...skippedProjects].map(([key, conversations]) => ({
+		name: names.get(key) ?? key,
+		conversations,
+	}));
+}
+
+/**
+ * The name of each local project key ({@link projectKey}): the agents of this machine working
+ * there, else the folder.
+ */
+function nameLocalProjects(keys: Iterable<string>): Map<string, string> {
+	const named = new Map<string, string>();
+	const wanted = [...keys];
+	if (wanted.length === 0) return named;
 	let records: AgentRecord[] = [];
 	if (storesInitialized()) {
 		try {
@@ -407,8 +426,7 @@ function localPartialAgents(
 		}
 	}
 	const remoteIds = new Set(remoteTokenAgentsOf(records).map((agent) => agent.id));
-	const partial: Array<{ name: string; conversations: number }> = [];
-	for (const [key, conversations] of skippedProjects) {
+	for (const key of wanted) {
 		const [agentType, projectPath] = key.split('\u0000');
 		const names = records
 			.filter(
@@ -418,12 +436,9 @@ function localPartialAgents(
 					(record.cwd === projectPath || record.projectRoot === projectPath)
 			)
 			.map((record) => (typeof record.name === 'string' && record.name ? record.name : record.id));
-		partial.push({
-			name: names.length > 0 ? [...new Set(names)].join(', ') : projectLabel(projectPath),
-			conversations,
-		});
+		named.set(key, names.length > 0 ? [...new Set(names)].join(', ') : projectLabel(projectPath));
 	}
-	return partial;
+	return named;
 }
 
 /**

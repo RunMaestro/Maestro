@@ -226,6 +226,11 @@ export interface TokenUsageExclusions {
 	 * `conversations` says how many are left out.
 	 */
 	partialAgents?: Array<{ name: string; conversations: number }>;
+	/**
+	 * Agents (or folders, when no agent works there now) of this machine whose conversations could
+	 * not be listed at all (an account or folder that failed to read): left out of the totals.
+	 */
+	unreadAgents?: string[];
 }
 
 /**

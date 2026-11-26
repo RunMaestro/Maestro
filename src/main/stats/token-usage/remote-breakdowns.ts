@@ -18,6 +18,7 @@
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import { liftRemoteCwd, liftSshRemoteId } from '../../../shared/maestro-lib/agents/lift-plan';
 import type { SessionTokenBreakdown } from '../../../shared/tokenUsage';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import type {
 	ProjectTokenUsage,
 	ProjectTokenUsageProject,
@@ -104,6 +105,11 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | unde
 }
 
 export interface CollectRemoteBreakdownsOptions {
+	/**
+	 * How long one remote is given for ALL its chunks together, so a caller that waits (the CLI)
+	 * waits a known time: a chunk asked once the time is spent is not asked, and its agents are
+	 * named as not counted.
+	 */
 	timeoutMs?: number;
 	/** One remote finished (answered, failed, or timed out). */
 	onRemoteDone?(): void;
@@ -146,10 +152,16 @@ export async function collectRemoteBreakdowns(
 				chunk: ProjectTokenUsageProject[];
 				usage: ProjectTokenUsage | undefined;
 			}> = [];
+			const deadline = Date.now() + timeoutMs;
 			for (const chunk of chunks) {
 				let usage: ProjectTokenUsage | undefined;
+				const left = deadline - Date.now();
+				if (left <= 0) {
+					settled.push({ remoteId, chunk, usage: undefined });
+					continue;
+				}
 				try {
-					usage = await withTimeout(request(remoteId, chunk, timeoutMs), timeoutMs);
+					usage = await withTimeout(request(remoteId, chunk, left), left);
 				} catch (error) {
 					options.onError?.(error);
 					usage = undefined;
@@ -186,7 +198,16 @@ export async function collectRemoteBreakdowns(
 			countedProjects.add(projectId);
 			if (result.skippedFiles) skippedByProject.set(projectId, result.skippedFiles);
 			for (const breakdown of result.breakdowns) {
-				const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.sessionId}`;
+				// A Grok id is scoped to its account and working directory, so two projects can each
+				// hold their own `s1`; every other provider's id is one conversation per account.
+				const scope = breakdown.agentType === 'grok' ? project.projectPath : '';
+				const key = canonicalJson([
+					remoteId,
+					breakdown.agentType,
+					breakdown.accountKey,
+					scope,
+					breakdown.sessionId,
+				]);
 				const previous = kept.get(key);
 				if (!previous || deeperFolder(breakdown.projectPath, previous.projectPath)) {
 					kept.set(key, breakdown);

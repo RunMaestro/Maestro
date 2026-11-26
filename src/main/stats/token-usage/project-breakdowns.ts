@@ -36,6 +36,7 @@ import type {
 } from '../../../shared/projectTokenUsage';
 import type { TokenUsageCache } from './token-usage-cache';
 import { sessionFingerprint, tokenCacheKey } from './token-usage-keys';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 
 /**
  * Per-agent base coverage, matching the Cue accessor's classification so both
@@ -298,7 +299,10 @@ export interface ProjectBreakdownDeps {
 	cache?: Pick<TokenUsageCache, 'get' | 'set'>;
 	/** Joins and limits the session listings, when the caller keeps one (a host does). */
 	gate?: SessionListGate;
-	/** A storage failed to list one project; that project is skipped. */
+	/**
+	 * A storage failed to list one project, for a reason that is not the environment's (an
+	 * unreadable or vanished file is expected and not reported); that project is still skipped.
+	 */
 	onError?(error: unknown): void;
 }
 
@@ -343,7 +347,8 @@ async function listAccountProjects(
 		const listMany = storage.listSessionsForProjects.bind(storage);
 		try {
 			const result = await gate.run(
-				canonicalJson(['many', agentType, account, [...projects]]),
+				// The same set in another order is the same walk.
+				canonicalJson(['many', agentType, account, [...projects].sort()]),
 				async () => {
 					const skipped = new Map<string, number>();
 					const byProject = await listMany(projects, accountDir, {
@@ -402,6 +407,9 @@ export async function collectProjectBreakdowns(
 	const gate = deps.gate ?? UNGATED;
 	// One walk can fail for several projects at once; report it once.
 	const reported = new Set<Error>();
+	const report = (error: unknown): void => {
+		if (!isExpectedSessionReadError(error)) deps.onError?.(error);
+	};
 
 	for (const [agentType, projectSet] of byAgent) {
 		const storage = deps.storageFor(agentType);
@@ -422,7 +430,7 @@ export async function collectProjectBreakdowns(
 		} catch (error) {
 			// Without its accounts this provider cannot be read whole: its projects fail, and the
 			// other providers of the request are still read.
-			deps.onError?.(error);
+			report(error);
 			for (const projectPath of projects) {
 				failedProjects.add(projectKey(agentType, projectPath));
 				byProject.set(projectKey(agentType, projectPath), []);
@@ -444,7 +452,7 @@ export async function collectProjectBreakdowns(
 				const accountKey = accountDir ?? DEFAULT_ACCOUNT_KEY;
 				const listing = listings[index].get(projectPath) ?? { sessions: [], skipped: 0 };
 				if (listing instanceof Error) {
-					if (!reported.has(listing)) deps.onError?.(listing);
+					if (!reported.has(listing)) report(listing);
 					reported.add(listing);
 					failedProjects.add(projectKey(agentType, projectPath));
 					return;
@@ -474,7 +482,9 @@ export async function collectProjectBreakdowns(
 						deps.cache?.set(key, fingerprint, breakdown);
 					}
 					own.push(breakdown);
-					if (agentType === 'grok' && liveKeys.has(key)) continue;
+					// A conversation two projects both cover (a Codex rollout in a child folder of
+					// another project, an aliased folder) is counted once in the totals.
+					if (liveKeys.has(key)) continue;
 					liveKeys.add(key);
 					breakdowns.push(breakdown);
 				}

@@ -252,6 +252,46 @@ describe('one conversation under two folders asked', () => {
 			expect(merged.notCounted).toEqual([]);
 		}
 	});
+
+	it("gives one remote's chunks one time budget together, and names the agents of a chunk past it", async () => {
+		// Three chunks (64 + 64 + 1 projects), each answered after 90 ms, inside 200 ms in all.
+		const agents = Array.from({ length: 129 }, (_, i) =>
+			agent({ id: `a${i}`, name: `A${i}`, projectPath: `/p/${i}` })
+		);
+		const timeouts: number[] = [];
+		const result = await collectRemoteBreakdowns(
+			agents,
+			async (_remoteId, projects, ms) => {
+				timeouts.push(ms);
+				await new Promise((resolve) => setTimeout(resolve, 90));
+				return answered(projects);
+			},
+			{ timeoutMs: 200 }
+		);
+		const notCounted = new Set(result.notCounted.map((a) => a.id));
+		expect(notCounted.has('a0')).toBe(false);
+		expect(notCounted.has('a128')).toBe(true);
+		// Each later chunk is given only what is left.
+		expect(timeouts[0]).toBe(200);
+		expect(timeouts[1]).toBeLessThan(200);
+	});
+
+	it('keeps a Grok conversation of each project when two projects reuse its id', async () => {
+		const merged = await collectRemoteBreakdowns(
+			[
+				agent({ id: 'a', name: 'A', provider: 'grok', projectPath: '/srv/a' }),
+				agent({ id: 'b', name: 'B', provider: 'grok', projectPath: '/srv/b' }),
+			],
+			async (_remoteId, projects) => ({
+				projects: projects.map((project) => ({
+					status: 'read' as const,
+					complete: true,
+					breakdowns: [{ ...breakdown('s1', project.projectPath), agentType: 'grok' }],
+				})),
+			})
+		);
+		expect(merged.breakdowns.map((b) => b.projectPath).sort()).toEqual(['/srv/a', '/srv/b']);
+	});
 });
 
 describe('projectTokenUsage (the host side)', () => {

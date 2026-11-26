@@ -331,6 +331,24 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		expect(notes.local).not.toMatch(/SSH|remote|hosted|federation/i);
 	});
 
+	it('names an agent whose conversations could not be listed at all, in every mode, with no mode word', async () => {
+		for (const mode of AGENT_MODES) {
+			setMode(mode);
+			listSessions.mockImplementation(async () =>
+				Promise.reject(Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }))
+			);
+			const aggregate = await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+			expect(aggregate.totals.sessionCount).toBe(0);
+			const named =
+				mode === 'local' ? aggregate.excluded.unreadAgents : aggregate.excluded.notCountedAgents;
+			expect(named).toEqual(['Build Box']);
+			const note = tokenCoverageNotes(aggregate).join(' ');
+			expect(note).toMatch(/Not counted: Build Box \(conversations .*could not be read\)\./);
+			expect(note).not.toMatch(/SSH|remote|hosted|federation/i);
+		}
+		listSessions.mockImplementation(async () => CONVERSATIONS);
+	});
+
 	describe('the remote count kept apart', () => {
 		/** A host that answers only when released, and how often it was asked. */
 		function slowHost() {
@@ -397,6 +415,29 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 			expect(served.excluded.pendingAgents).toEqual(['Second Box']);
 			await host.releaseAll();
 			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+		});
+
+		it('a read during a forced refresh of a fresh count says it is refreshing, and a waited one joins it', async () => {
+			setMode('hosted');
+			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+			const host = slowHost();
+			const forced = await getTokenUsageAggregate(QUERY, true);
+			expect(forced.excluded.remoteRefreshing).toBe(true);
+			await vi.waitFor(() => expect(host.ask).toHaveBeenCalledTimes(1));
+			// The count is still fresh, but a newer one is being read.
+			const shown = await getTokenUsageAggregate(QUERY, false);
+			expect(shown.excluded.remoteRefreshing).toBe(true);
+			let settled = false;
+			const waited = getTokenUsageAggregate(QUERY, false, { waitForRemote: true }).then((r) => {
+				settled = true;
+				return r;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(settled).toBe(false);
+			await host.releaseAll();
+			const full = await waited;
+			expect(full.excluded.remoteRefreshing).toBe(false);
+			expect(host.ask).toHaveBeenCalledTimes(1);
 		});
 
 		it('a refresh started before an invalidation does not fill the memo after it', async () => {

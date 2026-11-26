@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as path from 'path';
 import {
+	collectProjectBreakdowns,
 	createSessionListGate,
 	projectTokenUsage,
 	type ProjectSessionStorage,
@@ -46,7 +47,7 @@ describe('session list gate', () => {
 		expect(await second).toBe('done');
 		expect(list).toHaveBeenCalledTimes(1);
 		// Once settled, a new ask lists again (the storage's own cache keeps it cheap).
-		await gate.run('k', async () => 'again');
+		expect(await gate.run('k', async () => 'again')).toBe('again');
 		expect(list).toHaveBeenCalledTimes(1);
 	});
 
@@ -110,6 +111,62 @@ describe('projectTokenUsage under load', () => {
 			['read', 0],
 			['read', 0],
 		]);
+	});
+
+	it('joins an ask for the same projects in another order', async () => {
+		const parse = deferred<Map<string, AgentSessionInfo[]>>();
+		const listSessionsForProjects = vi.fn(() => parse.promise);
+		const deps = {
+			storageFor: () => ({ listSessions: vi.fn(), listSessionsForProjects }),
+			accountDirsFor: async () => [],
+			gate: createSessionListGate(),
+		};
+		const first = projectTokenUsage(
+			[
+				{ provider: 'codex', projectPath: '/a' },
+				{ provider: 'codex', projectPath: '/b' },
+			],
+			deps
+		);
+		const second = projectTokenUsage(
+			[
+				{ provider: 'codex', projectPath: '/b' },
+				{ provider: 'codex', projectPath: '/a' },
+			],
+			deps
+		);
+		await vi.waitFor(() => expect(listSessionsForProjects).toHaveBeenCalledTimes(1));
+		parse.resolve(new Map([['/a', [info('s1', '/a')]]]));
+		const [a, b] = await Promise.all([first, second]);
+		expect(listSessionsForProjects).toHaveBeenCalledTimes(1);
+		expect(a.projects.map((p) => p.breakdowns.length)).toEqual([1, 0]);
+		expect(b.projects.map((p) => p.breakdowns.length)).toEqual([0, 1]);
+	});
+
+	it('marks a project failed on an unreadable folder without reporting it as a bug', async () => {
+		const onError = vi.fn();
+		const unreadable = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+		const usage = await projectTokenUsage([{ provider: 'claude-code', projectPath: '/a' }], {
+			storageFor: () => ({ listSessions: vi.fn(async () => Promise.reject(unreadable)) }),
+			accountDirsFor: async () => [],
+			onError,
+		});
+		expect(usage.projects[0].status).toBe('failed');
+		expect(onError).not.toHaveBeenCalled();
+	});
+
+	it('counts a conversation two projects both cover once in the totals', async () => {
+		// A Codex rollout in /srv/app/pkg belongs to /srv/app and to /srv/app/pkg.
+		const rollout = info('r1', '/srv/app/pkg');
+		const collected = await collectProjectBreakdowns(
+			new Map([['codex', new Set(['/srv/app', '/srv/app/pkg'])]]),
+			{
+				storageFor: () => ({ listSessions: async () => [rollout] }),
+				accountDirsFor: async () => [],
+			}
+		);
+		expect(collected.breakdowns).toHaveLength(1);
+		expect([...collected.byProject.values()].map((own) => own.length)).toEqual([1, 1]);
 	});
 
 	it('answers two asks that arrive during one cold parse with one parse', async () => {

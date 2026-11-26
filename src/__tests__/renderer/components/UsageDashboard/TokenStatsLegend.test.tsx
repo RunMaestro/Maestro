@@ -549,6 +549,26 @@ describe('TokenStats framing', () => {
 		expect(getTokenUsage.mock.calls[1][1]).toBe(true);
 	});
 
+	it('keeps the not-counted note and Retry when a refresh of an empty result fails', async () => {
+		const getTokenUsage = vi
+			.fn()
+			.mockResolvedValueOnce({
+				...aggregate,
+				totals: makeTotals({ sessionCount: 0 }),
+				excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+			})
+			.mockRejectedValue(new Error('host went away'));
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+		await screen.findByText(/No token usage in this range\./);
+		fireEvent.click(screen.getByTestId('token-stats-refresh'));
+		await screen.findByText(/host went away/);
+		expect(screen.getByTestId('token-stats-empty').textContent).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+		expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+	});
+
 	it('names agents still being read as not counted once the read for them failed', () => {
 		const data = {
 			...aggregate,
