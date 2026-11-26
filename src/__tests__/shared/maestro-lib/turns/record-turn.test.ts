@@ -762,6 +762,36 @@ describe('turn records', () => {
 			});
 		});
 
+		it.each([
+			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['on', ['user', 'stdout']],
+			['off', ['user', 'stdout']],
+			[undefined, ['user', 'stdout']],
+		])(
+			'writes what a %s tab keeps of the streamed thinking and tool cards (P7)',
+			(mode, sources) => {
+				const streamed = [
+					{ id: 's1', timestamp: 2, source: 'thinking' as const, text: 'Plan it.' },
+					{
+						id: 'tool-1',
+						timestamp: 3,
+						source: 'tool' as const,
+						text: 'Read',
+						metadata: { toolState: { status: 'completed' as const, output: 'x'.repeat(10_000) } },
+					},
+					{ id: 's2', timestamp: 4, source: 'stdout' as const, text: 'streamed answer' },
+				];
+				const entries = buildTurnTranscript(turn({ streamed }), ctx, mode);
+				expect(entries.map((e) => e.source)).toEqual(sources);
+				if (mode === 'sticky') {
+					// The tool card is capped as a saved tab's is; the answer is the result, written once.
+					const output = entries[2].metadata?.toolState?.output as string;
+					expect(output.length).toBeLessThan(10_000);
+					expect(entries.filter((e) => e.source === 'stdout')).toHaveLength(1);
+				}
+			}
+		);
+
 		it('starts at the answer when the runtime already wrote the message', () => {
 			const entries = buildTurnTranscript(turn({ userEntryWritten: true }), ctx);
 			expect(entries.map((e) => e.source)).toEqual(['stdout']);

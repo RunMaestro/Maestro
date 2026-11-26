@@ -105,6 +105,7 @@ import { toTurnAgent, toTurnTab } from '../turns/records';
 import type { CompletedTurn } from '../run/run-to-completion';
 import { runAgentTurn, type AgentTurnRun, type RunAgentTurnRefusal } from '../turns/run-agent-turn';
 import { createTurnEventMapper, type UnstampedTurnEvent } from '../turns/turn-events';
+import { foldLiveTurn, type LiveTurn } from '../client/live-turn';
 import {
 	createStatsRecorder,
 	readStatsCollectionEnabled,
@@ -410,13 +411,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
 	const verdicts = new Map<string, (verdict: Verdict) => void>();
 
-	const emitTurn = (agentId: string, tabId: string, event: UnstampedTurnEvent): void => {
-		bus.emit({
-			type: 'turn',
-			agentId,
-			tabId,
-			event: { ...event, at: deps.now() } as TurnEvent,
-		});
+	/** Send one turn event to every client; answers it as sent, stamped. */
+	const emitTurn = (agentId: string, tabId: string, event: UnstampedTurnEvent): TurnEvent => {
+		const stamped = { ...event, at: deps.now() } as TurnEvent;
+		bus.emit({ type: 'turn', agentId, tabId, event: stamped });
+		return stamped;
 	};
 
 	// -----------------------------------------------------------------------
@@ -678,6 +677,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		let observedSession: string | undefined;
 		let identityFailure: string | undefined;
 		let sessionWrite: Promise<void> = Promise.resolve();
+		// The turn as a client's live tail draws it, from the very events sent: a 'sticky' tab keeps
+		// its thinking and tool cards in the transcript once the turn ends (`RecordedTurn.streamed`).
+		let streamed: LiveTurn | undefined;
+		const foldContext = { newId: () => ctx.newId() };
 
 		/** Preserve an allocated ID even during cancellation; a different ID is never a resume. */
 		const noteSession = (id: string): void => {
@@ -751,7 +754,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 						if (provider !== 'grok') noteSession(event.providerSessionId);
 						if (identityFailure) continue;
 					}
-					emitTurn(agentId, tabId, event);
+					streamed =
+						foldLiveTurn(streamed, emitTurn(agentId, tabId, event), foldContext) ?? streamed;
 				}
 			}
 		} catch (error) {
@@ -785,6 +789,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				startedAt,
 				endedAt,
 				userEntryWritten: true,
+				...(streamed ? { streamed: streamed.entries } : {}),
 				scope,
 				nativeSessionBinding,
 				writeGuard: provider === 'grok' ? () => !identityFailure && writeGuard!() : undefined,

@@ -313,6 +313,57 @@ describe('runtime turns', () => {
 			});
 		});
 
+		// P7: a 'sticky' tab keeps the turn's thinking and tool cards past the turn's end, as a local
+		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`).
+		it.each([
+			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['on', ['user', 'stdout']],
+		])(
+			'keeps what a %s tab keeps of the thinking and tool cards',
+			async (showThinking, sources) => {
+				const line = (obj: unknown) => JSON.stringify(obj) + '\n';
+				const session = 'sess-sticky-1';
+				recordings['claude-code'] = writeFakeTurn(work, {
+					chunks: [
+						line({ type: 'system', subtype: 'init', session_id: session }),
+						line({
+							type: 'assistant',
+							message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Plan it.' }] },
+						}),
+						line({
+							type: 'assistant',
+							message: {
+								role: 'assistant',
+								content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: {} }],
+							},
+						}),
+						line({
+							type: 'assistant',
+							message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+						}),
+						line({ type: 'result', result: 'Done.', session_id: session }),
+					],
+					close: { code: 0, signal: null },
+				});
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs: [], showThinking }],
+					}),
+				]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'read it' }));
+				await turn.outcome();
+
+				const entries = await transcript(runtime);
+				expect(entries.map((entry) => entry.source)).toEqual(sources);
+				if (showThinking === 'sticky') {
+					expect(entries[1].text).toBe('Plan it.');
+					expect(entries[2]).toMatchObject({ source: 'tool', text: 'Read' });
+				}
+				expect(entries.at(-1)?.text).toBe('Done.');
+			}
+		);
+
 		describe('History host and shared History', () => {
 			const SHARED = { sharedHistory: { label: 'box.host', hostname: 'box' } };
 			const sharedFile = () => path.join(sharedHistoryDir(work), sharedHistoryFilename('box.host'));

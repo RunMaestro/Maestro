@@ -12,15 +12,15 @@
  * none throws: the turn already happened, and a record that could not be written is a line in
  * the result, not a failed turn.
  *
- * Two departures from the desktop, both on purpose:
+ * One departure from the desktop, on purpose: **the History summary comes from the answer**
+ * (`summarizeAnswer`, the function the desktop's exit toast uses), not from a synopsis agent. The
+ * desktop spawns a second provider turn per exit to write one; the runtime does not start work
+ * nobody asked for. `fullResponse` is the answer itself.
  *
- * - **The History summary comes from the answer** (`summarizeAnswer`, the function the desktop's
- *   exit toast uses), not from a synopsis agent. The desktop spawns a second provider turn per
- *   exit to write one; the runtime does not start work nobody asked for. `fullResponse` is the
- *   answer itself.
- * - **Only the user's message, the answer, and a failure are written to the transcript.** Thinking
- *   and tool cards stream live to the client; persisting them is a richer entry model than
- *   this task owns.
+ * The transcript holds the user's message, the answer, and a failure, plus the turn's thinking and
+ * tool cards when the tab's thinking mode keeps them past the turn's end ('sticky',
+ * `logsKeptAtTurnEnd()`, the rule a local tab's exit cleanup applies). They stream live to the
+ * client either way; the runtime folds them from the same events (`RecordedTurn.streamed`).
  *
  * A tab whose `saveToHistory` chip is off records no History entry (as on the desktop; a sender's
  * own chip, `RecordedTurn.saveToHistory`, stands in for the tab's for that turn), and an
@@ -40,7 +40,8 @@ import { estimateContextUsage } from '../parsers/usage-aggregator';
 import type { CompletedTurn } from '../run/run-to-completion';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import { usageStatsToTurnFields } from '../../turnUsageLedger';
-import type { HistoryEntry, ToolType } from '../../types';
+import { compactLogToolOutputs } from '../../toolOutput';
+import { logsKeptAtTurnEnd, type HistoryEntry, type ToolType } from '../../types';
 import type { AssembledTurn } from './assemble';
 import { createHistoryWriter, type HistoryAppendResult, type HistoryWriter } from './history';
 import {
@@ -88,6 +89,12 @@ export interface RecordedTurn {
 	 * place of the tab's `saveToHistory`. Absent: the tab's chip decides.
 	 */
 	saveToHistory?: boolean;
+	/**
+	 * What the turn streamed, as `foldLiveTurn()` folded its events (the live tail a client drew).
+	 * Its thinking and tool entries are written before the answer when the tab keeps them past the
+	 * turn's end ('sticky'); the rest is recorded from `completed`.
+	 */
+	streamed?: readonly LogEntryRecord[];
 }
 
 /** What happened to each record. A skipped record says why. */
@@ -157,14 +164,24 @@ export function buildUserTranscriptEntry(
 
 /**
  * The transcript entries of one turn: the message the person sent (unless the runtime already
- * wrote it), then the answer, then a failure when it crashed. Pure; ids and times come from the
- * caller.
+ * wrote it), the thinking and tool cards a 'sticky' tab keeps (`showThinking`, the tab's mode when
+ * the turn ends), then the answer, then a failure when it crashed. Pure; ids and times come from
+ * the caller.
  */
-export function buildTurnTranscript(turn: RecordedTurn, ctx: RuleContext): LogEntryRecord[] {
+export function buildTurnTranscript(
+	turn: RecordedTurn,
+	ctx: RuleContext,
+	showThinking?: unknown
+): LogEntryRecord[] {
 	const { entry, settings } = turn.assembled;
 	const entries: LogEntryRecord[] = turn.userEntryWritten
 		? []
 		: [buildUserTranscriptEntry(entry, turn.startedAt, ctx)];
+
+	const reasoning = (turn.streamed ?? []).filter(
+		(streamed) => streamed.source === 'thinking' || streamed.source === 'tool'
+	);
+	entries.push(...compactLogToolOutputs(logsKeptAtTurnEnd(reasoning, showThinking)));
 
 	const answer = turn.completed.answerText?.trim() ? turn.completed.answerText : undefined;
 	if (answer) {
@@ -244,7 +261,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 		const transcript = await options.repository.appendTranscript(
 			turn.agentId,
 			turn.tabId,
-			buildTurnTranscript(turn, ctx),
+			buildTurnTranscript(turn, ctx, tab.showThinking),
 			...(turn.writeGuard ? [turn.writeGuard] : [])
 		);
 
