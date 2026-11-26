@@ -276,6 +276,28 @@ describe('PeerMirrorService', () => {
 		expect(h.service.isRemoteConnected('a')).toBe(false);
 	});
 
+	it('asks the host on a remote for its projects token usage only while that host is connected', async () => {
+		const a = fakeHost('a', { manualReady: true });
+		const usage = { projects: [{ status: 'unsupported', breakdowns: [], complete: false }] };
+		const projectTokens = vi.fn(async () => ({ ok: true, value: usage }));
+		(a.client as unknown as { usage: unknown }).usage = { projectTokens };
+		const h = harness([remoteOf('a')], { a });
+		const projects = [{ provider: 'codex', projectPath: '/srv/app' }];
+		h.service.start();
+		await settle();
+		expect(await h.service.projectTokenUsage('a', projects, 500)).toBeUndefined();
+		a.open();
+		await settle();
+		expect(await h.service.projectTokenUsage('a', projects, 500)).toEqual(usage);
+		expect(projectTokens).toHaveBeenCalledWith(projects, { timeoutMs: 500 });
+		expect(await h.service.projectTokenUsage('unknown', projects, 500)).toBeUndefined();
+		projectTokens.mockResolvedValueOnce({
+			ok: false,
+			error: { code: 'unsupported', message: 'old', method: 'usage.projectTokens' },
+		} as never);
+		expect(await h.service.projectTokenUsage('a', projects, 500)).toBeUndefined();
+	});
+
 	it('records a host that is down as the peer state with the fix line, and keeps going', async () => {
 		const a = fakeHost('a', { manualReady: true });
 		const b = fakeHost('b');

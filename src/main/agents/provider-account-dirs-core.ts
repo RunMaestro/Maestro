@@ -1,0 +1,223 @@
+/**
+ * Provider Account Directories (the rule, with no stores)
+ *
+ * Answers one question for any provider that keeps its account in a config
+ * directory: which account dirs exist on this machine, deduped to the distinct
+ * transcript pools behind them.
+ *
+ * The account-selecting env var per provider (`CLAUDE_CONFIG_DIR`,
+ * `CODEX_HOME`, `COPILOT_HOME`, `GROK_HOME`) lives in `PROVIDER_PROFILE_CONFIGS`, so this
+ * module is provider-agnostic: a provider gains multi-account attribution by
+ * gaining an entry there, not by gaining a discovery function here.
+ *
+ * Five sources, in order:
+ *   1. Every local live agent's account, resolved through the canonical
+ *      session/provider/global/process environment layers.
+ *   2. The provider-default selection through those same layers, even when no
+ *      local agent currently inherits it.
+ *   3. Maestro's own `process.env`, for a user who exports the var in a shell
+ *      profile.
+ *   4. `~/<defaultSubdir>`, the implicit default account.
+ *   5. A sibling scan of `$HOME` for `<defaultSubdir>` and `<defaultSubdir>-*`.
+ *      The only source that still finds an account whose agents have all been
+ *      deleted.
+ *
+ * This module reads no store and imports nothing from Electron, so a plain-Node
+ * `maestro-cli host` can load it and hand in its own sources. The desktop's
+ * store-reading defaults live in `provider-account-dirs.ts`.
+ *
+ * Sources 1 and 5 are each sorted before being appended, so the output order
+ * (and therefore which dir wins a dedupe) is stable across runs.
+ */
+
+import os from 'os';
+import path from 'path';
+import fsp from 'fs/promises';
+
+import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
+import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import {
+	resolveAgentAccountDir as resolveAccountDirForAgent,
+	type AgentAccountDirLayers,
+} from '../../shared/agentAccountDir';
+import {
+	getProviderProfileConfig,
+	isAccountDirName,
+	type ProviderProfileConfig,
+} from '../../shared/providerProfiles';
+
+const LOG_CONTEXT = '[ProviderAccountDirs]';
+
+/** Filesystem errors that mean "not an account dir", not "something is wrong". */
+const RECOVERABLE_FS_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'ELOOP']);
+
+function errorCode(err: unknown): string | undefined {
+	if (!err || typeof err !== 'object' || !('code' in err)) return undefined;
+	const code = (err as { code?: unknown }).code;
+	return typeof code === 'string' ? code : undefined;
+}
+
+function isRecoverableFsError(err: unknown): boolean {
+	const code = errorCode(err);
+	return code !== undefined && RECOVERABLE_FS_ERROR_CODES.has(code);
+}
+
+export interface ProviderAccountDirsOptions {
+	/** Defaults to `os.homedir()`. */
+	homeDir?: string;
+	/** Defaults to `process.env`. */
+	env?: NodeJS.ProcessEnv;
+	/** Stored agents. None when not given (the store-reading wrapper fills it in). */
+	sessions?: Array<Record<string, unknown>>;
+	/** Provider-level `customEnvVars`. None when not given. */
+	agentLevelEnvVars?: Record<string, string>;
+	/** Settings -> Environment. None when not given. */
+	globalShellEnvVars?: Record<string, string>;
+}
+
+/**
+ * Account dirs named by a configured agent of this provider.
+ *
+ * SSH-remote agents are skipped: their env var names a directory on the REMOTE
+ * host, so resolving it locally either misses or, worse, hits an unrelated
+ * local directory that happens to share the name.
+ */
+function collectConfiguredAccountDirs(
+	toolType: string,
+	options: ProviderAccountDirsOptions,
+	layers: AgentAccountDirLayers
+): string[] {
+	const sessions = options.sessions ?? [];
+	const dirs = new Set<string>();
+
+	const add = (value: unknown): void => {
+		if (typeof value !== 'string' || isBlankEnvValue(value)) return;
+		dirs.add(value.trim());
+	};
+
+	for (const session of sessions) {
+		if (session?.toolType !== toolType) continue;
+		const sshConfig = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
+		if (sshConfig?.enabled) continue;
+		const sessionEnvVars =
+			session.customEnvVars && typeof session.customEnvVars === 'object'
+				? (session.customEnvVars as Record<string, string>)
+				: undefined;
+		add(resolveAccountDirForAgent({ toolType, customEnvVars: sessionEnvVars }, layers));
+	}
+
+	return Array.from(dirs).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * `$HOME` entries that look like an account dir for this provider AND hold its
+ * sessions subtree. The subtree requirement is what keeps an unrelated
+ * `.codex-notes` folder from being reported as an account.
+ */
+async function scanHomeForAccountDirs(
+	config: ProviderProfileConfig,
+	homeDir: string
+): Promise<string[]> {
+	let entries;
+	try {
+		entries = await fsp.readdir(homeDir, { withFileTypes: true });
+	} catch (err) {
+		if (!isRecoverableFsError(err)) throw err;
+		logger.warn('Failed to scan $HOME for provider account dirs', LOG_CONTEXT, {
+			homeDir,
+			error: err instanceof Error ? err.message : String(err),
+		});
+		return [];
+	}
+
+	const dirs: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		if (!isAccountDirName(entry.name, config.defaultSubdir)) continue;
+		const dir = path.join(homeDir, entry.name);
+		try {
+			const stat = await fsp.stat(path.join(dir, config.sessionsSubdir));
+			if (!stat.isDirectory()) continue;
+		} catch (err) {
+			if (!isRecoverableFsError(err)) throw err;
+			continue;
+		}
+		dirs.push(dir);
+	}
+	return dirs.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The account dirs to read for a provider, deduped by the REAL path of their
+ * sessions subtree.
+ *
+ * Returns `[]` for a provider with no account concept, which callers read as
+ * "one pass against the default root".
+ *
+ * The dedupe is load-bearing, not defensive. A common multi-account setup
+ * symlinks `~/.claude-<name>/projects` back at `~/.claude/projects` so every
+ * account shares one transcript pool (only the credentials differ). Reading
+ * each config dir blindly would then count the same sessions once per account
+ * and multiply the reported tokens. Collapsing on the resolved target means a
+ * shared pool is read exactly once; genuinely separate accounts still each get
+ * read. First writer wins, and every source is sorted, so a shared pool is
+ * attributed to the same dir on every run.
+ */
+export async function findProviderAccountDirs(
+	toolType: string,
+	options: ProviderAccountDirsOptions = {}
+): Promise<string[]> {
+	const config = getProviderProfileConfig(toolType);
+	if (!config) return [];
+
+	const homeDir = options.homeDir ?? os.homedir();
+	const env = options.env ?? process.env;
+	const layers: AgentAccountDirLayers = {
+		agentLevelEnvVars: options.agentLevelEnvVars ?? {},
+		globalShellEnvVars: options.globalShellEnvVars ?? {},
+		env,
+		homeDir,
+	};
+
+	const candidates = collectConfiguredAccountDirs(toolType, options, layers);
+	// An implicit provider default must not win a shared-pool alias over an
+	// explicitly configured agent. Keep it after the sorted agent selections.
+	const providerDefault = resolveAccountDirForAgent({ toolType }, layers);
+	if (providerDefault) candidates.push(providerDefault);
+
+	// These are independent native pools, not fallbacks for a missing selected
+	// account. Normalize the host selection without borrowing higher layers.
+	const fromProcessEnv = env[config.envVar];
+	if (typeof fromProcessEnv === 'string' && !isBlankEnvValue(fromProcessEnv)) {
+		const processAccount = resolveAccountDirForAgent({ toolType }, { env, homeDir });
+		if (processAccount) candidates.push(processAccount);
+	}
+	candidates.push(path.join(homeDir, config.defaultSubdir));
+	candidates.push(...(await scanHomeForAccountDirs(config, homeDir)));
+
+	const byRealSessionsDir = new Map<string, string>();
+	for (const candidate of candidates) {
+		const resolved = path.resolve(candidate);
+		let realSessionsDir: string;
+		try {
+			realSessionsDir = await fsp.realpath(path.join(resolved, config.sessionsSubdir));
+		} catch (err) {
+			if (!isRecoverableFsError(err)) {
+				void captureException(err, {
+					operation: 'providerAccountDirs:realpath',
+					toolType,
+					accountDir: resolved,
+				});
+				continue;
+			}
+			// No sessions subtree yet (a fresh account): key on the dir itself so
+			// it still appears rather than silently collapsing into another one.
+			realSessionsDir = resolved;
+		}
+		if (!byRealSessionsDir.has(realSessionsDir)) {
+			byRealSessionsDir.set(realSessionsDir, resolved);
+		}
+	}
+	return Array.from(byRealSessionsDir.values());
+}

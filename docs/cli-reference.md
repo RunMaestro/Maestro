@@ -4162,6 +4162,16 @@ Show token usage, cost, and tokens per second (average and peak) per provider an
 | `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
 | `--json`              | Output the full token usage object as JSON                       | -       |
 
+## `maestro-cli stats-project-tokens`
+
+Show the token usage this machine's host answers a peer for projects kept here (SSH and hosted agents)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `--provider <id>`  | Provider id (claude-code, codex, ...)                     | -       |
+| `--project <path>` | Working directory on this machine (repeatable)            | `[]`    |
+| `--json`           | Output the conversations and unreadable providers as JSON | -       |
+
 ## `maestro-cli stats-indexing`
 
 Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)

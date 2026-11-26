@@ -136,8 +136,13 @@ export function createStatsApi() {
 
 		// Token & cost usage aggregate (Cost & Tokens tab). Reads agent session
 		// storage; `force` bypasses the accessor's in-memory memo for a refresh.
-		getTokenUsage: (query: TokenUsageQuery = {}, force = false): Promise<TokenUsageAggregate> =>
-			ipcRenderer.invoke('stats:get-token-usage', query, force),
+		// `waitForRemote` resolves once agents on another computer are counted.
+		getTokenUsage: (
+			query: TokenUsageQuery = {},
+			force = false,
+			waitForRemote = false
+		): Promise<TokenUsageAggregate> =>
+			ipcRenderer.invoke('stats:get-token-usage', query, force, waitForRemote),
 
 		// Export every stats table for a range to `filePath`: one JSON file, or a
 		// zip with one CSV per table. Main writes the file.

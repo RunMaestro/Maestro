@@ -47,6 +47,7 @@ import type {
 	DeleteMessagePairResult,
 } from '../agents';
 import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
+import type { SessionListObserver } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type {
 	ClaudeSessionOrigin,
@@ -201,7 +202,9 @@ async function parseSessionFile(
 	filePath: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	/** Called when the file is there but could not be read (never for an oversized one). */
+	onUnreadable?: () => void
 ): Promise<AgentSessionInfo | null> {
 	try {
 		if (stats.size > MAX_SESSION_FILE_SIZE) {
@@ -222,6 +225,8 @@ async function parseSessionFile(
 			mtimeMs: stats.mtimeMs,
 		});
 	} catch (error) {
+		// Left out of every total from here on: say so, unless the file is simply gone.
+		if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') onUnreadable?.();
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
 			return null;
@@ -421,7 +426,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * transcript folder yet.
 	 */
 	private async statProjectSessionFiles(
-		projectDir: string
+		projectDir: string,
+		observer?: SessionListObserver
 	): Promise<{ sessionId: string; filePath: string; sizeBytes: number; mtimeMs: number }[]> {
 		let filenames: string[];
 		try {
@@ -463,6 +469,10 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							mtimeMs: stat.mtimeMs,
 						};
 					} catch (error) {
+						// Listed but not stattable: its usage is missing, unless it is simply gone.
+						if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+							observer?.onSkippedFile?.({ sizeBytes: 0, reason: 'unreadable' });
+						}
 						// The `fs.stat` races the directory listing above, so the entry can
 						// already be gone or unreadable by the time we get here (MAESTRO-YH).
 						if (isExpectedSessionReadError(error)) {
@@ -495,7 +505,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		projectPath: string,
 		projectDir: string,
 		files: { sessionId: string; filePath: string; sizeBytes: number; mtimeMs: number }[],
-		prune: boolean
+		prune: boolean,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		const byPath = new Map(files.map((file) => [file.filePath, file]));
 		const refs: SessionFileRef[] = files.map((file) => ({
@@ -510,12 +521,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			async (ref) => {
 				const file = byPath.get(ref.key);
 				if (!file) return null;
+				const unreadable = (): void =>
+					observer?.onSkippedFile?.({ sizeBytes: file.sizeBytes, reason: 'unreadable' });
 				try {
-					return await parseSessionFile(file.filePath, file.sessionId, projectPath, {
-						size: file.sizeBytes,
-						mtimeMs: file.mtimeMs,
-					});
+					return await parseSessionFile(
+						file.filePath,
+						file.sessionId,
+						projectPath,
+						{ size: file.sizeBytes, mtimeMs: file.mtimeMs },
+						unreadable
+					);
 				} catch (error) {
+					if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') unreadable();
 					// Outer half of the same boundary `parseSessionFile` guards: the file
 					// can vanish or become unreadable between the stat and the read.
 					if (isExpectedSessionReadError(error)) {
@@ -547,15 +564,22 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	async listSessions(
 		projectPath: string,
 		sshConfig?: SshRemoteConfig,
-		configDir?: string
+		configDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig, configDir);
+			return this.listSessionsRemote(projectPath, sshConfig, configDir, observer);
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
-		const files = await this.statProjectSessionFiles(projectDir);
+		const files = await this.statProjectSessionFiles(projectDir, observer);
+		// Past the size cap a transcript is never parsed (`parseSessionFile`): say so.
+		for (const file of files) {
+			if (file.sizeBytes > MAX_SESSION_FILE_SIZE) {
+				observer?.onSkippedFile?.({ sizeBytes: file.sizeBytes, reason: 'too-large' });
+			}
+		}
 
 		if (files.length === 0) {
 			// Still a full listing, so still prune: a project whose transcripts were
@@ -570,7 +594,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			projectPath,
 			projectDir,
 			files,
-			true
+			true,
+			observer
 		);
 
 		logger.info(
@@ -590,7 +615,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	private async listSessionsRemote(
 		projectPath: string,
 		sshConfig: SshRemoteConfig,
-		configDir?: string
+		configDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
@@ -604,6 +630,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		}
 
 		const sessionFiles = (dirResult.data || []).filter((entry) => entry.size > 0);
+		for (const entry of sessionFiles) {
+			if (entry.size > MAX_SESSION_FILE_SIZE) {
+				observer?.onSkippedFile?.({ sizeBytes: entry.size, reason: 'too-large' });
+			}
+		}
 
 		const sessions = await mapWithConcurrency(
 			sessionFiles,
