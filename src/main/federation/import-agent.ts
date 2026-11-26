@@ -37,6 +37,11 @@ export interface DesktopAgentImportDeps {
 	getGroupIds(): string[];
 	getSettings(): Record<string, unknown>;
 	/**
+	 * Whether an agent is running a turn on this desktop. A copy that is (the one an import would
+	 * replace) is not replaced: that would cut the turn. Absent: nothing is taken as running.
+	 */
+	isBusy?(agentId: string): boolean;
+	/**
 	 * Tell every window and web client the agent entered the store, and which agents it replaced
 	 * (the copy an earlier Move Back left here) left it.
 	 */
@@ -63,9 +68,11 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 /** The desktop's stores and lifecycle push, with the bridge's own `enqueueCommand` for the queue. */
 export function buildDesktopAgentImportDeps(
-	enqueue: DesktopAgentImportDeps['enqueue']
+	enqueue: DesktopAgentImportDeps['enqueue'],
+	isBusy?: DesktopAgentImportDeps['isBusy']
 ): DesktopAgentImportDeps {
 	return {
+		...(isBusy ? { isBusy } : {}),
 		getSessions: () => {
 			const sessions = getSessionsStore().get('sessions', []);
 			return Array.isArray(sessions) ? sessions : [];
@@ -95,6 +102,13 @@ export async function importAgentIntoDesktop(
 		...(deps.checkCwd ? { checkCwd: deps.checkCwd } : {}),
 	});
 	if (!planned.ok) return planned;
+	if (planned.replaces && deps.isBusy?.(planned.replaces)) {
+		return {
+			ok: false,
+			code: 'rejected',
+			message: `The copy this import replaces (${planned.replaces}) is running a turn. Wait for it to finish, or stop it, then move again.`,
+		};
+	}
 
 	// The maestro-lib record is the stored shape: the store keeps what the record holds. The
 	// agent's earlier copy a Move Back left here (`planned.replaces`) goes in the same write.

@@ -10,6 +10,7 @@ import { LIFT_HOST_TOO_OLD } from '../../../federationCommands';
 import {
 	LiftRunError,
 	formatLiftPlan,
+	keepDivergentHostTabs,
 	liftErrorCode,
 	providerEnvVarsOf,
 	runLift,
@@ -348,5 +349,31 @@ describe('runLift follow-up settings', () => {
 			dryRun: false,
 			notices: ['Some settings did not reach the host: bad transport'],
 		});
+	});
+});
+
+describe('keepDivergentHostTabs (T5 review)', () => {
+	const tab = (id: string, logIds: string[], name = 'Main') => ({
+		id,
+		name,
+		logs: logIds.map((logId) => ({ id: logId, timestamp: 1, source: 'user', text: logId })),
+	});
+
+	it('merges a tab whose transcript one side only extended', () => {
+		const local = [tab('t1', ['a', 'b', 'c'])];
+		expect(keepDivergentHostTabs(local, [tab('t1', ['a', 'b'])])).toEqual([tab('t1', ['a', 'b'])]);
+		expect(keepDivergentHostTabs(local, [tab('t1', ['a', 'b', 'c', 'd'])])[0].id).toBe('t1');
+	});
+
+	it('brings a tab both sides went on in as a tab of its own', () => {
+		const local = [tab('t1', ['a', 'local-1', 'local-2'])];
+		const [host] = keepDivergentHostTabs(local, [tab('t1', ['a', 'host-1'])]);
+		expect(host).toMatchObject({ id: 't1-host', name: 'Main (on the host)' });
+		expect(host.logs?.map((entry) => entry.id)).toEqual(['a', 'host-1']);
+	});
+
+	it('picks an id no other tab holds', () => {
+		const local = [tab('t1', ['a', 'x']), tab('t1-host', [])];
+		expect(keepDivergentHostTabs(local, [tab('t1', ['a', 'y'])])[0].id).toBe('t1-host-2');
 	});
 });

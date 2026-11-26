@@ -676,11 +676,14 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				? entries.filter((entry) => !(isAgentEntry(entry) && entry.id === replaces))
 				: entries;
 			const removal = replaces ? removalSteps(replaces) : undefined;
+			const next: SessionsDocument = { ...sessionsDoc, sessions: [...kept, agent] };
+			// The selection follows the agent onto its new record, as it would stay on it.
+			if (replaces && sessionsDoc.activeSessionId === replaces) next.activeSessionId = agent.id;
 			return {
 				ok: true,
 				plan: {
 					value: { agentId: agent.id },
-					sessions: { ...sessionsDoc, sessions: [...kept, agent] },
+					sessions: next,
 					...(removal ? { before: removal.before, after: removal.after } : {}),
 					events: [
 						...(replaces ? [{ type: 'agent.removed' as const, agentId: replaces }] : []),

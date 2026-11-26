@@ -87,7 +87,8 @@ describe('planAgentImport', () => {
 		);
 		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
 		const free = planAgentImport(input({ replacesAgentId: 'gone' }), context());
-		expect(free.ok && 'replaces' in free).toBe(false);
+		expect(free.ok).toBe(true);
+		expect(free).not.toHaveProperty('replaces');
 	});
 
 	it('refuses a group the host lacks as not found', () => {

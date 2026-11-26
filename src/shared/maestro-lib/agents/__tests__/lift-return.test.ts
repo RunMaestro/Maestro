@@ -177,6 +177,8 @@ describe('runReturnFromHost', () => {
 				expect.objectContaining({ id: 'tab-new', logs: [log('n1')] }),
 			],
 			activeTabId: 'tab-new',
+			// Recorded until the removal below is confirmed (harmless once the copy is gone).
+			leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 },
 		});
 		expect(d.client.agents.remove).toHaveBeenCalledWith('host-1');
 		expect(d.restore.mock.invocationCallOrder[0]).toBeLessThan(
@@ -248,9 +250,14 @@ describe('runReturnFromHost', () => {
 	it('reports a host copy it could not remove, after the agent is back', async () => {
 		const d = deps(hostedAgent(), hostClient({ remove: fail('host-lost', 'socket closed') }));
 		const result = await runReturnFromHost('agent-1', {}, d.value);
-		expect(d.restore).toHaveBeenCalled();
+		// Recorded until the removal is confirmed, so a later Move to Host replaces it (T5 review).
+		expect(d.restore).toHaveBeenCalledWith(
+			'agent-1',
+			expect.objectContaining({ leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
 		expect(result.hostCopyRemoved).toBe(false);
 		expect(result.notices?.[0]).toMatch(/could not be removed: socket closed/);
+		expect(result.notices?.[0]).toContain('maestro-cli remove-agent build-box:host-1');
 	});
 
 	it('moves back offline without dialing, and keeps the host copy', async () => {

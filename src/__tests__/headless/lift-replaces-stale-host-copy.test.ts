@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SshRemoteConfig } from '../../shared/types';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
@@ -117,7 +117,7 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 			cwd: work,
 			state: 'idle',
 			sessionSshRemoteConfig: { enabled: true, remoteId: remote.id, workingDirOverride: work },
-			aiTabs: [{ id: 'tab-1', name: 'Main', agentSessionId: null, logs: [line('l1', 'hi')] }],
+			aiTabs: [{ id: 'tab-1', name: 'Main', agentSessionId: null, logs: [line('h1', 'hi')] }],
 			activeTabId: 'tab-1',
 		} as AgentRecord;
 		return leftOnHost
@@ -159,6 +159,53 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		expect(tabs.map((tab) => tab.id).sort()).toEqual(['tab-1', 'tab-h']);
 		const said = value(await host.tabs.transcript(agents[0].id, 'tab-h'));
 		expect(said.map((entry) => entry.text)).toContain('said on the host');
+	});
+
+	it('moves the stored selection onto the new record (T5 review)', async () => {
+		await runLift('agent-1', {}, deps(localAgent('agent-1', true)));
+		const [agent] = value(await host.agents.list());
+		await vi.waitFor(() => {
+			const stored = JSON.parse(fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf8'));
+			expect(stored.activeSessionId).toBe(agent.id);
+		});
+	});
+
+	it('keeps both sides of a tab both went on in (T5 review)', async () => {
+		// This machine went on in tab-1 after the move back; the host's tab-1 holds an entry it lacks.
+		const local = localAgent('agent-1', true);
+		local.aiTabs = [
+			{
+				id: 'tab-1',
+				name: 'Main',
+				agentSessionId: null,
+				logs: [line('l1', 'said here first'), line('l2', 'said here after the move back')],
+			},
+		] as AgentRecord['aiTabs'];
+		await runLift('agent-1', {}, deps(local));
+		const [agent] = value(await host.agents.list());
+		const tabs = value(await host.tabs.list(agent.id));
+		expect(tabs.map((tab) => tab.id).sort()).toEqual(['tab-1', 'tab-1-host', 'tab-h']);
+		const here = value(await host.tabs.transcript(agent.id, 'tab-1'));
+		expect(here.map((entry) => entry.text)).toEqual([
+			'said here first',
+			'said here after the move back',
+		]);
+		const there = value(await host.tabs.transcript(agent.id, 'tab-1-host'));
+		expect(there.map((entry) => entry.text)).toEqual(['hi']);
+	});
+
+	it('keeps the new host copy when this machine cannot record the move (T5 review)', async () => {
+		const failing = { ...deps(localAgent('agent-1', true)) };
+		failing.setPointer = async () => {
+			throw new Error('disk full');
+		};
+		await expect(runLift('agent-1', {}, failing)).rejects.toThrow(
+			/is kept: it holds tabs from its earlier copy/
+		);
+		const agents = value(await host.agents.list());
+		expect(agents).toHaveLength(1);
+		const tabs = value(await host.tabs.list(agents[0].id));
+		expect(tabs.map((tab) => tab.id)).toContain('tab-h');
 	});
 
 	it('still refuses a different agent that only shares the name', async () => {

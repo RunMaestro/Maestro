@@ -186,9 +186,14 @@ export async function runReturnFromHost(
 			);
 		}
 
-		// A copy the host keeps is recorded on the agent, so a later Move to Host replaces it.
-		const keepsCopy = hostAgent.ok && options.keepHostCopy === true;
-		await restoreOrThrow(deps, agent, keepsCopy ? { ...returned, leftOnHost: pointer } : returned);
+		// The host's copy is recorded on the agent until its removal is confirmed (it is removed
+		// below, after the restore), so a kept copy, or one whose removal fails, is replaced by a
+		// later Move to Host. A pointer to a copy since removed is harmless: the lift finds no copy.
+		await restoreOrThrow(
+			deps,
+			agent,
+			hostAgent.ok ? { ...returned, leftOnHost: pointer } : returned
+		);
 
 		let hostCopyRemoved = false;
 		if (hostAgent.ok && !options.keepHostCopy) {

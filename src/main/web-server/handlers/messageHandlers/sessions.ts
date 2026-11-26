@@ -182,7 +182,11 @@ export function handleImportAgent(
 			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true)
 			: Promise.resolve({ success: false, error: 'Enqueue not configured' });
 
-	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue))
+	// The bridge's agent list reads each agent's live processes (`isAgentBusy()`).
+	const isBusy = (agentId: string) =>
+		ctx.callbacks.getSessions?.().some((agent) => agent.id === agentId && agent.state === 'busy') ??
+		false;
+	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue, isBusy))
 		.then((result) => {
 			if (!result.ok) {
 				reply({

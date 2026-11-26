@@ -89,6 +89,16 @@ describe('importAgentIntoDesktop', () => {
 		expect(d.announceAdded).toHaveBeenCalledWith(stored[0], ['stale-1']);
 	});
 
+	it('does not replace a copy that is running a turn (T5 review)', async () => {
+		const d = deps({ isBusy: (agentId) => agentId === 'stale-1' });
+		d.setSessions([{ id: 'stale-1', name: 'Substrate', cwd: '/work/substrate' } as StoredSession]);
+		vi.mocked(d.setSessions).mockClear();
+		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		expect(result).toMatchObject({ ok: false, code: 'rejected' });
+		expect(d.setSessions).not.toHaveBeenCalled();
+		expect(d.stored().map((agent) => agent.id)).toEqual(['stale-1']);
+	});
+
 	it('writes nothing when the import rule refuses', async () => {
 		const d = deps({ checkCwd: () => 'No such directory' });
 		const result = await importAgentIntoDesktop(input(), d);

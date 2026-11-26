@@ -243,10 +243,45 @@ async function readStaleHostCopy(
 		withLogs.push({ ...tab, logs: transcript.value });
 	}
 	const merged = withReturnedFromHost(agent as unknown as Record<string, unknown>, {
-		tabs: withLogs,
+		tabs: keepDivergentHostTabs(agent.aiTabs ?? [], withLogs),
 		...(hostCopy.value.activeTabId ? { activeTabId: hostCopy.value.activeTabId } : {}),
 	}) as unknown as AgentRecord;
 	return { pointer, ref, merged };
+}
+
+/** The ids of a transcript's entries, in order. */
+function entryIds(tab: AITabRecord): string[] {
+	return (Array.isArray(tab.logs) ? tab.logs : []).map((entry) => entry.id);
+}
+
+/** Whether `head` is `all`'s first entries, by entry id. */
+function startsWith(all: readonly string[], head: readonly string[]): boolean {
+	return head.length <= all.length && head.every((id, index) => all[index] === id);
+}
+
+/**
+ * The host copy's tabs, ready to merge into the local agent (`withReturnedFromHost()`, which keeps
+ * the longer of two transcripts of one tab). After a Move Back while the host was down, both sides
+ * may have gone on in the same tab. Where neither transcript is the other's start, the host's tab
+ * comes in as a tab of its own, so neither side's entries are dropped.
+ */
+export function keepDivergentHostTabs(
+	localTabs: readonly AITabRecord[],
+	hostTabs: readonly AITabRecord[]
+): AITabRecord[] {
+	const localById = new Map(localTabs.map((tab) => [tab.id, tab]));
+	const taken = new Set([...localTabs, ...hostTabs].map((tab) => tab.id));
+	return hostTabs.map((host) => {
+		const local = localById.get(host.id);
+		if (!local) return host;
+		const hostIds = entryIds(host);
+		const localIds = entryIds(local);
+		if (startsWith(localIds, hostIds) || startsWith(hostIds, localIds)) return host;
+		let id = `${host.id}-host`;
+		for (let n = 2; taken.has(id); n++) id = `${host.id}-host-${n}`;
+		taken.add(id);
+		return { ...host, id, name: `${host.name || local.name || 'Tab'} (on the host)` };
+	});
 }
 
 /** The plan, with the import replacing the stale copy and the summary saying so. */
@@ -356,7 +391,11 @@ export async function runLift(
 			await deps.setPointer(agent.id, pointer, plan.movedQueueItemIds);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const undo = await rollBack(connection, hostAgentId);
+			// A lift that replaced the earlier copy holds tabs only the host had, and that copy is
+			// gone: removing the new one would lose them. It stays, and the error says where.
+			const undo = stale
+				? `The host's copy (${peerAgentRef(connection.peer, hostAgentId)}) is kept: it holds tabs from its earlier copy that this machine does not have. Remove it only once they are not needed: maestro-cli remove-agent ${peerAgentRef(connection.peer, hostAgentId)}`
+				: await rollBack(connection, hostAgentId);
 			throw new LiftRunError(
 				'LIFT_POINTER_FAILED',
 				`Could not mark "${agent.name}" as moved: ${message}. ${undo}`

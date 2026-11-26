@@ -328,7 +328,8 @@ describe('createWsMaestroClient', () => {
 				expect(read.ok && read.input.replacesAgentId).toBe('stale-1');
 				// An absent or blank id replaces nothing.
 				const plain = importInputFromMessage({ ...sent, replacesAgentId: '' } as never);
-				expect(plain.ok && 'replacesAgentId' in plain.input).toBe(false);
+				expect(plain.ok).toBe(true);
+				if (plain.ok) expect(plain.input).not.toHaveProperty('replacesAgentId');
 			});
 
 			it('passes on the notices for queued messages the host did not accept', async () => {
