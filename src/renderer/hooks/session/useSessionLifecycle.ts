@@ -19,9 +19,9 @@ import {
  * Reads from: sessionStore, modalStore
  */
 
-import { renameHostedTab } from '../../services/hostedTurns';
+import { renameHostedTabSettled } from '../../services/hostedTurns';
 import { useCallback, useEffect } from 'react';
-import type { AdditionalDirectory, Session } from '../../types';
+import type { AdditionalDirectory, ModalSaveOutcome, Session } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import {
 	useSessionStore,
@@ -54,6 +54,9 @@ import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
 } from '../../utils/agentWorkingDirectory';
+
+/** What a rename that nothing can refuse answers the Rename Tab modal. */
+const RENAME_SAVED: ModalSaveOutcome = { saved: true };
 
 // ============================================================================
 // Dependencies interface
@@ -117,7 +120,7 @@ export interface SessionLifecycleReturn {
 		convertProviderHistory?: boolean
 	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
-	handleRenameTab: (newName: string) => void;
+	handleRenameTab: (newName: string) => Promise<ModalSaveOutcome>;
 	/** Auto-name the currently-selected tab: close modal, show spinner, generate name via agent */
 	handleAutoNameTab: () => void;
 	/** Delete a session: kill processes, clean up playbooks, optionally erase working dir */
@@ -316,9 +319,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	);
 
 	const handleRenameTab = useCallback(
-		(newName: string) => {
+		async (newName: string): Promise<ModalSaveOutcome> => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
-			if (!activeSession || !renameTabId) return;
+			if (!activeSession || !renameTabId) return RENAME_SAVED;
 
 			// If this is a tiled tab group, rename the group. Resolve the auto-name
 			// fallback from the group's first pane title (matching the chip rename), so
@@ -330,7 +333,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					? generateGroupName(resolveTabRefTitle(activeSession, firstRef))
 					: group.name || 'Group';
 				useTabStore.getState().renameGroup(renameTabId, newName, fallback);
-				return;
+				return RENAME_SAVED;
 			}
 
 			// If this is a terminal tab, delegate to terminal tab rename helper
@@ -338,7 +341,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				updateSessionWith(activeSession.id, (s) =>
 					renameTerminalTabHelper(s, renameTabId, newName)
 				);
-				return;
+				return RENAME_SAVED;
 			}
 
 			// If this is a file preview tab, set a user-assigned name that locks the
@@ -354,7 +357,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						),
 					};
 				});
-				return;
+				return RENAME_SAVED;
 			}
 
 			// If this is a browser tab, set a user-assigned name that locks the
@@ -371,11 +374,17 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						),
 					};
 				});
-				return;
+				return RENAME_SAVED;
 			}
 
-			// A hosted agent's tab is renamed on its host too; the host's name comes back with it.
-			renameHostedTab(activeSession, renameTabId, newName);
+			// A hosted agent's tab is renamed on its host first, and here once the host took it: a
+			// name the host refuses stays in the Rename Tab modal with the reason, as nothing here
+			// changed. A local or SSH tab's rename cannot be refused.
+			const onHost = renameHostedTabSettled(activeSession, renameTabId, newName);
+			if (onHost) {
+				const outcome = await onHost;
+				if (!outcome.saved) return outcome;
+			}
 
 			updateSessionWith(activeSession.id, (s) => {
 				// Find the tab to get its agentSessionId for persistence
@@ -457,6 +466,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					),
 				};
 			});
+			return RENAME_SAVED;
 		},
 		[renameTabId]
 	);

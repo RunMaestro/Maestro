@@ -1,10 +1,11 @@
 // The live tail of a turn another Maestro is running, folded from its `TurnEvent`s.
 //
-// A host persists only the user entry and the final answer of a turn (`buildTurnTranscript()`),
-// so what a client shows WHILE a turn runs is a display tail, not a record: entries built here are
-// shown after the persisted transcript and dropped when the turn ends, when the caller re-reads
-// the host's transcript. A missed chunk can therefore never be written anywhere; the worst case
-// is a gap in the live view until the turn ends.
+// A host persists the user entry and the final answer of a turn (`buildTurnTranscript()`), and a
+// 'sticky' tab's thinking and tool cards, which a headless host folds with this same function from
+// the events it sends. What a client shows WHILE a turn runs is a display tail, not a record:
+// entries built here are shown after the persisted transcript and dropped when the turn ends, when
+// the caller re-reads the host's transcript. A chunk a client missed is therefore never written
+// from that client; the worst case is a gap in the live view until the turn ends.
 //
 // Pure: no I/O, no clock, no ids of its own (the caller passes `newId`). The desktop's peer mirror
 // folds with it in main and in the renderer, and a TUI client can use it as is.

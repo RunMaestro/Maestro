@@ -2310,7 +2310,10 @@ describe('ExecutionQueueBrowser', () => {
 		});
 
 		it('Enter opens the action menu for the selected row', () => {
-			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+			renderWithQueue({
+				onToggleItemPause: vi.fn(),
+				onEditItem: vi.fn(async () => ({ saved: true as const })),
+			});
 
 			fireEvent.keyDown(card(), { key: 'ArrowDown' });
 			fireEvent.keyDown(card(), { key: 'Enter' });
@@ -2336,7 +2339,7 @@ describe('ExecutionQueueBrowser', () => {
 					theme={theme}
 					onRemoveItem={mockOnRemoveItem}
 					onSwitchSession={mockOnSwitchSession}
-					onEditItem={vi.fn()}
+					onEditItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			);
 
@@ -2349,7 +2352,10 @@ describe('ExecutionQueueBrowser', () => {
 		});
 
 		it('runs the highlighted action on Enter and closes the menu', () => {
-			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+			renderWithQueue({
+				onToggleItemPause: vi.fn(),
+				onEditItem: vi.fn(async () => ({ saved: true as const })),
+			});
 
 			fireEvent.keyDown(card(), { key: 'Enter' });
 			// Edit, Delete, Hold, Copy - step down to Delete.
@@ -2549,7 +2555,7 @@ describe('ExecutionQueueBrowser', () => {
 					onReorderItems={vi.fn()}
 					onForceSendItem={handlers.onForceSendItem ?? vi.fn()}
 					onMergeItem={vi.fn()}
-					onEditItem={vi.fn()}
+					onEditItem={vi.fn(async () => ({ saved: true as const }))}
 					onToggleItemPause={vi.fn()}
 				/>
 			);
@@ -2640,7 +2646,7 @@ describe('ExecutionQueueBrowser', () => {
 			'%s: offers Edit on the same card and hands the same patch to onEditItem',
 			async (mode) => {
 				const hostQueued = mode === 'hosted' ? true : undefined;
-				const onEditItem = vi.fn();
+				const onEditItem = vi.fn(async () => ({ saved: true as const }));
 				render(
 					<ExecutionQueueBrowser
 						isOpen={true}

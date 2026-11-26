@@ -63,6 +63,9 @@ function fakeClient() {
 			resume: vi.fn(async () => ok(undefined)),
 			skip: vi.fn(async () => ok(undefined)),
 			abort: vi.fn(async () => ok(undefined)),
+			steer: vi.fn(async () =>
+				ok({ success: false, error: 'No Auto Run is active on this agent' })
+			),
 		},
 	};
 	return { client, asClient: client as unknown as MaestroClient };
@@ -929,6 +932,42 @@ describe('Auto Run actions', () => {
 			expect(client.autoRun[control]).toHaveBeenCalledWith('a1');
 		}
 	);
+
+	it("sends a steering command to the host's run and answers with its result, a refusal included", async () => {
+		const { client, asClient } = fakeClient();
+		const input = { action: 'send' as const, text: 'Prefer the fixtures' };
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'steer-auto-run', input })).toEqual(
+			ok({
+				kind: 'steer-auto-run',
+				result: { success: false, error: 'No Auto Run is active on this agent' },
+			})
+		);
+		expect(client.autoRun.steer).toHaveBeenCalledWith('a1', input);
+	});
+
+	it('reads a steering command that crossed IPC as the host reads one', () => {
+		expect(
+			parsePeerAgentAction({
+				kind: 'steer-auto-run',
+				input: { action: 'send', text: '  note  ', sessionId: 'ignored', background: true },
+			})
+		).toEqual({ kind: 'steer-auto-run', input: { action: 'send', text: 'note' } });
+		expect(
+			parsePeerAgentAction({ kind: 'steer-auto-run', input: { action: 'cancel', noteId: 'n1' } })
+		).toEqual({ kind: 'steer-auto-run', input: { action: 'cancel', noteId: 'n1' } });
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'steer-auto-run',
+				input: { action: 'send', text: 'x'.repeat(5000) },
+			})
+		).toThrow(/the limit is/);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'steer-auto-run', input: { action: 'nuke' } })
+		).toThrow(/Invalid or missing steering action/);
+		expect(() => parsePeerAgentAction({ kind: 'steer-auto-run' })).toThrow(
+			'steer-auto-run needs an input'
+		);
+	});
 
 	it('reads a launch that crossed IPC, checked by the launch rules', () => {
 		expect(

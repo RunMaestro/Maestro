@@ -289,6 +289,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			resume: (agentId) => guarded('autoRun.resume', () => deps.autoRun.resume(agentId)),
 			skip: (agentId) => guarded('autoRun.skip', () => deps.autoRun.skip(agentId)),
 			abort: (agentId) => guarded('autoRun.abort', () => deps.autoRun.abort(agentId)),
+			// A note only steers a run already going, so it stays available when fenced too.
+			steer: (agentId, input) => guarded('autoRun.steer', () => deps.autoRun.steer(agentId, input)),
 		},
 
 		groupChats: {

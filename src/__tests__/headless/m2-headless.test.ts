@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,7 +36,7 @@ import {
 import type { WatchDirectory } from '../../shared/maestro-lib/runtime/settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
-const BUNDLED_PROMPTS = path.resolve(__dirname, '../../shared/prompts');
+const BUNDLED_PROMPTS = path.resolve(__dirname, '../../prompts');
 
 function value<T>(result: ClientResult<T>): T {
 	if (!result.ok) throw new Error(`expected ok, got ${result.error.code}: ${result.error.message}`);
@@ -149,6 +149,19 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		};
 	}
 
+	/**
+	 * A turn's History entry is written by the synopsis turn that follows it (P8), so wait for it
+	 * before the next step: a provider swap leaves no conversation for a pending synopsis to resume.
+	 */
+	const historyWritten = (runtime: MaestroRuntime, count: number) =>
+		vi.waitFor(
+			() => {
+				const history = readHistory(runtime.paths, 'a1');
+				expect(history.status === 'ok' ? history.entries : []).toHaveLength(count);
+			},
+			{ timeout: 8_000 }
+		);
+
 	const transcript = async (runtime: MaestroRuntime, tabId: string) =>
 		value(await runtime.tabs.transcript('a1', tabId));
 	const tabOf = async (runtime: MaestroRuntime, tabId: string) =>
@@ -183,6 +196,7 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		value(await runtime.turns.send('a1', 't1', { text: 'first message on claude' }));
 		await tab1.outcome();
 		expect(tab1.outcomes()).toEqual(['completed']);
+		await historyWritten(runtime, 1);
 
 		let tab1Data = await tabOf(runtime, 't1');
 		expect(tab1Data.agentSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -198,6 +212,7 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		}
 		await tab2.outcome();
 		expect(tab2.outcomes()).toEqual(['completed']);
+		await historyWritten(runtime, 2);
 
 		let tab2Data = await tabOf(runtime, 't2');
 		expect(tab2Data.agentSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -215,6 +230,7 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		const tab1OpenCode = watchTab(runtime, 't1');
 		value(await runtime.turns.send('a1', 't1', { text: 'message on opencode' }));
 		await tab1OpenCode.outcome();
+		await historyWritten(runtime, 3);
 
 		tab1Data = await tabOf(runtime, 't1');
 		expect(tab1Data.agentSessionId).toBe(CAPTURED_OPENCODE_SESSION_ID);
@@ -234,6 +250,7 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		const tab1Back = watchTab(runtime, 't1');
 		value(await runtime.turns.send('a1', 't1', { text: 'back on claude' }));
 		await tab1Back.outcome();
+		await historyWritten(runtime, 4);
 
 		// Now turnProvider should be updated to claude-code.
 		tab1Data = await tabOf(runtime, 't1');

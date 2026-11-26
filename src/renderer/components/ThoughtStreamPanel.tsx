@@ -446,10 +446,15 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const steerRef = useRef<HTMLTextAreaElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 
-	// Only a run THIS client owns can be steered. `steeringBlocker` is the one
-	// statement of that rule, shared with `maestro-cli steer-auto-run`.
+	// A run THIS client owns, or a hosted agent's run, can be steered.
+	// `steeringBlocker` is the one statement of that rule, shared with
+	// `maestro-cli steer-auto-run`.
 	const canSteer = useBatchStore(
-		(st) => steeringBlocker(panelSessionId ? st.batchRunStates[panelSessionId] : undefined) === null
+		(st) =>
+			steeringBlocker(
+				panelSessionId ? st.batchRunStates[panelSessionId] : undefined,
+				panelSessionId ?? undefined
+			) === null
 	);
 	const pendingNotes = useAutoRunSteeringStore(selectPendingSteeringNotes(panelSessionId ?? ''));
 	const deliveredNotes = useAutoRunSteeringStore(
