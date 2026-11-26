@@ -554,6 +554,25 @@ export function endHostedTurnsHere(
 	});
 }
 
+/**
+ * Forget every cut, stop, and link error of a record that no longer runs on a host this mirror
+ * holds (`hostedIds`): the agent was deleted, moved back, or its peer removed. A resend still
+ * waiting on such a cut is told `unknown`, which ends its wait timer and keeps its message. Nothing
+ * here is needed to decide later: a kept copy is decided from the host's transcript by its entry
+ * (`cutTurnFate()`), with no cut on record.
+ */
+export function pruneHostedLinkLoss(hostedIds: ReadonlySet<string>): void {
+	const gone = (key: string) => ![...hostedIds].some((id) => key.startsWith(`${id}:`));
+	for (const [key, cut] of cutTurns) {
+		if (hostedIds.has(cut.sessionId)) continue;
+		cutTurns.delete(key);
+		answerWaiters(cut, 'unknown');
+	}
+	for (const key of [...stoppedTurns.keys()]) if (gone(key)) stoppedTurns.delete(key);
+	for (const id of [...linkErrors.keys()]) if (!hostedIds.has(id)) linkErrors.delete(id);
+	for (const id of [...endedHere.keys()]) if (!hostedIds.has(id)) endedHere.delete(id);
+}
+
 /** Test-only: forget every cut turn and local stop. */
 export function __resetHostedLinkLossForTests(): void {
 	for (const cut of cutTurns.values()) cut.waiters = undefined;

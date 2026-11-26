@@ -16,7 +16,11 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
-import { __resetHostedLinkLossForTests } from '../../../renderer/services/hostedLinkLoss';
+import {
+	__resetHostedLinkLossForTests,
+	cutHostedTurnTabs,
+	hostedCutsKept,
+} from '../../../renderer/services/hostedLinkLoss';
 import {
 	handQueuedItemToHost,
 	keepTurnForHost,
@@ -882,6 +886,46 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 				expect(toastMock).toHaveBeenCalledWith(
 					expect.objectContaining({ title: 'Not sent again' })
 				);
+			}
+		}
+	);
+
+	it.each([
+		[
+			'the agent is deleted',
+			() => useSessionStore.setState({ sessions: [], activeSessionId: '' }),
+			// Nothing is left to keep: no timer at all, the 10 s wait for the fate included.
+			() => expect(vi.getTimerCount()).toBe(0),
+		],
+		[
+			'its peer is removed',
+			() =>
+				usePeerMirrorStore.setState((state) => ({ peers: {}, order: [], enabled: state.enabled })),
+			// The resend stops waiting at once and its message stays kept under the card.
+			() => expect(getRetryEntry('row', 't1')).toMatchObject({ status: 'scheduled' }),
+		],
+	])(
+		'forgets its cut turns and ends a waiting resend when %s (R22)',
+		async (_when, remove, check) => {
+			vi.useFakeTimers();
+			try {
+				cut();
+				// The host is back but its read is still out, so a resend waits on the cut's fate.
+				hostBackReadPending();
+				retryNow('row', 't1');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(cutHostedTurnTabs('row')).toEqual(['t1']);
+				expect(getRetryEntry('row', 't1')?.status).toBe('in-flight');
+
+				remove();
+				syncHostedAgents();
+				await vi.advanceTimersByTimeAsync(0);
+				expect(cutHostedTurnTabs('row')).toEqual([]);
+				expect(hostedCutsKept('row')).toBeUndefined();
+				expect(sends()).toHaveLength(0);
+				check();
+			} finally {
+				vi.useRealTimers();
 			}
 		}
 	);

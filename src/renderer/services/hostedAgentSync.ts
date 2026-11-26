@@ -66,6 +66,7 @@ import {
 	hostedTurnsEndedHere,
 	hostedCutsKept,
 	noteHostedTurnsCut,
+	pruneHostedLinkLoss,
 	settleCutHostedTurns,
 	type HostLink,
 } from './hostedLinkLoss';
@@ -225,6 +226,7 @@ export function syncHostedAgents(): void {
 	if (!hostingEnabled()) {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
+		pruneHostedLinkLoss(new Set());
 		releaseHostedAgents();
 		return;
 	}
@@ -235,7 +237,10 @@ export function syncHostedAgents(): void {
 	pruneHostStartedMentions(
 		new Set(sessions.filter((s) => readLiftedTo(s.liftedTo)).map((s) => s.id))
 	);
-	if (!usePeerMirrorStore.getState().enabled) return;
+	if (!usePeerMirrorStore.getState().enabled) {
+		pruneHostedLinkLoss(new Set());
+		return;
+	}
 	const hostedIds = new Set<string>();
 	for (const session of sessions) {
 		const hosted = hostedInput(session);
@@ -304,6 +309,8 @@ export function syncHostedAgents(): void {
 		if (needsRead) void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
 	}
 	dropStaleAutoRuns(hostedIds);
+	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
+	pruneHostedLinkLoss(hostedIds);
 }
 
 /**
