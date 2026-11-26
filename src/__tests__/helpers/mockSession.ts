@@ -58,3 +58,30 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
 		...overrides,
 	} as Session;
 }
+
+/** The three agent modes a parity test renders a surface in. */
+export const AGENT_MODES = ['local', 'ssh', 'hosted'] as const;
+export type AgentMode = (typeof AGENT_MODES)[number];
+
+/**
+ * The same agent as a local, an SSH, or a hosted SSH agent. SSH sets the remote config
+ * and the spawned `sshRemoteId`; hosted is that SSH agent once lifted onto its remote's
+ * host (`liftedTo`). Parity tests (docs/parity/agent-ux-parity.md) render a surface with
+ * each and assert the same output.
+ */
+export function createModeSession(mode: AgentMode, overrides: Partial<Session> = {}): Session {
+	return createMockSession({ ...agentModeFields(mode), ...overrides } as Partial<Session>);
+}
+
+/**
+ * Only the fields that make an agent local, SSH, or hosted, for a suite that builds its
+ * sessions with its own factory (spread them into that factory's overrides).
+ */
+export function agentModeFields(mode: AgentMode): Partial<Session> {
+	if (mode === 'local') return {};
+	return {
+		sshRemoteId: 'r1',
+		sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+	} as Partial<Session>;
+}

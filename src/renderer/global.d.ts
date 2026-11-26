@@ -665,6 +665,7 @@ interface MaestroAPI {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: import('../shared/chatSteering').SteeringUnavailableReason;
 				}
 			) => void
 		) => () => void;
@@ -1058,7 +1059,7 @@ interface MaestroAPI {
 					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & import('../shared/crossAgentTypes').RemoteAskerContext,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -1101,6 +1102,8 @@ interface MaestroAPI {
 				queuePosition?: number;
 				queueLength?: number;
 				itemId?: string;
+				/** The text was one of Maestro's own commands, run for the tab: no turn started. */
+				ran?: boolean;
 				error?: string;
 				/** Machine-readable failure cause, so main can react to a specific one
 				 *  (dispatch callbacks retry agent-level on `tab-not-found`). */
@@ -1139,6 +1142,38 @@ interface MaestroAPI {
 		sendRemoteMergeQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		) => void;
+		onRemoteEditQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				edit: import('../shared/maestro-lib/client/types').QueuedTurnEdit,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteEditQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; error?: string }
+		) => void;
+		onRemoteMoveQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteMoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; moved: boolean; error?: string }
+		) => void;
+		onRemoteSendQueueItemNow: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSendQueueItemNowResponse: (
+			responseChannel: string,
+			result: { success: boolean; sent: boolean; error?: string }
 		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
@@ -1421,6 +1456,8 @@ interface MaestroAPI {
 						errorLine?: string;
 					};
 					parsedJson?: unknown;
+					/** The agent's last terminal screen, for the error modal only. */
+					failureScreen?: string;
 					/** Set when the failing process ran over SSH. */
 					sshRemoteId?: string;
 				}
@@ -1841,7 +1878,10 @@ interface MaestroAPI {
 			ref: string,
 			filePath: string
 		) => Promise<{ content?: string; error?: string }>;
-		checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{ installed: boolean; authenticated: boolean }>;
 		createGist: (
 			filename: string,
 			content: string,
@@ -1912,7 +1952,10 @@ interface MaestroAPI {
 			branch?: string;
 			error?: string;
 		}>;
-		checkGhCli: (ghPath?: string) => Promise<{
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{
 			installed: boolean;
 			authenticated: boolean;
 		}>;
@@ -2093,6 +2136,10 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
+		downloadRemoteFolder: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<{ success: boolean; path: string; fileCount: number }>;
 		writeFile: (
 			filePath: string,
 			content: string,
@@ -3492,7 +3539,15 @@ interface MaestroAPI {
 			error?: string;
 		}>;
 		checkin: () => Promise<void>;
-		download: (targetTag?: string) => Promise<{ success: boolean; error?: string }>;
+		download: (
+			targetTag?: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
+		listRollbackTargets: (
+			includePrerelease?: boolean
+		) => Promise<import('../shared/updateRollback').RollbackTargetsResult>;
+		rollback: (
+			targetTag: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
 		install: () => Promise<void>;
 		getStatus: () => Promise<{
 			status:
@@ -4836,6 +4891,7 @@ interface MaestroAPI {
 	tabNaming: {
 		generateTabName: (config: {
 			userMessage: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			sessionSshRemoteConfig?: {
@@ -4872,6 +4928,7 @@ interface MaestroAPI {
 	aiCommand: {
 		suggest: (config: {
 			request: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			isGitRepo?: boolean;
@@ -4899,6 +4956,7 @@ interface MaestroAPI {
 	sideQuestion: {
 		ask: (config: {
 			question: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			agentSessionId?: string;

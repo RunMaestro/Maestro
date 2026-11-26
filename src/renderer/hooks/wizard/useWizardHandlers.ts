@@ -57,6 +57,12 @@ import {
 	requestWizardTabAutoName,
 	WIZARD_TAB_PLACEHOLDER_NAME,
 } from '../../services/tabAutoNaming';
+import {
+	hostedTargetOf,
+	renameHostedTab,
+	settleHostedWizardTab,
+	startHostedConversation,
+} from '../../services/hostedTurns';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -83,6 +89,25 @@ function getAutorunSynopsisPrompt(): string {
 		return '';
 	}
 	return cachedAutorunSynopsisPrompt;
+}
+
+import type { BuiltinCommandTarget } from '../../services/maestroBuiltinCommands';
+
+/**
+ * The agent and tab a built-in slash command runs for: the named tab, or the active one when the
+ * composer typed it. A named tab that is gone resolves to no tab, never to the active one.
+ */
+function resolveBuiltinCommandTarget(target: BuiltinCommandTarget | undefined): {
+	session: Session | undefined;
+	tab: AITab | undefined;
+} {
+	const state = useSessionStore.getState();
+	if (!target) {
+		const session = selectActiveSession(state) ?? undefined;
+		return { session, tab: session ? (getActiveTab(session) ?? undefined) : undefined };
+	}
+	const session = selectSessionById(target.sessionId)(state) ?? undefined;
+	return { session, tab: session?.aiTabs.find((tab) => tab.id === target.tabId) };
 }
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
@@ -163,10 +188,13 @@ export interface UseWizardHandlersReturn {
 	grokCommandDiscovery: GrokCommandDiscoveryResult | null;
 	/** Wrapper for sendInlineWizardMessage that routes thinking chunks to tab state */
 	sendWizardMessageWithThinking: (content: string, images?: string[]) => Promise<void>;
-	/** Handler for /history command - spawns synopsis and saves to history */
-	handleHistoryCommand: () => Promise<void>;
-	/** Handler for /skills command - lists Claude Code skills */
-	handleSkillsCommand: () => Promise<void>;
+	/**
+	 * Handler for /history command - spawns synopsis and saves to history. Runs for the active tab,
+	 * or for `target` (a send from a Federation client or the CLI, `runMaestroBuiltinCommand()`).
+	 */
+	handleHistoryCommand: (target?: BuiltinCommandTarget) => Promise<void>;
+	/** Handler for /skills command - lists Claude Code skills, for the active tab or `target` */
+	handleSkillsCommand: (target?: BuiltinCommandTarget) => Promise<void>;
 	/** Handler for /wizard command - starts inline wizard */
 	handleWizardCommand: (args: string) => void;
 	/** Launch wizard in a new tab from Auto Run panel */
@@ -552,6 +580,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					}
 				: undefined;
 			updateAiTab(activeSession.id, tabId, (tab) => flattenWizardIntoTab(tab, { summary }));
+			settleHostedWizardTab(activeSession.id, tabId);
 			return;
 		}
 
@@ -714,251 +743,265 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	// handleHistoryCommand - /history slash command
 	// ========================================================================
-	const handleHistoryCommand = useCallback(async () => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession) {
-			logger.warn('[handleHistoryCommand] No active session');
-			return;
-		}
+	const handleHistoryCommand = useCallback(
+		async (target?: BuiltinCommandTarget) => {
+			const { session: currentSession, tab: activeTab } = resolveBuiltinCommandTarget(target);
+			if (!currentSession) {
+				logger.warn('[handleHistoryCommand] No active session');
+				return;
+			}
 
-		const activeTab = getActiveTab(currentSession);
-		const agentSessionId = activeTab?.agentSessionId;
-		const addLogToTab = useSessionStore.getState().addLogToTab;
+			// A named tab that is gone has nowhere to write; never fall back to the active tab.
+			if (!activeTab) {
+				logger.warn('[handleHistoryCommand] No target tab');
+				return;
+			}
+			const agentSessionId = activeTab.agentSessionId;
+			const addLogToTab = useSessionStore.getState().addLogToTab;
 
-		if (!agentSessionId) {
-			const errorLog: LogEntry = {
+			if (!agentSessionId) {
+				const errorLog: LogEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'system',
+					text: 'No active agent session. Start a conversation first before using /history.',
+				};
+				addLogToTab(currentSession.id, errorLog, activeTab.id);
+				return;
+			}
+
+			const pendingLog: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'system',
-				text: 'No active agent session. Start a conversation first before using /history.',
+				text: 'Generating history synopsis...',
 			};
-			addLogToTab(currentSession.id, errorLog);
-			return;
-		}
+			addLogToTab(currentSession.id, pendingLog, activeTab.id);
 
-		const pendingLog: LogEntry = {
-			id: generateId(),
-			timestamp: Date.now(),
-			source: 'system',
-			text: 'Generating history synopsis...',
-		};
-		addLogToTab(currentSession.id, pendingLog);
-
-		try {
-			let synopsisPrompt: string;
-			if (activeTab.lastSynopsisTime) {
-				const timeAgo = formatRelativeTime(activeTab.lastSynopsisTime);
-				synopsisPrompt = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
-			} else {
-				synopsisPrompt = getAutorunSynopsisPrompt();
-			}
-			const synopsisTime = Date.now();
-
-			const result = await spawnBackgroundSynopsis(
-				currentSession.id,
-				currentSession.cwd,
-				agentSessionId,
-				synopsisPrompt,
-				currentSession.toolType,
-				{
-					customPath: currentSession.customPath,
-					customArgs: currentSession.customArgs,
-					customEnvVars: currentSession.customEnvVars,
-					customModel: currentSession.customModel,
-					customContextWindow: currentSession.customContextWindow,
-					sessionSshRemoteConfig: currentSession.sessionSshRemoteConfig,
+			try {
+				let synopsisPrompt: string;
+				if (activeTab.lastSynopsisTime) {
+					const timeAgo = formatRelativeTime(activeTab.lastSynopsisTime);
+					synopsisPrompt = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
+				} else {
+					synopsisPrompt = getAutorunSynopsisPrompt();
 				}
-			);
+				const synopsisTime = Date.now();
 
-			if (result.success && result.response) {
-				const parsed = parseSynopsis(result.response);
+				const result = await spawnBackgroundSynopsis(
+					currentSession.id,
+					currentSession.cwd,
+					agentSessionId,
+					synopsisPrompt,
+					currentSession.toolType,
+					{
+						customPath: currentSession.customPath,
+						customArgs: currentSession.customArgs,
+						customEnvVars: currentSession.customEnvVars,
+						customModel: currentSession.customModel,
+						customContextWindow: currentSession.customContextWindow,
+						sessionSshRemoteConfig: currentSession.sessionSshRemoteConfig,
+					}
+				);
 
-				if (parsed.nothingToReport) {
+				if (result.success && result.response) {
+					const parsed = parseSynopsis(result.response);
+
+					if (parsed.nothingToReport) {
+						updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+							...tab,
+							logs: tab.logs.map((log) =>
+								log.id === pendingLog.id
+									? { ...log, text: 'Nothing to report - no history entry created.' }
+									: log
+							),
+						}));
+						return;
+					}
+
+					const currentGroups = useSessionStore.getState().groups;
+					// Worktree children inherit group from parent
+					const effectiveGroupId =
+						currentSession.groupId ||
+						(currentSession.parentSessionId
+							? selectSessionById(currentSession.parentSessionId)(useSessionStore.getState())
+									?.groupId
+							: undefined);
+					const group = effectiveGroupId
+						? currentGroups.find((g) => g.id === effectiveGroupId)
+						: null;
+					const groupName = group?.name || 'Ungrouped';
+
+					const elapsedTimeMs = activeTab.lastSynopsisTime
+						? synopsisTime - activeTab.lastSynopsisTime
+						: synopsisTime - activeTab.createdAt;
+
+					addHistoryEntry({
+						type: 'AUTO',
+						summary: parsed.shortSummary,
+						fullResponse: parsed.fullSynopsis,
+						agentSessionId,
+						sessionId: currentSession.id,
+						projectPath: currentSession.cwd,
+						sessionName: activeTab.name || undefined,
+						usageStats: result.usageStats,
+						contextUsage: result.contextUsage,
+						elapsedTimeMs,
+					});
+
+					updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+						...tab,
+						lastSynopsisTime: synopsisTime,
+						logs: tab.logs.map((log) =>
+							log.id === pendingLog.id
+								? { ...log, text: `Synopsis saved to history: ${parsed.shortSummary}` }
+								: log
+						),
+					}));
+
+					notifyToast({
+						type: 'success',
+						title: 'History Entry Added',
+						message: parsed.shortSummary,
+						group: groupName,
+						project: currentSession.name,
+						sessionId: currentSession.id,
+						tabId: activeTab.id,
+						tabName: activeTab.name || undefined,
+					});
+				} else {
 					updateAiTab(currentSession.id, activeTab.id, (tab) => ({
 						...tab,
 						logs: tab.logs.map((log) =>
 							log.id === pendingLog.id
-								? { ...log, text: 'Nothing to report - no history entry created.' }
+								? { ...log, text: 'Failed to generate history synopsis. Try again.' }
 								: log
 						),
 					}));
-					return;
 				}
-
-				const currentGroups = useSessionStore.getState().groups;
-				// Worktree children inherit group from parent
-				const effectiveGroupId =
-					currentSession.groupId ||
-					(currentSession.parentSessionId
-						? selectSessionById(currentSession.parentSessionId)(useSessionStore.getState())?.groupId
-						: undefined);
-				const group = effectiveGroupId
-					? currentGroups.find((g) => g.id === effectiveGroupId)
-					: null;
-				const groupName = group?.name || 'Ungrouped';
-
-				const elapsedTimeMs = activeTab.lastSynopsisTime
-					? synopsisTime - activeTab.lastSynopsisTime
-					: synopsisTime - activeTab.createdAt;
-
-				addHistoryEntry({
-					type: 'AUTO',
-					summary: parsed.shortSummary,
-					fullResponse: parsed.fullSynopsis,
-					agentSessionId,
-					sessionId: currentSession.id,
-					projectPath: currentSession.cwd,
-					sessionName: activeTab.name || undefined,
-					usageStats: result.usageStats,
-					contextUsage: result.contextUsage,
-					elapsedTimeMs,
-				});
-
-				updateAiTab(currentSession.id, activeTab.id, (tab) => ({
-					...tab,
-					lastSynopsisTime: synopsisTime,
-					logs: tab.logs.map((log) =>
-						log.id === pendingLog.id
-							? { ...log, text: `Synopsis saved to history: ${parsed.shortSummary}` }
-							: log
-					),
-				}));
-
-				notifyToast({
-					type: 'success',
-					title: 'History Entry Added',
-					message: parsed.shortSummary,
-					group: groupName,
-					project: currentSession.name,
-					sessionId: currentSession.id,
-					tabId: activeTab.id,
-					tabName: activeTab.name || undefined,
-				});
-			} else {
+			} catch (error) {
+				logger.error('[handleHistoryCommand] Error:', undefined, error);
 				updateAiTab(currentSession.id, activeTab.id, (tab) => ({
 					...tab,
 					logs: tab.logs.map((log) =>
 						log.id === pendingLog.id
-							? { ...log, text: 'Failed to generate history synopsis. Try again.' }
+							? { ...log, text: `Error generating synopsis: ${(error as Error).message}` }
 							: log
 					),
 				}));
 			}
-		} catch (error) {
-			logger.error('[handleHistoryCommand] Error:', undefined, error);
-			updateAiTab(currentSession.id, activeTab!.id, (tab) => ({
-				...tab,
-				logs: tab.logs.map((log) =>
-					log.id === pendingLog.id
-						? { ...log, text: `Error generating synopsis: ${(error as Error).message}` }
-						: log
-				),
-			}));
-		}
-	}, [activeSessionId, spawnBackgroundSynopsis, addHistoryEntry]);
+		},
+		[activeSessionId, spawnBackgroundSynopsis, addHistoryEntry]
+	);
 
 	// ========================================================================
 	// handleSkillsCommand - /skills slash command
 	// ========================================================================
-	const handleSkillsCommand = useCallback(async () => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession) {
-			logger.warn('[handleSkillsCommand] No active session');
-			return;
-		}
-
-		if (currentSession.toolType !== 'claude-code') {
-			logger.warn('[handleSkillsCommand] Skills command only available for Claude Code');
-			return;
-		}
-
-		const activeTab = getActiveTab(currentSession);
-		if (!activeTab) {
-			logger.warn('[handleSkillsCommand] No active tab');
-			return;
-		}
-
-		const addLogToTab = useSessionStore.getState().addLogToTab;
-
-		try {
-			const userLog: LogEntry = {
-				id: generateId(),
-				timestamp: Date.now(),
-				source: 'user',
-				text: '/skills',
-			};
-			addLogToTab(currentSession.id, userLog);
-
-			const skills = await (window as any).maestro.claude.getSkills(currentSession.projectRoot);
-
-			let skillsMessage: string;
-			if (skills.length === 0) {
-				skillsMessage =
-					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/SKILL.md` files in your project.';
-			} else {
-				const formatTokenCount = (tokens: number): string => {
-					if (tokens >= 1000) {
-						return `~${(tokens / 1000).toFixed(1)}k`;
-					}
-					return `~${tokens}`;
-				};
-
-				const projectSkills = skills.filter((s: { source: string }) => s.source === 'project');
-				const userSkills = skills.filter((s: { source: string }) => s.source === 'user');
-
-				const lines: string[] = [
-					`## Skills`,
-					'',
-					`${skills.length} skill${skills.length !== 1 ? 's' : ''} available`,
-					'',
-				];
-
-				if (projectSkills.length > 0) {
-					lines.push('### Project Skills');
-					lines.push('');
-					lines.push('| Skill | Tokens | Description |');
-					lines.push('|-------|--------|-------------|');
-					for (const skill of projectSkills) {
-						const desc =
-							skill.description && skill.description !== 'No description' ? skill.description : '-';
-						lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
-					}
-					lines.push('');
-				}
-
-				if (userSkills.length > 0) {
-					lines.push('### User Skills');
-					lines.push('');
-					lines.push('| Skill | Tokens | Description |');
-					lines.push('|-------|--------|-------------|');
-					for (const skill of userSkills) {
-						const desc =
-							skill.description && skill.description !== 'No description' ? skill.description : '-';
-						lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
-					}
-				}
-
-				skillsMessage = lines.join('\n');
+	const handleSkillsCommand = useCallback(
+		async (target?: BuiltinCommandTarget) => {
+			const { session: currentSession, tab: activeTab } = resolveBuiltinCommandTarget(target);
+			if (!currentSession) {
+				logger.warn('[handleSkillsCommand] No active session');
+				return;
 			}
 
-			const skillsLog: LogEntry = {
-				id: generateId(),
-				timestamp: Date.now(),
-				source: 'system',
-				text: skillsMessage,
-			};
-			addLogToTab(currentSession.id, skillsLog);
-		} catch (error) {
-			logger.error('[handleSkillsCommand] Error:', undefined, error);
-			const errorLog: LogEntry = {
-				id: generateId(),
-				timestamp: Date.now(),
-				source: 'system',
-				text: `Error listing skills: ${(error as Error).message}`,
-			};
-			addLogToTab(currentSession.id, errorLog);
-		}
-	}, [activeSessionId]);
+			if (currentSession.toolType !== 'claude-code') {
+				logger.warn('[handleSkillsCommand] Skills command only available for Claude Code');
+				return;
+			}
+
+			if (!activeTab) {
+				logger.warn('[handleSkillsCommand] No active tab');
+				return;
+			}
+
+			const addLogToTab = useSessionStore.getState().addLogToTab;
+
+			try {
+				const userLog: LogEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					text: '/skills',
+				};
+				addLogToTab(currentSession.id, userLog, activeTab.id);
+
+				const skills = await (window as any).maestro.claude.getSkills(currentSession.projectRoot);
+
+				let skillsMessage: string;
+				if (skills.length === 0) {
+					skillsMessage =
+						'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/SKILL.md` files in your project.';
+				} else {
+					const formatTokenCount = (tokens: number): string => {
+						if (tokens >= 1000) {
+							return `~${(tokens / 1000).toFixed(1)}k`;
+						}
+						return `~${tokens}`;
+					};
+
+					const projectSkills = skills.filter((s: { source: string }) => s.source === 'project');
+					const userSkills = skills.filter((s: { source: string }) => s.source === 'user');
+
+					const lines: string[] = [
+						`## Skills`,
+						'',
+						`${skills.length} skill${skills.length !== 1 ? 's' : ''} available`,
+						'',
+					];
+
+					if (projectSkills.length > 0) {
+						lines.push('### Project Skills');
+						lines.push('');
+						lines.push('| Skill | Tokens | Description |');
+						lines.push('|-------|--------|-------------|');
+						for (const skill of projectSkills) {
+							const desc =
+								skill.description && skill.description !== 'No description'
+									? skill.description
+									: '-';
+							lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
+						}
+						lines.push('');
+					}
+
+					if (userSkills.length > 0) {
+						lines.push('### User Skills');
+						lines.push('');
+						lines.push('| Skill | Tokens | Description |');
+						lines.push('|-------|--------|-------------|');
+						for (const skill of userSkills) {
+							const desc =
+								skill.description && skill.description !== 'No description'
+									? skill.description
+									: '-';
+							lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
+						}
+					}
+
+					skillsMessage = lines.join('\n');
+				}
+
+				const skillsLog: LogEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'system',
+					text: skillsMessage,
+				};
+				addLogToTab(currentSession.id, skillsLog, activeTab.id);
+			} catch (error) {
+				logger.error('[handleSkillsCommand] Error:', undefined, error);
+				const errorLog: LogEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'system',
+					text: `Error listing skills: ${(error as Error).message}`,
+				};
+				addLogToTab(currentSession.id, errorLog, activeTab.id);
+			}
+		},
+		[activeSessionId]
+	);
 
 	// ========================================================================
 	// handleWizardCommand - /wizard slash command
@@ -1018,6 +1061,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				...tab,
 				name: WIZARD_TAB_PLACEHOLDER_NAME,
 			}));
+			// A hosted tab's name lives on its host; the host's name comes back with it.
+			renameHostedTab(currentSession, activeTab.id, WIZARD_TAB_PLACEHOLDER_NAME);
 
 			// `/wizard <input>` already says what we are working on, so the placeholder
 			// can be replaced right away instead of waiting for the first chat message.
@@ -1056,6 +1101,73 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		}
 
 		const currentDefaults = useSettingsStore.getState();
+		const currentUIState: PreviousUIState = {
+			readOnlyMode: false,
+			saveToHistory: currentDefaults.defaultSaveToHistory,
+			showThinking: currentDefaults.defaultShowThinking,
+		};
+
+		// Start the wizard in the tab just opened, read back from the store so a host tab and a
+		// local tab start it the same way.
+		const startWizardInTab = (tabId: string) => {
+			const session = selectSessionById(currentSession.id)(useSessionStore.getState());
+			const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+			if (!session || !tab) {
+				logger.warn('[handleLaunchWizardTab] The new wizard tab is gone');
+				return;
+			}
+			// The new tab inherits the agent configuration, not the previous tab's overrides.
+			const { model, effort } = resolveModelEffort(tab, session, {
+				defaultModel: '',
+				defaultEffort: '',
+			});
+			startInlineWizard(
+				undefined,
+				currentUIState,
+				session.projectRoot || session.cwd,
+				session.toolType,
+				session.name,
+				tabId,
+				session.id,
+				session.autoRunFolderPath,
+				session.sessionSshRemoteConfig,
+				useSettingsStore.getState().conductorProfile,
+				{
+					customPath: session.customPath,
+					customArgs: session.customArgs,
+					customEnvVars: session.customEnvVars,
+					customModel: model || undefined,
+					customEffort: effort || undefined,
+					claudeTokenSource: getClaudeTokenSourceFields(session),
+				}
+			);
+			useSessionStore
+				.getState()
+				.addLogToTab(
+					session.id,
+					{ source: 'system', text: 'Starting wizard for Auto Run documents...' },
+					tabId
+				);
+		};
+
+		// A hosted agent's tabs live on its host, so the wizard's tab is a host tab, as the tab
+		// `/wizard` runs in is: the wizard runs here over the record's SSH remote and hands its
+		// name and session to that host tab when it ends (`settleHostedWizardTab()`). A host that
+		// refuses the tab says so in a toast, and no wizard starts.
+		if (hostedTargetOf(currentSession)) {
+			void startHostedConversation(currentSession, {
+				name: WIZARD_TAB_PLACEHOLDER_NAME,
+				afterTabId: currentSession.activeTabId,
+				fields: {
+					saveToHistory: currentDefaults.defaultSaveToHistory,
+					showThinking: currentDefaults.defaultShowThinking,
+				},
+			}).then((tabId) => {
+				if (tabId) startWizardInTab(tabId);
+			});
+			return;
+		}
+
 		const result = createTab(currentSession, {
 			name: WIZARD_TAB_PLACEHOLDER_NAME,
 			saveToHistory: currentDefaults.defaultSaveToHistory,
@@ -1074,48 +1186,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			activeTabId: newTab.id,
 		}));
 
-		const currentUIState: PreviousUIState = {
-			readOnlyMode: false,
-			saveToHistory: currentDefaults.defaultSaveToHistory,
-			showThinking: currentDefaults.defaultShowThinking,
-		};
-
-		const currentConductorProfile = useSettingsStore.getState().conductorProfile;
-		const addLogToTab = useSessionStore.getState().addLogToTab;
-		// The new tab inherits the agent configuration, not the previous tab's overrides.
-		const { model, effort } = resolveModelEffort(newTab, currentSession, {
-			defaultModel: '',
-			defaultEffort: '',
-		});
-
-		setTimeout(() => {
-			startInlineWizard(
-				undefined,
-				currentUIState,
-				currentSession.projectRoot || currentSession.cwd,
-				currentSession.toolType,
-				currentSession.name,
-				newTab.id,
-				currentSession.id,
-				currentSession.autoRunFolderPath,
-				currentSession.sessionSshRemoteConfig,
-				currentConductorProfile,
-				{
-					customPath: currentSession.customPath,
-					customArgs: currentSession.customArgs,
-					customEnvVars: currentSession.customEnvVars,
-					customModel: model || undefined,
-					customEffort: effort || undefined,
-					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
-				}
-			);
-
-			const wizardLog = {
-				source: 'system' as const,
-				text: 'Starting wizard for Auto Run documents...',
-			};
-			addLogToTab(currentSession.id, wizardLog, newTab.id);
-		}, 0);
+		setTimeout(() => startWizardInTab(newTab.id), 0);
 	}, [activeSessionId, startInlineWizard]);
 
 	// ========================================================================
@@ -1218,6 +1289,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				};
 			});
 
+			settleHostedWizardTab(currentSession.id, activeTabId);
+
 			// Pass the tab explicitly. The hook's internal currentTabId only tracks the
 			// last-touched wizard, and completion clears `tab.wizardState` here regardless -
 			// so ending the wrong tab strands a registered wizard on a tab that no longer
@@ -1277,6 +1350,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					};
 				})
 			);
+			settleHostedWizardTab(currentSession.id, tabId);
 
 			endInlineWizard(tabId);
 			setInputValueRef.current?.('');

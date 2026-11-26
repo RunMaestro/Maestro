@@ -482,6 +482,8 @@ describe('tabs', () => {
 					effort: 'high',
 					saveToHistory: false,
 					enterToSend: null,
+					agentSessionId: 'wizard-session',
+					mergedContext: 'Additional context',
 				})
 			).toEqual({
 				readOnlyMode: true,
@@ -490,7 +492,26 @@ describe('tabs', () => {
 				customEffort: 'high',
 				saveToHistory: false,
 				enterToSend: null,
+				agentSessionId: 'wizard-session',
+				pendingMergedContext: 'Additional context',
 			});
+		});
+
+		it("holds a merge's context for the tab's next turn", () => {
+			const held = applyTabPatch(tab('t'), { pendingMergedContext: 'Additional context' });
+			expect(held.ok && held.value.pendingMergedContext).toBe('Additional context');
+			expect(applyTabPatch(tab('t'), { pendingMergedContext: 7 }).ok).toBe(false);
+		});
+
+		it("adopts a provider session and drops the old one's binding", () => {
+			const binding = { provider: 'claude-code' } as never;
+			const source = tab('t', { agentSessionId: 'old', nativeSessionBinding: binding });
+			const adopted = applyTabPatch(source, { agentSessionId: 'wizard-session' });
+			expect(adopted.ok && adopted.value.agentSessionId).toBe('wizard-session');
+			expect(adopted.ok && 'nativeSessionBinding' in adopted.value).toBe(false);
+			// The same session again keeps its binding.
+			const same = applyTabPatch(source, { agentSessionId: 'old' });
+			expect(same.ok && same.value.nativeSessionBinding).toBe(binding);
 		});
 
 		it('writes valid values and clears a field on null, which is not false', () => {

@@ -22,6 +22,12 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 	};
 });
 
+// A hosted agent's local id takes the `peer:agent` route; the host link is the seam.
+vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/peer-resolver')>()),
+	resolvePeerAgent: vi.fn(),
+}));
+
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(() => undefined),
@@ -32,6 +38,8 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
+import { PeerResolveError, resolvePeerAgent } from '../../../cli/services/peer-resolver';
+import { ExitCode } from '../../../cli/exit-codes';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
 	resolveAgentId,
@@ -39,6 +47,7 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
+	readSettings,
 } from '../../../cli/services/storage';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
@@ -1004,7 +1013,10 @@ describe('dispatch command', () => {
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
-		it('refuses a lifted agent with AGENT_LIFTED before reaching the desktop', async () => {
+		// Addressed by its local id, a hosted agent is dispatched to as a local one is: the message
+		// goes to its host over the peer route (`peer:agent`), never refused and never queued here.
+		it("sends a hosted agent's dispatch to its host by the local id", async () => {
+			vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
 			vi.mocked(resolveAgentId).mockReturnValue('lifted-agent');
 			vi.mocked(getSessionById).mockReturnValueOnce({
 				id: 'lifted-agent',
@@ -1014,13 +1026,15 @@ describe('dispatch command', () => {
 				projectRoot: '/p',
 				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
 			});
+			vi.mocked(resolvePeerAgent).mockRejectedValueOnce(
+				new PeerResolveError('host-down', 'No host on build-box.', ExitCode.NotRunning, 'build-box')
+			);
 
-			await dispatch('lifted-agent', 'Hello', {});
+			const result = await runDispatch('lifted-agent', 'Hello', {});
 
-			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(output.success).toBe(false);
-			expect(output.code).toBe('AGENT_LIFTED');
-			expect(output.error).toContain('build-box:host-1');
+			expect(resolvePeerAgent).toHaveBeenCalledWith({ peer: 'build-box', agent: 'host-1' });
+			expect(result.code).not.toBe('AGENT_LIFTED');
+			expect(result).toMatchObject({ success: false, peer: 'build-box' });
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 	});

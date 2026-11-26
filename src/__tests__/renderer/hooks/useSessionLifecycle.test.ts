@@ -32,7 +32,17 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session } from '../../../renderer/types';
 import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	createMockSession as baseCreateMockSession,
+	createModeSession,
+} from '../../helpers/mockSession';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import { captureException } from '../../../renderer/utils/sentry';
@@ -614,6 +624,51 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('handleRenameTab', () => {
+		it('renames the tab the same way for a local, an SSH, and a hosted agent (mode parity)', () => {
+			// docs/parity/agent-ux-parity.md, Tab bar: only the transport differs. A hosted
+			// agent's rename also reaches its host (`federation.act`).
+			const federationAct = vi.fn().mockResolvedValue({ ok: true, result: { kind: 'rename-tab' } });
+			(window as any).maestro.federation = { act: federationAct };
+			useSettingsStore.setState({ federationHostedAgents: true } as any);
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+			try {
+				const outcomes = AGENT_MODES.map((mode) => {
+					const session = createModeSession(mode, {
+						id: 'session-1',
+						name: 'Test Agent',
+						cwd: '/projects/myapp',
+						toolType: 'claude-code' as any,
+						aiTabs: [createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123', name: 'Old' })],
+						activeTabId: 'tab-1',
+					});
+					useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+					useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: 'Old' });
+					const { result, unmount } = renderHook(() => useSessionLifecycle(createDeps()));
+					act(() => {
+						result.current.handleRenameTab('New Tab Name');
+					});
+					const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+					unmount();
+					return { name: tab.name, isGeneratingName: tab.isGeneratingName };
+				});
+				expect(outcomes[0]).toEqual({ name: 'New Tab Name', isGeneratingName: false });
+				expect(outcomes[1]).toEqual(outcomes[0]);
+				expect(outcomes[2]).toEqual(outcomes[0]);
+				expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
+					{ kind: 'rename-tab', tabId: 'tab-1', name: 'New Tab Name' },
+				]);
+			} finally {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				usePeerMirrorStore.setState({ peers: {} } as any);
+			}
+		});
+
 		it('renames tab and persists to claude session storage', () => {
 			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123', name: 'Old' });
 			const session = createMockSession({

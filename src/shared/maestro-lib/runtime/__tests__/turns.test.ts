@@ -33,6 +33,7 @@ import {
 	type MaestroRuntimeOptions,
 	type RuntimeDeps,
 } from '../index';
+import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -449,6 +450,24 @@ describe('runtime turns', () => {
 			expect(argvFiles).toEqual([]);
 		});
 
+		// A Federation client sends a hosted agent's `/history` as the typed text; only a desktop host
+		// runs it. Here it would reach the provider as a message, so it is refused and nothing runs.
+		it.each(['/history', '/skills', '/wizard plan it', '/btw why?'])(
+			'refuses Maestro command %s, which only a desktop host runs, and starts nothing',
+			async (command) => {
+				const runtime = await start([seedAgent({ toolType: 'claude-code' })]);
+				const turn = watch(runtime);
+				const error = errorOf(await runtime.turns.send('a1', 't1', { text: command }));
+				expect(error).toMatchObject({
+					code: 'unsupported',
+					message: `${command.split(' ')[0]} runs on a desktop host. This host is headless, so it cannot run it.`,
+				});
+				expect(argvFiles).toEqual([]);
+				expect(turn.events).toEqual([]);
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			}
+		);
+
 		it('answers host-unavailable once the runtime is closed', async () => {
 			const runtime = await start();
 			await runtime.connection.close();
@@ -487,6 +506,29 @@ describe('runtime turns', () => {
 				removed: true,
 			});
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+		});
+
+		it('launches no provider once another process took the data directory, and holds the message', async () => {
+			const runtime = await start();
+			// Another process holds the lock now; the runtime learns it at its next fence check.
+			fs.writeFileSync(
+				path.join(dir, RUNTIME_LOCK_FILE_NAME),
+				JSON.stringify({
+					pid: 200,
+					mode: 'host',
+					startedAt: new Date(T0).toISOString(),
+					heartbeatAt: new Date(T0).toISOString(),
+					bootTime: T0 - 3_600_000,
+				})
+			);
+
+			const failure = errorOf(await runtime.turns.send('a1', 't1', { text: 'do the thing' }));
+			expect(failure.code).toBe('failed');
+			expect(failure.message).toContain('held in the queue');
+			expect(launched).toEqual([]);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ tabId: 't1', text: 'do the thing', paused: true }),
+			]);
 		});
 	});
 
@@ -756,6 +798,160 @@ describe('runtime turns', () => {
 			value(await runtime.turns.queue.remove('a1', queued.itemId));
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
+		});
+
+		it('merges a waiting message into the one above it, the way the queued card does', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: QueuedTurn[][] = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') changes.push(event.items);
+				},
+				{ types: ['queue.changed'] }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const upper = value(await runtime.turns.send('a1', 't1', { text: 'upper\n' }));
+			const lower = value(await runtime.turns.send('a1', 't1', { text: 'lower' }));
+			if (upper.status !== 'queued' || lower.status !== 'queued')
+				throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.merge('a1', lower.itemId))).toEqual({
+				merged: true,
+				mergedIntoId: upper.itemId,
+			});
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: upper.itemId, text: 'upper\n\nlower' }),
+			]);
+			expect(changes[changes.length - 1]).toEqual([
+				expect.objectContaining({ itemId: upper.itemId, text: 'upper\n\nlower' }),
+			]);
+			// Nothing waits above the head.
+			expect(value(await runtime.turns.queue.merge('a1', upper.itemId))).toEqual({ merged: false });
+			expect(errorOf(await runtime.turns.queue.merge('nope', upper.itemId)).code).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', upper.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
+		});
+
+		it('refuses a steer: a headless turn takes no input once it starts, so the message waits', async () => {
+			const runtime = await start();
+			const refused = errorOf(await runtime.turns.queue.steer('a1', 'q1'));
+			expect(refused.code).toBe('unsupported');
+			expect(refused.message).toContain('stays queued');
+			expect(errorOf(await runtime.turns.queue.steer('nope', 'q1')).code).toBe('not-found');
+		});
+
+		it('edits a waiting message in place, the way the queued card does', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(
+				await runtime.turns.send('a1', 't1', { text: 'draft', overrides: { model: 'm1' } })
+			);
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: queued.itemId, turnSettings: { model: 'm1' } }),
+			]);
+
+			// Text only: the item keeps its model.
+			expect(value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'final' }))).toEqual(
+				{ found: true }
+			);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({
+					itemId: queued.itemId,
+					text: 'final',
+					turnSettings: { model: 'm1' },
+				}),
+			]);
+			// Settings given: assigned whole.
+			value(
+				await runtime.turns.queue.edit('a1', queued.itemId, {
+					text: 'final',
+					turnSettings: { effort: 'high' },
+				})
+			);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ turnSettings: { effort: 'high' } }),
+			]);
+			// A headless host queues no images, so an edit with some is refused whole.
+			expect(
+				errorOf(
+					await runtime.turns.queue.edit('a1', queued.itemId, {
+						text: 'x',
+						images: ['data:image/png;base64,AAAA'],
+					})
+				).code
+			).toBe('unsupported');
+			expect(value(await runtime.turns.queue.edit('a1', 'gone', { text: 'x' }))).toEqual({
+				found: false,
+			});
+			expect(
+				errorOf(await runtime.turns.queue.edit('nope', queued.itemId, { text: 'x' })).code
+			).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', queued.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
+		});
+
+		it('moves a waiting message, the way dragging its queued card does', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const b = value(await runtime.turns.send('a1', 't1', { text: 'b' }));
+			const c = value(await runtime.turns.send('a1', 't1', { text: 'c' }));
+			if (b.status !== 'queued' || c.status !== 'queued') throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.move('a1', c.itemId, 0, 't1'))).toEqual({
+				moved: true,
+			});
+			expect(value(await runtime.turns.queue.list('a1')).map((item) => item.text)).toEqual([
+				'c',
+				'b',
+			]);
+			expect(value(await runtime.turns.queue.move('a1', c.itemId, 5))).toEqual({ moved: false });
+			expect(value(await runtime.turns.queue.move('a1', 'gone', 0))).toEqual({ moved: false });
+			expect(errorOf(await runtime.turns.queue.move('nope', c.itemId, 0)).code).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', b.itemId));
+			value(await runtime.turns.queue.remove('a1', c.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
+		});
+
+		it('sends a waiting message now beside another tab, never over its own', async () => {
+			hold = true;
+			const runtime = await start();
+			const first = watch(runtime, 't1');
+			const second = watch(runtime, 't2');
+			value(await runtime.turns.send('a1', 't1', { text: 'busy' }));
+			await first.started();
+			const own = value(await runtime.turns.send('a1', 't1', { text: 'own tab' }));
+			hold = false;
+			const other = value(await runtime.turns.send('a1', 't2', { text: 'other tab' }));
+			if (own.status !== 'queued' || other.status !== 'queued') throw new Error('expected queued');
+
+			// Its own tab is mid-turn.
+			expect(value(await runtime.turns.queue.sendNow('a1', own.itemId))).toEqual({ sent: false });
+			// Beside t1's turn, t2's message runs now.
+			expect(value(await runtime.turns.queue.sendNow('a1', other.itemId))).toEqual({ sent: true });
+			await second.outcome();
+			expect(second.outcomes()).toEqual(['completed']);
+			expect(value(await runtime.turns.queue.sendNow('a1', 'gone'))).toEqual({ sent: false });
+			expect(errorOf(await runtime.turns.queue.sendNow('nope', own.itemId)).code).toBe('not-found');
+
+			value(await runtime.turns.queue.remove('a1', own.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await first.outcome();
 		});
 
 		it('says nothing was stopped when the tab is idle', async () => {

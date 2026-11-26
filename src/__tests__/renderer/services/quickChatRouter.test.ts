@@ -8,7 +8,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createMockAITab, createMockSession, resetStores } from '../../helpers';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockAITab,
+	createMockSession,
+	resetStores,
+} from '../../helpers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
@@ -186,6 +192,28 @@ describe('routeQuickChatMessage', () => {
 			})
 		);
 	});
+
+	it.each(AGENT_MODES)(
+		'%s: offers a closed conversation only where the machine that runs the turns can continue it',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			history([entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })]);
+			const session = agentWith([buildTab()], agentModeFields(mode));
+			const routed = await routeQuickChatMessage(session, 'home office deduction limits?', noChat);
+			const reopened = await reopenClosedConversation('agent', {
+				agentSessionId: 's-tax',
+				name: 'Tax',
+			});
+			if (mode === 'hosted') {
+				// The host keeps its own closed tabs; one reopened here is a tab it does not have.
+				expect(routed).toEqual({ kind: 'new' });
+				expect(reopened).toBeNull();
+				expect(getAllPaginated).not.toHaveBeenCalled();
+			} else {
+				expect(routed).toEqual({ kind: 'closed', agentSessionId: 's-tax', name: 'Tax' });
+			}
+		}
+	);
 
 	it('reaches a conversation through its tab when it still has one, never beside it', async () => {
 		history([entry('s-amazon', 'Tracked the amazon package to the porch')]);

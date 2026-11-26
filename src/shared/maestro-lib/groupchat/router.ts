@@ -2448,6 +2448,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
 						appendSystemPrompt: await systemPrompts?.forParticipant(matchingSession),
 						isResume,
+						ownerAgentId: matchingSession?.id,
+						launchFeature: 'group-chat-participant',
 					});
 
 					logger.debug(
@@ -3084,6 +3086,8 @@ Review the agent responses above. Either:
 			maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
 			// A fresh session (no resume), so a non-native agent gets it embedded again.
 			appendSystemPrompt: await systemPrompts?.forParticipant(matchingSession),
+			ownerAgentId: matchingSession?.id,
+			launchFeature: 'group-chat-participant',
 		});
 
 		logger.debug(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);

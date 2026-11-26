@@ -104,7 +104,10 @@ describe('foldLiveTurn', () => {
 			{ kind: 'error', at: 3, error: { message: 'boom' } as never },
 		]);
 		expect(turn?.usage).toEqual({ inputTokens: 5 });
-		expect(turn?.entries).toEqual([{ id: 'id-1', timestamp: 3, source: 'error', text: 'boom' }]);
+		// The structured error rides along, as on a local error entry (the card's details).
+		expect(turn?.entries).toEqual([
+			{ id: 'id-1', timestamp: 3, source: 'error', text: 'boom', agentError: { message: 'boom' } },
+		]);
 	});
 
 	it('ends on outcome and on gap', () => {

@@ -34,7 +34,6 @@ export function MarketplaceModal({
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
-	const isRemoteSession = !!sshRemoteId;
 	const runningVersion = useMemo(
 		() => (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown'),
 		[]
@@ -92,7 +91,6 @@ export function MarketplaceModal({
 		autoRunFolderPath,
 		sessionId,
 		sshRemoteId,
-		isRemoteSession,
 		importPlaybook,
 		onImportComplete,
 		onClose,
@@ -216,7 +214,6 @@ export function MarketplaceModal({
 						isLoadingDocument={isLoadingDocument}
 						targetFolderName={targetFolderName}
 						isImporting={isImporting}
-						isRemoteSession={isRemoteSession}
 						runningVersion={runningVersion}
 						onBack={handleBackToList}
 						onSelectDocument={handleSelectDocument}

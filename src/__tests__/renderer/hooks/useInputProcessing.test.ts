@@ -28,7 +28,19 @@ vi.mock('../../../renderer/services/shellCommand', () => ({
 // A hosted agent's send goes to its host through this service; its own suite covers the wire.
 vi.mock('../../../renderer/services/hostedTurns', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/services/hostedTurns')>();
-	return { ...actual, sendHostedTurn: vi.fn(async () => true) };
+	return {
+		...actual,
+		sendHostedTurn: vi.fn(async () => ({ status: 'started' as const })),
+	};
+});
+
+// Steer Running Turn on a hosted agent steers the item the host queued; its own suite covers it.
+vi.mock('../../../renderer/services/chatSteering', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/services/chatSteering')>();
+	return {
+		...actual,
+		steerHostedSentMessage: vi.fn(async () => ({ outcome: 'delivered' as const })),
+	};
 });
 
 vi.mock('../../../renderer/services/aiCommand', () => ({
@@ -46,6 +58,12 @@ import { useInputProcessing } from '../../../renderer/hooks/input/useInputProces
 import { askSideQuestion } from '../../../renderer/services/sideQuestion';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
+import { steerHostedSentMessage } from '../../../renderer/services/chatSteering';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
@@ -1754,11 +1772,17 @@ describe('useInputProcessing', () => {
 
 		beforeEach(() => {
 			useNotificationStore.setState({ toasts: [] });
+			// Hosting is opt-in: these cases run with it switched on.
+			useSettingsStore.setState({ federationHostedAgents: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: false });
 		});
 
 		it('sends an AI message to the host, spawns nothing here, and clears the draft once taken', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
-			vi.mocked(sendHostedTurn).mockResolvedValue(true);
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
 			const session = createMockSession({ liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1771,16 +1795,201 @@ describe('useInputProcessing', () => {
 				session,
 				session.activeTabId,
 				'hello',
-				expect.any(Array)
+				expect.any(Array),
+				{ held: false }
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			expect(mockSetSessions).not.toHaveBeenCalled();
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 		});
 
+		it('Queue Held sends the message held to the host, as a local Queue Held queues it paused', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'later' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { hold: true });
+			});
+
+			expect(sendHostedTurn).toHaveBeenCalledWith(
+				session,
+				session.activeTabId,
+				'later',
+				expect.any(Array),
+				{ held: true }
+			);
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('Steer sends the draft to the host, then steers the item the host queued', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(steerHostedSentMessage).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue({
+				status: 'queued',
+				itemId: 'host-q1',
+				position: 1,
+				queueLength: 1,
+			});
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'check the retry path' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { steer: true });
+			});
+
+			expect(steerHostedSentMessage).toHaveBeenCalledWith(session, session.activeTabId, 'host-q1');
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('Steer does not steer a message the host started at once (the turn had ended)', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(steerHostedSentMessage).mockClear();
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'check the retry path' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { steer: true });
+			});
+
+			expect(sendHostedTurn).toHaveBeenCalledTimes(1);
+			expect(steerHostedSentMessage).not.toHaveBeenCalled();
+		});
+
+		// The SSH remote a hosted record keeps, so all three modes differ only in transport.
+		const ssh = { enabled: true, remoteId: 'build-box' };
+		const modes = [
+			['local', {}],
+			['SSH', { sessionSshRemoteConfig: ssh }],
+			['hosted', { sessionSshRemoteConfig: ssh, liftedTo }],
+		] as const;
+
+		it.each(['/history', '/skills'])(
+			'local, SSH, and hosted agents all run %s for the tab, and no mode refuses it',
+			async (command) => {
+				const onSkillsCommand = vi.fn().mockResolvedValue(undefined);
+				for (const [mode, fields] of modes) {
+					vi.mocked(sendHostedTurn).mockClear();
+					vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'ran' });
+					mockOnHistoryCommand.mockClear();
+					onSkillsCommand.mockClear();
+					mockSetInputValue.mockClear();
+					const session = createMockSession({ toolType: 'claude-code', ...fields });
+					const deps = createDeps({ activeSession: session, inputValue: command, onSkillsCommand });
+					const { result, unmount } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					unmount();
+
+					const handler = command === '/history' ? mockOnHistoryCommand : onSkillsCommand;
+					if (mode === 'hosted') {
+						// The host runs the same handler for this tab (useRemoteIntegration.test.ts).
+						expect(sendHostedTurn, mode).toHaveBeenCalledWith(
+							session,
+							session.activeTabId,
+							command,
+							expect.any(Array),
+							{ held: false }
+						);
+						expect(handler, mode).not.toHaveBeenCalled();
+					} else {
+						expect(handler, mode).toHaveBeenCalledTimes(1);
+						expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+					}
+					expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+					expect(mockSetInputValue, mode).toHaveBeenCalledWith('');
+					expect(window.maestro.process.spawn, mode).not.toHaveBeenCalled();
+				}
+			}
+		);
+
+		it('local, SSH, and hosted agents all ask /btw of the tab and draw the same card', async () => {
+			for (const [mode, fields] of modes) {
+				vi.mocked(sendHostedTurn).mockClear();
+				vi.mocked(askSideQuestion).mockClear();
+				mockSetInputValue.mockClear();
+				const session = createMockSession({ toolType: 'claude-code', ...fields });
+				const deps = createDeps({ activeSession: session, inputValue: '/btw what changed?' });
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				unmount();
+
+				// `askSideQuestion()` routes a hosted tab to its host (sideQuestion.test.ts).
+				expect(askSideQuestion, mode).toHaveBeenCalledWith({
+					session,
+					tabId: session.activeTabId,
+					question: 'what changed?',
+				});
+				expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+				expect(mockSetInputValue, mode).toHaveBeenCalledWith('');
+				expect(window.maestro.process.spawn, mode).not.toHaveBeenCalled();
+			}
+		});
+
+		it('local, SSH, and hosted agents all start the wizard in this composer for /wizard', async () => {
+			for (const [mode, fields] of modes) {
+				vi.mocked(sendHostedTurn).mockClear();
+				mockSetInputValue.mockClear();
+				const onWizardCommand = vi.fn();
+				const session = createMockSession({ toolType: 'claude-code', ...fields });
+				const deps = createDeps({
+					activeSession: session,
+					inputValue: '/wizard plan it',
+					onWizardCommand,
+				});
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				unmount();
+
+				// The wizard's own turns spawn over the SSH remote a hosted record keeps; when it ends
+				// its tab name and session go to the host tab (hostedTurns.test.ts).
+				expect(onWizardCommand, mode).toHaveBeenCalledWith('plan it');
+				expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+				expect(mockSetInputValue, mode).toHaveBeenCalledWith('');
+			}
+		});
+
+		it('local, SSH, and hosted agents all send a message to the running wizard', async () => {
+			for (const [mode, fields] of modes) {
+				vi.mocked(sendHostedTurn).mockClear();
+				const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+				const session = createMockSession({ toolType: 'claude-code', ...fields });
+				const deps = createDeps({
+					activeSession: session,
+					inputValue: 'add a login page',
+					isWizardActive: true,
+					onWizardSendMessage,
+				});
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				unmount();
+
+				expect(onWizardSendMessage, mode).toHaveBeenCalledWith('add a login page', undefined);
+				expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+				expect(useNotificationStore.getState().toasts, mode).toHaveLength(0);
+			}
+		});
+
 		it('keeps the draft when the host refuses the message', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
-			vi.mocked(sendHostedTurn).mockResolvedValue(false);
+			vi.mocked(sendHostedTurn).mockResolvedValue(null);
 			const session = createMockSession({ liftedTo });
 			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1820,6 +2029,204 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockSetSessions).toHaveBeenCalled();
+		});
+
+		// docs/parity/agent-ux-parity.md, Composer "Design Mode chips": one expansion for every
+		// mode. What the agent receives is the same; only where it runs differs.
+		it('local, SSH, and hosted agents deliver the same Design Mode message and clear the chips', async () => {
+			const SHOT = 'data:image/png;base64,CHIP';
+			const PASTED = 'data:image/png;base64,PASTED';
+			const outcomes = [];
+			for (const [mode, fields] of modes) {
+				vi.mocked(sendHostedTurn).mockClear();
+				vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+				vi.mocked(window.maestro.process.spawn).mockClear();
+				mockSetStagedImages.mockClear();
+				mockSetInputValue.mockClear();
+				const tab = createMockTab({
+					stagedDesignPicks: [
+						createMockDesignPick({
+							id: 'a',
+							text: 'BLOCK a',
+							note: 'Make it blue',
+							screenshot: SHOT,
+						}),
+					],
+				});
+				const session = createMockSession({ aiTabs: [tab], activeTabId: tab.id, ...fields });
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					inputValue: 'Fix it',
+					stagedImages: [PASTED],
+				});
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				unmount();
+
+				const live = useSessionStore.getState().sessions[0].aiTabs[0];
+				let delivered: { text?: string; images?: string[] };
+				if (mode === 'hosted') {
+					expect(window.maestro.process.spawn, mode).not.toHaveBeenCalled();
+					const [, , text, images] = vi.mocked(sendHostedTurn).mock.calls[0];
+					delivered = { text, images };
+				} else {
+					expect(sendHostedTurn, mode).not.toHaveBeenCalled();
+					const userLog = live.logs.filter((log) => log.source === 'user').at(-1);
+					delivered = { text: userLog?.text, images: userLog?.images };
+					expect(vi.mocked(window.maestro.process.spawn).mock.calls[0][0].prompt, mode).toContain(
+						delivered.text
+					);
+				}
+				outcomes.push({
+					delivered,
+					chipsLeft: (live.stagedDesignPicks ?? []).length,
+					composerCleared: mockSetInputValue.mock.calls.some(([value]) => value === ''),
+					imagesCleared: mockSetStagedImages.mock.calls.some(
+						([value]) => Array.isArray(value) && value.length === 0
+					),
+				});
+			}
+			expect(outcomes[0]).toEqual({
+				delivered: { text: 'BLOCK a\n\nMake it blue\n\nFix it', images: [PASTED, SHOT] },
+				chipsLeft: 0,
+				composerCleared: true,
+				imagesCleared: true,
+			});
+			expect(outcomes[1]).toEqual(outcomes[0]);
+			expect(outcomes[2]).toEqual(outcomes[0]);
+		});
+
+		// docs/parity/agent-ux-parity.md, Composer "Model / effort / read-only": the tab's own
+		// pills reach the turn in every mode. Local and SSH spawn with them; the hosted leg runs
+		// the real sendHostedTurn() so the comparison is against what the host is sent.
+		it("local, SSH, and hosted agents run the turn with the tab's model, effort, and read-only", async () => {
+			const actual = await vi.importActual<typeof import('../../../renderer/services/hostedTurns')>(
+				'../../../renderer/services/hostedTurns'
+			);
+			const federationAct = vi.fn().mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			maestro.federation = { act: federationAct };
+			const settings: Array<{ model?: string; effort?: string; readOnly?: boolean }> = [];
+			try {
+				for (const [mode, fields] of modes) {
+					vi.mocked(window.maestro.process.spawn).mockClear();
+					federationAct.mockClear();
+					const tab = createMockTab({
+						customModel: 'opus',
+						customEffort: 'high',
+						readOnlyMode: true,
+					});
+					const { peer } = replacePeerAgents(
+						createMirroredPeer({ peerId: 'build-box', remoteId: 'build-box', name: 'Box' }),
+						[{ id: 'host-1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: tab.id }] }],
+						[],
+						1
+					);
+					usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+					// Only the hosted send reaches this service. A once-implementation queued
+					// for another mode is never consumed, and clearAllMocks() keeps it, so
+					// it would run in place of the next test's own implementation.
+					if (mode === 'hosted') {
+						vi.mocked(sendHostedTurn).mockImplementationOnce(actual.sendHostedTurn);
+					}
+					const session = createMockSession({
+						state: 'idle',
+						aiTabs: [tab],
+						activeTabId: tab.id,
+						...fields,
+					});
+					const deps = createDeps({
+						activeSession: session,
+						sessionsRef: { current: [session] },
+						inputValue: 'go',
+					});
+					const { result, unmount } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					unmount();
+					if (mode === 'hosted') {
+						expect(window.maestro.process.spawn, mode).not.toHaveBeenCalled();
+						const sent = federationAct.mock.calls.find(([, , action]) => action.kind === 'send');
+						const overrides = sent?.[2].overrides ?? {};
+						settings.push({
+							model: overrides.model,
+							effort: overrides.effort,
+							readOnly: overrides.readOnly,
+						});
+					} else {
+						const spawn = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+						settings.push({
+							model: spawn.sessionCustomModel,
+							effort: spawn.sessionCustomEffort,
+							readOnly: spawn.readOnlyMode,
+						});
+					}
+				}
+			} finally {
+				delete maestro.federation;
+				usePeerMirrorStore.setState({ peers: {} } as never);
+			}
+			// The real service was used up here: none of it is left for a later test.
+			expect(vi.mocked(sendHostedTurn).getMockImplementation()).not.toBe(actual.sendHostedTurn);
+			expect(settings[0]).toEqual({ model: 'opus', effort: 'high', readOnly: true });
+			expect(settings[1]).toEqual(settings[0]);
+			expect(settings[2]).toEqual(settings[0]);
+		});
+
+		// docs/parity/agent-ux-parity.md, Composer "Repeat-submit guard": a second Enter that
+		// lands while the first send is still in flight is ignored the same way in every mode.
+		it('local, SSH, and hosted agents send a message once when Enter lands twice in flight', async () => {
+			const deliveries: number[] = [];
+			for (const [mode, fields] of modes) {
+				vi.mocked(window.maestro.process.spawn).mockClear();
+				vi.mocked(sendHostedTurn).mockClear();
+				// Hold the first send open: the local ownership probe, or the host round trip.
+				let release!: () => void;
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
+					gate.then(() => []) as never
+				);
+				vi.mocked(sendHostedTurn).mockReturnValue(
+					gate.then(() => ({ status: 'started' as const }))
+				);
+				const session = createMockSession({ state: 'idle', ...fields });
+				const images = ['data:image/png;base64,AAAA'];
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					inputValue: 'look at this',
+					// Not re-rendered between the presses: both read the same draft and images.
+					stagedImages: images,
+				});
+				const { result, unmount } = renderHook(() => useInputProcessing(deps));
+				let first!: Promise<void>;
+				let second!: Promise<void>;
+				act(() => {
+					first = result.current.processInput();
+					second = result.current.processInput();
+				});
+				await act(async () => {
+					release();
+					await Promise.all([first, second]);
+				});
+				unmount();
+				deliveries.push(
+					mode === 'hosted'
+						? vi.mocked(sendHostedTurn).mock.calls.length
+						: vi.mocked(window.maestro.process.spawn).mock.calls.length
+				);
+			}
+			expect(deliveries).toEqual([1, 1, 1]);
+			vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([]);
 		});
 	});
 
@@ -3877,6 +4284,8 @@ describe('useInputProcessing', () => {
 				agentType: 'claude-code',
 				cwd: '/test/project',
 				sessionSshRemoteConfig: undefined,
+				// The agent the name is for, so main's hosted-launch check knows whose launch it is.
+				ownerAgentId: 'session-1',
 			});
 		});
 

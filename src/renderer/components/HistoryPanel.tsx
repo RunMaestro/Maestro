@@ -67,7 +67,7 @@ interface HistoryPanelProps {
 	/**
 	 * Where the entries come from. Default: the desktop's own History of `session`
 	 * (`localHistorySource`), or, for a hosted agent (`liftedTo`), its host's
-	 * (`mirrorHistorySource`), where its turns are recorded now. Read-only there.
+	 * (`mirrorHistorySource`), where its turns are recorded now and its entries are edited.
 	 */
 	source?: HistorySource;
 	theme: Theme;
@@ -213,7 +213,7 @@ export const HistoryPanel = React.memo(
 		// The source is rebuilt only when what it reads changes, so `loadPage`
 		// keeps its identity across unrelated session field updates.
 		// With hosted agents switched off, a hosted agent reads its own History, as an SSH agent.
-		const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+		const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 		const historySource = useMemo(() => {
 			if (source) return source;
 			const hosted = hostingOn ? readLiftedTo(session.liftedTo) : undefined;
@@ -1235,7 +1235,7 @@ export const HistoryPanel = React.memo(
 								? () => handleOpenHistoryEntry(detailModalEntry)
 								: undefined
 						}
-						// A read-only source (a peer's host) draws no delete or validate control.
+						// A source without a handler draws no delete or validate control.
 						onDelete={historySource.remove ? handleDeleteEntry : undefined}
 						onUpdate={
 							historySource.update

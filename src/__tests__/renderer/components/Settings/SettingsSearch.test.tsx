@@ -151,6 +151,38 @@ describe('SettingsSearch navigation', () => {
 		expect(onNavigate).toHaveBeenCalledWith('general', 'general-tool-calls');
 	});
 
+	it('opens the section once when the breadcrumb text in the header is clicked', () => {
+		const { panelFor, onNavigate } = setup('tool calls');
+		const header = panelFor('thinkingMode').querySelector<HTMLElement>('[role="button"]')!;
+		expect(header.getAttribute('aria-label')).toMatch(/ in General$/);
+		const breadcrumb = header.firstElementChild as HTMLElement;
+		expect(breadcrumb.textContent).toMatch(/^General › /);
+
+		fireEvent.click(breadcrumb);
+
+		expect(onNavigate).toHaveBeenCalledTimes(1);
+		expect(onNavigate).toHaveBeenCalledWith('general', 'general-tool-calls');
+	});
+
+	it('opens the section from the header with Enter and Space', () => {
+		const { panelFor, onNavigate } = setup('tool calls');
+		const header = panelFor('thinkingMode').querySelector<HTMLElement>('[role="button"]')!;
+
+		fireEvent.keyDown(header, { key: 'Enter' });
+		fireEvent.keyDown(header, { key: ' ' });
+
+		expect(onNavigate).toHaveBeenCalledTimes(2);
+		expect(onNavigate).toHaveBeenLastCalledWith('general', 'general-tool-calls');
+	});
+
+	it('keeps Show all on its own toggle, not the header jump', () => {
+		const { getByText, onNavigate } = setup('tool calls');
+
+		fireEvent.click(getByText(/^Show all 2 in /));
+
+		expect(onNavigate).not.toHaveBeenCalled();
+	});
+
 	it('opens the tab from a row that has nothing to change in place', () => {
 		const { rowFor, onNavigate } = setup("director's notes");
 
@@ -178,5 +210,74 @@ describe('SettingsSearch navigation', () => {
 		fireEvent.keyDown(input, { key: 'Escape' });
 
 		expect(input.value).toBe('');
+	});
+});
+
+describe('SettingsSearch go to setting', () => {
+	const goToButton = (container: HTMLElement) =>
+		container.querySelector<HTMLElement>('[data-testid="settings-search-go-to-setting"]');
+
+	function withQuickChat() {
+		act(() => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, quickChat: true },
+			});
+		});
+	}
+
+	it('jumps to the hovered control in a multi-match card, not the first match', () => {
+		withQuickChat();
+		const { container, control, onNavigate } = setup('quick chat');
+		expect(goToButton(container)).toBeNull();
+
+		fireEvent.mouseOver(control('encore-quick-chat-hotkey')!);
+		const button = goToButton(container)!;
+		expect(button.getAttribute('aria-label')).toBe('Go to Quick Chat Hotkey');
+		expect(button.tabIndex).toBe(-1);
+
+		fireEvent.click(button);
+
+		expect(onNavigate).toHaveBeenCalledTimes(1);
+		expect(onNavigate).toHaveBeenCalledWith('encore', 'encore-quick-chat-hotkey');
+	});
+
+	it('hides the button when the pointer leaves the card', () => {
+		withQuickChat();
+		const { container, control, panelFor } = setup('quick chat');
+
+		fireEvent.mouseOver(control('encore-quick-chat-agent')!);
+		expect(goToButton(container)).not.toBeNull();
+
+		fireEvent.mouseLeave(panelFor('quickChat'));
+		expect(goToButton(container)).toBeNull();
+	});
+
+	it('jumps with Cmd+Enter inside a control, and leaves plain Enter to the control', () => {
+		withQuickChat();
+		const { control, onNavigate } = setup('quick chat');
+		const agent = control('encore-quick-chat-agent')!;
+
+		fireEvent.keyDown(agent, { key: 'Enter' });
+		expect(onNavigate).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(agent, { key: 'Enter', metaKey: true });
+		expect(onNavigate).toHaveBeenCalledWith('encore', 'encore-quick-chat-agent');
+	});
+
+	it('offers only matched controls while filtered, and every control after Show all', () => {
+		const { container, control, getByText, onNavigate } = setup('tool calls');
+
+		// The thinking-mode wrapper only frames the match: no jump of its own.
+		fireEvent.mouseOver(control('general-thinking-mode')!);
+		expect(goToButton(container)).toBeNull();
+
+		fireEvent.click(getByText(/^Show all 2 in /));
+		fireEvent.mouseOver(getByText(THINKING_CARD_TEXT));
+		const button = goToButton(container)!;
+		expect(button.getAttribute('aria-label')).toBe('Go to Default Thinking Mode');
+
+		fireEvent.click(button);
+
+		expect(onNavigate).toHaveBeenCalledWith('general', 'general-thinking-mode');
 	});
 });

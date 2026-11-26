@@ -6,7 +6,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	findLiftedAgent,
+	hostedAgentsEnabled,
 	liftedAgentKeys,
+	liftedSendRefusal,
 } from '../../../../shared/maestro-lib/agents/lift-pointer';
 
 const agents = [
@@ -28,5 +30,15 @@ describe('findLiftedAgent', () => {
 		expect(findLiftedAgent(agents, 'tome', 'k1')?.id).toBe('row-1');
 		expect(findLiftedAgent(agents, 'gpu', 'k1')).toBeUndefined();
 		expect(findLiftedAgent(agents, 'tome', '')).toBeUndefined();
+	});
+});
+
+describe('hostedAgentsEnabled', () => {
+	it('lets a send to a lifted agent run over SSH when the setting was never stored', () => {
+		const lifted = { name: 'Docs', liftedTo: { peer: 'tome', agentId: 'k1', at: 1 } };
+		expect(liftedSendRefusal(lifted, hostedAgentsEnabled({}))).toBeUndefined();
+		expect(
+			liftedSendRefusal(lifted, hostedAgentsEnabled({ federationHostedAgents: true }))
+		).toMatch(/moved to peer "tome"/);
 	});
 });

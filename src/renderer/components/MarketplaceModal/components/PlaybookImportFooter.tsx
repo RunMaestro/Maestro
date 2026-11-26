@@ -9,7 +9,6 @@ export interface PlaybookImportFooterProps {
 	playbook: MarketplacePlaybook;
 	targetFolderName: string;
 	isImporting: boolean;
-	isRemoteSession: boolean;
 	runningVersion: string;
 	onTargetFolderChange: (name: string) => void;
 	onBrowseFolder: () => void;
@@ -21,7 +20,6 @@ export function PlaybookImportFooter({
 	playbook,
 	targetFolderName,
 	isImporting,
-	isRemoteSession,
 	runningVersion,
 	onTargetFolderChange,
 	onBrowseFolder,
@@ -59,16 +57,9 @@ export function PlaybookImportFooter({
 						/>
 						<button
 							onClick={onBrowseFolder}
-							disabled={isRemoteSession}
-							className={`p-2 rounded border transition-colors ${
-								isRemoteSession ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white/5'
-							}`}
+							className="p-2 rounded border transition-colors hover:bg-white/5"
 							style={{ borderColor: theme.colors.border }}
-							title={
-								isRemoteSession
-									? 'Browse is not available for remote sessions'
-									: 'Browse for folder'
-							}
+							title="Browse for folder"
 						>
 							<FolderOpen className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 						</button>

@@ -32,6 +32,11 @@ export interface PeerHistoryPageQuery {
 	lookbackHours?: number | null;
 	types?: HistoryEntryType[];
 	hostKey?: string | null;
+	/**
+	 * Collapse this machine's Cue runs per trigger (the `groupCueEntries` setting), as a local
+	 * agent's read does. The merge reads it (`withHostedCueRuns()`); the page itself does not.
+	 */
+	groupCue?: boolean;
 	pagination?: PaginationOptions;
 }
 
@@ -49,7 +54,11 @@ export function pagePeerHistory(
 	return paginateEntries(filtered, query.pagination);
 }
 
-/** The activity graph over every entry: a host serves no Cue runs, so there is no Cue series. */
+/**
+ * The activity graph over every entry. A host serves no Cue runs; the caller merges this
+ * machine's Cue runs of the agent in first (`withHostedCueRuns()`), so they count in the CUE
+ * series as a local agent's do.
+ */
 export function peerHistoryGraph(
 	entries: HistoryEntry[],
 	bucketCount: number,

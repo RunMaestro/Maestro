@@ -673,7 +673,7 @@ describe('GroupChatModal', () => {
 					options: [],
 				} as never);
 				if (change === 'path')
-					fireEvent.change(screen.getByPlaceholderText('grok'), {
+					fireEvent.change(screen.getByPlaceholderText('/path/to/grok'), {
 						target: { value: '/remote/bin/other-grok' },
 					});
 				if (change === 'account')

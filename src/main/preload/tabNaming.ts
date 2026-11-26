@@ -13,6 +13,8 @@ import { ipcRenderer } from 'electron';
 export interface TabNamingConfig {
 	/** The user's first message to analyze */
 	userMessage: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** The agent type to use (e.g., 'claude-code') */
 	agentType: string;
 	/** Working directory for the session */

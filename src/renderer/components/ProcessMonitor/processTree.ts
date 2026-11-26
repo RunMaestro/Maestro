@@ -147,17 +147,18 @@ export function buildProcessTree(input: BuildProcessTreeInput): ProcessNode[] {
 	});
 
 	const buildSessionNode = (session: Session): ProcessNode => {
-		const sshRemote = session.sshRemote
-			? { name: session.sshRemote.name, host: session.sshRemote.host }
-			: undefined;
-
 		const sessionNode: ProcessNode = {
 			id: `session-${session.id}`,
 			type: 'session',
 			label: session.name,
 			sessionId: session.id,
 			children: [],
-			sshRemote,
+			modeAgent: {
+				id: session.id,
+				liftedTo: session.liftedTo,
+				sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				sshConnectionFailed: session.sshConnectionFailed,
+			},
 		};
 
 		const sessionProcesses = processesMap.get(session.id) || [];
@@ -229,7 +230,6 @@ export function buildProcessTree(input: BuildProcessTreeInput): ProcessNode[] {
 						sessionId: session.id,
 						isAlive: true,
 						command: child.command,
-						sshRemote,
 					});
 				});
 			}
@@ -251,7 +251,6 @@ export function buildProcessTree(input: BuildProcessTreeInput): ProcessNode[] {
 				isAutoRun,
 				command: proc.command,
 				args: proc.args,
-				sshRemote,
 				tabName,
 				childProcesses: proc.childProcesses,
 				maestroEnvVars: proc.maestroEnvVars,

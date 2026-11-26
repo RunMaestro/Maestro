@@ -63,7 +63,6 @@ const defaultProps = {
 	theme,
 	contextMenuRef: { current: null } as any,
 	contextMenuPos,
-	sshRemoteId: undefined,
 	onFocusFileInGraph: vi.fn(),
 	onOpenBrowserTabAt: vi.fn(),
 	onCopyPath: vi.fn(),
@@ -168,16 +167,17 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.queryByText('New Agent Here')).toBeNull();
 	});
 
-	it('hides New Agent Here over SSH, where the folder path is remote', () => {
+	it('fires New Agent Here for a folder (the hook seeds the agent remote)', () => {
+		const onNewAgentHere = vi.fn();
 		render(
 			<FileTreeContextMenu
 				{...defaultProps}
-				sshRemoteId="remote-1"
+				onNewAgentHere={onNewAgentHere}
 				contextMenu={makeContextMenu(folderNode)}
 			/>
 		);
-		expect(screen.queryByText('New Agent Here')).toBeNull();
-		// The rest of the folder menu is unaffected.
+		fireEvent.click(screen.getByText('New Agent Here'));
+		expect(onNewAgentHere).toHaveBeenCalledTimes(1);
 		expect(screen.getByText('New Folder')).toBeTruthy();
 	});
 
@@ -221,20 +221,9 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.queryByText(/Preview All .* in Folder/)).toBeNull();
 	});
 
-	it('shows "Open in Maestro Browser" for HTML files (local only)', () => {
+	it('shows "Open in Maestro Browser" for HTML files', () => {
 		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(htmlNode)} />);
 		expect(screen.getByText('Open in Maestro Browser')).toBeTruthy();
-	});
-
-	it('hides "Open in Maestro Browser" when sshRemoteId is set', () => {
-		render(
-			<FileTreeContextMenu
-				{...defaultProps}
-				contextMenu={makeContextMenu(htmlNode)}
-				sshRemoteId="remote-1"
-			/>
-		);
-		expect(screen.queryByText('Open in Maestro Browser')).toBeNull();
 	});
 
 	it('shows "Document Graph" for markdown files when callback is provided', () => {
@@ -336,51 +325,26 @@ describe('FileTreeContextMenu', () => {
 		expect(onOpenDeleteMulti).toHaveBeenCalledTimes(1);
 	});
 
-	it('hides Reveal and Open in Default App when sshRemoteId is set', () => {
-		render(
-			<FileTreeContextMenu
-				{...defaultProps}
-				contextMenu={makeContextMenu(fileNode)}
-				sshRemoteId="remote-1"
-			/>
-		);
-		expect(screen.queryByText('Reveal in Finder')).toBeNull();
-		expect(screen.queryByText('Open in Default App')).toBeNull();
-	});
-
-	it('shows Download File only for remote files and calls onDownloadFile', () => {
-		// Local file: no Download File option (the file is already on disk).
-		const { unmount } = render(
-			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />
-		);
-		expect(screen.queryByText('Download File')).toBeNull();
-		unmount();
-
-		// Remote file: Download File appears and is wired to the handler.
+	// The menu takes no mode input at all: a local, an SSH, and a hosted agent get
+	// the same rows, and only the hook's actions fetch a remote file first.
+	it('offers Save a Copy… for every file and calls onDownloadFile', () => {
 		const onDownloadFile = vi.fn();
 		render(
 			<FileTreeContextMenu
 				{...defaultProps}
 				contextMenu={makeContextMenu(fileNode)}
-				sshRemoteId="remote-1"
 				onDownloadFile={onDownloadFile}
 			/>
 		);
-		const downloadBtn = screen.getByText('Download File');
-		expect(downloadBtn).toBeTruthy();
-		fireEvent.click(downloadBtn);
+		expect(screen.queryByText('Download File')).toBeNull();
+		fireEvent.click(screen.getByText('Save a Copy…'));
 		expect(onDownloadFile).toHaveBeenCalledTimes(1);
 	});
 
-	it('hides Download File for remote folders', () => {
-		render(
-			<FileTreeContextMenu
-				{...defaultProps}
-				contextMenu={makeContextMenu(folderNode)}
-				sshRemoteId="remote-1"
-			/>
-		);
-		expect(screen.queryByText('Download File')).toBeNull();
+	it('does not offer Save a Copy… on a folder', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+		expect(screen.queryByText('Save a Copy…')).toBeNull();
+		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
 	});
 
 	it('renders reveal action when the preload bridge is missing', () => {
@@ -484,18 +448,6 @@ describe('FileTreeContextMenu', () => {
 
 		it('offers no playback actions for an ordinary file', () => {
 			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
-			expect(screen.queryByText('Add to Play Queue')).toBeNull();
-		});
-
-		it('hides playback over SSH, where there is nothing to stream', () => {
-			render(
-				<FileTreeContextMenu
-					{...defaultProps}
-					contextMenu={makeContextMenu(mediaNode)}
-					sshRemoteId="remote-1"
-				/>
-			);
-			expect(screen.getByText('Preview')).toBeTruthy();
 			expect(screen.queryByText('Add to Play Queue')).toBeNull();
 		});
 

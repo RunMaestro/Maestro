@@ -6,7 +6,6 @@ import {
 	Bot,
 	Bookmark,
 	AlertCircle,
-	Server,
 	FolderTree,
 	ChevronRight,
 	Crown,
@@ -19,7 +18,7 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
-import { SessionFederationBadge } from './SessionList/SessionFederationBadge';
+import { AgentModePill } from './SessionList/AgentModePill';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -34,6 +33,7 @@ import { isImeComposing } from '../utils/ime';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { inlineErrorText } from '../../shared/failureScreen';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -291,15 +291,16 @@ export const SessionItem = memo(function SessionItem({
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
-	// Location pills: SSH indicator always shown (even in bookmarks) since it
-	// signals where prompts will run. GIT/LOCAL are suppressed in the bookmark
-	// variant to keep the row compact.
-	const showLocationPills =
+	// The GIT pill. Where prompts run (LOCAL / REMOTE / HOSTED) is the mode pill in the meta row,
+	// the same for every mode, so this pill says only "git repository" and is suppressed in the
+	// bookmark variant to keep the row compact.
+	const showGitPill =
 		showLeftPanelLocationPills &&
 		variant !== 'worktree' &&
+		variant !== 'bookmark' &&
 		session.toolType !== 'terminal' &&
-		!phone;
-	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
+		!phone &&
+		session.isGitRepo;
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
 	// Claude Code agents that haven't bound to a provider session yet. A stuck
@@ -547,7 +548,7 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="row-provider-icon w-3 h-3" />{' '}
 						<span className="row-provider">{getAgentDisplayName(session.toolType)}</span>
-						<SessionFederationBadge theme={theme} session={session} />
+						<AgentModePill theme={theme} session={session} />
 					</div>
 				)}
 				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}
@@ -574,7 +575,7 @@ export const SessionItem = memo(function SessionItem({
 						{showFullGroupLabelInBookmarks ? group.name : abbreviateGroupName(group.name)}
 					</span>
 				)}
-				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
+				{/* Git Dirty Indicator (only in wide mode) - placed before GIT for vertical alignment */}
 				{showLeftPanelGitIndicator &&
 					leftSidebarOpen &&
 					!phone &&
@@ -590,63 +591,18 @@ export const SessionItem = memo(function SessionItem({
 						</div>
 					)}
 
-				{/* Location Indicator Pills */}
-				{showLocationPills &&
-					(session.isGitRepo ? (
-						/* Git repo: Show server icon pill (if remote) + GIT pill */
-						<>
-							{session.sessionSshRemoteConfig?.enabled && (
-								<div
-									className="px-1.5 py-0.5 rounded text-3xs font-bold flex items-center"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-									}}
-									title="Running on remote host via SSH"
-								>
-									<Server className="w-3 h-3" />
-								</div>
-							)}
-							{showGitLocalBadge && (
-								<div
-									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.accent + '30',
-										color: theme.colors.accent,
-									}}
-									title="Git repository"
-								>
-									GIT
-								</div>
-							)}
-						</>
-					) : session.sessionSshRemoteConfig?.enabled ? (
-						/* Plain directory on remote: always show REMOTE */
-						<div
-							className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-							style={{
-								backgroundColor: theme.colors.warning + '30',
-								color: theme.colors.warning,
-							}}
-							title="Running on remote host via SSH"
-						>
-							REMOTE
-						</div>
-					) : (
-						/* Plain local directory: LOCAL pill suppressed in bookmark variant */
-						showGitLocalBadge && (
-							<div
-								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-								style={{
-									backgroundColor: theme.colors.textDim + '20',
-									color: theme.colors.textDim,
-								}}
-								title="Local directory (not a git repo)"
-							>
-								LOCAL
-							</div>
-						)
-					))}
+				{showGitPill && (
+					<div
+						className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
+						style={{
+							backgroundColor: theme.colors.accent + '30',
+							color: theme.colors.accent,
+						}}
+						title="Git repository"
+					>
+						GIT
+					</div>
+				)}
 
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
@@ -668,7 +624,7 @@ export const SessionItem = memo(function SessionItem({
 					<div
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
-						title={`Error: ${session.agentError.message}`}
+						title={`Error: ${inlineErrorText(session.agentError.message)}`}
 					>
 						<AlertCircle className="w-2.5 h-2.5" />
 						ERR

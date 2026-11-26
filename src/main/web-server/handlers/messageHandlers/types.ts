@@ -1,3 +1,4 @@
+import type { QueuedTurnEdit } from '../../../../shared/maestro-lib/client/types';
 import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
 import type {
 	NotificationInboxRequest,
@@ -259,7 +260,7 @@ export interface MessageHandlerCallbacks {
 	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
-		queues: unknown[];
+		queues: import('../../types').QueueSessionSnapshot[];
 		error?: string;
 	}>;
 	removeQueueItem: (
@@ -279,6 +280,21 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; merged: boolean; mergedIntoId?: string; error?: string }>;
+	editQueueItem: (
+		sessionId: string,
+		itemId: string,
+		edit: QueuedTurnEdit
+	) => Promise<{ success: boolean; found: boolean; error?: string }>;
+	moveQueueItem: (
+		sessionId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	) => Promise<{ success: boolean; moved: boolean; error?: string }>;
+	sendQueueItemNow: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; sent: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,

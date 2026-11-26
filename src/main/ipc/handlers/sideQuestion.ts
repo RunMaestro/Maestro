@@ -48,6 +48,8 @@ export interface SideQuestionHandlerDependencies {
 /** What the renderer sends. Mirrors the agent config a chat spawn would use. */
 export interface SideQuestionRequest {
 	question: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** Provider that owns the tab. */
 	agentType: string;
 	/** The agent's working directory (where the tab's session lives). */
@@ -142,6 +144,8 @@ export function registerSideQuestionHandlers(deps: SideQuestionHandlerDependenci
 							// it resumed, and a fork never writes to it, so the TUI path would
 							// wait out the timeout. Side questions always run `claude --print`.
 							agentConfigValues,
+							ownerAgentId: config.ownerAgentId,
+							launchFeature: 'side-question',
 						},
 						processManager,
 						agentDetector

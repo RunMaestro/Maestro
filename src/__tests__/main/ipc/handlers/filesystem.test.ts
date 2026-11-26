@@ -60,6 +60,7 @@ vi.mock('archiver', () => ({
 vi.mock('os', () => ({
 	default: {
 		homedir: vi.fn().mockReturnValue('/Users/testuser'),
+		tmpdir: vi.fn().mockReturnValue('/tmp'),
 	},
 }));
 
@@ -102,6 +103,8 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
 	existsRemote: vi.fn(),
+	readBinaryFileRemoteAsBase64: vi.fn(),
+	listTreeRemote: vi.fn(),
 }));
 
 // The header sniff reads real bytes off disk; each test decides the verdict.
@@ -114,10 +117,17 @@ vi.mock('../../../../main/stores', () => ({
 	getSshRemoteById: vi.fn(),
 }));
 
-import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesystem';
+import {
+	registerFilesystemHandlers,
+	REMOTE_FOLDER_DOWNLOAD_MAX_BYTES,
+	REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
+	REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES,
+	remoteFolderTooLarge,
+} from '../../../../main/ipc/handlers/filesystem';
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
+import { listTreeRemote, readBinaryFileRemoteAsBase64 } from '../../../../main/utils/remote-fs';
 import { isSqliteDatabaseFile } from '../../../../main/sqlite/sqlite-detect';
 import {
 	readDirRemote,
@@ -135,6 +145,18 @@ import {
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
 import path from 'path';
+import { withPlatform } from '../../../helpers/pathExpect';
+
+/**
+ * A temp download path: `<tmp>/maestro-remote-downloads/<12 hex>/<name>`. Read
+ * through `path`, so it holds whichever separator this OS joins with.
+ */
+function expectTempDownloadPath(actual: string, name: string): void {
+	const folder = path.dirname(actual);
+	expect(path.basename(actual)).toBe(name);
+	expect(path.basename(folder)).toMatch(/^[0-9a-f]{12}$/);
+	expect(path.dirname(folder)).toBe(path.join('/tmp', 'maestro-remote-downloads'));
+}
 
 describe('filesystem handlers', () => {
 	beforeEach(() => {
@@ -166,6 +188,510 @@ describe('filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:countItems', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:fetchImageAsBase64', expect.any(Function));
 		});
+	});
+
+	describe('fs:downloadRemoteFile', () => {
+		beforeEach(() => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.from('bytes').toString('base64'),
+			} as any);
+		});
+
+		it('gives two same-named remote files in different folders different local copies', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			const a = await handler({}, '/work/a/notes.pdf', 'r1');
+			const b = await handler({}, '/work/b/notes.pdf', 'r1');
+			const again = await handler({}, '/work/a/notes.pdf', 'r1');
+
+			expectTempDownloadPath(a.path, 'notes.pdf');
+			expect(b.path).not.toBe(a.path);
+			expect(again.path).toBe(a.path);
+		});
+
+		it('writes the bytes beside the copy and renames them over it in one step', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			const first = await handler({}, '/work/a/notes.pdf', 'r1');
+			const second = await handler({}, '/work/a/notes.pdf', 'r1');
+			expect(second.path).toBe(first.path);
+
+			// The published path is never the one being written.
+			const written = vi.mocked(fs.writeFile).mock.calls.map(([target]) => target as string);
+			expect(written).toHaveLength(2);
+			expect(written).not.toContain(first.path);
+			expect(written[1]).not.toBe(written[0]);
+			for (const staged of written) {
+				expect(path.dirname(staged)).toBe(path.dirname(first.path));
+			}
+			expect(fs.writeFile).toHaveBeenCalledWith(written[0], Buffer.from('bytes'));
+			expect(vi.mocked(fs.rename).mock.calls).toEqual([
+				[written[0], first.path],
+				[written[1], first.path],
+			]);
+		});
+
+		it('leaves the earlier copy alone when the new bytes cannot be written', async () => {
+			vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('ENOSPC'));
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			await expect(handler({}, '/work/a/notes.pdf', 'r1')).rejects.toThrow('ENOSPC');
+
+			const staged = vi.mocked(fs.writeFile).mock.calls[0][0] as string;
+			expect(fs.rename).not.toHaveBeenCalled();
+			expect(fs.rm).toHaveBeenCalledWith(staged, { force: true });
+		});
+
+		it('writes to the chosen path when one is given', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			const result = await handler({}, '/work/a/notes.pdf', 'r1', '/Users/me/notes.pdf');
+			expect(result).toEqual({ success: true, path: '/Users/me/notes.pdf' });
+			expect(fs.rename).toHaveBeenCalledWith(expect.any(String), '/Users/me/notes.pdf');
+		});
+	});
+
+	describe('fs:downloadRemoteFolder', () => {
+		beforeEach(() => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockImplementation(async (remotePath) => ({
+				success: true,
+				data: Buffer.from(`bytes of ${remotePath}`).toString('base64'),
+			}));
+		});
+
+		afterEach(() => {
+			vi.mocked(fs.rename).mockReset();
+		});
+
+		/** The folder the tree was built in before it took the copy's place. */
+		const stagingOf = (dest: string): string => {
+			const swap = vi.mocked(fs.rename).mock.calls.find(([, to]) => to === dest);
+			expect(swap, `no folder was renamed to ${dest}`).toBeDefined();
+			return swap![0] as string;
+		};
+
+		it('copies the whole tree into a fresh temp folder named like the remote folder', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: ['lib'], files: ['a.ts', 'lib/b.ts'], truncated: false },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			const result = await handler({}, '/work/src/', 'r1');
+
+			expectTempDownloadPath(result.path, 'src');
+			expect(result.fileCount).toBe(2);
+			expect(listTreeRemote).toHaveBeenCalledWith(
+				'/work/src/',
+				expect.objectContaining({ maxFiles: 2000 }),
+				{ id: 'r1' }
+			);
+			// The tree is built beside the copy, never inside it.
+			const staging = stagingOf(result.path);
+			expect(path.dirname(staging)).toBe(path.dirname(result.path));
+			expect(staging).not.toBe(result.path);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(staging, 'lib', 'b.ts'),
+				Buffer.from('bytes of /work/src/lib/b.ts')
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(staging, 'a.ts'),
+				Buffer.from('bytes of /work/src/a.ts')
+			);
+			// A stale copy is replaced, never merged into: once the whole new tree is
+			// written it moves aside whole, the new tree takes its name, and only
+			// then is the earlier copy deleted. No reader meets a half-deleted folder.
+			const order = (mock: unknown): number[] =>
+				(mock as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder;
+			const renames = vi.mocked(fs.rename).mock.calls;
+			const asideAt = renames.findIndex(([from]) => from === result.path);
+			const inAt = renames.findIndex(([from, to]) => from === staging && to === result.path);
+			expect(asideAt).toBeGreaterThanOrEqual(0);
+			expect(inAt).toBeGreaterThan(asideAt);
+			const retired = renames[asideAt][1] as string;
+			expect(path.dirname(retired)).toBe(path.dirname(result.path));
+			expect(Math.max(...order(fs.writeFile))).toBeLessThan(order(fs.rename)[asideAt]);
+			expect(fs.rm).not.toHaveBeenCalledWith(result.path, expect.anything());
+			const removal = vi.mocked(fs.rm).mock.calls.findIndex(([target]) => target === retired);
+			expect(removal).toBeGreaterThanOrEqual(0);
+			expect(order(fs.rm)[removal]).toBeGreaterThan(order(fs.rename)[inAt]);
+		});
+
+		it('puts the earlier copy back when the new one cannot take its place', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts'], truncated: false },
+			});
+			vi.mocked(fs.rename).mockImplementation(async (from) => {
+				if (
+					String(from).includes('.maestro-part-') &&
+					vi.mocked(fs.rename).mock.calls.length === 2
+				) {
+					throw Object.assign(new Error('EPERM: in use'), { code: 'EPERM' });
+				}
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow('EPERM: in use');
+			const [aside, failedIn, restore] = vi.mocked(fs.rename).mock.calls;
+			expect(failedIn[1]).toBe(aside[0]);
+			// The earlier copy is back under its own name, and it was never deleted.
+			expect(restore).toEqual([aside[1], aside[0]]);
+			expect(fs.rm).not.toHaveBeenCalledWith(aside[0], expect.anything());
+			expect(fs.rm).not.toHaveBeenCalledWith(aside[1], expect.anything());
+		});
+
+		it('swaps in a first copy when there is no earlier one', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts'], truncated: false },
+			});
+			vi.mocked(fs.rename).mockImplementationOnce(async () => {
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			const result = await handler({}, '/work/src', 'r1');
+			const renames = vi.mocked(fs.rename).mock.calls;
+			expect(renames).toHaveLength(2);
+			expect(renames[1][1]).toBe(result.path);
+		});
+
+		it('lists strictly: a subfolder it cannot read fails the copy, naming it, before any byte is fetched', async () => {
+			const why =
+				'Cannot read "private" in /work/src (Permission denied), so the folder cannot be copied whole';
+			vi.mocked(listTreeRemote).mockResolvedValue({ success: false, error: why });
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(why);
+			expect(listTreeRemote).toHaveBeenCalledWith(
+				'/work/src',
+				expect.objectContaining({ strict: true }),
+				{ id: 'r1' }
+			);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+			expect(fs.rm).not.toHaveBeenCalled();
+		});
+
+		it('leaves the earlier copy alone when a file cannot be fetched', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts', 'b.ts', 'c.ts'], truncated: false },
+			});
+			vi.mocked(readBinaryFileRemoteAsBase64).mockImplementation(async (remotePath) =>
+				remotePath.endsWith('/a.ts')
+					? { success: false, error: 'Permission denied: a.ts' }
+					: { success: true, data: Buffer.from('ok').toString('base64') }
+			);
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow('Permission denied: a.ts');
+
+			// Nothing was swapped in and the earlier copy was not removed. Only the
+			// half-built folder beside it went.
+			expect(fs.rename).not.toHaveBeenCalled();
+			const removed = vi.mocked(fs.rm).mock.calls.map(([target]) => target as string);
+			expect(removed).toHaveLength(1);
+			expect(path.basename(path.dirname(removed[0]))).toMatch(/^[0-9a-f]{12}$/);
+			expect(path.basename(removed[0])).not.toBe('src');
+			expect(vi.mocked(fs.mkdir).mock.calls[0][0]).toBe(removed[0]);
+		});
+
+		it('builds one copy of a folder at a time when two downloads overlap', async () => {
+			const listing = {
+				success: true as const,
+				data: { directories: [], files: ['a.ts'], truncated: false },
+			};
+			let releaseFirst!: () => void;
+			vi.mocked(listTreeRemote)
+				.mockImplementationOnce(
+					() => new Promise((resolve) => (releaseFirst = () => resolve(listing)))
+				)
+				.mockResolvedValue(listing);
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			const first = handler({}, '/work/src', 'r1');
+			const second = handler({}, '/work/src', 'r1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// The second has not started: the first still owns the folder.
+			expect(listTreeRemote).toHaveBeenCalledTimes(1);
+			expect(fs.rename).not.toHaveBeenCalled();
+
+			releaseFirst();
+			const [a, b] = await Promise.all([first, second]);
+			expect(b.path).toBe(a.path);
+			expect(listTreeRemote).toHaveBeenCalledTimes(2);
+			// Each download swaps in its own finished tree; the copy moved aside is not one.
+			const swaps = vi
+				.mocked(fs.rename)
+				.mock.calls.filter(([from, to]) => to === a.path && from !== a.path);
+			expect(swaps).toHaveLength(2);
+			expect(swaps[0][0]).not.toBe(swaps[1][0]);
+		});
+
+		it('lists with sizes and refuses a folder over the byte budget before any byte is fetched', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: [],
+					files: ['a.bin', 'b.bin'],
+					truncated: false,
+					fileSizes: [REMOTE_FOLDER_DOWNLOAD_MAX_BYTES, 1],
+				},
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			const refusal = handler({}, '/work/src', 'r1');
+			await expect(refusal).rejects.toThrow(/too large to copy to this computer \(500\.0 MB/);
+			expect(listTreeRemote).toHaveBeenCalledWith(
+				'/work/src',
+				expect.objectContaining({ withSizes: true, strict: true }),
+				{ id: 'r1' }
+			);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+		});
+
+		it('refuses a folder holding one file over the per-file cap, naming it, before any read', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: ['media'],
+					files: ['notes.md', 'media/big.iso'],
+					truncated: false,
+					fileSizes: [10, REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES + 1],
+				},
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(
+				/too large to copy to this computer \(50\.0 MB\): media\/big\.iso alone is 50\.0 MB, over the 50\.0 MB limit for one file/
+			);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+		});
+
+		it('checks a file whose size the listing could not report once its bytes are here', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: [],
+					files: ['small.md', 'unknown.bin'],
+					truncated: false,
+					fileSizes: [5, null],
+				},
+			});
+			vi.mocked(readBinaryFileRemoteAsBase64).mockImplementation(async (remotePath) => ({
+				success: true,
+				data: remotePath.endsWith('unknown.bin')
+					? Buffer.alloc(REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES + 1).toString('base64')
+					: Buffer.from('small').toString('base64'),
+			}));
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(
+				/too large to copy to this computer \(at least .*unknown\.bin alone is/
+			);
+			expect(fs.rename).not.toHaveBeenCalled();
+		});
+
+		it('checks a file that grew since the listing at its real size, before writing it', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['app.log'], truncated: false, fileSizes: [10] },
+			});
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.alloc(REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES + 1).toString('base64'),
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(
+				/too large to copy to this computer \(50\.0 MB\): app\.log alone is 50\.0 MB/
+			);
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+		});
+
+		it('copies a folder within the budget', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.md'], truncated: false, fileSizes: [16] },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).resolves.toMatchObject({ fileCount: 1 });
+		});
+
+		it('refuses a folder too large to copy whole', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts'], truncated: true },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(/more than 2000 files/);
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('refuses a folder nested as deep as the listing reaches, and copies one just short of it', async () => {
+			const nested = (depth: number): string => Array.from({ length: depth }, () => 'd').join('/');
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+
+			// The listing stops at the limit without saying so, so a folder that
+			// deep may hold files it never listed.
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: [nested(REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH)],
+					files: ['a.ts'],
+					truncated: false,
+				},
+			});
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(/too deep to copy/);
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: [nested(REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH - 1)],
+					files: ['a.ts'],
+					truncated: false,
+				},
+			});
+			await expect(handler({}, '/work/src', 'r1')).resolves.toMatchObject({ fileCount: 1 });
+		});
+
+		it('refuses a listed path that would land outside the folder', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['../../etc/evil'], truncated: false },
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(/outside the folder/);
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		// A backslash is a separator on Windows only, so the native join below
+		// cannot keep it in a name there.
+		it.skipIf(process.platform === 'win32')(
+			'reads a file whose name holds a backslash by its own name, apart from its look-alike',
+			async () => {
+				vi.mocked(listTreeRemote).mockResolvedValue({
+					success: true,
+					data: {
+						directories: ['report'],
+						files: ['report\\2026.txt', 'report/2026.txt'],
+						truncated: false,
+					},
+				});
+				const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+				const result = await handler({}, '/work/src', 'r1');
+				const staging = stagingOf(result.path);
+
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join(staging, 'report\\2026.txt'),
+					Buffer.from('bytes of /work/src/report\\2026.txt')
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join(staging, 'report', '2026.txt'),
+					Buffer.from('bytes of /work/src/report/2026.txt')
+				);
+			}
+		);
+
+		it('refuses a listed name Windows would read as another path, and never rewrites it', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			for (const hostile of ['report\\2026.txt', '..\\..\\evil', 'lib/C:evil', 'lib/.. /evil']) {
+				vi.mocked(listTreeRemote).mockResolvedValue({
+					success: true,
+					data: { directories: [], files: ['a.ts', hostile], truncated: false },
+				});
+				await withPlatform('win32', async () => {
+					await expect(handler({}, '/work/src', 'r1'), hostile).rejects.toThrow(
+						/outside the folder/
+					);
+				});
+			}
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+	});
+
+	// The remote names the file or folder; this machine decides where the copy
+	// goes. No remote name may put it outside the download folder.
+	describe('a hostile remote name and the download folder', () => {
+		const downloadRoot = path.join('/tmp', 'maestro-remote-downloads');
+		const channels = ['fs:downloadRemoteFile', 'fs:downloadRemoteFolder'] as const;
+
+		beforeEach(() => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.from('bytes').toString('base64'),
+			} as any);
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts'], truncated: false },
+			});
+		});
+
+		const expectNothingTouched = (): void => {
+			expect(listTreeRemote).not.toHaveBeenCalled();
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+		};
+
+		it.each(['/srv/..', '/srv/.', '/', '/srv/a\0b'])(
+			'refuses %j, which is not a name inside the folder on any platform',
+			async (remotePath) => {
+				for (const channel of channels) {
+					const handler = registeredHandlers.get(channel)!;
+					await expect(handler({}, remotePath, 'r1'), channel).rejects.toThrow(
+						/not one file name on this computer/
+					);
+				}
+				expectNothingTouched();
+			}
+		);
+
+		it.each(['/srv/..\\..\\victim', '/srv/..\\victim', '/srv/a\\b', '/srv/C:victim', '/srv/.. '])(
+			'refuses %j on Windows, where it would join to another path',
+			async (remotePath) => {
+				for (const channel of channels) {
+					const handler = registeredHandlers.get(channel)!;
+					await withPlatform('win32', async () => {
+						await expect(handler({}, remotePath, 'r1'), channel).rejects.toThrow(
+							/not one file name on this computer/
+						);
+					});
+				}
+				expectNothingTouched();
+			}
+		);
+
+		// Off Windows a backslash is a character in a name, so these stay one
+		// file inside the hashed folder. The `/` forms never leave it either:
+		// only the last remote segment names the copy.
+		it.skipIf(process.platform === 'win32')(
+			'keeps every other name as one entry inside its own hashed folder',
+			async () => {
+				for (const [remotePath, name] of [
+					['/srv/..\\..\\victim', '..\\..\\victim'],
+					['/srv/a\\b', 'a\\b'],
+					['/srv/../../victim', 'victim'],
+					['/srv/sub/../../../etc/passwd', 'passwd'],
+				]) {
+					for (const channel of channels) {
+						vi.mocked(fs.rm).mockClear();
+						const result = await registeredHandlers.get(channel)!({}, remotePath, 'r1');
+						expectTempDownloadPath(result.path, name);
+						expect(path.relative(downloadRoot, result.path).split(path.sep)).toHaveLength(2);
+						// Nothing outside the download folder is ever removed.
+						for (const [removed] of vi.mocked(fs.rm).mock.calls) {
+							expect(path.relative(downloadRoot, removed as string)).not.toMatch(/^\.\./);
+						}
+					}
+				}
+			}
+		);
 	});
 
 	describe('fs:homeDir', () => {
@@ -1603,5 +2129,32 @@ describe('filesystem handlers', () => {
 				expect(result).toMatch(/^data:image\/png;base64,/);
 			});
 		});
+	});
+});
+
+describe('remote folder copy budget', () => {
+	it('caps the whole copy at 500 MB and one file at 50 MB', () => {
+		expect(REMOTE_FOLDER_DOWNLOAD_MAX_BYTES).toBe(500 * 1024 * 1024);
+		expect(REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES).toBe(50 * 1024 * 1024);
+	});
+
+	it('lets a folder at the limits through and refuses one byte over, with its size', () => {
+		expect(
+			remoteFolderTooLarge(REMOTE_FOLDER_DOWNLOAD_MAX_BYTES, {
+				name: 'a',
+				size: REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES,
+			})
+		).toBeNull();
+		expect(remoteFolderTooLarge(REMOTE_FOLDER_DOWNLOAD_MAX_BYTES + 1, null)).toBe(
+			'The folder is too large to copy to this computer (500.0 MB; the limit is 500.0 MB)'
+		);
+	});
+
+	it('cuts a long hostile file name in the message', () => {
+		const message = remoteFolderTooLarge(1, {
+			name: 'x'.repeat(5000),
+			size: REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES + 1,
+		});
+		expect(message!.length).toBeLessThan(400);
 	});
 });

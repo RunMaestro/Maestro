@@ -233,7 +233,6 @@ export function useBatchRunner({
 				);
 				return;
 			}
-
 			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
 
 			// Continuing a run the app quit in the middle of (an update restart). A

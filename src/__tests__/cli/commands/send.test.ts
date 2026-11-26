@@ -48,6 +48,12 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 }));
 
 // Mock storage
+// A hosted agent's local id takes the `peer:agent` route; the host link is the seam.
+vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/peer-resolver')>()),
+	withPeerAgent: vi.fn(),
+}));
+
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
@@ -93,6 +99,7 @@ import {
 	getSessionById,
 	addHistoryEntry,
 	readStoredAiTabs,
+	readSettings,
 } from '../../../cli/services/storage';
 import { listDesktopTabs } from '../../../cli/services/session-command';
 import type { DesktopTabEntry } from '../../../shared/desktopTabs';
@@ -100,6 +107,7 @@ import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
+import { PeerResolveError, withPeerAgent } from '../../../cli/services/peer-resolver';
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -628,19 +636,73 @@ describe('send command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('refuses a lifted agent with AGENT_LIFTED and a pointer at peer:agentId', async () => {
+	// Addressed by its local id, a hosted agent's turn runs where its turns run: on its host, over
+	// the `peer:agent` route, as the desktop's own send does. Nothing spawns here.
+	it("runs a hosted agent's turn on its host by the local id", async () => {
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValueOnce(
 			mockAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } })
 		);
+		vi.mocked(withPeerAgent).mockRejectedValueOnce(
+			new PeerResolveError('host-down', 'No host on build-box.', 3, 'build-box')
+		);
 
 		await send('agent-abc', 'Hello', {});
 
+		expect(withPeerAgent).toHaveBeenCalledWith(
+			{ peer: 'build-box', agent: 'host-1' },
+			expect.any(Function)
+		);
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.code).not.toBe('AGENT_LIFTED');
 		expect(output.success).toBe(false);
-		expect(output.code).toBe('AGENT_LIFTED');
-		expect(output.error).toContain('build-box:host-1');
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(spawnAgent).not.toHaveBeenCalled();
+	});
+
+	it("takes --model for a hosted agent's local id, as it does for peer:agent, and refuses it for a local agent", async () => {
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValueOnce(
+			mockAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
+		vi.mocked(withPeerAgent).mockRejectedValueOnce(
+			new PeerResolveError('host-down', 'No host on build-box.', 3, 'build-box')
+		);
+
+		await send('agent-abc', 'Hello', { model: 'opus' });
+
+		expect(withPeerAgent).toHaveBeenCalledWith(
+			{ peer: 'build-box', agent: 'host-1' },
+			expect.any(Function)
+		);
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).not.toBe('INVALID_OPTION');
+
+		consoleSpy.mockClear();
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValueOnce(mockAgent());
+
+		await send('agent-abc', 'Hello', { model: 'opus' });
+
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTION');
+		expect(spawnAgent).not.toHaveBeenCalled();
+	});
+
+	it('lets a lifted agent through as an SSH agent while hosting was never switched on', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({
+				id: 'agent-term-1',
+				toolType: 'terminal',
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			})
+		);
+
+		await send('agent-term', 'Hello', {});
+
+		// Past the lifted gate: the next check (agent type) answers instead.
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.code).toBe('AGENT_UNSUPPORTED');
 	});
 
 	it('should exit with error for unsupported agent type', async () => {

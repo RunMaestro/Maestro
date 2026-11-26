@@ -45,7 +45,6 @@ import {
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
-import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
 	createTabStateChangeHandler,
@@ -73,7 +72,7 @@ import {
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
-import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { TAB_EDITABLE_KEYS, withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import {
 	readReturnedFromHost,
@@ -553,21 +552,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						});
 					}
 				},
-				onSpawnFailure: (tabId, isPersistent, message) => {
+				onSpawnFailure: (tabId, message) => {
 					// No xterm to write into from here, so report through the store and a
-					// toast. Persistent tabs stay as restartable husks exactly as they do
-					// on the view path; scratch tabs are closed.
+					// toast. The tab stays as a restartable exited tab in every mode, exactly
+					// as it does on the view path.
 					logger.warn('Background terminal PTY spawn failed', 'RemoteEvents', {
 						sessionId,
 						tabId,
-						isPersistent,
 						message,
 					});
-					if (isPersistent) {
-						createTabStateChangeHandler(sessionId)(tabId, 'exited');
-					} else {
-						useTabStore.getState().closeTerminalTab(tabId, 'spawn-failure');
-					}
+					createTabStateChangeHandler(sessionId)(tabId, 'exited');
 					notifyToast({ type: 'error', title: 'Failed to start terminal', message });
 				},
 			});
@@ -1949,21 +1943,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// persistent state over adding another fire-and-forget renderer channel.
 		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
 		if (targetTabId !== undefined) {
-			// Everything the composer chips toggle, keyed by the value it accepts.
-			// The type is enforced here rather than trusted from the wire: these
-			// land straight in the persisted tab, so a bad value (a string in
-			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
-			// chip rather than a rejected command.
-			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
-				starred: 'boolean',
-				hasUnread: 'boolean',
-				saveToHistory: 'boolean',
-				readOnlyMode: 'boolean',
-				enterToSend: 'boolean',
-				showThinking: 'thinking',
-				customModel: 'string',
-				customEffort: 'string',
-			};
+			// Everything the composer chips toggle, plus the provider session a wizard
+			// that ran elsewhere hands the tab, keyed by the value it accepts (the
+			// same allowlist a headless host applies). The type is enforced here
+			// rather than trusted from the wire: these land straight in the persisted
+			// tab, so a bad value (a string in `readOnlyMode`, a typo'd thinking mode)
+			// would be a permanently wrong chip rather than a rejected command.
 			const tabPatch: Record<string, unknown> = {};
 			for (const key of Object.keys(patchObj)) {
 				const kind = TAB_EDITABLE_KEYS[key];
@@ -2010,7 +1995,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			const applyTabPatch = (s: Session): Session => ({
 				...s,
-				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
+				aiTabs: s.aiTabs.map((t) => {
+					if (t.id !== targetTabId) return t;
+					const next = { ...t, ...tabPatch };
+					// The binding proves where the old session came from; it says nothing
+					// about a new one (the shared `applyTabPatch()` drops it the same way).
+					if ('agentSessionId' in tabPatch && tabPatch.agentSessionId !== t.agentSessionId) {
+						next.nativeSessionBinding = undefined;
+					}
+					return next;
+				}),
 			});
 
 			setSessions((prev: Session[]) =>

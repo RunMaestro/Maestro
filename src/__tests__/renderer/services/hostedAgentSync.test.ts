@@ -6,6 +6,7 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startHostedAgentSync, syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -132,5 +133,72 @@ describe('hostedAgentSync', () => {
 		useSettingsStore.setState({ federationHostedAgents: true });
 		syncHostedAgents();
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('busy');
+	});
+
+	describe('Auto Run the host drives', () => {
+		const frame = (completedTasks: number) => ({
+			isRunning: true,
+			totalTasks: 4,
+			completedTasks,
+			currentTaskIndex: completedTasks,
+			documents: ['phase-1'],
+			lockedDocuments: ['phase-1'],
+			currentDocTasksTotal: 4,
+			currentDocTasksCompleted: completedTasks,
+			startTime: 50,
+		});
+		const pushRun = (state: ReturnType<typeof frame> | null) =>
+			usePeerMirrorStore
+				.getState()
+				.applyPush({ peerId: 'box', event: { type: 'agent.autorun', agentId: 'h1', state } });
+
+		beforeEach(() => {
+			useBatchStore.setState({ batchRunStates: {} });
+			useSessionStore.setState({ sessions: [row()], activeSessionId: 'other' });
+			hydrateHost('idle');
+		});
+
+		it('draws the host run as the record run, follows it, and drops it when the host clears it', () => {
+			pushRun(frame(1));
+			syncHostedAgents();
+			expect(useBatchStore.getState().batchRunStates.row).toMatchObject({
+				mirrored: true,
+				isRunning: true,
+				documents: ['phase-1'],
+				lockedDocuments: ['phase-1'],
+				completedTasks: 1,
+				currentDocTasksCompleted: 1,
+				startTime: 50,
+			});
+
+			pushRun(frame(2));
+			syncHostedAgents();
+			expect(useBatchStore.getState().batchRunStates.row?.completedTasks).toBe(2);
+
+			pushRun(null);
+			syncHostedAgents();
+			expect(useBatchStore.getState().batchRunStates.row).toBeUndefined();
+		});
+
+		it('drops the run of a record that is no longer hosted', () => {
+			pushRun(frame(1));
+			syncHostedAgents();
+			expect(useBatchStore.getState().batchRunStates.row?.mirrored).toBe(true);
+			useSessionStore.setState({ sessions: [{ ...row(), liftedTo: undefined }] });
+			syncHostedAgents();
+			expect(useBatchStore.getState().batchRunStates.row).toBeUndefined();
+		});
+
+		it('never overwrites a run this window owns for the record', () => {
+			useBatchStore.setState({
+				batchRunStates: {
+					row: { ...frame(0), isRunning: true, isStopping: false } as never,
+				},
+			});
+			pushRun(frame(3));
+			syncHostedAgents();
+			expect(useBatchStore.getState().batchRunStates.row?.mirrored).toBeUndefined();
+			expect(useBatchStore.getState().batchRunStates.row?.completedTasks).toBe(0);
+		});
 	});
 });

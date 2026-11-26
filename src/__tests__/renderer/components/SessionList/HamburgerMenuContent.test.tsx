@@ -11,6 +11,8 @@ import { HamburgerMenuContent } from '../../../../renderer/components/SessionLis
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useThroughputGaugeStore } from '../../../../renderer/stores/throughputGaugeStore';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { AGENT_MODES, createModeSession } from '../../../helpers/mockSession';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 
 function renderMenu(setMenuOpen = vi.fn()) {
 	return render(
@@ -58,5 +60,27 @@ describe('HamburgerMenuContent - Throughput Gauge', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /Throughput Gauge/ }));
 		expect(useThroughputGaugeStore.getState().visible).toBe(false);
+	});
+});
+
+describe('HamburgerMenuContent - mode parity (local, SSH, hosted)', () => {
+	afterEach(() => {
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
+	it('draws the same menu whichever mode the active agent is in', () => {
+		const menus = AGENT_MODES.map((mode) => {
+			useSessionStore.setState({
+				sessions: [createModeSession(mode, { id: 'a1' })],
+				activeSessionId: 'a1',
+			});
+			const { container, unmount } = renderMenu();
+			const html = container.innerHTML;
+			unmount();
+			return html;
+		});
+		expect(menus[0]).not.toBe('');
+		expect(menus[1]).toBe(menus[0]);
+		expect(menus[2]).toBe(menus[0]);
 	});
 });

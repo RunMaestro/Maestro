@@ -132,6 +132,7 @@ describe('useAgentExecution', () => {
 	});
 
 	afterEach(() => {
+		resetEffortRejections();
 		vi.useRealTimers();
 		Object.assign(window.maestro, originalMaestro);
 	});
@@ -574,6 +575,315 @@ describe('useAgentExecution', () => {
 		const resultData = await spawnPromise;
 		expect(resultData.success).toBe(false);
 		expect(resultData.error).toBe(reason);
+	});
+
+	it('retries a refused Antigravity synopsis once at the session effort without looping', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-agy',
+			'Summarize session',
+			'antigravity',
+			{ customModel: 'gpt-oss-120b', customEffort: 'medium' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const firstSpawn = mockProcess.spawn.mock.calls[0][0];
+		expect(firstSpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(firstSpawn.sessionCustomEffort).toBe('low');
+
+		const rejectionError = {
+			agentId: 'antigravity',
+			message:
+				'error: invalid model selection (--model "gpt-oss-120b" --effort "low"): gpt-oss-120b has no "low" effort (available: medium)',
+		};
+		act(() => {
+			observeEffortRejection(firstSpawn.sessionId as string, rejectionError);
+			onAgentErrorHandler?.(firstSpawn.sessionId as string, rejectionError);
+			onExitHandler?.(firstSpawn.sessionId as string, 1);
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		const retrySpawn = mockProcess.spawn.mock.calls[1][0];
+		expect(retrySpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(retrySpawn.sessionCustomEffort).toBe('medium');
+
+		// A failure on the retry must not loop.
+		act(() => {
+			onAgentErrorHandler?.(retrySpawn.sessionId as string, { message: 'retry failed' });
+			onExitHandler?.(retrySpawn.sessionId as string, 1);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it('retries a refused Antigravity synopsis when the model comes from agent config', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+			// Real IPC (stripAgentFunctions) strips argBuilder from configOptions.
+			configOptions: [
+				{
+					key: 'model',
+					type: 'select',
+					label: 'Model',
+					default: '',
+				},
+			],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+			model: 'gpt-oss-120b',
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-agy-agent-cfg',
+			'Summarize session',
+			'antigravity'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const firstSpawn = mockProcess.spawn.mock.calls[0][0];
+		expect(firstSpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(firstSpawn.sessionCustomEffort).toBe('low');
+
+		const rejectionError = {
+			agentId: 'antigravity',
+			message:
+				'error: invalid model selection (--model "gpt-oss-120b" --effort "low"): gpt-oss-120b has no "low" effort (available: medium)',
+		};
+		act(() => {
+			observeEffortRejection(firstSpawn.sessionId as string, rejectionError);
+			onAgentErrorHandler?.(firstSpawn.sessionId as string, rejectionError);
+			onExitHandler?.(firstSpawn.sessionId as string, 1);
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		const retrySpawn = mockProcess.spawn.mock.calls[1][0];
+		expect(retrySpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(retrySpawn.sessionCustomEffort).toBeUndefined();
+
+		act(() => {
+			onDataHandler?.(retrySpawn.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(retrySpawn.sessionId as string, 0);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(true);
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it('still arms and retries a refused Codex synopsis once', async () => {
+		const session = createMockSession({ toolType: 'codex' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'codex',
+			command: 'codex',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-codex',
+			'Summarize session',
+			'codex',
+			{ customModel: 'gpt-6-astra', customEffort: 'high' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const firstSpawn = mockProcess.spawn.mock.calls[0][0];
+		expect(firstSpawn.sessionCustomModel).toBe('gpt-6-astra');
+		expect(firstSpawn.sessionCustomEffort).toBe('low');
+
+		const rejectionError = {
+			agentId: 'codex',
+			message:
+				"Unsupported value: 'low' is not supported with the 'gpt-6-astra' model. Supported values are: 'medium', 'high'. (\"param\":\"reasoning.effort\")",
+		};
+		act(() => {
+			observeEffortRejection(firstSpawn.sessionId as string, rejectionError);
+			onAgentErrorHandler?.(firstSpawn.sessionId as string, rejectionError);
+			onExitHandler?.(firstSpawn.sessionId as string, 1);
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		const retrySpawn = mockProcess.spawn.mock.calls[1][0];
+		expect(retrySpawn.sessionCustomModel).toBe('gpt-6-astra');
+		expect(retrySpawn.sessionCustomEffort).toBe('high');
+
+		act(() => {
+			onDataHandler?.(retrySpawn.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(retrySpawn.sessionId as string, 0);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(true);
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps non-shared provider synopsis settings unchanged when agent config sets a model', async () => {
+		const session = createMockSession({ toolType: 'claude-code' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'claude-code',
+			command: 'claude',
+			args: [],
+			configOptions: [
+				{
+					key: 'model',
+					type: 'select',
+					label: 'Model',
+					default: '',
+					argBuilder: (value: unknown) =>
+						typeof value === 'string' && value ? ['--model', value] : [],
+				},
+			],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+			model: 'opus[1m]',
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-claude-agent-cfg',
+			'Summarize session',
+			'claude-code'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionCustomModel).toBe('haiku');
+		expect(spawned.sessionCustomEffort).toBe('low');
+
+		act(() => {
+			onDataHandler?.(spawned.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(spawned.sessionId as string, 0);
+		});
+
+		expect((await spawnPromise).success).toBe(true);
+	});
+
+	it('does not spawn a synopsis if cancelPendingSynopsis is called while resolving agent config', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		let resolveConfig!: (value: Record<string, unknown>) => void;
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveConfig = resolve;
+				})
+		);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-cancelled-during-await',
+			'Summarize session',
+			'antigravity'
+		);
+
+		await waitFor(() => {
+			expect(window.maestro.agents.getConfig).toHaveBeenCalledTimes(1);
+		});
+
+		await act(async () => {
+			await result.current.cancelPendingSynopsis(session.id);
+		});
+		resolveConfig({ model: 'gpt-oss-120b' });
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(mockProcess.spawn).not.toHaveBeenCalled();
 	});
 
 	it('includes appendSystemPrompt in batch spawns', async () => {

@@ -3,7 +3,7 @@ import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivit
 import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
-import type { SteeringResultFrame } from '../../../shared/chatSteering';
+import type { SteeringResultFrame, SteeringUnavailableReason } from '../../../shared/chatSteering';
 import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolveResult,
@@ -133,6 +133,9 @@ export interface AgentError {
 		stdout?: string;
 		errorLine?: string;
 	};
+	parsedJson?: unknown;
+	/** The agent's last terminal screen, for the error modal only. */
+	failureScreen?: string;
 }
 
 /**
@@ -559,6 +562,7 @@ export function createProcessCoreApi() {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: SteeringUnavailableReason;
 				}
 			) => void
 		): (() => void) => {
@@ -569,6 +573,7 @@ export function createProcessCoreApi() {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: SteeringUnavailableReason;
 				}
 			) => callback(sessionId, resolution);
 			ipcRenderer.on('process:claude-mode-resolved', handler);

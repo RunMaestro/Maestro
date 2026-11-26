@@ -595,7 +595,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorOrder = usePeerMirrorStore((s) => s.order);
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const federationStatus = useAgentFederationStatus(activeSession);
-	const hostedAgentsOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+	const hostedAgentsOn = useSettingsStore((s) => s.federationHostedAgents === true);
 	const hasHostedAgents = sessions.some((session) => !!session.liftedTo);
 	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
@@ -731,7 +731,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openWizard,
 			getOpenInLabel,
 			platform: window.maestro?.platform || 'darwin',
-			openPath: window.maestro?.shell?.openPath,
 			onGoToNextUnread,
 			onGoToPreviousUnread,
 			onNavBack,

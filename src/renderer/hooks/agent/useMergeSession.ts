@@ -722,7 +722,6 @@ export function useMergeSessionWithSessions(
 					error: `Target session not found: ${targetSessionId}`,
 				};
 			}
-
 			// Execute the merge
 			const result = await baseHook.startMerge({
 				sourceSession,

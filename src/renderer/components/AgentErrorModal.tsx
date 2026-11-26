@@ -31,6 +31,7 @@ import {
 	Code2,
 	ArrowRight,
 	PackageX,
+	Terminal,
 } from 'lucide-react';
 import type { Theme, AgentError, AgentErrorType } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -38,6 +39,7 @@ import { Modal } from './ui/Modal';
 import { CollapsibleJsonViewer } from './CollapsibleJsonViewer';
 import { QuotaLimitEvidence } from './ui/QuotaLimitEvidence';
 import { parseQuotaLimitDetail } from '../../shared/quotaLimitDetail';
+import { withoutFailureScreen } from '../../shared/failureScreen';
 
 /**
  * Props for recovery action buttons
@@ -70,9 +72,10 @@ interface AgentErrorModalProps {
 }
 
 /**
- * Get the icon for an error type
+ * Get the icon for an error type. Exported so the SSH outage dialog, which takes the agent error
+ * modal's slot for a lost connection, draws the same header mark as a Connection Error.
  */
-function getErrorIcon(type: AgentErrorType): React.ReactNode {
+export function getErrorIcon(type: AgentErrorType): React.ReactNode {
 	switch (type) {
 		case 'auth_expired':
 			return <KeyRound className="w-6 h-6" />;
@@ -140,6 +143,7 @@ export function AgentErrorModal({
 }: AgentErrorModalProps) {
 	const primaryButtonRef = useRef<HTMLButtonElement>(null);
 	const [showJsonDetails, setShowJsonDetails] = useState(false);
+	const [showScreen, setShowScreen] = useState(true);
 
 	// Find the primary recovery action for initial focus
 	const primaryAction = useMemo(
@@ -149,6 +153,10 @@ export function AgentErrorModal({
 
 	// Check if we have JSON details to show
 	const hasJsonDetails = error.parsedJson !== undefined;
+
+	// The agent's last terminal screen: evidence too big for any inline surface,
+	// so this modal is the one place it is shown.
+	const failureScreen = error.failureScreen;
 
 	// Readable form of the provider's quota payload, when it sent one.
 	const quotaDetail = useMemo(() => parseQuotaLimitDetail(error.parsedJson), [error.parsedJson]);
@@ -163,7 +171,7 @@ export function AgentErrorModal({
 			title={errorTitle}
 			priority={MODAL_PRIORITIES.AGENT_ERROR}
 			onClose={onDismiss}
-			width={hasJsonDetails && showJsonDetails ? 600 : 480}
+			width={(hasJsonDetails && showJsonDetails) || (failureScreen && showScreen) ? 640 : 480}
 			zIndex={10001}
 			showCloseButton={dismissible}
 			headerIcon={<span style={{ color: errorColor }}>{errorIcon}</span>}
@@ -200,8 +208,11 @@ export function AgentErrorModal({
 				)}
 
 				{/* Error message */}
-				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					{error.message}
+				<p
+					className="text-sm leading-relaxed whitespace-pre-wrap break-words"
+					style={{ color: theme.colors.textMain }}
+				>
+					{withoutFailureScreen(error.message)}
 				</p>
 
 				{/* Plan-limit evidence: a provider's limit notice collapses to one
@@ -215,6 +226,37 @@ export function AgentErrorModal({
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>
 					{new Date(error.timestamp).toLocaleTimeString()}
 				</div>
+
+				{/* What the agent's terminal last showed */}
+				{failureScreen && (
+					<div className="border rounded" style={{ borderColor: theme.colors.border }}>
+						<button
+							type="button"
+							onClick={() => setShowScreen(!showScreen)}
+							className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/5 transition-colors rounded"
+							style={{ color: theme.colors.textDim }}
+						>
+							{showScreen ? (
+								<ChevronDown className="w-3 h-3" />
+							) : (
+								<ChevronRight className="w-3 h-3" />
+							)}
+							<Terminal className="w-3 h-3" />
+							<span>Last screen</span>
+						</button>
+						{showScreen && (
+							<pre
+								className="mx-2 mb-2 p-2 rounded text-xs font-mono leading-snug whitespace-pre overflow-auto max-h-72 select-text"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+								}}
+							>
+								{failureScreen}
+							</pre>
+						)}
+					</div>
+				)}
 
 				{/* Collapsible JSON Details */}
 				{hasJsonDetails && (

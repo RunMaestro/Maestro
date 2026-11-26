@@ -9,10 +9,15 @@
  * none yet or the host marked it stale (`readMirrorTranscript()`), the same lazy rule the mirror
  * always used: a tab nobody looks at costs no read, and a host that is down is not polled.
  *
+ * A run the host drives for the agent (Auto Run) lands in the same `batchRunStates` entry a local
+ * run would use, as a mirror (`applyAutoRunMirrorFrame()`), so the Auto Run panel, the progress
+ * pill, and the Left Bar draw it as they draw a local run; its controls go to the host.
+ *
  * With hosted agents switched off (`hostingEnabled()`) it folds nothing in, and releases each
  * hosted record once (`releaseHostedSession()`), so it works as its SSH agent.
  */
 
+import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
@@ -23,14 +28,19 @@ import {
 	releaseHostedSession,
 	type HostedProjectionInput,
 } from '../utils/hostedSession';
+import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { hostingEnabled } from './hostedTurns';
 import { readMirrorTranscript } from './peerMirror';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
-function hostedInput(session: {
-	liftedTo?: unknown;
-}):
-	| { peerId: string; agentId: string; input: HostedProjectionInput; connected: boolean }
+function hostedInput(session: { liftedTo?: unknown }):
+	| {
+			peerId: string;
+			agentId: string;
+			input: HostedProjectionInput;
+			connected: boolean;
+			autoRun: AutoRunBroadcastState | null;
+	  }
 	| undefined {
 	const pointer = readLiftedTo(session.liftedTo);
 	if (!pointer) return undefined;
@@ -42,6 +52,7 @@ function hostedInput(session: {
 		peerId: pointer.peer,
 		agentId: agent.id,
 		connected: peer.connection === 'connected',
+		autoRun: peer.autoRuns?.[agent.id] ?? null,
 		input: {
 			agent,
 			transcripts: mirror.transcripts[pointer.peer],
@@ -49,6 +60,29 @@ function hostedInput(session: {
 			queue: peer.queues[agent.id],
 		},
 	};
+}
+
+/** The host frame each record's Auto Run mirror was last built from, by record id. */
+const appliedAutoRuns = new Map<string, AutoRunBroadcastState | null>();
+
+/**
+ * Draw the host's run as this record's run. A frame is applied once (the projection runs on every
+ * store change); a record whose host has no run, or that is no longer hosted, drops its mirror.
+ * A run this window owns for the record is never touched (`applyAutoRunMirrorFrame()`).
+ */
+function syncHostedAutoRun(sessionId: string, frame: AutoRunBroadcastState | null): void {
+	if (appliedAutoRuns.has(sessionId) && appliedAutoRuns.get(sessionId) === frame) return;
+	appliedAutoRuns.set(sessionId, frame);
+	applyAutoRunMirrorFrame(sessionId, frame);
+}
+
+/** Drop the Auto Run mirror of every record that is no longer hosted. */
+function dropStaleAutoRuns(hostedIds: ReadonlySet<string>): void {
+	for (const sessionId of [...appliedAutoRuns.keys()]) {
+		if (hostedIds.has(sessionId)) continue;
+		if (appliedAutoRuns.get(sessionId) !== null) applyAutoRunMirrorFrame(sessionId, null);
+		appliedAutoRuns.delete(sessionId);
+	}
 }
 
 /** Records already released since hosted agents were switched off (see `releaseHostedSession()`). */
@@ -70,15 +104,19 @@ function releaseHostedAgents(): void {
 /** Fold the host into every hosted record, and read the shown tab when it needs it. */
 export function syncHostedAgents(): void {
 	if (!hostingEnabled()) {
+		dropStaleAutoRuns(new Set());
 		releaseHostedAgents();
 		return;
 	}
 	released.clear();
 	if (!usePeerMirrorStore.getState().enabled) return;
 	const { sessions, activeSessionId } = useSessionStore.getState();
+	const hostedIds = new Set<string>();
 	for (const session of sessions) {
 		const hosted = hostedInput(session);
 		if (!hosted) continue;
+		hostedIds.add(session.id);
+		syncHostedAutoRun(session.id, hosted.autoRun);
 		const next = projectHostedSession(session, hosted.input);
 		if (next !== session) {
 			updateSessionWith(session.id, (current) =>
@@ -95,6 +133,7 @@ export function syncHostedAgents(): void {
 		const needsRead = !slot?.loading && (!slot || slot.stale || (!slot.loaded && !slot.error));
 		if (needsRead) void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
 	}
+	dropStaleAutoRuns(hostedIds);
 }
 
 /** Start following. Returns the stop. */

@@ -9,7 +9,6 @@ import {
 	EyeOff,
 	Search,
 	FolderOpen,
-	Server,
 	Copy,
 	FolderInput,
 	FolderUp,
@@ -58,6 +57,7 @@ import { useFileOperations } from './hooks/useFileOperations';
 import { useDragToMove } from './hooks/useDragToMove';
 import { useOsFileDragOut } from './hooks/useOsFileDragOut';
 import { useFileContextMenu } from './hooks/useFileContextMenu';
+import { openFolderInFileManager } from '../../services/fileActions';
 
 // Utils
 import { formatBytes } from './utils/pathHelpers';
@@ -604,24 +604,26 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						{!iconOnly && 'Find'}
 					</button>
-					{/* Open in file manager - local sessions only */}
-					{!sshRemoteId && (
-						<button
-							onClick={() =>
-								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
-							}
-							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-							style={{
-								color: theme.colors.accent,
-								border: `1px solid ${theme.colors.accent}40`,
-								backgroundColor: `${theme.colors.accent}15`,
-							}}
-							title={getOpenInLabel(window.maestro?.platform || 'darwin')}
-						>
-							{!compact && <FolderOpen className="w-3 h-3" />}
-							{!iconOnly && 'Open'}
-						</button>
-					)}
+					{/* Open in file manager. A remote working directory has no location on
+					    this computer, so it is shown in the Files panel with a flash. */}
+					<button
+						onClick={() =>
+							void openFolderInFileManager(
+								{ path: session.fullPath || session.projectRoot, sshRemoteId },
+								{ sessionId: session.id }
+							)
+						}
+						className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						style={{
+							color: theme.colors.accent,
+							border: `1px solid ${theme.colors.accent}40`,
+							backgroundColor: `${theme.colors.accent}15`,
+						}}
+						title={getOpenInLabel(window.maestro?.platform || 'darwin')}
+					>
+						{!compact && <FolderOpen className="w-3 h-3" />}
+						{!iconOnly && 'Open'}
+					</button>
 					{/* Show/hide dotfiles */}
 					{!dotfilesToggleHidden && (
 						<button
@@ -716,15 +718,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							: undefined
 					}
 				>
-					{session.sshRemote && (
-						<span
-							className="flex-shrink-0"
-							title={`SSH: ${session.sshRemote.name} (${session.sshRemote.host})`}
-							style={{ color: theme.colors.accent }}
-						>
-							<Server className="w-3.5 h-3.5" />
-						</span>
-					)}
 					{showTruncationWarning && truncationCollapsed && (
 						<button
 							type="button"
@@ -756,11 +749,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							textOverflow: 'ellipsis',
 							textAlign: 'center',
 						}}
-						title={
-							session.sshRemote
-								? `${session.sshRemote.host}:${session.projectRoot}`
-								: session.projectRoot
-						}
+						title={session.projectRoot}
 						onDoubleClick={async () => {
 							if (await safeClipboardWrite(session.projectRoot)) {
 								flashCopiedToClipboard(session.projectRoot, 'Path Copied');
@@ -816,22 +805,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			) : (
 				<>
-					{session.fileTreeLoading &&
-						(() => {
-							const isRemote = !!sshRemoteId;
-							return (
-								<FileTreeLoadingProgress
-									theme={theme}
-									progress={session.fileTreeLoadingProgress}
-									isRemote={isRemote}
-									onCancel={
-										isRemote && cancelFileTreeLoad
-											? () => cancelFileTreeLoad(session.id)
-											: undefined
-									}
-								/>
-							);
-						})()}
+					{session.fileTreeLoading && (
+						<FileTreeLoadingProgress
+							theme={theme}
+							progress={session.fileTreeLoadingProgress}
+							onCancel={cancelFileTreeLoad ? () => cancelFileTreeLoad(session.id) : undefined}
+						/>
+					)}
 					{showTruncationWarning && !truncationCollapsed && (
 						<FileTreeTruncatedBanner
 							theme={theme}
@@ -1088,7 +1068,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenu={contextMenu}
 					contextMenuRef={contextMenuRef}
 					contextMenuPos={contextMenuPos}
-					sshRemoteId={sshRemoteId}
 					onFocusFileInGraph={onFocusFileInGraph}
 					onGraphFolder={handleGraphFolder}
 					onGraphSelection={handleGraphSelection}

@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import type React from 'react';
 import type { MainPanelHandle } from '../MainPanel/types';
+import type { UpdateCheckView } from '../../../shared/updateRollback';
 import type { QuitConfirmOptions } from '../QuitConfirmModal';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -126,6 +127,7 @@ export interface AppModalsProps {
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
+	newInstancePresetSshRemoteId?: string | null; // SSH remote the seeded working directory is on
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -248,7 +250,7 @@ export interface AppModalsProps {
 	onQuickActionsDebugReleaseQueuedItem: () => void;
 	markdownEditMode: boolean;
 	onQuickActionsToggleMarkdownEditMode: () => void;
-	setUpdateCheckModalOpenForQuickActions?: (open: boolean) => void;
+	setUpdateCheckModalOpenForQuickActions?: (open: boolean, view?: UpdateCheckView) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
@@ -650,6 +652,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		newInstancePresetWorkingDir,
+		newInstancePresetSshRemoteId,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -984,6 +987,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
 				newInstancePresetWorkingDir={newInstancePresetWorkingDir}
+				newInstancePresetSshRemoteId={newInstancePresetSshRemoteId}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}

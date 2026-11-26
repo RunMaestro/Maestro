@@ -14,6 +14,11 @@
  */
 
 import type { AgentRecord } from '../store/records';
+import {
+	parseWireAgentName,
+	parseWireHandoffAnswer,
+	parseWireTranscript,
+} from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
@@ -29,7 +34,7 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
+import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnEdit } from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -122,6 +127,8 @@ export function tabPatchFromConfig(config: Record<string, unknown>): TabPatch {
 	take('customEffort', 'effort');
 	take('saveToHistory', 'saveToHistory');
 	take('enterToSend', 'enterToSend');
+	take('agentSessionId', 'agentSessionId');
+	take('pendingMergedContext', 'mergedContext');
 	return patch as TabPatch;
 }
 
@@ -764,6 +771,24 @@ export function createRequestHandler(
 					(entries) => ({ entries })
 				);
 			}
+			case 'delete_history_entry':
+				return outcome(
+					'delete_history_entry_result',
+					await client.history.remove(sessionId(message), str(message.entryId) ?? ''),
+					(value) => ({ removed: value.removed })
+				);
+			case 'update_history_entry': {
+				const validated = bool(message.validated);
+				return outcome(
+					'update_history_entry_result',
+					await client.history.update(
+						sessionId(message),
+						str(message.entryId) ?? '',
+						validated !== undefined ? { validated } : {}
+					),
+					(value) => ({ updated: value.updated })
+				);
+			}
 			case 'list_queue': {
 				const agentId = sessionId(message);
 				const result = await client.turns.queue.list(agentId);
@@ -792,6 +817,54 @@ export function createRequestHandler(
 					(value) => ({ found: value.found, paused: value.paused })
 				);
 			}
+			case 'steer_queue_item':
+				return outcome(
+					'steer_queue_item_result',
+					await client.turns.queue.steer(sessionId(message), str(message.itemId) ?? ''),
+					(result) => ({ result })
+				);
+			case 'edit_queue_item': {
+				const type = 'edit_queue_item_result';
+				const parsed = parseQueuedTurnEdit(message);
+				if ('error' in parsed) return refusal(type, parsed.error, { found: false });
+				return outcome(
+					type,
+					await client.turns.queue.edit(sessionId(message), str(message.itemId) ?? '', parsed.edit),
+					(value) => ({ found: value.found })
+				);
+			}
+			case 'move_queue_item': {
+				const type = 'move_queue_item_result';
+				const toIndex = message.toIndex;
+				if (typeof toIndex !== 'number' || !Number.isInteger(toIndex) || toIndex < 0) {
+					return refusal(type, 'toIndex must be a whole number, 0 or more', { moved: false });
+				}
+				return outcome(
+					type,
+					await client.turns.queue.move(
+						sessionId(message),
+						str(message.itemId) ?? '',
+						toIndex,
+						str(message.tabId)
+					),
+					(value) => ({ moved: value.moved })
+				);
+			}
+			case 'send_queue_item_now':
+				return outcome(
+					'send_queue_item_now_result',
+					await client.turns.queue.sendNow(sessionId(message), str(message.itemId) ?? ''),
+					(value) => ({ sent: value.sent })
+				);
+			case 'merge_queue_item':
+				return outcome(
+					'merge_queue_item_result',
+					await client.turns.queue.merge(sessionId(message), str(message.itemId) ?? ''),
+					(value) => ({
+						merged: value.merged,
+						...(value.mergedIntoId ? { mergedIntoId: value.mergedIntoId } : {}),
+					})
+				);
 
 			// -- Auto Run ---------------------------------------------------
 			case 'configure_auto_run': {
@@ -918,16 +991,22 @@ export function createRequestHandler(
 			// -- consults ----------------------------------------------------
 			// Waits as long as the answer takes: the caller's own timeout bounds it, not a delivery receipt.
 			case 'cross_agent_ask': {
+				// An asker on another machine sends its own windowed context: the host holds no tab of it.
+				const transcript = parseWireTranscript(message.transcript);
+				const fromAgentName = parseWireAgentName(message.fromAgentName);
+				const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
 					question: typeof message.question === 'string' ? message.question : '',
 					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),
 					withContext: message.withContext === true,
+					...(transcript ? { transcript } : {}),
+					...(fromAgentName ? { fromAgentName } : {}),
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
-					...(typeof message.handoffAnswer === 'string'
-						? { handoffAnswer: message.handoffAnswer }
-						: {}),
+					...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
+					...(message.sideQuestion === true ? { sideQuestion: true } : {}),
+					...(str(message.targetTabId) ? { targetTabId: str(message.targetTabId) } : {}),
 				});
 				if (result.ok) {
 					return {

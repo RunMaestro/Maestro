@@ -19,9 +19,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAutoRunHandlers } from '../../../renderer/hooks';
 import type { Session, BatchRunConfig } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
+import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { usePathPickerStore } from '../../../renderer/services/pathPicker';
 
 // Mock gitService for worktree operations
 vi.mock('../../../renderer/services/git', () => ({
@@ -1612,6 +1618,146 @@ describe('useAutoRunHandlers', () => {
 			});
 
 			expect(mockDeps.setAutoRunSetupModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		// Parity: the first folder pick is the same step in every mode (the native dialog for a
+		// local agent, the remote folder picker for an SSH or hosted one), never the setup modal.
+		it.each(AGENT_MODES)(
+			'%s: with no folder yet, opens the folder picker and reads the pick where it lives',
+			async (mode) => {
+				vi.useRealTimers();
+				const mockSession = createMockSession({
+					...agentModeFields(mode),
+					autoRunFolderPath: undefined,
+					cwd: '/work/project',
+				});
+				const mockDeps = createMockDeps();
+				seedActiveSession(mockSession);
+				const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+				await browseAndPick(
+					mode,
+					() => void result.current.handleAutoRunOpenSetup(),
+					'/picked/autorun'
+				);
+
+				expect(mockDeps.setAutoRunSetupModalOpen).not.toHaveBeenCalledWith(true);
+				await waitFor(() =>
+					expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith(
+						'/picked/autorun',
+						mode === 'local' ? undefined : MODE_REMOTE_ID
+					)
+				);
+				resetPathPicker();
+			}
+		);
+
+		// The picker stays open while the user can switch agents. The pick belongs to the agent
+		// that opened it: saved on that agent, listed through that agent's transport.
+		it('applies the picked folder to the agent that opened the picker, not the active one', async () => {
+			vi.useRealTimers();
+			const opener = createMockSession({
+				...agentModeFields('ssh'),
+				id: 'opener',
+				autoRunFolderPath: undefined,
+			});
+			const other = createMockSession({ id: 'other', autoRunFolderPath: undefined });
+			const mockDeps = createMockDeps();
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+				files: [],
+				tree: [],
+			});
+			useSessionStore.setState({ sessions: [opener, other], activeSessionId: 'opener' } as any);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+			await act(async () => {
+				void result.current.handleAutoRunOpenSetup();
+			});
+			expect(usePathPickerStore.getState().request).toMatchObject({ sshRemoteId: MODE_REMOTE_ID });
+			// The user moves to another agent while the picker is open, then picks.
+			useSessionStore.setState({ activeSessionId: 'other' } as any);
+			await act(async () => {
+				usePathPickerStore.getState().settle('/picked/autorun');
+			});
+
+			await waitFor(() => expect(mockDeps.setSessions).toHaveBeenCalledTimes(1));
+			expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith(
+				'/picked/autorun',
+				MODE_REMOTE_ID
+			);
+			const updated = mockDeps.setSessions.mock.calls[0][0]([opener, other]);
+			expect(updated.find((s: Session) => s.id === 'opener').autoRunFolderPath).toBe(
+				'/picked/autorun'
+			);
+			expect(updated.find((s: Session) => s.id === 'other')).toBe(other);
+			// The lists and the Right Bar show the agent the user is on now. They stay as they are.
+			expect(mockDeps.setAutoRunDocumentList).not.toHaveBeenCalled();
+			expect(mockDeps.setAutoRunDocumentTree).not.toHaveBeenCalled();
+			expect(mockDeps.setActiveRightTab).not.toHaveBeenCalled();
+			expect(mockDeps.setActiveFocus).not.toHaveBeenCalled();
+		});
+
+		it('drops the picked folder when the agent that opened the picker is gone', async () => {
+			vi.useRealTimers();
+			const opener = createMockSession({
+				...agentModeFields('ssh'),
+				id: 'opener',
+				autoRunFolderPath: undefined,
+			});
+			const other = createMockSession({ id: 'other', autoRunFolderPath: undefined });
+			const mockDeps = createMockDeps();
+			useSessionStore.setState({ sessions: [opener, other], activeSessionId: 'opener' } as any);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+			await act(async () => {
+				void result.current.handleAutoRunOpenSetup();
+			});
+			useSessionStore.setState({ sessions: [other], activeSessionId: 'other' } as any);
+			await act(async () => {
+				usePathPickerStore.getState().settle('/picked/autorun');
+			});
+
+			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
+			expect(mockDeps.setSessions).not.toHaveBeenCalled();
+			expect(mockDeps.setAutoRunDocumentList).not.toHaveBeenCalled();
+		});
+
+		// The remote id alone does not decide where Browse looks: SSH has to be on.
+		it('a remote id left on an agent with SSH off opens the native dialog', async () => {
+			vi.useRealTimers();
+			const mockSession = createMockSession({
+				sessionSshRemoteConfig: { enabled: false, remoteId: MODE_REMOTE_ID },
+				autoRunFolderPath: undefined,
+			});
+			const mockDeps = createMockDeps();
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+			await browseAndPick('local', () => void result.current.handleAutoRunOpenSetup(), null);
+		});
+
+		it('an SSH agent with no remote resolved yet never opens the native dialog', async () => {
+			vi.useRealTimers();
+			const mockSession = createMockSession({
+				sessionSshRemoteConfig: { enabled: true, remoteId: null },
+				autoRunFolderPath: undefined,
+			});
+			const mockDeps = createMockDeps();
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+			vi.mocked(window.maestro.dialog.selectFolder).mockClear();
+
+			await act(async () => {
+				await result.current.handleAutoRunOpenSetup();
+			});
+
+			expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+			expect(usePathPickerStore.getState().request).toBeNull();
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Nothing to browse yet' })
+			);
+			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
 		});
 	});
 

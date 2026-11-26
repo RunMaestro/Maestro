@@ -16,11 +16,12 @@ import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { steerQueuedItem } from '../../services/chatSteering';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
-import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
+	editQueuedItem,
 	mergeQueuedItemIntoAbove,
-	resolveQueuedItemEdit,
+	removeQueuedItem,
+	reorderQueuedItems,
 	sendQueuedItemNow,
 	toggleQueuedItemPaused,
 } from '../../services/queuedPrompt';
@@ -71,16 +72,10 @@ export function useQueueHandlers({
 	// --- Store actions (stable via getState) ---
 	const { setSessions, setActiveSessionId } = useSessionStore.getState();
 
+	// Remove: the same service the inline card's Remove and `maestro-cli queue remove`
+	// reach, so a hosted item is taken out on its host instead of only here.
 	const handleRemoveQueueItem = useCallback((sessionId: string, itemId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== sessionId) return s;
-				return {
-					...s,
-					executionQueue: s.executionQueue.filter((item) => item.id !== itemId),
-				};
-			})
-		);
+		removeQueuedItem(sessionId, itemId);
 	}, []);
 
 	const handleSwitchQueueSession = useCallback((sessionId: string, tabId?: string) => {
@@ -97,26 +92,11 @@ export function useQueueHandlers({
 		}
 	}, []);
 
+	// Reorder: the same service the inline card's drag and `maestro-cli queue move`
+	// reach, so the rules (and a hosted item's route to its host) cannot differ.
 	const handleReorderQueueItems = useCallback(
 		(sessionId: string, fromIndex: number, toIndex: number) => {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					const len = s.executionQueue.length;
-					if (
-						fromIndex === toIndex ||
-						fromIndex < 0 ||
-						fromIndex >= len ||
-						toIndex < 0 ||
-						toIndex >= len
-					)
-						return s;
-					const queue = [...s.executionQueue];
-					const [removed] = queue.splice(fromIndex, 1);
-					queue.splice(toIndex, 0, removed);
-					return { ...s, executionQueue: queue };
-				})
-			);
+			reorderQueuedItems(sessionId, fromIndex, toIndex);
 		},
 		[]
 	);
@@ -125,27 +105,11 @@ export function useQueueHandlers({
 		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
+	// Edit: the same service the inline card's Edit and `maestro-cli queue edit`
+	// reach, so the rules (and a hosted item's route to its host) cannot differ.
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) => {
-			// The mention flags and the slash command are re-derived from the EDITED
-			// text (see resolveQueuedItemEdit): a stale flag consults the wrong agent,
-			// and `/commit` left as a message is sent to the provider as literal text.
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, itemId, patch);
-					return {
-						...s,
-						executionQueue: applyQueuedItemEdit(
-							s.executionQueue,
-							itemId,
-							patch,
-							crossAgent,
-							slashCommand
-						),
-					};
-				})
-			);
+			editQueuedItem(sessionId, itemId, patch);
 		},
 		[]
 	);

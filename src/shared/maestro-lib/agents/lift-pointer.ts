@@ -25,15 +25,16 @@ export interface LiftedToPointer {
 }
 
 /**
- * The setting that switches hosted agents off on this machine (on by default). Off, a lifted
- * record works as the SSH agent it was: its turns run over SSH from here, nothing is sent to its
- * host, and nothing on the host or in the record changes, so switching it back on restores hosting.
+ * The setting that turns hosted agents on for this machine. Off by default: only an explicit `true`
+ * opts in. Off, a lifted record works as the SSH agent it was: its turns run over SSH from here,
+ * nothing is sent to its host, and nothing on the host or in the record changes, so switching it
+ * on again restores hosting.
  */
 export const HOSTED_AGENTS_SETTING = 'federationHostedAgents';
 
-/** Whether hosted agents are on, from the stored settings (absent means on). */
+/** Whether hosted agents are on, from the stored settings (absent means off: only `true` opts in). */
 export function hostedAgentsEnabled(settings: Record<string, unknown> | undefined | null): boolean {
-	return settings?.[HOSTED_AGENTS_SETTING] !== false;
+	return settings?.[HOSTED_AGENTS_SETTING] === true;
 }
 
 /** The error code a refused send reports (`--json` output and bridge replies). */
@@ -61,8 +62,25 @@ export function liftedAgentRef(agent: { liftedTo?: unknown }): string | undefine
 }
 
 /**
+ * Where a hosted agent's turns run: its pointer while hosted agents are on, undefined for an
+ * agent that is not lifted or while they are off (it then works as its SSH agent, from here).
+ * The CLI sends to this peer agent what a local id names (`liftedPeerTarget()`).
+ */
+export function hostedPointer(
+	agent: { liftedTo?: unknown },
+	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
+	hostedEnabled: boolean | (() => boolean) = true
+): LiftedToPointer | undefined {
+	const pointer = readLiftedTo(agent.liftedTo);
+	if (!pointer) return undefined;
+	if (!(typeof hostedEnabled === 'function' ? hostedEnabled() : hostedEnabled)) return undefined;
+	return pointer;
+}
+
+/**
  * The message a send to a lifted agent is refused with, or undefined when the agent was not
- * lifted and the send may go ahead.
+ * lifted and the send may go ahead. For a place that cannot reach the host (a host's own
+ * runtime holding a stale pointer); the CLI routes such a send to the host instead.
  */
 export function liftedSendRefusal(
 	agent: {
@@ -72,9 +90,8 @@ export function liftedSendRefusal(
 	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
 	hostedEnabled: boolean | (() => boolean) = true
 ): string | undefined {
-	const pointer = readLiftedTo(agent.liftedTo);
+	const pointer = hostedPointer(agent, hostedEnabled);
 	if (!pointer) return undefined;
-	if (!(typeof hostedEnabled === 'function' ? hostedEnabled() : hostedEnabled)) return undefined;
 	const ref = peerAgentRef(pointer.peer, pointer.agentId);
 	const who = agent.name ? `"${agent.name}"` : 'This agent';
 	return `${who} was moved to peer "${pointer.peer}" and runs there now. Send to ${ref} instead.`;

@@ -31,14 +31,20 @@ vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
 });
 
 import {
+	queueEdit,
 	queueHold,
 	queueList,
 	queueMerge,
+	queueMove,
+	queueSendNow,
 	queueRemove,
 	queueResume,
 	queueSteer,
 } from '../../../cli/commands/queue';
-import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../../shared/chatSteering';
+import {
+	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
+	type QueueSteerResult,
+} from '../../../shared/chatSteering';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
 import {
@@ -224,6 +230,181 @@ describe('queue command', () => {
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('ITEM_NOT_FOUND');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('queue edit', () => {
+		it('sends edit_queue_item with the text, and the settings only when a flag names them', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			const mockSendCommand = vi
+				.fn()
+				.mockResolvedValue({ type: 'edit_queue_item_result', success: true, found: true });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await queueEdit('item-9', { agent: 'ag', text: 'new text' });
+			await queueEdit('item-9', { agent: 'ag', text: 'new text', model: 'm' });
+
+			expect(mockSendCommand).toHaveBeenNthCalledWith(
+				1,
+				{ type: 'edit_queue_item', sessionId: 'agent-1', itemId: 'item-9', text: 'new text' },
+				'edit_queue_item_result'
+			);
+			expect(mockSendCommand).toHaveBeenNthCalledWith(
+				2,
+				{
+					type: 'edit_queue_item',
+					sessionId: 'agent-1',
+					itemId: 'item-9',
+					text: 'new text',
+					turnSettings: { model: 'm' },
+				},
+				'edit_queue_item_result'
+			);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				itemId: 'item-9',
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with INVALID_OPTIONS without --agent or --text', async () => {
+			await queueEdit('item-9', { text: 'x' });
+			await queueEdit('item-9', { agent: 'ag', text: '  ' });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).code).toBe('INVALID_OPTIONS');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with ITEM_NOT_FOUND when the item no longer waits', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi.fn().mockResolvedValue({ success: true, found: false }),
+				} as never)
+			);
+
+			await queueEdit('ghost', { agent: 'ag', text: 'x' });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				code: 'ITEM_NOT_FOUND',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('queue move', () => {
+		it('sends move_queue_item with the place, and the tab only when one is named', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			const mockSendCommand = vi
+				.fn()
+				.mockResolvedValue({ type: 'move_queue_item_result', success: true, moved: true });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await queueMove('item-9', { agent: 'ag', to: '0' });
+			await queueMove('item-9', { agent: 'ag', to: '2', tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenNthCalledWith(
+				1,
+				{ type: 'move_queue_item', sessionId: 'agent-1', itemId: 'item-9', toIndex: 0 },
+				'move_queue_item_result'
+			);
+			expect(mockSendCommand).toHaveBeenNthCalledWith(
+				2,
+				{
+					type: 'move_queue_item',
+					sessionId: 'agent-1',
+					itemId: 'item-9',
+					toIndex: 2,
+					tabId: 'tab-1',
+				},
+				'move_queue_item_result'
+			);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				itemId: 'item-9',
+				toIndex: 0,
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with INVALID_OPTIONS without --agent or a whole --to', async () => {
+			await queueMove('item-9', { to: '0' });
+			await queueMove('item-9', { agent: 'ag' });
+			await queueMove('item-9', { agent: 'ag', to: '-1' });
+			await queueMove('item-9', { agent: 'ag', to: '1.5' });
+
+			for (let i = 0; i < 4; i++) {
+				expect(JSON.parse(consoleSpy.mock.calls[i][0]).code).toBe('INVALID_OPTIONS');
+			}
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with ITEM_NOT_FOUND when the move did not take', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi.fn().mockResolvedValue({ success: true, moved: false }),
+				} as never)
+			);
+
+			await queueMove('ghost', { agent: 'ag', to: '0' });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				code: 'ITEM_NOT_FOUND',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('queue send-now', () => {
+		it('sends send_queue_item_now and reports the item', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			const mockSendCommand = vi
+				.fn()
+				.mockResolvedValue({ type: 'send_queue_item_now_result', success: true, sent: true });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await queueSendNow('item-9', { agent: 'ag' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{ type: 'send_queue_item_now', sessionId: 'agent-1', itemId: 'item-9' },
+				'send_queue_item_now_result'
+			);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				itemId: 'item-9',
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with INVALID_OPTIONS without --agent, and NOT_SENT when it did not start', async () => {
+			await queueSendNow('item-9', {});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
+
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi.fn().mockResolvedValue({ success: true, sent: false }),
+				} as never)
+			);
+			await queueSendNow('item-9', { agent: 'ag' });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toMatchObject({
+				success: false,
+				code: 'NOT_SENT',
+			});
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
@@ -448,6 +629,18 @@ describe('queue command', () => {
 						setPaused: vi.fn(async (_a: string, _i: string, paused: boolean) =>
 							ok({ found: true, paused })
 						),
+						merge: vi.fn(async () =>
+							ok<{ merged: boolean; mergedIntoId?: string }>({
+								merged: true,
+								mergedIntoId: 'q0',
+							})
+						),
+						steer: vi.fn(async () =>
+							ok<QueueSteerResult>({ outcome: 'delivered', verdict: 'delivered' })
+						),
+						edit: vi.fn(async () => ok({ found: true })),
+						move: vi.fn(async () => ok({ moved: true })),
+						sendNow: vi.fn(async () => ok({ sent: true })),
 					},
 				},
 			};
@@ -475,6 +668,8 @@ describe('queue command', () => {
 						kind: 'message',
 						text: 'next',
 						paused: true,
+						// The local verb lists no images; the peer one leaves them out the same way.
+						images: ['data:image/png;base64,AAAA'],
 					},
 				])
 			);
@@ -593,21 +788,123 @@ describe('queue command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('refuses queue merge and steer before anything reaches the peer', async () => {
-			fakePeer();
+		it('queue merge folds the item into the one above it on the host', async () => {
+			const { client } = fakePeer();
 
 			await queueMerge('q1', { agent: `${PEER}:docs` });
+
+			expect(client.turns.queue.merge).toHaveBeenCalledWith(AGENT_ID, 'q1');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				mergedIntoId: 'q0',
+				peer: PEER,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('queue merge fails with NOT_MERGEABLE when the host merged nothing', async () => {
+			const { client } = fakePeer();
+			client.turns.queue.merge.mockResolvedValue(ok({ merged: false }));
+
+			await queueMerge('q1', { agent: `${PEER}:docs` });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'NOT_MERGEABLE' });
+			expect(output.error).toContain(`${PEER}:${AGENT_ID}`);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('queue move and send-now act on the host, in the local shape', async () => {
+			const { client } = fakePeer();
+
+			await queueMove('q1', { agent: `${PEER}:docs`, to: '1', tab: 't1' });
+			expect(client.turns.queue.move).toHaveBeenCalledWith(AGENT_ID, 'q1', 1, 't1');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				toIndex: 1,
+				peer: PEER,
+			});
+
+			await queueSendNow('q1', { agent: `${PEER}:docs` });
+			expect(client.turns.queue.sendNow).toHaveBeenCalledWith(AGENT_ID, 'q1');
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				peer: PEER,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+
+			client.turns.queue.sendNow.mockResolvedValue(ok({ sent: false }));
+			await queueSendNow('q1', { agent: `${PEER}:docs` });
+			expect(JSON.parse(consoleSpy.mock.calls[2][0])).toMatchObject({
+				success: false,
+				code: 'NOT_SENT',
+			});
+		});
+
+		it('queue edit rewrites the item on the host, in the local shape', async () => {
+			const { client } = fakePeer();
+
+			await queueEdit('q1', { agent: `${PEER}:docs`, text: 'new', effort: 'high' });
+
+			expect(client.turns.queue.edit).toHaveBeenCalledWith(AGENT_ID, 'q1', {
+				text: 'new',
+				turnSettings: { effort: 'high' },
+			});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				peer: PEER,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+
+			client.turns.queue.edit.mockResolvedValue(ok({ found: false }));
+			await queueEdit('q1', { agent: `${PEER}:docs`, text: 'new' });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toMatchObject({
+				success: false,
+				code: 'ITEM_NOT_FOUND',
+			});
+		});
+
+		it('queue steer hands the item to the running turn on the host, in the local shape', async () => {
+			const { client } = fakePeer();
+
 			await queueSteer('q1', { agent: `${PEER}:docs` });
 
-			for (const call of consoleSpy.mock.calls) {
-				expect(JSON.parse(call[0])).toMatchObject({
-					success: false,
-					code: 'PEER_UNSUPPORTED_VERB',
-				});
-			}
-			expect(consoleSpy).toHaveBeenCalledTimes(2);
-			expect(withPeerAgent).not.toHaveBeenCalled();
+			expect(client.turns.queue.steer).toHaveBeenCalledWith(AGENT_ID, 'q1');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				outcome: 'delivered',
+				verdict: 'delivered',
+				peer: PEER,
+			});
 			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it("queue steer exits with the local code for the host's refusal", async () => {
+			const { client } = fakePeer();
+			client.turns.queue.steer.mockResolvedValue(
+				ok<QueueSteerResult>({ outcome: 'not-steerable', blockedReason: 'paused' })
+			);
+
+			await queueSteer('q1', { agent: `${PEER}:docs` });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				outcome: 'not-steerable',
+				code: 'NOT_STEERABLE',
+				peer: PEER,
+			});
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});

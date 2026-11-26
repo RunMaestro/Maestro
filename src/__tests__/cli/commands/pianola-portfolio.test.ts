@@ -76,6 +76,7 @@ import {
 	pianolaNeedsMe,
 	pianolaBrief,
 } from '../../../cli/commands/pianola-portfolio';
+import { readSshRemotes } from '../../../cli/services/storage';
 
 beforeEach(() => {
 	state.programs = [];
@@ -84,6 +85,7 @@ beforeEach(() => {
 	state.targets = [];
 	state.sessions = null;
 	vi.clearAllMocks();
+	vi.mocked(readSshRemotes).mockReturnValue([{ id: 'wsl-dev', name: 'Dev Box' }] as never);
 	vi.spyOn(console, 'log').mockImplementation(() => {});
 	connect.mockResolvedValue(undefined);
 	sendCommand.mockImplementation(async (command) => {
@@ -319,51 +321,123 @@ describe('portfolio CLI commands', () => {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
-	it('migrates an existing role to the manifest remote without creating or deleting an agent', async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-ssh-'));
-		const file = path.join(dir, 'manifest.json');
-		const original: PianolaProgram = {
+	describe('never moves an existing agent to another SSH remote', () => {
+		const lead = (remoteId: string) => ({
+			id: 'lead',
+			name: 'Lead',
+			cwd: '/remote',
+			toolType: 'omp',
+			sessionSshRemoteConfig: { enabled: true, remoteId },
+		});
+		const program = (remoteId: string): PianolaProgram => ({
 			id: 'product',
 			title: 'Product',
 			root: '/remote',
-			remoteId: 'wsl-dev',
+			remoteId,
 			leadAgentId: 'lead',
 			roles: { lead: { name: 'Lead', agentId: 'lead' } },
 			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
 			status: 'active',
 			createdAt: 1,
 			updatedAt: 1,
-		};
-		state.programs = [original];
-		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, remoteId: 'new-remote' }] }));
-		state.sessions = [
-			{
-				id: 'lead',
-				name: 'Lead',
-				cwd: '/remote',
-				toolType: 'omp',
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
-			},
-		];
-		sendCommand.mockImplementation(async () => ({ success: true }));
-		try {
-			await pianolaProgramApply({ file, json: true });
-			expect(sendCommand).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'update_session_ssh',
-					sessionId: 'lead',
-					sshPatch: { enabled: true, remoteId: 'new-remote', workingDirOverride: '/remote' },
-				}),
-				'update_session_ssh_result'
-			);
-			expect(
-				sendCommand.mock.calls.some(
-					([command]) => command.type === 'create_session' || command.type === 'delete_session'
-				)
-			).toBe(false);
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
+		});
+		async function applyRefused(manifest: unknown): Promise<string> {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-ssh-'));
+			const file = path.join(dir, 'manifest.json');
+			fs.writeFileSync(file, JSON.stringify(manifest));
+			const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+				throw new Error('exit');
+			});
+			try {
+				await expect(pianolaProgramApply({ file, json: true })).rejects.toThrow('exit');
+				const out = vi.mocked(console.log).mock.calls.at(-1)?.[0] as string;
+				return (JSON.parse(out) as { error: string }).error;
+			} finally {
+				exit.mockRestore();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
 		}
+
+		it('refuses a manifest remote that differs from a role agent, and changes nothing', async () => {
+			const original = program('wsl-dev');
+			state.programs = [original];
+			state.sessions = [lead('wsl-dev')];
+			vi.mocked(readSshRemotes).mockReturnValue([
+				{ id: 'wsl-dev', name: 'Dev Box' },
+				{ id: 'new-remote', name: 'New Box' },
+			] as never);
+			const error = await applyRefused({ programs: [{ ...original, remoteId: 'new-remote' }] });
+			expect(error).toContain('Apply never moves an agent to another remote');
+			expect(error).toContain('maestro-cli update-agent lead --ssh-remote new-remote');
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(state.programs).toEqual([original]);
+		});
+
+		it('refuses a manifest that drops the remote instead of moving its agents to this machine', async () => {
+			const original = program('wsl-dev');
+			state.programs = [original];
+			state.sessions = [lead('wsl-dev')];
+			const { remoteId: _dropped, ...local } = original;
+			const error = await applyRefused({ programs: [local] });
+			expect(error).toContain('--ssh-remote none');
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(state.programs).toEqual([original]);
+		});
+
+		it('refuses a remote name two remotes share instead of picking the stale first one', async () => {
+			// An old VPN entry kept beside its Tailscale copy, both named "Dev Box". The stale one
+			// is stored first; resolving the name to it used to move every role agent onto it.
+			const original = program('tailscale');
+			state.programs = [original];
+			state.sessions = [lead('tailscale')];
+			vi.mocked(readSshRemotes).mockReturnValue([
+				{ id: 'vpn-old', name: 'Dev Box' },
+				{ id: 'tailscale', name: 'Dev Box' },
+			] as never);
+			const error = await applyRefused({ programs: [{ ...original, remoteId: 'Dev Box' }] });
+			expect(error).toContain('SSH remote name "Dev Box" matches 2 remotes (vpn-old, tailscale)');
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(state.programs).toEqual([original]);
+		});
+
+		it('refuses a remote that is not configured instead of writing it raw', async () => {
+			const original = program('wsl-dev');
+			state.programs = [original];
+			state.sessions = [lead('wsl-dev')];
+			const error = await applyRefused({ programs: [{ ...original, remoteId: 'gone' }] });
+			expect(error).toBe(
+				'No SSH remote "gone" is configured. Check them with: maestro-cli list ssh-remotes'
+			);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('leaves an agent a person moved by hand where it is when the program remote is unchanged', async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-ssh-'));
+			const file = path.join(dir, 'manifest.json');
+			const original = { ...program('wsl-dev'), root: dir };
+			state.programs = [original];
+			state.sessions = [{ ...lead('tailscale'), cwd: dir }];
+			vi.mocked(readSshRemotes).mockReturnValue([
+				{ id: 'wsl-dev', name: 'Dev Box' },
+				{ id: 'tailscale', name: 'Tailscale Box' },
+			] as never);
+			fs.writeFileSync(
+				file,
+				JSON.stringify({
+					programs: [
+						{ ...original, roles: { lead: { name: 'Lead', agentId: 'lead', model: 'm2' } } },
+					],
+				})
+			);
+			try {
+				await pianolaProgramApply({ file, json: true });
+				expect(sendCommand.mock.calls.map(([command]) => command.type)).toEqual([
+					'update_session_config',
+				]);
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
 	});
 	it.each([
 		'templates: {base: &base {name: manual, event: time.heartbeat}}\nsubscriptions: [*base]\n',

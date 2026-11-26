@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ProcessDetailView } from '../../../../renderer/components/ProcessMonitor/ProcessDetailView';
 import type { ProcessDetailData } from '../../../../renderer/components/ProcessMonitor/types';
 import type { Theme } from '../../../../renderer/types';
+import { AGENT_MODES } from '../../../helpers';
 
 const theme: Theme = {
 	id: 'test',
@@ -80,9 +81,23 @@ describe('ProcessDetailView', () => {
 		expect(
 			screen.getByText("claude '--print' '--output-format' 'stream-json'")
 		).toBeInTheDocument();
-		// ...and the local SSH wrapper tile is relabeled "SSH Command".
-		expect(screen.getByText('SSH Command')).toBeInTheDocument();
-		expect(screen.queryByText('Command Line')).not.toBeInTheDocument();
+		// ...and the local SSH wrapper tile keeps the one "Command Line" heading.
+		expect(screen.getByText('Command Line')).toBeInTheDocument();
+		expect(screen.queryByText('SSH Command')).not.toBeInTheDocument();
+	});
+
+	it.each(AGENT_MODES)('heads the command tile "Command Line" for a %s process', (mode) => {
+		// A local process runs its command directly; an SSH or hosted record's local process is
+		// the `ssh` wrapper with the agent's remote invocation beside it. The heading is the same.
+		const detail: ProcessDetailData =
+			mode === 'local'
+				? baseDetail
+				: { ...baseDetail, command: '/usr/bin/ssh', sshRemoteCommand: "claude '--print'" };
+		render(
+			<ProcessDetailView theme={theme} detail={detail} onBack={() => {}} onClose={() => {}} />
+		);
+		expect(screen.getByText('Command Line')).toBeInTheDocument();
+		expect(screen.queryByText('SSH Command')).not.toBeInTheDocument();
 	});
 
 	it('renders Cue-specific fields when present', () => {

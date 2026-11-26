@@ -17,6 +17,12 @@ import { AutoRunSetupModal } from '../../../renderer/components/AutoRun/AutoRunS
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import {
+	pathPickerRemoteId,
+	UNRESOLVED_REMOTE_MESSAGE,
+} from '../../../renderer/services/pathPicker';
+import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers';
+import { browseAndPick, resetPathPicker } from '../../helpers/pathPicker';
 
 // Mock lucide-react
 vi.mock('lucide-react', async (importOriginal) => ({
@@ -71,6 +77,7 @@ describe('AutoRunSetupModal', () => {
 	});
 
 	afterEach(() => {
+		resetPathPicker();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
@@ -1538,6 +1545,155 @@ describe('AutoRunSetupModal', () => {
 				'title',
 				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 			);
+		});
+	});
+
+	describe('Mode parity (local, SSH, hosted)', () => {
+		// The caller hands the modal pathPickerRemoteId(activeSession), so an SSH and a
+		// hosted agent (which keeps its SSH remote for the files) get the same remote id.
+		const renderMode = async (mode: AgentMode) => {
+			const sshRemoteId = pathPickerRemoteId(createModeSession(mode));
+			const view = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sessionName="Agent"
+					sshRemoteId={sshRemoteId}
+				/>
+			);
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			const input = screen.getByRole('textbox') as HTMLInputElement;
+			const picker = screen.getByTestId('folder-icon').closest('button') as HTMLButtonElement;
+			const drawn = {
+				placeholder: input.placeholder,
+				pickerTitle: picker.title,
+				pickerDisabled: picker.disabled,
+				text: view.container.ownerDocument.body.textContent,
+			};
+			fireEvent.change(input, { target: { value: '/home/user/docs' } });
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			const listDocsRemote = vi.mocked(window.maestro.autorun.listDocs).mock.calls.at(-1)?.[1];
+			view.unmount();
+			vi.mocked(window.maestro.autorun.listDocs).mockClear();
+			return { drawn, listDocsRemote };
+		};
+
+		it('draws the same modal in every mode and checks the folder where it lives', async () => {
+			const results = Object.fromEntries(
+				await AGENT_MODES.reduce<Promise<[AgentMode, Awaited<ReturnType<typeof renderMode>>][]>>(
+					async (acc, mode) => [...(await acc), [mode, await renderMode(mode)]],
+					Promise.resolve([])
+				)
+			) as Record<AgentMode, Awaited<ReturnType<typeof renderMode>>>;
+
+			expect(results.ssh.drawn).toEqual(results.local.drawn);
+			expect(results.hosted.drawn).toEqual(results.local.drawn);
+			expect(results.local.drawn.placeholder).toBe('Select Auto Run folder for Agent');
+			expect(results.local.drawn.pickerTitle).toBe(
+				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+			);
+			expect(results.local.drawn.pickerDisabled).toBe(false);
+			// Only the transport differs: the folder is read where it lives.
+			expect(results.local.listDocsRemote).toBeUndefined();
+			expect(results.ssh.listDocsRemote).toBe('r1');
+			expect(results.hosted.listDocsRemote).toBe('r1');
+			// No host name in the copy: the mode pill is the only mark that names the mode.
+			expect(results.ssh.drawn.text).not.toMatch(/SSH|remote/i);
+		});
+
+		it.each(AGENT_MODES)('%s: Browse and Cmd+O both pick the folder', async (mode) => {
+			const sshRemoteId = pathPickerRemoteId(createModeSession(mode));
+			const { container } = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sessionName="Agent"
+					sshRemoteId={sshRemoteId}
+				/>
+			);
+			const input = screen.getByRole('textbox') as HTMLInputElement;
+			const picker = screen.getByTestId('folder-icon').closest('button') as HTMLButtonElement;
+			await browseAndPick(mode, () => fireEvent.click(picker), '/picked/docs');
+			expect(input.value).toBe('/picked/docs');
+			await browseAndPick(
+				mode,
+				// Keyboard events are handled by the wrapper div around Modal
+				() => fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'o', metaKey: true }),
+				'/picked/again'
+			);
+			expect(input.value).toBe('/picked/again');
+		});
+
+		it('a remote id left on an agent with SSH off reads this machine, like a local agent', async () => {
+			const stale = pathPickerRemoteId(
+				createModeSession('local', {
+					sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' },
+				})
+			);
+			expect(stale).toBeUndefined();
+			renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sshRemoteId={stale}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/home/user/docs' } });
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith('/home/user/docs', undefined);
+		});
+
+		it('an SSH agent with no remote resolved yet never reads this machine and says why', async () => {
+			const unresolved = pathPickerRemoteId(
+				createModeSession('ssh', {
+					sshRemoteId: undefined,
+					sessionSshRemoteConfig: { enabled: true, remoteId: null },
+				})
+			);
+			expect(unresolved).toBeNull();
+			renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sshRemoteId={unresolved}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '~/docs' } });
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			// This machine's home is the wrong one for a remote path, and its disk is never read.
+			expect(window.maestro.fs.homeDir).not.toHaveBeenCalled();
+			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
+			expect(screen.getByText(UNRESOLVED_REMOTE_MESSAGE)).toBeInTheDocument();
+		});
+
+		it('an SSH agent with no remote resolved yet cannot commit a typed folder by Continue or Enter', async () => {
+			const onFolderSelected = vi.fn();
+			const { container } = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={onFolderSelected}
+					sshRemoteId={null}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/srv/docs' } });
+			const continueButton = screen.getByRole('button', { name: 'Continue' });
+			expect(continueButton).toBeDisabled();
+			fireEvent.click(continueButton);
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'Enter' });
+			expect(onFolderSelected).not.toHaveBeenCalled();
 		});
 	});
 });

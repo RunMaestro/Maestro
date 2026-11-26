@@ -27,7 +27,11 @@ import type {
 	HistorySourceListener,
 } from '../../../renderer/components/History/historySource';
 import type { Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -78,6 +82,15 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 					Update
 				</button>
 			)}
+			{onUpdate && (
+				<button
+					onClick={() => onUpdate(entry.id, { validated: true })}
+					data-testid="modal-validate"
+				>
+					Validate
+				</button>
+			)}
+			<span data-testid="modal-entry-validated">{String(entry.validated === true)}</span>
 			{onNavigate && filteredEntries && filteredEntries.length > 1 && (
 				<>
 					<button
@@ -2758,6 +2771,117 @@ describe('HistoryPanel', () => {
 				expect(remove).toHaveBeenCalledWith('gone');
 			});
 			expect(mockHistoryDelete).not.toHaveBeenCalled();
+		});
+	});
+
+	// ===== MODE PARITY: a local, an SSH, and a hosted agent draw the same History panel =====
+	// docs/parity/agent-ux-parity.md, "History panel": the same entries and the same Delete and
+	// Validate controls in every mode. Only where the edit is made differs: the desktop's History
+	// for a local or SSH agent, the host's for a hosted one (`mirrorHistorySource()`).
+	describe('mode parity', () => {
+		let federation: Record<string, ReturnType<typeof vi.fn>>;
+		const parityEntries = () => [createMockEntry({ id: 'e1', summary: 'Parity entry' })];
+
+		beforeEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			mockHistoryGetAll.mockResolvedValue(parityEntries());
+			federation = {
+				historyPage: vi.fn(async () => ({
+					entries: parityEntries(),
+					hasMore: false,
+					total: 1,
+					limit: 100,
+					offset: 0,
+				})),
+				historyGraph: vi.fn(async () => ({
+					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+					earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+					latestTimestamp: Date.now(),
+					hostCounts: {},
+				})),
+				historyOffset: vi.fn(async () => 0),
+				historyDelete: vi.fn(async () => true),
+				historyUpdate: vi.fn(async () => true),
+			};
+			(window as unknown as { maestro: Record<string, unknown> }).maestro.federation = federation;
+		});
+
+		afterEach(() => {
+			delete (window as unknown as { maestro: Record<string, unknown> }).maestro.federation;
+		});
+
+		async function openDetail(mode: (typeof AGENT_MODES)[number]) {
+			const view = render(
+				<HistoryPanel
+					session={createMockSession({ id: `agent-${mode}`, ...agentModeFields(mode) })}
+					theme={mockTheme}
+				/>
+			);
+			await waitFor(() => {
+				expect(screen.getByText('Parity entry')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Parity entry'));
+			await waitFor(() => {
+				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+			});
+			return view;
+		}
+
+		it('draws the same entry with Delete and Validate in every mode', async () => {
+			const drawn: Array<{ summary: string | null; remove: boolean; validate: boolean }> = [];
+			for (const mode of AGENT_MODES) {
+				const { unmount } = await openDetail(mode);
+				drawn.push({
+					summary: screen.getByTestId('modal-entry-summary').textContent,
+					remove: screen.queryByTestId('modal-delete') !== null,
+					validate: screen.queryByTestId('modal-validate') !== null,
+				});
+				unmount();
+			}
+			expect(drawn).toEqual(
+				AGENT_MODES.map(() => ({ summary: 'Parity entry', remove: true, validate: true }))
+			);
+		});
+
+		it('deletes the entry from the list in every mode, a hosted one on its host', async () => {
+			const remaining: number[] = [];
+			for (const mode of AGENT_MODES) {
+				const { unmount } = await openDetail(mode);
+				fireEvent.click(screen.getByTestId('modal-delete'));
+				fireEvent.click(screen.getByTestId('modal-close'));
+				await waitFor(() => {
+					expect(screen.queryByText('Parity entry')).not.toBeInTheDocument();
+				});
+				remaining.push(screen.queryAllByText('Parity entry').length);
+				unmount();
+			}
+			expect(remaining).toEqual([0, 0, 0]);
+			expect(mockHistoryDelete.mock.calls).toEqual([
+				['e1', 'agent-local'],
+				['e1', 'agent-ssh'],
+			]);
+			expect(federation.historyDelete.mock.calls).toEqual([['box', 'h1', 'e1']]);
+		});
+
+		it('marks the entry validated in every mode, a hosted one on its host', async () => {
+			const validated: string[] = [];
+			for (const mode of AGENT_MODES) {
+				const { unmount } = await openDetail(mode);
+				fireEvent.click(screen.getByTestId('modal-validate'));
+				await waitFor(() => {
+					expect(screen.getByTestId('modal-entry-validated')).toHaveTextContent('true');
+				});
+				validated.push(screen.getByTestId('modal-entry-validated').textContent ?? '');
+				unmount();
+			}
+			expect(validated).toEqual(['true', 'true', 'true']);
+			expect(mockHistoryUpdate.mock.calls).toEqual([
+				['e1', { validated: true }, 'agent-local'],
+				['e1', { validated: true }, 'agent-ssh'],
+			]);
+			expect(federation.historyUpdate.mock.calls).toEqual([
+				['box', 'h1', 'e1', { validated: true }],
+			]);
 		});
 	});
 });

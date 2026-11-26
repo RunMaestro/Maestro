@@ -14,8 +14,9 @@
  * - **Cost evidence.** Reported amounts, partial ledgers and unavailable costs
  *   remain distinct; a compatibility zero never overrides canonical
  *   missing-cost evidence.
- * - **Coverage.** The totals read local transcripts only: agents over SSH and
- *   providers with no transcript storage are not counted, and some providers
+ * - **Coverage.** The totals read local transcripts only: agents whose
+ *   conversations are stored on another computer (an SSH remote or a
+ *   Federation host) and providers with no transcript storage are not counted, and some providers
  *   report partial token data. The footer says which, from the aggregate's
  *   `excluded` and `coverageByAgent`.
  * - **Attribution.** A conversation's tokens land on the slice of its LAST
@@ -447,7 +448,9 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 /**
  * The footer's coverage sentences: what the totals leave out and where the
  * data is partial, read from the aggregate rather than hard-coded so a new
- * provider (or a user with no SSH agents) gets an accurate line.
+ * provider (or a user whose agents all run here) gets an accurate line. The
+ * line names where the transcripts are, never the agent's mode: a remote and a
+ * hosted agent read the same.
  */
 export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 	const notes: string[] = [];
@@ -460,7 +463,8 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 		);
 	}
 	const skipped: string[] = [];
-	if (data.excluded.remoteProjects > 0) skipped.push('agents running over SSH');
+	if (data.excluded.remoteProjects > 0)
+		skipped.push('agents whose conversations are stored on another computer');
 	if (data.excluded.unsupportedAgents.length > 0) {
 		skipped.push(data.excluded.unsupportedAgents.map(getAgentDisplayName).join(', '));
 	}

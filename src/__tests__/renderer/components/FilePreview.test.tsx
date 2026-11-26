@@ -16,6 +16,7 @@ import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
+import { AGENT_MODES } from '../../helpers';
 import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -424,7 +425,7 @@ describe('FilePreview', () => {
 			expect(icon.closest('button')).toBeInTheDocument();
 		});
 
-		it('calls shell.openPath with file path when clicked', () => {
+		it('calls shell.openPath with file path when clicked', async () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -435,13 +436,9 @@ describe('FilePreview', () => {
 			const button = screen.getByTestId('external-link-icon').closest('button')!;
 			fireEvent.click(button);
 
-			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/readme.md');
-		});
-
-		it('hides Open in Default App button for SSH remote sessions', () => {
-			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
-
-			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+			await waitFor(() =>
+				expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/readme.md')
+			);
 		});
 
 		it('hides the header Open in Default App button in the web-desktop build', () => {
@@ -469,7 +466,7 @@ describe('FilePreview', () => {
 			expect(window.maestro?.shell?.openPath).not.toHaveBeenCalled();
 		});
 
-		it('keeps the binary-file Open in Default App button active on the desktop', () => {
+		it('keeps the binary-file Open in Default App button active on the desktop', async () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -480,7 +477,9 @@ describe('FilePreview', () => {
 			const button = screen.getByRole('button', { name: 'Open in Default App' });
 			expect(button).toBeEnabled();
 			fireEvent.click(button);
-			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll');
+			await waitFor(() =>
+				expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll')
+			);
 		});
 	});
 
@@ -496,7 +495,7 @@ describe('FilePreview', () => {
 			);
 		});
 
-		it('calls shell.showItemInFolder with the file path when clicked', () => {
+		it('calls shell.showItemInFolder with the file path when clicked', async () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -507,14 +506,99 @@ describe('FilePreview', () => {
 			const button = screen.getByTestId('folder-open-icon').closest('button')!;
 			fireEvent.click(button);
 
-			expect(window.maestro?.shell?.showItemInFolder).toHaveBeenCalledWith('/test/readme.md');
+			await waitFor(() =>
+				expect(window.maestro?.shell?.showItemInFolder).toHaveBeenCalledWith('/test/readme.md')
+			);
+		});
+	});
+
+	describe('file actions in every agent mode', () => {
+		// The agent's files are on this disk (local) or on its SSH remote (SSH and
+		// hosted, which keeps its SSH fields). Only the transport differs: a remote
+		// file is fetched to this machine first, then gets the same OS action.
+		const remoteIdFor = (mode: (typeof AGENT_MODES)[number]) =>
+			mode === 'local' ? undefined : 'r1';
+		const localCopy = '/tmp/maestro-remote-downloads/k/readme.md';
+
+		beforeEach(() => {
+			(window.maestro.fs as any).downloadRemoteFile = vi
+				.fn()
+				.mockResolvedValue({ success: true, path: localCopy });
 		});
 
-		it('hides the reveal button for SSH remote sessions', () => {
-			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
-
-			expect(screen.queryByTestId('folder-open-icon')).not.toBeInTheDocument();
+		it('draws the same toolbar file actions in every mode', () => {
+			const toolbars = AGENT_MODES.map((mode) => {
+				const { container, unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'page.html', content: '<p>x</p>', path: '/test/page.html' }}
+						onOpenInBrowser={vi.fn()}
+						sshRemoteId={remoteIdFor(mode)}
+					/>
+				);
+				const labels = Array.from(container.querySelectorAll('button'))
+					.map((b) => b.getAttribute('title') ?? b.textContent ?? '')
+					.filter(Boolean);
+				unmount();
+				return labels;
+			});
+			expect(toolbars[1]).toEqual(toolbars[0]);
+			expect(toolbars[2]).toEqual(toolbars[0]);
+			// The icon mocks render their names: Open in Maestro Browser, Open in
+			// Default App, and Reveal are all there in every mode.
+			expect(toolbars[0]).toEqual(
+				expect.arrayContaining(['AppWindow', 'ExternalLink', 'FolderOpen'])
+			);
+			expect(screen.queryByText('Download & Open')).not.toBeInTheDocument();
 		});
+
+		it.each(AGENT_MODES)(
+			'%s: Open in Default App and Reveal act on a copy on this machine',
+			async (mode) => {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+						sshRemoteId={remoteIdFor(mode)}
+					/>
+				);
+				const expected = mode === 'local' ? '/test/readme.md' : localCopy;
+
+				fireEvent.click(screen.getByTestId('external-link-icon').closest('button')!);
+				await waitFor(() => expect(window.maestro.shell.openPath).toHaveBeenCalledWith(expected));
+				fireEvent.click(screen.getByTestId('folder-open-icon').closest('button')!);
+				await waitFor(() =>
+					expect(window.maestro.shell.showItemInFolder).toHaveBeenCalledWith(expected)
+				);
+				if (mode === 'local') {
+					expect(window.maestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
+				} else {
+					expect(window.maestro.fs.downloadRemoteFile).toHaveBeenCalledWith(
+						'/test/readme.md',
+						'r1'
+					);
+				}
+			}
+		);
+
+		it.each(AGENT_MODES)(
+			'%s: the binary fallback reads "Open in Default App" and opens a local copy',
+			async (mode) => {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+						sshRemoteId={remoteIdFor(mode)}
+					/>
+				);
+				fireEvent.click(screen.getByRole('button', { name: 'Open in Default App' }));
+				await waitFor(() =>
+					expect(window.maestro.shell.openPath).toHaveBeenCalledWith(
+						mode === 'local' ? '/test/lib.dll' : localCopy
+					)
+				);
+			}
+		);
 	});
 
 	describe('Mermaid (.mmd) preview', () => {

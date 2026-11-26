@@ -177,6 +177,12 @@ export interface AgentRepository {
 	withTabWriteGuard<T>(guard: TabWriteGuard, write: () => Promise<T>): Promise<ClientResult<T>>;
 	/** After this, every command answers `host-lost` with `reason`. Reads still work. */
 	fence(reason: string): void;
+	/**
+	 * Why this process may no longer write, or undefined while it may. The same verdict the write
+	 * path applies (`fence(reason)` and the data-dir fence), for work that must not START when its
+	 * records would be refused, such as a provider launch.
+	 */
+	writeRefusal(): string | undefined;
 	/** Resolves once every command accepted so far has finished, written or failed. Shutdown awaits it before releasing the lock. */
 	drain(): Promise<void>;
 
@@ -1198,6 +1204,15 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			),
 		fence: (reason) => {
 			fencedReason ??= reason;
+		},
+		writeRefusal: () => {
+			try {
+				guardWrite();
+				return undefined;
+			} catch (error) {
+				if (error instanceof FencedError) return error.reason;
+				throw error;
+			}
 		},
 		drain: async () => {
 			await chain;

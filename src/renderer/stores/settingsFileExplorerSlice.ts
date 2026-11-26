@@ -98,8 +98,8 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 	sshRemoteIgnorePatterns: ['.git', '*cache*'],
 	sshRemoteHonorGitignore: true,
-	federationAutoMove: true,
-	federationHostedAgents: true,
+	federationAutoMove: false,
+	federationHostedAgents: false,
 
 	setShowHiddenFiles: (value) => {
 		set({ showHiddenFiles: value });

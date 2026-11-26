@@ -11,7 +11,7 @@ import type {
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useBatchStore } from '../../stores/batchStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
@@ -34,6 +34,32 @@ import type { AutoRunKind } from '../../../shared/stats-types';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
+import type { AutoRunControl } from '../../../shared/maestro-lib/client/peer-actions';
+import {
+	controlHostedAutoRun,
+	hostedTargetOf,
+	startHostedAutoRun,
+} from '../../services/hostedTurns';
+
+/** The record an Auto Run call names, read at call time. */
+const sessionOf = (sessionId: string) => selectSessionById(sessionId)(useSessionStore.getState());
+
+/**
+ * A hosted agent's run is the host's: route the control there (true), or let the caller act on
+ * its own run (false). One rule for the panel's buttons and the remote entry points.
+ */
+const controlOnHost = (sessionId: string, control: AutoRunControl): boolean =>
+	controlHostedAutoRun(sessionOf(sessionId), control);
+
+/** How a web client's control reads for a host. `pause` is the host's own to raise. */
+const HOST_CONTROL: Partial<Record<AutoRunRemoteControl['action'], AutoRunControl>> = {
+	stop: 'stop',
+	// The host has no force kill on its bridge: Kill stops the run after the current task.
+	kill: 'stop',
+	resume: 'resume',
+	'skip-document': 'skip',
+	abort: 'abort',
+};
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -350,6 +376,12 @@ export function useBatchProcessor({
 				if (!result.success) throw new Error(result.error || 'Host rejected Auto Run start');
 				return;
 			}
+			// A hosted agent's run is driven by its host; its progress draws here as this record's run.
+			const session = sessionOf(sessionId);
+			if (hostedTargetOf(session) && session) {
+				await startHostedAutoRun(session, config, folderPath);
+				return;
+			}
 			if (config.goalConfig) {
 				return startGoalRun(sessionId, config, folderPath);
 			}
@@ -387,6 +419,11 @@ export function useBatchProcessor({
 			(sessionId, control, responseChannel) => {
 				void (async () => {
 					const state = useBatchStore.getState().batchRunStates[sessionId];
+					const hostControl = HOST_CONTROL[control.action];
+					if (state?.isRunning && hostControl && controlOnHost(sessionId, hostControl)) {
+						window.maestro.process.sendRemoteAutoRunResponse(responseChannel, { success: true });
+						return;
+					}
 					if (!state?.isRunning || state.mirrored)
 						throw new Error('No host-owned Auto Run is active for this agent');
 					switch (control.action) {
@@ -435,6 +472,38 @@ export function useBatchProcessor({
 
 	const remoteClient = isWebDesktop();
 
+	// The panel's controls for a hosted agent go to its host; every other run is this window's.
+	const stopOrHost = useCallback(
+		(sessionId: string) => {
+			if (!controlOnHost(sessionId, 'stop')) stopBatchRun(sessionId);
+		},
+		[stopBatchRun]
+	);
+	const killOrHost = useCallback(
+		async (sessionId: string) => {
+			if (!controlOnHost(sessionId, 'stop')) await killBatchRun(sessionId);
+		},
+		[killBatchRun]
+	);
+	const skipOrHost = useCallback(
+		(sessionId: string) => {
+			if (!controlOnHost(sessionId, 'skip')) skipCurrentDocument(sessionId);
+		},
+		[skipCurrentDocument]
+	);
+	const resumeOrHost = useCallback(
+		(sessionId: string) => {
+			if (!controlOnHost(sessionId, 'resume')) resumeAfterError(sessionId);
+		},
+		[resumeAfterError]
+	);
+	const abortOrHost = useCallback(
+		(sessionId: string) => {
+			if (!controlOnHost(sessionId, 'abort')) abortBatchOnError(sessionId);
+		},
+		[abortBatchOnError]
+	);
+
 	return {
 		batchRunStates,
 		getBatchState,
@@ -444,10 +513,10 @@ export function useBatchProcessor({
 		startBatchRun,
 		stopBatchRun: remoteClient
 			? (sessionId) => requestRemoteControl(sessionId, { action: 'stop' })
-			: stopBatchRun,
+			: stopOrHost,
 		killBatchRun: remoteClient
 			? (sessionId) => sendRemoteControl(sessionId, { action: 'kill' })
-			: killBatchRun,
+			: killOrHost,
 		customPrompts,
 		setCustomPrompt,
 		// Error handling (Phase 5.10)
@@ -462,12 +531,12 @@ export function useBatchProcessor({
 			: pauseBatchOnError,
 		skipCurrentDocument: remoteClient
 			? (sessionId) => requestRemoteControl(sessionId, { action: 'skip-document' })
-			: skipCurrentDocument,
+			: skipOrHost,
 		resumeAfterError: remoteClient
 			? (sessionId) => requestRemoteControl(sessionId, { action: 'resume' })
-			: resumeAfterError,
+			: resumeOrHost,
 		abortBatchOnError: remoteClient
 			? (sessionId) => requestRemoteControl(sessionId, { action: 'abort' })
-			: abortBatchOnError,
+			: abortOrHost,
 	};
 }

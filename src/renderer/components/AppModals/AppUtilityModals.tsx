@@ -1,5 +1,6 @@
 import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
+import type { UpdateCheckView } from '../../../shared/updateRollback';
 import type {
 	Theme,
 	Session,
@@ -41,6 +42,7 @@ import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
 import { AutoRunSetupModal } from '../AutoRun/AutoRunSetupModal';
+import { pathPickerRemoteId } from '../../services/pathPicker';
 import { LightboxModal } from '../LightboxModal';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
@@ -120,7 +122,7 @@ export interface AppUtilityModalsProps {
 	onDebugReleaseQueuedItem: () => void;
 	markdownEditMode: boolean;
 	onToggleMarkdownEditMode: () => void;
-	setUpdateCheckModalOpen?: (open: boolean) => void;
+	setUpdateCheckModalOpen?: (open: boolean, view?: UpdateCheckView) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
@@ -783,14 +785,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onFolderSelected={onAutoRunFolderSelected}
 					currentFolder={activeSession?.autoRunFolderPath}
 					sessionName={activeSession?.name}
-					sshRemoteId={
-						activeSession?.sshRemoteId ||
-						(activeSession?.sessionSshRemoteConfig?.enabled
-							? activeSession.sessionSshRemoteConfig.remoteId
-							: undefined) ||
-						undefined
-					}
-					sshRemoteHost={activeSession?.sshRemote?.host}
+					sshRemoteId={pathPickerRemoteId(activeSession)}
 				/>
 			)}
 

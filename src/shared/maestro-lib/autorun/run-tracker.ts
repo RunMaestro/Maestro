@@ -20,6 +20,7 @@
 
 import { stripAnsiCodes } from '../../stringUtils';
 import type { UsageStats } from '../../types';
+import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from './progress';
 
 /** Lines of output kept. A screen shows the last few; the rest is a buffer for resizing. */
@@ -49,7 +50,17 @@ export interface AutoRunRun {
 }
 
 export type AutoRunRunEvent =
-	| { kind: 'state'; at: number; state: AutoRunProgress | null }
+	| {
+			kind: 'state';
+			at: number;
+			state: AutoRunProgress | null;
+			/**
+			 * The host's frame itself, read field by field (`parseAutoRunBroadcastState()`), when the
+			 * event came over the wire. A client that draws the same Auto Run card the owning window
+			 * draws (a hosted agent's record) needs the fields `state` leaves out.
+			 */
+			frame?: AutoRunBroadcastState | null;
+	  }
 	| { kind: 'output'; at: number; processId: string; text: string }
 	| { kind: 'usage'; at: number; processId: string; usage: UsageStats };
 

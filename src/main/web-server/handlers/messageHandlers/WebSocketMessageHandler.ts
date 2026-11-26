@@ -108,6 +108,7 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import { handleListAgentModels } from './models';
+import { handleListRollbackTargets, handleRollbackUpdate } from './updates';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -227,6 +228,9 @@ import {
 	handleSteerQueueItem,
 	handleSetQueueItemPaused,
 	handleMergeQueueItem,
+	handleEditQueueItem,
+	handleMoveQueueItem,
+	handleSendQueueItemNow,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -623,6 +627,18 @@ export class WebSocketMessageHandler {
 
 			case 'merge_queue_item':
 				handleMergeQueueItem(this.ctx, client, message);
+				break;
+
+			case 'edit_queue_item':
+				handleEditQueueItem(this.ctx, client, message);
+				break;
+
+			case 'move_queue_item':
+				handleMoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'send_queue_item_now':
+				handleSendQueueItemNow(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -1035,6 +1051,14 @@ export class WebSocketMessageHandler {
 
 			case 'list_agent_models':
 				void handleListAgentModels(this.ctx, client, message);
+				break;
+
+			case 'list_rollback_targets':
+				void handleListRollbackTargets(this.ctx, client, message);
+				break;
+
+			case 'rollback_update':
+				void handleRollbackUpdate(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

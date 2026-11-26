@@ -359,10 +359,12 @@ describe('buildProcessTree', () => {
 		expect(processNode.label).toContain('My Tab');
 	});
 
-	it('propagates SSH metadata onto session and process nodes', () => {
+	it("carries the agent's mode fields onto its session node, and no remote name", () => {
+		const remote = { enabled: true, remoteId: 'ssh-1' };
 		const tree = buildProcessTree({
 			sessions: [
 				session({
+					sessionSshRemoteConfig: remote,
 					sshRemote: { id: 'ssh-1', name: 'prod', host: 'prod.example.com' } as never,
 				} as Partial<Session>),
 			],
@@ -371,11 +373,14 @@ describe('buildProcessTree', () => {
 			activeProcesses: [proc({ sessionId: 'session-1-ai-tab-a' })],
 		});
 		const sessionNode = tree[0].children![0];
-		expect(sessionNode.sshRemote).toEqual({ name: 'prod', host: 'prod.example.com' });
-		expect(sessionNode.children![0].sshRemote).toEqual({
-			name: 'prod',
-			host: 'prod.example.com',
+		expect(sessionNode.modeAgent).toEqual({
+			id: 'session-1',
+			liftedTo: undefined,
+			sessionSshRemoteConfig: remote,
+			sshConnectionFailed: undefined,
 		});
+		expect(sessionNode.children![0].modeAgent).toBeUndefined();
+		expect(JSON.stringify(tree)).not.toContain('prod.example.com');
 	});
 
 	it('emits a GROUP CHATS section with moderator + participant nodes', () => {

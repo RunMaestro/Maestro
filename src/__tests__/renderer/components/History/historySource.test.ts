@@ -1,8 +1,8 @@
 /**
  * Tests for the History panel's two sources: a local agent's History through
  * `window.maestro.history` (with the shared History of its project), and a Federation peer's
- * mirrored agent through `window.maestro.federation.history*`, which is read-only and reads
- * again when the window's mirror bumps the agent's History version.
+ * mirrored agent through `window.maestro.federation.history*`, which deletes and validates on
+ * the host and reads again when the window's mirror bumps the agent's History version.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,6 +65,8 @@ describe('historySource', () => {
 			})),
 			historyGraph: vi.fn(async () => GRAPH),
 			historyOffset: vi.fn(async () => 2),
+			historyDelete: vi.fn(async () => true),
+			historyUpdate: vi.fn(async () => true),
 		};
 		const unsubscribe = vi.fn();
 		onHistoryEntryAdded = vi.fn((listener) => {
@@ -166,12 +168,15 @@ describe('historySource', () => {
 	});
 
 	describe('mirrorHistorySource', () => {
-		it('pages through federation.historyPage without the local-only Cue grouping', async () => {
+		it('pages through federation.historyPage with the Cue grouping a local read takes', async () => {
+			// A hosted agent's Cue runs run on this machine and are merged into the host's page,
+			// so the grouping setting reaches them as it does a local agent's.
 			const page = await mirrorHistorySource('buildbox', 'a1').getPage(query);
 			expect(federation.historyPage).toHaveBeenCalledWith('buildbox', 'a1', {
 				lookbackHours: 24,
 				types: ['USER', 'AUTO'],
 				hostKey: 'laptop',
+				groupCue: true,
 				pagination: { offset: 10, limit: 5 },
 			});
 			expect(page).toEqual({ entries: [entry], hasMore: false, total: 1 });
@@ -186,10 +191,20 @@ describe('historySource', () => {
 			expect(federation.historyOffset).toHaveBeenCalledWith('buildbox', 'a1', 900, 48, ['AUTO']);
 		});
 
-		it('is read-only: no remove and no update', () => {
+		it('deletes and validates on the host, as a local source does in the desktop', async () => {
 			const source = mirrorHistorySource('buildbox', 'a1');
-			expect(source.remove).toBeUndefined();
-			expect(source.update).toBeUndefined();
+			expect(await source.remove?.('h1')).toBe(true);
+			expect(federation.historyDelete).toHaveBeenCalledWith('buildbox', 'a1', 'h1');
+			expect(await source.update?.('h1', { validated: false })).toBe(true);
+			expect(federation.historyUpdate).toHaveBeenCalledWith('buildbox', 'a1', 'h1', {
+				validated: false,
+			});
+		});
+
+		it('sends no update that changes nothing', async () => {
+			const source = mirrorHistorySource('buildbox', 'a1');
+			expect(await source.update?.('h1', {})).toBe(false);
+			expect(federation.historyUpdate).not.toHaveBeenCalled();
 		});
 
 		it('resets when its own agent History version moves, and only then', () => {

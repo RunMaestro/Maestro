@@ -680,6 +680,7 @@ configureSshReachability({
 	resolveRemote: getSshRemoteById,
 	probe: (remote) => sshRemoteManager.probeReachability(remote),
 	emit: (event) => safeSend('ssh-remote:reachability', event),
+	hasLiveTransport: (remoteId) => getPeerMirrorService()?.isRemoteConnected(remoteId) ?? false,
 });
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)

@@ -117,6 +117,17 @@ export function parseDataUrl(value: string): { base64: string; mediaType: string
 	return { mediaType: resolved.mediaType, base64: resolved.buffer.toString('base64') };
 }
 
+/**
+ * An image as a self-contained data URL another machine can read, or `null` when it cannot be
+ * resolved (a ref whose file is gone, or a host with no image store registered). An inline data
+ * URL comes back unchanged; a `maestro-image://` ref is read through the host's resolver.
+ */
+export function inlineImageDataUrl(value: string): string | null {
+	if (parseBase64DataUrl(value)) return value;
+	const parsed = parseDataUrl(value);
+	return parsed ? `data:${parsed.mediaType};base64,${parsed.base64}` : null;
+}
+
 export function buildImagePromptPrefix(tempPaths: string[]): string {
 	if (tempPaths.length === 0) return '';
 	return `[Attached images: ${tempPaths.join(', ')}]\n\n`;

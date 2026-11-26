@@ -22,6 +22,7 @@ import {
 	createMirroredPeer,
 	mirrorKey,
 	replacePeerAgents,
+	setAgentAutoRun,
 	setAgentQueue,
 	type MirrorContext,
 	type MirroredPeer,
@@ -273,6 +274,8 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 		}
 		case 'agent.queue':
 			return settlePeer(state, peerId, setAgentQueue(peer, event.agentId, event.items).peer);
+		case 'agent.autorun':
+			return settlePeer(state, peerId, setAgentAutoRun(peer, event.agentId, event.state).peer);
 		case 'tab.stale': {
 			if (!existing) return state;
 			const key = liveTurnKey(event.agentId, event.tabId);

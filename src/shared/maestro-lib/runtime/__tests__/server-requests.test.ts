@@ -121,6 +121,23 @@ describe('update_session_config', () => {
 		}
 	});
 
+	it('hands a tab the provider session a wizard that ran elsewhere started', async () => {
+		expect(await update({ tabId: 't1', agentSessionId: 'wizard-session' })).toMatchObject({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		const tabs = (await stored()).aiTabs as Array<{ id: string; agentSessionId: string | null }>;
+		expect(tabs.find((tab) => tab.id === 't1')?.agentSessionId).toBe('wizard-session');
+	});
+
+	it("holds a merge's context on the tab for its next turn", async () => {
+		expect(await update({ tabId: 't1', pendingMergedContext: 'Additional context' })).toMatchObject(
+			{ type: 'update_session_config_result', success: true }
+		);
+		const tabs = (await stored()).aiTabs as Array<{ id: string; pendingMergedContext?: string }>;
+		expect(tabs.find((tab) => tab.id === 't1')?.pendingMergedContext).toBe('Additional context');
+	});
+
 	it('clears every allowlisted key on null', async () => {
 		for (const key of AGENT_EDITABLE_KEYS) {
 			expect(await update({ [key]: SAMPLE[key] }), key).toMatchObject({ success: true });
@@ -475,6 +492,21 @@ function recordingClient(
 				if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 				return ok([{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }]);
 			},
+			remove: async (agentId: string, entryId: string) => {
+				note('history.remove', agentId, entryId);
+				if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+				return ok({ removed: entryId === 'h1' });
+			},
+			update: async (agentId: string, entryId: string, updates: unknown) => {
+				note('history.update', agentId, entryId, updates);
+				return ok({ updated: entryId === 'h1' });
+			},
+		},
+		consults: {
+			ask: async (input: unknown) => {
+				note('consults.ask', input);
+				return ok({ answer: 'yes' });
+			},
 		},
 	};
 	const handle = createRequestHandler(client as unknown as MaestroClient);
@@ -817,6 +849,24 @@ describe('origin host on a send', () => {
 	});
 });
 
+describe('cross_agent_ask', () => {
+	it('passes a /btw side question and its tab to the runtime, which decides on it', async () => {
+		const host = recordingClient();
+		await host.handle({
+			type: 'cross_agent_ask',
+			sessionId: 'a1',
+			question: 'which file?',
+			sideQuestion: true,
+			targetTabId: 't1',
+		});
+		await host.handle({ type: 'cross_agent_ask', sessionId: 'a1', question: 'plain' });
+		expect(host.named('consults.ask').map((call) => call.args[0])).toEqual([
+			expect.objectContaining({ question: 'which file?', sideQuestion: true, targetTabId: 't1' }),
+			expect.not.objectContaining({ sideQuestion: true }),
+		]);
+	});
+});
+
 describe("a sender's turn overrides on a send", () => {
 	it('hands the cleaned turnOverrides to turns.send on enqueue_command and send_command', async () => {
 		const host = recordingClient({ activeTabId: 't-active' });
@@ -898,6 +948,52 @@ describe('get_history', () => {
 	});
 });
 
+describe('delete_history_entry and update_history_entry', () => {
+	it('deletes an entry and answers whether one was removed', async () => {
+		const host = recordingClient();
+		expect(
+			await host.handle({ type: 'delete_history_entry', sessionId: 'a1', entryId: 'h1' })
+		).toEqual({ type: 'delete_history_entry_result', success: true, removed: true });
+		expect(
+			await host.handle({ type: 'delete_history_entry', sessionId: 'a1', entryId: 'ghost' })
+		).toEqual({ type: 'delete_history_entry_result', success: true, removed: false });
+		expect(host.named('history.remove').map((call) => call.args)).toEqual([
+			['a1', 'h1'],
+			['a1', 'ghost'],
+		]);
+	});
+
+	it('answers an unknown agent as a failure with the reason', async () => {
+		const host = recordingClient();
+		expect(
+			await host.handle({ type: 'delete_history_entry', sessionId: 'nobody', entryId: 'h1' })
+		).toMatchObject({ type: 'delete_history_entry_result', success: false });
+	});
+
+	it('updates an entry with only a boolean validated', async () => {
+		const host = recordingClient();
+		expect(
+			await host.handle({
+				type: 'update_history_entry',
+				sessionId: 'a1',
+				entryId: 'h1',
+				validated: true,
+			})
+		).toEqual({ type: 'update_history_entry_result', success: true, updated: true });
+		await host.handle({
+			type: 'update_history_entry',
+			sessionId: 'a1',
+			entryId: 'h1',
+			validated: 'yes',
+			summary: 'rewritten',
+		});
+		expect(host.named('history.update').map((call) => call.args)).toEqual([
+			['a1', 'h1', { validated: true }],
+			['a1', 'h1', {}],
+		]);
+	});
+});
+
 describe('live tab state and the host queue', () => {
 	const stored = {
 		id: 'a1',
@@ -913,6 +1009,9 @@ describe('live tab state and the host queue', () => {
 	/** A client with one stored agent and a queue that knows item `q1`. */
 	function hostClient() {
 		const setPausedCalls: unknown[][] = [];
+		const mergeCalls: unknown[][] = [];
+		const editCalls: unknown[][] = [];
+		const moveCalls: unknown[][] = [];
 		const client = {
 			agents: { list: async () => ok([stored]) },
 			tabs: { list: async () => ok(stored.aiTabs) },
@@ -923,10 +1022,33 @@ describe('live tab state and the host queue', () => {
 						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 						return ok({ found: itemId === 'q1', paused });
 					},
+					edit: async (agentId: string, itemId: string, edit: unknown) => {
+						editCalls.push([agentId, itemId, edit]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ found: itemId === 'q1' });
+					},
+					move: async (agentId: string, itemId: string, toIndex: number, tabId?: string) => {
+						moveCalls.push([agentId, itemId, toIndex, tabId]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ moved: itemId === 'q1' });
+					},
+					sendNow: async (agentId: string, itemId: string) => {
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ sent: itemId === 'q1' });
+					},
+					merge: async (agentId: string, itemId: string) => {
+						mergeCalls.push([agentId, itemId]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok(itemId === 'q2' ? { merged: true, mergedIntoId: 'q1' } : { merged: false });
+					},
+					steer: async (agentId: string) =>
+						agentId === 'a1'
+							? ok({ outcome: 'delivered', verdict: 'delivered' })
+							: fail('unsupported', 'This host cannot steer a running turn.'),
 				},
 			},
 		} as unknown as MaestroClient;
-		return { client, setPausedCalls };
+		return { client, setPausedCalls, mergeCalls, editCalls, moveCalls };
 	}
 
 	const liveTabs = (agentId: string) =>
@@ -991,6 +1113,119 @@ describe('live tab state and the host queue', () => {
 		]);
 		expect(await handle({ ...base, sessionId: 'nobody', paused: true })).toMatchObject({
 			success: false,
+		});
+	});
+
+	it('merges a waiting message into the one above it with merge_queue_item', async () => {
+		const { client, mergeCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'merge_queue_item', sessionId: 'a1' };
+		expect(await handle({ ...base, itemId: 'q2' })).toEqual({
+			type: 'merge_queue_item_result',
+			success: true,
+			merged: true,
+			mergedIntoId: 'q1',
+		});
+		expect(await handle({ ...base, itemId: 'q1' })).toEqual({
+			type: 'merge_queue_item_result',
+			success: true,
+			merged: false,
+		});
+		expect(await handle({ ...base, sessionId: 'nobody', itemId: 'q2' })).toMatchObject({
+			success: false,
+		});
+		expect(mergeCalls).toEqual([
+			['a1', 'q2'],
+			['a1', 'q1'],
+			['nobody', 'q2'],
+		]);
+	});
+
+	it("answers steer_queue_item with the client's outcome, or its refusal", async () => {
+		const { client } = hostClient();
+		const handle = createRequestHandler(client);
+		expect(await handle({ type: 'steer_queue_item', sessionId: 'a1', itemId: 'q1' })).toEqual({
+			type: 'steer_queue_item_result',
+			success: true,
+			result: { outcome: 'delivered', verdict: 'delivered' },
+		});
+		expect(
+			await handle({ type: 'steer_queue_item', sessionId: 'other', itemId: 'q1' })
+		).toMatchObject({
+			type: 'steer_queue_item_result',
+			success: false,
+			error: expect.stringContaining('cannot steer'),
+		});
+	});
+
+	it('edits a waiting message with edit_queue_item, and refuses a malformed edit', async () => {
+		const { client, editCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'edit_queue_item', sessionId: 'a1' };
+		expect(
+			await handle({ ...base, itemId: 'q1', text: 'new', turnSettings: { model: 'm', effort: '' } })
+		).toEqual({ type: 'edit_queue_item_result', success: true, found: true });
+		expect(await handle({ ...base, itemId: 'q9', text: 'new' })).toEqual({
+			type: 'edit_queue_item_result',
+			success: true,
+			found: false,
+		});
+		expect(await handle({ ...base, itemId: 'q1', text: '  ' })).toMatchObject({
+			success: false,
+			found: false,
+			error: 'Missing text',
+		});
+		expect(await handle({ ...base, itemId: 'q1', text: 'x', images: [1] })).toMatchObject({
+			success: false,
+			error: 'images must be a list of strings',
+		});
+		// The refusals never reached the queue; an empty effort is dropped, not sent.
+		expect(editCalls).toEqual([
+			['a1', 'q1', { text: 'new', turnSettings: { model: 'm' } }],
+			['a1', 'q9', { text: 'new' }],
+		]);
+	});
+
+	it('moves a waiting message with move_queue_item, and refuses a bad place', async () => {
+		const { client, moveCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'move_queue_item', sessionId: 'a1' };
+		expect(await handle({ ...base, itemId: 'q1', toIndex: 0, tabId: 't1' })).toEqual({
+			type: 'move_queue_item_result',
+			success: true,
+			moved: true,
+		});
+		expect(await handle({ ...base, itemId: 'q9', toIndex: 2 })).toEqual({
+			type: 'move_queue_item_result',
+			success: true,
+			moved: false,
+		});
+		for (const toIndex of [-1, 1.5, '1', undefined]) {
+			expect(await handle({ ...base, itemId: 'q1', toIndex })).toMatchObject({
+				success: false,
+				moved: false,
+				error: 'toIndex must be a whole number, 0 or more',
+			});
+		}
+		// The refusals never reached the queue.
+		expect(moveCalls).toEqual([
+			['a1', 'q1', 0, 't1'],
+			['a1', 'q9', 2, undefined],
+		]);
+	});
+
+	it('sends a waiting message now with send_queue_item_now', async () => {
+		const handle = createRequestHandler(hostClient().client);
+		const base = { type: 'send_queue_item_now', sessionId: 'a1' };
+		expect(await handle({ ...base, itemId: 'q1' })).toEqual({
+			type: 'send_queue_item_now_result',
+			success: true,
+			sent: true,
+		});
+		expect(await handle({ ...base, itemId: 'q9' })).toEqual({
+			type: 'send_queue_item_now_result',
+			success: true,
+			sent: false,
 		});
 	});
 

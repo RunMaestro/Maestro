@@ -7,8 +7,6 @@ interface DirectoryPathFieldProps {
 	theme: Theme;
 	directoryPath: string;
 	directoryError: string | null;
-	isRemoteSession: boolean;
-	sshRemoteHost: string | null;
 	isBrowsing: boolean;
 	inputRef: RefObject<HTMLInputElement>;
 	browseButtonRef: RefObject<HTMLButtonElement>;
@@ -20,8 +18,6 @@ export function DirectoryPathField({
 	theme,
 	directoryPath,
 	directoryError,
-	isRemoteSession,
-	sshRemoteHost,
 	isBrowsing,
 	inputRef,
 	browseButtonRef,
@@ -48,11 +44,7 @@ export function DirectoryPathField({
 					onChange={onPathChange}
 					onFocus={() => setIsFocused(true)}
 					onBlur={() => setIsFocused(false)}
-					placeholder={
-						isRemoteSession
-							? `Enter path on ${sshRemoteHost || 'remote host'} (e.g., /home/user/project)`
-							: '/path/to/your/project'
-					}
+					placeholder="/path/to/your/project"
 					className="flex-1 px-4 py-3 rounded-lg border text-base outline-none transition-all font-mono"
 					style={{
 						backgroundColor: theme.colors.bgMain,
@@ -67,51 +59,38 @@ export function DirectoryPathField({
 					aria-invalid={!!directoryError}
 					aria-describedby={directoryError ? 'directory-error' : undefined}
 				/>
-				{!isRemoteSession && (
-					<button
-						ref={browseButtonRef}
-						onClick={onBrowse}
-						disabled={isBrowsing}
-						className="px-6 py-3 rounded-lg font-medium transition-all flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							opacity: isBrowsing ? 0.7 : 1,
-							['--tw-ring-color' as any]: theme.colors.accent,
-							['--tw-ring-offset-color' as any]: theme.colors.bgMain,
-						}}
-					>
-						{isBrowsing ? (
-							<>
-								<div
-									className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
-									style={{
-										borderColor: theme.colors.accentForeground,
-										borderTopColor: 'transparent',
-									}}
-								/>
-								<span>Opening...</span>
-							</>
-						) : (
-							<>
-								<FileText className="w-5 h-5" />
-								<span>Browse</span>
-							</>
-						)}
-					</button>
-				)}
-			</div>
-
-			{isRemoteSession && (
-				<p
-					className="mt-2 text-xs flex items-center gap-1.5"
-					style={{ color: theme.colors.textDim }}
+				<button
+					ref={browseButtonRef}
+					onClick={onBrowse}
+					disabled={isBrowsing}
+					className="px-6 py-3 rounded-lg font-medium transition-all flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2"
+					style={{
+						backgroundColor: theme.colors.accent,
+						color: theme.colors.accentForeground,
+						opacity: isBrowsing ? 0.7 : 1,
+						['--tw-ring-color' as any]: theme.colors.accent,
+						['--tw-ring-offset-color' as any]: theme.colors.bgMain,
+					}}
 				>
-					<FileText className="w-4 h-4 flex-shrink-0" />
-					Enter the full path on <strong>{sshRemoteHost || 'the remote host'}</strong> - path will
-					be validated as you type
-				</p>
-			)}
+					{isBrowsing ? (
+						<>
+							<div
+								className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
+								style={{
+									borderColor: theme.colors.accentForeground,
+									borderTopColor: 'transparent',
+								}}
+							/>
+							<span>Opening...</span>
+						</>
+					) : (
+						<>
+							<FileText className="w-5 h-5" />
+							<span>Browse</span>
+						</>
+					)}
+				</button>
+			</div>
 
 			{directoryError && (
 				<p

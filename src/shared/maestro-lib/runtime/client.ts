@@ -246,6 +246,16 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					guarded('turns.queue.setPaused', () =>
 						deps.turns.queue.setPaused(agentId, itemId, paused)
 					),
+				merge: (agentId, itemId) =>
+					guarded('turns.queue.merge', () => deps.turns.queue.merge(agentId, itemId)),
+				steer: (agentId, itemId) =>
+					guarded('turns.queue.steer', () => deps.turns.queue.steer(agentId, itemId)),
+				edit: (agentId, itemId, edit) =>
+					guarded('turns.queue.edit', () => deps.turns.queue.edit(agentId, itemId, edit)),
+				move: (agentId, itemId, toIndex, tabId) =>
+					guarded('turns.queue.move', () => deps.turns.queue.move(agentId, itemId, toIndex, tabId)),
+				sendNow: (agentId, itemId) =>
+					guarded('turns.queue.sendNow', () => deps.turns.queue.sendNow(agentId, itemId)),
 			},
 			subscribe: (agentId, tabId, listener): Unsubscribe =>
 				deps.turns.subscribe(agentId, tabId, listener),
@@ -290,6 +300,13 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		history: {
 			list: (agentId, options) =>
 				guarded('history.list', () => deps.history.list(agentId, options)),
+			// A fenced runtime does not write: the data directory belongs to another process.
+			remove: (agentId, entryId) =>
+				Promise.resolve(gate('history.remove', true) ?? deps.history.remove(agentId, entryId)),
+			update: (agentId, entryId, updates) =>
+				Promise.resolve(
+					gate('history.update', true) ?? deps.history.update(agentId, entryId, updates)
+				),
 		},
 
 		settings: {

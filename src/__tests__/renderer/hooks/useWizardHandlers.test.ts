@@ -69,9 +69,26 @@ vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
 	DEFAULT_BATCH_PROMPT: 'Run each task sequentially.',
 }));
 
+// A hosted tab's name and session reach its host through these; hostedTurns.test.ts covers the wire.
+vi.mock('../../../renderer/services/hostedTurns', async () => {
+	const actual = await vi.importActual('../../../renderer/services/hostedTurns');
+	return {
+		...actual,
+		renameHostedTab: vi.fn(),
+		settleHostedWizardTab: vi.fn(),
+		startHostedConversation: vi.fn(),
+	};
+});
+import {
+	renameHostedTab,
+	settleHostedWizardTab,
+	startHostedConversation,
+} from '../../../renderer/services/hostedTurns';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
+
 import { useWizardHandlers } from '../../../renderer/hooks/wizard/useWizardHandlers';
 import type { UseWizardHandlersDeps } from '../../../renderer/hooks/wizard/useWizardHandlers';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
@@ -1646,6 +1663,46 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
+		// A send that names its own tab (a hosted agent's `/history`, run by its host) synopsizes that
+		// tab, never the active one.
+		it('runs for the named tab, and writes its progress there', async () => {
+			const active = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
+			const named = createMockTab({ id: 'tab-2', agentSessionId: 'agent-session-2', logs: [] });
+			const session = createMockSession({ aiTabs: [active, named], activeTabId: 'tab-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleHistoryCommand({ sessionId: 'session-1', tabId: 'tab-2' });
+			});
+
+			expect((deps.spawnBackgroundSynopsis as any).mock.calls[0][2]).toBe('agent-session-2');
+			expect(deps.addHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({ agentSessionId: 'agent-session-2' })
+			);
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs[1].logs.map((l) => l.text)).toEqual(['Synopsis saved to history: Short summary']);
+			expect(tabs[0].logs.some((l) => l.text.includes('ynopsis'))).toBe(false);
+		});
+
+		it('writes nothing for a named tab that is gone', async () => {
+			const session = createMockSession();
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			const before = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleHistoryCommand({ sessionId: 'session-1', tabId: 'gone' });
+			});
+
+			expect(deps.spawnBackgroundSynopsis).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toBe(before);
+		});
+
 		it('shows error log when no agent session exists', async () => {
 			const tab = createMockTab({ agentSessionId: null });
 			const session = createMockSession({ aiTabs: [tab] });
@@ -1838,6 +1895,30 @@ describe('useWizardHandlers', () => {
 			expect(skillsLog!.text).toContain('test-gen');
 			expect(skillsLog!.text).toContain('Project Skills');
 			expect(skillsLog!.text).toContain('User Skills');
+		});
+
+		it('lists the skills in the named tab, not the active one', async () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'tab-1', logs: [] }),
+					createMockTab({ id: 'tab-2', logs: [] }),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			(window as any).maestro.claude.getSkills.mockResolvedValue([]);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleSkillsCommand({ sessionId: 'session-1', tabId: 'tab-2' });
+			});
+
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs[0].logs).toEqual([]);
+			expect(tabs[1].logs.map((l) => l.source)).toEqual(['user', 'system']);
+			expect(tabs[1].logs[0].text).toBe('/skills');
 		});
 
 		it('displays "no skills found" message when empty', async () => {
@@ -2077,6 +2158,51 @@ describe('useWizardHandlers', () => {
 			expect(activeTab?.name).toBe('Wizard');
 		});
 
+		it('starts the same wizard for local, SSH, and hosted agents, over the SSH remote they keep', () => {
+			const ssh = { enabled: true, remoteId: 'build-box' };
+			const modes = [
+				['local', {}, undefined],
+				['SSH', { sessionSshRemoteConfig: ssh }, ssh],
+				[
+					'hosted',
+					{ sessionSshRemoteConfig: ssh, liftedTo: { peer: 'box', agentId: 'h1', at: 1 } },
+					ssh,
+				],
+			] as const;
+			for (const [mode, fields, sshArg] of modes) {
+				const session = createMockSession(fields);
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				vi.mocked(renameHostedTab).mockReset();
+				const deps = createMockDeps();
+				const { result, unmount } = renderHook(() => useWizardHandlers(deps));
+				act(() => {
+					result.current.handleWizardCommand('plan it');
+				});
+				unmount();
+
+				expect(deps.inlineWizardContext.startWizard, mode).toHaveBeenCalledWith(
+					'plan it',
+					expect.objectContaining({ readOnlyMode: false }),
+					'/projects/test',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'session-1',
+					undefined,
+					sshArg,
+					expect.any(String),
+					expect.objectContaining({})
+				);
+				// The placeholder name goes to a hosted tab's host too (a no-op otherwise).
+				expect(renameHostedTab, mode).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'Wizard'
+				);
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].name, mode).toBe('Wizard');
+			}
+		});
+
 		it('adds a wizard log entry', () => {
 			const session = createMockSession();
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -2172,6 +2298,92 @@ describe('useWizardHandlers', () => {
 			const updatedSession = useSessionStore.getState().sessions[0];
 			// Active tab should no longer be the original tab-1
 			expect(updatedSession.activeTabId).not.toBe('tab-1');
+		});
+
+		it.each(AGENT_MODES)(
+			'opens the wizard in a tab the %s agent holds, as /wizard does, over the SSH remote it keeps',
+			async (mode) => {
+				// An earlier test's deferred wizard start (mocked ids reuse a tab id) must not land here.
+				await act(async () => {
+					await new Promise((r) => setTimeout(r, 0));
+				});
+				useSettingsStore.setState({ federationHostedAgents: true } as any);
+				// The host opens the tab and the record shows it, as `startHostedConversation()` does.
+				vi.mocked(startHostedConversation).mockReset();
+				vi.mocked(startHostedConversation).mockImplementation(async (record, start) => {
+					updateSessionWith(record.id, (current) => ({
+						...current,
+						aiTabs: [
+							...current.aiTabs,
+							createMockTab({ id: 'host-tab', ...start.fields, name: start.name }),
+						],
+						activeTabId: 'host-tab',
+					}));
+					return 'host-tab';
+				});
+				const session = createMockSession(agentModeFields(mode));
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				await act(async () => {
+					result.current.handleLaunchWizardTab();
+					await new Promise((r) => setTimeout(r, 0));
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				const wizardTab = updated.aiTabs.find((tab) => tab.id === updated.activeTabId)!;
+				// The same tab, wizard, and note in every mode; only where the tab is opened differs.
+				expect(updated.aiTabs).toHaveLength(2);
+				expect(wizardTab.id).not.toBe('tab-1');
+				expect(wizardTab.name).toBe('Wizard');
+				expect(wizardTab.logs.map((log) => log.text)).toEqual([
+					'Starting wizard for Auto Run documents...',
+				]);
+				expect(deps.inlineWizardContext.startWizard).toHaveBeenCalledExactlyOnceWith(
+					undefined,
+					expect.objectContaining({ readOnlyMode: false }),
+					'/projects/test',
+					'claude-code',
+					'Test Agent',
+					wizardTab.id,
+					'session-1',
+					undefined,
+					session.sessionSshRemoteConfig,
+					expect.any(String),
+					expect.objectContaining({})
+				);
+				// A hosted agent's wizard tab is a host tab, so its end can hand the tab to the host.
+				if (mode === 'hosted') {
+					expect(startHostedConversation).toHaveBeenCalledExactlyOnceWith(
+						expect.objectContaining({ id: 'session-1' }),
+						expect.objectContaining({ name: 'Wizard', afterTabId: 'tab-1' })
+					);
+					expect(wizardTab.id).toBe('host-tab');
+				} else {
+					expect(startHostedConversation).not.toHaveBeenCalled();
+				}
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+			}
+		);
+
+		it('starts no wizard when the host refuses the tab', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true } as any);
+			vi.mocked(startHostedConversation).mockReset();
+			vi.mocked(startHostedConversation).mockResolvedValue(null);
+			const session = createMockSession(agentModeFields('hosted'));
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				result.current.handleLaunchWizardTab();
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(1);
+			expect(deps.inlineWizardContext.startWizard).not.toHaveBeenCalled();
+			useSettingsStore.setState({ federationHostedAgents: false } as any);
 		});
 
 		it('does nothing when no active session', () => {
@@ -2415,6 +2627,47 @@ describe('useWizardHandlers', () => {
 			expect(endWizard).toHaveBeenCalledWith('tab-1');
 		});
 
+		it('hands the flattened tab to its host for local, SSH, and hosted agents alike', () => {
+			const ssh = { enabled: true, remoteId: 'build-box' };
+			const modes = [
+				['local', {}],
+				['SSH', { sessionSshRemoteConfig: ssh }],
+				[
+					'hosted',
+					{ sessionSshRemoteConfig: ssh, liftedTo: { peer: 'box', agentId: 'h1', at: 1 } },
+				],
+			] as const;
+			for (const [mode, fields] of modes) {
+				const session = { ...buildWizardSession(), ...fields };
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				let tabWhenSettled: unknown;
+				vi.mocked(settleHostedWizardTab).mockReset();
+				vi.mocked(settleHostedWizardTab).mockImplementation(() => {
+					tabWhenSettled = useSessionStore.getState().sessions[0].aiTabs[0];
+				});
+				const deps = createMockDeps({
+					inlineWizardContext: {
+						...createMockDeps().inlineWizardContext,
+						getStateForTab: vi.fn(() =>
+							createMatchingInlineWizardTabState(session.aiTabs[0].wizardState)
+						),
+					} as any,
+				});
+				const { result, unmount } = renderHook(() => useWizardHandlers(deps));
+				act(() => {
+					result.current.handleExitWizard('tab-1');
+				});
+				unmount();
+
+				// One call for every mode; it does nothing for an agent that is not hosted.
+				expect(settleHostedWizardTab, mode).toHaveBeenCalledWith('session-1', 'tab-1');
+				expect(tabWhenSettled, mode).toMatchObject({
+					agentSessionId: 'provider-abc',
+					wizardState: undefined,
+				});
+			}
+		});
+
 		it('adds no closing note when the wizard was never talked to', () => {
 			const session = buildWizardSession();
 			session.aiTabs[0].wizardState!.conversationHistory = [];
@@ -2551,6 +2804,8 @@ describe('useWizardHandlers', () => {
 			// last-touched wizard ends someone else's, leaving this one registered on a
 			// tab that no longer shows a wizard - a permanent wand in the Left Bar.
 			expect(deps.inlineWizardContext.endWizard).toHaveBeenCalledWith(tab.id);
+			// The finished name and session go to a hosted tab's host (a no-op otherwise).
+			expect(settleHostedWizardTab).toHaveBeenCalledWith('session-1', tab.id);
 
 			// Should refresh auto run and clear input
 			expect(deps.handleAutoRunRefreshRef.current).toHaveBeenCalled();

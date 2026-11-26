@@ -20,6 +20,7 @@ import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
 import { ZoomViewerHost } from './ZoomViewer';
+import { PathPickerHost } from './PathPicker/PathPickerModal';
 import { MediaPlaybackHost } from './MediaPlayback';
 import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
@@ -309,6 +310,10 @@ export function AppShell({
 			    Full-screen pan/zoom for any diagram or image. Opened by expand
 			    buttons and the image right-click menu via openZoomViewer(). */}
 			<ZoomViewerHost theme={theme} />
+			{/* --- PATH PICKER (single, app-wide) ---
+			    Browse for a folder or file on an agent's remote. Opened by
+			    pickDirectory() / pickFile() in services/pathPicker.ts. */}
+			<PathPickerHost theme={theme} />
 			{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
 			    Owns the one <audio>/<video> element so playback survives switching
 			    tabs and agents. Media never gets a tab: it renders only as the

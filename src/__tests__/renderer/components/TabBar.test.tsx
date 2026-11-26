@@ -3689,8 +3689,17 @@ describe('FileTab overlay menu', () => {
 		vi.useRealTimers();
 	});
 
-	it('hides Reveal in Finder/Explorer on file tabs when sshRemote is true', async () => {
+	it('reveals the fetched copy of a file tab on an SSH remote', async () => {
 		vi.useFakeTimers();
+		const mockShowItemInFolder = vi.fn().mockResolvedValue(undefined);
+		const downloadRemoteFile = vi
+			.fn()
+			.mockResolvedValue({ success: true, path: '/tmp/maestro-remote-downloads/k/document.md' });
+		window.maestro = {
+			...window.maestro,
+			shell: { ...window.maestro.shell, showItemInFolder: mockShowItemInFolder },
+			fs: { ...window.maestro.fs, downloadRemoteFile },
+		} as typeof window.maestro;
 
 		render(
 			<TabBar
@@ -3704,7 +3713,7 @@ describe('FileTab overlay menu', () => {
 				activeFileTabId={null}
 				onFileTabSelect={vi.fn()}
 				onFileTabClose={vi.fn()}
-				sshRemote
+				sshRemoteId="r1"
 			/>
 		);
 
@@ -3715,7 +3724,14 @@ describe('FileTab overlay menu', () => {
 			vi.advanceTimersByTime(450);
 		});
 
-		expect(screen.queryByText(/Reveal in (Finder|Explorer|File Manager)/)).not.toBeInTheDocument();
+		await act(async () => {
+			fireEvent.click(screen.getByText(/Reveal in (Finder|Explorer|File Manager)/));
+		});
+
+		expect(downloadRemoteFile).toHaveBeenCalledWith('/path/to/document.md', 'r1');
+		expect(mockShowItemInFolder).toHaveBeenCalledWith(
+			'/tmp/maestro-remote-downloads/k/document.md'
+		);
 
 		vi.useRealTimers();
 	});

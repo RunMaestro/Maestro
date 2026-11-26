@@ -20,6 +20,7 @@ import {
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
 import { AGENT_IDS } from '../../shared/agentIds';
+import { AGENT_MODES, createModeSession } from '../helpers/mockSession';
 
 describe('agentMetadata', () => {
 	describe('getAgentDisplayName', () => {
@@ -489,5 +490,19 @@ describe('agentMetadata', () => {
 			expect(hasStandardApprovalChannel({ ...server, hasImages: true })).toBe(false);
 			expect(hasStandardApprovalChannel({ ...server, sshEnabled: true })).toBe(false);
 		});
+
+		it.each(AGENT_MODES)(
+			'judges a %s agent by its turn transport, as the composer pill does',
+			(mode) => {
+				const session = createModeSession(mode);
+				const sshEnabled = session.sessionSshRemoteConfig?.enabled === true;
+				// Claude Code approves over its own channel wherever it runs.
+				expect(hasStandardApprovalChannel({ toolType: 'claude-code', sshEnabled })).toBe(true);
+				// LOCKED (B1.13): OpenCode's approval stream is the local server's.
+				expect(
+					hasStandardApprovalChannel({ toolType: 'opencode', opencodeServer: true, sshEnabled })
+				).toBe(mode === 'local');
+			}
+		);
 	});
 });

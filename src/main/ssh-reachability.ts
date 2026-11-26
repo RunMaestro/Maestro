@@ -19,6 +19,14 @@
  * host to come back. Any later ssh run that gets through, or a probe that
  * succeeds, marks it reachable and announces the recovery.
  *
+ * A remote that also hosts Federation agents is dialed by Federation too (its
+ * port forward, discovery, re-probes). On a tunnelled transport those dials
+ * collide with Maestro's own git and file-tree ssh, and the loser exits 255.
+ * While Federation holds a live connection to that remote (`hasLiveTransport`),
+ * the host is provably up, so such a 255 costs no probe: without this, a hosted
+ * agent's remote cycled through the unreachable dialog and the "SSH connection
+ * restored" toast over and over while nothing was actually down.
+ *
  * The module imports nothing from Electron; the transport (`emit`), the remote
  * lookup and the probe are injected once at startup, so the process manager and
  * remote-fs can call it unconditionally. Before configuration every call is a
@@ -63,6 +71,11 @@ export interface SshReachabilityDeps {
 	probe: (remote: SshRemoteConfig) => Promise<SshProbeOutcome>;
 	/** Deliver a state change to every client. */
 	emit: (event: SshReachabilityEvent) => void;
+	/**
+	 * Whether another live connection to this remote proves it is up right now
+	 * (a connected Federation peer). Optional: without it every 255 is suspect.
+	 */
+	hasLiveTransport?: (remoteId: string) => boolean;
 }
 
 interface UnreachableState {
@@ -112,6 +125,14 @@ export function noteSshExit(
 		if (unreachable.has(remoteId)) return;
 		const healthyAt = lastHealthyProbeAt.get(remoteId);
 		if (healthyAt !== undefined && Date.now() - healthyAt < SUSPICION_COOLDOWN_MS) return;
+		if (deps.hasLiveTransport?.(remoteId)) {
+			logger.debug(
+				`ssh exit ${exitCode} ignored: a live Federation connection holds the remote`,
+				LOG_CONTEXT,
+				{ remoteId }
+			);
+			return;
+		}
 		void checkSshRemote(remoteId);
 		return;
 	}

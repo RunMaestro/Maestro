@@ -41,7 +41,8 @@ describe('services/peerMirror', () => {
 				ok: true,
 				result: { kind: 'remove-queued', itemId: 'q1', removed: true },
 			});
-			await removeMirrorQueuedItem('box', 'a1', 'q1');
+			// The host's answer is returned, so a caller that reports it (the CLI) can.
+			expect(await removeMirrorQueuedItem('box', 'a1', 'q1')).toBe(true);
 			expect(act$).toHaveBeenCalledWith('box', 'a1', { kind: 'remove-queued', itemId: 'q1' });
 			expect(notifyToast).not.toHaveBeenCalled();
 		});
@@ -51,7 +52,7 @@ describe('services/peerMirror', () => {
 				ok: true,
 				result: { kind: 'remove-queued', itemId: 'q1', removed: false },
 			});
-			await removeMirrorQueuedItem('box', 'a1', 'q1');
+			expect(await removeMirrorQueuedItem('box', 'a1', 'q1')).toBe(false);
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ color: 'yellow', title: 'Message not removed' })
 			);
@@ -91,7 +92,8 @@ describe('services/peerMirror', () => {
 
 		it('raises a red toast when the host refuses', async () => {
 			act$.mockResolvedValue({ ok: false, error: 'Not connected to peer "box".' });
-			await removeMirrorQueuedItem('box', 'a1', 'q1');
+			// No answer is null, not a refusal: the caller reports the failure, not "not found".
+			expect(await removeMirrorQueuedItem('box', 'a1', 'q1')).toBeNull();
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ color: 'red', title: 'Could not remove the queued message' })
 			);

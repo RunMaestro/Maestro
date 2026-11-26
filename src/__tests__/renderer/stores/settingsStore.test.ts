@@ -235,6 +235,12 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
+		it('defaults Federation hosting and automatic moves to off in the store and metadata', () => {
+			expect(_INITIAL_STATE.federationHostedAgents).toBe(false);
+			expect(_INITIAL_STATE.federationAutoMove).toBe(false);
+			expect(SETTINGS_METADATA.federationHostedAgents.default).toBe(false);
+			expect(SETTINGS_METADATA.federationAutoMove.default).toBe(false);
+		});
 		it('defaults worktree provider labels to off in the store and metadata', () => {
 			expect(_INITIAL_STATE.showWorktreeProvider).toBe(false);
 			expect(SETTINGS_METADATA.showWorktreeProvider.default).toBe(false);

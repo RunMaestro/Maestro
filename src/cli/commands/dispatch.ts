@@ -12,13 +12,7 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
-	readSettings,
 } from '../services/storage';
-import {
-	AGENT_LIFTED_CODE,
-	hostedAgentsEnabled,
-	liftedSendRefusal,
-} from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
@@ -36,6 +30,7 @@ import {
 	PeerResolveError,
 	peerErrorCode,
 	resolvePeerAgent,
+	liftedPeerTarget,
 	routeAgentTarget,
 	type PeerTarget,
 } from '../services/peer-resolver';
@@ -511,11 +506,12 @@ export async function runDispatch(
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
 
-	// A lifted agent runs on its host now: queueing here would start a second owner of its session.
-	const liftedRefusal = liftedSendRefusal(getSessionById(agentId) ?? {}, () =>
-		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
-	);
-	if (liftedRefusal) return { success: false, error: liftedRefusal, code: AGENT_LIFTED_CODE };
+	// A hosted agent's turns run on its host: the dispatch goes there, as a desktop send does.
+	// Queueing here would start a second owner of its session.
+	const hostRoute = liftedPeerTarget(getSessionById(agentId));
+	if (hostRoute) {
+		return runPeerDispatch(hostRoute, message, options, queue, routingField.routing);
+	}
 
 	// A routing only steers the consults a message's `@mentions` start, so a
 	// message that mentions no other agent has nothing for it to route. Resolved

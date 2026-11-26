@@ -23,6 +23,3 @@ export type CodexVisualizationLoadResult =
 
 /** Largest height the bridge may ask for, matching Codex's own shell. */
 export const MAX_CODEX_VISUALIZATION_HEIGHT = 10_000;
-
-/** Width of a `mode: "wide"` visualization, per the skill's contract. */
-export const CODEX_VISUALIZATION_WIDE_MAX_WIDTH = 1024;

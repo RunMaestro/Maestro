@@ -7,7 +7,11 @@
 
 import type { AITab, Session, ToolType } from '../types';
 import { COMBINED_CONTEXT_AGENTS, getContextWindowForAgent } from '../../shared/agentConstants';
-import { effectiveAgentCustomEnvVars, resolveAgentAccountKey } from '../../shared/providerProfiles';
+import {
+	effectiveAgentCustomEnvVars,
+	REMOTE_ACCOUNT_HOME_DIR,
+	resolveAgentAccountKey,
+} from '../../shared/providerProfiles';
 import { useAgentStore } from '../stores/agentStore';
 import { getHomeDir } from './homeDir';
 
@@ -77,8 +81,10 @@ export function __resetGrokContextSelectionForTests(): void {
  * Synchronous for the per-turn usage path: the provider-level inputs are read
  * from a cache primed here, and nothing is returned until that cache and
  * `$HOME` have resolved, because a guessed default account could name another
- * account's window. Remote agents get none: discovery records windows for local
- * accounts only, and a local key would not describe the remote's disk.
+ * account's window. An agent whose turns run on an SSH remote (remote and
+ * hosted alike) names its account against the remote's home
+ * (`REMOTE_ACCOUNT_HOME_DIR`), the key `probeRemoteGrokContextWindows()` records
+ * that remote's catalog under; the caller looks it up in that remote's snapshot.
  */
 export function resolveGrokContextSelection(
 	session: Pick<
@@ -88,14 +94,14 @@ export function resolveGrokContextSelection(
 	tab?: Pick<AITab, 'customModel'> | null
 ): ContextWindowSelection | undefined {
 	if (session.toolType !== 'grok') return undefined;
-	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) return undefined;
 	primeGrokProviderInputs();
 	const provider = grokProviderInputs;
 	if (!provider) return undefined;
+	const runsOnRemote = Boolean(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 	const accountKey = resolveAgentAccountKey(
 		'grok',
 		effectiveAgentCustomEnvVars(session.customEnvVars, provider.env),
-		getHomeDir()
+		runsOnRemote ? REMOTE_ACCOUNT_HOME_DIR : getHomeDir()
 	);
 	if (!accountKey) return undefined;
 	const model = tab?.customModel?.trim() || session.customModel?.trim() || provider.model;

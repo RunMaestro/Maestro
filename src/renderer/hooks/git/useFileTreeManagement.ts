@@ -391,8 +391,8 @@ export function useFileTreeManagement(
 	// repo that is a second scan for no gain. Switching agents is not a request
 	// to stop loading files.
 	//
-	// The manual cancel button stays available on both (SSH-only, in
-	// FileExplorerPanel) - stopping a slow remote walk is the user's call to
+	// The manual cancel button stays available on both, in every mode (the
+	// Files panel's "Stop loading") - stopping a slow walk is the user's call to
 	// make explicitly, not something to infer from them looking elsewhere.
 	useEffect(() => {
 		if (!isWebDesktop()) return;

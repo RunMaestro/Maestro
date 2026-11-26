@@ -99,4 +99,30 @@ describe('eventMatchesShortcutKeys', () => {
 		expect(eventMatchesShortcutKeys(keyEvent('a'), [])).toBe(false);
 		expect(eventMatchesShortcutKeys(keyEvent('a'), undefined)).toBe(false);
 	});
+
+	it('matches Alt chords strictly by physical code when altByCodeOnly is set', () => {
+		// German Option+5 produces '[' on Digit5, Option+8 produces '{' on Digit8;
+		// neither is the physical '[' key so neither should match Alt+[.
+		expect(
+			eventMatchesShortcutKeys(keyEvent('[', { altKey: true, code: 'Digit5' }), ['Alt', '['], {
+				altByCodeOnly: true,
+			})
+		).toBe(false);
+		expect(
+			eventMatchesShortcutKeys(keyEvent('{', { altKey: true, code: 'Digit8' }), ['Alt', '['], {
+				altByCodeOnly: true,
+			})
+		).toBe(false);
+		// US Option+[ (BracketLeft) and Option+Q ('œ' on KeyQ) still match by code.
+		expect(
+			eventMatchesShortcutKeys(keyEvent('“', { altKey: true, code: 'BracketLeft' }), ['Alt', '['], {
+				altByCodeOnly: true,
+			})
+		).toBe(true);
+		expect(
+			eventMatchesShortcutKeys(keyEvent('œ', { altKey: true, code: 'KeyQ' }), ['Alt', 'q'], {
+				altByCodeOnly: true,
+			})
+		).toBe(true);
+	});
 });

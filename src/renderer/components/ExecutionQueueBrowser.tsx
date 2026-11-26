@@ -500,6 +500,8 @@ export function ExecutionQueueBrowser({
 								{/* Queue Items */}
 								<div className="space-y-0">
 									{session.executionQueue?.map((item, index) => {
+										// A hosted agent's items offer every action a local one does; the
+										// queue services route each to the host. Same rule as QueuedItemsList.
 										const forceSend = onForceSendItem
 											? getForceSendEligibility(session, item, { forcedParallelEnabled })
 											: null;

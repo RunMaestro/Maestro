@@ -13,6 +13,7 @@ import {
 	markAllTabsStale,
 	mirrorKey,
 	replacePeerAgents,
+	setAgentAutoRun,
 	setAgentQueue,
 	setPeerConnection,
 	summarizePeer,
@@ -305,5 +306,74 @@ describe('findMirrorPeer', () => {
 		});
 		expect(findMirrorPeer(peers, '  ')).toMatchObject({ ok: false, code: 'unknown-peer' });
 		expect(findMirrorPeer([], 'buildbox')).toMatchObject({ ok: false, code: 'unknown-peer' });
+	});
+});
+
+describe('Auto Run the host drives', () => {
+	const frame = (completedTasks: number, isRunning = true) => ({
+		isRunning,
+		totalTasks: 3,
+		completedTasks,
+		currentTaskIndex: completedTasks,
+		documents: ['phase-1'],
+	});
+	const stateEvent = (state: ReturnType<typeof frame> | null, withFrame = true) => ({
+		type: 'autorun' as const,
+		agentId: 'a1',
+		event: {
+			kind: 'state' as const,
+			at: 1,
+			state: null,
+			...(withFrame ? { frame: state } : {}),
+		},
+	});
+
+	it('an autorun state from the host holds its frame and pushes it', () => {
+		const step = applyPeerEvent(peerWith([agent('a1')]), stateEvent(frame(1)), ctx());
+		expect(step.peer.autoRuns).toEqual({ a1: frame(1) });
+		expect(step.push).toEqual([{ type: 'agent.autorun', agentId: 'a1', state: frame(1) }]);
+	});
+
+	it('a null or a stopped frame clears the run; clearing nothing pushes nothing', () => {
+		let peer = setAgentAutoRun(peerWith([agent('a1')]), 'a1', frame(1)).peer;
+		const stopped = applyPeerEvent(peer, stateEvent(frame(3, false)), ctx());
+		expect(stopped.peer.autoRuns).toEqual({});
+		expect(stopped.push).toEqual([{ type: 'agent.autorun', agentId: 'a1', state: null }]);
+		peer = stopped.peer;
+		const again = applyPeerEvent(peer, stateEvent(null), ctx());
+		expect(again.peer).toBe(peer);
+		expect(again.push).toEqual([]);
+	});
+
+	it('ignores output, usage, a frameless running state, and an agent the peer does not have', () => {
+		const peer = peerWith([agent('a1')]);
+		for (const event of [
+			{
+				type: 'autorun' as const,
+				agentId: 'a1',
+				event: { kind: 'output' as const, at: 1, processId: 'p', text: 'x' },
+			},
+			{
+				type: 'autorun' as const,
+				agentId: 'a1',
+				event: { kind: 'state' as const, at: 1, state: { isRunning: true } as never },
+			},
+			{ ...stateEvent(frame(1)), agentId: 'ghost' },
+		]) {
+			const step = applyPeerEvent(peer, event, ctx());
+			expect(step.peer).toBe(peer);
+			expect(step.push).toEqual([]);
+		}
+	});
+
+	it('a snapshot and agent.removed drop the run of an agent that went away', () => {
+		let peer = peerWith([agent('a1'), agent('a2')]);
+		peer = setAgentAutoRun(peer, 'a1', frame(1)).peer;
+		peer = setAgentAutoRun(peer, 'a2', frame(2)).peer;
+		expect(replacePeerAgents(peer, [agent('a2')], [], 2000).peer.autoRuns).toEqual({
+			a2: frame(2),
+		});
+		const removed = applyPeerEvent(peer, { type: 'agent.removed', agentId: 'a2' }, ctx());
+		expect(removed.peer.autoRuns).toEqual({ a1: frame(1) });
 	});
 });

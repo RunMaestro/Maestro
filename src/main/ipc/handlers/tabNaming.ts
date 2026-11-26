@@ -48,6 +48,7 @@ import type { ProcessConfig } from '../../process-manager/types';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { checkHostedAgentLaunch } from '../../utils/hosted-launch-guard';
 
 const LOG_CONTEXT = '[TabNaming]';
 
@@ -110,6 +111,8 @@ const EARLY_EXTRACT_INTERVAL_MS = 2 * 1000;
 /** Input for the shared tab and plugin title generator. */
 export interface TabNamingConfig {
 	userMessage: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	agentType: string;
 	cwd: string;
 	sessionSshRemoteConfig?: {
@@ -145,6 +148,7 @@ export async function generateTabName(
 	skipCheapEffort = false
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
+	if (!skipCheapEffort) checkHostedAgentLaunch(config.ownerAgentId, 'tab-naming');
 	// Keep the request's account and host stable across preparation.
 	config = structuredClone(config);
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;

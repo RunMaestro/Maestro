@@ -382,10 +382,11 @@ export interface LogEntry {
 		 * REQUEST at least as much as the command line.
 		 */
 		request?: string;
-		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
+		/**
+		 * Directory the command ran in (the agent's cwd, or the remote's). The remote's name is not
+		 * kept: the mode pill is the one mark of where an agent runs.
+		 */
 		cwd: string;
-		/** SSH remote name when the agent runs remotely, else undefined. */
-		remoteName?: string;
 		status: 'running' | 'finished' | 'cancelled';
 		exitCode?: number;
 		/** Wall-clock duration in ms, set on finish. */
@@ -1771,6 +1772,12 @@ export interface Session {
 		mode: 'interactive' | 'api';
 		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
+		/**
+		 * Why the most recent TUI turn has no steering channel when the settings say
+		 * it should (its SSH remote's maestro-p predates the steering relay). Absent
+		 * when the turn can be steered. Written by the spawner with `mode`.
+		 */
+		steeringUnavailable?: import('../../shared/chatSteering').SteeringUnavailableReason;
 	};
 }
 

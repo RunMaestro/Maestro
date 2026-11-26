@@ -28,7 +28,6 @@ const baseProps = (overrides: Partial<React.ComponentProps<typeof PlaybookDetail
 	isLoadingDocument: false,
 	targetFolderName: 'test-playbook',
 	isImporting: false,
-	isRemoteSession: false,
 	runningVersion: '1.0.0',
 	onBack: vi.fn(),
 	onSelectDocument: vi.fn(),
@@ -137,11 +136,11 @@ describe('PlaybookDetailView', () => {
 		expect(container.querySelector('.animate-spin')).toBeTruthy();
 	});
 
-	it('updates target folder, browses locally, imports, and disables browse remotely', () => {
+	it('updates target folder, browses, and imports (the view takes no mode)', () => {
 		const onTargetFolderChange = vi.fn();
 		const onBrowseFolder = vi.fn();
 		const onImport = vi.fn();
-		const { getByPlaceholderText, getByTitle, getByText, rerender } = render(
+		const { getByPlaceholderText, getByTitle, getByText } = render(
 			<PlaybookDetailView
 				{...baseProps({
 					onTargetFolderChange,
@@ -159,8 +158,5 @@ describe('PlaybookDetailView', () => {
 
 		fireEvent.click(getByText('Import Playbook'));
 		expect(onImport).toHaveBeenCalledTimes(1);
-
-		rerender(<PlaybookDetailView {...baseProps({ isRemoteSession: true })} />);
-		expect(getByTitle('Browse is not available for remote sessions')).toBeDisabled();
 	});
 });

@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	applySettingFilter,
+	findJumpAnchor,
 	groupNavigationTarget,
 	groupSearchResults,
 	SEARCH_HIDDEN_ATTR,
@@ -139,5 +140,40 @@ describe('applySettingFilter', () => {
 
 		expect(hidden(root, '[data-setting-id="hotkey"]')).toBe(false);
 		expect(hidden(root, '[data-setting-id="agent"]')).toBe(true);
+	});
+});
+
+describe('findJumpAnchor', () => {
+	function render(): HTMLElement {
+		const root = document.createElement('div');
+		root.innerHTML = `
+			<div data-setting-id="tile">
+				<p class="intro">Intro</p>
+				<div data-setting-id="hotkey"><button>Set</button></div>
+				<div data-setting-id="agent"><select></select></div>
+			</div>
+			<p class="loose">Loose</p>`;
+		return root;
+	}
+	const anyId = () => true;
+
+	it('lands on the nearest wrapper around the element', () => {
+		const root = render();
+		const anchor = findJumpAnchor(root, root.querySelector('button'), anyId);
+		expect(anchor?.dataset.settingId).toBe('hotkey');
+	});
+
+	it('skips a refused wrapper for the one that encloses it', () => {
+		const root = render();
+		const anchor = findJumpAnchor(root, root.querySelector('button'), (id) => id === 'tile');
+		expect(anchor?.dataset.settingId).toBe('tile');
+	});
+
+	it('finds nothing outside a wrapper, outside the root, or under a hidden element', () => {
+		const root = render();
+		expect(findJumpAnchor(root, root.querySelector('.loose'), anyId)).toBeNull();
+		expect(findJumpAnchor(root, document.createElement('div'), anyId)).toBeNull();
+		root.querySelector('[data-setting-id="agent"]')!.setAttribute(SEARCH_HIDDEN_ATTR, '');
+		expect(findJumpAnchor(root, root.querySelector('select'), anyId)).toBeNull();
 	});
 });
