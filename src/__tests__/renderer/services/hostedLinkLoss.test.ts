@@ -17,7 +17,11 @@ import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { __resetHostedLinkLossForTests } from '../../../renderer/services/hostedLinkLoss';
-import { handQueuedItemToHost, keepTurnForHost } from '../../../renderer/services/hostedQueuedTurn';
+import {
+	handQueuedItemToHost,
+	keepTurnForHost,
+	sendTakenItemToHost,
+} from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
@@ -841,6 +845,46 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(queue()).toHaveLength(1);
 		expect(getRetryEntry('row', 't1')?.status).toBe('scheduled');
 	});
+
+	it.each([
+		[
+			'never sends it when the host had answered it',
+			[QUESTION, { id: 'a1', timestamp: 20, source: 'ai' as const, text: 'The docs say...' }],
+			0,
+		],
+		['sends it, naming its entry, when the turn died with the host', [QUESTION], 1],
+	])(
+		'Force Send on the copy a Stop parked reads the host first: %s (R21)',
+		async (_what, entries, sent) => {
+			cut();
+			// Stop on the cut turn, then on its retry card: the kept copy is parked held.
+			await interruptTurn('row', { tabId: 't1' });
+			stopRetriesForAgent('row', 't1');
+			const parked = queue()[0];
+			expect(parked).toMatchObject({ paused: true, hostEntryId: 'u1' });
+
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			await hostBack('idle', entries);
+			expect(sends()).toHaveLength(0);
+
+			// Force Send: the drain takes the copy out of the queue and hands it to the host.
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((session) => ({ ...session, executionQueue: [] })),
+			}));
+			await sendTakenItemToHost('row', parked);
+			await flush();
+			expect(sends()).toHaveLength(sent);
+			if (sent) expect(sends()[0][2]).toMatchObject({ kind: 'send', entryId: 'u1' });
+			else {
+				expect(toastMock).toHaveBeenCalledWith(
+					expect.objectContaining({ title: 'Not sent again' })
+				);
+			}
+		}
+	);
 
 	it('a resend while the host is still down stays kept under the same card', async () => {
 		cut();
