@@ -20,7 +20,7 @@ import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useFocusOnMount, useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import type { Session, Theme, QueuedItem, QueuedItemEditPatch } from '../types';
+import type { Session, Theme, QueuedItem, ModalSaveOutcome, QueuedItemEditPatch } from '../types';
 import { formatRelativeTime } from '../../shared/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
@@ -62,7 +62,11 @@ interface ExecutionQueueBrowserProps {
 	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onToggleItemPause?: (sessionId: string, itemId: string) => void;
-	onEditItem?: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditItem?: (
+		sessionId: string,
+		itemId: string,
+		patch: QueuedItemEditPatch
+	) => Promise<ModalSaveOutcome>;
 	/** Dispatch a queued item immediately, out of queue order */
 	onForceSendItem?: (sessionId: string, itemId: string) => void;
 	/** Fold a queued message into the earlier message for the same tab */

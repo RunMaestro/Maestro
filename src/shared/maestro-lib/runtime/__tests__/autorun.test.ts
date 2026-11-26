@@ -33,6 +33,7 @@ import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-hist
 import { AUTO_RUN_SESSION_COLUMNS, AUTO_RUN_TASK_COLUMNS } from '../../stats/auto-run-insert';
 import { QUERY_EVENT_COLUMNS } from '../../stats/query-event-insert';
 import { runAgentTurn } from '../../turns/run-agent-turn';
+import { STEERING_BLOCK_START } from '../../../autorunSteering';
 import { outcomeOfEngineEvent } from '../autorun';
 import {
 	createMaestroRuntime,
@@ -62,7 +63,12 @@ const AUTH_FAILURE =
  * One Claude Code turn that says `text`: what the fake agent replays for a task or an iteration.
  * With `failure`, the turn ends on that error and exits 1.
  */
-function claudeTurn(text: string, sessionId: string, failure?: string): FakeTurn {
+function claudeTurn(
+	text: string,
+	sessionId: string,
+	failure?: string,
+	work?: { reasoning: string; readFile: string }
+): FakeTurn {
 	const usage = {
 		input_tokens: 10,
 		output_tokens: 5,
@@ -73,6 +79,28 @@ function claudeTurn(text: string, sessionId: string, failure?: string): FakeTurn
 	return {
 		chunks: [
 			line({ type: 'system', subtype: 'init', session_id: sessionId }),
+			// The agent's reasoning and one tool call, before its answer.
+			...(work
+				? [
+						line({
+							type: 'assistant',
+							message: {
+								role: 'assistant',
+								content: [
+									{ type: 'thinking', thinking: work.reasoning },
+									{
+										type: 'tool_use',
+										id: 'call-read-1',
+										name: 'Read',
+										input: { file_path: work.readFile },
+									},
+								],
+								usage,
+							},
+							session_id: sessionId,
+						}),
+					]
+				: []),
 			line({
 				type: 'assistant',
 				message: { role: 'assistant', content: [{ type: 'text', text }], usage },
@@ -101,6 +129,8 @@ interface Step {
 	failure?: string;
 	/** The agent says nothing more and stays running, as a hung agent does. */
 	hang?: boolean;
+	/** The agent reasons and reads a file before it answers. */
+	work?: { reasoning: string; readFile: string };
 }
 
 describe('runtime Auto Run', () => {
@@ -124,7 +154,10 @@ describe('runtime Auto Run', () => {
 		if (isRun && !step) throw new Error('The script has no step left for this Auto Run turn.');
 		if (isRun) runLaunches.push({ prompt: turn.launch.prompt ?? '', args: [...turn.launch.args] });
 		const recording = step
-			? writeFakeTurn(work, claudeTurn(step.text, `provider-${envFiles.length + 1}`, step.failure))
+			? writeFakeTurn(
+					work,
+					claudeTurn(step.text, `provider-${envFiles.length + 1}`, step.failure, step.work)
+				)
 			: chatRecording;
 		const envOut = path.join(work, `env-${envFiles.length + 1}.json`);
 		envFiles.push(envOut);
@@ -372,6 +405,68 @@ describe('runtime Auto Run', () => {
 			// Each turn is automation, not someone typing.
 			const env = JSON.parse(read(envFiles[0]));
 			expect(env.MAESTRO_QUERY_SOURCE).toBe('auto');
+		});
+
+		it("sends the task's reasoning and tool calls, in order, for a client's Thought Stream", async () => {
+			const file = doc('tasks', tasks(1));
+			script = [
+				{
+					text: 'Finished the one task.',
+					tick: file,
+					work: { reasoning: 'First I read the source.', readFile: '/w/src/a.ts' },
+				},
+			];
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			expect(value(await runtime.autoRun.launch('a1', { documents: [{ file }] }))).toBeUndefined();
+			await run.ended();
+
+			const kinds = run.events.map((event) => event.kind);
+			const thought = run.events.find((event) => event.kind === 'thinking');
+			const tool = run.events.find((event) => event.kind === 'tool');
+			expect(thought).toMatchObject({ text: 'First I read the source.' });
+			expect(tool).toMatchObject({
+				toolName: 'Read',
+				toolCallId: 'call-read-1',
+				// The call's raw arguments ride under `input`, as the desktop's own tool events carry them.
+				state: { status: 'running', input: { file_path: '/w/src/a.ts' } },
+			});
+			// The reasoning that led to the call goes out before it, and both before the answer.
+			expect(kinds.indexOf('thinking')).toBeLessThan(kinds.indexOf('tool'));
+			expect(kinds.indexOf('tool')).toBeLessThan(kinds.indexOf('output'));
+			expect(thought?.kind === 'thinking' && thought.processId).toBe(
+				tool?.kind === 'tool' && tool.processId
+			);
+		});
+
+		it('opens the next task with a steering note, and keeps the reply beside it', async () => {
+			const file = doc('tasks', tasks(2));
+			script = [1, 2].map((n) => ({ text: `Finished task ${n}.`, tick: file }));
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			expect(value(await runtime.autoRun.steer('a1', { action: 'send', text: 'x' }))).toMatchObject(
+				{ success: false, error: 'No Auto Run is active on this agent' }
+			);
+			expect(value(await runtime.autoRun.launch('a1', { documents: [{ file }] }))).toBeUndefined();
+			const sent = value(
+				await runtime.autoRun.steer('a1', { action: 'send', text: 'Prefer the fixtures' })
+			);
+			expect(sent).toMatchObject({ success: true, note: { text: 'Prefer the fixtures' } });
+			await run.ended();
+
+			// The default prompt names the block's marker too, so the note's own text is what is counted.
+			const steered = runLaunches.filter((launch) => launch.prompt.includes('Prefer the fixtures'));
+			expect(steered).toHaveLength(1);
+			expect(steered[0].prompt.startsWith(STEERING_BLOCK_START)).toBe(true);
+			const listed = value(await runtime.autoRun.steer('a1', { action: 'list' }));
+			expect(listed).toMatchObject({ success: true, steerable: false, pending: [] });
+			expect(listed.deliveries).toHaveLength(1);
+			expect(listed.deliveries?.[0]).toMatchObject({
+				notes: [{ text: 'Prefer the fixtures' }],
+				reply: { success: true, text: expect.stringMatching(/^Finished task [12]\.$/) },
+			});
 		});
 
 		it('starts its progress frame from the tasks already checked, as the desktop runner does', async () => {

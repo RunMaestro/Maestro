@@ -27,6 +27,7 @@ import type {
 } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
 import type { QueueSteerResult } from '../../chatSteering';
+import type { SteeringCommandInput, SteeringCommandResult } from '../../autoRunSteeringCommands';
 import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../projectTokenUsage';
 import type { HarnessControlMode } from '../providers/native-control';
 import type { PeerAccess, PeerAgent } from '../../types';
@@ -121,6 +122,7 @@ export type ClientMethod =
 	| 'autoRun.resume'
 	| 'autoRun.skip'
 	| 'autoRun.abort'
+	| 'autoRun.steer'
 	| 'groupChats.list'
 	| 'groupChats.get'
 	| 'groupChats.create'
@@ -799,6 +801,13 @@ export interface AutoRunApi {
 	skip(agentId: string): Promise<ClientResult<void>>;
 	/** AR-7. End a run parked on an error. */
 	abort(agentId: string): Promise<ClientResult<void>>;
+	/**
+	 * The Thought Stream's Steer: send a note for the run's next task, list what waits and what
+	 * came back, take a waiting note back, or dismiss a delivered one. The host answers with the
+	 * desktop's own result (`auto_run_steering_command`); a refusal (no run, the cap) is a result
+	 * with `success: false`, not an error. An older host answers `unsupported`.
+	 */
+	steer(agentId: string, input: SteeringCommandInput): Promise<ClientResult<SteeringCommandResult>>;
 }
 
 /**

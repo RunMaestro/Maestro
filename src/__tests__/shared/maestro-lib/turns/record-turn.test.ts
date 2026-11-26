@@ -37,6 +37,7 @@ import {
 	buildUserTranscriptEntry,
 	createTurnRecorder,
 	type RecordedTurn,
+	type TurnSummaryHandoff,
 } from '../../../../shared/maestro-lib/turns/record-turn';
 import type { StatsRecorder } from '../../../../shared/maestro-lib/turns/stats';
 import type { TurnExit } from '../../../../shared/maestro-lib/run/start-turn';
@@ -113,7 +114,11 @@ describe('turn records', () => {
 		);
 
 	async function recorder(
-		options: { statsRecorder?: StatsRecorder; loadSqlite?: () => never } = {}
+		options: {
+			statsRecorder?: StatsRecorder;
+			loadSqlite?: () => never;
+			summarize?: (handoff: TurnSummaryHandoff) => void;
+		} = {}
 	) {
 		const repository = createAgentRepository({
 			paths,
@@ -137,6 +142,7 @@ describe('turn records', () => {
 				context: context(),
 				// With a loader given, the real recorder runs; otherwise the spy.
 				...(options.loadSqlite ? {} : { statsRecorder }),
+				...(options.summarize ? { summarize: options.summarize } : {}),
 			}),
 		};
 	}
@@ -763,6 +769,36 @@ describe('turn records', () => {
 			});
 		});
 
+		it.each([
+			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['on', ['user', 'stdout']],
+			['off', ['user', 'stdout']],
+			[undefined, ['user', 'stdout']],
+		])(
+			'writes what a %s tab keeps of the streamed thinking and tool cards (P7)',
+			(mode, sources) => {
+				const streamed = [
+					{ id: 's1', timestamp: 2, source: 'thinking' as const, text: 'Plan it.' },
+					{
+						id: 'tool-1',
+						timestamp: 3,
+						source: 'tool' as const,
+						text: 'Read',
+						metadata: { toolState: { status: 'completed' as const, output: 'x'.repeat(10_000) } },
+					},
+					{ id: 's2', timestamp: 4, source: 'stdout' as const, text: 'streamed answer' },
+				];
+				const entries = buildTurnTranscript(turn({ streamed }), ctx, mode);
+				expect(entries.map((e) => e.source)).toEqual(sources);
+				if (mode === 'sticky') {
+					// The tool card is capped as a saved tab's is; the answer is the result, written once.
+					const output = entries[2].metadata?.toolState?.output as string;
+					expect(output.length).toBeLessThan(10_000);
+					expect(entries.filter((e) => e.source === 'stdout')).toHaveLength(1);
+				}
+			}
+		);
+
 		it('starts at the answer when the runtime already wrote the message', () => {
 			const entries = buildTurnTranscript(turn({ userEntryWritten: true }), ctx);
 			expect(entries.map((e) => e.source)).toEqual(['stdout']);
@@ -795,6 +831,69 @@ describe('turn records', () => {
 			);
 			expect(answer).not.toHaveProperty('turnModel');
 			expect(answer).not.toHaveProperty('turnEffort');
+		});
+	});
+
+	// P8: with `summarize` (a host's runtime), a finished turn's History entry comes from a synopsis
+	// turn, by the desktop's exit rule: the turn ran a tool (or its tool cards are not kept, or it
+	// was a custom command) in a provider session.
+	describe('History from a synopsis turn (P8)', () => {
+		const tool = { id: 'tool-1', timestamp: 3, source: 'tool' as const, text: 'Read' };
+
+		it("hands the entry to summarize with the turn's provider, model and effort, and writes none", async () => {
+			const handoffs: TurnSummaryHandoff[] = [];
+			const { recorder: records } = await recorder({ summarize: (h) => handoffs.push(h) });
+			const result = await records.recordTurn(turn({ streamed: [tool] }));
+			expect(result.history).toEqual({ ok: true, synopsis: true });
+			expect(await new HistoryManager().getEntries('a1')).toEqual([]);
+			expect(handoffs).toHaveLength(1);
+			expect(handoffs[0].settings).toEqual({
+				provider: 'claude-code',
+				model: 'opus',
+				effort: 'high',
+			});
+			expect(handoffs[0].entry).toMatchObject({
+				type: 'USER',
+				agentSessionId: 'abcd1234-0000-4000-8000-000000000000',
+				sessionId: 'a1',
+				tabId: 't1',
+				elapsedTimeMs: 4_200,
+				success: true,
+			});
+			// Usage is still recorded for the turn itself.
+			expect(statsEvents).toHaveLength(1);
+		});
+
+		it.each([
+			['a tab that keeps tool cards, after a text-only turn', 'on', [], undefined, false],
+			['a tab that keeps tool cards, after a tool turn', 'on', [tool], undefined, true],
+			['a tab with thinking off, whose tool cards are not kept', 'off', [], undefined, true],
+			['a custom command, whatever it ran', 'on', [], { command: '/commit' }, true],
+		] as const)('%s: summarized=%s', async (_name, showThinking, streamed, aiCommand, handed) => {
+			seed({}, { showThinking });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(
+				turn({
+					streamed: [...streamed],
+					assembled: {
+						entry: { text: 'do it', ...(aiCommand ? { aiCommand } : {}) },
+						settings: { provider: 'claude-code' },
+					},
+				})
+			);
+			expect(summarize).toHaveBeenCalledTimes(handed ? 1 : 0);
+			expect(result.history).toMatchObject(handed ? { ok: true } : { reason: 'not-recorded' });
+		});
+
+		it('summarizes no turn that ran in no provider session, as the desktop does not', async () => {
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(
+				turn({ streamed: [tool], completed: { ...turn().completed, sessionId: undefined } })
+			);
+			expect(summarize).not.toHaveBeenCalled();
+			expect(result.history).toMatchObject({ ok: false, reason: 'not-recorded' });
 		});
 	});
 

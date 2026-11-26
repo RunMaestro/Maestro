@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { AdditionalDirectory, Theme, Session } from '../../types';
+import type { AdditionalDirectory, ModalSaveOutcome, Theme, Session } from '../../types';
 
 // Session Management Modal Components
 import { NewInstanceModal, EditAgentModal } from '../NewInstanceModal';
@@ -95,7 +95,7 @@ export interface AppSessionModalsProps {
 	renameTabId: string | null;
 	renameTabInitialName: string;
 	onCloseRenameTabModal: () => void;
-	onRenameTab: (newName: string) => void;
+	onRenameTab: (newName: string) => Promise<ModalSaveOutcome>;
 	onAutoNameTab: () => void;
 
 	// NewAgentChoiceModal

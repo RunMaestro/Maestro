@@ -56,7 +56,7 @@ import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
-import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
+import { answerSteeringCommand } from '../../services/autoRunSteering';
 import { runRemoteDiffReviewCommand } from '../../services/diffReview';
 import { runRemoteFileReviewCommand } from '../../services/fileReview';
 import { runRemoteDesignPickCommand } from '../../services/designModePick';
@@ -2698,15 +2698,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(request, responseChannel) => {
 				const reply = (result: SteeringCommandResult) =>
 					window.maestro.process.sendRemoteAutoRunSteeringCommandResponse(responseChannel, result);
-				try {
-					reply(runRemoteSteeringCommand(request));
-				} catch (error) {
+				// A hosted agent's answer comes from its host, so the reply waits for it.
+				answerSteeringCommand(request).then(reply, (error: unknown) => {
 					logger.error('[useRemoteIntegration] Steering command failed', undefined, error);
 					reply({
 						success: false,
 						error: error instanceof Error ? error.message : String(error),
 					});
-				}
+				});
 			}
 		);
 		return () => {

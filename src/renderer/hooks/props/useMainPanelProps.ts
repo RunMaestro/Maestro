@@ -23,6 +23,7 @@ import type {
 	AITab,
 	AgentError,
 	QueuedItem,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
@@ -149,7 +150,7 @@ export interface UseMainPanelPropsDeps {
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
 	handleMergeQueuedItem: (itemId: string) => void;
-	handleEditQueuedItem: (itemId: string, patch: QueuedItemEditPatch) => void;
+	handleEditQueuedItem: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>;
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;

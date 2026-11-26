@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, PenLine, X } from 'lucide-react';
-import type { Theme, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings } from '../types';
+import type {
+	Theme,
+	ModalSaveOutcome,
+	QueuedItem,
+	QueuedItemEditPatch,
+	QueuedTurnSettings,
+} from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import type { AgentDiscoveryRequest } from '../../shared/types';
@@ -24,6 +30,8 @@ import { useAutoModelChoice } from '../hooks/agent/useAutoModelChoice';
 import { withAutoModelOption } from '../../shared/autoTurn';
 import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { isImeComposing } from '../utils/ime';
+import { useModalSave } from '../hooks/ui/useModalSave';
+import { ModalSaveError } from './ui/ModalSaveError';
 
 interface QueuedItemEditModalProps {
 	item: QueuedItem;
@@ -37,7 +45,12 @@ interface QueuedItemEditModalProps {
 	 */
 	sessionId?: string;
 	onClose: () => void;
-	onSave: (patch: QueuedItemEditPatch) => void;
+	/**
+	 * Save the edit. The modal closes only when it answers `saved`; a refused or failed save keeps
+	 * the modal open with what the person typed and shows the reason in it, in every mode (a
+	 * hosted agent's host answers it, a local or SSH agent's queue at once).
+	 */
+	onSave: (patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>;
 }
 
 /**
@@ -72,6 +85,14 @@ export function QueuedItemEditModal({
 		return captureQueuedTurnSettings(tab, session);
 	}, [item.turnSettings, item.tabId, session]);
 	const [turnSettings, setTurnSettings] = useState(initialTurnSettings);
+	// A save closes the modal only once it landed; a refused one keeps the text and images here
+	// and says why, in every mode.
+	const { save, saving, saveError, clearSaveError } = useModalSave(
+		() => onSave({ text, images, turnSettings }),
+		onClose,
+		'QueuedItemEditModal',
+		[text, images, turnSettings]
+	);
 	const [draftOwner, setDraftOwner] = useState({ sessionId: session?.id, itemId: item.id });
 	if (draftOwner.sessionId !== session?.id || draftOwner.itemId !== item.id) {
 		// Reset before React commits this render: neither discovery nor Save may
@@ -80,6 +101,7 @@ export function QueuedItemEditModal({
 		setText(item.text ?? '');
 		setImages(item.images ?? []);
 		setTurnSettings(initialTurnSettings);
+		clearSaveError();
 	}
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
@@ -209,10 +231,8 @@ export function QueuedItemEditModal({
 	const trimmed = text.trim();
 	const canSave = trimmed.length > 0 || images.length > 0;
 
-	const handleSave = () => {
-		if (!canSave) return;
-		onSave({ text, images, turnSettings });
-		onClose();
+	const handleSave = async () => {
+		if (canSave) await save();
 	};
 
 	// Open the annotator on a specific image; the edited PNG replaces it in place.
@@ -230,7 +250,7 @@ export function QueuedItemEditModal({
 		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
-			handleSave();
+			void handleSave();
 			return;
 		}
 		if (images.length === 0) return;
@@ -261,9 +281,9 @@ export function QueuedItemEditModal({
 					<ModalFooter
 						theme={theme}
 						onCancel={onClose}
-						onConfirm={handleSave}
-						confirmLabel="Save"
-						confirmDisabled={!canSave}
+						onConfirm={() => void handleSave()}
+						confirmLabel={saving ? 'Saving...' : 'Save'}
+						confirmDisabled={!canSave || saving}
 					/>
 				}
 			>
@@ -282,6 +302,7 @@ export function QueuedItemEditModal({
 							...resize.style,
 						}}
 					/>
+					<ModalSaveError theme={theme} reason={saveError} />
 
 					{/* Image strip: annotate / remove / click-to-view */}
 					{images.length > 0 && (

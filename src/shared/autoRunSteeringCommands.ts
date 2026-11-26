@@ -53,6 +53,12 @@ export interface SteeringCommandRequest {
 	background?: boolean;
 }
 
+/**
+ * A steering command for an agent already named: what a client asks a Federation host about one of
+ * its agents (`autoRun.steer`). The `--background` notice is the asking client's own.
+ */
+export type SteeringCommandInput = Omit<SteeringCommandRequest, 'sessionId' | 'background'>;
+
 /** One note the operator sent, as it crosses the wire. */
 export interface SteeringNoteSummary {
 	/** Stable handle for `cancel` while the note is still pending. */

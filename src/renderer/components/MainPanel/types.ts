@@ -10,6 +10,7 @@ import type {
 	FilePreviewTab,
 	AgentError,
 	QueuedItem,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type {
@@ -154,7 +155,7 @@ export interface MainPanelProps {
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onMergeQueuedItem?: (itemId: string) => void;
-	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;

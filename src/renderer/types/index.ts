@@ -533,6 +533,13 @@ export interface QueuedItemEditPatch {
 	turnSettings: QueuedTurnSettings;
 }
 
+/**
+ * What a modal's save did, for a modal that sends what the person typed somewhere that can refuse
+ * it (a hosted agent's host): Edit Queued Message (`saveQueuedItemEdit()`) and Rename Tab. The
+ * modal closes only on `saved`; otherwise it keeps the person's input and shows `reason` in it.
+ */
+export type ModalSaveOutcome = { saved: true } | { saved: false; reason: string };
+
 /** One agent a held turn is waiting to hear from. */
 export interface ConsultHoldTarget {
 	targetSessionId: string;

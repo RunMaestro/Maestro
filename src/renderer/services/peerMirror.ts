@@ -23,6 +23,10 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type {
+	SteeringCommandInput,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import type { ClosedTabSummary } from '../../shared/closedTabCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -105,6 +109,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'auto-run': 'Auto Run did not start',
 	'goal-run': 'Auto Run did not start',
 	'auto-run-control': 'Auto Run control failed',
+	'steer-auto-run': 'Could not steer the Auto Run',
 };
 
 /** What the main-process service answered for one action (`PeerMirrorService.act()`). */
@@ -144,11 +149,38 @@ export async function actOnMirroredAgent(
 	const answer = await callMirroredAgentAction(peerId, agentId, action);
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
-	const error = answer.unknown
+	notifyToast({
+		color: 'red',
+		title: ACTION_FAILURE_TITLES[action.kind],
+		message: mirroredActionError(answer),
+	});
+	return null;
+}
+
+/** Why an action on a hosted agent has no result: its host never answered. */
+export const HOST_NO_ANSWER_REASON =
+	"The agent's host did not answer. It may be offline: check the agent in Maestro.";
+
+/**
+ * `actOnMirroredAgent` with no toast, for a modal that shows the reason itself and keeps what the
+ * person typed (Edit Queued Message, Rename Tab): the host's result, or why it did not take the
+ * action (the host's own words, or `HOST_NO_ANSWER_REASON`).
+ */
+export async function actOnMirroredAgentQuietly(
+	peerId: string,
+	agentId: string,
+	action: PeerAgentAction
+): Promise<{ result: PeerAgentActionResult } | { error: string }> {
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (!answer) return { error: HOST_NO_ANSWER_REASON };
+	return answer.ok ? { result: answer.result } : { error: mirroredActionError(answer) };
+}
+
+/** The words for an action the host did not take, as the red toast and a modal's own line say it. */
+function mirroredActionError(answer: Extract<MirroredActionAnswer, { ok: false }>): string {
+	return answer.unknown
 		? `${answer.error} The host may have taken it: check the tab before sending again.`
 		: answer.error;
-	notifyToast({ color: 'red', title: ACTION_FAILURE_TITLES[action.kind], message: error });
-	return null;
 }
 
 /**
@@ -373,6 +405,27 @@ export async function steerMirrorQueuedItem(
 ): Promise<QueueSteerResult | null> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'steer-queued', itemId });
 	return result?.kind === 'steer-queued' ? result.result : null;
+}
+
+/**
+ * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss). The host's
+ * answer as is, a refusal included (`success: false`, no toast: the caller says it where the user
+ * looked). Null when the host could not be reached (a red toast, unless `quiet`).
+ */
+export async function steerMirrorAutoRun(
+	peerId: string,
+	agentId: string,
+	input: SteeringCommandInput,
+	options: { quiet?: boolean } = {}
+): Promise<SteeringCommandResult | null> {
+	const action = { kind: 'steer-auto-run' as const, input };
+	// `quiet`: a background read, whose failure is not news (the next one tries again).
+	if (options.quiet) {
+		const answer = await callMirroredAgentAction(peerId, agentId, action);
+		return answer?.ok && answer.result.kind === 'steer-auto-run' ? answer.result.result : null;
+	}
+	const result = await actOnMirroredAgent(peerId, agentId, action);
+	return result?.kind === 'steer-auto-run' ? result.result : null;
 }
 
 /**

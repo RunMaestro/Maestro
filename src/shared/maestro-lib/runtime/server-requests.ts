@@ -24,6 +24,7 @@ import {
 } from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
 import { parseClosedTabCommandRequest } from '../../closedTabCommands';
+import { parseSteeringCommandRequest } from '../../autoRunSteeringCommands';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type { RunOnTarget } from '../../local-models/run-on';
 import type {
@@ -999,6 +1000,17 @@ export function createRequestHandler(
 					'abort_auto_run_error_result',
 					await client.autoRun.abort(sessionId(message))
 				);
+			// The Thought Stream's Steer, in the desktop's own message (`maestro-cli steer-auto-run`).
+			case 'auto_run_steering_command': {
+				const type = 'auto_run_steering_command_result';
+				const parsed = parseSteeringCommandRequest(message);
+				if (!parsed.ok) return { type, success: false, error: parsed.error };
+				const { sessionId: agentId, background: _notice, ...input } = parsed.request;
+				const steered = await client.autoRun.steer(agentId, input);
+				return steered.ok
+					? { type, ...steered.value }
+					: { type, success: false, error: errorText(steered) };
+			}
 
 			// -- group chats ------------------------------------------------
 			case 'get_group_chats': {

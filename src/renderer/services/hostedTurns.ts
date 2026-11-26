@@ -32,6 +32,10 @@ import type {
 } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { BatchRunConfig } from '../../shared/types';
+import type {
+	SteeringCommandInput,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -41,19 +45,21 @@ import {
 	updateSessionWith,
 	useSessionStore,
 } from '../stores/sessionStore';
-import type { AITab, Session, UnifiedTabRef } from '../types';
+import type { AITab, ModalSaveOutcome, Session, UnifiedTabRef } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
 import { appendBlockToDraft } from '../utils/quoteSelection';
 import { insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
 import {
 	actOnMirroredAgent,
+	actOnMirroredAgentQuietly,
 	closeMirrorTab,
 	interruptMirroredAgent,
 	renameMirrorTab,
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
 	starMirrorTab,
+	steerMirrorAutoRun,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
 import { hostedTranscriptBaseline, watchHostedHistoryCommand } from './historyEntryToast';
@@ -411,7 +417,6 @@ export async function sendHostedTurn(
 	const historyBaseline = historyCommand
 		? await hostedTranscriptBaseline(target.peerId, target.agentId, hostTabId as string)
 		: undefined;
-	const sentAt = Date.now();
 	const receipt = await sendToMirroredTab(
 		target.peerId,
 		target.agentId,
@@ -434,11 +439,9 @@ export async function sendHostedTurn(
 				: candidate
 		);
 	}
-	if (historyCommand && receipt?.status === 'ran' && hostTabId) {
-		watchHostedHistoryCommand(session.id, target, hostTabId, {
-			sentAt,
-			...(historyBaseline ? { baseline: historyBaseline } : {}),
-		});
+	// No baseline (the read before the send failed): no toast rather than an earlier run's.
+	if (historyCommand && historyBaseline && receipt?.status === 'ran' && hostTabId) {
+		watchHostedHistoryCommand(session.id, target, hostTabId, { baseline: historyBaseline });
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
 	if (receipt && opts.nameFrom && hostTabId) {
@@ -508,6 +511,27 @@ export function renameHostedTab(
 	if (target && isHostTab(target, tabId)) {
 		void renameMirrorTab(target.peerId, target.agentId, tabId, name);
 	}
+}
+
+/**
+ * Rename a host tab and wait for the host's answer, for Rename Tab: a name the host refused keeps
+ * the modal open with what the person typed, and the reason in it (no toast). Null for a tab that
+ * is not a host's (a local or SSH rename, which is applied here and cannot be refused).
+ */
+export function renameHostedTabSettled(
+	session: Pick<Session, 'liftedTo'> | null | undefined,
+	tabId: string,
+	name: string
+): Promise<ModalSaveOutcome> | null {
+	const target = hostedTargetOf(session);
+	if (!target || !isHostTab(target, tabId)) return null;
+	return actOnMirroredAgentQuietly(target.peerId, target.agentId, {
+		kind: 'rename-tab',
+		tabId,
+		name,
+	}).then((answer) =>
+		'error' in answer ? { saved: false, reason: answer.error } : { saved: true }
+	);
 }
 
 /**
@@ -618,6 +642,21 @@ export async function startHostedAutoRun(
 		},
 	});
 	return result?.kind === 'auto-run';
+}
+
+/**
+ * Steer a hosted agent's run on the host that runs it (the Thought Stream's Steer). Undefined for
+ * an agent that is not hosted, so the caller steers its own run; otherwise the host's answer, or
+ * null when the host could not be reached (already a red toast).
+ */
+export function steerHostedAutoRun(
+	session: Pick<Session, 'liftedTo'> | null | undefined,
+	input: SteeringCommandInput,
+	options: { quiet?: boolean } = {}
+): Promise<SteeringCommandResult | null> | undefined {
+	const target = hostedTargetOf(session);
+	if (!target) return undefined;
+	return steerMirrorAutoRun(target.peerId, target.agentId, input, options);
 }
 
 /**

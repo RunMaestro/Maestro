@@ -20,13 +20,6 @@ import { readMirrorTranscript } from './peerMirror';
 /** How long a window waits for a hosted `/history` to finish before it stops watching. */
 export const HOSTED_HISTORY_WATCH_MS = 10 * 60 * 1000;
 
-/**
- * How far a host's clock may run behind this one. Only used when the tab could not be read before
- * the send (`hostedTranscriptBaseline()` failed), so the lines already there cannot be told apart
- * by id.
- */
-export const HOSTED_HISTORY_CLOCK_SKEW_MS = 60 * 1000;
-
 /** The group a History toast names: the agent's, a worktree child's parent's, else Ungrouped. */
 function historyToastGroupName(session: Pick<Session, 'groupId' | 'parentSessionId'>): string {
 	const state = useSessionStore.getState();
@@ -80,23 +73,22 @@ export async function hostedTranscriptBaseline(
 
 /**
  * After a host ran `/history` for a hosted agent's tab, raise the local toast once the host's line
- * says the entry was saved. Lines in `baseline` (the tab's entries before the send) are older runs;
- * without one, lines older than the send (allowing for clock skew) are. A line that ends the run any
- * other way (nothing to report, failed, error) ends the watch with no toast, as a local run raises
- * none. Returns a function that stops watching.
+ * says the entry was saved. Lines in `baseline` (the tab's entries read before the send) are older
+ * runs, so only a line outside it is this run's. A caller with no baseline (the read before the
+ * send failed) does not watch: an earlier run's line could not be told from this one's, and no
+ * toast is better than a wrong one. A line that ends the run any other way (nothing to report,
+ * failed, error) ends the watch with no toast, as a local run raises none. Returns a function that
+ * stops watching.
  */
 export function watchHostedHistoryCommand(
 	sessionId: string,
 	target: { peerId: string; agentId: string },
 	tabId: string,
-	opts: { sentAt: number; baseline?: ReadonlySet<string>; timeoutMs?: number }
+	opts: { baseline: ReadonlySet<string>; timeoutMs?: number }
 ): () => void {
 	const key = liveTurnKey(target.agentId, tabId);
 	const slotOf = () => usePeerMirrorStore.getState().transcripts[target.peerId]?.[key];
-	const isNew = (entry: LogEntryRecord): boolean =>
-		opts.baseline
-			? !opts.baseline.has(entry.id)
-			: entry.timestamp >= opts.sentAt - HOSTED_HISTORY_CLOCK_SKEW_MS;
+	const isNew = (entry: LogEntryRecord): boolean => !opts.baseline.has(entry.id);
 
 	let done = false;
 	let unsubscribe: () => void = () => {};

@@ -12,15 +12,17 @@
  * none throws: the turn already happened, and a record that could not be written is a line in
  * the result, not a failed turn.
  *
- * Two departures from the desktop, both on purpose:
+ * The History entry comes from a synopsis turn when the recorder has `summarize` (a host's
+ * runtime: the desktop's exit rule, `runExitSynopsis`), so the same reply reads the same in every
+ * mode: the turn must have done tool work (`turnDidMeaningfulWork`, with the tab's thinking mode
+ * deciding whether its tool cards prove it, `thinkingLogsRecorded`) and run in a provider session,
+ * and `summarize` then writes the entry once the tab is free. Without `summarize` the summary
+ * comes from the answer (`summarizeAnswer`) and `fullResponse` is the answer itself.
  *
- * - **The History summary comes from the answer** (`summarizeAnswer`, the function the desktop's
- *   exit toast uses), not from a synopsis agent. The desktop spawns a second provider turn per
- *   exit to write one; the runtime does not start work nobody asked for. `fullResponse` is the
- *   answer itself.
- * - **Only the user's message, the answer, and a failure are written to the transcript.** Thinking
- *   and tool cards stream live to the client; persisting them is a richer entry model than
- *   this task owns.
+ * The transcript holds the user's message, the answer, and a failure, plus the turn's thinking and
+ * tool cards when the tab's thinking mode keeps them past the turn's end ('sticky',
+ * `logsKeptAtTurnEnd()`, the rule a local tab's exit cleanup applies). They stream live to the
+ * client either way; the runtime folds them from the same events (`RecordedTurn.streamed`).
  *
  * A tab whose `saveToHistory` chip is off records no History entry (as on the desktop; a sender's
  * own chip, `RecordedTurn.saveToHistory`, stands in for the tab's for that turn), and an
@@ -40,7 +42,13 @@ import { estimateContextUsage } from '../parsers/usage-aggregator';
 import type { CompletedTurn } from '../run/run-to-completion';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import { usageStatsToTurnFields } from '../../turnUsageLedger';
-import type { HistoryEntry, ToolType } from '../../types';
+import { compactLogToolOutputs } from '../../toolOutput';
+import {
+	logsKeptAtTurnEnd,
+	type HistoryEntry,
+	type ThinkingMode,
+	type ToolType,
+} from '../../types';
 import type { AssembledTurn } from './assemble';
 import { createHistoryWriter, type HistoryAppendResult, type HistoryWriter } from './history';
 import {
@@ -51,6 +59,7 @@ import {
 	type StatsRecorder,
 } from './stats';
 import { summarizeAnswer } from './summary';
+import { thinkingLogsRecorded, turnDidMeaningfulWork } from '../../synopsis';
 
 /** The stderr kept in a failure entry when the provider named no error. */
 const STDERR_TAIL_CHARS = 500;
@@ -88,13 +97,33 @@ export interface RecordedTurn {
 	 * place of the tab's `saveToHistory`. Absent: the tab's chip decides.
 	 */
 	saveToHistory?: boolean;
+	/**
+	 * What the turn streamed, as `foldLiveTurn()` folded its events (the live tail a client drew).
+	 * Its thinking and tool entries are written before the answer when the tab keeps them past the
+	 * turn's end ('sticky'); the rest is recorded from `completed`.
+	 */
+	streamed?: readonly LogEntryRecord[];
 }
 
 /** What happened to each record. A skipped record says why. */
 export interface TurnRecordResult {
 	transcript: ClientResult<void>;
-	history: HistoryAppendResult | { ok: false; reason: 'not-recorded'; message: string };
+	/** `synopsis`: the entry was handed to `summarize`, which writes it after a synopsis turn. */
+	history:
+		| HistoryAppendResult
+		| { ok: true; synopsis: true }
+		| { ok: false; reason: 'not-recorded'; message: string };
 	stats: StatsRecordResult;
+}
+
+/** A finished turn's History entry, handed to `TurnRecorderOptions.summarize`. */
+export interface TurnSummaryHandoff {
+	agentId: string;
+	tabId: string;
+	/** The provider, model, and effort the turn ran at, frozen at send. */
+	settings: { provider: string; model?: string; effort?: string };
+	/** The entry as the turn would write it; the synopsis replaces its summary and usage. */
+	entry: HistoryEntry;
 }
 
 export interface TurnRecorderOptions {
@@ -107,6 +136,12 @@ export interface TurnRecorderOptions {
 	fence?: () => DataDirVerdict;
 	/** Ids and the clock for the entries it makes. */
 	context?: Partial<RuleContext>;
+	/**
+	 * Write an eligible turn's History entry from a synopsis turn instead of from the answer. Called
+	 * without waiting: the synopsis resumes the turn's provider session, so it runs once the turn
+	 * has ended. It must not throw.
+	 */
+	summarize?(handoff: TurnSummaryHandoff): void;
 	/** Test seams: the writers themselves. */
 	historyWriter?: HistoryWriter;
 	statsRecorder?: StatsRecorder;
@@ -157,14 +192,24 @@ export function buildUserTranscriptEntry(
 
 /**
  * The transcript entries of one turn: the message the person sent (unless the runtime already
- * wrote it), then the answer, then a failure when it crashed. Pure; ids and times come from the
- * caller.
+ * wrote it), the thinking and tool cards a 'sticky' tab keeps (`showThinking`, the tab's mode when
+ * the turn ends), then the answer, then a failure when it crashed. Pure; ids and times come from
+ * the caller.
  */
-export function buildTurnTranscript(turn: RecordedTurn, ctx: RuleContext): LogEntryRecord[] {
+export function buildTurnTranscript(
+	turn: RecordedTurn,
+	ctx: RuleContext,
+	showThinking?: unknown
+): LogEntryRecord[] {
 	const { entry, settings } = turn.assembled;
 	const entries: LogEntryRecord[] = turn.userEntryWritten
 		? []
 		: [buildUserTranscriptEntry(entry, turn.startedAt, ctx)];
+
+	const reasoning = (turn.streamed ?? []).filter(
+		(streamed) => streamed.source === 'thinking' || streamed.source === 'tool'
+	);
+	entries.push(...compactLogToolOutputs(logsKeptAtTurnEnd(reasoning, showThinking)));
 
 	const answer = turn.completed.answerText?.trim() ? turn.completed.answerText : undefined;
 	if (answer) {
@@ -245,7 +290,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 		const transcript = await options.repository.appendTranscript(
 			turn.agentId,
 			turn.tabId,
-			buildTurnTranscript(turn, ctx),
+			buildTurnTranscript(turn, ctx, tab.showThinking),
 			...(turn.writeGuard ? [turn.writeGuard] : [])
 		);
 
@@ -307,6 +352,26 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 						? 'The sender chose not to save this turn to History.'
 						: 'The tab does not save to History.',
 			};
+		} else if (options.summarize && !completed.sessionId) {
+			// The desktop's rule: no provider session, no synopsis to resume, no entry.
+			history = {
+				ok: false,
+				reason: 'not-recorded',
+				message: 'The turn ran in no provider session.',
+			};
+		} else if (
+			options.summarize &&
+			!turnDidMeaningfulWork(
+				turn.streamed ?? [],
+				!!turn.assembled.entry.aiCommand,
+				thinkingLogsRecorded(tab.showThinking as ThinkingMode | boolean | undefined)
+			)
+		) {
+			history = {
+				ok: false,
+				reason: 'not-recorded',
+				message: 'The turn ran no tool, so it is not summarized to History.',
+			};
 		} else {
 			const context = completed.usage
 				? estimateContextUsage(completed.usage, provider as ToolType)
@@ -340,7 +405,21 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 				elapsedTimeMs: turn.endedAt - turn.startedAt,
 				...(turn.originHost ? { hostname: turn.originHost } : {}),
 			};
-			history = await historyWriter.append(agent.id, entry);
+			if (options.summarize) {
+				options.summarize({
+					agentId: agent.id,
+					tabId: tab.id,
+					settings: {
+						provider,
+						...(turn.assembled.settings.model ? { model: turn.assembled.settings.model } : {}),
+						...(turn.assembled.settings.effort ? { effort: turn.assembled.settings.effort } : {}),
+					},
+					entry,
+				});
+				history = { ok: true, synopsis: true };
+			} else {
+				history = await historyWriter.append(agent.id, entry);
+			}
 		}
 
 		const stats = await statsRecorder.recordQuery({

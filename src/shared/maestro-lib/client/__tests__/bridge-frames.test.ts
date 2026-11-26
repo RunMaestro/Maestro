@@ -271,23 +271,40 @@ describe('parseBatchFrame', () => {
 		});
 	});
 
-	it('turns a tool call that starts into one line, and ignores its finish', () => {
-		const running = parseBatchFrame('process:tool-execution', [
-			PROCESS,
-			{ toolName: 'Read', state: { status: 'running', input: { file_path: '/p/src/a.ts' } } },
-		]);
-		expect(running?.frame.kind).toBe('output');
-		expect(running?.frame.kind === 'output' && running.frame.text).toMatch(/^Read .*a\.ts$/);
+	it('carries each tool report with its payload, for the Thought Stream', () => {
+		const state = { status: 'running', input: { file_path: '/p/src/a.ts' } };
+		expect(
+			parseBatchFrame('process:tool-execution', [
+				PROCESS,
+				{ toolName: 'Read', state, toolCallId: 'call-1', timestamp: 5 },
+			])
+		).toEqual({
+			agentId: AGENT,
+			processId: PROCESS,
+			frame: { kind: 'tool', toolName: 'Read', state, toolCallId: 'call-1' },
+		});
 		expect(
 			parseBatchFrame('process:tool-execution', [
 				PROCESS,
 				{ toolName: 'Read', state: { status: 'completed' } },
-			])
-		).toBeNull();
+			])?.frame
+		).toEqual({ kind: 'tool', toolName: 'Read', state: { status: 'completed' } });
 	});
 
-	it('leaves out thinking, exits, tab processes, and malformed frames', () => {
-		expect(parseBatchFrame('process:thinking-chunk', [PROCESS, 'hmm'])).toBeNull();
+	it('carries a reasoning chunk, cut to a bound', () => {
+		expect(parseBatchFrame('process:thinking-chunk', [PROCESS, 'hmm'])?.frame).toEqual({
+			kind: 'thinking',
+			text: 'hmm',
+		});
+		const long = parseBatchFrame('process:thinking-chunk', [PROCESS, 'x'.repeat(100_000)]);
+		expect(long?.frame.kind === 'thinking' && long.frame.text.length).toBe(64_000);
+	});
+
+	it('leaves out exits, tab processes, and malformed frames', () => {
+		expect(parseBatchFrame('process:thinking-chunk', [PROCESS, ''])).toBeNull();
+		expect(parseBatchFrame('process:thinking-chunk', [PROCESS, 7])).toBeNull();
+		expect(parseBatchFrame('process:tool-execution', [PROCESS, { toolName: '' }])).toBeNull();
+		expect(parseBatchFrame('process:tool-execution', [PROCESS, { state: {} }])).toBeNull();
 		expect(parseBatchFrame('process:exit', [PROCESS, 0])).toBeNull();
 		expect(parseBatchFrame('process:data', [`${AGENT}-ai-${TAB}`, 'x'])).toBeNull();
 		expect(parseBatchFrame('process:data', [PROCESS, 7])).toBeNull();

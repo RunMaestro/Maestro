@@ -4220,7 +4220,7 @@ describe('useRemoteIntegration', () => {
 		const sent = () =>
 			window.maestro.process.sendRemoteAutoRunSteeringCommandResponse as ReturnType<typeof vi.fn>;
 
-		it('answers a steering verb on its response channel', () => {
+		it('answers a steering verb on its response channel', async () => {
 			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
 
 			renderHook(() => useRemoteIntegration(deps));
@@ -4232,13 +4232,16 @@ describe('useRemoteIntegration', () => {
 				);
 			});
 
-			expect(sent()).toHaveBeenCalledWith(
-				'steer-response',
-				expect.objectContaining({ success: true, steerable: false, pending: [], deliveries: [] })
+			// The answer is awaited (a hosted agent's comes from its host).
+			await vi.waitFor(() =>
+				expect(sent()).toHaveBeenCalledWith(
+					'steer-response',
+					expect.objectContaining({ success: true, steerable: false, pending: [], deliveries: [] })
+				)
 			);
 		});
 
-		it('reports a refusal rather than leaving the caller waiting', () => {
+		it('reports a refusal rather than leaving the caller waiting', async () => {
 			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
 
 			renderHook(() => useRemoteIntegration(deps));
@@ -4251,9 +4254,11 @@ describe('useRemoteIntegration', () => {
 				);
 			});
 
-			expect(sent()).toHaveBeenCalledWith(
-				'steer-response',
-				expect.objectContaining({ success: false })
+			await vi.waitFor(() =>
+				expect(sent()).toHaveBeenCalledWith(
+					'steer-response',
+					expect.objectContaining({ success: false })
+				)
 			);
 		});
 	});

@@ -21,6 +21,11 @@
 
 import type { QueueSteerResult } from '../../chatSteering';
 import {
+	parseSteeringCommandRequest,
+	type SteeringCommandInput,
+	type SteeringCommandResult,
+} from '../../autoRunSteeringCommands';
+import {
 	buildRemoteAskerKey,
 	parseWireTranscript,
 	type RemoteAskerContext,
@@ -133,7 +138,9 @@ export type PeerAgentAction =
 	/** Start a goal-driven Auto Run on the host. */
 	| { kind: 'goal-run'; launch: GoalRunLaunchInput }
 	/** Stop the host's run, or answer its pause (resume, skip the document, abort). */
-	| { kind: 'auto-run-control'; control: AutoRunControl };
+	| { kind: 'auto-run-control'; control: AutoRunControl }
+	/** The Thought Stream's Steer on the host's run: send, list, cancel, or dismiss a note. */
+	| { kind: 'steer-auto-run'; input: SteeringCommandInput };
 
 /** What a person can do to a running Auto Run from another machine. */
 export type AutoRunControl = 'stop' | 'resume' | 'skip' | 'abort';
@@ -186,7 +193,9 @@ export type PeerAgentActionResult =
 	/** `tabId`: the tab the host shows the goal run on, when it says. */
 	| { kind: 'goal-run'; tabId?: string }
 	/** The host took the control; the run's `autorun` events show it land. */
-	| { kind: 'auto-run-control'; control: AutoRunControl };
+	| { kind: 'auto-run-control'; control: AutoRunControl }
+	/** The host's answer, a refusal included (`success: false`). */
+	| { kind: 'steer-auto-run'; result: SteeringCommandResult };
 
 /** The agent fields an action reads: interrupt picks the busy tabs from the record. */
 export type PeerActionAgent = Pick<AgentRecord, 'id' | 'aiTabs'>;
@@ -215,6 +224,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'auto-run',
 	'goal-run',
 	'auto-run-control',
+	'steer-auto-run',
 ];
 
 /**
@@ -470,7 +480,28 @@ export async function runPeerAgentAction(
 				? { ok: true, value: { kind: 'auto-run-control', control: action.control } }
 				: controlled;
 		}
+		case 'steer-auto-run': {
+			const steered = await client.autoRun.steer(agent.id, action.input);
+			return steered.ok
+				? { ok: true, value: { kind: 'steer-auto-run', result: steered.value } }
+				: steered;
+		}
 	}
+}
+
+/**
+ * A steering command that crossed a process boundary, read as the host reads one
+ * (`parseSteeringCommandRequest()`), so an over-long note is refused here, never cut.
+ */
+function parseSteeringInput(raw: unknown): SteeringCommandInput {
+	if (!raw || typeof raw !== 'object') throw new Error('steer-auto-run needs an input');
+	const parsed = parseSteeringCommandRequest({
+		...(raw as Record<string, unknown>),
+		sessionId: 'agent',
+	});
+	if (!parsed.ok) throw new Error(parsed.error);
+	const { sessionId: _agent, background: _notice, ...input } = parsed.request;
+	return input;
 }
 
 /** A send's images: data URLs only. Anything else in the list is refused, not dropped. */
@@ -628,6 +659,8 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			}
 			return { kind, control };
 		}
+		case 'steer-auto-run':
+			return { kind, input: parseSteeringInput(value.input) };
 	}
 }
 
