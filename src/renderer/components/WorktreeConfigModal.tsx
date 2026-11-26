@@ -10,8 +10,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getParentDir } from '../../shared/formatters';
 import { isImeComposing } from '../utils/ime';
 import { openUrl } from '../utils/openUrl';
-import { getSessionSshRemoteId } from '../utils/sessionHelpers';
-import { pathPickerRemoteId, pickDirectory } from '../services/pathPicker';
+import { fileOpRemoteId, pathPickerRemoteId, pickDirectory } from '../services/pathPicker';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 interface WorktreeConfigModalProps {
@@ -75,10 +74,9 @@ export function WorktreeConfigModal({
 	const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | null>(null);
 
 	// Where the worktree directory lives (SSH and hosted alike). It only routes the reads and the
-	// Browse; the modal looks the same in every mode.
-	const sshRemoteId = getSessionSshRemoteId(session);
-	// Browse asks `pathPickerRemoteId()`, which ignores a remote id left on an agent with SSH
-	// switched off: that agent is local, so its Browse is the native dialog.
+	// Browse; the modal looks the same in every mode. `pathPickerRemoteId()` ignores a remote id
+	// left on an agent with SSH switched off (that agent is local), and is `null` for an SSH agent
+	// whose remote is not resolved yet: Browse says so, and Save fails with that reason.
 	const browseRemoteId = pathPickerRemoteId(session);
 
 	// Register with layer stack for Escape handling
@@ -138,7 +136,7 @@ export function WorktreeConfigModal({
 		setIsValidating(true);
 		setError(null);
 		try {
-			const exists = await validateDirectory(basePath.trim(), sshRemoteId);
+			const exists = await validateDirectory(basePath.trim(), fileOpRemoteId(browseRemoteId));
 			if (!exists) {
 				setError('Directory not found. Please select a valid directory.');
 				return;

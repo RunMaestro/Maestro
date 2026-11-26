@@ -10,7 +10,9 @@ import { ipcMain } from 'electron';
 import {
 	registerAgentsHandlers,
 	AgentsHandlerDependencies,
+	REMOTE_WHICH_COMMAND,
 } from '../../../../main/ipc/handlers/agents';
+import { AGENT_MODES, type AgentMode } from '../../../helpers/mockSession';
 import * as agentCapabilities from '../../../../main/agents';
 import { discoverCodexSkills } from '../../../../main/agents/codex-skills';
 import { makeGrokCommandObservation } from '../../../fixtures/grok-command-observation';
@@ -1015,6 +1017,95 @@ describe('agents IPC handlers', () => {
 			expect(result.debugInfo.available).toBe(true);
 			expect(result.debugInfo.path).toBe('/bin/claude');
 			expect(result.debugInfo.error).toBeNull();
+		});
+
+		// Parity (docs/parity/agent-ux-parity.md): the New Agent modal's per-agent refresh
+		// re-detects where the agent will run. A local agent asks this machine; an SSH agent and
+		// a hosted agent (which keeps its SSH remote) ask the remote, never this machine.
+		describe('re-detects where the agent runs (local, SSH, hosted)', () => {
+			beforeEach(() => {
+				const settingsStore = {
+					get: vi
+						.fn()
+						.mockReturnValue([
+							{ id: 'remote-1', host: 'dev.example.com', username: 'dev', port: 22, enabled: true },
+						]),
+					set: vi.fn(),
+				};
+				handlers.clear();
+				registerAgentsHandlers({ ...deps, settingsStore: settingsStore as any });
+				vi.mocked(buildSshCommand).mockClear();
+				vi.mocked(buildSshCommand).mockResolvedValue({ command: 'ssh', args: ['mock'] });
+				mockAgentDetector.detectAgents.mockResolvedValue([
+					{ id: 'claude-code', name: 'Claude Code', available: false, binaryName: 'claude' },
+				]);
+			});
+
+			const refreshIn = async (mode: AgentMode) => {
+				// Every remote probe finds nothing; the debug-facts script answers with the host facts.
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, args) => {
+					const text = (args ?? []).join(' ');
+					if (text.includes('uname -s')) {
+						return { exitCode: 0, stdout: 'Linux\n/home/dev\n/usr/bin:/bin\n', stderr: '' };
+					}
+					return { exitCode: 1, stdout: '', stderr: '' };
+				});
+				vi.mocked(buildSshCommand).mockImplementation(async (_remote, options) => ({
+					command: 'ssh',
+					args: ['dev@dev.example.com', options.command, ...(options.args ?? [])],
+				}));
+				const handler = handlers.get('agents:refresh');
+				return handler!({} as any, 'claude-code', mode === 'local' ? undefined : 'remote-1');
+			};
+
+			it.each(AGENT_MODES)('%s: returns the same debug fields', async (mode) => {
+				const local = await refreshIn('local');
+				const result = await refreshIn(mode);
+				expect(Object.keys(result.debugInfo).sort()).toEqual(Object.keys(local.debugInfo).sort());
+				expect(result.debugInfo.agentId).toBe('claude-code');
+				expect(result.debugInfo.available).toBe(false);
+				expect(result.debugInfo.error).toBeTruthy();
+			});
+
+			it.each(['ssh', 'hosted'] as const)(
+				'%s: detects on the remote and reads its platform, home, and PATH there',
+				async (mode) => {
+					mockAgentDetector.detectAgents.mockClear();
+					mockAgentDetector.clearCache.mockClear();
+					const result = await refreshIn(mode);
+					expect(mockAgentDetector.detectAgents).not.toHaveBeenCalled();
+					expect(mockAgentDetector.clearCache).not.toHaveBeenCalled();
+					const probes = vi.mocked(buildSshCommand).mock.calls.map(([, o]) => o);
+					expect(probes).toContainEqual(
+						expect.objectContaining({ command: 'command', args: ['-v', 'claude'] })
+					);
+					expect(result.debugInfo).toMatchObject({
+						binaryName: 'claude',
+						platform: 'linux',
+						homeDir: '/home/dev',
+						envPath: '/usr/bin:/bin',
+						whichCommand: REMOTE_WHICH_COMMAND,
+					});
+					expect(result.debugInfo.error).toContain('command -v claude');
+					// The facts probe's ssh child has the same bound as the wait for it.
+					const factsCall = vi
+						.mocked(execFileNoThrow)
+						.mock.calls.find(([, args]) => (args ?? []).join(' ').includes('uname -s'));
+					expect(factsCall?.[3]).toMatchObject({ timeout: expect.any(Number) });
+					// The agents come back tagged with the remote they were detected on.
+					expect(result.agents.find((a: any) => a.id === 'claude-code')).toBeDefined();
+				}
+			);
+
+			it('an unknown remote returns every agent unavailable with the reason, never this machine', async () => {
+				mockAgentDetector.detectAgents.mockClear();
+				const handler = handlers.get('agents:refresh');
+				const result = await handler!({} as any, 'claude-code', 'gone-remote');
+				expect(mockAgentDetector.detectAgents).not.toHaveBeenCalled();
+				expect(result.agents.every((a: any) => a.available === false)).toBe(true);
+				expect(result.debugInfo.error).toBe('SSH remote configuration not found: gone-remote');
+				expect(result.debugInfo.platform).toBe('unknown');
+			});
 		});
 	});
 

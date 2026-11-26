@@ -23,6 +23,8 @@ import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
+import { pathPickerRemoteId } from '../services/pathPicker';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { PlaygroundPanel } from './PlaygroundPanel';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
@@ -412,11 +414,7 @@ function AppStandaloneModalsInner({
 						onClose={() => setMarketplaceModalOpen(false)}
 						autoRunFolderPath={activeSession.autoRunFolderPath}
 						sessionId={activeSession.id}
-						sshRemoteId={
-							activeSession.sshRemoteId ||
-							activeSession.sessionSshRemoteConfig?.remoteId ||
-							undefined
-						}
+						sshRemoteId={pathPickerRemoteId(activeSession)}
 						onImportComplete={onMarketplaceImportComplete}
 					/>
 				</Suspense>
@@ -625,12 +623,8 @@ function AppStandaloneModalsInner({
 								graphRootPath || activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							const filename = filePath.split('/').pop() || filePath;
-							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-							// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
-							const sshRemoteId =
-								activeSession?.sshRemoteId ||
-								activeSession?.sessionSshRemoteConfig?.remoteId ||
-								undefined;
+							// The gated remote id: a remote left on an agent with SSH switched off is ignored.
+							const sshRemoteId = getSessionSshRemoteId(activeSession);
 							try {
 								// Fetch content and stat in parallel for efficiency
 								const [content, stat] = await Promise.all([
@@ -680,13 +674,7 @@ function AppStandaloneModalsInner({
 							// Also update the global default for new agents
 							onLayoutTypeChange(type);
 						}}
-						// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-						// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
-						sshRemoteId={
-							activeSession?.sshRemoteId ||
-							activeSession?.sessionSshRemoteConfig?.remoteId ||
-							undefined
-						}
+						sshRemoteId={getSessionSshRemoteId(activeSession)}
 					/>
 				</Suspense>
 			)}
