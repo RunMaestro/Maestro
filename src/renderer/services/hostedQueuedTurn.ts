@@ -44,7 +44,7 @@ import {
 	previewMentionDispatch,
 	type CrossAgentMentionPlan,
 } from './crossAgentMentions';
-import { markHandoffSentToHost } from './crossAgentHandoff';
+import { markHandoffSentToHost, releaseHostedHandoff } from './crossAgentHandoff';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
 import { queuedItemNamingText } from './tabAutoNaming';
 
@@ -191,23 +191,25 @@ function fireMentionsForHostTurn(
 	// A turn the host queued behind another is not this agent's turn yet: its consult waits for
 	// it to start (`fireHostStartedMentions()`). A hand-off consults nobody until the turn ends.
 	if (receipt.status === 'queued' && mention.routing !== 'handoff') {
-		const tabId =
-			item.tabId || selectSessionById(sessionId)(useSessionStore.getState())?.activeTabId;
-		const tab = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
-			(candidate) => candidate.id === tabId
-		);
+		// The turn it waits behind is read from the host's tab while it is seen queued.
 		mentionsAwaitingHostStart.set(receipt.itemId, {
 			sessionId,
 			item,
 			mention,
 			seenQueued: false,
-			turnStartedAt: tab?.state === 'busy' ? tab.thinkingStartTime : undefined,
+			queuedAt: Date.now(),
 		});
 		return;
 	}
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return;
+	// A tab holds one hand-off. One still waiting for its turn's saved answer goes now, with the
+	// answer the tab holds, rather than be replaced by this one and never reach its agents.
+	const armed = session.aiTabs.find((tab) => tab.id === tabId);
+	if (mention.routing === 'handoff' && armed?.pendingMentionHandoff?.hostTurn) {
+		releaseHostedHandoff(sessionId, armed);
+	}
 	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
 	if (mention.routing === 'handoff') markHandoffSentToHost(sessionId, tabId, receipt);
 }
@@ -222,6 +224,8 @@ const mentionsAwaitingHostStart = new Map<
 		seenQueued: boolean;
 		/** When the turn the host queued it behind started (the tab's `thinkingStartTime` then). */
 		turnStartedAt?: number;
+		/** When the host's receipt said it was queued. */
+		queuedAt: number;
 	}
 >();
 
@@ -238,17 +242,24 @@ export function fireHostStartedMentions(session: Session): void {
 	);
 	for (const [hostItemId, waiting] of mentionsAwaitingHostStart) {
 		if (waiting.sessionId !== session.id) continue;
-		if (hostQueued.has(hostItemId)) {
-			waiting.seenQueued = true;
-			continue;
-		}
 		const tabId = waiting.item.tabId || session.activeTabId;
 		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
+		if (hostQueued.has(hostItemId)) {
+			// While it waits, the turn ahead is whatever the host's tab runs now.
+			waiting.seenQueued = true;
+			waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
+			continue;
+		}
+		// Its turn, not the one it waited behind: a removal while that turn runs consults nobody.
+		// Never seen waiting (its queue frame had not come): only a turn that started after the
+		// receipt can be it, not the one running when the host queued it.
 		const started =
 			tab?.state === 'busy' &&
-			(waiting.seenQueued || tab.thinkingStartTime !== waiting.turnStartedAt);
+			(waiting.seenQueued
+				? tab.thinkingStartTime !== waiting.turnStartedAt
+				: (tab.thinkingStartTime ?? 0) >= waiting.queuedAt);
 		if (!started) {
-			if (waiting.seenQueued && tab?.state !== 'busy') mentionsAwaitingHostStart.delete(hostItemId);
+			if (waiting.seenQueued) mentionsAwaitingHostStart.delete(hostItemId);
 			continue;
 		}
 		mentionsAwaitingHostStart.delete(hostItemId);

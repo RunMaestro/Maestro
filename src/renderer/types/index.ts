@@ -526,7 +526,15 @@ export interface MentionHandoff {
 	 * when it waits in the host's queue; `afterEntryId` the tab's last entry then), `running` once
 	 * the host tab reads busy with it.
 	 */
-	hostTurn?: { stage: 'sent' | 'running'; queueItemId?: string; afterEntryId?: string };
+	hostTurn?: {
+		stage: 'sent' | 'running';
+		queueItemId?: string;
+		afterEntryId?: string;
+		/** The host's queue frame showed `queueItemId` waiting. */
+		seenQueued?: boolean;
+		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		turnStartedAt?: number;
+	};
 }
 
 export interface QueuedItem {

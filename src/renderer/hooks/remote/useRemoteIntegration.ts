@@ -1539,22 +1539,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							),
 							...(held && { paused: true }),
 						};
-						const lineForTab = (session.executionQueue ?? []).some(
-							(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
-						);
+						// It waits in this machine's line, and an idle drain takes it at once. The caller
+						// gets its id either way, so a turn the host then refuses (back here, held) can be
+						// found and resumed.
 						updateSessionWith(sessionId, (s) => ({
 							...s,
 							executionQueue: [...s.executionQueue, item],
 						}));
-						if (
-							!held &&
-							targetTab.state !== 'busy' &&
-							!lineForTab &&
-							sendQueuedItemNow(sessionId, item.id)
-						) {
-							reply({ success: true, tabId: resolvedTabId, queued: false });
-							return;
-						}
 						const waiting =
 							useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ??
 							[];

@@ -178,7 +178,7 @@ export function syncHostedAgents(): void {
 			},
 			isCurrent: (tabId) => {
 				const slot = slotOf(tabId);
-				return !!slot?.loaded && !slot.stale && !slot.loading;
+				return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
 			},
 		});
 		if (session.id !== activeSessionId || !hosted.connected) continue;

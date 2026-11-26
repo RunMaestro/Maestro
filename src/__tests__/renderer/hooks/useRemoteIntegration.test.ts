@@ -5886,6 +5886,25 @@ describe('useRemoteIntegration', () => {
 			}
 		);
 
+		it('hosted: a dispatched @mention on an idle tab answers its place and id, so a refusal can be found', async () => {
+			const session = seed('hosted');
+			vi.mocked(planCrossAgentMentions).mockReturnValue({
+				targetSessionIds: ['reviewer'],
+				routing: 'parallel',
+				inferredRouting: 'parallel',
+				routingSource: 'wording',
+				suppressLocal: false,
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			await act(async () => {
+				await onRemoteEnqueueCommandHandler?.('session-1', 'with @Reviewer', 'chan', 'ai', 'tab-1');
+			});
+			const [, answer] = mockProcess.sendRemoteEnqueueCommandResponse.mock.calls[0];
+			const local = useSessionStore.getState().sessions[0].executionQueue;
+			expect(answer).toMatchObject({ success: true, queued: true, itemId: local[0].id });
+			vi.mocked(planCrossAgentMentions).mockImplementation(() => null);
+		});
+
 		it.each(AGENT_MODES)(
 			'%s: a dispatched follow-up waits behind the consult hold of the turn before it',
 			async (mode) => {

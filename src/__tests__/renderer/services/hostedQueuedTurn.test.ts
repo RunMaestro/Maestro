@@ -24,6 +24,7 @@ import { loadCrossAgentConsultPrompts } from '../../../renderer/services/crossAg
 import {
 	followHostedHandoffs,
 	hostedHandoffStep,
+	hostedHandoffTurn,
 } from '../../../renderer/services/crossAgentHandoff';
 import { fireHostStartedMentions } from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
@@ -454,19 +455,24 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			{ id: 'u', timestamp: 1, source: 'user' as const, text: 'm' },
 			{ id: 'a', timestamp: 2, source: 'ai' as const, text: 'done' },
 		];
-		const queued = { stage: 'sent', queueItemId: 'h9' };
-		expect(
-			hostedHandoffStep(
-				{ state: 'busy', logs: [], pendingMentionHandoff: handoff(queued) },
-				new Set(['h9'])
-			)
-		).toBe('wait');
-		expect(
-			hostedHandoffStep(
-				{ state: 'busy', logs: [], pendingMentionHandoff: handoff(queued) },
-				new Set()
-			)
-		).toBe('running');
+		// Queued behind the turn that started at 100.
+		const queued = { stage: 'sent', queueItemId: 'h9', turnStartedAt: 100 };
+		const busyWith = (thinkingStartTime: number, hostTurn: object) => ({
+			state: 'busy' as const,
+			thinkingStartTime,
+			logs: [],
+			pendingMentionHandoff: handoff(hostTurn),
+		});
+		expect(hostedHandoffStep(busyWith(100, queued), new Set(['h9']))).toBe('seen-queued');
+		const seen = { ...queued, seenQueued: true };
+		expect(hostedHandoffStep(busyWith(100, seen), new Set(['h9']))).toBe('wait');
+		// A new turn ahead of it while it still waits is recorded, not taken for its own.
+		expect(hostedHandoffStep(busyWith(150, seen), new Set(['h9']))).toBe('seen-queued');
+		// Its own turn started: a new start time on the tab.
+		expect(hostedHandoffStep(busyWith(200, seen), new Set())).toBe('running');
+		// Gone from the queue while the turn ahead still runs: it was removed, nothing goes out.
+		expect(hostedHandoffStep(busyWith(100, seen), new Set())).toBe('drop');
+		expect(hostedHandoffStep({ ...busyWith(100, seen), state: 'idle' }, new Set())).toBe('drop');
 		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(
@@ -515,12 +521,15 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				{
 					state: 'idle',
 					logs: answer,
-					pendingMentionHandoff: handoff({ stage: 'running', queueItemId: 'h9' }),
+					pendingMentionHandoff: handoff({ stage: 'running', queueItemId: 'h9', seenQueued: true }),
 				},
 				new Set(['h9']),
 				true
 			)
 		).toBe('wait');
+		// What it hands off is this turn's answer, never an earlier one's.
+		expect(hostedHandoffTurn(answer, 'a')).toBeNull();
+		expect(hostedHandoffTurn(answer, undefined)?.answer).toBe('done');
 		// A local hand-off is released by its process exit, never here.
 		expect(
 			hostedHandoffStep(
@@ -591,17 +600,13 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			crossAgentMention: true,
 			mentionRouting: 'parallel',
 		});
-		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
-		await flush();
-		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-
-		const withHost = (hostQueued: boolean, state: 'busy' | 'idle') =>
+		const withHost = (hostQueued: boolean, thinkingStartTime: number) =>
 			useSessionStore.setState((current) => ({
 				sessions: current.sessions.map((s) =>
 					s.id === 'row'
 						? {
 								...s,
-								aiTabs: s.aiTabs.map((t) => ({ ...t, state })),
+								aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime })),
 								executionQueue: hostQueued
 									? [queuedMessage({ id: 'h9', hostQueued: true, text: item.text })]
 									: s.executionQueue.filter((q) => !q.hostQueued),
@@ -609,13 +614,60 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 						: s
 				),
 			}));
-		withHost(true, 'busy');
+		// The turn it is queued behind started at 100.
+		withHost(false, 100);
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+
+		withHost(true, 100);
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-		withHost(false, 'busy');
+		withHost(false, 200);
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({ targetSessionId: 'backend' });
+	});
+
+	it('hosted: a queued turn removed from the host queue while the turn ahead runs consults nobody', async () => {
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'send',
+				receipt: { status: 'queued', itemId: 'h7', position: 1, queueLength: 1 },
+			},
+		});
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'look into the cache with @Backend',
+			crossAgentMention: true,
+			mentionRouting: 'parallel',
+		});
+		const withHost = (hostQueued: boolean, thinkingStartTime: number) =>
+			useSessionStore.setState((current) => ({
+				sessions: current.sessions.map((s) =>
+					s.id === 'row'
+						? {
+								...s,
+								aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime })),
+								executionQueue: hostQueued
+									? [queuedMessage({ id: 'h7', hostQueued: true, text: item.text })]
+									: s.executionQueue.filter((q) => !q.hostQueued),
+							}
+						: s
+				),
+			}));
+		withHost(false, 100);
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+		withHost(true, 100);
+		fireHostStartedMentions(row());
+		withHost(false, 100);
+		fireHostStartedMentions(row());
+		// A later turn on the tab is not this message either.
+		withHost(false, 300);
+		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 	});
 
 	it('hosted: a queued turn that starts before its queued state is seen still consults', async () => {
@@ -647,16 +699,76 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		await flush();
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-		// The host started it before any queue frame arrived: a new turn on the tab.
+		// The turn ahead (started before the receipt) still runs: not this one.
 		useSessionStore.setState((current) => ({
 			sessions: current.sessions.map((s) =>
 				s.id === 'row'
-					? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime: 200 })) }
+					? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime: 100 })) }
 					: s
 			),
 		}));
 		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		// The host started it before any queue frame arrived: a turn that began after the receipt.
+		const startedAfter = Date.now() + 1;
+		useSessionStore.setState((current) => ({
+			sessions: current.sessions.map((s) =>
+				s.id === 'row'
+					? {
+							...s,
+							aiTabs: s.aiTabs.map((t) => ({
+								...t,
+								state: 'busy',
+								thinkingStartTime: startedAfter,
+							})),
+						}
+					: s
+			),
+		}));
+
+		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+	});
+
+	it('hosted: a second hand-off on the tab sends the first one out instead of replacing it', async () => {
+		seedWithBackend('hosted');
+		useSessionStore.setState((current) => ({
+			sessions: current.sessions.map((s) =>
+				s.id === 'row'
+					? {
+							...s,
+							aiTabs: s.aiTabs.map((t) => ({
+								...t,
+								logs: [
+									{ id: 'u1', timestamp: 1, source: 'user', text: 'first' },
+									{ id: 'a1', timestamp: 2, source: 'ai', text: 'first answer' },
+								],
+								pendingMentionHandoff: {
+									targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+									message: 'first, then tell @Backend',
+									hostTurn: { stage: 'running' },
+								},
+							})),
+						}
+					: s
+			),
+		}));
+		await useAgentStore.getState().processQueuedItem(
+			'row',
+			queuedMessage({
+				text: 'second, then tell @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'handoff',
+			}),
+			drainDeps
+		);
+		await flush();
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+			userPrompt: 'first, then tell @Backend',
+			handoffAnswer: 'first answer',
+		});
+		expect(row().aiTabs[0].pendingMentionHandoff?.message).toBe('second, then tell @Backend');
 	});
 
 	it('hosted: a message addressed only at an agent that is gone sends this agent nothing', async () => {
