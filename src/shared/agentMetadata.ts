@@ -158,6 +158,12 @@ export function hasStandardApprovalChannel(context: StandardApprovalChannelConte
 		return resolveCodexTransport(context) === 'app-server' && context.hasImages !== true;
 	}
 	if (context.toolType === 'opencode') {
+		// LOCKED (parity B1.13): OpenCode's approvals arrive on the SSE stream of the
+		// LOCAL `opencode serve` server (`OpencodeServerSpawner`, Encore `opencodeServer`).
+		// An SSH turn runs `opencode run` on the remote, and a hosted turn runs on its
+		// host's runtime, which has no server route: neither has a stream to raise an
+		// approval on. The pill is the same in every mode; it skips Standard by the same
+		// channel rule that skips it for a local agent with the server off or an image staged.
 		return (
 			context.opencodeServer === true &&
 			context.hasPrompt !== false &&
