@@ -324,6 +324,18 @@ describe('remote copy write-back', () => {
 		expect(writeBack.pendingCopies()).toEqual([]);
 	});
 
+	it('names a copy saved again after a conflict, whose later save is only in the copy', async () => {
+		const writeBack = await watched();
+		remoteFile = Buffer.from('someone else');
+		await saveCopy(writeBack, 'first');
+		// The conflict kept that save beside the copy: nothing unsent yet.
+		expect(writeBack.pendingCopies()).toEqual([]);
+		await saveCopy(writeBack, 'second');
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		await writeBack.dispose();
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+	});
+
 	it('stops naming a copy once a later send of it lands', async () => {
 		writeRemote.mockRejectedValueOnce(new Error('Connection refused'));
 		const writeBack = await watched();

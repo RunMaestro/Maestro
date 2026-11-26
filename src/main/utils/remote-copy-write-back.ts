@@ -281,8 +281,9 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	/** Work in flight, with the copy it is for (for `idle()`, `dispose()`, `pendingCopies()`). */
 	const pending = new Map<Promise<void>, WatchedCopy>();
 	/**
-	 * Copies whose change is only in the copy: the last send failed, or the copy
-	 * grew past the size cap. Cleared when the change is sent, kept beside the
+	 * Copies whose change is only in the copy: the last send failed, the copy
+	 * grew past the size cap, or it was saved again after it stopped saving back
+	 * (a conflict, a failed watcher). Cleared when the change is sent, kept beside the
 	 * copy, or replaced by a fetch, or the copy is forgotten. Kept past
 	 * `dispose()`, so the quit can still name them.
 	 */
@@ -474,7 +475,11 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				return;
 			}
 			// Said once already; a fresh Open starts over from the remote's bytes.
-			if (entry.halted) return;
+			// This change is in neither the remote nor a kept version: the quit names it.
+			if (entry.halted) {
+				if (!entry.forgotten) failed.add(entry);
+				return;
+			}
 			if (local.length > maxBytes) {
 				entry.halted = 'too-large';
 				// Not on the remote, and only in the copy: the quit names it.
