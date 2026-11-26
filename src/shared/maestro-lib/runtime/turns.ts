@@ -68,6 +68,7 @@ import { logger } from '../host';
 import { admitTurnImages } from '../launch/image-delivery';
 import { agentIdCanReadImages } from '../providers/capabilities';
 import { getAgentDisplayName } from '../../agentMetadata';
+import { steeringSocketPathFor } from '../../chatSteeringSocket';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { createOutputParser } from '../parsers/parser-factory';
@@ -108,6 +109,7 @@ import {
 	type StatsConnectionConstructor,
 } from '../turns/stats';
 import { createRuntimeBuiltinCommands } from './builtin-commands';
+import { createRuntimeSteering, type SteeredTurnHandle } from './steering';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
 import { createSshRemoteStore } from './ssh-store';
@@ -322,6 +324,26 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	});
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
+	// Steer Running Turn: a TUI turn this host runs takes a waiting message over its socket.
+	const steering = createRuntimeSteering<TurnItem>({
+		queueOf: (agentId) => queues.get(agentId),
+		toolTypeOf: (agentId) => repository.getAgent(agentId)?.toolType,
+		appendEntry: async (agentId, tabId, entry) => {
+			const written = await repository.appendTranscript(agentId, tabId, [entry]);
+			if (!written.ok) {
+				logger.warn(
+					`A steer's transcript entry was not written: ${written.error.message}`,
+					LOG_CONTEXT
+				);
+				return;
+			}
+			// Mid-turn the entry joins the live turn in order; on an idle tab clients read the tab again.
+			if (queues.get(agentId)?.isTabBusy(tabId)) emitTurn(agentId, tabId, { kind: 'user', entry });
+			else emitTurn(agentId, tabId, { kind: 'gap' });
+		},
+		newId: () => ctx.newId(),
+		now: () => deps.now(),
+	});
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
 	const verdicts = new Map<string, (verdict: Verdict) => void>();
 
@@ -458,8 +480,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// the item stays held instead of starting a process that is stopped at its first record.
 		const fenced = repository.writeRefusal();
 		if (fenced) throw new Error(fenced);
+		// A fresh socket per spawn: a steer meant for a turn that just ended can never reach the next.
+		const steeringSocketPath = steeringSocketPathFor(`${agentId}-ai-${item.tabId}:${ctx.newId()}`);
+		// Bound once the run exists; a verdict can only follow a steer, which needs the run.
+		const steered: { turn?: SteeredTurnHandle } = {};
 		const started = await deps.runAgentTurn(turn, {
 			sessionId: `${agentId}-ai-${item.tabId}`,
+			steeringSocketPath,
+			onSteeringVerdict: (verdict) => steered.turn?.verdict(verdict),
 			grokLaunchScope: host.grokLaunchScope,
 			retainedNativeSessionBinding: expected.nativeSessionBinding,
 			...(provider === 'grok'
@@ -474,6 +502,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		});
 		if (!started.ok) throw new Error(started.message);
 		const run = started.run;
+		const steeredTurn = steering.turnStarted(agentId, item.tabId, {
+			provider,
+			readOnly: turn.readOnly,
+			...(run.steeringSocket ? { socketPath: run.steeringSocket } : {}),
+		});
+		steered.turn = steeredTurn;
+		void run.result.then(
+			() => steeredTurn.ended(),
+			() => steeredTurn.ended()
+		);
 
 		// The process exists, so the registry learns of it before anything is awaited: the agent
 		// reads busy to Auto Run, and a shutdown stops this process, from this line on. `settled`
@@ -982,17 +1020,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					}) ?? null;
 				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
 			},
-			// A headless host runs `claude --print` and `codex exec`, which take no input once a turn
-			// starts. Refused, so the message stays queued and sends when the turn ends.
-			steer: async (agentId) => {
+			// The queued card's Steer: typed into the Claude TUI turn running on the message's tab, as
+			// a desktop types it (`steering.ts`). A turn with no input channel (`claude --print`,
+			// `codex exec`) answers `not-steerable`, and the message stays queued.
+			steer: async (agentId, itemId) => {
 				if (!repository.getAgent(agentId)) {
 					return fail('turns.queue.steer', 'not-found', `No agent ${agentId}.`);
 				}
-				return fail(
-					'turns.queue.steer',
-					'unsupported',
-					'This host cannot steer a running turn. The message stays queued and sends when the turn ends.'
-				);
+				return ok(await steering.steer(agentId, itemId));
 			},
 			edit: async (agentId, itemId, edit) => {
 				const record = repository.getAgent(agentId);

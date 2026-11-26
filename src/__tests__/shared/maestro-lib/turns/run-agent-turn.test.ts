@@ -38,6 +38,7 @@ import {
 	claudeTranscriptPath,
 	clearRememberedClaudeSessionCosts,
 } from '../../../../shared/claudeCostTracker';
+import { STEERING_SOCKET_ENV_VAR } from '../../../../shared/chatSteering';
 import { getEffortRejection, resetEffortRejections } from '../../../../shared/effortRejection';
 import { SSH_STDIN_REMOTE_SHELL } from '../../../../shared/maestro-lib/control/ssh-remote-signal';
 import { newRemotePromptFileDestination } from '../../../../shared/maestro-lib/launch/ssh-command-builder';
@@ -2127,6 +2128,50 @@ describe('runAgentTurn: the Claude token source', () => {
 		await run.result;
 
 		expect(JSON.parse(fs.readFileSync(envOut, 'utf8')).MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
+	});
+
+	it('opens the steering socket for a TUI turn, and hands on the verdicts it prints (M4)', async () => {
+		const envOut = outFile('env');
+		const recording = CAPTURED_RECORDINGS['captured-claude-code-normal'];
+		const verdictLine = `${JSON.stringify({ type: 'steering', id: 's1', verdict: 'absorbed' })}\n`;
+		const file = writeFakeTurn(scratch.dir, {
+			...fakeTurnFromRecording(recording),
+			chunks: [verdictLine, ...recording.chunks],
+		});
+		const verdicts: unknown[] = [];
+		const run = await start(
+			assembleWithFakeAgent('claude-code', {
+				recording: 'captured-claude-code-normal',
+				env: { FAKE_AGENT_RECORDING: file, FAKE_AGENT_ENV_OUT: envOut },
+			}),
+			{
+				claudeTokenSource: tuiSource,
+				maestroPBinPath: FAKE_AGENT_PATH,
+				steeringSocketPath: '/tmp/maestro-steer-test.sock',
+				onSteeringVerdict: (verdict) => verdicts.push(verdict),
+			}
+		);
+		expect((await run.result).outcome).toBe('completed');
+
+		const env = JSON.parse(fs.readFileSync(envOut, 'utf8')) as Record<string, string>;
+		expect(env[STEERING_SOCKET_ENV_VAR]).toBe('/tmp/maestro-steer-test.sock');
+		expect(run.steeringSocket).toBe('/tmp/maestro-steer-test.sock');
+		expect(verdicts).toEqual([{ type: 'steering', id: 's1', verdict: 'absorbed' }]);
+	});
+
+	it('opens no steering socket for a claude --print turn, which takes no input once it starts', async () => {
+		const envOut = outFile('env');
+		const run = await start(
+			assembleWithFakeAgent('claude-code', {
+				recording: 'captured-claude-code-normal',
+				env: { FAKE_AGENT_ENV_OUT: envOut },
+			}),
+			{ steeringSocketPath: '/tmp/maestro-steer-test.sock' }
+		);
+		await run.result;
+
+		expect(JSON.parse(fs.readFileSync(envOut, 'utf8'))[STEERING_SOCKET_ENV_VAR]).toBeUndefined();
+		expect(run.steeringSocket).toBeUndefined();
 	});
 
 	it('falls back to API when the TUI is chosen but no maestro-p is installed', async () => {

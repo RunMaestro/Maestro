@@ -7,6 +7,7 @@
  * repository, its queue, and its records are real and write to a temp data directory.
  */
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -61,6 +62,8 @@ describe('runtime turns', () => {
 	let recordings: Record<string, string>;
 	/** Keep the fake agent running after its replay, until it is stopped. */
 	let hold: boolean;
+	/** Run each turn as a maestro-p TUI turn, which opens its steering socket. */
+	let tui: boolean;
 	let argvFiles: string[];
 	/** The options each turn was started with. */
 	let turnOptions: RunAgentTurnOptions[];
@@ -100,6 +103,10 @@ describe('runtime turns', () => {
 			void started.run.result.finally(() => {
 				live.now -= 1;
 			});
+		// A maestro-p TUI turn opens the socket it was given; the fake agent stands in for it.
+		if (tui && started.ok && options.steeringSocketPath) {
+			return { ...started, run: { ...started.run, steeringSocket: options.steeringSocketPath } };
+		}
 		return started;
 	};
 	/** How many provider processes run at once, and the most there ever were. */
@@ -219,6 +226,7 @@ describe('runtime turns', () => {
 		work = fs.mkdtempSync(path.join(fixtureRoot, 'maestro-runtime-turns-work-'));
 		open = [];
 		hold = false;
+		tui = false;
 		argvFiles = [];
 		live.now = 0;
 		live.max = 0;
@@ -1117,12 +1125,87 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
-		it('refuses a steer: a headless turn takes no input once it starts, so the message waits', async () => {
+		it('steers a waiting message into the TUI turn running on its tab, over its socket (M4)', async () => {
+			hold = true;
+			tui = true;
 			const runtime = await start();
-			const refused = errorOf(await runtime.turns.queue.steer('a1', 'q1'));
-			expect(refused.code).toBe('unsupported');
-			expect(refused.message).toContain('stays queued');
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'go left instead' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+
+			// maestro-p's end of the socket: it takes the frame and answers delivered.
+			const socketPath = turnOptions[0].steeringSocketPath!;
+			expect(socketPath).toBeTruthy();
+			const frames: Array<{ id: string; text: string }> = [];
+			const server = net.createServer((socket) => {
+				socket.setEncoding('utf8');
+				socket.on('data', (chunk: string) => {
+					const frame = JSON.parse(chunk.trim()) as { id: string; text: string };
+					frames.push(frame);
+					socket.write(
+						`${JSON.stringify({ type: 'steering', id: frame.id, verdict: 'delivered' })}\n`
+					);
+				});
+			});
+			await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+			try {
+				expect(value(await runtime.turns.queue.steer('a1', queued.itemId))).toEqual({
+					outcome: 'delivered',
+					verdict: 'delivered',
+				});
+				expect(frames.map((frame) => frame.text)).toEqual(['go left instead']);
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				// The steered message joins the live turn and the tab's transcript, marked as a steer.
+				const steeredEntry = expect.objectContaining({
+					source: 'user',
+					text: 'go left instead',
+					steered: true,
+				});
+				expect(turn.events).toContainEqual(
+					expect.objectContaining({ kind: 'user', entry: steeredEntry })
+				);
+				expect(await transcript(runtime)).toContainEqual(steeredEntry);
+
+				// The turn says later that it never took it: back in line, live, and the tab says so.
+				turnOptions[0].onSteeringVerdict!({
+					type: 'steering',
+					id: frames[0].id,
+					verdict: 'dropped',
+				});
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({
+						itemId: queued.itemId,
+						text: 'go left instead',
+						paused: false,
+					}),
+				]);
+			} finally {
+				await new Promise<void>((resolve) => server.close(() => resolve()));
+			}
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
 			expect(errorOf(await runtime.turns.queue.steer('nope', 'q1')).code).toBe('not-found');
+		});
+
+		it('answers not-steerable for a claude --print turn, and the message waits', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'later' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.steer('a1', queued.itemId))).toMatchObject({
+				outcome: 'not-steerable',
+				blockedReason: 'api-token-source',
+				detail: expect.stringContaining('stays queued'),
+			});
+			expect(value(await runtime.turns.queue.list('a1'))).toHaveLength(1);
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
 		});
 
 		it('edits a waiting message in place, the way the queued card does', async () => {

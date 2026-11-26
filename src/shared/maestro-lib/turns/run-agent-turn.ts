@@ -39,6 +39,11 @@
 import * as os from 'os';
 import { observeGrokLaunchScope, type GrokLaunchScopePorts } from '../../agentAccountDir';
 import { canonicalJson } from '../../canonicalJson';
+import {
+	parseSteeringResult,
+	STEERING_SOCKET_ENV_VAR,
+	type SteeringResultFrame,
+} from '../../chatSteering';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import { grokLaunchArgsProblem } from '../launch/agent-args';
 import { readClaudeTurnBaseline, type ClaudeCostState } from '../../claudeCostTracker';
@@ -187,6 +192,15 @@ export interface RunAgentTurnOptions {
 	 * folder-trust prompt there (#1872). Leave unset for any other folder.
 	 */
 	acceptWorkspaceTrust?: boolean;
+	/**
+	 * Open maestro-p's steering channel at this socket (`steeringSocketPathFor()`), as a desktop
+	 * spawn does (`STEERING_SOCKET_ENV_VAR`). Taken only by a TUI turn on this machine: the socket
+	 * is local, and `claude --print` takes no input once a turn starts. The run says whether it
+	 * took it (`AgentTurnRun.steeringSocket`).
+	 */
+	steeringSocketPath?: string;
+	/** A verdict maestro-p printed for a steer typed into this turn (absorbed, queued, dropped). */
+	onSteeringVerdict?(verdict: SteeringResultFrame): void;
 	/** Aborting stops the turn, from the terminate stage. */
 	signal?: AbortSignal;
 	/** How long each stop stage gets. Default: `INTERACTIVE_STOP_GRACE_MS`. */
@@ -218,6 +232,15 @@ export interface AgentTurnRun {
 	/** Last resort for process exit: no grace, nothing awaited. */
 	terminateNow(): void;
 	stopRequested(): boolean;
+	/** The steering socket the turn opened (`RunAgentTurnOptions.steeringSocketPath`). None: not steerable. */
+	steeringSocket?: string;
+}
+
+/** A stdout line that is maestro-p's steering verdict, handed on; any other line is skipped cheaply. */
+function noteSteeringLine(line: string, onVerdict: (verdict: SteeringResultFrame) => void): void {
+	if (!line.includes('"steering"')) return;
+	const verdict = parseSteeringResult(line);
+	if (verdict) onVerdict(verdict);
 }
 
 /**
@@ -630,6 +653,7 @@ export async function runAgentTurn(
 
 	// The process to start.
 	let spec: TurnProcessSpec;
+	let steeringSocket: string | undefined;
 	let remote: RemoteAgentTarget | undefined;
 	if (plan.target.kind === 'remote' && sshConfig) {
 		const plannedRemote = structuredClone(plan.target.remote);
@@ -780,8 +804,16 @@ export async function runAgentTurn(
 				...spec,
 				command: applied.command,
 				args: applied.args,
-				env: { ...spec.env, ...(applied.customEnvVars ?? {}) },
+				env: {
+					...spec.env,
+					...(applied.customEnvVars ?? {}),
+					// The TUI turn listens for steers here, as a desktop spawn's does.
+					...(options.steeringSocketPath
+						? { [STEERING_SOCKET_ENV_VAR]: options.steeringSocketPath }
+						: {}),
+				},
 			};
+			steeringSocket = options.steeringSocketPath;
 		}
 	}
 
@@ -959,7 +991,13 @@ export async function runAgentTurn(
 					signal: options.signal,
 					outcome: options.outcome,
 				},
-				{ onEvent: (event) => stream.push(event) }
+				{
+					onEvent: (event) => stream.push(event),
+					// maestro-p prints each steer's later verdict as its own stdout line.
+					...(steeringSocket && options.onSteeringVerdict
+						? { onLine: (line: string) => noteSteeringLine(line, options.onSteeringVerdict!) }
+						: {}),
+				}
 			);
 		}
 	} catch (error) {
@@ -1020,6 +1058,7 @@ export async function runAgentTurn(
 		terminate: stops.terminate,
 		terminateNow: stops.terminateNow,
 		stopRequested: () => running.handle.stopRequested(),
+		...(steeringSocket ? { steeringSocket } : {}),
 	};
 	if (nativeLaunchReceipt)
 		Object.defineProperty(run, 'nativeLaunchReceipt', {

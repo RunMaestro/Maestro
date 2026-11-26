@@ -310,6 +310,12 @@ export interface ExecutionQueue<T extends QueueItem> {
 	/** Take a waiting item out. Returns false when it is not waiting (it may already be running). */
 	remove(id: string): boolean;
 	/**
+	 * Put an item that left the queue back at its head: a steer the agent never took. The head,
+	 * because the person asked for it sooner than anything behind it. It runs when its tab is free,
+	 * unless it comes back paused.
+	 */
+	returnToFront(item: T): void;
+	/**
 	 * Fold a waiting item into the waiting item above it on the same tab (`findQueueMergeTarget`):
 	 * the queued card's Merge. `combine` builds the upper item that remains (it keeps its id and
 	 * place); the lower one leaves the queue. Returns the upper item's id, or null when there is
@@ -557,6 +563,13 @@ export function createExecutionQueue<T extends QueueItem>(
 			// A removed head can unblock what is behind it.
 			drain();
 			return true;
+		},
+
+		returnToFront(item) {
+			if (disposed) return;
+			entries.unshift({ item, state: 'queued' });
+			emit({ type: 'queued', item, position: 0 });
+			drain();
 		},
 
 		merge(id, combine) {

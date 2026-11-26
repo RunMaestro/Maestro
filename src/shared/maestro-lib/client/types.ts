@@ -679,7 +679,9 @@ export interface TurnsApi {
 		 * Hand a waiting message to the turn already running on its tab: the queued card's Steer.
 		 * The host runs its own steer (the same `steerQueuedItem()` its Steer button runs), so the
 		 * message leaves its queue only once the agent has it, and comes back if it never takes it.
-		 * `outcome` says what happened; a headless host answers `unsupported`.
+		 * `outcome` says what happened. A headless host types it into the Claude TUI turn it runs
+		 * (`runtime/steering.ts`) and answers `not-steerable` for a turn that takes no input; an older
+		 * headless host answers `unsupported`.
 		 */
 		steer(agentId: string, itemId: string): Promise<ClientResult<QueueSteerResult>>;
 		/**
