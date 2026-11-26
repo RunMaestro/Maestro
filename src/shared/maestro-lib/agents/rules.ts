@@ -52,7 +52,9 @@ import type {
 	TabRefRecord,
 } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
+import { switchTabProvider } from '../translation/session';
 import {
+	matchesNativeSessionBinding,
 	switchAgentProvider,
 	updateProviderSlot,
 	type NativeSessionBinding,
@@ -509,7 +511,12 @@ export function closeTabRecord(
 	const index = tabs.findIndex((tab) => tab.id === tabId);
 	if (index === -1 || tabs[index].hidden === true) return null;
 
-	const closed: ClosedTabRecord = { tab: { ...tabs[index] }, index, closedAt: ctx.now() };
+	const closed: ClosedTabRecord = {
+		tab: { ...tabs[index] },
+		index,
+		closedAt: ctx.now(),
+		...(typeof agent.toolType === 'string' ? { toolType: agent.toolType } : {}),
+	};
 	let aiTabs = tabs.filter((tab) => tab.id !== tabId);
 	const visible = aiTabs.filter((tab) => tab.hidden !== true);
 	const otherTabs =
@@ -537,6 +544,72 @@ export function closeTabRecord(
 		agent: { ...agent, aiTabs, unifiedTabOrder: order, activeTabId },
 		closed,
 		...(freshTab ? { freshTab } : {}),
+	};
+}
+
+export interface ReopenTabOutcome {
+	agent: AgentRecord;
+	/** The tab that is open now. */
+	tabId: string;
+	/** The conversation already had a tab: nothing was added, and `tabId` names that tab. */
+	wasDuplicate?: boolean;
+}
+
+/**
+ * Reopen one archived tab (Cmd+Shift+T, a Federation peer's reopen): back where it sat in
+ * `aiTabs`, at the end of the strip order, in the background (the active tab, the other active
+ * ids, and `inputMode` are never touched). A conversation that already has a visible tab is not
+ * opened twice (same session id, and the same observed binding when it has one). The tab keeps its
+ * id unless another tab took it since.
+ */
+export function reopenTabRecord(
+	agent: AgentRecord,
+	closed: ClosedTabRecord,
+	ctx: RuleContext
+): ReopenTabOutcome {
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	// The live session fields belong to the provider the tab closed under. After a provider switch
+	// they are parked under it, so the next turn never resumes another provider's session.
+	const owner = typeof closed.toolType === 'string' ? closed.toolType : agent.toolType;
+	// The record's fields are the translation tab's, with `agentSessionId` optional on disk.
+	type ParkableTab = Parameters<typeof switchTabProvider>[0];
+	const archived: AITabRecord =
+		typeof owner === 'string' && typeof agent.toolType === 'string'
+			? (switchTabProvider(
+					closed.tab as unknown as ParkableTab,
+					owner as ToolType,
+					agent.toolType as ToolType
+				) as unknown as AITabRecord)
+			: closed.tab;
+	const sessionId = archived.agentSessionId;
+	// A native session id alone does not prove the same conversation: an archived tab that carries
+	// a binding is a duplicate only of a tab with the same observed binding.
+	const binding = archived.nativeSessionBinding;
+	const open = sessionId
+		? tabs.find(
+				(tab) =>
+					tab.hidden !== true &&
+					tab.agentSessionId === sessionId &&
+					(binding === undefined
+						? tab.nativeSessionBinding === undefined
+						: matchesNativeSessionBinding(tab.nativeSessionBinding, binding))
+			)
+		: undefined;
+	if (open) return { agent, tabId: open.id, wasDuplicate: true };
+	const id = tabs.some((tab) => tab.id === archived.id) ? ctx.newId() : archived.id;
+	const tab: AITabRecord = { ...archived, id, state: 'idle' };
+	const at = Math.max(
+		0,
+		Math.min(Number.isInteger(closed.index) ? closed.index : tabs.length, tabs.length)
+	);
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+	return {
+		agent: {
+			...agent,
+			aiTabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)],
+			unifiedTabOrder: [...order, { type: 'ai', id }],
+		},
+		tabId: id,
 	};
 }
 

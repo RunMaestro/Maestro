@@ -8,7 +8,9 @@
  * instead of back to the agent that asked.
  */
 
+import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { buildRemoteAskerKey, CROSS_AGENT_ASK_TAB_ID } from '../../../shared/crossAgentTypes';
 import type * as MaestroClientModule from '../../../cli/services/maestro-client';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
@@ -157,6 +159,42 @@ describe('ask command', () => {
 			peer: 'build-box',
 		});
 		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	// G2: from an agent's own shell, a hosted ask names its asker as a local ask does, so the host
+	// keeps one consult tab per asking (machine, agent), named after it.
+	it('names the calling agent to the host of a hosted agent, for its own consult tab', async () => {
+		process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
+		const peerSend = vi.fn().mockResolvedValue({ type: 'cross_agent_ask_result', success: true });
+		vi.mocked(getSessionById).mockImplementation(((id: string) =>
+			id === 'caller-agent'
+				? { id, name: 'Kensho', toolType: 'claude-code', cwd: '/k', projectRoot: '/k' }
+				: {
+						id: 'resolved-builder',
+						name: 'Builder',
+						toolType: 'claude-code',
+						cwd: '/p',
+						projectRoot: '/p',
+						liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+					}) as never);
+		peerBridge.sendCommand = peerSend;
+		try {
+			await ask('builder', 'Where is the gate?', {});
+		} finally {
+			peerBridge.sendCommand = null;
+			vi.mocked(getSessionById).mockImplementation(() => undefined);
+		}
+		expect(peerSend.mock.calls[0][0]).toMatchObject({
+			type: 'cross_agent_ask',
+			askerKey: buildRemoteAskerKey({
+				machine: os.hostname(),
+				agentId: 'caller-agent',
+				tabId: CROSS_AGENT_ASK_TAB_ID,
+			}),
+			fromAgentName: 'Kensho',
+		});
+		expect(peerSend.mock.calls[0][0]).not.toHaveProperty('fromSessionId');
 	});
 
 	it('rejects an empty question', async () => {

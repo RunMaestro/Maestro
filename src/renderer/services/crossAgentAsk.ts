@@ -31,6 +31,8 @@ import type { LogEntry } from '../types';
 import {
 	CROSS_AGENT_ASK_SESSION_ID,
 	CROSS_AGENT_ASK_TAB_ID,
+	parseWireAskerKey,
+	remoteAskerConsultKey,
 	type RemoteAskerContext,
 } from '../../shared/crossAgentTypes';
 
@@ -154,12 +156,17 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 			});
 		};
 
+		// One consult tab per calling agent here; an asker on another machine (a Federation peer
+		// consulting this desktop's agent) gets one per (machine, agent, tab) it names, under a
+		// prefix no agent here has, so it can reach its own consult tab and no other.
+		const consultKey = source
+			? { sourceSessionId: source.id, sourceTabId: CROSS_AGENT_ASK_TAB_ID }
+			: remoteAskerConsultKey(parseWireAskerKey(request.askerKey));
 		sendCrossAgentRequest({
-			sourceSessionId: source?.id ?? CROSS_AGENT_ASK_SESSION_ID,
-			// An asker on another machine (a Federation peer consulting this desktop's agent) names
-			// itself and sends its own context and hand-off, as a typed mention here would.
+			...consultKey,
+			// That remote asker names itself and sends its own context and hand-off, as a typed
+			// mention here would.
 			sourceAgentName: source?.name ?? request.fromAgentName ?? CROSS_AGENT_ASK_FALLBACK_NAME,
-			sourceTabId: CROSS_AGENT_ASK_TAB_ID,
 			targetSessionId: request.targetSessionId,
 			userPrompt: request.question,
 			sourceLogs,

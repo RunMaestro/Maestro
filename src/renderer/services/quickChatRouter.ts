@@ -35,7 +35,9 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { createTab, isSessionIdLabel } from '../utils/tabHelpers';
-import { hostedTargetOf } from './hostedTurns';
+import { hostedTargetOf, reopenHostedClosedTab, type HostedTarget } from './hostedTurns';
+import { reopenHostedClosedEntry } from './closedTabCommands';
+import { readMirrorClosedTabs } from './peerMirror';
 import { isAiTabHidden } from '../utils/unifiedTabOrderUtils';
 import {
 	loadResumableSession,
@@ -50,7 +52,7 @@ export type RouteTarget =
 	| { kind: 'open'; tabId: string }
 	| ({ kind: 'closed' } & Pick<
 			ClosedConversation,
-			'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding'
+			'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding' | 'hostTabId'
 	  >)
 	| { kind: 'new' };
 
@@ -78,6 +80,8 @@ interface ClosedConversation {
 	name: string | null;
 	text: string;
 	lastActiveAt: number;
+	/** A hosted agent's: the tab id its host closed it as, which the host reopens. */
+	hostTabId?: string;
 }
 
 const closedCache = new Map<
@@ -97,13 +101,19 @@ export function resetQuickChatRouterForTests(): void {
  * rest many times over.
  */
 async function readClosedConversations(session: Session): Promise<ClosedConversation[]> {
-	// A hosted agent's conversations run on its host, which keeps its own closed tabs. One reopened
-	// here would be a tab only this machine has, so the host could not continue it.
-	if (hostedTargetOf(session)) return [];
+	// A hosted agent's conversations run on its host, which keeps their closed tabs: they are
+	// offered from there and reopen there, so the host continues them. The cache is keyed on the
+	// host too, so a move or the hosted setting changing never serves the other source's list.
+	const host = hostedTargetOf(session);
 	const cached = closedCache.get(session.id);
-	const selectionKey = resumeSelectionKey(session);
+	const selectionKey = `${resumeSelectionKey(session)}\u0000${host ? `${host.peerId}\u0000${host.agentId}` : 'local'}`;
 	if (cached?.selectionKey === selectionKey && Date.now() - cached.at < CLOSED_CACHE_TTL_MS)
 		return cached.conversations;
+	if (host) {
+		const conversations = await readHostedClosedConversations(host);
+		closedCache.set(session.id, { at: Date.now(), selectionKey, conversations });
+		return conversations;
+	}
 
 	const { entries }: { entries: HistoryEntry[] } = await window.maestro.history.getAllPaginated({
 		sessionId: session.id,
@@ -150,6 +160,50 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
 	}));
 	closedCache.set(session.id, { at: Date.now(), selectionKey, conversations });
 	return conversations;
+}
+
+/**
+ * A hosted agent's closed conversations: the AI tabs in its host's closed-tab stack (bounded) that
+ * name a provider session and closed in the lookback window, described by the USER turns of its
+ * host's History, as a local agent's are by its own. A host that cannot say offers none.
+ */
+async function readHostedClosedConversations(host: HostedTarget): Promise<ClosedConversation[]> {
+	const since = Date.now() - QUICK_CHAT_ROUTE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+	const closed = (await readMirrorClosedTabs(host.peerId, host.agentId)).filter(
+		(entry) => entry.type === 'ai' && entry.agentSessionId && entry.closedAt >= since
+	);
+	if (closed.length === 0) return [];
+	const summaries = new Map<string, { text: string[]; at: number }>();
+	try {
+		const page = await window.maestro.federation?.historyPage(host.peerId, host.agentId, {
+			lookbackHours: QUICK_CHAT_ROUTE_LOOKBACK_DAYS * 24,
+			types: ['USER'],
+			pagination: { limit: HISTORY_SCAN_LIMIT, offset: 0 },
+		});
+		for (const entry of page?.entries ?? []) {
+			if (!entry.agentSessionId) continue;
+			const seen = summaries.get(entry.agentSessionId) ?? { text: [], at: 0 };
+			seen.at = Math.max(seen.at, entry.timestamp);
+			if (entry.summary?.trim() && seen.text.length < SUMMARIES_PER_CONVERSATION) {
+				seen.text.push(entry.summary);
+			}
+			summaries.set(entry.agentSessionId, seen);
+		}
+	} catch (error) {
+		// The closed tabs are still routable by their names without the host's History.
+		logger.warn('[QuickChat] Could not read the host History', undefined, error);
+	}
+	return closed.map((entry) => {
+		const agentSessionId = entry.agentSessionId as string;
+		const described = summaries.get(agentSessionId);
+		return {
+			agentSessionId,
+			name: entry.label && !isSessionIdLabel(entry.label, agentSessionId) ? entry.label : null,
+			text: described?.text.join('\n') ?? '',
+			lastActiveAt: Math.max(entry.closedAt, described?.at ?? 0),
+			hostTabId: entry.tabId,
+		};
+	});
 }
 
 /**
@@ -273,11 +327,12 @@ export async function routeQuickChatMessage(
 			)
 		)
 			continue;
-		const key = `session:${canonicalJson({ ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId })}`;
+		const key = `session:${canonicalJson({ ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId, hostTabId: conversation.hostTabId })}`;
 		targets.set(key, {
 			kind: 'closed',
 			agentSessionId: conversation.agentSessionId,
 			name: conversation.name,
+			...(conversation.hostTabId ? { hostTabId: conversation.hostTabId } : {}),
 			ownerAgentId: conversation.ownerAgentId,
 			nativeSessionBinding:
 				conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding),
@@ -304,6 +359,36 @@ export async function routeQuickChatMessage(
 }
 
 /**
+ * Reopen a hosted agent's closed conversation on its host, in the background: the tab its host
+ * closed it as (`hostTabId`, else the host's closed tab of that provider session). Null when the
+ * host has no closed tab for it (the caller opens a new host tab, as a local miss opens a new
+ * tab) or refused (a red toast says so). The entry for it leaves this machine's closed stack too.
+ */
+async function reopenHostedConversation(
+	session: Session,
+	host: HostedTarget,
+	conversation: Pick<ClosedConversation, 'agentSessionId' | 'hostTabId'>,
+	isCurrent: () => boolean,
+	onCreated?: (tabId: string) => void
+): Promise<string | null> {
+	const hostTabId =
+		conversation.hostTabId ??
+		(await readMirrorClosedTabs(host.peerId, host.agentId)).find(
+			(entry) => entry.type === 'ai' && entry.agentSessionId === conversation.agentSessionId
+		)?.tabId;
+	if (!hostTabId || !isCurrent()) return null;
+	const local = session.unifiedClosedTabHistory?.find(
+		(entry) => entry.type === 'ai' && entry.tab.id === hostTabId
+	);
+	const reopened = local
+		? await reopenHostedClosedEntry(session, local, { background: true })
+		: await reopenHostedClosedTab(session, { tabId: hostTabId }, { background: true });
+	if (!reopened) return null;
+	if (!reopened.wasDuplicate) onCreated?.(reopened.tabId);
+	return reopened.tabId;
+}
+
+/**
  * Bring a closed conversation back as a background tab, ready for a prompt. The
  * view does not move: the user is in Quick Chat, not in the main window.
  *
@@ -316,7 +401,7 @@ export async function reopenClosedConversation(
 	sessionId: string,
 	conversation: Pick<
 		ClosedConversation,
-		'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding'
+		'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding' | 'hostTabId'
 	>,
 	isCurrent: () => boolean = () => true,
 	onCreated?: (tabId: string) => void
@@ -324,8 +409,9 @@ export async function reopenClosedConversation(
 	const find = () => useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const session = find();
 	if (!session) return null;
-	// Not offered for a hosted agent (see readClosedConversations): the caller opens a host tab.
-	if (hostedTargetOf(session)) return null;
+	// A hosted agent's conversation reopens on its host, which continues it there.
+	const host = hostedTargetOf(session);
+	if (host) return reopenHostedConversation(session, host, conversation, isCurrent, onCreated);
 	const selectionKey = resumeSelectionKey(session);
 	const binding =
 		conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding);
