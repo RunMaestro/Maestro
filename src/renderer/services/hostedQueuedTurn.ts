@@ -44,6 +44,10 @@ import {
 	noteDirectDispatch,
 	raiseAgentError,
 	settleRetryOnHost,
+	useRetryStore,
+	HOST_HAD_MESSAGE_TEXT,
+	notOnHostText,
+	type NotOnHost,
 	wouldAutoRetry,
 } from '../stores/retryStore';
 import {
@@ -261,16 +265,30 @@ export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undef
  * nothing is sent or held. The resend's own retry ends saying so (`settleRetryOnHost()`); one a
  * later message started after a Stop is that message's, and is left alone. A send no retry owns
  * (Force Send of a copy parked by Stop) says it with a toast, so it never vanishes unexplained.
+ *
+ * With `notOnHost` the host no longer has the tab or the message the copy named (closed, or
+ * cleared): nothing is sent there, and the copy is parked held, no longer naming that entry, so
+ * the user can send it again as a new message. The card or the toast says which.
  */
-function notHostedAgain(sessionId: string, tabId: string, retryOutage: string | undefined): void {
-	if (retryOutage !== undefined && getRetryEntry(sessionId, tabId)?.outageId === retryOutage) {
-		settleRetryOnHost(sessionId, tabId);
+function notHostedAgain(
+	sessionId: string,
+	item: QueuedItem,
+	index: number,
+	retryOutage: string | undefined,
+	notOnHost?: NotOnHost
+): void {
+	const owned =
+		retryOutage !== undefined && getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
+	if (owned) settleRetryOnHost(sessionId, item.tabId, notOnHost);
+	if (notOnHost) holdRefusedItem(sessionId, { ...item, hostEntryId: undefined }, index);
+	// Its retry's card says it (settled here, or already by the cut's own read): told once.
+	if (owned || (retryOutage && useRetryStore.getState().outages[retryOutage]?.settledByHost)) {
 		return;
 	}
 	notifyToast({
 		color: 'theme',
-		title: 'Not sent again',
-		message: 'The host already had this message, so it was not sent again.',
+		title: notOnHost ? 'Not sent' : 'Not sent again',
+		message: notOnHost ? notOnHostText(notOnHost) : HOST_HAD_MESSAGE_TEXT,
 	});
 }
 
@@ -323,7 +341,7 @@ function forwardToHost(
 			(receipt) => {
 				if (receipt?.status === 'answered') {
 					// The host had already answered this message: it ran once, and nothing ran now.
-					notHostedAgain(sessionId, item.tabId, retryOutage);
+					notHostedAgain(sessionId, item, index, retryOutage);
 					return null;
 				}
 				if (receipt) {
@@ -354,7 +372,17 @@ function forwardToHost(
 					retryOutage !== undefined &&
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
 				if (decided === 'answered') {
-					notHostedAgain(sessionId, item.tabId, retryOutage);
+					notHostedAgain(sessionId, item, index, retryOutage);
+					return null;
+				}
+				if (decided === 'tab-gone' || decided === 'entry-gone') {
+					notHostedAgain(
+						sessionId,
+						item,
+						index,
+						retryOutage,
+						decided === 'tab-gone' ? 'tab' : 'message'
+					);
 					return null;
 				}
 				if (retryOutage && !stillOwned) {

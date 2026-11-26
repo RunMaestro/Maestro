@@ -26,7 +26,7 @@
 
 import {
 	isSameUserEntry,
-	TURN_ENDED_SOURCES,
+	turnEndedAfter,
 	userEntryAnswered,
 } from '../../shared/maestro-lib/agents/rules';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
@@ -42,7 +42,7 @@ import { sameImages } from '../utils/hostedSession';
 import { generateId } from '../utils/ids';
 import { settleTabThinkingState } from '../utils/tabHelpers';
 import { keepTurnForHost } from './hostedQueuedTurn';
-import { readMirrorTranscript } from './peerMirror';
+import { MIRROR_TRANSCRIPT_TAIL, readMirrorTranscript } from './peerMirror';
 
 /** How the mirror stands with the host a hosted record runs on. */
 export interface HostLink {
@@ -120,10 +120,20 @@ interface CutTurn {
 
 /**
  * How a cut turn's kept message goes on: `send` (the turn died with the host), `answered` (the
- * host still runs it, finished it, or no longer has the tab: never sent again), or `unknown` (the
- * host's transcript could not be read: kept for the next try).
+ * host still runs it or finished it: never sent again), `tab-gone` or `entry-gone` (the host no
+ * longer has the tab, or the message after a clear: not sent there, and parked held for the user
+ * to send again), or `unknown` (the host's transcript could not be read: kept for the next try).
  */
-export type CutTurnFate = 'send' | 'answered' | 'unknown';
+export type CutTurnFate = 'send' | 'answered' | 'tab-gone' | 'entry-gone' | 'unknown';
+
+/**
+ * The fate of a message the host's tab does not hold (`at` is -1): past the tail this machine
+ * read, it has a history after it (`answered`); in a tail that is the whole transcript, it is gone
+ * from the tab (a clear, `entry-gone`).
+ */
+function missingEntryFate(entries: readonly unknown[]): 'answered' | 'entry-gone' {
+	return entries.length >= MIRROR_TRANSCRIPT_TAIL ? 'answered' : 'entry-gone';
+}
 
 /** How long a resend waits for the host to say how a cut turn ended, as a send waits for a reconnect. */
 export const CUT_TURN_FATE_WAIT_MS = 10_000;
@@ -310,9 +320,10 @@ export function cutTurnFate(
 
 /**
  * How a kept message the host already wrote down goes on, read from the host's tab (no cut on
- * record for it). Running there now with it as its message, or answered after it (or the entry is
- * gone): `answered`, never sent again. Not answered and not running: `send`. The tab could not be
- * read: `unknown`, kept for the next try.
+ * record for it). Running there now with it as its message, or its own turn answered (an answer
+ * before the next user message): `answered`, never sent again. Not answered and not running:
+ * `send`. The tab closed there, or the message gone from it: `tab-gone` / `entry-gone`, never
+ * sent into it. The tab could not be read: `unknown`, kept for the next try.
  */
 async function readKeptEntryFate(
 	host: HostAgentRef,
@@ -324,7 +335,7 @@ async function readKeptEntryFate(
 		.find((agent) => agent.id === host.agentId)
 		?.aiTabs?.find((tab) => tab.id === item.tabId);
 	// Closed on the host: nothing there to send it to as that entry, and it may have run.
-	if (!hostTab) return 'answered';
+	if (!hostTab) return 'tab-gone';
 	const slot = mirror.transcripts[host.peerId]?.[liveTurnKey(host.agentId, item.tabId)];
 	if (!slot?.loaded || slot.loading || slot.error || slot.stale) return 'unknown';
 	const entry = {
@@ -333,8 +344,8 @@ async function readKeptEntryFate(
 		...(item.images?.length ? { images: item.images } : {}),
 	};
 	const at = slot.entries.findIndex((candidate) => candidate.id === entry.id);
-	// Past the tail read, or gone: it has a history after it. Never sent twice.
-	if (at === -1) return 'answered';
+	// Past the tail read (a history after it), or gone after a clear. Never sent twice.
+	if (at === -1) return missingEntryFate(slot.entries);
 	// Edited while it was kept: the user's own message now, sent as one (the host gives it an entry
 	// of its own, since it no longer matches the one it names).
 	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
@@ -349,11 +360,30 @@ async function readKeptEntryFate(
  * whether its retry counts down or it waits behind another message's retry (that one is left
  * alone). A copy the user edited while it was kept is their own message now: it stays, no longer
  * named as the host's entry, and goes as one.
+ *
+ * `tab-gone` / `entry-gone`: the host no longer has the tab or the message. Nothing is sent
+ * there, and the copy stays in the queue held, no longer named as the host's entry, so the user
+ * can send it again; the card says which.
  */
-function settleKeptCut(cut: CutTurn): void {
-	answerWaiters(cut, 'answered');
+function settleKeptCut(
+	cut: CutTurn,
+	fate: 'answered' | 'tab-gone' | 'entry-gone' = 'answered'
+): void {
+	answerWaiters(cut, fate);
 	const keptId = cut.keptItemId;
 	if (!keptId) return;
+	if (fate !== 'answered') {
+		if (getRetryEntry(cut.sessionId, cut.tabId)?.heldItemId === keptId) {
+			settleRetryOnHost(cut.sessionId, cut.tabId, fate === 'tab-gone' ? 'tab' : 'message');
+		}
+		updateSessionWith(cut.sessionId, (session) => ({
+			...session,
+			executionQueue: (session.executionQueue ?? []).map((item) =>
+				item.id === keptId ? { ...item, paused: true, hostEntryId: undefined } : item
+			),
+		}));
+		return;
+	}
 	const holdsIt = getRetryEntry(cut.sessionId, cut.tabId)?.heldItemId === keptId;
 	const queued = selectSessionById(cut.sessionId)(useSessionStore.getState())?.executionQueue?.find(
 		(item) => item.id === keptId
@@ -380,13 +410,6 @@ function settleKeptCut(cut: CutTurn): void {
 	}
 }
 
-/** The host's transcript says the turn answering `message` ended (an answer or an error after it). */
-function turnEnded(entries: readonly { id: string; source: string }[], messageId: string): boolean {
-	const at = entries.findIndex((entry) => entry.id === messageId);
-	if (at === -1) return true;
-	return entries.slice(at + 1).some((entry) => TURN_ENDED_SOURCES.has(entry.source));
-}
-
 /**
  * Decide one cut turn from the host's transcript, read after the host came back. A read that says
  * nothing conclusive keeps the cut for the next one.
@@ -401,10 +424,15 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	const hostTab = mirror.peers[link.peerId]?.agents
 		.find((agent) => agent.id === link.agentId)
 		?.aiTabs?.find((tab) => tab.id === cut.tabId);
-	// Closed on the host, still running there (it draws Thinking again), stopped by the user, or
-	// no message to send: nothing to settle.
+	// Closed on the host: not sent into a tab that is gone, and held for the user to send again.
+	if (!hostTab) {
+		cutTurns.delete(key);
+		settleKeptCut(cut, 'tab-gone');
+		return;
+	}
+	// Still running there (it draws Thinking again), stopped by the user, or no message to send:
+	// nothing to settle.
 	if (
-		!hostTab ||
 		hostTab.state === 'busy' ||
 		cut.stopped ||
 		stoppedHere(key, cut.message?.id) ||
@@ -422,7 +450,16 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		return;
 	}
 	cutTurns.delete(key);
-	if (turnEnded(slot.entries, cut.message.id)) {
+	const messageId = cut.message.id;
+	const at = slot.entries.findIndex((entry) => entry.id === messageId);
+	// Gone from the tab (a clear), or past the tail read: never sent twice.
+	if (at === -1) {
+		settleKeptCut(cut, missingEntryFate(slot.entries));
+		return;
+	}
+	// Its own turn ended (an answer before the next user message, `turnEndedAfter()`); an answer to
+	// a LATER message is that one's, and this turn died.
+	if (turnEndedAfter(slot.entries, at)) {
 		settleKeptCut(cut);
 		return;
 	}

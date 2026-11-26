@@ -4077,6 +4077,18 @@ describe('WebSocketMessageHandler', () => {
 
 			it.each([
 				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
+				[
+					'only a later message was answered',
+					{
+						logs: [
+							QUESTION,
+							{ id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' },
+							{ id: 'a2', timestamp: 4, source: 'ai', text: 'The tests...' },
+						],
+					},
+					'Summarize the docs',
+				],
 				[
 					'the message was edited while it was kept',
 					{ logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'ok' }] },

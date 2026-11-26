@@ -32,6 +32,7 @@ import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	getRetryEntry,
 	noteDirectDispatch,
+	notOnHostText,
 	registerAgentErrorSurfacer,
 	registerDispatchDepsProvider,
 	retryNow,
@@ -68,6 +69,9 @@ const act$ = vi.fn();
 const flush = () => act(async () => undefined);
 
 const QUESTION: LogEntry = { id: 'u1', timestamp: 10, source: 'user', text: 'Summarize the docs' };
+/** A message the user sent on the same tab after QUESTION, and its answer. */
+const LATER_MESSAGE: LogEntry = { id: 'u2', timestamp: 30, source: 'user', text: 'And the tests?' };
+const LATER_ANSWER: LogEntry = { id: 'a2', timestamp: 40, source: 'ai', text: 'The tests...' };
 
 /** The error main reports for an SSH agent's turn when its link is cut mid-turn. */
 const sshTurnError: AgentError = {
@@ -683,6 +687,32 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(userBubbles()).toHaveLength(1);
 	});
 
+	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		// The answer a2 is u2's: u1's turn died with the host, so u1 never ran.
+		await hostBack('idle', [QUESTION, LATER_MESSAGE, LATER_ANSWER]);
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	it('holds the kept message, unsent, and says the message is gone when the host tab was cleared (R23)', async () => {
+		cut();
+		const outageId = getRetryEntry('row', 't1')!.outageId;
+		await hostBack('idle', []);
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		// Kept for the user to send again, as a new message: it no longer names the host's entry.
+		expect(queue()).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true, hostEntryId: undefined }),
+		]);
+		expect(useRetryStore.getState().outages[outageId]).toMatchObject({
+			settledByHost: true,
+			notOnHost: 'message',
+		});
+		expect(notOnHostText('message')).toContain('no longer on the host');
+	});
+
 	it.each([
 		[
 			'finished while the link was down',
@@ -1023,6 +1053,49 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		await flush();
 		expect(sends()).toHaveLength(0);
 		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+	});
+
+	it('sends the kept message when only a LATER message of the tab was answered (R23)', async () => {
+		// Stopped while cut, parked, then u2 went straight to the host and was answered a2.
+		relaunch('idle', [QUESTION, LATER_MESSAGE, LATER_ANSWER]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	it.each([
+		['its tab was closed on the host', 'tab' as const],
+		['the host tab was cleared', 'message' as const],
+	])('holds the kept message, unsent, saying so, when %s (R23)', async (_how, notOnHost) => {
+		relaunch('idle', notOnHost === 'tab' ? [QUESTION] : []);
+		if (notOnHost === 'tab') {
+			const peer = peerWith('idle', 'connected');
+			usePeerMirrorStore
+				.getState()
+				.hydrate([{ ...peer, agents: peer.agents.map((agent) => ({ ...agent, aiTabs: [] })) }]);
+		}
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toEqual([
+			expect.objectContaining({
+				id: 'k1',
+				text: QUESTION.text,
+				paused: true,
+				hostEntryId: undefined,
+			}),
+		]);
+		expect(toastMock).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Not sent', message: notOnHostText(notOnHost) })
+		);
+		expect(toastMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: 'The host already had this message, so it was not sent again.',
+			})
+		);
 	});
 
 	it('takes the host saying the message already ran as "already ran"', async () => {

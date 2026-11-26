@@ -755,17 +755,27 @@ export function isSameUserEntry(candidate: unknown, entry: SentUserEntry): boole
 export const TURN_ENDED_SOURCES: ReadonlySet<string> = new Set(['stdout', 'ai', 'error']);
 
 /**
- * Whether `logs` hold the user message `entry` with the end of its turn after it (an answer or an
- * error): that message already ran, so a resend of it must not run again.
+ * Whether the turn of the user message at `at` in `logs` ended: an answer or an error follows it
+ * before the next user message. An answer after a LATER user message is that message's, never
+ * this one's: a message whose turn died, followed by another that was answered, did not run.
  */
-export function userEntryAnswered(logs: readonly unknown[], entry: SentUserEntry): boolean {
-	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
-	if (at === -1) return false;
+export function turnEndedAfter(logs: readonly unknown[], at: number): boolean {
 	for (let i = at + 1; i < logs.length; i += 1) {
 		const source = (logs[i] as Partial<LogEntryRecord> | null)?.source;
+		if (source === 'user') return false;
 		if (typeof source === 'string' && TURN_ENDED_SOURCES.has(source)) return true;
 	}
 	return false;
+}
+
+/**
+ * Whether `logs` hold the user message `entry` with the end of its own turn after it (an answer or
+ * an error before the next user message, `turnEndedAfter()`): that message already ran, so a
+ * resend of it must not run again.
+ */
+export function userEntryAnswered(logs: readonly unknown[], entry: SentUserEntry): boolean {
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	return at !== -1 && turnEndedAfter(logs, at);
 }
 
 /**

@@ -1596,6 +1596,20 @@ describe('runtime turns', () => {
 				expect(argvFiles).toHaveLength(1);
 			});
 
+			// Parity R23: an answer after a LATER message is that message's. The resend of a message
+			// whose own turn died runs, though the tab holds an answer further down.
+			it('runs the resend of a message when only a later message of the tab was answered', async () => {
+				const LATER = { id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' };
+				const LATER_ANSWER = { id: 'a2', timestamp: 4, source: 'stdout', text: 'The tests...' };
+				const runtime = await start([cutTab([QUESTION, LATER, LATER_ANSWER])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).not.toEqual({ status: 'answered' });
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
 			it('gives a new message the id it names', async () => {
 				const runtime = await start();
 				const turn = watch(runtime);
