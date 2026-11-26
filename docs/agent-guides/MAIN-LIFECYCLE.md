@@ -662,7 +662,7 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 6. **Stop web server** - `webServer.stop()` (fire and forget)
 7. **Close stats database** - `closeStatsDB()` (synchronous)
 
-Before cleanup, the quit also starts `flushPendingRemoteWrites` (`flushRemoteCopyWriteBack()`): a change saved in an opened remote copy that has not reached the remote yet is sent over SSH. Those writes cannot land synchronously, so the hard exit waits for them, at most `REMOTE_WRITE_FLUSH_MAX_MS` (5 s).
+Before cleanup, the quit also starts `flushPendingRemoteWrites` (`flushRemoteCopyWriteBack()`): it tries to send each change saved in an opened remote copy that has not reached the remote yet. Those writes go over SSH and cannot land synchronously, so the hard exit waits for them, at most `REMOTE_WRITE_FLUSH_MAX_MS` (5 s); a re-entrant `before-quit` is held behind the same wait. A change can still stay unsent: a copy that stopped saving back (a conflict, the size cap, a failed watcher), a failed write, or the 5 s bound running out. Such a change stays in the copy on this computer.
 
 ### Platform-Specific Quit Behavior
 

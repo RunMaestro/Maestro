@@ -698,6 +698,25 @@ describe('app-lifecycle/quit-handler', () => {
 			vi.useRealTimers();
 		});
 
+		it('holds a second quit request behind the remote-copy wait too', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+			await vi.advanceTimersByTimeAsync(1000);
+
+			const again = { preventDefault: vi.fn() };
+			beforeQuitHandler!(again);
+			expect(again.preventDefault).toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
+			vi.useRealTimers();
+		});
+
 		it('stops waiting for remote copy writes after the bound', async () => {
 			vi.useFakeTimers();
 			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =

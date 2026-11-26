@@ -159,6 +159,12 @@ interface QuitHandlerState {
 	installingUpdate: boolean;
 	/** Guards against re-entrant before-quit running cleanup / arming the timer twice. */
 	cleanupStarted: boolean;
+	/**
+	 * This process ends by its own hard exit (the loop is held open for it). A
+	 * re-entrant before-quit must hold it open too, or it ends the process
+	 * before the remote-copy writes the exit waits for.
+	 */
+	controlledExit: boolean;
 }
 
 /** Quit handler instance */
@@ -238,6 +244,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		confirmationTimeout: null,
 		installingUpdate: false,
 		cleanupStarted: false,
+		controlledExit: false,
 	};
 
 	return {
@@ -321,6 +328,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				// path calling app.quit() during the grace window) running cleanup or
 				// arming the timer twice.
 				if (state.cleanupStarted) {
+					if (state.controlledExit) event.preventDefault();
 					return;
 				}
 				state.cleanupStarted = true;
@@ -350,6 +358,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				// the graceful teardown their updater handoffs are written against.
 				const forceExitOnInstall = state.installingUpdate && isMacOS();
 				if (!state.installingUpdate || forceExitOnInstall) {
+					state.controlledExit = true;
 					event.preventDefault();
 					const graceMs = state.installingUpdate ? UPDATE_EXIT_GRACE_MS : FORCE_EXIT_GRACE_MS;
 					const exit = () => {
