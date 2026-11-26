@@ -134,12 +134,26 @@ describe('withReturnedFromHost', () => {
 	});
 });
 
+describe('the host copy a move back leaves (T5)', () => {
+	it('is recorded on the agent, and cleared by a move back that leaves none', () => {
+		const left = { peer: 'build-box', agentId: 'host-1', at: 1 };
+		const kept = withReturnedFromHost(hostedAgent(), { tabs: [], leftOnHost: left });
+		expect(kept.leftOnHost).toEqual(left);
+		expect(withReturnedFromHost(kept, { tabs: [] }).leftOnHost).toBeUndefined();
+	});
+});
+
 describe('readReturnedFromHost and returnRestoreRefusal', () => {
 	it('reads a well-formed value and refuses a malformed one', () => {
 		expect(readReturnedFromHost({ tabs: [{ id: 't1' }], activeTabId: 't1' })).toEqual({
 			tabs: [{ id: 't1' }],
 			activeTabId: 't1',
 		});
+		// T5: the host copy a move back left, checked like a pointer; a malformed one is dropped.
+		expect(
+			readReturnedFromHost({ tabs: [], leftOnHost: { peer: 'box', agentId: 'h1', at: 2 } })
+		).toEqual({ tabs: [], leftOnHost: { peer: 'box', agentId: 'h1', at: 2 } });
+		expect(readReturnedFromHost({ tabs: [], leftOnHost: { peer: 'box' } })).toEqual({ tabs: [] });
 		expect(readReturnedFromHost({ tabs: [{ name: 'no id' }] })).toBeUndefined();
 		expect(readReturnedFromHost({ tabs: 'x' })).toBeUndefined();
 		expect(readReturnedFromHost(null)).toBeUndefined();
@@ -243,9 +257,16 @@ describe('runReturnFromHost', () => {
 		const d = deps(hostedAgent());
 		const result = await runReturnFromHost('agent-1', { offline: true }, d.value);
 		expect(d.connect).not.toHaveBeenCalled();
-		expect(d.restore).toHaveBeenCalledWith('agent-1', { tabs: [] });
+		// The copy left on the host is recorded, so a later Move to Host replaces it (T5).
+		expect(d.restore).toHaveBeenCalledWith('agent-1', {
+			tabs: [],
+			leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 },
+		});
 		expect(result.hostCopyRemoved).toBe(false);
-		expect(result.notices?.[0]).toMatch(/maestro-cli remove-agent host-1/);
+		// A command run on this machine: `peer:agent` reaches a headless host too.
+		expect(result.notices?.[0]).toContain('maestro-cli remove-agent build-box:host-1');
+		expect(result.notices?.[0]).toContain('maestro-cli show agent build-box:host-1');
+		expect(result.notices?.[0]).toContain('Moving the agent to the host again replaces that copy');
 	});
 
 	it('throws a LiftRunError for an unknown agent', async () => {

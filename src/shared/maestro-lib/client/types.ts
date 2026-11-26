@@ -263,6 +263,12 @@ export interface AgentImportInput {
 	/** The tab the person was looking at. Absent, or not one of `tabs`: the first tab. */
 	activeTabId?: string;
 	queue?: AgentImportQueuedMessage[];
+	/**
+	 * The id of this agent's earlier copy on the host, left there by a Move Back while the host was
+	 * down. The host replaces that copy with this import in one write: its name and directory do
+	 * not refuse the import. A host that does not know the field refuses on the name as before.
+	 */
+	replacesAgentId?: string;
 }
 
 export interface AgentImportReceipt {

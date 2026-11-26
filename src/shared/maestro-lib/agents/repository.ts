@@ -661,16 +661,31 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				checkCwd,
 			});
 			if (!planned.ok) return failure(method, planned.code, planned.message);
-			const { agent } = planned;
+			const { agent, replaces } = planned;
+			if (replaces && processes.isBusy(replaces)) {
+				return failure(
+					method,
+					'rejected',
+					`The copy this import replaces (${replaces}) is running a turn. Wait for it to finish, or stop it, then move again.`
+				);
+			}
+			// The agent's earlier copy goes in the same write the new record lands in, cleaned up
+			// as a removal cleans it up (`removalSteps()`).
+			const entries = sessionsDoc.sessions ?? [];
+			const kept = replaces
+				? entries.filter((entry) => !(isAgentEntry(entry) && entry.id === replaces))
+				: entries;
+			const removal = replaces ? removalSteps(replaces) : undefined;
 			return {
 				ok: true,
 				plan: {
 					value: { agentId: agent.id },
-					sessions: {
-						...sessionsDoc,
-						sessions: [...(sessionsDoc.sessions ?? []), agent],
-					},
-					events: [{ type: 'agent.added', agent: project(agent) }],
+					sessions: { ...sessionsDoc, sessions: [...kept, agent] },
+					...(removal ? { before: removal.before, after: removal.after } : {}),
+					events: [
+						...(replaces ? [{ type: 'agent.removed' as const, agentId: replaces }] : []),
+						{ type: 'agent.added', agent: project(agent) },
+					],
 				},
 			};
 		});
@@ -875,21 +890,28 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				plan: {
 					value: undefined,
 					sessions: next,
-					// Every process of the agent, every tab's, not only the legacy `-ai` id (G6).
-					before: () => processes.stopAgent(agentId),
-					// Kept: History, the provider's own session files, the working directory (AG-5).
-					after: async () => {
-						if (isSafeFileId(agentId)) {
-							await fs.rm(path.join(paths.userDataDir, 'playbooks', `${agentId}.json`), {
-								force: true,
-							});
-						}
-						await removeClosedTabArchive(paths.syncDir, agentId);
-					},
+					...removalSteps(agentId),
 					events: [{ type: 'agent.removed', agentId }],
 				},
 			};
 		});
+	}
+
+	/** What removing an agent does besides dropping its record: one rule for a remove and a replace. */
+	function removalSteps(agentId: string) {
+		return {
+			// Every process of the agent, every tab's, not only the legacy `-ai` id (G6).
+			before: () => processes.stopAgent(agentId),
+			// Kept: History, the provider's own session files, the working directory (AG-5).
+			after: async () => {
+				if (isSafeFileId(agentId)) {
+					await fs.rm(path.join(paths.userDataDir, 'playbooks', `${agentId}.json`), {
+						force: true,
+					});
+				}
+				await removeClosedTabArchive(paths.syncDir, agentId);
+			},
+		};
 	}
 
 	// -----------------------------------------------------------------------

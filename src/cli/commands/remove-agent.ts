@@ -4,12 +4,24 @@ import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import { exitIfMaestroNotRunning } from '../services/session-command';
+import {
+	PeerResolveError,
+	hostCallError,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import { ExitCode } from '../exit-codes';
 
 interface RemoveAgentOptions {
 	json?: boolean;
 }
 
 export async function removeAgent(agentId: string, options: RemoveAgentOptions): Promise<void> {
+	// `peer:agent` removes the agent on that Federation peer's host, a headless host or a desktop
+	// one (the copy a Move Back left there while the host was down). Read it with `show agent`.
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') return removePeerAgent(route.target, options);
 	// Resolve agent ID (supports partial match / name lookup)
 	let sessionId: string;
 	try {
@@ -64,5 +76,35 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 			console.error(formatError(msg));
 		}
 		process.exit(1);
+	}
+}
+
+async function removePeerAgent(target: PeerTarget, options: RemoveAgentOptions): Promise<void> {
+	try {
+		const removed = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const result = await client.agents.remove(agent.id);
+			if (!result.ok) throw hostCallError(peer, result.error);
+			return { agentId: agent.id, peer };
+		});
+		if (options.json) {
+			console.log(JSON.stringify({ success: true, ...removed }));
+		} else {
+			console.log(formatSuccess(`Removed agent ${removed.agentId} on peer "${removed.peer}"`));
+		}
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		const peerError = error instanceof PeerResolveError ? error : undefined;
+		if (options.json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: msg,
+					...(peerError ? { peer: peerError.peer } : {}),
+				})
+			);
+		} else {
+			console.error(formatError(msg));
+		}
+		process.exit(peerError?.exitCode ?? ExitCode.GeneralError);
 	}
 }

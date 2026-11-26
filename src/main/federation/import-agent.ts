@@ -36,8 +36,11 @@ export interface DesktopAgentImportDeps {
 	setSessions(sessions: StoredSession[]): void;
 	getGroupIds(): string[];
 	getSettings(): Record<string, unknown>;
-	/** Tell every window and web client the agent entered the store. */
-	announceAdded(agent: StoredSession): void;
+	/**
+	 * Tell every window and web client the agent entered the store, and which agents it replaced
+	 * (the copy an earlier Move Back left here) left it.
+	 */
+	announceAdded(agent: StoredSession, removedIds?: string[]): void;
 	enqueue(
 		agentId: string,
 		tabId: string,
@@ -73,8 +76,8 @@ export function buildDesktopAgentImportDeps(
 			return Array.isArray(groups) ? groups.map((group) => group.id) : [];
 		},
 		getSettings: () => getSettingsStore().store as unknown as Record<string, unknown>,
-		announceAdded: (agent) =>
-			broadcastSessionLifecycle(undefined, { added: [agent], removedIds: [] }),
+		announceAdded: (agent, removedIds = []) =>
+			broadcastSessionLifecycle(undefined, { added: [agent], removedIds }),
 		enqueue,
 	};
 }
@@ -93,10 +96,14 @@ export async function importAgentIntoDesktop(
 	});
 	if (!planned.ok) return planned;
 
-	// The maestro-lib record is the stored shape: the store keeps what the record holds.
+	// The maestro-lib record is the stored shape: the store keeps what the record holds. The
+	// agent's earlier copy a Move Back left here (`planned.replaces`) goes in the same write.
 	const agent = planned.agent as unknown as StoredSession;
-	deps.setSessions([...sessions, agent]);
-	deps.announceAdded(agent);
+	const kept = planned.replaces
+		? sessions.filter((session) => session.id !== planned.replaces)
+		: sessions;
+	deps.setSessions([...kept, agent]);
+	deps.announceAdded(agent, planned.replaces ? [planned.replaces] : []);
 
 	const sleep = deps.sleep ?? defaultSleep;
 	let queued = 0;

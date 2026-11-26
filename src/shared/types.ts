@@ -393,6 +393,8 @@ export interface SessionInfo {
 	 * through `readLiftedTo()` / `liftedSendRefusal()` in `src/shared/maestro-lib/agents/lift-pointer.ts`.
 	 */
 	liftedTo?: LiftedToPointer;
+	/** Federation: the host's copy a move back left behind. Read it through `readLeftOnHost()`. */
+	leftOnHost?: LiftedToPointer;
 }
 
 /**

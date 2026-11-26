@@ -321,7 +321,7 @@ describe('lift', () => {
 			connection
 		);
 		await lift('agent-1', { json: true }, deps);
-		expect(String(lastJson().error)).toContain('maestro-cli remove-agent host-1');
+		expect(String(lastJson().error)).toContain('maestro-cli remove-agent build-box:host-1');
 	});
 
 	it('reports a host refusal and sets no pointer', async () => {

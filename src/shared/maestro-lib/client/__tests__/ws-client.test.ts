@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { importInputFromMessage } from '../../runtime/server-requests';
 import { createWsMaestroClient } from '../ws-client';
 import { TRANSCRIPT_CHANGED_CHANNEL } from '../bridge-frames';
 import { normalizeOriginHost } from '../types';
@@ -313,6 +314,21 @@ describe('createWsMaestroClient', () => {
 					activeTabId: 't2',
 					queue: [{ tabId: 't1', text: 'next' }],
 				});
+			});
+
+			it('names the copy the import replaces, and reads it back on the host (T5)', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'host-agent', queued: 0 })
+				);
+				await client.agents.import({ ...input, replacesAgentId: 'stale-1' });
+				const sent = bridge.sent('import_agent')[0];
+				expect(sent).toMatchObject({ replacesAgentId: 'stale-1' });
+				const read = importInputFromMessage(sent as never);
+				expect(read.ok && read.input.replacesAgentId).toBe('stale-1');
+				// An absent or blank id replaces nothing.
+				const plain = importInputFromMessage({ ...sent, replacesAgentId: '' } as never);
+				expect(plain.ok && 'replacesAgentId' in plain.input).toBe(false);
 			});
 
 			it('passes on the notices for queued messages the host did not accept', async () => {

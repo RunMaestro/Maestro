@@ -74,8 +74,19 @@ describe('importAgentIntoDesktop', () => {
 		const [agent] = d.stored();
 		expect(agent.name).toBe('Substrate');
 		expect(agent.aiTabs[0]).toMatchObject({ id: 'tA', agentSessionId: 'sess-A' });
-		expect(d.announceAdded).toHaveBeenCalledWith(agent);
+		expect(d.announceAdded).toHaveBeenCalledWith(agent, []);
 		expect(result.receipt).toEqual({ agentId: agent.id, queued: 0 });
+	});
+
+	it('replaces the copy an earlier Move Back left here, in the same write (T5)', async () => {
+		const d = deps();
+		d.setSessions([{ id: 'stale-1', name: 'Substrate', cwd: '/work/substrate' } as StoredSession]);
+		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		expect(result.ok).toBe(true);
+		const stored = d.stored();
+		expect(stored.map((agent) => agent.id)).not.toContain('stale-1');
+		expect(stored).toHaveLength(1);
+		expect(d.announceAdded).toHaveBeenCalledWith(stored[0], ['stale-1']);
 	});
 
 	it('writes nothing when the import rule refuses', async () => {

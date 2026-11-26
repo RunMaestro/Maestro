@@ -1506,6 +1506,7 @@ class WsMaestroClient implements MaestroClient {
 			tabs: input.tabs.map(importTabWireFields),
 			...(input.activeTabId ? { activeTabId: input.activeTabId } : {}),
 			...(input.queue && input.queue.length > 0 ? { queue: input.queue } : {}),
+			...(input.replacesAgentId ? { replacesAgentId: input.replacesAgentId } : {}),
 		};
 		// A long transcript is a large frame: give it the time a large frame takes.
 		const sent = await this.send('agents.import', message, 'import_agent_result', {

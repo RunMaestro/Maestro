@@ -35,7 +35,15 @@ export interface AgentImportPlanContext {
 }
 
 export type AgentImportPlan =
-	| { ok: true; agent: AgentRecord }
+	| {
+			ok: true;
+			agent: AgentRecord;
+			/**
+			 * The host agent this import replaces (`AgentImportInput.replacesAgentId`): the caller
+			 * removes it in the same write that stores `agent`. Absent: nothing is replaced.
+			 */
+			replaces?: string;
+	  }
 	| { ok: false; code: 'invalid' | 'rejected' | 'not-found'; message: string };
 
 /**
@@ -49,7 +57,17 @@ export function planAgentImport(
 	const checked = checkAgentImportInput(input);
 	if (!checked.ok) return checked;
 
-	const validation = validateNewAgent(checked.value.name, checked.value.cwd, context.agents, null);
+	// The agent's own earlier copy (left by a Move Back while this host was down) is replaced, so
+	// its name and directory are not a conflict. A copy already gone replaces nothing. Any other
+	// agent with the name still refuses the import.
+	const replaces =
+		typeof input.replacesAgentId === 'string' && input.replacesAgentId
+			? context.agents.find((agent) => agent.id === input.replacesAgentId)?.id
+			: undefined;
+	const others = replaces
+		? context.agents.filter((agent) => agent.id !== replaces)
+		: context.agents;
+	const validation = validateNewAgent(checked.value.name, checked.value.cwd, others, null);
 	if (!validation.valid) {
 		return {
 			ok: false,
@@ -78,5 +96,6 @@ export function planAgentImport(
 			context.ctx ?? DEFAULT_RULE_CONTEXT,
 			context.defaults
 		),
+		...(replaces ? { replaces } : {}),
 	};
 }

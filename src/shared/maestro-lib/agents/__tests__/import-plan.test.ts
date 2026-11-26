@@ -57,6 +57,39 @@ describe('planAgentImport', () => {
 		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
 	});
 
+	// T5: the agent's own copy, left by a Move Back while the host was down, is replaced.
+	it('replaces the copy it names, whose name and directory are then no conflict', () => {
+		const stale = { id: 'stale-1', name: 'Substrate', cwd: '/work/substrate' };
+		const plan = planAgentImport(
+			input({ replacesAgentId: 'stale-1' }),
+			context({ agents: [stale] })
+		);
+		expect(plan).toMatchObject({ ok: true, replaces: 'stale-1' });
+	});
+
+	it('still refuses another agent with the name when it replaces one', () => {
+		const plan = planAgentImport(
+			input({ replacesAgentId: 'stale-1' }),
+			context({
+				agents: [
+					{ id: 'stale-1', name: 'Old name', cwd: '/elsewhere' },
+					{ id: 'other', name: 'substrate', cwd: '/elsewhere' },
+				],
+			})
+		);
+		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
+	});
+
+	it('replaces nothing when the copy it names is gone, and checks the name as before', () => {
+		const plan = planAgentImport(
+			input({ replacesAgentId: 'gone' }),
+			context({ agents: [{ id: 'x', name: 'substrate', cwd: '/elsewhere' }] })
+		);
+		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
+		const free = planAgentImport(input({ replacesAgentId: 'gone' }), context());
+		expect(free.ok && 'replaces' in free).toBe(false);
+	});
+
 	it('refuses a group the host lacks as not found', () => {
 		const plan = planAgentImport(
 			input({ agent: { ...input().agent, groupId: 'missing' } }),

@@ -9,6 +9,9 @@
  * 1. Record refusals (`liftRefusal()`), the remote's Federation opt-out, a running turn the record
  *    cannot show (`busyReason`), and the caller's own refusal (`localRefusal`). None costs a dial.
  * 2. The plan (`planAgentLift()`), handed to `onPlan` once the host is reached. A dry run stops.
+ *    A copy of the SAME agent that an earlier Move Back left on this host (`leftOnHost`) is read
+ *    first: its tabs merge into what moves, and the import replaces it (`replacesAgentId`), so the
+ *    move is not refused for the name that copy holds and nothing said there is lost.
  * 3. `import_agent` on the host, then the local pointer. The two writes cannot be one
  *    transaction: when the pointer cannot be set, the host's copy is removed again, so the agent
  *    never has two owners.
@@ -27,7 +30,9 @@ import type { AgentRecord } from '../store/records';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, type LiftedToPointer } from './lift-pointer';
+import { readLeftOnHost, withReturnedFromHost } from './lift-return-record';
 import { liftFollowUpPatch } from './lift-settings-sync';
+import type { AITabRecord } from '../store/records';
 
 export interface LiftRunOptions {
 	/** Build and show the plan, then stop. */
@@ -55,7 +60,7 @@ export function liftErrorCode(code: string): string {
 export interface LiftHostConnection {
 	/** The peer id the host is addressed by: the pointer names it. */
 	peer: string;
-	client: Pick<MaestroClient, 'agents'>;
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
 	release(): Promise<void>;
 }
 
@@ -136,6 +141,11 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 		);
 	}
 	lines.push(`  Queued messages: ${summary.queued.length}`);
+	if (summary.replaces) {
+		lines.push(
+			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves.`
+		);
+	}
 	lines.push('Stays on this machine:');
 	lines.push(
 		'  Every tab and transcript (the local agent becomes a pointer; sends to it are refused)'
@@ -178,7 +188,74 @@ function defaultHostCallError(peer: string, error: Pick<ClientError, 'code' | 'm
 async function rollBack(connection: LiftHostConnection, hostAgentId: string): Promise<string> {
 	const removed = await connection.client.agents.remove(hostAgentId);
 	if (removed.ok) return `The host's copy was removed again, so the agent stays here, unchanged.`;
-	return `The host's copy (${peerAgentRef(connection.peer, hostAgentId)}) could not be removed: ${removed.error.message} On the remote, run: maestro-cli remove-agent ${hostAgentId}`;
+	const ref = peerAgentRef(connection.peer, hostAgentId);
+	return `The host's copy (${ref}) could not be removed: ${removed.error.message} Once the host answers, run: maestro-cli remove-agent ${ref}`;
+}
+
+/** The host copy an earlier Move Back left behind, read for a lift that replaces it. */
+interface StaleHostCopy {
+	pointer: LiftedToPointer;
+	ref: string;
+	/** The agent with that copy's tabs merged in, as an online Move Back would have left it. */
+	merged: AgentRecord;
+}
+
+/**
+ * The copy of this agent an earlier Move Back left on the host it moves to (`leftOnHost`), with
+ * its tabs and transcripts, or undefined when there is none (never left, another host, or since
+ * removed). A copy running a turn or holding queued messages is refused, as a Move Back refuses
+ * it: replacing it would cut the turn or drop the messages.
+ */
+async function readStaleHostCopy(
+	agent: AgentRecord,
+	connection: LiftHostConnection,
+	hostError: (peer: string, error: Pick<ClientError, 'code' | 'message'>) => Error
+): Promise<StaleHostCopy | undefined> {
+	const pointer = readLeftOnHost(agent);
+	if (!pointer || pointer.peer !== connection.peer) return undefined;
+	const { client } = connection;
+	const hostCopy = await client.agents.get(pointer.agentId);
+	if (!hostCopy.ok) {
+		if (hostCopy.error.code === 'not-found') return undefined;
+		throw hostError(connection.peer, hostCopy.error);
+	}
+	const ref = peerAgentRef(pointer.peer, pointer.agentId);
+	if ((hostCopy.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
+		throw new LiftRunError(
+			liftErrorCode('host-copy-busy'),
+			`"${agent.name}" still has a copy on the host (${ref}) that is running a turn. Wait for it to finish, or stop it, then move again.`
+		);
+	}
+	const queue = await client.turns.queue.list(pointer.agentId);
+	if (!queue.ok) throw hostError(connection.peer, queue.error);
+	if (queue.value.length > 0) {
+		throw new LiftRunError(
+			liftErrorCode('host-copy-queued'),
+			`${queue.value.length} message(s) still wait in the queue of "${agent.name}"'s copy on the host (${ref}). Let them run or remove them, then move again.`
+		);
+	}
+	const tabs = await client.tabs.list(pointer.agentId);
+	if (!tabs.ok) throw hostError(connection.peer, tabs.error);
+	const withLogs: AITabRecord[] = [];
+	for (const tab of tabs.value) {
+		const transcript = await client.tabs.transcript(pointer.agentId, tab.id);
+		if (!transcript.ok) throw hostError(connection.peer, transcript.error);
+		withLogs.push({ ...tab, logs: transcript.value });
+	}
+	const merged = withReturnedFromHost(agent as unknown as Record<string, unknown>, {
+		tabs: withLogs,
+		...(hostCopy.value.activeTabId ? { activeTabId: hostCopy.value.activeTabId } : {}),
+	}) as unknown as AgentRecord;
+	return { pointer, ref, merged };
+}
+
+/** The plan, with the import replacing the stale copy and the summary saying so. */
+function withReplacement(plan: LiftPlan, ref: string, replacesAgentId: string): LiftPlan {
+	return {
+		...plan,
+		summary: { ...plan.summary, replaces: ref },
+		input: { ...plan.input, replacesAgentId },
+	};
 }
 
 /**
@@ -230,16 +307,22 @@ export async function runLift(
 	if (local) throw local;
 
 	const peer = peerIdFor(remote, remotes);
-	const plan = planAgentLift({
-		agent,
-		remote,
-		peer,
-		providerEnvVars: deps.providerEnvVars(agent.toolType),
-		withEnv: options.withEnv === true,
-	});
+	const planFor = (record: AgentRecord) =>
+		planAgentLift({
+			agent: record,
+			remote,
+			peer,
+			providerEnvVars: deps.providerEnvVars(record.toolType),
+			withEnv: options.withEnv === true,
+		});
 
 	const connection = await deps.connect(remote, peer);
 	try {
+		const hostError = deps.hostCallError ?? defaultHostCallError;
+		const stale = await readStaleHostCopy(agent, connection, hostError);
+		const plan = stale
+			? withReplacement(planFor(stale.merged), stale.ref, stale.pointer.agentId)
+			: planFor(agent);
 		onPlan(plan);
 		if (options.dryRun) return { plan: plan.summary, dryRun: true };
 
@@ -249,7 +332,7 @@ export async function runLift(
 				imported.error.code === 'unsupported'
 					? { ...imported.error, message: importUnsupportedMessage(connection.peer) }
 					: imported.error;
-			throw (deps.hostCallError ?? defaultHostCallError)(connection.peer, error);
+			throw hostError(connection.peer, error);
 		}
 		const { agentId: hostAgentId, queued } = imported.value;
 		const notices = [...(imported.value.notices ?? [])];

@@ -272,7 +272,7 @@ describe('runLift', () => {
 			conn
 		);
 		const error = await refusalOf(runLift('agent-1', {}, deps));
-		expect(error.message).toContain('maestro-cli remove-agent host-1');
+		expect(error.message).toContain('maestro-cli remove-agent build-box:host-1');
 	});
 });
 

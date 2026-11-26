@@ -28,6 +28,7 @@ import { LiftRunError } from './lift-run';
 import type { ReturnedFromHost } from './lift-return-record';
 
 export {
+	readLeftOnHost,
 	readReturnedFromHost,
 	returnRestoreRefusal,
 	withReturnedFromHost,
@@ -73,6 +74,14 @@ export interface ReturnResult {
 
 function defaultHostCallError(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error {
 	return new LiftRunError('RETURN_HOST_FAILED', `Peer "${peer}": ${error.message}`);
+}
+
+/**
+ * What to do about a host copy left behind, named as commands run on THIS machine once the host is
+ * back: `peer:agent` reaches the host over Federation, a headless host as well as a desktop one.
+ */
+export function hostCopyLeftAdvice(from: string): string {
+	return `Moving the agent to the host again replaces that copy. To remove it instead, once the host is back: maestro-cli remove-agent ${from} (check it with: maestro-cli show agent ${from}).`;
 }
 
 function sshRemoteIdOf(agent: AgentRecord): string | undefined {
@@ -121,7 +130,7 @@ export async function runReturnFromHost(
 	const summary = { id: agent.id, name: agent.name };
 
 	if (options.offline) {
-		await restoreOrThrow(deps, agent, { tabs: [] });
+		await restoreOrThrow(deps, agent, { tabs: [], leftOnHost: pointer });
 		return {
 			agent: summary,
 			from,
@@ -129,7 +138,7 @@ export async function runReturnFromHost(
 			newTabs: 0,
 			hostCopyRemoved: false,
 			notices: [
-				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. Remove it on the host when it is back: maestro-cli remove-agent ${pointer.agentId}`,
+				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. ${hostCopyLeftAdvice(from)}`,
 			],
 		};
 	}
@@ -177,7 +186,9 @@ export async function runReturnFromHost(
 			);
 		}
 
-		await restoreOrThrow(deps, agent, returned);
+		// A copy the host keeps is recorded on the agent, so a later Move to Host replaces it.
+		const keepsCopy = hostAgent.ok && options.keepHostCopy === true;
+		await restoreOrThrow(deps, agent, keepsCopy ? { ...returned, leftOnHost: pointer } : returned);
 
 		let hostCopyRemoved = false;
 		if (hostAgent.ok && !options.keepHostCopy) {
@@ -185,7 +196,7 @@ export async function runReturnFromHost(
 			if (removed.ok) hostCopyRemoved = true;
 			else {
 				notices.push(
-					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} On the remote, run: maestro-cli remove-agent ${pointer.agentId}`
+					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} ${hostCopyLeftAdvice(from)}`
 				);
 			}
 		} else if (hostAgent.ok) {
