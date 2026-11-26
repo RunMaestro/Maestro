@@ -109,6 +109,7 @@ import {
 	type StatsConnectionConstructor,
 } from '../turns/stats';
 import { createRuntimeBuiltinCommands } from './builtin-commands';
+import { createRuntimeSideQuestions, type RuntimeSideQuestions } from './side-questions';
 import { createRuntimeSteering, type SteeredTurnHandle } from './steering';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
@@ -168,6 +169,8 @@ export interface RuntimeTurns {
 	readonly api: TurnsApi;
 	/** Look at an agent's queue again, for a hold that cleared (an Auto Run ended). */
 	drain(agentId: string): void;
+	/** `/btw` side questions about this host's tabs, which `consults.ask` hands over (M6). */
+	readonly sideQuestions: Pick<RuntimeSideQuestions, 'ask'>;
 	/** Stop looking at queues: nothing more starts. Running turns are left to `registry.stopAll`. */
 	dispose(): void;
 }
@@ -321,6 +324,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// A transcript that grew outside a turn: `gap` is the event that tells a client to read
 		// the tab again, which an older client already honors.
 		transcriptChanged: (agentId, tabId) => emitTurn(agentId, tabId, { kind: 'gap' }),
+	});
+
+	// `/btw`: a read-only fork of a tab's session, beside whatever the tab runs, as a desktop host forks it.
+	const sideQuestions = createRuntimeSideQuestions({
+		paths,
+		repository,
+		registry,
+		host,
+		deps,
+		rules: ctx,
 	});
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
@@ -1101,11 +1114,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 	return {
 		api,
+		sideQuestions: { ask: sideQuestions.ask },
 		drain: (agentId) => queues.get(agentId)?.drain(),
 		dispose() {
 			disposed = true;
 			unsubscribeLifecycle();
 			builtins.stop();
+			sideQuestions.dispose();
 			for (const queue of queues.values()) queue.dispose();
 			queues.clear();
 			// Nothing runs any more, so nothing is left to wait for.

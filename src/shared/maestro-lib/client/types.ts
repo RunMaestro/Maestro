@@ -846,7 +846,8 @@ export interface ConsultAskInput {
 	/**
 	 * Ask a `/btw` side question instead of consulting: the host answers from a throwaway fork of
 	 * the target's tab (`targetTabId`, or its active tab), with tools off, and nothing lands in that
-	 * tab's transcript. A headless host refuses it.
+	 * tab's transcript. A headless host answers it as a desktop host does (`runtime/side-questions.ts`);
+	 * one older than that refuses it with a message that says so.
 	 */
 	sideQuestion?: boolean;
 	/** With `sideQuestion`: the target's AI tab to fork. */

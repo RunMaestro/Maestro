@@ -33,6 +33,7 @@ import {
 	formatClaudeSkillsMessage,
 	HISTORY_COMMAND_TEXT,
 } from '../../../maestroBuiltinCommandText';
+import { buildSideQuestionPrompt } from '../../../sideQuestion';
 import {
 	createMaestroRuntime,
 	type MaestroRuntime,
@@ -758,6 +759,81 @@ describe('runtime turns', () => {
 				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
 					expect.objectContaining({ text: '/history', paused: true }),
 				]);
+			});
+		});
+
+		describe('/btw side questions (M6: a headless host forks its tab, as a desktop host does)', () => {
+			const ask = (runtime: MaestroRuntime, extra: Record<string, unknown> = {}) =>
+				runtime.consults.ask({
+					targetAgentId: 'a1',
+					targetTabId: 't1',
+					question: '  which file did we change?  ',
+					sideQuestion: true,
+					...extra,
+				});
+			const argvOf = (n: number) => JSON.parse(fs.readFileSync(argvFiles[n], 'utf-8')) as string[];
+
+			it('answers from a read-only throwaway fork of the tab, tools off, and writes nothing anywhere', async () => {
+				const runtime = await start([
+					seedAgent({
+						// A TUI token source still answers over --print: a fork never writes what maestro-p tails.
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						aiTabs: [
+							{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+						],
+					}),
+				]);
+				const turn = watch(runtime);
+
+				const answer = value(await ask(runtime));
+
+				expect(answer.agentName).toBe('Alpha');
+				expect(answer.answer).not.toBe('');
+				const argv = argvOf(0);
+				const resumeAt = argv.indexOf('--resume');
+				expect(argv[resumeAt + 1]).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+				expect(argv).toEqual(
+					expect.arrayContaining(['--fork-session', '--no-session-persistence'])
+				);
+				expect(argv[argv.indexOf('--tools') + 1]).toBe('');
+				expect(argv[argv.indexOf('--permission-mode') + 1]).toBe('plan');
+				expect(argv).not.toContain('--dangerously-skip-permissions');
+				expect(argv.some((arg) => arg.startsWith('--append-system-prompt'))).toBe(false);
+				expect(launched[0].prompt).toBe(buildSideQuestionPrompt('which file did we change?'));
+				expect(turnOptions[0].claudeTokenSource).toBeUndefined();
+				// Nothing lands in the tab, its History, or its live state.
+				expect(await transcript(runtime)).toEqual([]);
+				const history = readHistory(runtime.paths, 'a1');
+				expect(history.status === 'ok' ? history.entries : []).toEqual([]);
+				expect(turn.kinds()).toEqual([]);
+			});
+
+			it("forks the agent's active tab when none is named, and saves no session for a tab with none", async () => {
+				const runtime = await start();
+				value(await ask(runtime, { targetTabId: undefined }));
+				const argv = argvOf(0);
+				expect(argv).not.toContain('--resume');
+				expect(argv).not.toContain('--fork-session');
+				expect(argv).toContain('--no-session-persistence');
+			});
+
+			it("refuses what the desktop refuses, in the desktop's words, and starts nothing", async () => {
+				const runtime = await start([
+					seedAgent(),
+					seedAgent({ id: 'a2', name: 'Beta', toolType: 'opencode' }),
+				]);
+				expect(errorOf(await ask(runtime, { question: '   ' })).message).toBe(
+					'Type a question after /btw.'
+				);
+				expect(errorOf(await ask(runtime, { targetTabId: 'nope' })).message).toBe(
+					'No AI tab nope on Alpha'
+				);
+				expect(errorOf(await ask(runtime, { targetAgentId: 'a2' })).message).toBe(
+					'Beta cannot answer side questions (Claude Code agents only)'
+				);
+				expect(errorOf(await ask(runtime, { targetAgentId: 'zzz' })).code).toBe('not-found');
+				expect(argvFiles).toEqual([]);
 			});
 		});
 

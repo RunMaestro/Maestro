@@ -43,7 +43,7 @@ import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
 import { readSettingsStore } from '../store/read-stores';
 import { sshRecordOf } from '../agents/rules';
-import { assembleAutoRunTurn } from '../turns/assemble';
+import { assembleAutoRunTurn, assembleSideQuestionTurn } from '../turns/assemble';
 import { loadTurnContext } from '../turns/context';
 import { describeCrash } from '../turns/record-turn';
 import { toTurnAgent } from '../turns/records';
@@ -86,6 +86,14 @@ export interface AutoRunTurnRunnerOptions {
 	 * tab's `/history` synopsis uses its own slot beside the tab (`synopsisProcessSlot`).
 	 */
 	processTabId?: string;
+	/**
+	 * Each turn is a `/btw` side question (`runtime/side-questions.ts`): `request.prompt` is the
+	 * question, assembled by `assembleSideQuestionTurn` as a read-only throwaway fork with tools
+	 * off. Claude runs `claude --print` whatever its token source (maestro-p tails the transcript
+	 * it resumed, which a fork never writes), and no usage row is written, as the desktop's
+	 * `sideQuestion:ask` writes none.
+	 */
+	sideQuestion?: boolean;
 }
 
 export interface AutoRunTurnRunner {
@@ -154,16 +162,14 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		});
 		if (!loaded.ok) return attempt(failure(loaded.message));
 
-		const assembled = assembleAutoRunTurn(
-			agent,
-			{
-				prompt: request.prompt,
-				resumeSessionId: request.resumeSessionId,
-				model: request.model,
-				effort: request.effort,
-			},
-			loaded.context
-		);
+		const input = {
+			resumeSessionId: request.resumeSessionId,
+			model: request.model,
+			effort: request.effort,
+		};
+		const assembled = options.sideQuestion
+			? assembleSideQuestionTurn(agent, { ...input, question: request.prompt }, loaded.context)
+			: assembleAutoRunTurn(agent, { ...input, prompt: request.prompt }, loaded.context);
 		if (!assembled.ok) return attempt(failure(assembled.message));
 		const turn = assembled.turn;
 		const provider = turn.settings.provider;
@@ -177,7 +183,9 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		const started = await startTurn(turn, {
 			sessionId,
 			sshStore,
-			claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields),
+			...(options.sideQuestion
+				? {}
+				: { claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields) }),
 			maestroPBinPath: host.maestroPBinPath ?? null,
 			...(request.signal ? { signal: request.signal } : {}),
 		});
@@ -245,17 +253,19 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		const endedAt = deps.now();
 
 		// The usage row the desktop writes for every turn it spawns, marked as automation.
-		await statsRecorder.recordQuery({
-			sessionId: agentId,
-			agentType: provider,
-			source: 'auto',
-			startTime: startedAt,
-			duration: endedAt - startedAt,
-			projectPath: agent.cwd,
-			isRemote: sshRecordOf(record.sessionSshRemoteConfig)?.enabled === true,
-			isWorktree: typeof record.parentSessionId === 'string' && record.parentSessionId !== '',
-			...usageStatsToTurnFields(completed.usage),
-		});
+		if (!options.sideQuestion) {
+			await statsRecorder.recordQuery({
+				sessionId: agentId,
+				agentType: provider,
+				source: 'auto',
+				startTime: startedAt,
+				duration: endedAt - startedAt,
+				projectPath: agent.cwd,
+				isRemote: sshRecordOf(record.sessionSshRemoteConfig)?.enabled === true,
+				isWorktree: typeof record.parentSessionId === 'string' && record.parentSessionId !== '',
+				...usageStatsToTurnFields(completed.usage),
+			});
+		}
 
 		const finishedWell =
 			completed.outcome === 'completed' || completed.outcome === 'completed-with-warning';

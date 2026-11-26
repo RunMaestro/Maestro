@@ -18,6 +18,7 @@
  * transport differs.
  */
 
+import { resolveSideQuestionTarget } from '../../shared/sideQuestion';
 import type { Session } from '../types';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
@@ -115,20 +116,15 @@ export async function runRemoteSideQuestion(request: {
 }): Promise<SideQuestionOutcome> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === request.targetSessionId);
 	if (!session) return { success: false, error: `No agent with id ${request.targetSessionId}` };
-	if (session.toolType !== 'claude-code') {
-		return {
-			success: false,
-			error: `${session.name} cannot answer side questions (Claude Code agents only)`,
-			agentName: session.name,
-		};
-	}
-	const tabId = request.tabId ?? session.activeTabId;
-	if (!tabId || !session.aiTabs?.some((t) => t.id === tabId)) {
-		return {
-			success: false,
-			error: request.tabId ? `No AI tab ${request.tabId} on ${session.name}` : 'No AI tab to ask',
-			agentName: session.name,
-		};
-	}
-	return askSideQuestion({ session, tabId, question: request.question });
+	const target = resolveSideQuestionTarget(
+		{
+			name: session.name,
+			toolType: session.toolType,
+			activeTabId: session.activeTabId,
+			tabIds: (session.aiTabs ?? []).map((t) => t.id),
+		},
+		request.tabId
+	);
+	if (!target.ok) return { success: false, error: target.error, agentName: session.name };
+	return askSideQuestion({ session, tabId: target.tabId, question: request.question });
 }

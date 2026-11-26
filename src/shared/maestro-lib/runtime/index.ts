@@ -416,6 +416,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		rules: deps.rules,
 		// Where the prompts and the CLI script are, as the chat turns are told.
 		...(options.turns ? { options: options.turns } : {}),
+		// `/btw` forks one of this host's tabs, which is the chat turns' work.
+		sideQuestions: turns.sideQuestions,
 		...(deps.consults?.minTimeoutMs !== undefined
 			? { minTimeoutMs: deps.consults.minTimeoutMs }
 			: {}),
