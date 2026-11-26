@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QueuedItem, Session } from '../../../renderer/types';
-import { agentModeFields, createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, agentModeFields, createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
@@ -37,6 +37,11 @@ import {
 	replacePeerAgents,
 } from '../../../shared/maestro-lib/client/peer-mirror';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import {
+	createRuntimeSteering,
+	type SteerableItem,
+} from '../../../shared/maestro-lib/runtime/steering';
+import { createExecutionQueue } from '../../../shared/maestro-lib/turns/queue';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
@@ -857,6 +862,30 @@ describe('steering a hosted agent', () => {
 		);
 	});
 
+	it('says why when the host declines a steer this side offered (M4)', async () => {
+		useSessionStore.setState({ sessions: [hostedSession([item({ hostQueued: true })])] });
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'steer-queued',
+				itemId: 'item-a',
+				result: { outcome: 'not-steerable', blockedReason: 'api-token-source' },
+			},
+		});
+
+		// The Steer button's path (useQueueHandlers).
+		const result = await steerQueuedItemOrExplain('sess-1', 'item-a');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'api-token-source' });
+		expect(notifyToast).toHaveBeenCalledTimes(1);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message: expect.stringMatching(/The message stays queued\.$/),
+			})
+		);
+	});
+
 	it('asks nothing of the host for a message that cannot be steered', async () => {
 		useSessionStore.setState({
 			sessions: [hostedSession([item({ hostQueued: true, paused: true })])],
@@ -888,5 +917,72 @@ describe('steering a hosted agent', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ title: 'Could not steer this turn' })
 		);
+	});
+
+	// M4: a headless host runs the steer itself (runtime/steering.ts), over the socket of the TUI
+	// turn it spawned. The same socket answer gives the same result and the same toasts in every mode.
+	describe.each([
+		['delivered', { verdict: 'delivered' }],
+		['refused: a dialog owns the keyboard', { verdict: 'refused', refusal: 'blocking-dialog' }],
+		['unknown: the socket went quiet', { verdict: 'unknown' }],
+	] as const)('a socket that answers %s', (_label, verdict) => {
+		async function desktopSteer(mode: 'local' | 'ssh') {
+			vi.clearAllMocks();
+			resetPendingSteersForTests();
+			useSessionStore.setState({
+				sessions: [{ ...steerableSession([item()]), ...agentModeFields(mode) } as Session],
+			});
+			steer.mockResolvedValue({ type: 'steering', id: 'steer-1', ...verdict });
+			const result = await steerQueuedItem('sess-1', 'item-a');
+			return { result, toasts: vi.mocked(notifyToast).mock.calls };
+		}
+
+		async function hostedSteer() {
+			vi.clearAllMocks();
+			resetPendingSteersForTests();
+			// The host's own queue: a turn running on tab-1, and the message waiting behind it.
+			const hostQueue = createExecutionQueue<SteerableItem>({
+				start: async () => ({
+					done: new Promise<void>(() => undefined),
+					interrupt: () => undefined,
+				}),
+				onEvent: () => undefined,
+			});
+			hostQueue.submit({ id: 'run', tabId: 'tab-1', text: 'first' });
+			hostQueue.submit({ id: 'item-a', tabId: 'tab-1', text: 'go left instead' });
+			const host = createRuntimeSteering<SteerableItem>({
+				queueOf: () => hostQueue,
+				toolTypeOf: () => 'claude-code',
+				appendEntry: async () => undefined,
+				newId: () => 'steer-1',
+				now: () => 0,
+				send: async (_socket, _text, id) => ({ type: 'steering', id, ...verdict }),
+			});
+			host.turnStarted('h1', 'tab-1', {
+				provider: 'claude-code',
+				readOnly: false,
+				socketPath: '/tmp/steer.sock',
+			});
+			act$.mockImplementation(
+				async (_peer: string, agentId: string, action: { itemId: string }) => ({
+					ok: true,
+					result: {
+						kind: 'steer-queued',
+						itemId: action.itemId,
+						result: await host.steer(agentId, action.itemId),
+					},
+				})
+			);
+			useSessionStore.setState({ sessions: [hostedSession([item({ hostQueued: true })])] });
+			const result = await steerQueuedItem('sess-1', 'item-a');
+			return { result, toasts: vi.mocked(notifyToast).mock.calls };
+		}
+
+		it.each(AGENT_MODES)('a %s agent gets the same result and toasts', async (mode) => {
+			const local = await desktopSteer('local');
+			const outcome = mode === 'hosted' ? await hostedSteer() : await desktopSteer(mode);
+			expect(outcome).toEqual(local);
+			expect(outcome.toasts).toHaveLength(1);
+		});
 	});
 });

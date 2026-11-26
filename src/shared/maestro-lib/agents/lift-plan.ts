@@ -22,8 +22,8 @@ import { isPathAtOrUnderRoot } from '../../worktreePaths';
 import type { AgentImportInput, AgentImportQueuedMessage, AgentImportTab } from '../client/types';
 import { aiTabsOf, visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
-import { transcriptOf, type LogEntryRecord } from '../store/transcript';
-import { inlineImageDataUrl } from '../launch/image-refs';
+import { transcriptOf } from '../store/transcript';
+import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
 import { liftBusyReason, peerAgentRef, readLiftedTo } from './lift-pointer';
 import { planLiftEnv, type SessionDirSelector } from './lift-env';
 import { sshRecordOf } from './rules';
@@ -201,32 +201,8 @@ function importTabOf(tab: AITabRecord): AgentImportTab {
 		...(stringField(tab.customModel) ? { model: tab.customModel } : {}),
 		...(stringField(tab.customEffort) ? { effort: tab.customEffort } : {}),
 		...(usageStats ? { usageStats } : {}),
-		logs: transcriptOf(tab).map(withInlineImages),
+		logs: transcriptOf(tab).map(withInlineEntryImages),
 	};
-}
-
-/**
- * Images as data URLs the host can read. A `maestro-image://` ref names THIS machine's image store,
- * so a transcript or queued message that kept refs would show broken images on the host and hand
- * its provider nothing. A ref that cannot be read here is counted and dropped, as a local spawn
- * drops it.
- */
-function inlineImages(images: readonly string[]): { inline: string[]; unresolved: number } {
-	const inline: string[] = [];
-	let unresolved = 0;
-	for (const image of images) {
-		const data = inlineImageDataUrl(image);
-		if (data) inline.push(data);
-		else unresolved += 1;
-	}
-	return { inline, unresolved };
-}
-
-/** A transcript entry with its images inlined. Unchanged (same object) when it has none. */
-function withInlineImages(entry: LogEntryRecord): LogEntryRecord {
-	if (!Array.isArray(entry.images) || entry.images.length === 0) return entry;
-	const { inline } = inlineImages(entry.images.filter((image) => typeof image === 'string'));
-	return { ...entry, images: inline };
 }
 
 interface StoredQueueItem {
@@ -275,7 +251,7 @@ function planQueue(
 			: [];
 		// A stored image reference names this machine's image store, which the host cannot read:
 		// it moves as its bytes. Only one that cannot be read here stays.
-		const { inline, unresolved } = inlineImages(images);
+		const { inline, unresolved } = inlineImageList(images);
 		if (unresolved > 0) {
 			stays.push({
 				kind: 'queued-image',

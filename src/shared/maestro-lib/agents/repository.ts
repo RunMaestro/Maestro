@@ -50,6 +50,7 @@ import { logger } from '../host';
 import { unusableCwdReason } from '../launch/cwd';
 import { planAgentImport } from './import-plan';
 import type { MaestroPaths } from '../paths/resolve';
+import { hasInlineSessionImages, type SessionImageStore } from '../store/session-images';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import {
 	GROUPS_REGISTRY,
@@ -154,6 +155,13 @@ export interface AgentRepositoryOptions {
 	readTabDefaults?: () => Promise<TabDefaults>;
 	/** Why a local working directory cannot be used, or null. Default: `unusableCwdReason`. */
 	checkCwd?: (cwd: string) => string | null;
+	/**
+	 * The data directory's session image store. When given, every sessions write first moves an
+	 * inline image (a transcript entry's, a draft's, a stored queue item's) into the store and keeps
+	 * its `maestro-image://` ref, as the desktop's persistence does, so the sessions file never
+	 * carries base64 and stays small enough to rewrite on each change.
+	 */
+	images?: Pick<SessionImageStore, 'relocateSessionImages'>;
 }
 
 /** Why the repository could not load its documents. The runtime unions these into `RuntimeRefusal`. */
@@ -427,6 +435,14 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		if (tabGuard && !tabGuard()) throw new TabOwnerChangedError();
 	}
 
+	/** The sessions document with every inline image moved into the image store (`options.images`). */
+	async function withStoredImages(doc: SessionsDocument): Promise<SessionsDocument> {
+		const entries = doc.sessions;
+		if (!options.images || !Array.isArray(entries) || !hasInlineSessionImages(entries)) return doc;
+		const { sessions } = await options.images.relocateSessionImages(entries);
+		return { ...doc, sessions };
+	}
+
 	async function run<T>(
 		method: ClientMethod,
 		planner: () => Promise<Planned<T>> | Planned<T>,
@@ -446,6 +462,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				// Each file's in-memory copy is replaced as soon as ITS write lands, so a
 				// failure on the second file leaves memory describing what is on disk.
 				if (plan.sessions) {
+					plan.sessions = await withStoredImages(plan.sessions);
 					guardWrite(guard);
 					await writeStoreDocument(paths.sessionsFile, plan.sessions, {
 						registry: SESSIONS_REGISTRY,

@@ -57,6 +57,17 @@ export interface TurnArgsInput {
 	sessionCustomEffort?: string;
 	sessionCustomArgs?: string;
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * Resume `resumeSessionId` as a throwaway fork (`ephemeralForkArgs`), or save no session when
+	 * there is none to resume (`noPersistenceArgs`): a `/btw` side question. The caller checks the
+	 * provider declares them first (`sideQuestionForkRefusal`).
+	 */
+	ephemeralFork?: boolean;
+	/**
+	 * Turn every tool off (`noToolsArgs`), after the config options and custom arguments, as the
+	 * desktop's `groomContext` does. A provider with no verified all-off flag gets none.
+	 */
+	disableTools?: boolean;
 }
 
 export interface TurnArgs {
@@ -85,6 +96,7 @@ export function buildTurnArgs(input: TurnArgsInput): TurnArgs {
 		permissionMode: input.permissionMode,
 		agentSessionId: input.resumeSessionId,
 		additionalDirectories: input.additionalDirectories,
+		...(input.ephemeralFork ? { ephemeralFork: true } : {}),
 	});
 	const resolution = applyAgentConfigOverrides(input.provider, built, {
 		agentConfigValues: input.providerConfig as Record<string, unknown>,
@@ -93,7 +105,11 @@ export function buildTurnArgs(input: TurnArgsInput): TurnArgs {
 		sessionCustomArgs: input.sessionCustomArgs,
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
 	});
-	return { args: resolution.args, resolution };
+	const noTools = input.disableTools ? (input.provider?.noToolsArgs ?? []) : [];
+	return {
+		args: noTools.length > 0 ? [...resolution.args, ...noTools] : resolution.args,
+		resolution,
+	};
 }
 
 export interface SystemPromptPlacementInput {

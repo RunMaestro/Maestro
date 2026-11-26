@@ -16,7 +16,7 @@
  */
 
 import * as fs from 'fs/promises';
-import { realpathSync, statSync } from 'fs';
+import { mkdirSync, realpathSync, statSync } from 'fs';
 import * as os from 'os';
 
 import { createSleepTracker } from '../../sleepTracking';
@@ -25,13 +25,14 @@ import type { RepositoryLoadFailure } from '../agents/repository';
 import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
 import type { HostInfo, MaestroClient } from '../client/types';
-import { logger } from '../host';
+import { logger, setMaestroLibImageRefResolver } from '../host';
 import { grokInstallationId } from '../grok/host-seams';
 import { createGroupChatTurnMetrics } from '../groupchat/turn-metrics';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { assertUserDataDirExists, type UserDataDirOptions } from '../paths/userDataDir';
 import { resolveMaestroPaths, type MaestroPaths } from '../paths/resolve';
 import { readAgentConfigsStore } from '../store/read-stores';
+import { createSessionImageStore, type SessionImageStore } from '../store/session-images';
 import { createRuntimeClient, type RuntimePhase } from './client';
 import {
 	acquireDataDirLock,
@@ -171,6 +172,23 @@ async function isDirectory(dir: string): Promise<boolean> {
  * refuses and nothing is written before the lock is held (the start rule, section
  * 3 of the design).
  */
+/**
+ * The runtime's session image store over `paths.sessionImagesDir` (created on first use), registered
+ * as the library's image ref resolver so a spawn can read a stored image back.
+ */
+function createRuntimeImageStore(paths: MaestroPaths): SessionImageStore {
+	let ready = false;
+	const store = createSessionImageStore(() => {
+		if (!ready) {
+			mkdirSync(paths.sessionImagesDir, { recursive: true });
+			ready = true;
+		}
+		return paths.sessionImagesDir;
+	});
+	setMaestroLibImageRefResolver(store.resolveToBytesSync);
+	return store;
+}
+
 export async function createMaestroRuntime(options: MaestroRuntimeOptions): Promise<RuntimeStart> {
 	const deps = options.deps ?? {};
 	const env = { MAESTRO_USER_DATA: options.dataDir };
@@ -259,9 +277,15 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		return verdict;
 	};
 
+	// The data directory's image store, the folder the desktop uses (`<syncDir>/session-images`). A
+	// pasted image is kept there and its ref on the transcript and the queue, as on the desktop, and a
+	// provider spawn reads a ref back through the resolver registered here (M10).
+	const images = createRuntimeImageStore(paths);
+
 	const repository = createAgentRepository({
 		paths,
 		bus,
+		images,
 		processes: registry,
 		fence,
 		quarantineCorruptStores: options.quarantineCorruptStores,
@@ -344,6 +368,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	const turns = createRuntimeTurns({
 		paths,
 		repository,
+		images,
 		bus,
 		registry,
 		fence,
@@ -416,6 +441,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		rules: deps.rules,
 		// Where the prompts and the CLI script are, as the chat turns are told.
 		...(options.turns ? { options: options.turns } : {}),
+		// `/btw` forks one of this host's tabs, which is the chat turns' work.
+		sideQuestions: turns.sideQuestions,
 		...(deps.consults?.minTimeoutMs !== undefined
 			? { minTimeoutMs: deps.consults.minTimeoutMs }
 			: {}),

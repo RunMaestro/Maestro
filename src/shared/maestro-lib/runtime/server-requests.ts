@@ -299,12 +299,15 @@ function unsupportedDispatch(message: Request): string | undefined {
 	return undefined;
 }
 
-/** A dispatch message's images, when it carries any. */
+/**
+ * A dispatch message's images exactly as they came, when the field is present. Never filtered here:
+ * a malformed list or entry must reach `admitTurnImages()` (in `turns.send`), which refuses the
+ * whole send with the reason, rather than become a text-only message (M12).
+ */
 function imagesOf(message: Request): string[] | undefined {
-	const images = Array.isArray(message.images)
-		? message.images.filter((image): image is string => typeof image === 'string')
-		: [];
-	return images.length > 0 ? images : undefined;
+	if (message.images === undefined || message.images === null) return undefined;
+	if (Array.isArray(message.images) && message.images.length === 0) return undefined;
+	return message.images as string[];
 }
 
 /** The reply fields that say whether the message is running or waiting its turn. */
@@ -671,15 +674,6 @@ export function createRequestHandler(
 				const agentId = sessionId(message);
 				const unsupported = unsupportedDispatch(message);
 				if (unsupported) return refusal(type, unsupported, { sessionId: agentId });
-				// The queue here starts a waiting message as soon as its turn comes; it has no state
-				// that keeps one back until a person releases it.
-				if (message.held === true) {
-					return refusal(
-						type,
-						'A headless host cannot queue a held message (--held): its queue would run the message as soon as the agent is free. Nothing was queued.',
-						{ sessionId: agentId }
-					);
-				}
 				const target = await resolveTargetTab(client, agentId, str(message.tabId));
 				if (!target.ok) {
 					return refusal(type, target.error, {
@@ -693,6 +687,8 @@ export function createRequestHandler(
 					...(images ? { images } : {}),
 					...originHostOf(message),
 					...turnOverridesOf(message),
+					// Queue Held (`dispatch --queue --held`): queued paused, even on an idle agent.
+					...(message.held === true ? { held: true } : {}),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {

@@ -30,6 +30,17 @@ const entry = (id: string, text: string, extra: Partial<LogEntryRecord> = {}): L
 });
 
 describe('mirrorLogEntry', () => {
+	it('keeps the steer mark on a message the host steered into its running turn (M4)', () => {
+		expect(mirrorLogEntry(entry('s1', 'go left', { source: 'user', steered: true })).steered).toBe(
+			true
+		);
+		// Only a real mark: anything else from the wire draws no header.
+		expect(
+			mirrorLogEntry(entry('s2', 'hi', { source: 'user', steered: 'yes' as unknown as boolean }))
+				.steered
+		).toBeUndefined();
+	});
+
 	it('copies the drawn fields and maps an unknown kind to a system line', () => {
 		expect(mirrorLogEntry(entry('e1', 'hi', { source: 'future-kind' })).source).toBe('system');
 		const mapped = mirrorLogEntry(

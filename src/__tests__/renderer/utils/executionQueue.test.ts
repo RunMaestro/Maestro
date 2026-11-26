@@ -29,7 +29,8 @@ import {
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { AGENT_MODES, agentModeFields } from '../../helpers';
-import { createMockSession } from '../../helpers/mockSession';
+import { createMockSession, createModeSession } from '../../helpers/mockSession';
+import { joinMergedQueueImages } from '../../../shared/maestro-lib/turns/queue';
 import { createMockAITab } from '../../helpers/mockTab';
 
 function item(id: string, paused = false): QueuedItem {
@@ -39,6 +40,28 @@ function item(id: string, paused = false): QueuedItem {
 function tabItem(id: string, tabId: string): QueuedItem {
 	return { id, timestamp: 0, tabId, type: 'message', text: id };
 }
+
+describe('queued images in every mode (M2)', () => {
+	const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+	const JPEG = 'data:image/jpeg;base64,/9j/4AAQ';
+
+	// A local or SSH agent's queue lives in this desktop; a hosted agent's lives on its host, which
+	// merges with the same `joinMergedQueueImages` rule. The merged card carries the same images.
+	it.each(AGENT_MODES)('%s: a merge keeps the upper images, then the lower ones', (mode) => {
+		const session = createModeSession(mode, {
+			executionQueue: [
+				{ ...item('upper'), images: [PNG] },
+				{ ...item('lower'), images: [JPEG] },
+			],
+		});
+		const merged =
+			mode === 'hosted'
+				? joinMergedQueueImages(session.executionQueue[0].images, session.executionQueue[1].images)
+				: mergeQueuedItemIntoPrevious(session.executionQueue, 'lower')!.queue[0].images;
+		expect(merged).toEqual([PNG, JPEG]);
+		expect(joinMergedQueueImages(undefined, [])).toBeUndefined();
+	});
+});
 
 describe('executionQueue helpers', () => {
 	it('holds admission work and later work on the same tab while other tabs proceed', () => {

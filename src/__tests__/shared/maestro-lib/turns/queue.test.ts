@@ -103,6 +103,16 @@ describe('decideSubmit', () => {
 		expect(decideSubmit(item('a', 't1'), view())).toBe('run');
 	});
 
+	it('queues a held (paused) message even on an idle agent, forced parallel or not', () => {
+		expect(decideSubmit({ ...item('a', 't1'), paused: true }, view())).toBe('queue');
+		expect(
+			decideSubmit(
+				{ ...item('a', 't1'), paused: true, forceParallel: true, readOnly: true },
+				view()
+			)
+		).toBe('queue');
+	});
+
 	it('queues behind a busy tab, forced parallel or not', () => {
 		expect(decideSubmit(item('a', 't1'), view([{ tabId: 't1' }]))).toBe('queue');
 		expect(decideSubmit(item('a', 't1', { forceParallel: true }), view([{ tabId: 't1' }]))).toBe(
@@ -343,6 +353,29 @@ describe('createExecutionQueue ordering', () => {
 		h.turnFor('a').end();
 		await h.flush();
 		expect(h.startOrder).toEqual(['a', 'c']);
+	});
+
+	it('puts a steer the agent never took back at the head, and runs it once its tab is free (M4)', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't1'));
+		h.queue.submit(item('c', 't1'));
+		await h.flush();
+		// `b` left the queue to be steered into `a`'s turn, and comes back ahead of `c`.
+		expect(h.queue.remove('b')).toBe(true);
+		h.events.length = 0;
+		h.queue.returnToFront(item('b', 't1'));
+		expect(h.queue.items().map((i) => i.id)).toEqual(['b', 'c']);
+		expect(h.events).toEqual([{ type: 'queued', item: item('b', 't1'), position: 0 }]);
+		h.turnFor('a').end();
+		await h.flush();
+		expect(h.startOrder).toEqual(['a', 'b']);
+		// A paused one comes back paused, and waits.
+		h.queue.returnToFront(item('d', 't1', { paused: true }));
+		h.turnFor('b').end();
+		await h.flush();
+		expect(h.startOrder).toEqual(['a', 'b', 'c']);
+		expect(h.queue.items().map((i) => i.id)).toEqual(['d']);
 	});
 
 	it('merges a waiting item into the waiting item above it on the same tab', async () => {

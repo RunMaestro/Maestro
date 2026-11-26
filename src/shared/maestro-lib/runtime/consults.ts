@@ -69,6 +69,7 @@ import { toTurnAgent } from '../turns/records';
 import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import type { BackgroundTurns } from './background-turns';
 import type { DataDirVerdict } from './data-dir-lock';
+import type { RuntimeSideQuestions } from './side-questions';
 import type { RuntimeTurnOptions } from './turns';
 
 const LOG_CONTEXT = '[RuntimeConsults]';
@@ -94,6 +95,11 @@ export interface RuntimeConsultsOptions {
 	minTimeoutMs?: number;
 	/** Where the bundled prompts and the CLI are, as chat turns read them for the target's system prompt. */
 	options?: Pick<RuntimeTurnOptions, 'bundledPromptsDir' | 'moduleDirectory' | 'maestroCliPath'>;
+	/**
+	 * Answers a `/btw` side question (`sideQuestion`), which forks the target's tab instead of
+	 * consulting it (`RuntimeTurns.sideQuestions`). Absent: a side question is refused.
+	 */
+	sideQuestions?: Pick<RuntimeSideQuestions, 'ask'>;
 }
 
 /**
@@ -270,17 +276,18 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 	async function askNow(input: RuntimeConsultInput): Promise<Answer> {
 		const method: ClientMethod = 'consults.ask';
 		if (disposed) return fail(method, 'host-unavailable', 'The runtime is closing.');
-		const question = input.question.trim();
-		if (!question) return fail(method, 'invalid', 'The question is empty.');
-		// A side question forks a desktop tab's provider session (`/btw`); answering it as a consult
-		// would add a turn to a consult tab instead, so refuse it rather than answer something else.
+		// A side question forks the target tab's provider session (`/btw`); answering it as a consult
+		// would add a turn to a consult tab instead, so it goes to the side questions or is refused.
 		if (input.sideQuestion === true) {
+			if (options.sideQuestions) return options.sideQuestions.ask(input);
 			return fail(
 				method,
 				'rejected',
 				'This host does not answer side questions (/btw). Run it on a desktop host.'
 			);
 		}
+		const question = input.question.trim();
+		if (!question) return fail(method, 'invalid', 'The question is empty.');
 		const record = repository.getAgent(input.targetAgentId);
 		if (!record) return fail(method, 'not-found', `No agent ${input.targetAgentId}.`);
 		if (input.fromAgentId && input.fromAgentId === input.targetAgentId) {

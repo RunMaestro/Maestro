@@ -104,6 +104,16 @@ import { resetStores } from '../../helpers/resetStores';
 import { makeGrokCommandObservation } from '../../fixtures/grok-command-observation';
 import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
 import { resolve } from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { createRuntimeBuiltinCommands } from '../../../shared/maestro-lib/runtime/builtin-commands';
+import { createProcessRegistry } from '../../../shared/maestro-lib/runtime/processes';
+import { discoverClaudeSkills } from '../../../shared/maestro-lib/agents/claude-skills';
+import {
+	formatClaudeSkillsMessage,
+	HISTORY_COMMAND_TEXT,
+} from '../../../shared/maestroBuiltinCommandText';
 
 // ============================================================================
 // Test Helpers
@@ -2003,6 +2013,120 @@ describe('useWizardHandlers', () => {
 	// ========================================================================
 	// handleSkillsCommand
 	// ========================================================================
+	// M5: a hosted agent's /skills and /history run on its host. A headless host runs them in its
+	// runtime (`createRuntimeBuiltinCommands`) over the same shared pieces, so the tab reads the
+	// same as a local or SSH agent's, whose commands run here.
+	describe('/skills and /history read the same in every mode (M5)', () => {
+		const skillsRoot = () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-skills-'));
+			const dir = path.join(root, 'project', '.claude', 'skills', 'review');
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(
+				path.join(dir, 'SKILL.md'),
+				'---\nname: review\ndescription: Reviews\n---\nBody'
+			);
+			fs.mkdirSync(path.join(root, 'home'));
+			return root;
+		};
+
+		/** What a headless host's runtime writes to the tab for `command`. */
+		async function hostLines(
+			command: '/skills' | '/history',
+			root: string,
+			agentSessionId: string | null
+		): Promise<Array<[string, string]>> {
+			const entries: Array<{ source: string; text: string }> = [];
+			const repository = {
+				getAgent: () => ({
+					id: 'session-1',
+					toolType: 'claude-code',
+					cwd: path.join(root, 'project'),
+					projectRoot: path.join(root, 'project'),
+				}),
+				getTab: () => ({ id: 'tab-1', agentSessionId }),
+				appendTranscript: async (_agent: string, _tab: string, list: typeof entries) => {
+					entries.push(...list);
+					return { ok: true, value: undefined };
+				},
+			};
+			let id = 0;
+			const builtins = createRuntimeBuiltinCommands({
+				paths: {} as never,
+				repository: repository as never,
+				registry: createProcessRegistry(),
+				historyWriter: {} as never,
+				statsRecorder: { recordQuery: vi.fn() },
+				host: {},
+				deps: { runAgentTurn: vi.fn(), now: () => 1 },
+				rules: { newId: () => `e${++id}` },
+				reserveTabSession: async () => () => undefined,
+				transcriptChanged: () => undefined,
+				homeDir: () => path.join(root, 'home'),
+			});
+			await builtins.run('session-1', 'tab-1', { name: command });
+			return entries.map((entry) => [entry.source, entry.text]);
+		}
+
+		it.each(AGENT_MODES)('%s: /skills writes the same two entries', async (mode) => {
+			const root = skillsRoot();
+			try {
+				let lines: Array<[string, string]>;
+				if (mode === 'hosted') {
+					lines = await hostLines('/skills', root, null);
+				} else {
+					const session = createMockSession({
+						...agentModeFields(mode),
+						projectRoot: path.join(root, 'project'),
+					});
+					useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+					(window as any).maestro.claude.getSkills.mockResolvedValue(
+						await discoverClaudeSkills(path.join(root, 'project'), path.join(root, 'home'))
+					);
+					const { result } = renderHook(() => useWizardHandlers(createMockDeps()));
+					await act(async () => {
+						await result.current.handleSkillsCommand();
+					});
+					lines = useSessionStore
+						.getState()
+						.sessions[0].aiTabs[0].logs.map((log) => [log.source, log.text]);
+				}
+				expect(lines).toEqual([
+					['user', '/skills'],
+					[
+						'system',
+						formatClaudeSkillsMessage([
+							{ name: 'review', description: 'Reviews', tokenCount: 12, source: 'project' },
+						]),
+					],
+				]);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it.each(AGENT_MODES)('%s: /history with no session says so, and nothing else', async (mode) => {
+			let lines: Array<[string, string]>;
+			if (mode === 'hosted') {
+				lines = await hostLines('/history', os.tmpdir(), null);
+			} else {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					aiTabs: [createMockAITab({ id: 'tab-1', agentSessionId: null, logs: [] })],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const { result } = renderHook(() => useWizardHandlers(createMockDeps()));
+				await act(async () => {
+					await result.current.handleHistoryCommand();
+				});
+				lines = useSessionStore
+					.getState()
+					.sessions[0].aiTabs[0].logs.map((log) => [log.source, log.text]);
+			}
+			expect(lines).toEqual([['system', HISTORY_COMMAND_TEXT.noSession]]);
+		});
+	});
+
 	describe('handleSkillsCommand', () => {
 		it('fetches and displays skills in a table format', async () => {
 			const session = createMockSession();
