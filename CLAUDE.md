@@ -122,7 +122,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
 - **A file action that hands a file to this machine (open, reveal, play, save a copy):** `openFileInDefaultApp()`, `revealInFileManager()`, `openFolderInFileManager()`, `openFileInMaestroBrowser()`, `saveCopyOfFile()`, `resolveOpenSource()`, `fetchLocalCopy()` in `src/renderer/services/fileActions.ts`
-- **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
+- **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)`, `fileOpRemoteId()` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
+- **Which SSH remote an agent's files are on (renderer):** `getSessionSshRemoteId(session)`, `isSessionRemote(session)` in `src/renderer/utils/sessionHelpers.ts`
 
 #### Main process: stores, persistence, platform
 

@@ -22,7 +22,7 @@ The rule: a local agent, an SSH agent, and a hosted SSH agent look and behave th
 
 The one permitted visual difference is the **mode pill**: one small `LOCAL`, `REMOTE`, or `HOSTED` pill, drawn by `AgentModePill` (`SessionList/AgentModePill.tsx`, over `FederationBadge`) with the same props in every place a mode is shown: the Left Bar row, the collapsed Left Bar's hover card, the Main Window header, the `@` mention picker's agent rows, the Group Chat participant card, and the Process Monitor's agent rows. No surface draws a remote's name or a transport mark of its own. Its color and hover card carry the mode's state (the host's connection, a failed SSH run, a blocked automatic move). No other mark names the mode: no remote-name pill, no server icon, no separate transport badge. The `GIT` pill and the branch pill say only "git repository" and draw the same in every mode. Any other place where SSH or hosted takes its own UI branch is a defect. Fix it by collapsing to the same component and props, and route only the action through the transport.
 
-**Progress denominator: 101.** Closed rows (✅ or 🔒) out of 101 is the progress number. The denominator does not change: a difference found later goes in a "Found later" section and is not counted.
+**Progress denominator: 101.** Closed rows (✅ or 🔒) out of 101 is the progress number. The denominator does not change: a difference found later goes in a "Found later" section and is not counted. Rounds 2 and 3 add their own rows below (a second reading from the known gaps, and a third from the first live comparison of the three modes in the running app); each has its own count.
 
 ## Legend
 
@@ -217,6 +217,95 @@ Read from the code on 2026-11-25 ([[agent-ux-parity-census]]), re-checked at `ac
 | Surface                                                                | Status | Code path                                                                                | Test | Notes                                                                                                                                                |
 | ---------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | B3.4 Move to Host / Move Back from Host (Left Bar menu, Quick Actions) | 🔒     | `SessionList/SessionContextMenu.tsx`, `QuickActionsModal/commands/federationCommands.ts` |      | The mode switch itself, in one menu slot: an SSH agent offers Move to Host, a hosted agent offers Move Back. A local agent has no remote to move to. |
+
+## Round 2: the known gaps of round 1
+
+Each workstream has its own pull request into `rc`. A row is closed when its pull request is merged.
+
+### Steer over SSH (workstream F)
+
+| Surface                                    | Status | Code path                                                                                                                | Test | Notes                                                       |
+| ------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------ | ---- | ----------------------------------------------------------- |
+| F1 Steer on a plain SSH Claude TUI turn    | ❌     | `utils/sendMenu.ts`, `utils/executionQueue.ts`, `main/process-manager/steering-client.ts`, `maestro-p/steering-relay.ts` |      | Row B1.15 was locked: the steering socket is on the remote. |
+| F2 Steer on a native-control turn over SSH | ❌     | `main/codex-app-server/steering.ts`                                                                                      |      | The other producer of the `ssh-remote` reason.              |
+
+### A consult of a hosted agent (workstream G)
+
+| Surface                                                                        | Status | Code path                                                            | Test | Notes                                                           |
+| ------------------------------------------------------------------------------ | ------ | -------------------------------------------------------------------- | ---- | --------------------------------------------------------------- |
+| G1 A hosted consult streams its answer                                         | ❌     | `services/peerMirror.ts` (`askMirrorConsult`), `runtime/consults.ts` |      | Landed whole; a local consult streams.                          |
+| G2 One consult thread per asking tab on the host                               | ❌     | `runtime/consults.ts`                                                |      | Every remote asker shared one hidden consult tab per target.    |
+| G3 A Pianola-managed consult of a hosted target                                | ❌     | `shared/maestro-lib/agents/consult.ts`                               |      | Ran over SSH and was reported as an unlisted launch.            |
+| G4 Write access of a hand-off sent over the wire                               | ❌     | `main/ipc/handlers/cross-agent.ts`, `messageHandlers/commands.ts`    |      | A `handoffAnswer` field asked for a writable run.               |
+| G5 Reopening a closed conversation of a hosted agent (Quick Chat, Cmd+Shift+T) | ❌     | `services/quickChatRouter.ts`, `shared/closedTabHistory.ts`          |      | The host keeps its own closed tabs; this side did not see them. |
+
+### Remote paths and file copies (workstream H)
+
+| Surface                                               | Status | Code path                                                                | Test                                                                                                                                                                                           | Notes                                                                                                                                                                                     |
+| ----------------------------------------------------- | ------ | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1 Browse and its transport go to the same machine    | ✅     | `services/pathPicker.ts` (`fileOpRemoteId()`), `utils/sessionHelpers.ts` | `pathPicker.test.tsx` "a file operation for an SSH agent with no remote resolved yet throws the reason"; `sessionHelpers.test.ts` "ignores a remote id left on an agent with SSH switched off" | Fixed (#2129): Browse and the read, write, list, or import behind it go to the same machine. `getSessionSshRemoteId()` is gated on `isSessionRemote()` at the source, for all 16 callers. |
+| H2 New Agent refresh detects where the agent will run | ✅     | `main/ipc/handlers/agents.ts` (`agents:refresh`)                         | `agents.test.ts` "re-detects where the agent runs (local, SSH, hosted)"                                                                                                                        | Fixed (#2129).                                                                                                                                                                            |
+| H3 A remote folder copy with an unreadable subfolder  | ✅     | `main/utils/remote-fs.ts` (`ListTreeOptions.strict`)                     | `remote-fs.test.ts` "under a real shell: an unreadable subfolder fails, naming it; a symlink loop does not"                                                                                    | Fixed (#2129): the copy fails with a message that names the subfolder; nothing half-copied is swapped in.                                                                                 |
+| H4 Overlapping fetches of one remote file or folder   | ✅     | `services/fileActions.ts`                                                | `fileActions.test.ts` "overlapping fetches of one folder share one download", "a failed fetch forgets the copy"                                                                                | Fixed (#2129).                                                                                                                                                                            |
+| H5 Size budget of a remote folder copy                | ✅     | `main/ipc/handlers/filesystem.ts`                                        | `filesystem.test.ts` "refuses a folder over the byte budget before any byte is fetched"                                                                                                        | Fixed (#2129): 500 MB for the copy and 50 MB per file, refused from the listing with the size.                                                                                            |
+| H6 New Agent path-status row                          | ✅     | `NewInstanceModal/NewInstanceModal.tsx`                                  | `NewInstanceModal.test.tsx` "Path status row: mode parity (local, SSH, hosted)"                                                                                                                | Fixed (#2129).                                                                                                                                                                            |
+
+### Token totals for agents on another computer (workstream I)
+
+| Surface                                       | Status | Code path                       | Test | Notes                                               |
+| --------------------------------------------- | ------ | ------------------------------- | ---- | --------------------------------------------------- |
+| I1 Token totals of a hosted agent             | ❌     | `main/stats/`, the host runtime |      | Row N3 was locked: the transcripts are on the host. |
+| I2 Token totals of an SSH agent               | ❌     | `main/stats/`                   |      | The transcripts are on the remote.                  |
+| I3 The dashboard reads the same in every mode | ❌     | `UsageDashboard/TokenStats.tsx` |      | The "Not counted" note.                             |
+
+## Round 3: what the live pass found
+
+On 2026-11-26 a local, an SSH, and a hosted agent were compared side by side in the running app for the first time (a demo instance, a user-mode `sshd` on this machine with its own home, a headless host installed by Move to Host, and a fake provider on both sides). No real remote and no user data were touched. 21 of 39 surfaces were the same. The report "the Enter button is missing on a hosted agent" did not reproduce: the Enter toggle and Send are present and the same in all three modes. The differences are the rows below.
+
+### A headless host does what a desktop host does (workstream M)
+
+Round 1 made many hosted actions work by having a DESKTOP host run them. Move to Host installs a HEADLESS host (`maestro-cli host`), and that one refused them.
+
+| Surface                                          | Status | Code path                            | Test | Notes                                                                            |
+| ------------------------------------------------ | ------ | ------------------------------------ | ---- | -------------------------------------------------------------------------------- |
+| M1 Images on a send to a headless host           | ❌     | `runtime/turns.ts`                   |      | Refused: "Images cannot be sent from here yet."                                  |
+| M2 Images on a queued message on a headless host | ❌     | `runtime/turns.ts`, `turns/queue.ts` |      | Refused: "This host does not queue images."                                      |
+| M3 Queue Held on a headless host                 | ❌     | `runtime/server-requests.ts`         |      | Refused: "A headless host cannot queue a held message."                          |
+| M4 Steer on a headless host                      | ❌     | `runtime/turns.ts`                   |      | Refused: "This host cannot steer a running turn."                                |
+| M5 `/history` and `/skills` on a headless host   | ❌     | `runtime/turns.ts`                   |      | Refused: "runs on a desktop host. This host is headless."                        |
+| M6 `/btw` on a headless host                     | ❌     | `runtime/consults.ts`                |      | Refused: "This host does not answer side questions."                             |
+| M7 An `@mention` in a hosted agent's own message | ❌     | `runtime/server-requests.ts`         |      | "A headless host does not consult @mentioned agents."                            |
+| M8 Every other refusal of the headless host      | ❌     | `runtime/`                           |      | Completion callback, provider switch, Auto Run in a worktree, saving a playbook. |
+
+### A hosted turn reads like a local turn (workstream N)
+
+| Surface                                                              | Status | Code path                                                        | Test | Notes                                                                          |
+| -------------------------------------------------------------------- | ------ | ---------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------ |
+| N1 A hosted tab is named from its first message                      | ❌     | `hooks/input/useInputProcessing.ts`, `services/tabAutoNaming.ts` |      | A hosted tab kept its session id as its name; its History entries too.         |
+| N2 Defaults of a new hosted tab                                      | ❌     | `services/hostedTurns.ts` (`openHostedTab`)                      |      | A new hosted tab started with Save to History off.                             |
+| N3 The "Message delivered" tick                                      | ❌     | `utils/hostedSession.ts`                                         |      | Shown on hosted while the turn still ran.                                      |
+| N4 History entries of a hosted agent                                 | ❌     | `shared/history.ts`, `turns/record-turn.ts`                      |      | Summary was the first paragraph, not the heading; an extra machine-name label. |
+| N5 `maestro-cli lift` reaches the open window                        | ❌     | `main/federation/lift.ts`                                        |      | The Left Bar kept the REMOTE pill until a reload.                              |
+| N6 Everything else a local send does after the hosted branch returns | ❌     | `hooks/input/useInputProcessing.ts`                              |      | A sweep of the two sides of each hosted branch.                                |
+
+### An SSH agent's surfaces read like a local agent's (workstream O)
+
+| Surface                                              | Status | Code path                                                            | Test | Notes                                                                                            |
+| ---------------------------------------------------- | ------ | -------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------ |
+| O1 Header provider profile label                     | ❌     | `MainPanel/MainPanelHeader.tsx`                                      |      | SSH and hosted showed "Claude Code default @ remote" with a path of this machine in its tooltip. |
+| O2 Edit Agent modal sections                         | ❌     | `NewInstanceModal/EditAgentModal.tsx`, `shared/AgentConfigPanel.tsx` |      | Installations select, History toggle, and a reasoning note differed.                             |
+| O3 Slash-command discovery runs where the agent runs | ❌     | main slash-command discovery                                         |      | The `/help` probe ran on this machine with the remote path as cwd.                               |
+| O4 Files panel footer counts                         | ❌     | `main/ipc/handlers/filesystem.ts` (`directorySizeRemote`)            |      | A remote tree counted `.git` and ignored files: 33 files where local showed 3.                   |
+| O5 Open in Default App and Reveal on a remote file   | ❌     | `services/fileActions.ts`                                            |      | Acted on a downloaded copy without saying so; an edit never reached the remote.                  |
+
+### Bugs found on the way, the same in every mode (workstream J)
+
+| Surface                                                    | Status | Code path                                | Test | Notes                                                                |
+| ---------------------------------------------------------- | ------ | ---------------------------------------- | ---- | -------------------------------------------------------------------- |
+| J1 A steering note reaches a Goal-Driven Auto Run          | ❌     | `hooks/batch/internal/useGoalRunner.ts`  |      | `steer-auto-run send` queued the note and no goal iteration took it. |
+| J2 Director's Notes lists Cue runs                         | ❌     | `main/ipc/bootstrap/index.ts`            |      | The live IPC wiring dropped an optional dependency.                  |
+| J3 A group chat moderator's `!autorun` starts the run      | ❌     | group chat renderer hooks                |      | Nothing subscribed to `groupChat:onAutoRunTriggered`.                |
+| J4 The stall message of a goal run names the right percent | ❌     | `shared/goalDriven/goalExitEvaluator.ts` |      | Said "stuck at 36%" for a run flat at 48.                            |
 
 ## Found later
 
