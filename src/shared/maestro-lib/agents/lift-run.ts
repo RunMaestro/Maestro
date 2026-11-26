@@ -250,12 +250,14 @@ async function readStaleHostCopy(
 }
 
 /** The ids of a transcript's entries, in order. */
-function entryIds(tab: AITabRecord): string[] {
-	return (Array.isArray(tab.logs) ? tab.logs : []).map((entry) => entry.id);
+function entryIds(tab: AITabRecord): unknown[] {
+	return (Array.isArray(tab.logs) ? tab.logs : []).map((entry) =>
+		entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined
+	);
 }
 
 /** Whether `head` is `all`'s first entries, by entry id. */
-function startsWith(all: readonly string[], head: readonly string[]): boolean {
+function startsWith(all: readonly unknown[], head: readonly unknown[]): boolean {
 	return head.length <= all.length && head.every((id, index) => all[index] === id);
 }
 

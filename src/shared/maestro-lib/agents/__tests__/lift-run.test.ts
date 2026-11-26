@@ -369,7 +369,7 @@ describe('keepDivergentHostTabs (T5 review)', () => {
 		const local = [tab('t1', ['a', 'local-1', 'local-2'])];
 		const [host] = keepDivergentHostTabs(local, [tab('t1', ['a', 'host-1'])]);
 		expect(host).toMatchObject({ id: 't1-host', name: 'Main (on the host)' });
-		expect(host.logs?.map((entry) => entry.id)).toEqual(['a', 'host-1']);
+		expect((host.logs as Array<{ id: string }>).map((entry) => entry.id)).toEqual(['a', 'host-1']);
 	});
 
 	it('picks an id no other tab holds', () => {
