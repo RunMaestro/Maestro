@@ -9,6 +9,7 @@ import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/sha
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
 import { parentDirOf } from '../utils/pathHelpers';
+import { openFileInMaestroBrowser } from '../../../services/fileActions';
 import { INDENT_STEP, connectorArmWidth, guideLeft, rowPaddingLeft } from '../utils/treeLines';
 
 interface VirtualRow {
@@ -160,12 +161,12 @@ export const FileTreeRow = memo(function FileTreeRow({
 	const openFile = () => {
 		if (isFolder) return;
 		const isHtml = /\.html?$/i.test(node.name);
-		if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
-			const encodedPath = absolutePath
-				.split('/')
-				.map((seg) => encodeURIComponent(seg))
-				.join('/');
-			onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
+		if (htmlDoubleClickOpensInBrowser && isHtml && onOpenBrowserTabAt) {
+			void openFileInMaestroBrowser(
+				{ path: absolutePath, sshRemoteId },
+				onOpenBrowserTabAt,
+				node.name
+			);
 			return;
 		}
 		void handleFileClick(node, fullPath);

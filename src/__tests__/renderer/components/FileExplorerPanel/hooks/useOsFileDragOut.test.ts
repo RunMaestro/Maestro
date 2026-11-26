@@ -3,6 +3,10 @@ import { renderHook, act } from '@testing-library/react';
 import { useOsFileDragOut } from '../../../../../renderer/components/FileExplorerPanel/hooks/useOsFileDragOut';
 import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
 import type { FileNode } from '../../../../../renderer/types/fileTree';
+import {
+	__resetFileActionsForTests,
+	fetchLocalCopy,
+} from '../../../../../renderer/services/fileActions';
 
 vi.mock('../../../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -38,6 +42,7 @@ describe('useOsFileDragOut', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.mocked(isWebDesktop).mockReturnValue(false);
+		__resetFileActionsForTests();
 	});
 
 	it('web-desktop: never takes over the gesture, even for an Alt-drag', () => {
@@ -122,6 +127,21 @@ describe('useOsFileDragOut', () => {
 		});
 		expect(startDragOut).toHaveBeenCalledWith(['/tmp/report.pdf']);
 		expect(downloadRemoteFile).toHaveBeenCalledTimes(1);
+	});
+
+	it('remote: a file another action already fetched drags out on the first gesture', async () => {
+		// Open in Default App, Reveal, or Play fetched it first (services/fileActions).
+		downloadRemoteFile.mockResolvedValue({ success: true, path: '/tmp/k/report.pdf' });
+		await fetchLocalCopy({ path: '/project/report.pdf', sshRemoteId: 'remote-1' }, { quiet: true });
+		downloadRemoteFile.mockClear();
+		const { result } = renderHook(() =>
+			useOsFileDragOut({ session, sshRemoteId: 'remote-1', onShowFlash: vi.fn() })
+		);
+		act(() => {
+			result.current.handleOsDragStart(makeDragEvent(true), ['report.pdf']);
+		});
+		expect(startDragOut).toHaveBeenCalledWith(['/tmp/k/report.pdf']);
+		expect(downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
 	it('remote: folders are unsupported and flash an explanation instead of dragging', () => {

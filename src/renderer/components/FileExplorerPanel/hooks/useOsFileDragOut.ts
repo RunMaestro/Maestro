@@ -1,6 +1,7 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import type { Session } from '../../../types';
 import { captureException } from '../../../utils/sentry';
+import { cachedLocalCopy, fetchLocalCopy } from '../../../services/fileActions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { basenameOf, findNodeAtPath } from '../utils/pathHelpers';
 
@@ -28,21 +29,19 @@ interface UseOsFileDragOutResult {
  * the plain drag (in-tree move) or the drag-to-AI-input @mention, both of which
  * rely on the HTML5 drag that `startDrag` would otherwise cancel.
  *
- * Local files/folders drag out in a single gesture. Remote (SSH) files can't be
- * handed to the OS live (the bytes aren't on disk and a download can't attach to
- * the gesture), so the first Option-drag downloads to a temp cache and flashes
- * "drag again"; the cached second drag is seamless. Never drags a partial file.
+ * Local files/folders drag out in a single gesture. A remote (SSH) file can be
+ * handed to the OS only once its bytes are on this disk: the OS drag must name
+ * its files inside the dragstart event, and a fetch cannot finish inside it. So
+ * a remote file already fetched by ANY file action (Open in Default App, Reveal,
+ * Play, a previous drag) drags out on the first gesture from the shared copy in
+ * `services/fileActions`; one never fetched is fetched now, with a flash asking
+ * for a second drag. Never drags a partial file.
  */
 export function useOsFileDragOut({
 	session,
 	sshRemoteId,
 	onShowFlash,
 }: UseOsFileDragOutArgs): UseOsFileDragOutResult {
-	// Maps a remote workspace-relative path -> the local temp path it was
-	// downloaded to. Lives for the panel's lifetime so a second Option-drag of
-	// the same file is instant. Keyed by relative path (stable per session).
-	const remoteTempCache = useRef<Map<string, string>>(new Map());
-
 	const handleOsDragStart = useCallback(
 		(e: React.DragEvent, relSources: string[]): boolean => {
 			// OS drag-out fires `fs:startDragOut`, an ipcMain.on channel the
@@ -84,7 +83,7 @@ export function useOsFileDragOut({
 			const cached: string[] = [];
 			const uncached: string[] = [];
 			for (const r of fileRels) {
-				const temp = remoteTempCache.current.get(r);
+				const temp = cachedLocalCopy({ path: `${fullPath}/${r}`, sshRemoteId });
 				if (temp) cached.push(temp);
 				else uncached.push(r);
 			}
@@ -107,11 +106,8 @@ export function useOsFileDragOut({
 				let ready = 0;
 				for (const r of uncached) {
 					try {
-						const res = await window.maestro.fs.downloadRemoteFile(`${fullPath}/${r}`, sshRemoteId);
-						if (res?.path) {
-							remoteTempCache.current.set(r, res.path);
-							ready++;
-						}
+						await fetchLocalCopy({ path: `${fullPath}/${r}`, sshRemoteId }, { quiet: true });
+						ready++;
 					} catch (error) {
 						captureException(error, {
 							extra: { action: 'os-drag-out.download', relPath: r, sshRemoteId },

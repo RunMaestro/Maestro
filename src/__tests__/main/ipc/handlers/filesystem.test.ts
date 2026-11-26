@@ -60,6 +60,7 @@ vi.mock('archiver', () => ({
 vi.mock('os', () => ({
 	default: {
 		homedir: vi.fn().mockReturnValue('/Users/testuser'),
+		tmpdir: vi.fn().mockReturnValue('/tmp'),
 	},
 }));
 
@@ -102,6 +103,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
 	existsRemote: vi.fn(),
+	readBinaryFileRemoteAsBase64: vi.fn(),
 }));
 
 // The header sniff reads real bytes off disk; each test decides the verdict.
@@ -118,6 +120,7 @@ import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesy
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
+import { readBinaryFileRemoteAsBase64 } from '../../../../main/utils/remote-fs';
 import { isSqliteDatabaseFile } from '../../../../main/sqlite/sqlite-detect';
 import {
 	readDirRemote,
@@ -165,6 +168,34 @@ describe('filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:deleteMany', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:countItems', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:fetchImageAsBase64', expect.any(Function));
+		});
+	});
+
+	describe('fs:downloadRemoteFile', () => {
+		beforeEach(() => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.from('bytes').toString('base64'),
+			} as any);
+		});
+
+		it('gives two same-named remote files in different folders different local copies', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			const a = await handler({}, '/work/a/notes.pdf', 'r1');
+			const b = await handler({}, '/work/b/notes.pdf', 'r1');
+			const again = await handler({}, '/work/a/notes.pdf', 'r1');
+
+			expect(a.path).toMatch(/^\/tmp\/maestro-remote-downloads\/[0-9a-f]{12}\/notes\.pdf$/);
+			expect(b.path).not.toBe(a.path);
+			expect(again.path).toBe(a.path);
+			expect(fs.writeFile).toHaveBeenCalledWith(a.path, Buffer.from('bytes'));
+		});
+
+		it('writes to the chosen path when one is given', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			const result = await handler({}, '/work/a/notes.pdf', 'r1', '/Users/me/notes.pdf');
+			expect(result).toEqual({ success: true, path: '/Users/me/notes.pdf' });
 		});
 	});
 

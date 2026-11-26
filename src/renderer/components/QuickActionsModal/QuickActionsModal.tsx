@@ -731,7 +731,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openWizard,
 			getOpenInLabel,
 			platform: window.maestro?.platform || 'darwin',
-			openPath: window.maestro?.shell?.openPath,
 			onGoToNextUnread,
 			onGoToPreviousUnread,
 			onNavBack,

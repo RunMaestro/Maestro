@@ -62,6 +62,22 @@ export function windowsDrivePathToFileUrl(path: string): string | null {
 }
 
 /**
+ * The `file://` URL for an absolute path on this machine, the inverse of
+ * `fileUrlToPath`. Each segment is percent-encoded so spaces and reserved
+ * characters survive; a Windows drive keeps its colon (`file:///D:/a%20b.html`).
+ */
+export function pathToFileUrl(path: string): string {
+	const normalized = path.replace(/\\/g, '/');
+	const isWindowsDrivePath = /^[A-Za-z]:/.test(normalized);
+	const rooted = isWindowsDrivePath || !normalized.startsWith('/') ? `/${normalized}` : normalized;
+	const encoded = rooted
+		.split('/')
+		.map((seg, index) => (isWindowsDrivePath && index === 1 ? seg : encodeURIComponent(seg)))
+		.join('/');
+	return `file://${encoded}`;
+}
+
+/**
  * Handle a clicked `file://` href.
  *
  * @param href The link target. Anything that is not `file://` is ignored.

@@ -1284,7 +1284,7 @@ export const MainPanel = React.memo(
 										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
 									}
 									colorBlindMode={colorBlindMode}
-									sshRemote={Boolean(filePreviewSshRemoteId)}
+									sshRemoteId={filePreviewSshRemoteId}
 									leadingSlot={
 										<PianolaDashboardTab
 											theme={theme}
@@ -1383,7 +1383,7 @@ export const MainPanel = React.memo(
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
-									sshRemote={Boolean(filePreviewSshRemoteId)}
+									sshRemoteId={filePreviewSshRemoteId}
 								/>
 							)
 						)}

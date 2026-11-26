@@ -102,7 +102,7 @@ function TabBarInner({
 	onGroupBreakApart,
 	onGroupClose,
 	colorBlindMode,
-	sshRemote,
+	sshRemoteId,
 	leadingSlot,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
@@ -846,7 +846,7 @@ function TabBarInner({
 										tabIndex={originalIndex}
 										colorBlindMode={colorBlindMode}
 										shortcutHint={shortcutHint}
-										sshRemote={sshRemote}
+										sshRemoteId={sshRemoteId}
 										displayName={fileTabDisplayNames.get(fileTab.id)}
 									/>
 								</React.Fragment>

@@ -22,6 +22,7 @@
 import { ipcMain } from 'electron';
 import path from 'path';
 import os from 'os';
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
@@ -558,7 +559,15 @@ export function registerFilesystemHandlers(): void {
 
 			let destPath = localDestPath;
 			if (!destPath) {
-				const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads');
+				// One temp folder per remote folder, so two remote files that share a
+				// name (`a/notes.pdf`, `b/notes.pdf`) never overwrite each other's
+				// fetched copy while one of them is open, playing, or being dragged.
+				// The file keeps its own name, which is what Finder and the opener show.
+				const folderKey = createHash('sha1')
+					.update(`${sshRemoteId}\0${path.posix.dirname(remotePath)}`)
+					.digest('hex')
+					.slice(0, 12);
+				const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads', folderKey);
 				await fs.mkdir(tempDir, { recursive: true });
 				destPath = path.join(tempDir, path.basename(remotePath));
 			}
