@@ -335,6 +335,63 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockQuit).toHaveBeenCalled();
 		});
 
+		it('holds a Windows or Linux update install until opened remote copies have sent their saved changes, then quits again', async () => {
+			mockIsMacOS = false;
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			let landWrites!: () => void;
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>((resolve) => (landWrites = resolve)),
+			});
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const first = { preventDefault: vi.fn() };
+			beforeQuitHandler!(first);
+			expect(first.preventDefault).toHaveBeenCalled();
+			// A second quit request while the writes go is held too.
+			const reentrant = { preventDefault: vi.fn() };
+			beforeQuitHandler!(reentrant);
+			expect(reentrant.preventDefault).toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(mockQuit).not.toHaveBeenCalled();
+
+			landWrites();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(mockQuit).toHaveBeenCalledTimes(1);
+			// The quit it starts runs the graceful teardown the installer handoff needs.
+			const again = { preventDefault: vi.fn() };
+			beforeQuitHandler!(again);
+			expect(again.preventDefault).not.toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
+			expect(mockExit).not.toHaveBeenCalled();
+			// Cleanup ran once, on the first before-quit.
+			expect(mockHistoryManager.stopWatching).toHaveBeenCalledTimes(1);
+			vi.useRealTimers();
+		});
+
+		it('lets a Windows or Linux update install go on after the remote-copy bound runs out', async () => {
+			mockIsMacOS = false;
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS - 1);
+			expect(mockQuit).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(mockQuit).toHaveBeenCalledTimes(1);
+			expect(process.kill).not.toHaveBeenCalled();
+			vi.useRealTimers();
+		});
+
 		it('should hard-exit on the macOS update-install path after the grace window', async () => {
 			mockIsMacOS = true;
 			vi.useFakeTimers();
