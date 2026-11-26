@@ -13,7 +13,10 @@
  * it (the wizard panel, the side-question card), which a remote send has no access to.
  */
 
-import type { MaestroBuiltinCommand } from '../../shared/maestroBuiltinCommands';
+import {
+	runsOutsideComposer,
+	type MaestroBuiltinCommand,
+} from '../../shared/maestroBuiltinCommands';
 
 /** The tab a built-in runs for. */
 export interface BuiltinCommandTarget {
@@ -35,14 +38,8 @@ export function registerMaestroBuiltinCommandHandlers(
 	handlers = next;
 }
 
-/**
- * Whether `command` is one a send from outside the composer runs for its tab (`/history`,
- * `/skills`), wherever the agent runs: here through `runMaestroBuiltinCommand()`, or on a hosted
- * agent's host, which runs the typed text the same way. `/wizard` and `/btw` need the composer.
- */
-export function runsOutsideComposer(command: MaestroBuiltinCommand): boolean {
-	return command.name === '/history' || command.name === '/skills';
-}
+/** Re-exported: the rule lives with the parser, so a headless host reads it too. */
+export { runsOutsideComposer };
 
 /**
  * Start `command` for `target`. Answers true when it started (the caller must not also send the

@@ -27,6 +27,11 @@ import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
 import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
+import { discoverClaudeSkills } from '../../agents/claude-skills';
+import {
+	formatClaudeSkillsMessage,
+	HISTORY_COMMAND_TEXT,
+} from '../../../maestroBuiltinCommandText';
 import {
 	createMaestroRuntime,
 	type MaestroRuntime,
@@ -105,7 +110,7 @@ describe('runtime turns', () => {
 			watchDirectory,
 			probeBinary: async (binaryName) =>
 				binaryExists ? { exists: true, path: `/fake/bin/${binaryName}` } : { exists: false },
-			turns: { runAgentTurn: fakeProvider },
+			turns: { runAgentTurn: fakeProvider, homeDir: () => path.join(work, 'home') },
 		};
 	}
 
@@ -505,23 +510,109 @@ describe('runtime turns', () => {
 			expect(argvFiles).toEqual([]);
 		});
 
-		// A Federation client sends a hosted agent's `/history` as the typed text; only a desktop host
-		// runs it. Here it would reach the provider as a message, so it is refused and nothing runs.
-		it.each(['/history', '/skills', '/wizard plan it', '/btw why?'])(
-			'refuses Maestro command %s, which only a desktop host runs, and starts nothing',
+		// `/wizard` and `/btw` draw in the composer of the window that typed them, so a remote send
+		// cannot run them anywhere; here they would reach the provider as a message, so they are
+		// refused and nothing runs.
+		it.each(['/wizard plan it', '/btw why?'])(
+			'refuses Maestro command %s, which needs the typing window, and starts nothing',
 			async (command) => {
 				const runtime = await start([seedAgent({ toolType: 'claude-code' })]);
 				const turn = watch(runtime);
 				const error = errorOf(await runtime.turns.send('a1', 't1', { text: command }));
 				expect(error).toMatchObject({
 					code: 'unsupported',
-					message: `${command.split(' ')[0]} runs on a desktop host. This host is headless, so it cannot run it.`,
+					message: `${command.split(' ')[0]} runs in the composer of the window that typed it, so it cannot run from here.`,
 				});
 				expect(argvFiles).toEqual([]);
 				expect(turn.events).toEqual([]);
 				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
 			}
 		);
+
+		describe('/history and /skills (M5: a headless host runs them as a desktop host does)', () => {
+			const transcriptLines = async (runtime: MaestroRuntime) =>
+				(await transcript(runtime)).map((entry) => [entry.source, entry.text]);
+			const settle = (runtime: MaestroRuntime, lines: number) =>
+				vi.waitFor(async () => expect((await transcript(runtime)).length).toBe(lines), {
+					timeout: 8_000,
+				});
+
+			it('lists the project and user skills on the tab, as the desktop does', async () => {
+				const skill = (root: string, name: string, description: string) => {
+					fs.mkdirSync(path.join(root, '.claude', 'skills', name), { recursive: true });
+					fs.writeFileSync(
+						path.join(root, '.claude', 'skills', name, 'SKILL.md'),
+						`---\nname: ${name}\ndescription: ${description}\n---\nBody`
+					);
+				};
+				skill(work, 'review', 'Reviews code');
+				skill(path.join(work, 'home'), 'notes', 'Takes notes');
+				const runtime = await start();
+				const turn = watch(runtime);
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: '/skills' }))).toEqual({
+					status: 'ran',
+				});
+				await settle(runtime, 2);
+
+				const lines = await transcriptLines(runtime);
+				expect(lines[0]).toEqual(['user', '/skills']);
+				expect(lines[1][0]).toBe('system');
+				expect(lines[1][1]).toBe(
+					formatClaudeSkillsMessage(await discoverClaudeSkills(work, path.join(work, 'home')))
+				);
+				expect(lines[1][1]).toContain('| **review** |');
+				expect(lines[1][1]).toContain('| **notes** |');
+				expect(argvFiles).toEqual([]);
+				// The clients are told to read the tab again; no turn started.
+				expect(turn.kinds()).toEqual(['gap', 'gap']);
+			});
+
+			it('says there is no session yet, and writes no History', async () => {
+				const runtime = await start();
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				await settle(runtime, 1);
+				expect(await transcriptLines(runtime)).toEqual([
+					['system', HISTORY_COMMAND_TEXT.noSession],
+				]);
+				expect(argvFiles).toEqual([]);
+			});
+
+			it('resumes the tab session for a synopsis, writes the History entry, and says it saved', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: '/history' }))).toEqual({
+					status: 'ran',
+				});
+				await settle(runtime, 4);
+
+				const lines = await transcriptLines(runtime);
+				expect(lines[2]).toEqual(['system', HISTORY_COMMAND_TEXT.pending]);
+				expect(lines[3][0]).toBe('system');
+				expect(lines[3][1]).toMatch(/^Synopsis saved to history: /);
+				// The synopsis resumed the tab's own conversation.
+				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
+				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
+				const history = readHistory(runtime.paths, 'a1');
+				const auto = (history.status === 'ok' ? history.entries : []).filter(
+					(entry) => entry.type === 'AUTO'
+				);
+				expect(auto).toHaveLength(1);
+				expect(lines[3][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
+			});
+
+			it('queues a held /history as a message, as Queue Held does on a desktop', async () => {
+				const runtime = await start();
+				const held = value(await runtime.turns.send('a1', 't1', { text: '/history', held: true }));
+				expect(held).toMatchObject({ status: 'queued' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({ text: '/history', paused: true }),
+				]);
+			});
+		});
 
 		it('answers host-unavailable once the runtime is closed', async () => {
 			const runtime = await start();

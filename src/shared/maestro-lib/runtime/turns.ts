@@ -44,7 +44,7 @@ import {
 	type TabSessionUpdate,
 } from '../agents/rules';
 import { liftedSendRefusal } from '../agents/lift-pointer';
-import { parseMaestroBuiltinCommand } from '../../maestroBuiltinCommands';
+import { parseMaestroBuiltinCommand, runsOutsideComposer } from '../../maestroBuiltinCommands';
 import type { EventBus } from '../client/event-bus';
 import type {
 	ClientError,
@@ -96,12 +96,17 @@ import {
 	type TurnRecorder,
 	type RecordedTurn,
 } from '../turns/record-turn';
-import type { HistoryWriter } from '../turns/history';
+import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import { toTurnAgent, toTurnTab } from '../turns/records';
 import type { CompletedTurn } from '../run/run-to-completion';
 import { runAgentTurn, type AgentTurnRun, type RunAgentTurnRefusal } from '../turns/run-agent-turn';
 import { createTurnEventMapper, type UnstampedTurnEvent } from '../turns/turn-events';
-import type { StatsConnectionConstructor } from '../turns/stats';
+import {
+	createStatsRecorder,
+	readStatsCollectionEnabled,
+	type StatsConnectionConstructor,
+} from '../turns/stats';
+import { createRuntimeBuiltinCommands, synopsisProcessSlot } from './builtin-commands';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
 import { createSshRemoteStore } from './ssh-store';
@@ -134,6 +139,8 @@ export interface RuntimeTurnDeps {
 	readGitBranch?(cwd: string): Promise<string | undefined>;
 	/** The clock for events and records. */
 	now: () => number;
+	/** The home directory `/skills` reads the user's own skills under. Default: this process's. */
+	homeDir?(): string;
 	/** `queue.recheckMs` and the timer behind it. */
 	recheckMs?: number;
 	schedule?(run: () => void, ms: number): () => void;
@@ -254,6 +261,45 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 	const sshStore = createSshRemoteStore(paths);
 
+	/** Resolved when a turn on the tab ends (`whenTabIdle`), by `agentId` then `tabId`. */
+	const idleWaiters = new Map<string, Array<() => void>>();
+	const waiterKey = (agentId: string, tabId: string) => `${agentId}\u0000${tabId}`;
+	function whenTabIdle(agentId: string, tabId: string): Promise<void> {
+		if (!queues.get(agentId)?.isTabBusy(tabId)) return Promise.resolve();
+		return new Promise<void>((resolve) => {
+			const key = waiterKey(agentId, tabId);
+			idleWaiters.set(key, [...(idleWaiters.get(key) ?? []), () => resolve()]);
+		}).then(() => whenTabIdle(agentId, tabId));
+	}
+	function wakeIdleWaiters(agentId: string, tabId: string): void {
+		const key = waiterKey(agentId, tabId);
+		const waiting = idleWaiters.get(key);
+		idleWaiters.delete(key);
+		for (const resolve of waiting ?? []) resolve();
+	}
+
+	// Maestro's own `/history` and `/skills`, run here for a tab as a desktop host runs them.
+	const builtins = createRuntimeBuiltinCommands({
+		paths,
+		repository,
+		registry,
+		historyWriter: options.historyWriter ?? createHistoryWriter({ paths, fence: options.fence }),
+		statsRecorder: createStatsRecorder({
+			paths,
+			loadSqlite: host.loadSqlite ?? noLoader,
+			fence: options.fence,
+			isEnabled: () => readStatsCollectionEnabled(paths.settingsFile),
+		}),
+		host,
+		deps,
+		rules: ctx,
+		whenTabIdle,
+		...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+		// A transcript that grew outside a turn: `gap` is the event that tells a client to read
+		// the tab again, which an older client already honors.
+		transcriptChanged: (agentId, tabId) => emitTurn(agentId, tabId, { kind: 'gap' }),
+	});
+
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
 	const verdicts = new Map<string, (verdict: Verdict) => void>();
@@ -278,8 +324,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (lifted) throw new Error(lifted);
 		const tabRecord = repository.getTab(agentId, item.tabId);
 		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
-		// The tab's previous process has not gone yet: a timing collision, not a verdict on the item.
-		if (registry.isBusy(agentId, item.tabId)) throw new TurnCollisionError();
+		// The tab's previous process has not gone yet, or its `/history` synopsis still resumes its
+		// provider session: a timing collision, not a verdict on the item.
+		if (
+			registry.isBusy(agentId, item.tabId) ||
+			registry.isBusy(agentId, synopsisProcessSlot(item.tabId))
+		) {
+			throw new TurnCollisionError();
+		}
 
 		const agent = toTurnAgent(record);
 		if (!agent) throw new Error('The agent has no working directory to run in.');
@@ -693,6 +745,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				verdicts.get(event.item.id)?.({ ok: true });
 				verdicts.delete(event.item.id);
 				break;
+			case 'ended':
+				wakeIdleWaiters(agentId, event.item.tabId);
+				break;
 			case 'dispatch-failed': {
 				if (event.held) {
 					logger.warn(`A turn could not start: ${event.error.message}`, LOG_CONTEXT);
@@ -780,17 +835,24 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
-		// Maestro's own commands run in a desktop's composer (or for a send it receives). This host
-		// has nothing to run one, and the provider would get the literal text as a message.
-		const builtin = parseMaestroBuiltinCommand(text, record.toolType);
-		if (builtin) {
-			return fail(
-				method,
-				'unsupported',
-				`${builtin.name} runs on a desktop host. This host is headless, so it cannot run it.`
-			);
-		}
 		const tabRecord = repository.getTab(agentId, tabId);
+		// Maestro's own commands. `/history` and `/skills` run here for the tab, as a desktop host
+		// runs them for a send it receives; one that needs the typing window's composer is refused,
+		// never handed to the provider as a message. A held send stays a message, as Queue Held keeps
+		// it on a desktop.
+		const builtin = input.held === true ? null : parseMaestroBuiltinCommand(text, record.toolType);
+		if (builtin) {
+			if (!runsOutsideComposer(builtin)) {
+				return fail(
+					method,
+					'unsupported',
+					`${builtin.name} runs in the composer of the window that typed it, so it cannot run from here.`
+				);
+			}
+			if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
+			void builtins.run(agentId, tabId, builtin);
+			return ok({ status: 'ran' });
+		}
 		if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
 		const agent = toTurnAgent(record);
 		if (!agent) return fail(method, 'rejected', 'The agent has no working directory to run in.');
@@ -966,6 +1028,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			unsubscribeLifecycle();
 			for (const queue of queues.values()) queue.dispose();
 			queues.clear();
+			// Nothing runs any more, so nothing is left to wait for.
+			for (const key of [...idleWaiters.keys()]) {
+				const [agentId, tabId] = key.split('\u0000');
+				wakeIdleWaiters(agentId, tabId);
+			}
 		},
 	};
 }

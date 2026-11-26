@@ -81,6 +81,11 @@ export interface AutoRunTurnRunnerOptions {
 	deps: Pick<RuntimeTurnDeps, 'runAgentTurn' | 'probeBinary' | 'readGitBranch' | 'now'>;
 	/** The run's live output and usage, for the progress stream. */
 	onStream(event: AutoRunStreamEvent): void;
+	/**
+	 * The registry slot the turn's process is filed under. Default `AUTORUN_PROCESS_TAB_ID`; a
+	 * tab's `/history` synopsis uses its own slot beside the tab (`synopsisProcessSlot`).
+	 */
+	processTabId?: string;
 }
 
 export interface AutoRunTurnRunner {
@@ -225,7 +230,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 			return completed;
 		})();
 
-		registry.register(agentId, AUTORUN_PROCESS_TAB_ID, {
+		registry.register(agentId, options.processTabId ?? AUTORUN_PROCESS_TAB_ID, {
 			interrupt: () => process.interrupt(),
 			terminate: () => process.terminate(),
 			terminateNow: () => process.terminateNow(),
