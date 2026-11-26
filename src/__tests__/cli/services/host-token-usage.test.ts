@@ -113,6 +113,27 @@ describe('headless host token usage answer', () => {
 		}
 	});
 
+	it('fails the read, rather than answer short, when an account source cannot be read', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-host-accounts-'));
+		try {
+			const runtime = (agentsOk: boolean, settingsOk: boolean) =>
+				({
+					agents: { list: async () => (agentsOk ? { ok: true, value: [] } : { ok: false }) },
+					settings: {
+						get: async () => (settingsOk ? { ok: true, value: {} } : { ok: false }),
+					},
+				}) as never;
+			// An absent configs file is no failure.
+			await expect(headlessAccountSources(runtime(true, true), dir)).resolves.toBeDefined();
+			await expect(headlessAccountSources(runtime(false, true), dir)).rejects.toThrow();
+			await expect(headlessAccountSources(runtime(true, false), dir)).rejects.toThrow();
+			fs.writeFileSync(path.join(dir, 'maestro-agent-configs.json'), '{ not json');
+			await expect(headlessAccountSources(runtime(true, true), dir)).rejects.toThrow();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('loads storages that plain Node can run: no static path to better-sqlite3', () => {
 		// The modules the headless reader imports on the first ask.
 		for (const entry of [
@@ -120,6 +141,7 @@ describe('headless host token usage answer', () => {
 			'main/storage/claude-session-storage.ts',
 			'main/storage/codex-session-storage.ts',
 			'main/agents/provider-account-dirs.ts',
+			'main/agents/provider-account-dirs-core.ts',
 		]) {
 			const graph = staticGraph(path.join(SRC, entry), () => null);
 			const offenders = [...graph.entries()]

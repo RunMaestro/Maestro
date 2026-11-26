@@ -60,7 +60,12 @@ function stringMap(value: unknown): Record<string, string> {
 	);
 }
 
-/** The account sources of a running headless host: its runtime's agents and settings, and its agent configs file. */
+/**
+ * The account sources of a running headless host: its runtime's agents and settings, and its agent
+ * configs file. Throws when one cannot be read: an account named only there would be missed, and
+ * the answer would look whole while it is short, so the read fails and the peer names its agents.
+ * An absent configs file is not a failure (the reader returns no configs for it).
+ */
 export async function headlessAccountSources(
 	runtime: Pick<MaestroClient, 'agents' | 'settings'>,
 	productionDataDir: string
@@ -69,15 +74,14 @@ export async function headlessAccountSources(
 		runtime.agents.list(),
 		runtime.settings.get(['shellEnvVars']),
 	]);
-	let configs: Record<string, Record<string, unknown>> = {};
-	try {
-		configs = readAgentConfigsStoreFile(productionDataDir).configs;
-	} catch {
-		// A corrupt configs file leaves only the provider layer out; the other layers still apply.
-	}
+	if (!agents.ok) throw new Error('Could not read the stored agents for account discovery.');
+	if (!settings.ok) throw new Error('Could not read the settings for account discovery.');
+	const configs: Record<string, Record<string, unknown>> = readAgentConfigsStoreFile(
+		productionDataDir
+	).configs;
 	return {
-		sessions: agents.ok ? (agents.value as unknown as Array<Record<string, unknown>>) : [],
-		globalShellEnvVars: settings.ok ? stringMap(settings.value.shellEnvVars) : {},
+		sessions: agents.value as unknown as Array<Record<string, unknown>>,
+		globalShellEnvVars: stringMap(settings.value.shellEnvVars),
 		agentLevelEnvVars: (toolType) => stringMap(configs[toolType]?.customEnvVars),
 	};
 }

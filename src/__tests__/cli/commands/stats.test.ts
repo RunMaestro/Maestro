@@ -317,6 +317,29 @@ describe('stats-project-tokens (the host op behind remote and hosted agents)', (
 		expect(out).not.toContain('Not counted');
 	});
 
+	it('prints the cost as Unknown when a counted conversation has an unknown cost', async () => {
+		sendCommand.mockResolvedValue({
+			type: 'project_token_usage_result',
+			success: true,
+			projects: [
+				{
+					status: 'read',
+					breakdowns: [
+						{
+							...record,
+							projectPath: path.resolve('/srv/app'),
+							costEstimated: false,
+							costUsd: 0,
+							lifetime: { source: 'none', completeness: 'complete', cost: { status: 'unknown' } },
+						},
+					],
+				},
+			],
+		});
+		await statsProjectTokens({ provider: 'claude-code', project: ['/srv/app'] });
+		expect(logSpy.mock.calls[0][0]).toContain('API-equivalent cost: Unknown');
+	});
+
 	it('resolves a relative project path from where the command runs', async () => {
 		sendCommand.mockImplementation(answerAll);
 		await statsProjectTokens({ provider: 'codex', project: ['./app'] });

@@ -618,6 +618,9 @@ function nonTabularSummary(bundle: UsageExportBundle) {
 			? {
 					series: tokens.series,
 					coverageByAgent: tokens.coverageByAgent,
+					// What the totals leave out (agents on a computer that did not answer, conversations
+					// too large to read), so the archive says which agents it does not cover.
+					excluded: tokens.excluded,
 					generatedAtMs: tokens.generatedAtMs,
 					speed: {
 						overall: tokens.speed.overall,

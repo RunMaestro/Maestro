@@ -249,6 +249,12 @@ const tokenUsage = {
 			},
 		],
 	},
+	excluded: {
+		unsupportedAgents: [],
+		remoteProjects: 0,
+		notCountedAgents: ['Build Box'],
+		partialAgents: [{ name: 'Other Box', conversations: 1 }],
+	},
 } as unknown as TokenUsageAggregate;
 
 describe('buildUsageExport', () => {
@@ -416,6 +422,8 @@ describe('usageExportToCsvFiles', () => {
 			{ rootId: 'cue-1', rootSubscriptionName: 'digest', totals: cueTotals },
 		]);
 		expect(info.tokenUsageSummary.speed.overall).toBeDefined();
+		// The archive says what its token totals leave out.
+		expect(info.tokenUsageSummary.excluded).toEqual(tokenUsage.excluded);
 		const [header, row] = files
 			.find((f) => f.name === 'cue-stats-chain-nodes.csv')!
 			.content.split('\n');

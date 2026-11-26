@@ -242,6 +242,11 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 			return;
 		}
 		const breakdowns = answers.flatMap(({ result }) => result.breakdowns);
+		const costUnknown = breakdowns.some((b) =>
+			b.accounting
+				? b.accounting.cost.status === 'unknown'
+				: b.byModel.some((m) => m.accounting?.cost.status === 'unknown')
+		);
 		const totals = breakdowns.reduce(
 			(sum, b) => ({
 				inputTokens: sum.inputTokens + b.inputTokens,
@@ -267,7 +272,10 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 			`  Conversations:   ${breakdowns.length}`,
 			`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ` +
 				`${formatTokensCompact(totals.cacheReadTokens)} cache read / ${formatTokensCompact(totals.cacheCreationTokens)} cache creation`,
-			`  API-equivalent cost: ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`,
+			// A conversation whose cost is unknown contributes 0 to the sum: the sum is then not the cost.
+			`  API-equivalent cost: ${
+				costUnknown ? 'Unknown' : `${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`
+			}`,
 		];
 		for (const { project, result } of answers) {
 			if (result.complete && result.skippedFiles) {
