@@ -27,6 +27,7 @@ let localFiles: Map<string, Buffer>;
 let remoteFile: Buffer;
 let onChange: (() => void) | null;
 let onError: ((error: unknown) => void) | null;
+let hashRemoteFails: boolean;
 /** Modification time of each local file, bumped by every write a test makes through `writeCopy`. */
 let mtimes: Map<string, number>;
 let events: RemoteCopyWriteBackEvent[];
@@ -63,7 +64,10 @@ function service(overrides: { maxWatched?: number; maxBytes?: number; fileEvents
 			localFiles.set(localPath, bytes);
 		},
 		// The remote hashes its own file: its bytes never come here.
-		hashRemote: async () => sha(remoteFile),
+		hashRemote: async () => {
+			if (hashRemoteFails) throw new Error('Connection refused');
+			return sha(remoteFile);
+		},
 		writeRemote,
 		notify: (event) => events.push(event),
 		debounceMs: 50,
@@ -123,6 +127,7 @@ beforeEach(() => {
 	remoteFile = Buffer.from('fetched');
 	onChange = null;
 	onError = null;
+	hashRemoteFails = false;
 	discarded = 0;
 	mtimes = new Map();
 	events = [];
@@ -618,6 +623,39 @@ describe('remote copy write-back', () => {
 		expect(remoteFile.toString()).toBe('fetched');
 		await expect(reopen(writeBack)).resolves.toBe('fetched');
 		expect(localFiles.get(LOCAL)?.toString()).toBe('fetched');
+	});
+
+	it('keeps a copy whose write is still unconfirmed when the remote cannot be asked', async () => {
+		const writeBack = await watched();
+		writeRemote.mockImplementationOnce(async (_p, bytes) => {
+			remoteFile = bytes;
+			throw new Error('Connection reset by peer');
+		});
+		await saveCopy(writeBack, 'B');
+		// The user puts the fetched bytes back; then the remote cannot be reached.
+		localFiles.set(LOCAL, Buffer.from('fetched'));
+		hashRemoteFails = true;
+		const download = vi.fn(async () => remoteFile);
+		await expect(writeBack.refetch(LOCAL, { download, stage: stageAt(LOCAL) })).resolves.toBe(
+			'kept'
+		);
+		expect(download).not.toHaveBeenCalled();
+		expect(localFiles.get(LOCAL)?.toString()).toBe('fetched');
+	});
+
+	it('a re-Open that watches a retired copy again still sends a save made before the watcher started', async () => {
+		const writeBack = service({ maxWatched: 1, fileEvents: false });
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await writeBack.watch({ localPath: other, remotePath: '/home/me/other.md', sshRemoteId: 'r1' });
+		await writeBack.idle();
+		// Saved while no watcher ran, with the same size and time as the fetched copy.
+		localFiles.set(LOCAL, Buffer.from('edited!'));
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await vi.advanceTimersByTimeAsync(1000 + 60);
+		await writeBack.idle();
+		expect(remoteFile.toString()).toBe('edited!');
 	});
 
 	it('names the kept version beside the copy', () => {

@@ -1669,7 +1669,7 @@ export async function sha256FileRemote(
  *    script ignores a hang-up from there on: a connection that drops mid-copy
  *    (sshd sends SIGHUP to the session) no longer kills it. A copy that fails
  *    (the target's disk is full) puts the target's earlier bytes back from a
- *    second temp copy, and reports the failure.
+ *    private temp copy (mode 0600), and reports the failure.
  *
  * Steps 2 and 3 run back to back on the remote host, which leaves the window for
  * another writer at the remote's own speed instead of an SSH round trip. A
@@ -1692,7 +1692,7 @@ export async function replaceFileRemoteIfUnchanged(
 		...REMOTE_SHA256_PRELUDE,
 		REMOTE_PATH_GONE_PRELUDE,
 		'tmp=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
-		'trap \'rm -f "$tmp" "$tmp.orig"\' EXIT',
+		'trap \'rm -f "$tmp"\' EXIT',
 		'base64 -d > "$tmp" || exit 1',
 		'got=$(sum "$tmp") || exit 1',
 		`[ "$got" = ${contentSha256} ] || { echo "The upload did not arrive whole" >&2; exit 1; }`,
@@ -1700,12 +1700,16 @@ export async function replaceFileRemoteIfUnchanged(
 		'cur=$(sum "$f") || exit 1',
 		`[ "$cur" = ${contentSha256} ] && exit 0`,
 		`[ "$cur" = ${expectedSha256} ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
-		// The target's bytes now, to put back if the copy into it fails midway.
-		'cp "$f" "$tmp.orig" || exit 1',
+		// The target's bytes now, to put back if the copy into it fails midway. The
+		// backup is made by mktemp (mode 0600) and copied INTO, so it never takes
+		// the target's mode where other users could read it.
+		'orig=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
+		'trap \'rm -f "$tmp" "$orig"\' EXIT',
+		'cp "$f" "$orig" || exit 1',
 		// Ignored signals are inherited, so the `cat` survives the hang-up too.
 		"trap '' HUP PIPE",
 		'if ! cat "$tmp" > "$f"; then',
-		'  if cat "$tmp.orig" > "$f"; then echo "Could not write the file (is the disk full?); it was left as it was" >&2; else echo "Could not write the file, and could not put it back as it was" >&2; fi',
+		'  if cp "$orig" "$f"; then echo "Could not write the file (is the disk full?); it was left as it was" >&2; else echo "Could not write the file, and could not put it back as it was" >&2; fi',
 		'  exit 1',
 		'fi',
 	].join('\n');

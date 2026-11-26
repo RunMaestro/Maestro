@@ -2836,12 +2836,14 @@ finally:
 			}
 		);
 
-		/** A PATH with `cat` replaced by `body` (a sh script; `$REAL_CAT` is the real one). */
-		function pathWithCat(body: string): NodeJS.ProcessEnv {
+		/** A PATH with `tool` replaced by `body` (a sh script; `$REAL` is the real one). */
+		function pathWithShim(tool: string, body: string): NodeJS.ProcessEnv {
 			const bin = path.join(dir, 'bin');
 			fs.mkdirSync(bin, { recursive: true });
-			const realCat = spawnSync('sh', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim();
-			fs.writeFileSync(path.join(bin, 'cat'), `#!/bin/sh\nREAL_CAT=${realCat}\n${body}\n`, {
+			const real = spawnSync('sh', ['-c', `command -v ${tool}`], {
+				encoding: 'utf8',
+			}).stdout.trim();
+			fs.writeFileSync(path.join(bin, tool), `#!/bin/sh\nREAL=${real}\n${body}\n`, {
 				mode: 0o755,
 			});
 			return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` };
@@ -2873,9 +2875,7 @@ finally:
 				fs.writeFileSync(file, 'fetched');
 				// The copy into the target writes a prefix and fails (a full disk); the
 				// copy that puts the earlier bytes back works.
-				const env = pathWithCat(
-					'case "$1" in *.orig) exec "$REAL_CAT" "$@";; esac\nhead -c 3 "$1"\nexit 1'
-				);
+				const env = pathWithShim('cat', 'head -c 3 "$1"\nexit 1');
 				const result = await replaceFileRemoteIfUnchanged(
 					file,
 					Buffer.from('edited'),
@@ -2887,6 +2887,30 @@ finally:
 				expect(result.changed).toBeUndefined();
 				expect(result.error).toContain('it was left as it was');
 				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			"keeps its backup of the file private, whatever the file's own mode",
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o644);
+				// Note the mode of each copy's destination before it is written.
+				const log = path.join(dir, 'modes.log');
+				const env = pathWithShim(
+					'cp',
+					`ls -l "$2" | cut -c1-10 >> ${JSON.stringify(log)}\nexec "$REAL" "$@"`
+				);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(env)
+				);
+				expect(result).toEqual({ success: true });
+				expect(fs.readFileSync(log, 'utf8').split('\n')[0]).toBe('-rw-------');
 			}
 		);
 

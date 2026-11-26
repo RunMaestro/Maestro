@@ -487,7 +487,9 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					if (existing.halted) throw haltError(existing.halted);
 					if (existing.watcherLost) {
 						existing.watcherLost = false;
-						existing.lastStat = await statKey(localPath);
+						// Unknown, not "now": the next poll reads the copy once, so a save
+						// made before this watcher started is still sent.
+						existing.lastStat = null;
 						existing.watcher = deps.watchFile(
 							localPath,
 							() => schedule(existing),
@@ -549,7 +551,13 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					if (local) {
 						const localHash = hashOf(local);
 						checked = localHash;
-						if (localHash !== entry.baseline && localHash !== entry.kept) {
+						// While a write is unconfirmed the baseline is not known, so the copy
+						// is not clean until the remote is asked (the sync above did, unless
+						// it failed).
+						const clean =
+							entry.unconfirmed === null &&
+							(localHash === entry.baseline || localHash === entry.kept);
+						if (!clean) {
 							// Still not on the remote (the write failed): the copy stays,
 							// and the next save tries again.
 							if (!entry.halted) return 'kept' as const;
