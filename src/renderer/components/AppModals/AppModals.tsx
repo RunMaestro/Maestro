@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import type React from 'react';
 import type { MainPanelHandle } from '../MainPanel/types';
+import type { UpdateCheckView } from '../../../shared/updateRollback';
 import type { QuitConfirmOptions } from '../QuitConfirmModal';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -249,7 +250,7 @@ export interface AppModalsProps {
 	onQuickActionsDebugReleaseQueuedItem: () => void;
 	markdownEditMode: boolean;
 	onQuickActionsToggleMarkdownEditMode: () => void;
-	setUpdateCheckModalOpenForQuickActions?: (open: boolean) => void;
+	setUpdateCheckModalOpenForQuickActions?: (open: boolean, view?: UpdateCheckView) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;

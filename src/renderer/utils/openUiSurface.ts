@@ -103,6 +103,9 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			// Same entry point as the hotkey: the create form starts on the active agent.
 			openPromptLinks();
 			return { ok: true };
+		case 'updates':
+			actions.setUpdateCheckModalOpen(true, tab?.id === 'rollback' ? 'rollback' : 'updates');
+			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');
 			return { ok: true };

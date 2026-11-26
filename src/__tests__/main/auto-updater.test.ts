@@ -18,6 +18,7 @@ const mockHandle = vi.fn((channel: string, fn: (...args: unknown[]) => unknown) 
 });
 
 vi.mock('electron', () => ({
+	app: { getVersion: () => '1.0.4' },
 	BrowserWindow: class {},
 	ipcMain: {
 		handle: (channel: string, fn: (...args: unknown[]) => unknown) => mockHandle(channel, fn),
@@ -49,6 +50,7 @@ const mockAutoUpdater = {
 	autoDownload: false,
 	autoInstallOnAppQuit: false,
 	allowPrerelease: false,
+	allowDowngrade: false,
 	on: vi.fn(),
 	checkForUpdates: vi.fn(),
 	downloadUpdate: vi.fn(),
@@ -214,7 +216,7 @@ describe('main/auto-updater', () => {
 			await vi.runAllTimersAsync();
 			const result = await resultPromise;
 
-			expect(result).toEqual({ success: true });
+			expect(result).toEqual({ success: true, version: '1.2.3' });
 			expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
 			expect(mockAutoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
 		});
@@ -247,7 +249,7 @@ describe('main/auto-updater', () => {
 			await vi.runAllTimersAsync();
 			const result = await resultPromise;
 
-			expect(result).toEqual({ success: true });
+			expect(result).toEqual({ success: true, version: '1.2.3' });
 			// Generic provider pointed at the release's CDN-served asset directory,
 			// bypassing releases.atom entirely.
 			expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
@@ -281,6 +283,100 @@ describe('main/auto-updater', () => {
 			expect(result.success).toBe(false);
 			expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
 			expect(result.error).toContain('ENOSPC');
+		});
+
+		it('does not download when the check reports no update', async () => {
+			mockAutoUpdater.checkForUpdates.mockResolvedValue({
+				isUpdateAvailable: false,
+				updateInfo: { version: '1.0.4' },
+			});
+
+			const handler = await getDownloadHandler();
+			const resultPromise = handler({}, 'v1.0.4');
+			await vi.runAllTimersAsync();
+			const result = (await resultPromise) as { success: boolean; error: string };
+
+			expect(result).toEqual({ success: false, error: 'No update available to download' });
+			expect(mockAutoUpdater.downloadUpdate).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('updates:rollback handler', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+			mockAutoUpdater.checkForUpdates.mockReset();
+			mockAutoUpdater.downloadUpdate.mockReset();
+			mockAutoUpdater.setFeedURL.mockReset();
+			mockAutoUpdater.allowDowngrade = false;
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		async function getRollbackHandler() {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0]);
+			const handler = ipcHandlers.get('updates:rollback');
+			expect(handler).toBeTruthy();
+			return handler!;
+		}
+
+		it('downloads an older release with allowDowngrade on, then switches it back off', async () => {
+			let downgradeDuringCheck: boolean | undefined;
+			mockAutoUpdater.checkForUpdates.mockImplementation(async () => {
+				downgradeDuringCheck = mockAutoUpdater.allowDowngrade;
+				return { isUpdateAvailable: true, updateInfo: { version: '1.0.3' } };
+			});
+			mockAutoUpdater.downloadUpdate.mockResolvedValue(undefined);
+
+			const handler = await getRollbackHandler();
+			const resultPromise = handler({}, '1.0.3');
+			await vi.runAllTimersAsync();
+			const result = await resultPromise;
+
+			expect(result).toEqual({ success: true, version: '1.0.3' });
+			expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+				provider: 'generic',
+				url: 'https://github.com/RunMaestro/Maestro/releases/download/v1.0.3/',
+			});
+			expect(downgradeDuringCheck).toBe(true);
+			expect(mockAutoUpdater.allowDowngrade).toBe(false);
+		});
+
+		it('switches allowDowngrade back off when the download fails', async () => {
+			mockAutoUpdater.checkForUpdates.mockResolvedValue({
+				isUpdateAvailable: true,
+				updateInfo: { version: '1.0.3' },
+			});
+			mockAutoUpdater.downloadUpdate.mockRejectedValue(new Error('ENOSPC: disk full'));
+
+			const handler = await getRollbackHandler();
+			const resultPromise = handler({}, 'v1.0.3');
+			await vi.runAllTimersAsync();
+			const result = (await resultPromise) as { success: boolean; error: string };
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('ENOSPC');
+			expect(mockAutoUpdater.allowDowngrade).toBe(false);
+		});
+
+		it.each([
+			['the running version', 'v1.0.4'],
+			['a newer version', 'v1.1.0'],
+			['a malformed tag', '../../evil'],
+		])('refuses %s without touching the updater', async (_label, tag) => {
+			const handler = await getRollbackHandler();
+			const result = (await handler({}, tag)) as { success: boolean; error: string };
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('is not an earlier release');
+			expect(mockAutoUpdater.setFeedURL).not.toHaveBeenCalled();
+			expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
 		});
 	});
 });

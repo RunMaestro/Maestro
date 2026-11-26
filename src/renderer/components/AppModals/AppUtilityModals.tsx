@@ -1,5 +1,6 @@
 import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
+import type { UpdateCheckView } from '../../../shared/updateRollback';
 import type {
 	Theme,
 	Session,
@@ -121,7 +122,7 @@ export interface AppUtilityModalsProps {
 	onDebugReleaseQueuedItem: () => void;
 	markdownEditMode: boolean;
 	onToggleMarkdownEditMode: () => void;
-	setUpdateCheckModalOpen?: (open: boolean) => void;
+	setUpdateCheckModalOpen?: (open: boolean, view?: UpdateCheckView) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;

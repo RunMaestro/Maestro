@@ -10,7 +10,8 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 // Import after mocking
-import { checkForUpdates } from '../../main/update-checker';
+import { checkForUpdates, listRollbackTargets } from '../../main/update-checker';
+import { updaterChannelFile } from '../../shared/updateRollback';
 
 // Helper to create mock release
 const createMockRelease = (
@@ -22,6 +23,7 @@ const createMockRelease = (
 		published_at: string;
 		prerelease: boolean;
 		draft: boolean;
+		assets: Array<{ name: string }>;
 	}> = {}
 ) => ({
 	tag_name: 'v1.0.0',
@@ -386,6 +388,68 @@ describe('update-checker', () => {
 
 			expect(result.latestVersion).toBe('1.2.0-beta');
 			expect(result.releases.every((r) => !r.draft)).toBe(true);
+		});
+	});
+
+	describe('listRollbackTargets', () => {
+		// The channel file electron-updater needs on whatever machine runs the suite.
+		const channelFile = updaterChannelFile(process.platform, process.arch)!;
+		const installable = (tag: string, extra: Record<string, unknown> = {}) =>
+			createMockRelease({ tag_name: tag, assets: [{ name: channelFile }], ...extra });
+
+		it('lists only older, installable releases, newest first', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						installable('v0.9.0'),
+						installable('v1.1.0'), // newer: an update, not a rollback
+						installable('v1.0.0'), // the running version
+						createMockRelease({ tag_name: 'v0.9.5', assets: [{ name: 'notes.txt' }] }),
+						installable('v0.9.8'),
+					]),
+			});
+
+			const result = await listRollbackTargets('1.0.0');
+
+			expect(result.error).toBeUndefined();
+			expect(result.currentVersion).toBe('1.0.0');
+			expect(result.releases.map((r) => r.tag_name)).toEqual(['v0.9.8', 'v0.9.0']);
+		});
+
+		it('leaves prereleases out unless asked for them', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([installable('v0.9.9-RC', { prerelease: true }), installable('v0.9.0')]),
+			});
+
+			const stable = await listRollbackTargets('1.0.0');
+			expect(stable.releases.map((r) => r.tag_name)).toEqual(['v0.9.0']);
+
+			const withBeta = await listRollbackTargets('1.0.0', true);
+			expect(withBeta.releases.map((r) => r.tag_name)).toEqual(['v0.9.9-RC', 'v0.9.0']);
+		});
+
+		it('caps the list', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(Array.from({ length: 25 }, (_, i) => installable(`v0.${i}.0`))),
+			});
+
+			const result = await listRollbackTargets('1.0.0');
+
+			expect(result.releases).toHaveLength(15);
+			expect(result.releases[0].tag_name).toBe('v0.24.0');
+		});
+
+		it('reports a failed fetch instead of throwing', async () => {
+			mockFetch.mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' });
+
+			const result = await listRollbackTargets('1.0.0');
+
+			expect(result.releases).toEqual([]);
+			expect(result.error).toContain('503');
 		});
 	});
 });

@@ -21,20 +21,14 @@ import {
 	LogOut,
 	MessageCircle,
 	Gauge,
-	GitMerge,
-	Network,
 	Link2,
+	History,
 } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useAddableHostedAgentCount } from '../../hooks/federation/useAgentLift';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
-import {
-	selectHostedConflictCount,
-	useHostedAgentSettingsStore,
-} from '../../stores/hostedAgentSettingsStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { openUrl } from '../../utils/openUrl';
@@ -64,8 +58,6 @@ export function HamburgerMenuContent({
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
-	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
-	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
@@ -196,7 +188,6 @@ export function HamburgerMenuContent({
 					</div>
 				</button>
 			)}
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 			{!phone && (
 				<button
 					onClick={() => {
@@ -271,48 +262,8 @@ export function HamburgerMenuContent({
 				</div>
 				<ShortcutHint theme={theme} keys={shortcuts.processMonitor?.keys ?? []} />
 			</button>
-			{encoreFeatures.usageStats && (
-				<button
-					onClick={() => {
-						setUsageDashboardOpen(true);
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Usage Dashboard
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							View usage analytics
-						</div>
-					</div>
-					<ShortcutHint theme={theme} keys={shortcuts.usageDashboard?.keys ?? []} />
-				</button>
-			)}
-			{encoreFeatures.directorNotes && (
-				<button
-					onClick={() => {
-						setDirectorNotesOpen(true);
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<ScrollText className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Director's Notes
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Unified history & AI synopsis
-						</div>
-					</div>
-					{shortcuts.directorNotes && (
-						<ShortcutHint theme={theme} keys={shortcuts.directorNotes?.keys ?? []} />
-					)}
-				</button>
-			)}
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			{/* Features, in alphabetical order. Keep new entries sorted by label. */}
 			{canOpenComputerHistory(encoreFeatures) && (
 				<button
 					onClick={() => {
@@ -333,66 +284,6 @@ export function HamburgerMenuContent({
 					{shortcuts.computerHistory && (
 						<ShortcutHint theme={theme} keys={shortcuts.computerHistory?.keys ?? []} />
 					)}
-				</button>
-			)}
-			{encoreFeatures.symphony && (
-				<button
-					onClick={() => {
-						setSymphonyModalOpen(true);
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Maestro Symphony
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Contribute to open source
-						</div>
-					</div>
-					<ShortcutHint theme={theme} keys={shortcuts.openSymphony?.keys ?? []} />
-				</button>
-			)}
-			{encoreFeatures.maestroCue && (
-				<button
-					onClick={() => {
-						setCueModalOpen(true);
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<Zap className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Maestro Cue
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Event-driven automation
-						</div>
-					</div>
-					{shortcuts.openCue && <ShortcutHint theme={theme} keys={shortcuts.openCue?.keys ?? []} />}
-				</button>
-			)}
-			{promptLinksAvailable(encoreFeatures.promptLinks) && (
-				<button
-					onClick={() => {
-						openPromptLinks();
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<Link2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Prompt Links
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Links that send a prompt to an agent
-						</div>
-					</div>
-					<ShortcutHint theme={theme} keys={shortcuts.openPromptLinks?.keys ?? []} />
 				</button>
 			)}
 			{encoreFeatures.concerto && (
@@ -417,69 +308,105 @@ export function HamburgerMenuContent({
 					)}
 				</button>
 			)}
-			{encoreFeatures.throughputGauge && (
+			{encoreFeatures.directorNotes && (
 				<button
 					onClick={() => {
-						useThroughputGaugeStore.getState().toggle();
+						setDirectorNotesOpen(true);
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<Gauge className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<ScrollText className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<div className="flex-1">
 						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Throughput Gauge
+							Director's Notes
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Live tokens per second
+							Unified history & AI synopsis
 						</div>
 					</div>
-					{shortcuts.toggleThroughputGauge && (
-						<ShortcutHint theme={theme} keys={shortcuts.toggleThroughputGauge?.keys ?? []} />
+					{shortcuts.directorNotes && (
+						<ShortcutHint theme={theme} keys={shortcuts.directorNotes?.keys ?? []} />
 					)}
 				</button>
 			)}
-			{/* Federation: shown only while a hosted agent has settings waiting for the person. */}
-			{settingsConflictCount > 0 && (
+			{encoreFeatures.maestroCue && (
 				<button
 					onClick={() => {
-						useHostedAgentSettingsStore.getState().setConflictsOpen(true);
+						setCueModalOpen(true);
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<GitMerge className="w-5 h-5" style={{ color: theme.colors.warning }} />
+					<Zap className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<div className="flex-1">
 						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Federation Settings Conflicts
+							Maestro Cue
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							{settingsConflictCount} setting{settingsConflictCount === 1 ? '' : 's'} to settle with
-							a host
+							Event-driven automation
+						</div>
+					</div>
+					{shortcuts.openCue && <ShortcutHint theme={theme} keys={shortcuts.openCue?.keys ?? []} />}
+				</button>
+			)}
+			{encoreFeatures.symphony && (
+				<button
+					onClick={() => {
+						setSymphonyModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Maestro Symphony
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Contribute to open source
+						</div>
+					</div>
+					<ShortcutHint theme={theme} keys={shortcuts.openSymphony?.keys ?? []} />
+				</button>
+			)}
+			{encoreFeatures.pianola && (
+				<button
+					onClick={() => {
+						setPianolaModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Pianola
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Autonomous manager
 						</div>
 					</div>
 				</button>
 			)}
-			{/* Federation: shown only while a host runs an agent the Left Bar does not show yet. */}
-			{addableHostedAgentCount > 0 && (
+			{promptLinksAvailable(encoreFeatures.promptLinks) && (
 				<button
 					onClick={() => {
-						openUiSurface('add-hosted-agent');
+						openPromptLinks();
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-					data-testid="hamburger-add-hosted-agent"
 				>
-					<Network className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<Link2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<div className="flex-1">
 						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Add Hosted Agent
+							Prompt Links
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							{addableHostedAgentCount} agent{addableHostedAgentCount === 1 ? '' : 's'} on your
-							hosts not in the Left Bar
+							Links that send a prompt to an agent
 						</div>
 					</div>
+					<ShortcutHint theme={theme} keys={shortcuts.openPromptLinks?.keys ?? []} />
 				</button>
 			)}
 			{/* Quick Chat is its own window, which only the Electron app has. */}
@@ -503,23 +430,46 @@ export function HamburgerMenuContent({
 					{quickChatHotkey.length > 0 && <ShortcutHint theme={theme} keys={quickChatHotkey} />}
 				</button>
 			)}
-			{encoreFeatures.pianola && (
+			{encoreFeatures.throughputGauge && (
 				<button
 					onClick={() => {
-						setPianolaModalOpen(true);
+						useThroughputGaugeStore.getState().toggle();
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<Gauge className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<div className="flex-1">
 						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Pianola
+							Throughput Gauge
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Autonomous manager
+							Live tokens per second
 						</div>
 					</div>
+					{shortcuts.toggleThroughputGauge && (
+						<ShortcutHint theme={theme} keys={shortcuts.toggleThroughputGauge?.keys ?? []} />
+					)}
+				</button>
+			)}
+			{encoreFeatures.usageStats && (
+				<button
+					onClick={() => {
+						setUsageDashboardOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Usage Dashboard
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							View usage analytics
+						</div>
+					</div>
+					<ShortcutHint theme={theme} keys={shortcuts.usageDashboard?.keys ?? []} />
 				</button>
 			)}
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -577,6 +527,25 @@ export function HamburgerMenuContent({
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
 							Get the latest version
+						</div>
+					</div>
+				</button>
+			)}
+			{!isWebDesktop() && (
+				<button
+					onClick={() => {
+						setUpdateCheckModalOpen(true, 'rollback');
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<History className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Roll Back Version
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Reinstall an earlier release
 						</div>
 					</div>
 				</button>

@@ -917,6 +917,34 @@ describe('QuickActions command builders', () => {
 		expect(debugCommandIds).toContain('debugAgentProbe');
 	});
 
+	it('offers a rollback command that opens Check for Updates on its rollback list', () => {
+		const close = vi.fn();
+		const setUpdateCheckModalOpen = vi.fn();
+		const commands = buildSupportCommands({
+			setQuickActionOpen: close,
+			setSettingsModalOpen: vi.fn(),
+			setSettingsTab: vi.fn(),
+			setShortcutsHelpOpen: vi.fn(),
+			setAboutModalOpen: vi.fn(),
+			setFeedbackModalOpen: vi.fn(),
+			setLogViewerOpen: vi.fn(),
+			setProcessMonitorOpen: vi.fn(),
+			setUpdateCheckModalOpen,
+			getFeedbackDraft: () => ({ isMinimized: false, setMinimized: vi.fn() }),
+			createDebugPackage: vi.fn(),
+			notifyToast: vi.fn(),
+			openUrl: vi.fn(),
+			toggleDevtools: vi.fn(),
+			shortcuts: {},
+		} as Parameters<typeof buildSupportCommands>[0]);
+
+		const rollback = commands.find((c) => c.id === 'updateRollback');
+		expect(rollback?.label).toBe('Roll Back to an Earlier Version');
+		rollback!.action();
+		expect(setUpdateCheckModalOpen).toHaveBeenCalledWith(true, 'rollback');
+		expect(close).toHaveBeenCalledWith(false);
+	});
+
 	describe('buildTabGroupCommands', () => {
 		const groupSession = (activeGroupId: string | null) => {
 			const group = createGroupFromTabRefs(

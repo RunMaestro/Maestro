@@ -6,7 +6,6 @@ import { resolveConcertoHtmlSrc } from '../../../utils/concertoHtmlSrc';
 import { openUrl } from '../../../utils/openUrl';
 import { requestCodexFollowup } from '../../../services/codexFollowup';
 import {
-	CODEX_VISUALIZATION_WIDE_MAX_WIDTH,
 	MAX_CODEX_VISUALIZATION_HEIGHT,
 	type CodexVisualizationLoadResult,
 } from '../../../../shared/codexVisualization';
@@ -14,7 +13,12 @@ import { CodexFileCitation } from './CodexFileCitation';
 
 /** Height before the frame reports its own, so the transcript does not jump twice. */
 const INITIAL_HEIGHT = 240;
-/** A normal-width visual stays at reading width; only `mode: "wide"` spreads out. */
+/**
+ * A normal-width visual stays at reading width. A `mode: "wide"` visual has no
+ * cap and fills the message column: the skill tells the model wide means about
+ * 1024px because that is all the Codex app's column has, but Maestro's column
+ * is often far wider, and a dense table or matrix needs every pixel of it.
+ */
 const NORMAL_MAX_WIDTH = 768;
 
 export interface CodexVisualizationFrameProps {
@@ -170,7 +174,7 @@ export function CodexVisualizationFrame({
 			style={{
 				display: 'block',
 				width: '100%',
-				maxWidth: mode === 'wide' ? CODEX_VISUALIZATION_WIDE_MAX_WIDTH : NORMAL_MAX_WIDTH,
+				maxWidth: mode === 'wide' ? undefined : NORMAL_MAX_WIDTH,
 				margin: '0.5em 0',
 			}}
 		>

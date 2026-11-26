@@ -3538,7 +3538,15 @@ interface MaestroAPI {
 			error?: string;
 		}>;
 		checkin: () => Promise<void>;
-		download: (targetTag?: string) => Promise<{ success: boolean; error?: string }>;
+		download: (
+			targetTag?: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
+		listRollbackTargets: (
+			includePrerelease?: boolean
+		) => Promise<import('../shared/updateRollback').RollbackTargetsResult>;
+		rollback: (
+			targetTag: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
 		install: () => Promise<void>;
 		getStatus: () => Promise<{
 			status:
