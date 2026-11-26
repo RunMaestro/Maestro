@@ -510,15 +510,38 @@ describe('TerminalView - auto-close on shell exit', () => {
 		}
 	);
 
-	it.each(['ssh', 'hosted'] as const)(
-		'keeps the tab for restart when the SSH connection drops in a %s agent',
+	it.each(['local', 'ssh', 'hosted'] as const)(
+		'keeps the tab for restart when the shell ends with the connection-failure code in a %s agent',
 		(mode) => {
 			vi.useFakeTimers();
 			// ssh exits 255 when the connection fails: the user never asked to leave, and a
 			// dropped transport must not silently discard the tab (the vanishing terminals).
+			// One rule in every mode: a local shell ending with 255 is kept the same way.
 			exitIn(mode, 255);
 			expect(mockCloseTerminalTab).not.toHaveBeenCalled();
 			vi.useRealTimers();
+		}
+	);
+
+	it.each(['local', 'ssh', 'hosted'] as const)(
+		'keeps a tab whose shell failed to start, for restart, in a %s agent',
+		async (mode) => {
+			maestro().process.spawnTerminalTab.mockResolvedValueOnce({ success: false });
+			const onTabStateChange = vi.fn();
+			const tab = makeTab({ pid: 0, state: 'idle' });
+			await act(async () => {
+				render(
+					<TerminalView
+						{...defaultProps}
+						onTabStateChange={onTabStateChange}
+						session={inMode(mode, [tab])}
+						isVisible={true}
+					/>
+				);
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			});
+			expect(onTabStateChange).toHaveBeenCalledWith('tab-1', 'exited');
+			expect(mockCloseTerminalTab).not.toHaveBeenCalled();
 		}
 	);
 });
