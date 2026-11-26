@@ -38,7 +38,12 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnEdit } from '../client/types';
+import {
+	HOST_CAPABILITIES,
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnEdit,
+} from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -817,6 +822,13 @@ export function createRequestHandler(
 					(value) => ({ updated: value.updated })
 				);
 			}
+			// What this host does beyond the base protocol; an older host echoes the request.
+			case 'host_capabilities':
+				return {
+					type: 'host_capabilities_result',
+					success: true,
+					capabilities: [...HOST_CAPABILITIES],
+				};
 			case 'list_queue': {
 				const agentId = sessionId(message);
 				const result = await client.turns.queue.list(agentId);

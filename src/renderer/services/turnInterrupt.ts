@@ -27,6 +27,7 @@ import { useSessionStore, selectSessionById, updateSessionWith } from '../stores
 import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
+import { dropStoppedHostStartMentions } from './hostedQueuedTurn';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
 import { generateId } from '../utils/ids';
 import {
@@ -160,6 +161,8 @@ export async function interruptTurn(
 		// armed for the turn, the same as below. The hand-off goes first, before any await, so a
 		// host update that lands meanwhile cannot release it.
 		dropMentionHandoffs(sessionId, scopeTabId);
+		// A consult of the stopped turn whose start the host has not confirmed yet goes with it.
+		dropStoppedHostStartMentions(sessionId, scopeTabId);
 		const peer = usePeerMirrorStore.getState().peers[hostedTargetOf(session)?.peerId ?? ''];
 		// A turn the lost link cut is drawn idle here while the host may still run it, or may not
 		// have: Stop ends it too, so it is never sent again when the host is back.

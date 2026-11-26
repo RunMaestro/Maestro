@@ -2866,6 +2866,43 @@ describe('useRemoteHandlers', () => {
 			expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
 		});
 
+		// M19: a host has no `--force`, so a forced message for a busy host tab waits in its queue.
+		// The ack says queued, with the host's item, so the CLI prints what happened.
+		it('hosted: a --force message the host queues behind a busy tab is acked queued, never delivered (M19)', async () => {
+			act$.mockResolvedValue({
+				ok: true,
+				result: {
+					kind: 'send',
+					receipt: { status: 'queued', itemId: 'q-7', position: 2, queueLength: 2 },
+				},
+			});
+			const session = createBusyTabSession(agentModeFields('hosted'));
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			await act(async () =>
+				getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId: 'tab-1',
+							command: 'hello',
+							inputMode: 'ai',
+							force: true,
+							receiptChannel: 'receipt',
+						},
+					})
+				)
+			);
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledExactlyOnceWith(
+				'receipt',
+				true,
+				undefined,
+				{ itemId: 'q-7', position: 2 }
+			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
 		it('hosted: a host that refuses the message acks it undelivered and spawns nothing', async () => {
 			act$.mockResolvedValue(null);
 

@@ -561,6 +561,9 @@ describe('peer:agent targets', () => {
 
 			expect(callback).toMatchObject({ success: false, code: 'INVALID_OPTIONS', peer: PEER });
 			expect(routing).toMatchObject({ success: false, code: 'INVALID_OPTIONS', peer: PEER });
+			// A true `peer:agent` target keeps its refusal, whether or not a desktop runs (M17).
+			expect(callback.error).toContain(`cannot reach across to peer "${PEER}"`);
+			expect(routing.error).toContain(`cannot reach across to peer "${PEER}"`);
 			expect(resolvePeerAgent).not.toHaveBeenCalled();
 		});
 
