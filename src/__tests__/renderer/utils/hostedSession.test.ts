@@ -99,16 +99,19 @@ describe('mergeHostedLogs', () => {
 		expect(mergeHostedLogs(first, [record('a')], [record('live', 'xy')])).not.toBe(first);
 	});
 
-	// Parity round 3, N3: the tick follows the local rule (an answer arrived), not the host's flag.
-	it("ticks a host message once its answer arrives, keeps a local entry's own flag, and stays stable", () => {
+	// Parity round 3, N3: the tick follows the local rule (the answer arrived), not the host's flag.
+	it("ticks a host message once the host recorded its answer, keeps a local entry's own flag, and stays stable", () => {
 		const sent = { ...record('u1'), delivered: true };
 		const answer: LogEntryRecord = { id: 'a1', timestamp: 2, source: 'stdout', text: 'Done' };
 		const waiting = mergeHostedLogs([], [sent], undefined);
 		expect(waiting[0].delivered).toBe(false);
 		expect(mergeHostedLogs(waiting, [sent], undefined)).toBe(waiting);
-		const answered = mergeHostedLogs(waiting, [sent], [answer]);
+		// Partial text streaming in a live entry is not the answer yet, as a local tab's is not.
+		const streaming = mergeHostedLogs(waiting, [sent], [{ ...answer, id: 'p1', text: 'Do' }]);
+		expect(streaming[0].delivered).toBe(false);
+		const answered = mergeHostedLogs(streaming, [sent, answer], undefined);
 		expect(answered[0].delivered).toBe(true);
-		expect(mergeHostedLogs(answered, [sent], [answer])).toBe(answered);
+		expect(mergeHostedLogs(answered, [sent, answer], undefined)).toBe(answered);
 		// A message written here before the move keeps the flag it was given here.
 		const kept = mergeHostedLogs([local('old', { delivered: true })], [sent], undefined);
 		expect(kept.map((entry) => [entry.id, entry.delivered])).toEqual([

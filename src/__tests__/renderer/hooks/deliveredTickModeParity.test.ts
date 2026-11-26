@@ -1,13 +1,16 @@
 /**
  * Parity round 3, N3: the "Message delivered" tick on the user's bubble appears at the same moment
- * in every mode. A local and an SSH tab mark the message delivered when the agent's first output
- * for it arrives (`markDelivered()` on a data chunk, `useBatchedSessionUpdates`); a hosted tab
- * draws the host's transcript (`projectHostedSession()`), whose user entry the host records as
- * delivered when the turn starts, so the projection applies the same rule.
+ * in every mode. A local and an SSH tab mark the message delivered when the agent's answer reaches
+ * the tab as data (`useAgentDataListener` -> `markDelivered()` in `useBatchedSessionUpdates`); the
+ * main process emits that data when the provider reports its result, while partial text streams
+ * as thinking and marks nothing. A hosted tab draws the host's transcript
+ * (`projectHostedSession()`): the host records the user entry as delivered when its turn starts
+ * and streams partial text as live entries, so the projection waits for the answer it recorded.
  */
 
 import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAgentDataListener } from '../../../renderer/hooks/agent/internal/useAgentDataListener';
 import { useBatchedSessionUpdates } from '../../../renderer/hooks/session/useBatchedSessionUpdates';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { LogEntry, Session } from '../../../renderer/types';
@@ -21,14 +24,37 @@ import { createMockAITab } from '../../helpers/mockTab';
 
 const TAB = 't1';
 const USER: LogEntry = { id: 'u1', timestamp: 1, source: 'user', text: 'Fix the login bug' };
+const ANSWER = 'The login form now checks the token.';
 
-type Moment = 'sent' | 'answering' | 'failed';
+/**
+ * `sent`: the turn runs, nothing came back. `streaming`: partial text is arriving. `answered`: the
+ * provider reported its result. `failed`: the turn ended on an error with no answer.
+ */
+type Moment = 'sent' | 'streaming' | 'answered' | 'failed';
+
+let onData: ((sessionId: string, data: string) => void) | undefined;
+
+beforeEach(() => {
+	onData = undefined;
+	const maestro = (window as unknown as { maestro: Record<string, unknown> }).maestro;
+	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
+		...maestro,
+		process: {
+			...(maestro.process as Record<string, unknown>),
+			onData: vi.fn((handler: typeof onData) => {
+				onData = handler;
+				return () => {};
+			}),
+		},
+		agentError: { clearError: vi.fn().mockResolvedValue(undefined) },
+	};
+});
 
 function tickOf(logs: readonly LogEntry[]): boolean {
 	return !!logs.find((entry) => entry.source === 'user')?.delivered;
 }
 
-/** A local or SSH tab: the message is in the tab, then the agent's output (or none) arrives. */
+/** A local or SSH tab, driven through the data event route its process uses. */
 function localTick(mode: AgentMode, moment: Moment): boolean {
 	const session = createModeSession(mode, {
 		id: `row-${mode}`,
@@ -36,18 +62,23 @@ function localTick(mode: AgentMode, moment: Moment): boolean {
 		aiTabs: [createMockAITab({ id: TAB, state: 'busy', logs: [USER] })],
 	});
 	useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
-	const { result, unmount } = renderHook(() => useBatchedSessionUpdates());
+	const batched = renderHook(() => useBatchedSessionUpdates());
+	const listener = renderHook(() =>
+		useAgentDataListener({
+			batchedUpdater: batched.result.current,
+			activeHiddenToolRef: { current: new Map() },
+		})
+	);
 	act(() => {
-		if (moment === 'answering') {
-			result.current.appendLog(session.id, TAB, true, 'Looking at the login form.');
-			result.current.markDelivered(session.id, TAB);
-		}
+		// Partial text streams as thinking (no data event); only the result is data.
+		if (moment === 'answered') onData!(`${session.id}-ai-${TAB}`, ANSWER);
 		if (moment === 'failed') {
-			result.current.appendLog(session.id, TAB, false, 'The agent exited with code 1.');
+			batched.result.current.appendLog(session.id, TAB, false, 'The agent exited with code 1.');
 		}
-		result.current.flushNow();
+		batched.result.current.flushNow();
 	});
-	unmount();
+	listener.unmount();
+	batched.unmount();
 	const tab = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === TAB);
 	return tickOf(tab?.logs ?? []);
 }
@@ -55,26 +86,30 @@ function localTick(mode: AgentMode, moment: Moment): boolean {
 /** A hosted tab: the host's record of the same moment, folded into the record. */
 function hostedTick(moment: Moment): boolean {
 	const userRecord: LogEntryRecord = { ...USER, delivered: true };
+	const ended = moment === 'answered' || moment === 'failed';
 	const agent: AgentRecord = {
 		id: 'h1',
 		name: 'Docs',
 		toolType: 'claude-code',
 		activeTabId: TAB,
-		aiTabs: [{ id: TAB, state: moment === 'failed' ? 'idle' : 'busy' }],
+		aiTabs: [{ id: TAB, state: ended ? 'idle' : 'busy' }],
 	};
-	const persisted: LogEntryRecord[] =
-		moment === 'failed'
-			? [
-					userRecord,
-					{ id: 'e1', timestamp: 3, source: 'error', text: 'The agent exited with code 1.' },
-				]
-			: [userRecord];
+	const persisted: LogEntryRecord[] = [userRecord];
+	if (moment === 'answered') {
+		persisted.push({ id: 'a1', timestamp: 3, source: 'stdout', text: ANSWER });
+	}
+	if (moment === 'failed') {
+		persisted.push({
+			id: 'e1',
+			timestamp: 3,
+			source: 'error',
+			text: 'The agent exited with code 1.',
+		});
+	}
 	const live: LiveTurn | undefined =
-		moment === 'answering'
+		moment === 'streaming'
 			? ({
-					entries: [
-						{ id: 'a1', timestamp: 2, source: 'stdout', text: 'Looking at the login form.' },
-					],
+					entries: [{ id: 'p1', timestamp: 2, source: 'stdout', text: 'Looking at the' }],
 					startedAt: 1,
 				} as unknown as LiveTurn)
 			: undefined;
@@ -95,7 +130,8 @@ function hostedTick(moment: Moment): boolean {
 describe('"Message delivered" tick in every mode', () => {
 	it.each<[Moment, boolean]>([
 		['sent', false],
-		['answering', true],
+		['streaming', false],
+		['answered', true],
 		['failed', false],
 	])('%s: local, SSH, and hosted bubbles show delivered=%s', (moment, expected) => {
 		const ticks = AGENT_MODES.map((mode) =>

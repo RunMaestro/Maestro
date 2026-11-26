@@ -89,17 +89,18 @@ function byTime(local: readonly LogEntry[], host: readonly LogEntry[]): LogEntry
 	return out;
 }
 
-/** Sources whose arrival proves the agent got the message: its answer streaming in. */
+/** Sources of an agent's answer text. */
 const ANSWER_SOURCES = new Set<LogEntry['source']>(['stdout', 'ai']);
 
 /**
  * The host's user entries with "Message delivered" set by the rule a local tab follows: a local
- * send marks its message delivered when the agent's first output for it arrives
- * (`markDelivered()` on the first data chunk), not when the turn starts, so the tick never shows
- * on a message the agent has not answered. The host records `delivered` when its turn starts;
- * here the tick waits, as a local one does, for an answer entry after the message (and before the
- * next one). Only entries in `fromHost` are judged; one written here keeps its own flag. An entry
- * whose flag is already right is kept as is.
+ * send marks its message delivered when the agent's answer reaches the tab as data
+ * (`markDelivered()`), which the main process emits when the provider reports its result, at the
+ * end of the turn (partial text streams as thinking, which marks nothing). The host records
+ * `delivered` when its turn starts and streams partial text as live entries; here the tick waits
+ * for the answer the host recorded when the turn ended (a persisted answer entry after the
+ * message, before the next one). Only entries in `fromHost` are judged; one written here keeps its
+ * own flag. An entry whose flag is already right is kept as is.
  */
 function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>): LogEntry[] {
 	let out: LogEntry[] | undefined;
@@ -118,7 +119,7 @@ function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>):
 			settle();
 			pendingUser = i;
 			answered = false;
-		} else if (ANSWER_SOURCES.has(entry.source)) {
+		} else if (ANSWER_SOURCES.has(entry.source) && !entry.hostLive) {
 			answered = true;
 		}
 	});
@@ -231,9 +232,10 @@ function streamedAnswer(prior: readonly LogEntry[], logs: readonly LogEntry[]): 
 
 /**
  * A tab's unread flag after the host streamed into it, by the rule a local tab follows
- * (`useAgentDataListener`): output marks it unread unless the person is looking at it (its agent
- * and tab are the visible ones, scrolled to the bottom), and reading it clears it. A hidden tab is
- * never set unread: it has no chip to clear it from.
+ * (`useAgentDataListener`): output marks it unread unless its agent is the active agent, it is the
+ * agent's active AI tab (`activeTabId`, whichever panel is drawn), and it is scrolled to the
+ * bottom; then the output clears it. A hidden tab is never set unread: it has no chip to clear it
+ * from.
  */
 function hostedTabUnread(
 	local: AITab,
