@@ -52,6 +52,7 @@ import { useLogItemUiState } from './hooks/useLogItemUiState';
 import { useTerminalOutputSearch } from './hooks/useTerminalOutputSearch';
 import { useTerminalOutputScroll } from './hooks/useTerminalOutputScroll';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
+import { pathPickerRemoteId } from '../../services/pathPicker';
 
 /**
  * Frames a cross-tab search jump keeps re-asserting its scroll position.
@@ -891,11 +892,7 @@ export const TerminalOutput = memo(
 						content={saveModalContent}
 						onClose={() => setSaveModalContent(null)}
 						defaultFolder={cwd || session.cwd || ''}
-						sshRemoteId={
-							session.sessionSshRemoteConfig?.enabled
-								? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
-								: undefined
-						}
+						sshRemoteId={pathPickerRemoteId(session)}
 						onFileSaved={onFileSaved}
 						onOpenInTab={onOpenInTab}
 					/>

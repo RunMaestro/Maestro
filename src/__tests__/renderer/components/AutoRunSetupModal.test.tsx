@@ -17,7 +17,10 @@ import { AutoRunSetupModal } from '../../../renderer/components/AutoRun/AutoRunS
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
-import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
+import {
+	pathPickerRemoteId,
+	UNRESOLVED_REMOTE_MESSAGE,
+} from '../../../renderer/services/pathPicker';
 import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers';
 import { browseAndPick, resetPathPicker } from '../../helpers/pathPicker';
 
@@ -1546,10 +1549,10 @@ describe('AutoRunSetupModal', () => {
 	});
 
 	describe('Mode parity (local, SSH, hosted)', () => {
-		// The caller hands the modal getSessionSshRemoteId(activeSession), so an SSH and a
+		// The caller hands the modal pathPickerRemoteId(activeSession), so an SSH and a
 		// hosted agent (which keeps its SSH remote for the files) get the same remote id.
 		const renderMode = async (mode: AgentMode) => {
-			const sshRemoteId = getSessionSshRemoteId(createModeSession(mode));
+			const sshRemoteId = pathPickerRemoteId(createModeSession(mode));
 			const view = renderWithLayerStack(
 				<AutoRunSetupModal
 					theme={theme}
@@ -1604,7 +1607,7 @@ describe('AutoRunSetupModal', () => {
 		});
 
 		it.each(AGENT_MODES)('%s: Browse and Cmd+O both pick the folder', async (mode) => {
-			const sshRemoteId = getSessionSshRemoteId(createModeSession(mode));
+			const sshRemoteId = pathPickerRemoteId(createModeSession(mode));
 			const { container } = renderWithLayerStack(
 				<AutoRunSetupModal
 					theme={theme}
@@ -1625,6 +1628,72 @@ describe('AutoRunSetupModal', () => {
 				'/picked/again'
 			);
 			expect(input.value).toBe('/picked/again');
+		});
+
+		it('a remote id left on an agent with SSH off reads this machine, like a local agent', async () => {
+			const stale = pathPickerRemoteId(
+				createModeSession('local', {
+					sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' },
+				})
+			);
+			expect(stale).toBeUndefined();
+			renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sshRemoteId={stale}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/home/user/docs' } });
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith('/home/user/docs', undefined);
+		});
+
+		it('an SSH agent with no remote resolved yet never reads this machine and says why', async () => {
+			const unresolved = pathPickerRemoteId(
+				createModeSession('ssh', {
+					sshRemoteId: undefined,
+					sessionSshRemoteConfig: { enabled: true, remoteId: null },
+				})
+			);
+			expect(unresolved).toBeNull();
+			renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sshRemoteId={unresolved}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '~/docs' } });
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			// This machine's home is the wrong one for a remote path, and its disk is never read.
+			expect(window.maestro.fs.homeDir).not.toHaveBeenCalled();
+			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
+			expect(screen.getByText(UNRESOLVED_REMOTE_MESSAGE)).toBeInTheDocument();
+		});
+
+		it('an SSH agent with no remote resolved yet cannot commit a typed folder by Continue or Enter', async () => {
+			const onFolderSelected = vi.fn();
+			const { container } = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={onFolderSelected}
+					sshRemoteId={null}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/srv/docs' } });
+			const continueButton = screen.getByRole('button', { name: 'Continue' });
+			expect(continueButton).toBeDisabled();
+			fireEvent.click(continueButton);
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'Enter' });
+			expect(onFolderSelected).not.toHaveBeenCalled();
 		});
 	});
 });

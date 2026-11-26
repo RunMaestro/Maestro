@@ -342,7 +342,8 @@ export interface SessionSshInfo {
  * to ensure SSH operations work correctly for all session types.
  *
  * @param session - Session object or partial with SSH fields
- * @returns The effective SSH remote ID, or undefined for local sessions
+ * @returns The effective SSH remote ID, or undefined for local sessions (including one whose
+ * `sessionSshRemoteConfig` still names a remote while `enabled` is false)
  *
  * @example
  * // WRONG - fails for terminal-only SSH sessions
@@ -358,7 +359,9 @@ export interface SessionSshInfo {
 export function getSessionSshRemoteId(
 	session: SessionSshInfo | null | undefined
 ): string | undefined {
-	if (!session) return undefined;
+	// A remote id left on an agent with SSH switched off is stale: that agent runs on this
+	// machine, so its file operations must not go to the remote it used to run on.
+	if (!session || !isSessionRemote(session)) return undefined;
 	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 }
 
@@ -380,6 +383,9 @@ export function getSessionSshRemoteId(
  */
 export function isSessionRemote(session: SessionSshInfo | null | undefined): boolean {
 	if (!session) return false;
+	// SSH switched off in the agent's settings wins over the last spawn's `sshRemoteId`, which
+	// stays on the record until the next spawn: that agent now runs on this machine.
+	if (session.sessionSshRemoteConfig?.enabled === false) return false;
 	return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
 }
 

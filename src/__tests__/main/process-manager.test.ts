@@ -70,8 +70,9 @@ vi.mock('../../main/process-manager/utils/childProcessInfo', async (importOrigin
 // Grok steering: the maestro-p steering client is observed, never dialed for
 // Grok; while `grokScript.enabled`, the shared ACP driver is a scripted turn (no process)
 // and the selector is told a person can answer, so the real GrokAcpSpawner records a turn.
-const { mockSendSteeringRequest, grokScript } = vi.hoisted(() => ({
+const { mockSendSteeringRequest, mockSendRemoteSteeringRequest, grokScript } = vi.hoisted(() => ({
 	mockSendSteeringRequest: vi.fn(),
+	mockSendRemoteSteeringRequest: vi.fn(),
 	grokScript: {
 		enabled: false,
 		turns: [] as Array<{
@@ -85,6 +86,7 @@ const { mockSendSteeringRequest, grokScript } = vi.hoisted(() => ({
 vi.mock('../../main/process-manager/steering-client', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../main/process-manager/steering-client')>()),
 	sendSteeringRequest: mockSendSteeringRequest,
+	sendRemoteSteeringRequest: mockSendRemoteSteeringRequest,
 }));
 vi.mock('../../shared/maestro-lib/grok/route', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../shared/maestro-lib/grok/route')>();
@@ -487,6 +489,54 @@ describe('process-manager.ts', () => {
 			processManager = new ProcessManager();
 			mockExecFile.mockClear();
 			mockExecFileSync.mockClear();
+		});
+
+		describe('Claude TUI steering by where the turn runs (parity F1)', () => {
+			const channel = {
+				remote: { id: 'r1', name: 'box', host: 'box.example' },
+				command: 'maestro-p',
+				socket: '~/.maestro/steer/maestro-steer-0123456789abcdef.sock',
+			};
+			function register(sessionId: string, fields: Partial<ManagedProcess>) {
+				(processManager as unknown as { processes: Map<string, ManagedProcess> }).processes.set(
+					sessionId,
+					{ sessionId, toolType: 'claude-code', pid: 1, ...fields } as ManagedProcess
+				);
+			}
+
+			beforeEach(() => {
+				mockSendSteeringRequest.mockReset();
+				mockSendRemoteSteeringRequest.mockReset();
+				const delivered = async (o: { id: string }) => ({
+					type: 'steering',
+					id: o.id,
+					verdict: 'delivered',
+				});
+				mockSendSteeringRequest.mockImplementation(delivered);
+				mockSendRemoteSteeringRequest.mockImplementation(delivered);
+			});
+
+			it('relays an SSH turn that opened a remote channel through the remote', async () => {
+				register('ssh-turn', { sshRemoteId: 'r1', remoteSteering: channel } as never);
+				const result = await processManager.steer('ssh-turn', 'change course');
+				expect(result.verdict).toBe('delivered');
+				expect(mockSendRemoteSteeringRequest).toHaveBeenCalledWith(
+					expect.objectContaining({ channel, processKey: 'ssh-turn', text: 'change course' })
+				);
+				expect(mockSendSteeringRequest).not.toHaveBeenCalled();
+			});
+
+			it('dials the local socket for a local turn, and for an SSH turn with no channel', async () => {
+				register('local-turn', {});
+				register('old-remote-turn', { sshRemoteId: 'r1' });
+				await processManager.steer('local-turn', 'a');
+				await processManager.steer('old-remote-turn', 'b');
+				expect(mockSendRemoteSteeringRequest).not.toHaveBeenCalled();
+				expect(mockSendSteeringRequest.mock.calls.map((c) => c[0].processKey)).toEqual([
+					'local-turn',
+					'old-remote-turn',
+				]);
+			});
 		});
 
 		describe('Grok native request correlation', () => {

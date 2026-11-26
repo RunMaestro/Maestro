@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QueuedItem, Session } from '../../../renderer/types';
-import { createMockSession } from '../../helpers/mockSession';
+import { agentModeFields, createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
@@ -309,6 +309,42 @@ describe('steerQueuedItem', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringMatching(/^Codex has your message/) })
 		);
+	});
+});
+
+describe('a failed steer on an SSH turn (parity F1)', () => {
+	// The SSH relay answers with the same verdict shapes as the local socket, so the
+	// queue, the toast and the flash must come out identical. A hosted item steers
+	// through its host instead (steerHostedSentMessage), covered on its own.
+	async function outcomeFor(mode: 'local' | 'ssh', verdict: Record<string, unknown>) {
+		vi.clearAllMocks();
+		resetPendingSteersForTests();
+		useSessionStore.setState({
+			sessions: [{ ...steerableSession([item()]), ...agentModeFields(mode) } as Session],
+		});
+		steer.mockResolvedValue({ type: 'steering', id: 'steer-1', ...verdict });
+		const result = await steerQueuedItem('sess-1', 'item-a');
+		return {
+			result,
+			queue: queue(),
+			logs: tabLogs(),
+			toasts: vi.mocked(notifyToast).mock.calls,
+			flashes: vi.mocked(notifyCenterFlash).mock.calls,
+			steerKey: steer.mock.calls[0]?.[0],
+		};
+	}
+
+	it.each([
+		['refused: ssh never reached the host', { verdict: 'refused', refusal: 'not-running' }],
+		['refused: a dialog owns the keyboard', { verdict: 'refused', refusal: 'blocking-dialog' }],
+		['unknown: the relay started and went quiet', { verdict: 'unknown' }],
+	])('%s leaves the message where a local one leaves it', async (_label, verdict) => {
+		const local = await outcomeFor('local', verdict);
+		const ssh = await outcomeFor('ssh', verdict);
+		expect(ssh).toEqual(local);
+		// Never lost: the item is back in the queue (paused when it may have been typed).
+		expect(ssh.queue).toHaveLength(1);
+		expect(ssh.queue[0].id).toBe('item-a');
 	});
 });
 

@@ -13,6 +13,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers';
 import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 import { mockTheme } from '../../helpers/mockTheme';
+import { UNRESOLVED_REMOTE_MESSAGE } from '../../../renderer/services/pathPicker';
 import type { Session } from '../../../renderer/types';
 
 afterEach(() => {
@@ -91,6 +92,27 @@ describe('WorktreeConfigModal: mode parity (local, SSH, hosted)', () => {
 			'/picked/worktrees'
 		);
 		expect(screen.getByPlaceholderText('/path/to/worktrees')).toHaveValue('/picked/worktrees');
+	});
+
+	it('a remote id left on an agent with SSH off checks the directory on this machine', async () => {
+		vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]);
+		const { onSaveConfig } = renderMode('local', vi.fn(), {
+			sessionSshRemoteConfig: { enabled: false, remoteId: MODE_REMOTE_ID },
+		});
+		fireEvent.click(screen.getByText('Save Configuration'));
+		await waitFor(() => expect(onSaveConfig).toHaveBeenCalled());
+		expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/work', undefined);
+	});
+
+	it('an SSH agent with no remote resolved yet fails Save with the reason and reads nothing', async () => {
+		const { onSaveConfig } = renderMode('ssh', vi.fn(), {
+			sshRemoteId: undefined,
+			sessionSshRemoteConfig: { enabled: true, remoteId: null },
+		});
+		fireEvent.click(screen.getByText('Save Configuration'));
+		expect(await screen.findByText(UNRESOLVED_REMOTE_MESSAGE)).toBeInTheDocument();
+		expect(window.maestro.fs.readDir).not.toHaveBeenCalled();
+		expect(onSaveConfig).not.toHaveBeenCalled();
 	});
 
 	it.each(AGENT_MODES)(

@@ -111,9 +111,10 @@ export function applyLocalInteractiveSpawnDecision(
 	});
 
 	// Chat steering: this function is the ONE place that knows a spawn resolved to
-	// a LOCAL maestro-p, which is the only shape that can be steered - an API
-	// (`claude --print`) turn has no writable PTY for the length of the turn, and
-	// the branch above has already returned for both that and SSH. Naming the
+	// a LOCAL maestro-p - an API (`claude --print`) turn has no writable PTY for
+	// the length of the turn, and the branch above has already returned for both
+	// that and SSH. An SSH TUI turn names its socket on the remote instead, in
+	// wrapSpawnForSsh. Naming the
 	// socket here is therefore the same decision as "this turn is steerable",
 	// rather than a second guess about it made somewhere else.
 	//
