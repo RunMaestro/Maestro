@@ -116,6 +116,29 @@ function getSshContext(session: Session, options?: SshContextOptions): SshContex
 	return context;
 }
 
+type FileTreeStats = NonNullable<Session['fileTreeStats']>;
+
+/** The footer's stats from one `fs:directorySize` answer (the same in every mode). */
+function toFileTreeStats(stats: FileTreeStats): FileTreeStats {
+	return {
+		fileCount: stats.fileCount,
+		folderCount: stats.folderCount,
+		totalSize: stats.totalSize,
+		...(stats.fileCountCapped ? { fileCountCapped: true } : {}),
+	};
+}
+
+/** Whether a new answer would draw the same footer (keep the session's identity, #1180). */
+function sameFileTreeStats(cur: FileTreeStats | undefined, next: FileTreeStats): boolean {
+	return (
+		!!cur &&
+		cur.fileCount === next.fileCount &&
+		cur.folderCount === next.folderCount &&
+		cur.totalSize === next.totalSize &&
+		(cur.fileCountCapped === true) === (next.fileCountCapped === true)
+	);
+}
+
 /**
  * The ignore rule for the Files panel's footer (counts and size): the rule the
  * agent's own tree is drawn with, the SSH remote's patterns for an agent that
@@ -550,23 +573,10 @@ export function useFileTreeManagement(
 							setSessions((prev) =>
 								prev.map((s) => {
 									if (s.id !== sessionId) return s;
-									const cur = s.fileTreeStats;
-									if (
-										cur &&
-										cur.fileCount === stats.fileCount &&
-										cur.folderCount === stats.folderCount &&
-										cur.totalSize === stats.totalSize
-									) {
+									if (sameFileTreeStats(s.fileTreeStats, stats)) {
 										return s; // unchanged - preserve identity, skip re-render (#1180)
 									}
-									return {
-										...s,
-										fileTreeStats: {
-											fileCount: stats.fileCount,
-											folderCount: stats.folderCount,
-											totalSize: stats.totalSize,
-										},
-									};
+									return { ...s, fileTreeStats: toFileTreeStats(stats) };
 								})
 							);
 						})
@@ -727,23 +737,10 @@ export function useFileTreeManagement(
 						setSessions((prev) =>
 							prev.map((s) => {
 								if (s.id !== sessionId) return s;
-								const cur = s.fileTreeStats;
-								if (
-									cur &&
-									cur.fileCount === stats.fileCount &&
-									cur.folderCount === stats.folderCount &&
-									cur.totalSize === stats.totalSize
-								) {
+								if (sameFileTreeStats(s.fileTreeStats, stats)) {
 									return s; // unchanged - preserve identity (#1180)
 								}
-								return {
-									...s,
-									fileTreeStats: {
-										fileCount: stats.fileCount,
-										folderCount: stats.folderCount,
-										totalSize: stats.totalSize,
-									},
-								};
+								return { ...s, fileTreeStats: toFileTreeStats(stats) };
 							})
 						);
 					})
@@ -1026,11 +1023,7 @@ export function useFileTreeManagement(
 							s.id === sessionId && stillAtRoot(s)
 								? {
 										...s,
-										fileTreeStats: {
-											fileCount: stats.fileCount,
-											folderCount: stats.folderCount,
-											totalSize: stats.totalSize,
-										},
+										fileTreeStats: toFileTreeStats(stats),
 									}
 								: s
 						)
@@ -1239,11 +1232,7 @@ export function useFileTreeManagement(
 						s.id === sessionId
 							? {
 									...s,
-									fileTreeStats: {
-										fileCount: stats.fileCount,
-										folderCount: stats.folderCount,
-										totalSize: stats.totalSize,
-									},
+									fileTreeStats: toFileTreeStats(stats),
 								}
 							: s
 					)

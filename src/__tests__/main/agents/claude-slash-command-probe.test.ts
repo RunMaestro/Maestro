@@ -33,6 +33,7 @@ import { execFileNoThrow } from '../../../main/utils/execFile';
 import { buildSshCommand, execSshCommand } from '../../../main/utils/ssh-command-builder';
 import type { SshRemoteConfig } from '../../../shared/types';
 import {
+	CLAUDE_SLASH_PROBE_FAILURE_TTL_MS,
 	clearClaudeSlashCommandCache,
 	parseInitSlashCommands,
 	probeClaudeSlashCommands,
@@ -145,16 +146,26 @@ describe('probeClaudeSlashCommandsCached', () => {
 		expect(execFileNoThrow).toHaveBeenCalledTimes(3);
 	});
 
-	it('does not cache a failed probe', async () => {
-		vi.mocked(execFileNoThrow)
-			.mockResolvedValueOnce({ stdout: '', stderr: 'boom', exitCode: 1 })
-			.mockResolvedValueOnce({ stdout: initLine(['/help']), stderr: '', exitCode: 0 });
+	it('keeps a failed probe briefly, then tries again', async () => {
+		vi.useFakeTimers();
+		try {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: '', stderr: 'boom', exitCode: 1 })
+				.mockResolvedValueOnce({ stdout: initLine(['/help']), stderr: '', exitCode: 0 });
 
-		const env = {};
-		await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toBeNull();
-		await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toEqual([
-			'/help',
-		]);
+			const env = {};
+			await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toBeNull();
+			await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toBeNull();
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+
+			vi.advanceTimersByTime(CLAUDE_SLASH_PROBE_FAILURE_TTL_MS);
+			await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toEqual([
+				'/help',
+			]);
+			expect(execFileNoThrow).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 
@@ -187,6 +198,29 @@ describe('probeClaudeSlashCommandsRemoteCached', () => {
 			})
 		);
 		expect(execFileNoThrow).not.toHaveBeenCalled();
+	});
+
+	it('does not start a new SSH probe on every composer open while the remote cannot be reached', async () => {
+		vi.useFakeTimers();
+		try {
+			vi.mocked(execSshCommand).mockResolvedValue({
+				stdout: '',
+				stderr: 'ssh: connect to host box.example.com port 22: Operation timed out',
+				exitCode: 255,
+			});
+			for (let open = 0; open < 5; open++) {
+				await expect(
+					probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p')
+				).resolves.toBeNull();
+			}
+			expect(execSshCommand).toHaveBeenCalledTimes(1);
+
+			vi.advanceTimersByTime(CLAUDE_SLASH_PROBE_FAILURE_TTL_MS);
+			await probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p');
+			expect(execSshCommand).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('probes each remote once, and never shares one list between remotes', async () => {
@@ -275,14 +309,12 @@ describe('probeClaudeSlashCommandsRemoteCached', () => {
 		expect(execSshCommand).toHaveBeenCalledTimes(1);
 	});
 
-	it('gives no list for an unreachable remote and asks again next time', async () => {
+	it('gives no list for an unreachable remote, and never falls back to this machine', async () => {
 		vi.mocked(execSshCommand).mockResolvedValue({ stdout: '', stderr: 'timed out', exitCode: 255 });
 
 		await expect(
 			probeClaudeSlashCommandsRemoteCached(remote('down'), 'claude', '/srv/p')
 		).resolves.toBeNull();
-		await probeClaudeSlashCommandsRemoteCached(remote('down'), 'claude', '/srv/p');
-		expect(execSshCommand).toHaveBeenCalledTimes(2);
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
 });

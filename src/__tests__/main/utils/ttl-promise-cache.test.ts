@@ -36,6 +36,28 @@ describe('createTtlPromiseCache', () => {
 		expect(throwing).toHaveBeenCalledTimes(2);
 	});
 
+	it('keeps a failure for failureTtlMs from when it settled, then tries again', async () => {
+		vi.useFakeTimers();
+		const cache = createTtlPromiseCache<number | null>(60_000, (value) => value !== null, {
+			failureTtlMs: 1000,
+		});
+		const failing = vi.fn(async () => null);
+		expect(await cache.get('k', failing)).toBeNull();
+		vi.advanceTimersByTime(999);
+		expect(await cache.get('k', failing)).toBeNull();
+		expect(failing).toHaveBeenCalledTimes(1);
+		vi.advanceTimersByTime(1);
+		await cache.get('k', failing);
+		expect(failing).toHaveBeenCalledTimes(2);
+
+		const throwing = vi.fn(async (): Promise<number | null> => {
+			throw new Error('down');
+		});
+		await expect(cache.get('t', throwing)).rejects.toThrow('down');
+		await expect(cache.get('t', throwing)).rejects.toThrow('down');
+		expect(throwing).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps keys apart', async () => {
 		const cache = createTtlPromiseCache<string>(60_000);
 		expect(await cache.get('a', async () => 'A')).toBe('A');

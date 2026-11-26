@@ -41,6 +41,12 @@ const NO_PERSISTENCE_FLAG = '--no-session-persistence';
 // Commands change when the user adds a skill, plugin, or MCP server, which is
 // rare; one probe per folder in this window is plenty.
 const CACHE_TTL_MS = 30 * 60 * 1000;
+/**
+ * A failed probe is kept this long: a remote that cannot be reached would
+ * otherwise start a new probe (up to the probe's timeout) on every composer
+ * open. Short, so a host that comes back is asked again soon.
+ */
+export const CLAUDE_SLASH_PROBE_FAILURE_TTL_MS = 30 * 1000;
 
 /** The `slash_commands` of the first `init` event in stream-json output, or null. */
 export function parseInitSlashCommands(stdout: string): string[] | null {
@@ -137,14 +143,16 @@ async function runProbe(run: (args: string[]) => Promise<ExecResult>): Promise<s
 	return commands;
 }
 
-/** One probe per key in the window; a failed probe (null) is not kept. */
-const cache = createTtlPromiseCache<string[] | null>(CACHE_TTL_MS, (found) => found !== null);
+/** One probe per key in the window; a failed probe (null) is kept only briefly. */
+const cache = createTtlPromiseCache<string[] | null>(CACHE_TTL_MS, (found) => found !== null, {
+	failureTtlMs: CLAUDE_SLASH_PROBE_FAILURE_TTL_MS,
+});
 
 /**
  * {@link probeClaudeSlashCommands}, at most once per binary, folder, and config
  * dir in {@link CACHE_TTL_MS}. Concurrent callers share one probe, so several
- * tabs starting at once spawn one claude, not several. A failed probe is not
- * cached, so the next turn tries again.
+ * tabs starting at once spawn one claude, not several. A failed probe is kept
+ * for {@link CLAUDE_SLASH_PROBE_FAILURE_TTL_MS}, then tried again.
  */
 export function probeClaudeSlashCommandsCached(
 	commandPath: string,
@@ -159,7 +167,8 @@ export function probeClaudeSlashCommandsCached(
  * {@link probeClaudeSlashCommandsRemote}, at most once per remote, binary,
  * folder, and agent env in {@link CACHE_TTL_MS}, so opening an SSH agent does not start an SSH
  * round trip each time. Keyed by the remote's id: two remotes never share a
- * list. A failed probe is not cached.
+ * list. A failed probe (an unreachable remote) is kept for
+ * {@link CLAUDE_SLASH_PROBE_FAILURE_TTL_MS}, so composer opens do not each start an SSH probe.
  */
 export function probeClaudeSlashCommandsRemoteCached(
 	sshRemote: SshRemoteConfig,
