@@ -173,7 +173,8 @@ export interface RemoteCopyWriteBack {
 	 * past {@link RemoteCopyWriteBackDeps.maxKnown}, a crash) has no baseline, so
 	 * a change in it cannot be told from bytes the remote held: when the copy is
 	 * there and differs from the fetched bytes, it is kept beside the copy before
-	 * they replace it, and the user is told where.
+	 * they replace it, and the user is told where. From then on the copy is known,
+	 * over the fetched bytes: a save made before the next `watch()` is sent.
 	 */
 	refetch(
 		copy: { localPath: string; remotePath: string; sshRemoteId: string },
@@ -214,6 +215,8 @@ interface WatchedCopy {
 	watcher: RemoteCopyWatcher;
 	/** The watcher failed and was closed; the next `watch()` starts a new one. */
 	watcherLost: boolean;
+	/** Forgotten past `maxKnown`: a send of it that fails is no longer recorded. */
+	forgotten: boolean;
 	timer: ReturnType<typeof setTimeout> | null;
 	/** Size and modification time at the last poll (or watch), as `size:mtimeMs`. */
 	lastStat: string | null;
@@ -282,6 +285,8 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	 * send lands. Kept past `dispose()`, so the quit can still name them.
 	 */
 	const failed = new Set<WatchedCopy>();
+	/** Copies with a sync queued that has not started: it reads the copy when it runs. */
+	const queuedSync = new Set<WatchedCopy>();
 	/** One interval for every watched copy; runs only while a copy is watched. */
 	let poller: ReturnType<typeof setInterval> | null = null;
 	let polling = false;
@@ -359,9 +364,11 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 		for (const entry of live.slice(0, Math.max(0, live.length - maxWatched))) retire(entry);
 		while (watched.size > maxKnown) {
 			const oldest = watched.values().next().value as WatchedCopy;
-			stop(oldest);
-			// Forgotten for good: a fresh Open of it keeps an unsent change beside it.
+			// Forgotten for good (a fresh Open of it keeps an unsent change beside
+			// it): its last send, queued by stop(), records nothing when it fails.
+			oldest.forgotten = true;
 			failed.delete(oldest);
+			stop(oldest);
 		}
 	}
 
@@ -406,6 +413,34 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			}
 		}
 		throw new Error(`No free name to keep your version beside ${localPath}`);
+	}
+
+	/**
+	 * Know a copy a refetch fetched with no record of it: `fetched` is what the
+	 * remote holds, so it is the baseline, never the copy's bytes at the next
+	 * `watch()` (a save made in between would read as already sent). No watcher
+	 * yet; the next `watch()` starts one.
+	 */
+	function remember(
+		copy: { localPath: string; remotePath: string; sshRemoteId: string },
+		fetched: Buffer
+	): WatchedCopy {
+		const entry: WatchedCopy = {
+			...copy,
+			baseline: hashOf(fetched),
+			kept: null,
+			unconfirmed: null,
+			halted: fetched.length > maxBytes ? 'too-large' : null,
+			watcher: { close: () => undefined },
+			watcherLost: true,
+			forgotten: false,
+			timer: null,
+			// Unknown: the first poll after `watch()` reads the copy once.
+			lastStat: null,
+		};
+		watched.set(copy.localPath, entry);
+		enforceCaps();
+		return entry;
 	}
 
 	/** The copy's bytes, or null while an app's atomic save has it moved away. */
@@ -478,7 +513,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			failed.delete(entry);
 			deps.notify({ kind: 'conflict', remotePath, sshRemoteId, keptAt });
 		} catch (error) {
-			failed.add(entry);
+			if (!entry.forgotten) failed.add(entry);
 			deps.notify({ kind: 'failed', remotePath, sshRemoteId, message: messageOf(error) });
 		}
 	}
@@ -486,9 +521,16 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	function runSync(entry: WatchedCopy): void {
 		// A watch that stopped (evicted, disposed) while waiting sends nothing.
 		if (watched.get(entry.localPath) !== entry) return;
+		// One already waiting reads the copy as it is then: a second would only send
+		// it (or fail, and say so) twice, as when a copy is retired and forgotten at once.
+		if (queuedSync.has(entry)) return;
+		queuedSync.add(entry);
 		track(
 			entry,
-			queue.enqueue(entry.localPath, () => sync(entry))
+			queue.enqueue(entry.localPath, () => {
+				queuedSync.delete(entry);
+				return sync(entry);
+			})
 		);
 	}
 
@@ -553,6 +595,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					halted: tooLarge ? 'too-large' : null,
 					watcher: { close: () => undefined },
 					watcherLost: tooLarge,
+					forgotten: false,
 					timer: null,
 					lastStat: await statKey(localPath),
 				};
@@ -625,7 +668,12 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 							// A save the app made while that was written is in neither the
 							// kept version nor the fetched bytes: the copy stays as it is.
 							const after = await readCopy(localPath);
-							if (after && hashOf(after) !== hashOf(local)) return 'saved-during-fetch' as const;
+							if (after && hashOf(after) !== hashOf(local)) {
+								// That save is not on the remote: known from now on over the
+								// fetched bytes, it is sent like any save.
+								remember({ localPath, remotePath, sshRemoteId }, bytes);
+								return 'saved-during-fetch' as const;
+							}
 						}
 						await staged.commit();
 						replaced = true;
@@ -642,6 +690,8 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 						failed.delete(entry);
 						// A fresh copy saves back again, unless it is too large to.
 						entry.halted = bytes.length > maxBytes ? 'too-large' : null;
+					} else {
+						remember({ localPath, remotePath, sshRemoteId }, bytes);
 					}
 					return 'fetched' as const;
 				} finally {

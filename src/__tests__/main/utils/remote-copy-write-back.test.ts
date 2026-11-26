@@ -43,13 +43,20 @@ let writeRemote: Mock<
 >;
 let close: Mock<() => void>;
 
-function service(overrides: { maxWatched?: number; maxBytes?: number; fileEvents?: boolean } = {}) {
+type ServiceOverrides = {
+	maxWatched?: number;
+	maxKnown?: number;
+	maxBytes?: number;
+	fileEvents?: boolean;
+};
+
+function service(overrides: ServiceOverrides = {}) {
 	return createRemoteCopyWriteBack(baseDeps(overrides));
 }
 
 /** The test's in-memory files and remote, as the service's dependencies. */
 function baseDeps(
-	overrides: { maxWatched?: number; maxBytes?: number; fileEvents?: boolean } = {}
+	overrides: ServiceOverrides = {}
 ): Parameters<typeof createRemoteCopyWriteBack>[0] {
 	const { fileEvents = true, ...rest } = overrides;
 	return {
@@ -203,9 +210,55 @@ describe('remote copy write-back', () => {
 		const keptAt = keptVersionPath(LOCAL, WHEN);
 		expect(localFiles.get(keptAt)?.toString()).toBe('unsent change');
 		expect(discarded).toBe(1);
+		// That save is not on the remote: it goes there, over the bytes just fetched.
+		await writeBack.idle();
 		expect(events).toEqual([
 			{ kind: 'kept', remotePath: REMOTE, sshRemoteId: 'r1', keptAt, replaced: false },
+			{ kind: 'saved', remotePath: REMOTE, sshRemoteId: 'r1' },
 		]);
+		expect(writeRemote).toHaveBeenCalledWith(
+			REMOTE,
+			Buffer.from('saved while keeping'),
+			'r1',
+			sha(Buffer.from('fetched'))
+		);
+		expect(remoteFile.toString()).toBe('saved while keeping');
+		// The Open's watch then starts from what the remote holds, not from the copy.
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await saveCopy(writeBack, 'later');
+		expect(remoteFile.toString()).toBe('later');
+		expect(events.map((e) => e.kind)).toEqual(['kept', 'saved', 'saved']);
+	});
+
+	it('an Open with no record of the copy sends a save made before its watch starts', async () => {
+		const writeBack = service();
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		// The app saves the copy before the renderer asks for the watch.
+		localFiles.set(LOCAL, Buffer.from('early save'));
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await vi.advanceTimersByTimeAsync(1000 + 60);
+		await writeBack.idle();
+		expect(writeRemote).toHaveBeenCalledWith(
+			REMOTE,
+			Buffer.from('early save'),
+			'r1',
+			sha(Buffer.from('fetched'))
+		);
+		expect(remoteFile.toString()).toBe('early save');
+	});
+
+	it('does not keep naming a copy forgotten past the cap whose last send failed', async () => {
+		writeRemote.mockRejectedValue(new Error('Connection refused'));
+		const writeBack = service({ maxWatched: 1, maxKnown: 1 });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		localFiles.set(LOCAL, Buffer.from('edited'));
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		// Watching a second copy forgets the first; its last send fails.
+		await writeBack.watch({ localPath: other, remotePath: '/home/me/other.md', sshRemoteId: 'r1' });
+		await writeBack.idle();
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		expect(writeBack.pendingCopies()).toEqual([]);
 	});
 
 	it('still names a copy whose send failed after its watch stopped, beside one still being sent', async () => {

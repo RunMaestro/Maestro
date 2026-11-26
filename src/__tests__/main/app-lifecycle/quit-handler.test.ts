@@ -858,6 +858,35 @@ describe('app-lifecycle/quit-handler', () => {
 			vi.useRealTimers();
 		});
 
+		it('keeps waiting for the Sentry report when the writes land while it is being sent', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			let sent!: (value: boolean) => void;
+			mockFlushSentry.mockImplementationOnce(
+				() => new Promise<boolean>((resolve) => (sent = resolve))
+			);
+			let landWrites!: () => void;
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>((resolve) => (landWrites = resolve)),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS);
+			expect(mockFlushSentry).toHaveBeenCalled();
+			// The writes land after the bound, while the report is still going out.
+			landWrites();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).not.toHaveBeenCalled();
+			sent(true);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
 		it('does not wait for the Sentry report past its own bound', async () => {
 			vi.useFakeTimers();
 			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS, REMOTE_WRITE_REPORT_MAX_MS } =

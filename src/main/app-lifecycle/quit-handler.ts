@@ -241,7 +241,10 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				flush.settled = true;
 				resolve();
 			};
+			/** The bound ran out and the report is going: only it ends the wait now. */
+			let reporting = false;
 			const bound = setTimeout(() => {
+				reporting = true;
 				void reportUnsentRemoteWrites().finally(finish);
 			}, REMOTE_WRITE_FLUSH_MAX_MS);
 			void Promise.resolve()
@@ -249,7 +252,9 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				.catch((err) =>
 					logger.error(`Error flushing remote copy writes on quit: ${err}`, 'Shutdown')
 				)
-				.finally(finish);
+				.finally(() => {
+					if (!reporting) finish();
+				});
 		});
 		return flush;
 	}
