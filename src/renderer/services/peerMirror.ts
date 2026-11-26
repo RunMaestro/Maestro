@@ -400,24 +400,36 @@ export async function steerMirrorQueuedItem(
 }
 
 /**
- * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss). The host's
- * answer as is, a refusal included (`success: false`, no toast: the caller says it where the user
- * looked). Null when the host could not be reached (a red toast, unless `quiet`).
+ * What a host said to one steering command: its result (a refusal is `success: false` in it), or
+ * why it gave none. `unsupported`: the host does not know the op (an older host), so asking it
+ * again cannot help.
+ */
+export type MirrorSteeringAnswer =
+	| { ok: true; result: SteeringCommandResult }
+	| { ok: false; error: string; unsupported: boolean };
+
+/**
+ * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss), with no
+ * toast: the caller says a failure where the user looked, and keeps what the user typed.
  */
 export async function steerMirrorAutoRun(
 	peerId: string,
 	agentId: string,
-	input: SteeringCommandInput,
-	options: { quiet?: boolean } = {}
-): Promise<SteeringCommandResult | null> {
-	const action = { kind: 'steer-auto-run' as const, input };
-	// `quiet`: a background read, whose failure is not news (the next one tries again).
-	if (options.quiet) {
-		const answer = await callMirroredAgentAction(peerId, agentId, action);
-		return answer?.ok && answer.result.kind === 'steer-auto-run' ? answer.result.result : null;
+	input: SteeringCommandInput
+): Promise<MirrorSteeringAnswer> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'steer-auto-run', input });
+	if (!answer) return { ok: false, error: HOST_NO_ANSWER_REASON, unsupported: false };
+	if (!answer.ok) {
+		return {
+			ok: false,
+			error: mirroredActionError(answer),
+			unsupported: answer.code === 'unsupported',
+		};
 	}
-	const result = await actOnMirroredAgent(peerId, agentId, action);
-	return result?.kind === 'steer-auto-run' ? result.result : null;
+	if (answer.result.kind !== 'steer-auto-run' || !answer.result.result) {
+		return { ok: false, error: HOST_NO_ANSWER_REASON, unsupported: false };
+	}
+	return { ok: true, result: answer.result.result };
 }
 
 /**

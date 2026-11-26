@@ -32,10 +32,7 @@ import type {
 } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { BatchRunConfig } from '../../shared/types';
-import type {
-	SteeringCommandInput,
-	SteeringCommandResult,
-} from '../../shared/autoRunSteeringCommands';
+import type { SteeringCommandInput } from '../../shared/autoRunSteeringCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -60,6 +57,7 @@ import {
 	sendToMirroredTab,
 	starMirrorTab,
 	steerMirrorAutoRun,
+	type MirrorSteeringAnswer,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
 import { hostedTranscriptBaseline, watchHostedHistoryCommand } from './historyEntryToast';
@@ -646,17 +644,16 @@ export async function startHostedAutoRun(
 
 /**
  * Steer a hosted agent's run on the host that runs it (the Thought Stream's Steer). Undefined for
- * an agent that is not hosted, so the caller steers its own run; otherwise the host's answer, or
- * null when the host could not be reached (already a red toast).
+ * an agent that is not hosted, so the caller steers its own run; otherwise what the host said
+ * (`steerMirrorAutoRun()`: no toast, the caller reports a failure).
  */
 export function steerHostedAutoRun(
 	session: Pick<Session, 'liftedTo'> | null | undefined,
-	input: SteeringCommandInput,
-	options: { quiet?: boolean } = {}
-): Promise<SteeringCommandResult | null> | undefined {
+	input: SteeringCommandInput
+): Promise<MirrorSteeringAnswer> | undefined {
 	const target = hostedTargetOf(session);
 	if (!target) return undefined;
-	return steerMirrorAutoRun(target.peerId, target.agentId, input, options);
+	return steerMirrorAutoRun(target.peerId, target.agentId, input);
 }
 
 /**

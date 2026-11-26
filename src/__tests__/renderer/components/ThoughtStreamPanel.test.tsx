@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import {
 	ThoughtStreamPanel,
 	SHOW_TOOL_ACTIVITY_KEY,
@@ -84,7 +84,7 @@ beforeEach(() => {
 	useUIStore.setState({ rightPanelOpen: true });
 	useSettingsStore.setState({ rightPanelWidth: 480 } as never);
 	useBatchStore.setState({ batchRunStates: {} } as never);
-	useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
+	useAutoRunSteeringStore.setState({ notes: {}, delivered: {}, returnedDrafts: {} });
 });
 
 /** A run state for SID: the Steer button only exists while one is in flight. */
@@ -475,6 +475,18 @@ describe('ThoughtStreamPanel steering', () => {
 		// The composer closes on a successful send, so the next Enter is not a
 		// second copy of the note the operator just watched land.
 		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+	});
+
+	it('puts a note that never reached the run back in the Steer box (P9)', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		// The host answered after the box had cleared: the service hands the text back.
+		act(() => useAutoRunSteeringStore.getState().returnDraft(SID, 'use the v3 endpoint'));
+
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('use the v3 endpoint');
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toBeUndefined();
 	});
 
 	it('sends on Enter and keeps typing on Shift+Enter', () => {

@@ -89,6 +89,12 @@ export interface AutoRunSteeringState {
 	notes: Record<string, AutoRunSteeringNote[]>;
 	/** sessionId -> notes a task has already taken, oldest first. */
 	delivered: Record<string, DeliveredSteeringNote[]>;
+	/**
+	 * sessionId -> text of notes that never reached the run (a hosted agent's host refused the
+	 * send, or could not be reached), waiting for the Steer box to take it back. A local refusal
+	 * keeps the draft in the box; a host answers after the box has cleared, so the text waits here.
+	 */
+	returnedDrafts: Record<string, string>;
 }
 
 export interface AutoRunSteeringActions {
@@ -125,6 +131,10 @@ export interface AutoRunSteeringActions {
 	clearPendingNotes: (sessionId: string) => void;
 	/** Drop everything for a session, pending and delivered (run start). */
 	clearNotes: (sessionId: string) => void;
+	/** Hand a note that was not delivered back to the Steer box (joined after any text waiting). */
+	returnDraft: (sessionId: string, text: string) => void;
+	/** Read and clear the text waiting for the Steer box, if any. */
+	takeReturnedDraft: (sessionId: string) => string | undefined;
 }
 
 export type AutoRunSteeringStore = AutoRunSteeringState & AutoRunSteeringActions;
@@ -135,6 +145,7 @@ const EMPTY_DELIVERED: DeliveredSteeringNote[] = [];
 export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get) => ({
 	notes: {},
 	delivered: {},
+	returnedDrafts: {},
 
 	addNote: (sessionId, text) => {
 		const normalized = normalizeSteeringNoteText(text);
@@ -230,13 +241,38 @@ export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get)
 
 	clearNotes: (sessionId) =>
 		set((s) => {
-			if (!s.notes[sessionId] && !s.delivered[sessionId]) return {};
+			if (!s.notes[sessionId] && !s.delivered[sessionId] && !(sessionId in s.returnedDrafts)) {
+				return {};
+			}
 			const nextNotes = { ...s.notes };
 			delete nextNotes[sessionId];
 			const nextDelivered = { ...s.delivered };
 			delete nextDelivered[sessionId];
-			return { notes: nextNotes, delivered: nextDelivered };
+			const nextDrafts = { ...s.returnedDrafts };
+			delete nextDrafts[sessionId];
+			return { notes: nextNotes, delivered: nextDelivered, returnedDrafts: nextDrafts };
 		}),
+
+	returnDraft: (sessionId, text) => {
+		const normalized = normalizeSteeringNoteText(text);
+		if (!normalized) return;
+		set((s) => {
+			const waiting = s.returnedDrafts[sessionId];
+			const joined = waiting ? `${waiting}\n\n${normalized}` : normalized;
+			return { returnedDrafts: { ...s.returnedDrafts, [sessionId]: joined } };
+		});
+	},
+
+	takeReturnedDraft: (sessionId) => {
+		const text = get().returnedDrafts[sessionId];
+		if (text === undefined) return undefined;
+		set((s) => {
+			const next = { ...s.returnedDrafts };
+			delete next[sessionId];
+			return { returnedDrafts: next };
+		});
+		return text;
+	},
 }));
 
 /** Pending notes for one session. Stable empty array so it is selector-safe. */

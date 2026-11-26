@@ -568,6 +568,22 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		}
 	}, [canSteer]);
 
+	// A note that never reached the run (a hosted agent's host refused it, or was out of reach)
+	// comes back into the box, as a local refusal keeps the draft there: the text is the
+	// operator's, and the box had already cleared by the time the host answered.
+	const returnedDraft = useAutoRunSteeringStore((st) =>
+		panelSessionId ? st.returnedDrafts[panelSessionId] : undefined
+	);
+	useEffect(() => {
+		if (!panelSessionId || returnedDraft === undefined || !canSteer) return;
+		const text = useAutoRunSteeringStore.getState().takeReturnedDraft(panelSessionId);
+		if (!text) return;
+		setSteerDraft((draft) =>
+			(draft.trim() ? `${text}\n\n${draft}` : text).slice(0, MAX_STEERING_NOTE_LENGTH)
+		);
+		setBarMode('steer');
+	}, [panelSessionId, returnedDraft, canSteer]);
+
 	// Hand the caret to whichever input a button just opened. The panel registers
 	// a PASSIVE layer, so nothing else does; without this the operator clicks
 	// Steer and then has to click again to type. Keyed on the button press rather

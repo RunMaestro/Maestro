@@ -52,6 +52,7 @@ import type {
 } from '../../shared/autoRunSteeringCommands';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { hostedTargetOf, steerHostedAutoRun } from './hostedTurns';
+import { HOST_NO_ANSWER_REASON } from './peerMirror';
 import { readBackgroundField } from '../../shared/focusPlacement';
 import type { BatchRunState } from '../types';
 
@@ -171,20 +172,30 @@ function markUnanswered(sessionId: string, noteId: string, waiting: boolean): vo
 /** The host's id for a note this window showed first under its own, by that id. */
 const hostNoteIds = new Map<string, string>();
 
+/**
+ * Hosted agents whose host does not know the steering op (an older host). A list cannot answer
+ * there, so the hosted sync's reads stop instead of asking again on every frame. A send still
+ * goes (the person asked), and one the host takes clears the mark.
+ */
+const hostsWithoutSteering = new Set<string>();
+
 interface ForwardOptions {
 	/** The note this window shows while the host has not answered (a send). */
 	localNoteId?: string;
 	/** Say a refusal on screen. A caller that reports it itself (the CLI) passes false. */
 	announce?: boolean;
-	/** A background read: a host that cannot be reached raises no toast. */
-	quiet?: boolean;
 }
 
 /**
  * Ask the host one steering command for a hosted agent, then read its list back into this
  * window's store, so the panel shows what the host holds. `input` is built when the command's
  * turn comes, so a cancel queued behind its send names the note by the host's id. Resolves with
- * the host's answer (the list, for a `list`), or null when the host could not be reached.
+ * the host's answer (the list, for a `list`): a command the host did not take, or could not be
+ * asked, answers `success: false` with the reason. Null for a list that could not be read.
+ *
+ * A send the host did not take is a refusal whatever the cause (it said no, it is out of reach,
+ * it does not know the op): the note is not waiting anywhere, so it leaves the pending list, and
+ * its text goes back to the Steer box (`returnDraft()`), as a local refusal keeps the draft there.
  */
 function forwardToHost(
 	sessionId: string,
@@ -197,30 +208,73 @@ function forwardToHost(
 		const ask = typeof input === 'function' ? input() : input;
 		let answer: SteeringCommandResult | null = null;
 		if (ask.action !== 'list') {
-			answer = (await steerHostedAutoRun(session, ask)) ?? null;
+			const sent = await steerHostedAutoRun(session, ask);
 			// Answered (or out of reach): from here the host's list says whether it waits.
 			if (options.localNoteId) markUnanswered(sessionId, options.localNoteId, false);
-			if (answer?.success && options.localNoteId && answer.note?.id) {
-				hostNoteIds.set(options.localNoteId, answer.note.id);
-			}
-			if (answer && !answer.success) {
-				// The host said no: the note it refused is not waiting anywhere.
-				if (options.localNoteId) {
-					useAutoRunSteeringStore.getState().removeNote(sessionId, options.localNoteId);
+			if (sent?.ok && sent.result.success) {
+				answer = sent.result;
+				hostsWithoutSteering.delete(sessionId);
+				const hostId = answer.note?.id;
+				if (options.localNoteId && typeof hostId === 'string' && hostId) {
+					hostNoteIds.set(options.localNoteId, hostId.slice(0, 200));
 				}
-				if (options.announce !== false) {
-					notifyCenterFlash({
-						message: 'Steering note not delivered',
-						detail: answer.error ?? 'The host refused it',
-						color: 'orange',
-					});
-				}
+			} else {
+				if (sent && !sent.ok && sent.unsupported) hostsWithoutSteering.add(sessionId);
+				const error = sent?.ok
+					? typeof sent.result.error === 'string' && sent.result.error
+						? sent.result.error.slice(0, 500)
+						: 'The host refused it'
+					: (sent?.error ?? HOST_NO_ANSWER_REASON);
+				answer = { success: false, error };
 			}
 		}
-		const listed =
-			(await steerHostedAutoRun(session, { action: 'list' }, { quiet: options.quiet })) ?? null;
-		if (listed?.success) applyHostList(sessionId, listed);
+		const listed = hostsWithoutSteering.has(sessionId) ? null : await readHostList(sessionId);
+		if (answer && !answer.success) settleRefusal(sessionId, ask, answer.error, listed, options);
 		return ask.action === 'list' ? listed : answer;
+	});
+}
+
+/** Read a hosted agent's list from its host into this window's store. Null when it cannot. */
+async function readHostList(sessionId: string): Promise<SteeringCommandResult | null> {
+	const session = hostedSessionOf(sessionId);
+	const read = session ? await steerHostedAutoRun(session, { action: 'list' }) : undefined;
+	if (!read) return null;
+	if (!read.ok) {
+		if (read.unsupported) hostsWithoutSteering.add(sessionId);
+		return null;
+	}
+	if (!read.result.success) return null;
+	applyHostList(sessionId, read.result);
+	return read.result;
+}
+
+/** A command the host did not take: drop the note it named, hand its text back, say why. */
+function settleRefusal(
+	sessionId: string,
+	ask: SteeringCommandInput,
+	reason: string | undefined,
+	listed: SteeringCommandResult | null,
+	options: ForwardOptions
+): void {
+	const { localNoteId } = options;
+	let returned = false;
+	if (ask.action === 'send' && localNoteId) {
+		useAutoRunSteeringStore.getState().removeNote(sessionId, localNoteId);
+		// A send whose outcome is unknown may still have landed: the host's list says so.
+		const text = normalizeSteeringNoteText(ask.text ?? '');
+		const landed = (Array.isArray(listed?.pending) ? listed.pending : []).some(
+			(note) => hostNote(note)?.text === text
+		);
+		if (text && !landed) {
+			useAutoRunSteeringStore.getState().returnDraft(sessionId, text);
+			returned = true;
+		}
+	}
+	if (options.announce === false) return;
+	notifyCenterFlash({
+		message: ask.action === 'send' ? 'Steering note not delivered' : 'The host did not take that',
+		detail: `${reason ?? 'The host refused it'}${returned ? ' Your note is back in the Steer box.' : ''}`,
+		color: 'orange',
 	});
 }
 
@@ -234,14 +288,11 @@ export function refreshHostedSteering(sessionId: string): Promise<void> {
 	// reads ahead of a note the person sends.
 	const queued = queuedRefreshes.get(sessionId);
 	if (queued) return queued;
-	const read = forwardToHost(
-		sessionId,
-		() => {
-			queuedRefreshes.delete(sessionId);
-			return { action: 'list' };
-		},
-		{ quiet: true }
-	)
+	if (hostsWithoutSteering.has(sessionId)) return Promise.resolve();
+	const read = forwardToHost(sessionId, () => {
+		queuedRefreshes.delete(sessionId);
+		return { action: 'list' };
+	})
 		.then(() => undefined)
 		.finally(() => {
 			if (queuedRefreshes.get(sessionId) === read) queuedRefreshes.delete(sessionId);
