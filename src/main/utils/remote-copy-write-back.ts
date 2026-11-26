@@ -52,7 +52,9 @@ export type RemoteCopyWriteBackEvent =
 	| { kind: 'conflict'; remotePath: string; sshRemoteId: string; keptAt: string }
 	/** A copy that no longer saved back was fetched again; the change it held is kept here. */
 	| { kind: 'kept'; remotePath: string; sshRemoteId: string; keptAt: string }
-	| { kind: 'failed'; remotePath: string; sshRemoteId: string; message: string };
+	| { kind: 'failed'; remotePath: string; sshRemoteId: string; message: string }
+	/** The copy can no longer be watched (the watcher failed): later saves stay on this machine. */
+	| { kind: 'unwatched'; remotePath: string; sshRemoteId: string };
 
 /** A watcher on one local file; `close()` stops it. */
 export interface RemoteCopyWatcher {
@@ -60,8 +62,21 @@ export interface RemoteCopyWatcher {
 }
 
 export interface RemoteCopyWriteBackDeps {
-	/** Watch one local file; call `onChange` when it is written, replaced, or created. */
-	watchFile(localPath: string, onChange: () => void): RemoteCopyWatcher;
+	/**
+	 * Watch one local file; call `onChange` when it is written, replaced, or
+	 * created, and `onError` when the watch fails and will report no more.
+	 */
+	watchFile(
+		localPath: string,
+		onChange: () => void,
+		onError: (error: unknown) => void
+	): RemoteCopyWatcher;
+	/**
+	 * The copy's size and modification time, or null while it is moved away.
+	 * Polled for every watched copy, so a save is seen even when the OS file
+	 * events never arrive.
+	 */
+	statLocal(localPath: string): Promise<{ size: number; mtimeMs: number } | null>;
 	/** The copy's bytes; rejects with ENOENT while an app's atomic save has it moved away. */
 	readLocal(localPath: string): Promise<Buffer>;
 	/** Create a NEW local file (the user's version on a conflict); rejects with EEXIST if it exists. */
@@ -86,6 +101,8 @@ export interface RemoteCopyWriteBackDeps {
 	notify(event: RemoteCopyWriteBackEvent): void;
 	/** Quiet time after the last change before the copy is read (an app may write in steps). */
 	debounceMs?: number;
+	/** How often each watched copy's size and modification time are compared (no file events needed). */
+	pollMs?: number;
 	/** The most copies watched at once; the oldest watch stops first. */
 	maxWatched?: number;
 	/** The largest copy written back (default {@link REMOTE_COPY_WRITE_BACK_MAX_BYTES}). */
@@ -138,14 +155,21 @@ interface WatchedCopy {
 	kept: string | null;
 	/**
 	 * Why this copy no longer saves back, once the user was told: the remote
-	 * changed under it, or it grew past the cap. A fresh fetch clears it.
+	 * changed under it, it grew past the cap, or its watcher failed. A fresh
+	 * fetch clears it.
 	 */
-	halted: 'conflict' | 'too-large' | null;
+	halted: 'conflict' | 'too-large' | 'unwatched' | null;
 	watcher: RemoteCopyWatcher;
+	/** The watcher failed and was closed; the next `watch()` starts a new one. */
+	watcherLost: boolean;
 	timer: ReturnType<typeof setTimeout> | null;
+	/** Size and modification time at the last poll (or watch), as `size:mtimeMs`. */
+	lastStat: string | null;
 }
 
 const DEFAULT_DEBOUNCE_MS = 400;
+/** Slow on purpose: it only backs up the file events, and costs one stat per watched copy. */
+const DEFAULT_POLL_MS = 3000;
 const DEFAULT_MAX_WATCHED = 64;
 /** How many kept-version names are tried before giving up. */
 const MAX_KEPT_NAME_ATTEMPTS = 100;
@@ -178,6 +202,7 @@ export function keptVersionPath(localPath: string, when: Date, attempt = 1): str
 
 export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): RemoteCopyWriteBack {
 	const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+	const pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
 	const maxWatched = deps.maxWatched ?? DEFAULT_MAX_WATCHED;
 	const maxBytes = deps.maxBytes ?? REMOTE_COPY_WRITE_BACK_MAX_BYTES;
 	const now = deps.now ?? (() => new Date());
@@ -186,6 +211,52 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	/** One step at a time per copy, so a save, a refetch, and a watch never interleave. */
 	const queue = createKeyedWriteQueue();
 	const pending = new Set<Promise<void>>();
+	/** One interval for every watched copy; runs only while a copy is watched. */
+	let poller: ReturnType<typeof setInterval> | null = null;
+	let polling = false;
+
+	async function statKey(localPath: string): Promise<string | null> {
+		try {
+			const stat = await deps.statLocal(localPath);
+			return stat ? `${stat.size}:${stat.mtimeMs}` : null;
+		} catch {
+			// A stat that fails reads as no change; the file events still apply.
+			return null;
+		}
+	}
+
+	/**
+	 * The fallback that does not depend on file events (some machines never
+	 * deliver them): a copy whose size or modification time moved since the last
+	 * look is read as saved.
+	 */
+	async function poll(): Promise<void> {
+		if (polling) return;
+		polling = true;
+		try {
+			for (const entry of [...watched.values()]) {
+				// A copy that no longer saves back has nothing to look for.
+				if (entry.halted) continue;
+				const key = await statKey(entry.localPath);
+				if (key === null || key === entry.lastStat) continue;
+				entry.lastStat = key;
+				if (watched.get(entry.localPath) === entry && !entry.timer) schedule(entry);
+			}
+		} finally {
+			polling = false;
+		}
+	}
+
+	function updatePoller(): void {
+		if (watched.size > 0 && !poller) {
+			poller = setInterval(() => void poll(), pollMs);
+			// Never what keeps the process alive.
+			(poller as { unref?: () => void }).unref?.();
+		} else if (watched.size === 0 && poller) {
+			clearInterval(poller);
+			poller = null;
+		}
+	}
 
 	/**
 	 * Stop one watch (evicted at the cap, or disposed). A save the user made just
@@ -198,6 +269,33 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 		runSync(entry);
 		entry.watcher.close();
 		watched.delete(entry.localPath);
+		updatePoller();
+	}
+
+	/**
+	 * The watcher failed: send what the copy holds now, then say once that later
+	 * saves stay on this machine. The copy stays known (so a fresh Open keeps an
+	 * unsent change beside it, and watches it again).
+	 */
+	function lose(entry: WatchedCopy): void {
+		if (watched.get(entry.localPath) !== entry || entry.watcherLost) return;
+		entry.watcherLost = true;
+		if (entry.timer) clearTimeout(entry.timer);
+		entry.timer = null;
+		entry.watcher.close();
+		track(
+			queue.enqueue(entry.localPath, async () => {
+				await sync(entry);
+				// Already told why it does not save back (a conflict, the cap).
+				if (entry.halted) return;
+				entry.halted = 'unwatched';
+				deps.notify({
+					kind: 'unwatched',
+					remotePath: entry.remotePath,
+					sshRemoteId: entry.sshRemoteId,
+				});
+			})
+		);
 	}
 
 	/** Keep the user's version under a name no earlier version holds. */
@@ -269,7 +367,11 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	function runSync(entry: WatchedCopy): void {
 		// A watch that stopped (evicted, disposed) while waiting sends nothing.
 		if (watched.get(entry.localPath) !== entry) return;
-		const run = queue.enqueue(entry.localPath, () => sync(entry));
+		track(queue.enqueue(entry.localPath, () => sync(entry)));
+	}
+
+	/** Count `run` as work in flight until it settles (for `idle()` and `dispose()`). */
+	function track(run: Promise<void>): void {
 		pending.add(run);
 		void run.finally(() => pending.delete(run));
 	}
@@ -296,6 +398,14 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					existing.sshRemoteId = sshRemoteId;
 					// The fetch just put a copy too large to send back here.
 					if (existing.halted === 'too-large') throw new RemoteCopyTooLargeError(maxBytes);
+					if (existing.watcherLost) {
+						existing.watcherLost = false;
+						existing.watcher = deps.watchFile(
+							localPath,
+							() => schedule(existing),
+							() => lose(existing)
+						);
+					}
 					return;
 				}
 				const fetched = await deps.readLocal(localPath);
@@ -308,10 +418,17 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					kept: null,
 					halted: null,
 					watcher: { close: () => undefined },
+					watcherLost: false,
 					timer: null,
+					lastStat: await statKey(localPath),
 				};
-				entry.watcher = deps.watchFile(localPath, () => schedule(entry));
+				entry.watcher = deps.watchFile(
+					localPath,
+					() => schedule(entry),
+					() => lose(entry)
+				);
 				watched.set(localPath, entry);
+				updatePoller();
 				while (watched.size > maxWatched) {
 					stop(watched.values().next().value as WatchedCopy);
 				}
@@ -358,6 +475,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				}
 				await place(bytes);
 				if (entry) {
+					entry.lastStat = await statKey(localPath);
 					entry.baseline = hashOf(bytes);
 					entry.kept = null;
 					// A fresh copy saves back again, unless it is too large to.

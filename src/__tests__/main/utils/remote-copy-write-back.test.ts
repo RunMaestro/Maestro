@@ -25,6 +25,9 @@ const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 let localFiles: Map<string, Buffer>;
 let remoteFile: Buffer;
 let onChange: (() => void) | null;
+let onError: ((error: unknown) => void) | null;
+/** Modification time of each local file, bumped by every write a test makes through `writeCopy`. */
+let mtimes: Map<string, number>;
 let events: RemoteCopyWriteBackEvent[];
 let writeRemote: Mock<
 	(
@@ -36,11 +39,18 @@ let writeRemote: Mock<
 >;
 let close: Mock<() => void>;
 
-function service(overrides: { maxWatched?: number; maxBytes?: number } = {}) {
+function service(overrides: { maxWatched?: number; maxBytes?: number; fileEvents?: boolean } = {}) {
+	const { fileEvents = true, ...rest } = overrides;
 	return createRemoteCopyWriteBack({
-		watchFile: (_localPath, handler) => {
-			onChange = handler;
+		watchFile: (_localPath, handler, errorHandler) => {
+			// Without file events (as on a machine that never delivers them) only the poll sees a save.
+			if (fileEvents) onChange = handler;
+			onError = errorHandler;
 			return { close };
+		},
+		statLocal: async (localPath) => {
+			const bytes = localFiles.get(localPath);
+			return bytes ? { size: bytes.length, mtimeMs: mtimes.get(localPath) ?? 0 } : null;
 		},
 		readLocal: async (localPath) => {
 			const bytes = localFiles.get(localPath);
@@ -56,8 +66,9 @@ function service(overrides: { maxWatched?: number; maxBytes?: number } = {}) {
 		writeRemote,
 		notify: (event) => events.push(event),
 		debounceMs: 50,
+		pollMs: 1000,
 		now: () => WHEN,
-		...overrides,
+		...rest,
 	});
 }
 
@@ -96,6 +107,8 @@ beforeEach(() => {
 	localFiles = new Map([[LOCAL, Buffer.from('fetched')]]);
 	remoteFile = Buffer.from('fetched');
 	onChange = null;
+	onError = null;
+	mtimes = new Map();
 	events = [];
 	close = vi.fn<() => void>();
 	// The remote's own check: the write lands only over the expected bytes.
@@ -369,6 +382,59 @@ describe('remote copy write-back', () => {
 		await vi.advanceTimersByTimeAsync(60);
 		await writeBack.idle();
 		expect(remoteFile.toString()).toBe('saved at quit');
+	});
+
+	it('sees a save with no file events, by its size and modification time, and sends it', async () => {
+		const writeBack = service({ fileEvents: false });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		expect(onChange).toBeNull();
+		// Same size as before: only the modification time moved.
+		localFiles.set(LOCAL, Buffer.from('edited!'));
+		mtimes.set(LOCAL, 1);
+		await vi.advanceTimersByTimeAsync(1000 + 60);
+		await writeBack.idle();
+		expect(remoteFile.toString()).toBe('edited!');
+		expect(events).toEqual([{ kind: 'saved', remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		// Nothing moved since: the poll sends nothing more.
+		await vi.advanceTimersByTimeAsync(3000);
+		await writeBack.idle();
+		expect(writeRemote).toHaveBeenCalledTimes(1);
+	});
+
+	it('stops polling once no copy is watched', async () => {
+		const writeBack = service({ fileEvents: false });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		expect(vi.getTimerCount()).toBe(1);
+		await writeBack.dispose();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('says once that a copy whose watcher failed no longer saves back, and a fresh Open watches it again', async () => {
+		const writeBack = await watched();
+		// Saved just before the watcher failed: still sent.
+		localFiles.set(LOCAL, Buffer.from('saved before the failure'));
+		onError?.(new Error('EMFILE'));
+		onError?.(new Error('EMFILE'));
+		await writeBack.idle();
+		expect(remoteFile.toString()).toBe('saved before the failure');
+		expect(close).toHaveBeenCalledTimes(1);
+		expect(events.map((e) => e.kind)).toEqual(['saved', 'unwatched']);
+
+		// A later save stays in the copy, even when the poll sees it.
+		localFiles.set(LOCAL, Buffer.from('after the failure'));
+		mtimes.set(LOCAL, 2);
+		await vi.advanceTimersByTimeAsync(2000);
+		await writeBack.idle();
+		expect(writeRemote).toHaveBeenCalledTimes(1);
+
+		// Open again: the unsent change is kept beside, and the copy is watched again.
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		expect(localFiles.get(keptVersionPath(LOCAL, WHEN))?.toString()).toBe('after the failure');
+		onChange = null;
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		expect(onChange).not.toBeNull();
+		await saveCopy(writeBack, 'watched again');
+		expect(remoteFile.toString()).toBe('watched again');
 	});
 
 	it('names the kept version beside the copy', () => {

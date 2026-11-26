@@ -395,6 +395,32 @@ describe('filesystem handlers', () => {
 			expect(safeSend).not.toHaveBeenCalled();
 		});
 
+		it('sees a save by polling when no file event arrives, and says once when the watcher fails', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 7, mtimeMs: 1 } as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			// The app saves; the OS never reports it.
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('edited!') as any);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 7, mtimeMs: 2 } as any);
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited!'),
+				sha(fetched),
+				{ id: 'r1' }
+			);
+
+			chokidarWatchers[0].handlers.get('error')!(new Error('EMFILE'));
+			chokidarWatchers[0].handlers.get('error')!(new Error('EMFILE'));
+			await vi.advanceTimersByTimeAsync(0);
+			const notices = safeSend.mock.calls.filter(
+				([channel, toast]) =>
+					channel === 'remote:notifyToast' && toast.title === 'No longer saving to the remote host'
+			);
+			expect(notices).toHaveLength(1);
+		});
+
 		it('a second Open keeps a copy whose saved change has not reached the remote', async () => {
 			vi.useFakeTimers();
 			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);

@@ -605,6 +605,15 @@ function announceWriteBack(
 		});
 		return;
 	}
+	if (event.kind === 'unwatched') {
+		safeSend('remote:notifyToast', {
+			title: 'No longer saving to the remote host',
+			message: `Maestro can no longer watch the copy of ${name} on this computer, so changes you save to it from now on stay here. Open the file again to start saving back.`,
+			color: 'yellow',
+			dismissible: true,
+		});
+		return;
+	}
 	if (event.kind === 'kept') {
 		safeSend('remote:notifyToast', {
 			title: 'Your change was kept',
@@ -638,7 +647,7 @@ function sshConfigOrThrow(sshRemoteId: string): SshRemoteConfig {
  */
 function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopyWriteBack {
 	return createRemoteCopyWriteBack({
-		watchFile: (localPath, onChange) => {
+		watchFile: (localPath, onChange, onError) => {
 			const watcher = chokidar.watch(localPath, {
 				ignoreInitial: true,
 				persistent: false,
@@ -649,13 +658,23 @@ function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopy
 			});
 			watcher.on('add', onChange);
 			watcher.on('change', onChange);
-			watcher.on('error', (error) =>
+			watcher.on('error', (error) => {
 				logger.warn('Remote copy watcher failed', 'fs:watchRemoteCopy', {
 					localPath,
 					error: String(error),
-				})
-			);
+				});
+				onError(error);
+			});
 			return { close: () => watcher.close() };
+		},
+		statLocal: async (localPath) => {
+			try {
+				const stat = await fs.stat(localPath);
+				return { size: stat.size, mtimeMs: stat.mtimeMs };
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+				throw error;
+			}
 		},
 		readLocal: (localPath) => fs.readFile(localPath),
 		// `wx`: a kept version never replaces an earlier one.
