@@ -191,6 +191,23 @@ describe('startGroupChatAutoRun refusals reach the chat', () => {
 		}
 	);
 
+	it.each(AGENT_MODES)(
+		'lets the %s run a chat already waits on answer a repeat request from that chat',
+		async (mode) => {
+			setAgent(mode);
+			void startGroupChatAutoRun(trigger, inProgress());
+			await vi.waitFor(() => expect(hasGroupChatAutoRun('agent-1')).toBe(true));
+			const again = vi.fn();
+
+			await startGroupChatAutoRun(trigger, again);
+
+			// No report: it would resolve the participant early and complete the run.
+			expect(again).not.toHaveBeenCalled();
+			expect(reportAutoRunComplete).not.toHaveBeenCalled();
+			expect(hasGroupChatAutoRun('agent-1')).toBe(true);
+		}
+	);
+
 	it('refuses the second of two requests whose folder listings overlap', async () => {
 		setAgent('local');
 		const listings: Array<(value: { success: boolean; files: string[] }) => void> = [];

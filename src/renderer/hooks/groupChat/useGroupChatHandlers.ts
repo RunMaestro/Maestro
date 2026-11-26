@@ -29,6 +29,7 @@ import { aiTabFocusFields } from '../../utils/tabHelpers';
 import {
 	consumeGroupChatAutoRun,
 	getAutoRunSessionsForGroupChat,
+	hasGroupChatAutoRun,
 } from '../../utils/groupChatAutoRunRegistry';
 import { archiveGroupChat, stopGroupChatWork } from '../../services/remoteGroupChat';
 import { steerGroupChatQueuedItem } from '../../services/groupChatSteering';
@@ -326,6 +327,15 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				// Fallback: resolve by participant name if registry entry was already consumed
 				const session = useSessionStore.getState().sessions.find((s) => s.name === participantName);
 				if (!session) return;
+				// This chat holds no entry for the agent, so a run still going on it, or
+				// one another chat is waiting on, is not this chat's run. That is the case
+				// when this chat's request was refused because the agent was busy.
+				if (
+					hasGroupChatAutoRun(session.id) ||
+					useBatchStore.getState().batchRunStates[session.id]?.isRunning
+				) {
+					return;
+				}
 				useBatchStore.getState().dispatchBatch({
 					type: 'COMPLETE_BATCH',
 					sessionId: session.id,

@@ -39,6 +39,11 @@ export function consumeGroupChatAutoRun(sessionId: string): GroupChatAutoRunEntr
 	return entry;
 }
 
+/** The group chat !autorun entry still waiting to be reported for this session, without consuming it. */
+export function peekGroupChatAutoRun(sessionId: string): GroupChatAutoRunEntry | undefined {
+	return registry.get(sessionId);
+}
+
 /** Whether a group chat !autorun run for this session is still waiting to be reported. */
 export function hasGroupChatAutoRun(sessionId: string): boolean {
 	return registry.has(sessionId);

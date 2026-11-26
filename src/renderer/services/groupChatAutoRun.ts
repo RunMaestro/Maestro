@@ -33,6 +33,7 @@ import { resolveGroupChatAutoRunTarget } from '../utils/groupChatAutoRun';
 import {
 	consumeGroupChatAutoRun,
 	hasGroupChatAutoRun,
+	peekGroupChatAutoRun,
 	registerGroupChatAutoRun,
 } from '../utils/groupChatAutoRunRegistry';
 import { DEFAULT_BATCH_PROMPT } from '../hooks/batch/batchUtils';
@@ -204,10 +205,17 @@ export async function startGroupChatAutoRun(
 	// completion the first one is waiting for. Checked with no `await` between
 	// the check and the registration, so two requests whose folder listings
 	// overlap cannot both pass it.
-	if (
-		hasGroupChatAutoRun(session.id) ||
-		useBatchStore.getState().batchRunStates[session.id]?.isRunning
-	) {
+	const waiting = peekGroupChatAutoRun(session.id);
+	if (waiting?.groupChatId === trigger.groupChatId) {
+		// This chat already waits on this agent's run, and that run's end answers
+		// it. Reporting a refusal here would resolve the participant early and let
+		// main complete the run it is still waiting on.
+		logger.info(
+			`[GroupChat:AutoRun] @${trigger.participantName} already runs an Auto Run for this chat; its result answers this request`
+		);
+		return;
+	}
+	if (waiting || useBatchStore.getState().batchRunStates[session.id]?.isRunning) {
 		await fail(
 			`Agent "${session.name}" is already running an Auto Run. Ask again when that run ends.`
 		);

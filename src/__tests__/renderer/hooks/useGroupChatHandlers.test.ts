@@ -8,6 +8,14 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import {
+	consumeGroupChatAutoRun,
+	hasGroupChatAutoRun,
+	registerGroupChatAutoRun,
+} from '../../../renderer/utils/groupChatAutoRunRegistry';
+import { createMockSession } from '../../helpers/mockSession';
 
 // Mock notifyToast (module-level export can't be spied - must vi.mock)
 vi.mock('../../../renderer/stores/notificationStore', async () => {
@@ -1734,6 +1742,58 @@ describe('useGroupChatHandlers', () => {
 
 			expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
 			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('autoRunBatchComplete listener', () => {
+		type BatchCompleteHandler = (groupChatId: string, participantName: string) => void;
+		let fire: BatchCompleteHandler;
+
+		beforeEach(() => {
+			(window.maestro as any).groupChat.onAutoRunBatchComplete = vi.fn(
+				(cb: BatchCompleteHandler) => {
+					fire = cb;
+					return () => {};
+				}
+			);
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'agent-1', name: 'Client' })],
+			} as never);
+			useBatchStore.setState({
+				batchRunStates: { 'agent-1': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+		});
+
+		afterEach(() => {
+			consumeGroupChatAutoRun('agent-1');
+		});
+
+		it('completes and consumes the run this chat is waiting on', () => {
+			registerGroupChatAutoRun('agent-1', 'chat-1', 'Client');
+			renderHook(() => useGroupChatHandlers());
+
+			act(() => fire('chat-1', 'Client'));
+
+			expect(hasGroupChatAutoRun('agent-1')).toBe(false);
+			expect(useBatchStore.getState().batchRunStates['agent-1']?.isRunning).toBe(false);
+		});
+
+		it("does not complete a run another chat is waiting on when this chat's request was refused", () => {
+			registerGroupChatAutoRun('agent-1', 'chat-1', 'Client');
+			renderHook(() => useGroupChatHandlers());
+
+			act(() => fire('chat-2', 'Client'));
+
+			expect(hasGroupChatAutoRun('agent-1')).toBe(true);
+			expect(useBatchStore.getState().batchRunStates['agent-1']?.isRunning).toBe(true);
+		});
+
+		it('does not complete a running run no chat started', () => {
+			renderHook(() => useGroupChatHandlers());
+
+			act(() => fire('chat-2', 'Client'));
+
+			expect(useBatchStore.getState().batchRunStates['agent-1']?.isRunning).toBe(true);
 		});
 	});
 });
