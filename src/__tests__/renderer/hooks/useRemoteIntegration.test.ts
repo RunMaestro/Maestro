@@ -5842,6 +5842,50 @@ describe('useRemoteIntegration', () => {
 			}
 		);
 
+		// Parity M8 (found by the refusal audit): `maestro-cli dispatch` with an `@mention` to a
+		// hosted agent used to hand the host the text alone, dropping the mention and its routing.
+		it.each(AGENT_MODES)(
+			'%s: a dispatched @mention behind a busy tab waits in this line with its routing, for the drain to consult',
+			async (mode) => {
+				const session = seed(mode, 'busy');
+				// Every call in this case resolves the mention (the composer and the queue builder ask).
+				vi.mocked(planCrossAgentMentions).mockReturnValue({
+					targetSessionIds: ['reviewer'],
+					routing: 'handoff',
+					inferredRouting: 'handoff',
+					routingSource: 'explicit',
+					suppressLocal: false,
+				});
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					await onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'look at this, then send it to @Reviewer',
+						'chan',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						'handoff'
+					);
+				});
+
+				const [, answer] = mockProcess.sendRemoteEnqueueCommandResponse.mock.calls[0];
+				expect(answer).toMatchObject({ success: true, tabId: 'tab-1', queued: true });
+				const local = useSessionStore.getState().sessions[0].executionQueue;
+				expect(local).toHaveLength(1);
+				expect(local[0]).toMatchObject({
+					text: 'look at this, then send it to @Reviewer',
+					crossAgentMention: true,
+					mentionRouting: 'handoff',
+				});
+				expect(hostSends()).toEqual([]);
+				vi.mocked(planCrossAgentMentions).mockImplementation(() => null);
+			}
+		);
+
 		it.each(AGENT_MODES)(
 			'%s: a new tab with a prompt opens hidden in the background and runs the prompt there',
 			async (mode) => {
