@@ -1455,6 +1455,8 @@ interface MaestroAPI {
 						errorLine?: string;
 					};
 					parsedJson?: unknown;
+					/** The agent's last terminal screen, for the error modal only. */
+					failureScreen?: string;
 					/** Set when the failing process ran over SSH. */
 					sshRemoteId?: string;
 				}

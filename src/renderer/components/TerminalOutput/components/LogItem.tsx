@@ -29,6 +29,7 @@ import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
 import { formatDurationWords, formatTurnDuration } from '../../../../shared/duration';
 import { sessionImageThumbnailSrc } from '../../../../shared/sessionImageRefs';
+import { withoutFailureScreen } from '../../../../shared/failureScreen';
 import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
@@ -713,7 +714,7 @@ export const LogItem = memo(
 							</div>
 							<div className="text-sm" style={{ color: theme.colors.textMain }}>
 								<MarkdownRenderer
-									content={log.text}
+									content={withoutFailureScreen(log.text)}
 									theme={theme}
 									onCopy={copyToClipboard}
 									fileTree={fileTree}
@@ -725,20 +726,21 @@ export const LogItem = memo(
 									chatMath
 								/>
 							</div>
-							{!!log.agentError?.parsedJson && onShowErrorDetails && (
-								<button
-									onClick={() => onShowErrorDetails(log.agentError!)}
-									className="self-start flex items-center gap-2 px-3 py-1.5 text-xs rounded border hover:opacity-80 transition-opacity"
-									style={{
-										backgroundColor: theme.colors.error + '15',
-										borderColor: theme.colors.error + '40',
-										color: theme.colors.error,
-									}}
-								>
-									<Eye className="w-3 h-3" />
-									View Details
-								</button>
-							)}
+							{!!(log.agentError?.parsedJson || log.agentError?.failureScreen) &&
+								onShowErrorDetails && (
+									<button
+										onClick={() => onShowErrorDetails(log.agentError!)}
+										className="self-start flex items-center gap-2 px-3 py-1.5 text-xs rounded border hover:opacity-80 transition-opacity"
+										style={{
+											backgroundColor: theme.colors.error + '15',
+											borderColor: theme.colors.error + '40',
+											color: theme.colors.error,
+										}}
+									>
+										<Eye className="w-3 h-3" />
+										View Details
+									</button>
+								)}
 						</div>
 					)}
 					{/* Special rendering for thinking/streaming content (AI reasoning in real-time) */}

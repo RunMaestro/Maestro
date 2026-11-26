@@ -1798,20 +1798,33 @@ describe('ClaudeOutputParser failed results (is_error: true)', () => {
 		expect(classifyRetryableError(error!)).toBe(strategy);
 	});
 
-	it('shows the screen maestro-p attached under the failure message', () => {
+	it('carries the screen maestro-p attached on its own field, not in the message', () => {
 		const error = parser.detectErrorFromParsed({
 			type: 'result',
 			subtype: 'error_during_execution',
 			session_id: 'sess-1',
 			is_error: true,
 			error: 'tui_exited',
-			last_screen: 'Adding a new directory:\n\n/work/shared\n\n❯ No, exit\n  Yes, add it',
+			last_screen:
+				'Adding a new directory:\n\n/work/shared\n\n❯ No, exit\n  Yes, add it\n\\033[1;30m$\\033[0m',
 		});
 
 		expect(error?.message).toMatch(/^Claude Code quit before the turn finished\./);
-		expect(error?.message).toContain('What Claude Code last showed:');
-		expect(error?.message).toContain('❯ No, exit');
-		expect(error?.message).not.toContain('Nothing it printed');
+		expect(error?.message).not.toContain('❯ No, exit');
+		expect(error?.failureScreen).toContain('❯ No, exit');
+		expect(error?.failureScreen).not.toContain('\\033');
+	});
+
+	it('leaves failureScreen off when maestro-p attached no screen', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'timeout',
+		});
+
+		expect(error).not.toHaveProperty('failureScreen');
 	});
 
 	it('never lets the attached screen pick the error type or a retry', () => {

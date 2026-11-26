@@ -33,6 +33,7 @@ import { isImeComposing } from '../utils/ime';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { inlineErrorText } from '../../shared/failureScreen';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -623,7 +624,7 @@ export const SessionItem = memo(function SessionItem({
 					<div
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
-						title={`Error: ${session.agentError.message}`}
+						title={`Error: ${inlineErrorText(session.agentError.message)}`}
 					>
 						<AlertCircle className="w-2.5 h-2.5" />
 						ERR

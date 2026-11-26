@@ -49,6 +49,7 @@ import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
+import { inlineErrorText } from '../../../shared/failureScreen';
 import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
@@ -1013,7 +1014,7 @@ function PaneStatusIndicators({
 	return (
 		<>
 			{aiTab.agentError && (
-				<span title={`Error: ${aiTab.agentError.message}`}>
+				<span title={`Error: ${inlineErrorText(aiTab.agentError.message)}`}>
 					<AlertCircle className="w-3 h-3 shrink-0" style={{ color: theme.colors.error }} />
 				</span>
 			)}

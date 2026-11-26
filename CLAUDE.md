@@ -108,7 +108,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
-- **A terminal screen shown under a failure message:** `appendFailureScreen()`, `withoutFailureScreen()` in `src/shared/failureScreen.ts`
+- **A terminal screen kept beside a failure message, and an error message shown inline:** `formatFailureScreen()`, `inlineErrorText()`, `withoutFailureScreen()` in `src/shared/failureScreen.ts`
 - **An Error in a log entry or JSON payload:** `serializeError()`, `toLoggableData()` in `src/shared/serializeError.ts`
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable()` in `src/shared/sshConnection.ts`
 - **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
