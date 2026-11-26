@@ -535,6 +535,39 @@ describe('TokenStats framing', () => {
 		expect(getTokenUsage).toHaveBeenCalledTimes(2);
 	});
 
+	it('offers a refresh in the empty state while something is not counted, and reads again on it', async () => {
+		const getTokenUsage = vi.fn().mockResolvedValue({
+			...aggregate,
+			totals: makeTotals({ sessionCount: 0 }),
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+		});
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+		await screen.findByText(/No token usage in this range\./);
+		fireEvent.click(screen.getByTestId('token-stats-refresh'));
+		await waitFor(() => expect(getTokenUsage).toHaveBeenCalledTimes(2));
+		expect(getTokenUsage.mock.calls[1][1]).toBe(true);
+	});
+
+	it('names agents still being read as not counted once the read for them failed', () => {
+		const data = {
+			...aggregate,
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: ['Build Box'],
+				remoteRefreshing: true,
+			},
+		};
+		expect(tokenCoverageNotes(data).join(' ')).toContain('still being read');
+		const failed = tokenCoverageNotes(data, { readFailed: true }).join(' ');
+		expect(failed).not.toContain('still being read');
+		expect(failed).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+	});
+
 	it('shows the error, not an empty state, when the read fails', async () => {
 		(window as unknown as { maestro: unknown }).maestro = {
 			stats: { getTokenUsage: vi.fn().mockRejectedValue(new Error('disk on fire')) },

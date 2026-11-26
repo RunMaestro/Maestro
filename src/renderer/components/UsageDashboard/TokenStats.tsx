@@ -453,7 +453,11 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
  * line names agents and where their transcripts are, never the agent's mode: a
  * remote and a hosted agent read the same.
  */
-export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
+export function tokenCoverageNotes(
+	data: TokenUsageAggregate,
+	/** The read that would have counted the agents still being read failed: they are not counted. */
+	options: { readFailed?: boolean } = {}
+): string[] {
 	const notes: string[] = [];
 	const partial = Object.entries(data.coverageByAgent)
 		.filter(([, coverage]) => coverage === 'partial')
@@ -467,7 +471,11 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 	// Agents on another computer are counted there; only the ones that computer
 	// could not answer for are named, and removed agents whose computer nothing
 	// here can reach are counted as one group.
-	const unread = [...(data.excluded.notCountedAgents ?? [])];
+	const pending = data.excluded.pendingAgents ?? [];
+	const unread = [
+		...(data.excluded.notCountedAgents ?? []),
+		...(options.readFailed ? pending : []),
+	];
 	const removed = data.excluded.remoteProjects;
 	if (removed > 0) unread.push(removed === 1 ? '1 removed agent' : `${removed} removed agents`);
 	if (unread.length > 0) {
@@ -480,8 +488,7 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 			`${conversations === 1 ? '1 conversation' : `${conversations} conversations`} of ${name} (too large to read)`
 		);
 	}
-	const pending = data.excluded.pendingAgents ?? [];
-	if (pending.length > 0) {
+	if (pending.length > 0 && !options.readFailed) {
 		skipped.push(`${pending.join(', ')} (conversations on another computer, still being read)`);
 	}
 	if (data.excluded.unsupportedAgents.length > 0) {
@@ -493,6 +500,31 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 		notes.push(`Not counted: ${skipped.join('; ')}.`);
 	}
 	return notes;
+}
+
+/** Re-read the transcripts now: the footer's control, and the empty state's while something is left out. */
+function TokenRefreshButton({
+	theme,
+	refreshing,
+	onRefresh,
+}: {
+	theme: Theme;
+	refreshing: boolean;
+	onRefresh: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onRefresh}
+			disabled={refreshing}
+			className="flex items-center gap-1.5 px-2 py-1 rounded transition-opacity hover:opacity-80 disabled:opacity-50"
+			style={{ color: theme.colors.textDim }}
+			data-testid="token-stats-refresh"
+		>
+			<RefreshCw size={12} className={refreshing ? 'animate-spin' : undefined} />
+			{refreshing ? 'Refreshing' : 'Refresh'}
+		</button>
+	);
 }
 
 export const TokenStats = memo(function TokenStats({
@@ -520,7 +552,9 @@ export const TokenStats = memo(function TokenStats({
 		// Nothing counted can still mean something was left out (every agent is on a computer
 		// that did not answer), so the empty state names it too.
 		const notCounted = data
-			? tokenCoverageNotes(data).filter((note) => note.startsWith('Not counted'))
+			? tokenCoverageNotes(data, { readFailed: !!error }).filter((note) =>
+					note.startsWith('Not counted')
+				)
 			: [];
 		return (
 			<DashboardPanelState
@@ -533,6 +567,16 @@ export const TokenStats = memo(function TokenStats({
 						? `No token usage in this range. ${notCounted.join(' ')}`
 						: 'No token usage in this range. Run an agent and its token consumption shows up here.'
 				}
+				// Something left out may be counted on a later read (a computer that answers now).
+				emptyAction={
+					notCounted.length > 0 ? (
+						<TokenRefreshButton
+							theme={theme}
+							refreshing={refreshing}
+							onRefresh={() => void forceRefresh()}
+						/>
+					) : undefined
+				}
 				loadingMessage="Reading agent transcripts..."
 				onRetry={() => void forceRefresh()}
 				testId="token-stats"
@@ -542,7 +586,7 @@ export const TokenStats = memo(function TokenStats({
 
 	const { totals } = data;
 	const accentColor = colorBlindMode ? COLORBLIND_AGENT_PALETTE[0] : theme.colors.accent;
-	const coverageNotes = tokenCoverageNotes(data);
+	const coverageNotes = tokenCoverageNotes(data, { readFailed: !!error });
 
 	return (
 		<DashboardPanelState
@@ -679,17 +723,11 @@ export const TokenStats = memo(function TokenStats({
 							<span key={note}>{note}</span>
 						))}
 					</div>
-					<button
-						type="button"
-						onClick={() => void forceRefresh()}
-						disabled={refreshing}
-						className="flex items-center gap-1.5 px-2 py-1 rounded transition-opacity hover:opacity-80 disabled:opacity-50"
-						style={{ color: theme.colors.textDim }}
-						data-testid="token-stats-refresh"
-					>
-						<RefreshCw size={12} className={refreshing ? 'animate-spin' : undefined} />
-						{refreshing ? 'Refreshing' : 'Refresh'}
-					</button>
+					<TokenRefreshButton
+						theme={theme}
+						refreshing={refreshing}
+						onRefresh={() => void forceRefresh()}
+					/>
 				</div>
 			</div>
 		</DashboardPanelState>
