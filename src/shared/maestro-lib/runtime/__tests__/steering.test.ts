@@ -12,11 +12,15 @@ import {
 	runtimeSteerBlockedReason,
 	type SteerableItem,
 	type SteeredTurn,
+	type SteeredTurnHandle,
 } from '../steering';
 
 type Verdict = Omit<SteeringResultFrame, 'type' | 'id'>;
 
-function setup(answer: Verdict = { verdict: 'delivered' }) {
+function setup(
+	answer: Verdict = { verdict: 'delivered' },
+	beforeAnswer?: (steerId: string) => void
+) {
 	const queue: ExecutionQueue<SteerableItem> = createExecutionQueue<SteerableItem>({
 		// A turn that runs until the test is done with it.
 		start: async () => ({ done: new Promise<void>(() => undefined), interrupt: () => undefined }),
@@ -35,6 +39,7 @@ function setup(answer: Verdict = { verdict: 'delivered' }) {
 		now: () => 5,
 		send: async (_socket, text, steerId) => {
 			typed.push(text);
+			beforeAnswer?.(steerId);
 			return { type: 'steering', id: steerId, ...answer };
 		},
 	});
@@ -98,6 +103,44 @@ describe('the host steer', () => {
 			outcome: 'not-steerable',
 			blockedReason: 'paused',
 		});
+	});
+
+	it('settles a steer the turn said it took, even when the socket answer was lost', async () => {
+		// The turn prints its verdict before the socket gives up.
+		const turn: { handle?: SteeredTurnHandle } = {};
+		const { steering, entries, ids, tui } = setup({ verdict: 'unknown' }, (steerId) =>
+			turn.handle?.verdict({ type: 'steering', id: steerId, verdict: 'absorbed' })
+		);
+		turn.handle = steering.turnStarted('a1', 't1', tui);
+
+		expect(await steering.steer('a1', 'q1')).toEqual({ outcome: 'settled', verdict: 'absorbed' });
+		expect(ids()).toEqual([]);
+		expect(entries).toEqual([expect.objectContaining({ source: 'user', steered: true })]);
+	});
+
+	it('takes a paused steer off the queue when the turn later says it took it, and frees it when dropped', async () => {
+		const first = setup({ verdict: 'unknown' });
+		const turn = first.steering.turnStarted('a1', 't1', first.tui);
+		await first.steering.steer('a1', 'q1');
+		expect(first.ids()).toEqual(['q1 (paused)']);
+		turn.verdict({ type: 'steering', id: 'id-1', verdict: 'queued' });
+		await Promise.resolve();
+		// Taken: Resume can no longer send it a second time.
+		expect(first.ids()).toEqual([]);
+		expect(first.entries).toEqual([expect.objectContaining({ source: 'user', steered: true })]);
+
+		const second = setup({ verdict: 'unknown' });
+		const other = second.steering.turnStarted('a1', 't1', second.tui);
+		await second.steering.steer('a1', 'q1');
+		other.verdict({ type: 'steering', id: 'id-1', verdict: 'dropped' });
+		// Never taken: it sends next, and the tab says so.
+		expect(second.ids()).toEqual(['q1']);
+		expect(second.entries).toEqual([
+			expect.objectContaining({
+				source: 'system',
+				text: expect.stringContaining('will send next'),
+			}),
+		]);
 	});
 
 	it('brings a steer the agent never took back to the queue, live, with the words the desktop toast uses', async () => {

@@ -132,6 +132,11 @@ interface PendingSteer<T> {
 	agentId: string;
 	tabId: string;
 	item: T;
+	/**
+	 * Its socket answer never came, so it waits back in the queue, paused. The turn can still
+	 * say what became of it: taken, and it leaves the queue; dropped, and it sends next.
+	 */
+	parked?: boolean;
 }
 
 export function createRuntimeSteering<T extends SteerableItem>(
@@ -184,6 +189,10 @@ export function createRuntimeSteering<T extends SteerableItem>(
 	/** The turn ended before the agent took the text: it sends next, as the desktop's toast says. */
 	function dropped(steered: PendingSteer<T>): void {
 		returnToQueue(steered, false);
+		droppedLine(steered);
+	}
+
+	function droppedLine(steered: PendingSteer<T>): void {
 		systemLine(
 			steered.agentId,
 			steered.tabId,
@@ -214,9 +223,16 @@ export function createRuntimeSteering<T extends SteerableItem>(
 				}
 				if (frame.verdict === 'absorbed' || frame.verdict === 'queued') {
 					pending.get(token)?.delete(frame.id);
+					// The agent took a message that waited paused: it leaves the queue, never runs twice.
+					if (steered.parked && options.queueOf(agentId)?.remove(steered.item.id)) {
+						void writeSteeredEntry(steered);
+					}
 				} else if (frame.verdict === 'dropped') {
 					pending.get(token)?.delete(frame.id);
-					dropped(steered);
+					if (!steered.parked) dropped(steered);
+					else if (options.queueOf(agentId)?.setPaused(steered.item.id, false)) {
+						droppedLine(steered);
+					}
 				}
 				// `delivered` repeated on stdout says nothing new.
 			},
@@ -225,7 +241,9 @@ export function createRuntimeSteering<T extends SteerableItem>(
 				for (const heard of early.get(token) ?? []) heard.exited = true;
 				// maestro-p reports every unsettled steer as `dropped` before it exits, so one left
 				// here means that report never came (a crash, a kill).
-				for (const steered of pending.get(token)?.values() ?? []) unconfirmed(steered);
+				for (const steered of pending.get(token)?.values() ?? []) {
+					if (!steered.parked) unconfirmed(steered);
+				}
 				pending.delete(token);
 			},
 		};
@@ -269,8 +287,9 @@ export function createRuntimeSteering<T extends SteerableItem>(
 		early.set(token, listening);
 		inFlight.add(flightKey);
 		let frame: SteeringResultFrame;
+		const steerId = options.newId();
 		try {
-			frame = await send(socketPath, item.text.trim(), options.newId());
+			frame = await send(socketPath, item.text.trim(), steerId);
 		} catch (error) {
 			// The socket client never rejects; anything here may have followed a write.
 			frame = {
@@ -285,21 +304,47 @@ export function createRuntimeSteering<T extends SteerableItem>(
 		// What the turn says while this steer is still being answered is held for it, until it is
 		// registered below or settled.
 		try {
-			return await settleSteer(frame, steered, token, heard);
+			return await settleSteer(frame, steerId, steered, token, heard);
 		} finally {
 			listening.delete(heard);
 			if (listening.size === 0 && early.get(token) === listening) early.delete(token);
 		}
 	}
 
+	/** The steered entry joins the transcript, as the desktop's bubble. */
+	function writeSteeredEntry(steered: PendingSteer<T>): Promise<void> {
+		const { item } = steered;
+		return options.appendEntry(steered.agentId, item.tabId, {
+			id: options.newId(),
+			timestamp: options.now(),
+			source: 'user',
+			text: item.text,
+			steered: true,
+			queuedItemId: item.id,
+			...(item.readOnly ? { readOnly: true } : {}),
+		});
+	}
+
+	function registerPending(token: object, steerId: string, steered: PendingSteer<T>): void {
+		let steers = pending.get(token);
+		if (!steers) {
+			steers = new Map();
+			pending.set(token, steers);
+		}
+		steers.set(steerId, steered);
+	}
+
 	async function settleSteer(
-		frame: SteeringResultFrame,
+		socketFrame: SteeringResultFrame,
+		steerId: string,
 		steered: PendingSteer<T>,
 		token: object,
 		heard: Heard
 	): Promise<QueueSteerResult> {
-		const { agentId, item } = steered;
-
+		// What the turn printed for this steer while the socket was still answering.
+		const heardOf = (...verdicts: SteeringResultFrame['verdict'][]) =>
+			heard.verdicts.find((v) => v.id === steerId && verdicts.includes(v.verdict));
+		let frame = socketFrame;
 		if (frame.verdict === 'refused') {
 			// Nothing was typed: the message is still the person's, live, at the head.
 			returnToQueue(steered, false);
@@ -315,48 +360,49 @@ export function createRuntimeSteering<T extends SteerableItem>(
 			frame.verdict !== 'absorbed' &&
 			frame.verdict !== 'queued'
 		) {
-			// `unknown` (or a `dropped` on the socket): it may have been typed. Paused, never doubled.
-			returnToQueue(steered, true);
+			// No answer from the socket, but the turn may have said already that it has the text.
+			const said = heardOf('delivered', 'absorbed', 'queued', 'dropped');
+			if (!said) {
+				// `unknown`: it may have been typed. Paused, never doubled, and still listened for.
+				returnToQueue(steered, true);
+				if (!heard.exited) registerPending(token, steerId, { ...steered, parked: true });
+				return {
+					outcome: 'unconfirmed',
+					verdict: frame.verdict,
+					...(frame.detail ? { detail: frame.detail } : {}),
+				};
+			}
+			frame = said;
+		}
+		if (frame.verdict === 'dropped') {
+			// Typed, and the turn ended before it took it: the message is the person's to send.
+			dropped(steered);
 			return {
-				outcome: 'unconfirmed',
-				verdict: frame.verdict,
-				...(frame.detail ? { detail: frame.detail } : {}),
+				outcome: 'refused',
+				verdict: 'dropped',
+				refusal: 'not-running',
+				detail: 'the turn ended before it took the message',
 			};
 		}
 
-		// The agent has the text: the steered entry joins the transcript, as the desktop's bubble,
-		// before the answer goes back, so a client that reads the tab next finds it.
-		await options.appendEntry(agentId, item.tabId, {
-			id: options.newId(),
-			timestamp: options.now(),
-			source: 'user',
-			text: item.text,
-			steered: true,
-			queuedItemId: item.id,
-			...(item.readOnly ? { readOnly: true } : {}),
-		});
+		// The agent has the text: the entry is written before the answer goes back, so a client that
+		// reads the tab next finds it.
+		await writeSteeredEntry(steered);
 		if (frame.verdict !== 'delivered') return { outcome: 'settled', verdict: frame.verdict };
 
 		// What the turn said while the socket was still answering settles it now.
-		const later = heard.verdicts.find((v) => v.id === frame.id && v.verdict !== 'delivered');
+		const later = heardOf('absorbed', 'queued', 'dropped');
 		if (later?.verdict === 'dropped') {
 			dropped(steered);
-			return { outcome: 'delivered', verdict: frame.verdict };
+			return { outcome: 'delivered', verdict: 'delivered' };
 		}
-		if (later?.verdict === 'absorbed' || later?.verdict === 'queued') {
-			return { outcome: 'settled', verdict: later.verdict };
-		}
+		if (later) return { outcome: 'settled', verdict: later.verdict };
 		if (heard.exited) {
 			unconfirmed(steered);
-			return { outcome: 'delivered', verdict: frame.verdict };
+			return { outcome: 'delivered', verdict: 'delivered' };
 		}
-		let steers = pending.get(token);
-		if (!steers) {
-			steers = new Map();
-			pending.set(token, steers);
-		}
-		steers.set(frame.id, steered);
-		return { outcome: 'delivered', verdict: frame.verdict };
+		registerPending(token, steerId, steered);
+		return { outcome: 'delivered', verdict: 'delivered' };
 	}
 
 	return { turnStarted, steer };

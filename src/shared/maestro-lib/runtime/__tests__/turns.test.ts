@@ -653,6 +653,36 @@ describe('runtime turns', () => {
 				expect(live.max).toBe(1);
 			});
 
+			it('holds a send behind a long synopsis without spending its retries, so it never pauses', async () => {
+				hold = true;
+				const base = deps();
+				const runtime = await start(
+					[
+						seedAgent({
+							aiTabs: [
+								{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+							],
+							unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+						}),
+					],
+					// A 1 ms recheck: a send that collided with the hold would spend its six attempts at once.
+					{ deps: { ...base, turns: { ...base.turns!, recheckMs: 1 } } }
+				);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				await vi.waitFor(() => expect(argvFiles).toHaveLength(1), { timeout: 8_000 });
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: 'hello' }))).toMatchObject({
+					status: 'queued',
+				});
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({ text: 'hello', paused: false }),
+				]);
+				expect(turn.kinds()).not.toContain('error');
+				expect(argvFiles).toHaveLength(1);
+			});
+
 			it('summarizes the session the tab holds once its turn ends, not the one it had before', async () => {
 				hold = true;
 				const runtime = await start([

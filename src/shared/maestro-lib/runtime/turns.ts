@@ -836,6 +836,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			queue = createExecutionQueue<TurnItem>({
 				start: (item) => startItem(agentId, item),
 				onEvent: (event) => onQueueEvent(agentId, event),
+				// A `/history` synopsis holding the tab's provider session holds the tab's queue, as a
+				// retry does: the send waits, never spends its collision attempts, and runs at release.
+				isRetryHeld: (tabId) => synopsisHolds.has(waiterKey(agentId, tabId)),
 				holdsTree: () => options.autoRunHolds?.(agentId) ?? false,
 				...(deps.recheckMs !== undefined ? { recheckMs: deps.recheckMs } : {}),
 				...(deps.schedule ? { schedule: deps.schedule } : {}),
