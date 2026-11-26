@@ -1599,6 +1599,18 @@ const REMOTE_SHA256_PRELUDE = [
 		REMOTE_SHA256_NO_TOOL,
 ];
 
+/**
+ * The line of a remote `/bin/sh` script that defines `gone <path>`: succeeds
+ * when the path is confirmed not to be a regular file (it is absent, or is
+ * something else), and fails, saying so on stderr, when the path cannot be
+ * looked up (a folder on the way cannot be searched). An access error is
+ * retryable; only a confirmed absence reads as the remote file having changed.
+ * The nearest folder above the path that can be stat-ed decides: if it can be
+ * searched, the next name below it really is not there.
+ */
+const REMOTE_PATH_GONE_PRELUDE =
+	'gone() { if [ -e "$1" ] || [ -L "$1" ]; then return 0; fi; __p=$1; while :; do __p=$(dirname -- "$__p"); if [ -d "$__p" ]; then [ -x "$__p" ] && return 0; echo "Permission denied: cannot reach $1" >&2; return 1; fi; case $__p in /|.) return 0;; esac; done; }';
+
 function noRemoteSha256Message(filePath: string): string {
 	return `The remote host has no sha256sum or shasum to check ${filePath}`;
 }
@@ -1616,7 +1628,8 @@ export async function sha256FileRemote(
 	const script = [
 		`f=${shellEscapeRemotePath(filePath)}`,
 		...REMOTE_SHA256_PRELUDE,
-		'[ -f "$f" ] || exit 0',
+		REMOTE_PATH_GONE_PRELUDE,
+		'if [ ! -f "$f" ]; then gone "$f" && exit 0; exit 1; fi',
 		'sum "$f" || exit 1',
 	].join('\n');
 	const result = await execRemoteCommand(sshRemote, `/bin/sh -c ${shellEscape(script)}`, deps);
@@ -1643,15 +1656,20 @@ export async function sha256FileRemote(
  * whose SHA-256 is `expectedSha256` (the write-back of a copy opened in another
  * app). One SSH round trip:
  *
- * 1. The bytes go to a temp file on the remote first, so a dropped connection
- *    never leaves the target cut short.
+ * 1. The bytes go to a temp file on the remote first, and are hashed there: an
+ *    upload cut short (even at a base64 boundary) is refused before the
+ *    target is touched.
  * 2. The target is hashed there and compared with `expectedSha256`; a target
- *    that changed, or is gone, is left alone and reported as `changed`.
+ *    that changed, or is confirmed gone, is left alone and reported as
+ *    `changed`. A target that cannot be read or reached is a failure, not a
+ *    change, so the next save tries again.
  * 3. The temp file is copied INTO the target (not moved over it), which keeps
- *    the target's mode, owner, and links. That copy truncates the target
- *    first, so the script ignores a hang-up from there on: a connection that
- *    drops mid-copy (sshd sends SIGHUP to the session) no longer kills it and
- *    leaves the target cut short. The copy finishes, then the temp file goes.
+ *    the target's mode, owner, ACLs, and hard links, and needs no write
+ *    permission on the folder. That copy truncates the target first, so the
+ *    script ignores a hang-up from there on: a connection that drops mid-copy
+ *    (sshd sends SIGHUP to the session) no longer kills it. A copy that fails
+ *    (the target's disk is full) puts the target's earlier bytes back from a
+ *    second temp copy, and reports the failure.
  *
  * Steps 2 and 3 run back to back on the remote host, which leaves the window for
  * another writer at the remote's own speed instead of an SSH round trip. A
@@ -1672,16 +1690,24 @@ export async function replaceFileRemoteIfUnchanged(
 	const script = [
 		`f=${shellEscapeRemotePath(filePath)}`,
 		...REMOTE_SHA256_PRELUDE,
+		REMOTE_PATH_GONE_PRELUDE,
 		'tmp=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
-		'trap \'rm -f "$tmp"\' EXIT',
+		'trap \'rm -f "$tmp" "$tmp.orig"\' EXIT',
 		'base64 -d > "$tmp" || exit 1',
-		`[ -f "$f" ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
+		'got=$(sum "$tmp") || exit 1',
+		`[ "$got" = ${contentSha256} ] || { echo "The upload did not arrive whole" >&2; exit 1; }`,
+		`if [ ! -f "$f" ]; then gone "$f" && exit ${REPLACE_IF_UNCHANGED_CHANGED}; exit 1; fi`,
 		'cur=$(sum "$f") || exit 1',
 		`[ "$cur" = ${contentSha256} ] && exit 0`,
 		`[ "$cur" = ${expectedSha256} ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
+		// The target's bytes now, to put back if the copy into it fails midway.
+		'cp "$f" "$tmp.orig" || exit 1',
 		// Ignored signals are inherited, so the `cat` survives the hang-up too.
 		"trap '' HUP PIPE",
-		'cat "$tmp" > "$f"',
+		'if ! cat "$tmp" > "$f"; then',
+		'  if cat "$tmp.orig" > "$f"; then echo "Could not write the file (is the disk full?); it was left as it was" >&2; else echo "Could not write the file, and could not put it back as it was" >&2; fi',
+		'  exit 1',
+		'fi',
 	].join('\n');
 	// Never run twice: a retry after a dropped connection would hash the target
 	// while the first run's copy (which survives the hang-up) is still writing it,

@@ -2697,11 +2697,18 @@ finally:
 		const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
 
 		/** Deps that run the generated command with this machine's sh, as the remote would. */
-		function runLocally(env?: NodeJS.ProcessEnv): RemoteFsDeps {
+		function runLocally(
+			env?: NodeJS.ProcessEnv,
+			arrived: (input: string) => string = (input) => input
+		): RemoteFsDeps {
 			return {
 				buildSshArgs: vi.fn().mockReturnValue(['host']),
 				execSsh: vi.fn(async (_ssh: string, args: string[], input?: string) => {
-					const out = spawnSync('sh', ['-c', args.at(-1)!], { input, encoding: 'utf8', env });
+					const out = spawnSync('sh', ['-c', args.at(-1)!], {
+						input: input === undefined ? undefined : arrived(input),
+						encoding: 'utf8',
+						env,
+					});
 					return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
 				}),
 			};
@@ -2826,6 +2833,88 @@ finally:
 				expect(result.success).toBe(false);
 				expect(result.changed).toBeUndefined();
 				expect(result.error).toContain('Permission denied');
+			}
+		);
+
+		/** A PATH with `cat` replaced by `body` (a sh script; `$REAL_CAT` is the real one). */
+		function pathWithCat(body: string): NodeJS.ProcessEnv {
+			const bin = path.join(dir, 'bin');
+			fs.mkdirSync(bin, { recursive: true });
+			const realCat = spawnSync('sh', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim();
+			fs.writeFileSync(path.join(bin, 'cat'), `#!/bin/sh\nREAL_CAT=${realCat}\n${body}\n`, {
+				mode: 0o755,
+			});
+			return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` };
+		}
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses an upload cut short, even at a base64 boundary, and leaves the file alone',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited and longer'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(undefined, (input) => input.slice(0, 8))
+				);
+				expect(result).toMatchObject({ success: false });
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('The upload did not arrive whole');
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'puts the file back as it was when the copy into it fails midway',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				// The copy into the target writes a prefix and fails (a full disk); the
+				// copy that puts the earlier bytes back works.
+				const env = pathWithCat(
+					'case "$1" in *.orig) exec "$REAL_CAT" "$@";; esac\nhead -c 3 "$1"\nexit 1'
+				);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(env)
+				);
+				expect(result.success).toBe(false);
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('it was left as it was');
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+			'reads a file in a folder it cannot search as a failure, never as deleted',
+			async () => {
+				const sub = path.join(dir, 'locked');
+				fs.mkdirSync(sub);
+				const file = path.join(sub, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(sub, 0o600);
+				try {
+					const hashed = await sha256FileRemote(file, baseConfig, runLocally());
+					expect(hashed.success).toBe(false);
+					expect(hashed.error).toContain('Permission denied');
+					const written = await replaceFileRemoteIfUnchanged(
+						file,
+						Buffer.from('edited'),
+						sha('fetched'),
+						baseConfig,
+						runLocally()
+					);
+					expect(written.success).toBe(false);
+					expect(written.changed).toBeUndefined();
+				} finally {
+					fs.chmodSync(sub, 0o700);
+				}
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
 			}
 		);
 
