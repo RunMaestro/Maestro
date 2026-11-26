@@ -16,6 +16,7 @@ import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { resetStore } from '../../../helpers/resetStores';
+import { AGENT_MODES, agentModeFields } from '../../../helpers/mockSession';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -626,6 +627,72 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	// One set of labels and controls in every mode; only where detection runs
+	// differs (this computer for a local agent, over SSH for a remote or hosted one).
+	describe.each(AGENT_MODES)('the same panel for a %s agent', (mode) => {
+		const fields = agentModeFields(mode);
+		const modeProps = {
+			isSshEnabled: Boolean(fields.sessionSshRemoteConfig?.enabled),
+			sshRemoteId: fields.sshRemoteId ?? undefined,
+		};
+		const agentsGet = () =>
+			(window as unknown as { maestro: { agents: { get: ReturnType<typeof vi.fn> } } }).maestro
+				.agents.get;
+
+		beforeEach(() => {
+			// The remote resolves the same binary this computer does.
+			agentsGet().mockResolvedValue({ available: true, path: '/usr/local/bin/claude' });
+		});
+		afterEach(() => {
+			agentsGet().mockResolvedValue(null);
+		});
+
+		it('reads the same Path label, value, hint and controls', async () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						...modeProps,
+						onRefreshAgent: vi.fn(),
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Path')).toBeInTheDocument();
+			expect(screen.queryByText('Remote Command')).not.toBeInTheDocument();
+			expect(await screen.findByDisplayValue('/usr/local/bin/claude')).toBeInTheDocument();
+			expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
+			expect(
+				screen.getByText('Path to the claude binary. Edit to override the auto-detected path.')
+			).toBeInTheDocument();
+			expect(screen.getByText('Detect')).toBeInTheDocument();
+			expect(screen.queryByText('Re-check')).not.toBeInTheDocument();
+			for (const label of ['claude -p', 'TUI Wrapper', 'Dynamic']) {
+				expect(screen.getByText(label)).toBeInTheDocument();
+			}
+			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
+			expect(screen.queryByText(/remote host/)).not.toBeInTheDocument();
+		});
+
+		it('runs Detect where the agent runs', async () => {
+			const onRefreshAgent = vi.fn();
+			render(<AgentConfigPanel {...createDefaultProps({ ...modeProps, onRefreshAgent })} />);
+			const callsBefore = agentsGet().mock.calls.length;
+			fireEvent.click(screen.getByText('Detect'));
+			if (modeProps.isSshEnabled) {
+				await waitFor(() => expect(agentsGet().mock.calls.length).toBeGreaterThan(callsBefore));
+				expect(agentsGet()).toHaveBeenLastCalledWith('claude-code', 'r1');
+				expect(onRefreshAgent).not.toHaveBeenCalled();
+			} else {
+				expect(onRefreshAgent).toHaveBeenCalledTimes(1);
+				expect(agentsGet().mock.calls.length).toBe(callsBefore);
+			}
+		});
+	});
+
 	describe('Claude Token Source selector', () => {
 		it('offers API / TUI / Dynamic for a local claude-code agent', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ onEnableMaestroPChange: vi.fn() })} />);
@@ -638,7 +705,7 @@ describe('AgentConfigPanel', () => {
 
 		it('defaults an unconfigured SSH agent to TUI (remote maestro-p), not API', () => {
 			// enableMaestroP left undefined (never configured) + SSH => TUI is the
-			// default selection, and the remote-host hint renders.
+			// default selection, with the same hint a local TUI agent reads.
 			render(
 				<AgentConfigPanel
 					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
@@ -649,7 +716,7 @@ describe('AgentConfigPanel', () => {
 			const apiButton = screen.getByText('claude -p').closest('button');
 			expect(tuiButton?.className).toContain('ring-2');
 			expect(apiButton?.className).not.toContain('ring-2');
-			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
+			expect(screen.queryByText(/remote host/)).not.toBeInTheDocument();
 		});
 
 		it('honors an explicit API choice on an SSH agent (does not force TUI)', () => {
@@ -669,9 +736,9 @@ describe('AgentConfigPanel', () => {
 			expect(tuiButton?.className).not.toContain('ring-2');
 		});
 
-		it('disables the TUI option and falls back to API when the remote has no maestro-p', async () => {
+		it('keeps the TUI option, runs API and says why when the remote has no maestro-p', async () => {
 			// The remote probe reports maestro-p is absent: TUI can't run there, so
-			// the option is dropped and an unconfigured agent defaults to API.
+			// an unconfigured agent runs API, the option stays, and the reason shows.
 			(
 				window as unknown as {
 					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
@@ -687,12 +754,18 @@ describe('AgentConfigPanel', () => {
 				/>
 			);
 
-			// Once the async probe resolves, the warning appears and TUI is gone.
+			// Once the async probe resolves, the agent runs API; TUI stays listed and
+			// choosing it is refused with the reason.
 			await waitFor(() =>
-				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
+				expect(
+					(window as unknown as { maestro: { agents: { getRemoteMaestroPAvailable: any } } })
+						.maestro.agents.getRemoteMaestroPAvailable
+				).toHaveBeenCalled()
 			);
-			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
 			const apiButton = screen.getByText('claude -p').closest('button');
+			await waitFor(() => expect(apiButton?.className).toContain('ring-2'));
+			fireEvent.click(screen.getByText('TUI Wrapper'));
+			expect(screen.getByText(/maestro-p was not found on the PATH/)).toBeInTheDocument();
 			expect(apiButton?.className).toContain('ring-2');
 			(
 				window as unknown as {
@@ -701,7 +774,7 @@ describe('AgentConfigPanel', () => {
 			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(null);
 		});
 
-		it('links to the maestro-p install page from the missing-remote warning', async () => {
+		it('links to the maestro-p install page from the TUI refusal', async () => {
 			openUrlMock.mockClear();
 			(
 				window as unknown as {
@@ -718,6 +791,10 @@ describe('AgentConfigPanel', () => {
 				/>
 			);
 
+			await waitFor(() =>
+				expect(screen.getByText('claude -p').closest('button')?.className).toContain('ring-2')
+			);
+			fireEvent.click(screen.getByText('TUI Wrapper'));
 			const installLink = await screen.findByText('Install maestro-p');
 			fireEvent.click(installLink);
 			expect(openUrlMock).toHaveBeenCalledWith(
@@ -732,61 +809,68 @@ describe('AgentConfigPanel', () => {
 			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(null);
 		});
 
-		it('re-probes the remote with force when the Re-check button is clicked', async () => {
+		it('re-probes maestro-p with force when Detect is clicked for a remote agent', async () => {
 			const probeFn = (
 				window as unknown as {
 					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
 				}
 			).maestro.agents.getRemoteMaestroPAvailable;
 			// First probe (mount): maestro-p absent. After the user installs it on the
-			// remote and clicks Re-check, the forced re-probe reports it present.
+			// remote and clicks Detect, the forced re-probe reports it present.
 			probeFn.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
 			render(
 				<AgentConfigPanel
 					{...createDefaultProps({
 						onEnableMaestroPChange: vi.fn(),
+						onRefreshAgent: vi.fn(),
 						isSshEnabled: true,
 						sshRemoteId: 'remote-just-got-maestro-p',
 					})}
 				/>
 			);
 
-			// Mount probe resolves to absent: TUI option missing, warning shown.
 			await waitFor(() =>
-				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
+				expect(screen.getByText('claude -p').closest('button')?.className).toContain('ring-2')
 			);
+			fireEvent.click(screen.getByText('TUI Wrapper'));
+			expect(screen.getByText(/maestro-p was not found on the PATH/)).toBeInTheDocument();
 			expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', false);
+			// There is no separate Re-check control: Detect is the one detection button.
+			expect(screen.queryByText('Re-check')).not.toBeInTheDocument();
 
-			fireEvent.click(screen.getByText('Re-check'));
+			fireEvent.click(screen.getByText('Detect'));
 
-			// The refresh forces a cache-bypassing re-probe...
 			await waitFor(() =>
 				expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', true)
 			);
-			// ...which now reports maestro-p present: the warning clears and TUI returns.
 			await waitFor(() =>
-				expect(screen.queryByText(/maestro-p was not found on the remote/)).not.toBeInTheDocument()
+				expect(screen.queryByText(/maestro-p was not found on the PATH/)).not.toBeInTheDocument()
 			);
-			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
 
 			probeFn.mockResolvedValue(null);
 		});
 
-		it('renders the selector for SSH agents but drops the Dynamic option', () => {
+		it('keeps Dynamic in the list for an SSH agent and refuses it with its reason when chosen', () => {
+			const onEnableMaestroPChange = vi.fn();
 			render(
 				<AgentConfigPanel
-					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+					{...createDefaultProps({
+						onEnableMaestroPChange,
+						isSshEnabled: true,
+						enableMaestroP: false,
+					})}
 				/>
 			);
 
-			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
-			expect(screen.getByText('claude -p')).toBeInTheDocument();
-			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
-			expect(screen.queryByText('Dynamic')).not.toBeInTheDocument();
+			expect(screen.getByText('Dynamic')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Dynamic'));
+			expect(onEnableMaestroPChange).not.toHaveBeenCalled();
+			expect(screen.getByRole('status')).toHaveTextContent(/Dynamic is not available/);
+			expect(screen.getByText('claude -p').closest('button')?.className).toContain('ring-2');
 		});
 
-		it('hides the local Maestro-P Path override when SSH is enabled and TUI is selected', () => {
+		it('shows the Maestro-P Path field for an SSH TUI agent, refused with its reason', () => {
 			render(
 				<AgentConfigPanel
 					{...createDefaultProps({
@@ -799,9 +883,9 @@ describe('AgentConfigPanel', () => {
 				/>
 			);
 
-			// The remote TUI hint shows, but the local-script path input does not.
-			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
-			expect(screen.queryByText('Maestro-P Path (optional)')).not.toBeInTheDocument();
+			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
+			expect(screen.getByLabelText('Maestro-P Path (optional)')).toBeDisabled();
+			expect(screen.getByText(/runs maestro-p from the PATH of the computer/)).toBeInTheDocument();
 		});
 
 		it('still shows the local Maestro-P Path override for a local TUI agent', () => {
@@ -894,7 +978,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		expect(onCodexTransportChange).toHaveBeenCalledWith('app-server');
 	});
 
-	it('shows a stored app-server choice as selected and notes that SSH overrides it', () => {
+	it('shows a stored app-server choice as selected with the same hint over SSH', () => {
 		render(
 			<AgentConfigPanel
 				{...createDefaultProps({
@@ -908,9 +992,8 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 
 		const appServer = screen.getByText('codex app-server').closest('button');
 		expect(appServer?.className).toContain('ring-2');
-		expect(
-			screen.getByText(/This agent runs over SSH, so its turns use codex exec/)
-		).toBeInTheDocument();
+		expect(screen.queryByText(/This agent runs over SSH/)).not.toBeInTheDocument();
+		expect(screen.getByText(/SSH, image, Auto Run, and Cue turns keep using/)).toBeInTheDocument();
 	});
 });
 
