@@ -22,7 +22,7 @@ import {
 	rememberedClaudeSessionCost,
 	type ClaudeCostState,
 } from '../../claudeCostTracker';
-import { appendFailureScreen } from '../../failureScreen';
+import { formatFailureScreen } from '../../failureScreen';
 import {
 	getErrorPatterns,
 	isClaudeLimitNotice,
@@ -195,15 +195,15 @@ const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
 };
 
 /**
- * A failure message with the screen maestro-p left behind (`last_screen` on
- * its result) appended, so the reason is visible where the failure is shown.
- * Classified before this runs: the screen never picks the error type.
+ * The screen maestro-p left behind (`last_screen` on its result), cleaned for
+ * the error's `failureScreen` field. Kept off the message: the message is what
+ * every inline surface shows, and classification runs on it before this.
  */
-function withLastScreen(message: string, obj: Record<string, unknown>): string {
-	return appendFailureScreen(
-		message,
+function lastScreenOf(obj: Record<string, unknown>): { failureScreen?: string } {
+	const screen = formatFailureScreen(
 		typeof obj.last_screen === 'string' ? obj.last_screen : undefined
 	);
+	return screen ? { failureScreen: screen } : {};
 }
 
 /**
@@ -1007,7 +1007,8 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				typeof obj.error === 'string' && MAESTRO_P_TRANSIENT_FAILURES.has(obj.error.trim());
 			return {
 				type: match?.type ?? (transient ? 'network_error' : 'unknown'),
-				message: withLastScreen(match?.message ?? failureText, obj),
+				message: match?.message ?? failureText,
+				...lastScreenOf(obj),
 				recoverable: match?.recoverable ?? true,
 				agentId: this.agentId,
 				timestamp: Date.now(),

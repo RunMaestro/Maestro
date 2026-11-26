@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { AgentError, Theme } from '../../types';
+import { inlineErrorText } from '../../../shared/failureScreen';
 
 interface AgentErrorBannerProps {
 	error: AgentError;
@@ -16,6 +17,9 @@ export const AgentErrorBanner = React.memo(function AgentErrorBanner({
 	onShowDetails,
 	onClear,
 }: AgentErrorBannerProps) {
+	// A banner is two lines at most. The full message and the agent's last
+	// screen live behind View Details (the agent error modal).
+	const text = inlineErrorText(error.message);
 	return (
 		<div
 			className="flex items-center gap-3 px-4 py-2 border-b shrink-0"
@@ -26,8 +30,12 @@ export const AgentErrorBanner = React.memo(function AgentErrorBanner({
 		>
 			<AlertCircle className="w-4 h-4 shrink-0" style={{ color: theme.colors.error }} />
 			<div className="flex-1 min-w-0">
-				<span className="text-sm font-medium" style={{ color: theme.colors.error }}>
-					{error.message}
+				<span
+					className="text-sm font-medium line-clamp-2 break-words"
+					style={{ color: theme.colors.error }}
+					title={text}
+				>
+					{text}
 				</span>
 			</div>
 			<div className="flex items-center gap-2 shrink-0">

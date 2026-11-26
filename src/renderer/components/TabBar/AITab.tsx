@@ -5,6 +5,7 @@ import type { AITab as AITabType, Theme } from '../../types';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
+import { inlineErrorText } from '../../../shared/failureScreen';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { setTabDragImage } from '../../utils/tabDragImage';
 import { getTabKindColor } from './tabBarUtils';
@@ -546,7 +547,7 @@ export const AITab = memo(function AITab({
 				<div
 					className="flex items-center gap-0.5 px-1 py-0.5 rounded text-3xs font-bold uppercase shrink-0"
 					style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
-					title={`Error: ${tab.agentError.message}`}
+					title={`Error: ${inlineErrorText(tab.agentError.message)}`}
 				>
 					<AlertCircle className="w-2.5 h-2.5" />
 					ERR

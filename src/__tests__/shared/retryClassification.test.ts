@@ -16,7 +16,6 @@ import {
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import type { AgentErrorType } from '../../shared/types';
-import { appendFailureScreen } from '../../shared/failureScreen';
 
 function err(partial: Partial<ClassifiableError> & { message: string }): ClassifiableError {
 	return {
@@ -192,15 +191,19 @@ describe('classifyRetryableError', () => {
 		expect(classifyRetryableError(err({ type: 'unknown', message: 'something weird' }))).toBeNull();
 	});
 
-	it('never lets a failure screen under the message choose the retry', () => {
+	/** A message as older builds persisted it, with the screen appended. */
+	const legacyScreenMessage = (message: string, screen: string) =>
+		`${message}\n\nWhat Claude Code last showed:\n\n\`\`\`\n${screen}\n\`\`\``;
+
+	it('never lets a legacy failure screen under the message choose the retry', () => {
 		// The screen is evidence for a person: an agent's own output on it can say
 		// "rate limit" or "overloaded" without the provider having refused anything.
-		const message = appendFailureScreen(
+		const message = legacyScreenMessage(
 			'claude exited before the turn started',
 			'> checking the rate limit docs\n  API overloaded handling: done'
 		);
 		expect(classifyRetryableError(err({ type: 'unknown', message }))).toBeNull();
-		const grokMessage = appendFailureScreen('grok exited', 'Too many requests in the log');
+		const grokMessage = legacyScreenMessage('grok exited', 'Too many requests in the log');
 		expect(
 			classifyRetryableError(
 				err({
@@ -214,7 +217,7 @@ describe('classifyRetryableError', () => {
 	});
 
 	it('still classifies the message above a failure screen', () => {
-		const message = appendFailureScreen('API Error: 529 Overloaded', 'some screen text');
+		const message = legacyScreenMessage('API Error: 529 Overloaded', 'some screen text');
 		expect(classifyRetryableError(err({ message }))).toBe('availability');
 	});
 });

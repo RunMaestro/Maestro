@@ -228,6 +228,23 @@ describe('stripAnsiCodes', () => {
 			expect(safeDecodeURIComponent('a%20b')).toBe('a b');
 		});
 	});
+
+	describe('escapedLiterals', () => {
+		it('keeps escapes written out as text by default', () => {
+			expect(stripAnsiCodes('echo -e "\\033[31mred\\033[0m"')).toBe(
+				'echo -e "\\033[31mred\\033[0m"'
+			);
+		});
+
+		it('strips the literal \\033, \\x1b, \\u001b and \\e forms when asked', () => {
+			const text = '\\033[1;30m~/work\\033[0m \\x1b[32mok\\x1B[0m \\u001b[31mno\\e[0m';
+			expect(stripAnsiCodes(text, { escapedLiterals: true })).toBe('~/work ok no');
+		});
+
+		it('strips a double-backslashed escape', () => {
+			expect(stripAnsiCodes('\\\\033[1;30m$ \\\\033[0m', { escapedLiterals: true })).toBe('$ ');
+		});
+	});
 });
 
 describe('safeDecodeURIComponent', () => {
