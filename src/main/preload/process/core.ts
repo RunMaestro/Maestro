@@ -308,6 +308,13 @@ export function createProcessCoreApi() {
 			ipcRenderer.invoke('process:broadcast-user-input', payload),
 
 		/**
+		 * Tell this Maestro's Federation clients that a tab's transcript grew outside a turn, so they
+		 * read it again (a `/skills` or `/history` run for one of them).
+		 */
+		broadcastTranscriptChanged: (sessionId: string, tabId: string): Promise<void> =>
+			ipcRenderer.invoke('process:broadcast-transcript-changed', sessionId, tabId),
+
+		/**
 		 * Send interrupt signal (Ctrl+C) to a process
 		 */
 		interrupt: (sessionId: string): Promise<boolean> =>

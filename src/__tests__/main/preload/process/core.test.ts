@@ -382,6 +382,20 @@ describe('Process Core Preload API', () => {
 		});
 	});
 
+	describe('broadcastTranscriptChanged', () => {
+		it('should invoke process:broadcast-transcript-changed with the agent and tab', async () => {
+			mockInvoke.mockResolvedValue(undefined);
+
+			await api.broadcastTranscriptChanged('session-123', 'tab-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'process:broadcast-transcript-changed',
+				'session-123',
+				'tab-1'
+			);
+		});
+	});
+
 	describe('interrupt', () => {
 		it('should invoke process:interrupt with sessionId', async () => {
 			mockInvoke.mockResolvedValue(true);

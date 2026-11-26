@@ -42,6 +42,8 @@ import {
 } from '../../shared/crossAgentContext';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
 import {
+	consultPendingNoteText,
+	handoffPendingNoteText,
 	holdTurnForConsults,
 	resolveConsultTargets,
 	withConsultPendingNote,
@@ -122,6 +124,22 @@ export function withMentionTurnNotes(
 		withConsultPendingNote(prompt, dispatch.consultTargets),
 		dispatch.handoffTargets
 	);
+}
+
+/**
+ * The notes {@link withMentionTurnNotes} appends, alone and joined the same way, for a turn whose
+ * prompt is built elsewhere (a hosted agent's host appends them: `TurnInput.agentNotes`).
+ * Undefined when the dispatch adds none.
+ */
+export function mentionTurnNotes(
+	dispatch: CrossAgentMentionDispatch | null | undefined
+): string | undefined {
+	if (!dispatch) return undefined;
+	const notes = [
+		consultPendingNoteText(dispatch.consultTargets),
+		handoffPendingNoteText(dispatch.handoffTargets),
+	].filter((note): note is string => !!note);
+	return notes.length > 0 ? notes.join('\n\n---\n\n') : undefined;
 }
 
 /**

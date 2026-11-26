@@ -49,7 +49,7 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from './types';
-import { parseQueuedTurnEdit } from './types';
+import { parseQueuedTurnEdit, readTurnAgentText } from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
@@ -67,6 +67,10 @@ export type PeerAgentAction =
 			overrides?: TurnOverrides;
 			/** Queue Held: the host queues it paused, even on an idle tab (`TurnInput.held`). */
 			held?: boolean;
+			/** Agent-only text ahead of the message (`TurnInput.agentContext`). */
+			agentContext?: string;
+			/** Agent-only notes behind the message (`TurnInput.agentNotes`). */
+			agentNotes?: string;
 	  }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
@@ -260,6 +264,8 @@ export async function runPeerAgentAction(
 				...(context.originHost ? { originHost: context.originHost } : {}),
 				...(action.overrides ? { overrides: action.overrides } : {}),
 				...(action.held === true ? { held: true } : {}),
+				...(action.agentContext ? { agentContext: action.agentContext } : {}),
+				...(action.agentNotes ? { agentNotes: action.agentNotes } : {}),
 			});
 			return sent.ok ? { ok: true, value: { kind: 'send', receipt: sent.value } } : sent;
 		}
@@ -502,6 +508,10 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				throw new Error('There is nothing to send.');
 			}
 			const overrides = value.overrides == null ? undefined : parseTurnOverrides(value.overrides);
+			const agentContext = readTurnAgentText(value.agentContext, 'agentContext');
+			if (!agentContext.ok) throw new Error(agentContext.error);
+			const agentNotes = readTurnAgentText(value.agentNotes, 'agentNotes');
+			if (!agentNotes.ok) throw new Error(agentNotes.error);
 			return {
 				kind,
 				tabId: tabId(),
@@ -510,6 +520,8 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(nonEmptyString(value.dispatchId) ? { dispatchId: value.dispatchId } : {}),
 				...(overrides ? { overrides } : {}),
 				...(value.held === true ? { held: true } : {}),
+				...(agentContext.value ? { agentContext: agentContext.value } : {}),
+				...(agentNotes.value ? { agentNotes: agentNotes.value } : {}),
 			};
 		}
 		case 'interrupt':

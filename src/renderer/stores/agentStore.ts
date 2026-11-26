@@ -454,14 +454,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		// A hosted agent's turns run on its Federation host, and main refuses a spawn here. Whatever
 		// queued this item (a snooze, a review, a web client, one left from before the move), it goes
-		// to the host the way the composer's send does. The tab the dequeue marked running is
-		// released first: the host's update draws the turn.
-		if (isQueuedItemForHost(session, item)) {
-			updateSessionWith(sessionId, (s) =>
-				applyQueuedItemAbort(s, item, queuedItemOwnerTabId(s, item))
-			);
-			return sendTakenItemToHost(sessionId, item);
-		}
+		// to the host the way the composer's send does, releasing the tab the dequeue marked running
+		// (the host's update draws the turn). Its `@mentions` consult from here, as below.
+		if (isQueuedItemForHost(session, item)) return sendTakenItemToHost(sessionId, item);
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that
