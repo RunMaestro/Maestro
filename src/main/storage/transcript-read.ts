@@ -27,6 +27,8 @@ export function isMissingRemoteFile(error: string | undefined): boolean {
 	return (
 		lower.startsWith('file not found') ||
 		lower.includes('no such file') ||
+		// A folder on the path is a file: the transcript cannot exist, as ENOTDIR reads locally.
+		lower.includes('not a directory') ||
 		lower.includes('does not exist')
 	);
 }

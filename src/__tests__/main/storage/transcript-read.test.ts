@@ -130,6 +130,8 @@ describe('the transcript readers', () => {
 	it('tells a missing remote file from every other remote failure', () => {
 		expect(isMissingRemoteFile('File not found: /x')).toBe(true);
 		expect(isMissingRemoteFile('cat: /x: No such file or directory')).toBe(true);
+		// The local reader reads ENOTDIR as missing; the remote one must agree.
+		expect(isMissingRemoteFile('cat: /a/b.jsonl: Not a directory')).toBe(true);
 		expect(isMissingRemoteFile('Permission denied: /x')).toBe(false);
 		expect(isMissingRemoteFile('Path is a directory: /x')).toBe(false);
 		expect(isMissingRemoteFile(undefined)).toBe(false);
