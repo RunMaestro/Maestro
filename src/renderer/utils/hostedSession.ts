@@ -56,6 +56,32 @@ export interface HostedProjectionInput {
 	viewing?: boolean;
 	/** Tabs closed here whose close the host has not reported yet: never drawn back. */
 	closing?: ReadonlySet<string>;
+	/**
+	 * The link to the host is down (a confirmed outage of its remote, or a connection the mirror gave
+	 * up). The mirror keeps the host's last report through a disconnect, so a turn it last reported
+	 * running would draw Thinking forever. Each such tab is drawn ended instead, with this error and
+	 * a note in its transcript, as an SSH tab whose link is cut mid-turn. The next connected report
+	 * draws the host's real state again, and the error clears (`source: 'host-link'`).
+	 */
+	linkLost?: AgentError;
+	/** Tabs whose turn was stopped here while the host could not be told: drawn idle until it can. */
+	endedHere?: ReadonlySet<string>;
+}
+
+/** The transcript note a tab gets when the link to its host is lost mid-turn. */
+export function hostLinkNoteId(error: AgentError, tabId: string): string {
+	return `host-link-${error.timestamp}-${tabId}`;
+}
+
+/**
+ * `logs` with the link note last: after the turn's live entries, where an SSH tab's error lands.
+ * The same array back when it is already there, so the projection settles.
+ */
+function withLinkNote(logs: LogEntry[], prior: readonly LogEntry[], note: LogEntry): LogEntry[] {
+	const last = logs[logs.length - 1];
+	if (last?.id === note.id) return logs;
+	const next = [...logs.filter((entry) => entry.id !== note.id), note];
+	return sameIds(next, prior) ? (prior as LogEntry[]) : next;
 }
 
 const persistedViews = new WeakMap<readonly LogEntryRecord[], LogEntry[]>();
@@ -218,9 +244,12 @@ function sameImages(a: readonly string[] | undefined, b: readonly string[] | und
 function hostedTabError(
 	local: AITab,
 	busy: boolean,
-	logs: readonly LogEntry[]
+	logs: readonly LogEntry[],
+	linkDown: boolean
 ): AgentError | undefined {
 	let error = busy && local.state !== 'busy' ? undefined : local.agentError;
+	// The link is back: the host's own report says how the turn ended.
+	if (!linkDown && error?.source === 'host-link') error = undefined;
 	if (logs === local.logs) return error;
 	const drawn = new Set((local.logs ?? []).map((entry) => entry.id));
 	for (const entry of logs) {
@@ -269,12 +298,25 @@ function hostedTabUnread(
 function projectTab(
 	local: AITab,
 	host: AITabRecord,
-	logs: LogEntry[],
+	merged: LogEntry[],
 	liveTurn: LiveTurn | undefined,
 	watched: boolean,
-	hostSeenAt: number | undefined
+	hostSeenAt: number | undefined,
+	link: { lost?: AgentError; endedHere: boolean }
 ): AITab {
-	const busy = host.state === 'busy';
+	// A turn the host last reported running that nobody here can follow or finish ends here.
+	const cut = host.state === 'busy' && link.lost !== undefined;
+	const busy = host.state === 'busy' && !cut && !link.endedHere;
+	const logs =
+		cut && link.lost
+			? withLinkNote(merged, local.logs ?? [], {
+					id: hostLinkNoteId(link.lost, local.id),
+					timestamp: link.lost.timestamp,
+					source: 'error',
+					text: link.lost.message,
+					agentError: link.lost,
+				})
+			: merged;
 	const thinkingStartTime = busy
 		? (host.thinkingStartTime ?? liveTurn?.startedAt ?? local.thinkingStartTime)
 		: undefined;
@@ -282,7 +324,8 @@ function projectTab(
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;
 	const starred = host.starred === true;
 	const state = busy ? 'busy' : 'idle';
-	const agentError = hostedTabError(local, busy, logs);
+	const agentError =
+		cut && link.lost ? link.lost : hostedTabError(local, busy, logs, link.lost !== undefined);
 	const hasUnread = hostedTabUnread(local, logs, watched);
 	// The host runs the turns, so its tab's usage is what the header's gauge and cost pill read. A
 	// host that reports none (an older host) leaves the usage this tab already had.
@@ -414,7 +457,8 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			logsFor(local.id, local.logs ?? []),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
 			input.viewing === true && local.id === session.activeTabId,
-			hostingAt ?? local.hostSeenAt
+			hostingAt ?? local.hostSeenAt,
+			{ lost: input.linkLost, endedHere: input.endedHere?.has(local.id) === true }
 		);
 		if (next !== local) changed = true;
 		aiTabs.push(next);
@@ -425,6 +469,11 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		const tab = mirrorTab(host);
 		tab.logs = logsFor(host.id, []);
 		if (hostingAt !== undefined) tab.hostSeenAt = hostingAt;
+		if (input.linkLost && tab.state === 'busy') {
+			// First drawn while the link is down: nothing here can follow its turn either.
+			tab.state = 'idle';
+			tab.thinkingStartTime = undefined;
+		}
 		added.push(tab);
 	}
 	if (added.length > 0) {

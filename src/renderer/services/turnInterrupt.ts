@@ -19,6 +19,8 @@
  */
 
 import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
+import { endHostedTurnsHere } from './hostedLinkLoss';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
@@ -145,7 +147,11 @@ export async function interruptTurn(
 		const hostRunsAutoRun =
 			!scopedTab && useBatchStore.getState().batchRunStates[sessionId]?.isRunning === true;
 		const forward = hostBusy.length > 0 || hostRunsAutoRun;
-		if (forward) await interruptHostedTurn(session, scopeTabId);
+		const peer = usePeerMirrorStore.getState().peers[hostedTargetOf(session)?.peerId ?? ''];
+		if (forward && peer && peer.connection !== 'connected' && hostBusy.length > 0) {
+			// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
+			endHostedTurnsHere(sessionId, hostBusy, peer.name);
+		} else if (forward) await interruptHostedTurn(session, scopeTabId);
 		return {
 			success: true,
 			sessionId,

@@ -984,8 +984,12 @@ export interface AgentError {
 	/** The category of error */
 	type: AgentErrorType;
 
-	/** Set only when the host supervisor terminates the turn; overrides a successful process exit. */
-	source?: 'host-supervision';
+	/**
+	 * `host-supervision`: set only when the host supervisor terminates the turn; overrides a
+	 * successful process exit. `host-link`: a hosted turn drawn ended here because the link to its
+	 * Federation host was lost; it clears when the host reports again.
+	 */
+	source?: 'host-supervision' | 'host-link';
 
 	/** Human-readable error message for display */
 	message: string;
