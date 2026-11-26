@@ -4,6 +4,7 @@ import {
 	buildMirroredBatchState,
 	reapStaleMirrors,
 	resetMirrorFrameClock,
+	skipSleepInMirroredClocks,
 } from '../../../../renderer/hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../../../../renderer/stores/batchStore';
 import { DEFAULT_BATCH_STATE } from '../../../../renderer/hooks/batch/batchReducer';
@@ -138,6 +139,37 @@ describe('buildMirroredBatchState', () => {
 			expect(autoRunActiveElapsedMs(state, start + 12 * min)).toBe(2 * min);
 			state = buildMirroredBatchState(mkFrame({ startTime: start }), state, start + 12 * min);
 			expect(autoRunActiveElapsedMs(state, start + 13 * min)).toBe(3 * min);
+		});
+
+		it('starts a new run with a fresh clock', () => {
+			vi.setSystemTime(start + 20 * min);
+			let state = buildMirroredBatchState(mkFrame({ startTime: start }));
+			state = buildMirroredBatchState(
+				mkFrame({ startTime: start, errorPaused: true }),
+				state,
+				start + 5 * min
+			);
+			const next = start + 20 * min;
+			const fresh = buildMirroredBatchState(mkFrame({ startTime: next }), state, next);
+			expect(fresh.accumulatedElapsedMs).toBeUndefined();
+			expect(fresh.lastActiveTimestamp).toBeUndefined();
+			expect(autoRunActiveElapsedMs(fresh, next)).toBe(0);
+		});
+
+		it('leaves a machine sleep out of the span a resume started', () => {
+			vi.setSystemTime(start + 1 * min);
+			let state = buildMirroredBatchState(mkFrame({ startTime: start }));
+			state = buildMirroredBatchState(
+				mkFrame({ startTime: start, errorPaused: true }),
+				state,
+				start + 1 * min
+			);
+			state = buildMirroredBatchState(mkFrame({ startTime: start }), state, start + 2 * min);
+			useBatchStore.setState({ batchRunStates: { row: state } });
+			// The viewer slept from 12:03 to 12:13; at 12:14 the run has been active for 3 minutes.
+			skipSleepInMirroredClocks(10 * min, start + 13 * min);
+			const after = useBatchStore.getState().batchRunStates.row!;
+			expect(autoRunActiveElapsedMs(after, start + 14 * min)).toBe(3 * min);
 		});
 	});
 });

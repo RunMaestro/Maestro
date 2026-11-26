@@ -18,7 +18,7 @@ import { DEFAULT_BATCH_STATE } from './batchReducer';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { hostedTargetOf } from '../../services/hostedTurns';
-import { sleepAwareElapsedSince } from '../../services/systemSleep';
+import { onSystemSleep, sleepAwareElapsedSince } from '../../services/systemSleep';
 import { autoRunActiveElapsedMs } from './useTimeTracking';
 
 /**
@@ -67,15 +67,25 @@ function mirroredClock(
 /**
  * Build the mirrored `BatchRunState` for one broadcast frame.
  *
- * `previous` is the entry already on screen (also a mirror) so fields that only
+ * `shown` is the entry already on screen (also a mirror) so fields that only
  * ride along on some frames - and the mirror's own active-time clock
- * (`mirroredClock()`) - survive a frame that omits them. Exported for tests.
+ * (`mirroredClock()`) - survive a frame of the same run that omits them.
+ * Exported for tests.
  */
 export function buildMirroredBatchState(
 	incoming: AutoRunBroadcastState,
-	previous?: BatchRunState,
+	shown?: BatchRunState,
 	now: number = Date.now()
 ): BatchRunState {
+	// A frame with another start time is another run: nothing of the one on screen carries over,
+	// its clock least of all.
+	const previous =
+		shown &&
+		(incoming.startTime === undefined ||
+			shown.startTime === undefined ||
+			incoming.startTime === shown.startTime)
+			? shown
+			: undefined;
 	const base = previous ?? DEFAULT_BATCH_STATE;
 	const documents = incoming.documents ?? base.documents ?? [];
 
@@ -319,6 +329,26 @@ export function useAutoRunStateMirror(): void {
 		}, MIRROR_REAP_INTERVAL_MS);
 		return () => clearInterval(timer);
 	}, []);
+
+	// Machine sleep is not active time, as the owner's tracker counts it.
+	useEffect(() => onSystemSleep(skipSleepInMirroredClocks), []);
+}
+
+/**
+ * Walk the live span of every running mirror past a machine sleep, as `useTimeTracking` does for a
+ * run this window owns. A mirror that never paused counts from `startTime` with sleep already taken
+ * out (`sleepAwareElapsedSince()`), so only a span started by a resume needs it. Exported for tests.
+ */
+export function skipSleepInMirroredClocks(sleptMs: number, now: number = Date.now()): void {
+	const { batchRunStates, setBatchRunStates } = useBatchStore.getState();
+	const shifted: Record<string, BatchRunState> = {};
+	for (const [sessionId, state] of Object.entries(batchRunStates)) {
+		const since = state.lastActiveTimestamp;
+		if (state.mirrored !== true || !state.isRunning || since === undefined) continue;
+		const skipMs = Math.min(sleptMs, Math.max(0, now - since));
+		if (skipMs > 0) shifted[sessionId] = { ...state, lastActiveTimestamp: since + skipMs };
+	}
+	if (Object.keys(shifted).length > 0) setBatchRunStates((prev) => ({ ...prev, ...shifted }));
 }
 
 /**
