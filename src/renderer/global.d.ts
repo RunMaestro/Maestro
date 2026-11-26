@@ -2136,6 +2136,7 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
+		watchRemoteCopy: (remotePath: string, sshRemoteId: string) => Promise<{ path: string }>;
 		downloadRemoteFolder: (
 			remotePath: string,
 			sshRemoteId: string
@@ -3980,7 +3981,12 @@ interface MaestroAPI {
 			callback: (groupChatId: string, sessionId: string) => void
 		) => () => void;
 		onAutoRunTriggered: (
-			callback: (groupChatId: string, participantName: string, filename?: string) => void
+			callback: (
+				groupChatId: string,
+				participantName: string,
+				filename?: string,
+				agentId?: string
+			) => void
 		) => () => void;
 		onAutoRunBatchComplete: (
 			callback: (groupChatId: string, participantName: string) => void

@@ -8,7 +8,7 @@
  * back to trigger the synthesis round.
  */
 
-interface GroupChatAutoRunEntry {
+export interface GroupChatAutoRunEntry {
 	groupChatId: string;
 	participantName: string;
 }
@@ -23,20 +23,37 @@ export function registerGroupChatAutoRun(
 	sessionId: string,
 	groupChatId: string,
 	participantName: string
-): void {
-	registry.set(sessionId, { groupChatId, participantName });
+): GroupChatAutoRunEntry {
+	const entry = { groupChatId, participantName };
+	registry.set(sessionId, entry);
+	return entry;
 }
 
 /**
  * Consume (retrieve and remove) the group chat context for a completed batch run.
  * Returns undefined if this session was not triggered by group chat !autorun.
+ *
+ * Pass `expected` (the entry `registerGroupChatAutoRun` returned) to remove only
+ * that launch's entry: a cleanup that runs late must never take a newer launch's.
  */
-export function consumeGroupChatAutoRun(sessionId: string): GroupChatAutoRunEntry | undefined {
+export function consumeGroupChatAutoRun(
+	sessionId: string,
+	expected?: GroupChatAutoRunEntry
+): GroupChatAutoRunEntry | undefined {
 	const entry = registry.get(sessionId);
-	if (entry) {
-		registry.delete(sessionId);
-	}
+	if (!entry || (expected && entry !== expected)) return undefined;
+	registry.delete(sessionId);
 	return entry;
+}
+
+/** The group chat !autorun entry still waiting to be reported for this session, without consuming it. */
+export function peekGroupChatAutoRun(sessionId: string): GroupChatAutoRunEntry | undefined {
+	return registry.get(sessionId);
+}
+
+/** Whether a group chat !autorun run for this session is still waiting to be reported. */
+export function hasGroupChatAutoRun(sessionId: string): boolean {
+	return registry.has(sessionId);
 }
 
 /**

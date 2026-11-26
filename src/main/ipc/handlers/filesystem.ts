@@ -27,6 +27,7 @@ import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
+import * as chokidar from 'chokidar';
 
 import { logger } from '../../utils/logger';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
@@ -52,9 +53,9 @@ import {
 	readBinaryFileRemoteAsBase64,
 	readFileRemoteAbortable,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
 	mkdirRemote,
 	statRemote,
-	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
 	deleteManyRemote,
@@ -69,6 +70,12 @@ import { resolveDirentType } from '../../utils/dirent-utils';
 import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
+import {
+	createRemoteCopyWriteBack,
+	type RemoteCopyWriteBack,
+	type RemoteCopyWriteBackEvent,
+} from '../../utils/remote-copy-write-back';
+import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
 import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
 import { getHostDirectoryInfo } from '../../utils/host-directory';
@@ -221,7 +228,7 @@ async function downloadRemoteFileTo(
 	remotePath: string,
 	localPath: string,
 	sshConfig: SshRemoteConfig
-): Promise<void> {
+): Promise<Buffer> {
 	const bytes = await readRemoteFileBytes(remotePath, sshConfig);
 	const staged = stagingPathFor(localPath);
 	try {
@@ -235,6 +242,7 @@ async function downloadRemoteFileTo(
 		}
 		throw error;
 	}
+	return bytes;
 }
 
 /** The most files one folder download fetches; a bigger folder is refused, never cut short. */
@@ -466,6 +474,9 @@ interface DirectorySizeResult {
  */
 const DIRECTORY_SIZE_CACHE_MS = 2_000;
 
+/** How deep the Files panel's size walk goes: entries up to 10 levels below the root, in every mode. */
+const DIRECTORY_SIZE_MAX_DEPTH = 10;
+
 /**
  * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
  * this, and the SSRF guard above only vets the host: a permitted host that
@@ -568,7 +579,97 @@ async function deleteLocalPath(targetPath: string, recursive: boolean): Promise<
 	}
 }
 
-export function registerFilesystemHandlers(): void {
+/** The words for one write-back outcome, sent on the existing toast and flash channels. */
+function announceWriteBack(
+	safeSend: SafeSendFn | undefined,
+	event: RemoteCopyWriteBackEvent
+): void {
+	if (!safeSend) return;
+	const name = path.posix.basename(event.remotePath);
+	if (event.kind === 'saved') {
+		safeSend('remote:notifyCenterFlash', {
+			message: 'Saved to the remote host',
+			detail: name,
+			color: 'green',
+			duration: 2000,
+		});
+		return;
+	}
+	safeSend('remote:notifyToast', {
+		title:
+			event.kind === 'conflict' ? 'Not saved to the remote host' : 'Save to the remote host failed',
+		message:
+			event.kind === 'conflict'
+				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}.`
+				: `${name}: ${event.message}. Your change is still in the copy on this computer.`,
+		color: 'red',
+		dismissible: true,
+	});
+}
+
+function sshConfigOrThrow(sshRemoteId: string): SshRemoteConfig {
+	const sshConfig = getSshRemoteById(sshRemoteId);
+	if (!sshConfig) throw new Error(`SSH remote not found: ${sshRemoteId}`);
+	return sshConfig;
+}
+
+/**
+ * The write-back for remote copies opened in another app (`fs:watchRemoteCopy`).
+ * Its watchers do not keep the app alive, and each watches one file.
+ */
+function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopyWriteBack {
+	return createRemoteCopyWriteBack({
+		watchFile: (localPath, onChange) => {
+			const watcher = chokidar.watch(localPath, {
+				ignoreInitial: true,
+				persistent: false,
+				// An app that saves by writing a sibling and renaming it over the file
+				// still reads as one change to this path.
+				atomic: true,
+				awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+			});
+			watcher.on('add', onChange);
+			watcher.on('change', onChange);
+			watcher.on('error', (error) =>
+				logger.warn('Remote copy watcher failed', 'fs:watchRemoteCopy', {
+					localPath,
+					error: String(error),
+				})
+			);
+			return { close: () => watcher.close() };
+		},
+		readLocal: (localPath) => fs.readFile(localPath),
+		// `wx`: a kept version never replaces an earlier one.
+		createLocal: (localPath, bytes) => fs.writeFile(localPath, bytes, { flag: 'wx' }),
+		readRemote: (remotePath, sshRemoteId) =>
+			readRemoteFileBytes(remotePath, sshConfigOrThrow(sshRemoteId)),
+		writeRemote: async (remotePath, bytes, sshRemoteId, expectedSha256) => {
+			const result = await replaceFileRemoteIfUnchanged(
+				remotePath,
+				bytes,
+				expectedSha256,
+				sshConfigOrThrow(sshRemoteId)
+			);
+			if (result.success) return 'written';
+			if (result.changed) return 'changed';
+			throw new Error(result.error || 'The remote write failed');
+		},
+		notify: (event) => announceWriteBack(safeSend, event),
+	});
+}
+
+let remoteCopyWriteBack: RemoteCopyWriteBack | null = null;
+
+export interface FilesystemHandlerDependencies {
+	/** Broadcast to the renderers: the write-back of a remote copy reports through it. */
+	safeSend?: SafeSendFn;
+}
+
+export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies = {}): void {
+	remoteCopyWriteBack?.dispose();
+	remoteCopyWriteBack = createFilesystemWriteBack(deps.safeSend);
+	const writeBack = remoteCopyWriteBack;
+
 	// Get user home directory
 	ipcMain.handle('fs:homeDir', () => {
 		return os.homedir();
@@ -852,16 +953,34 @@ export function registerFilesystemHandlers(): void {
 				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
-			let destPath = localDestPath;
-			if (!destPath) {
-				destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
-				await fs.mkdir(path.dirname(destPath), { recursive: true });
+			if (localDestPath) {
+				await downloadRemoteFileTo(remotePath, localDestPath, sshConfig);
+				return { success: true, path: localDestPath };
 			}
-
-			await downloadRemoteFileTo(remotePath, destPath, sshConfig);
+			const destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+			// A copy opened in another app may hold a change the remote does not have
+			// yet: it stays (the write is tried again), never replaced by a fetch.
+			if ((await writeBack.beforeRefetch(destPath)) === 'keep') {
+				return { success: true, path: destPath };
+			}
+			await fs.mkdir(path.dirname(destPath), { recursive: true });
+			const bytes = await downloadRemoteFileTo(remotePath, destPath, sshConfig);
+			await writeBack.noteFetched(destPath, bytes);
 			return { success: true, path: destPath };
 		}
 	);
+
+	// Watch the copy `fs:downloadRemoteFile` fetched for a remote file (no
+	// destination named), and write a change saved in another app back to the
+	// remote file. The copy's path is derived here, never taken from the caller,
+	// so only a fetched copy can be sent to the remote. Call it right after the
+	// fetch: the copy's bytes now are what the remote held.
+	ipcMain.handle('fs:watchRemoteCopy', async (_, remotePath: string, sshRemoteId: string) => {
+		sshConfigOrThrow(sshRemoteId);
+		const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+		await writeBack.watch({ localPath, remotePath, sshRemoteId });
+		return { path: localPath };
+	});
 
 	// Download a remote SSH folder (its whole tree) to a temp folder on this
 	// machine, for actions that must hand a real folder to the OS (the Files
@@ -952,25 +1071,11 @@ export function registerFilesystemHandlers(): void {
 			ignorePatterns?: string[],
 			honorGitignore?: boolean
 		) => {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
-				}
-				// Fetch size and counts in parallel for SSH remotes
-				const [sizeResult, countResult] = await Promise.all([
-					directorySizeRemote(dirPath, sshConfig),
-					countItemsRemote(dirPath, sshConfig),
-				]);
-				if (!sizeResult.success) {
-					throw new Error(sizeResult.error || 'Failed to get remote directory size');
-				}
-				return {
-					totalSize: sizeResult.data!,
-					fileCount: countResult.success ? countResult.data!.fileCount : 0,
-					folderCount: countResult.success ? countResult.data!.folderCount : 0,
-				};
+			// SSH remote: the same walk rule (patterns, .gitignore, depth) over SSH, so
+			// one tree gives the same counts and size wherever the agent runs.
+			const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			if (sshRemoteId && !sshConfig) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
 			// The Files panel asks for this from several places that all fire inside
@@ -980,7 +1085,7 @@ export function registerFilesystemHandlers(): void {
 			// those into one walk: a request that arrives while a matching walk is
 			// still running joins it, and the settled answer is reused for a beat
 			// afterwards so the back-to-back callers do not each pay for it.
-			const cacheKey = `${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
+			const cacheKey = `${sshRemoteId ?? ''}\u0000${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
 				ignorePatterns ?? LOCAL_IGNORE_DEFAULTS
 			).join('\u0001')}`;
 			const cached = directorySizeCache.get(cacheKey);
@@ -988,7 +1093,7 @@ export function registerFilesystemHandlers(): void {
 				return cached.result;
 			}
 
-			const pending = computeDirectorySize();
+			const pending = sshConfig ? computeRemoteDirectorySize(sshConfig) : computeDirectorySize();
 			const now = Date.now();
 			// Prune while we are here so a long-lived session cannot accumulate one
 			// entry per directory the user ever opened.
@@ -1000,6 +1105,49 @@ export function registerFilesystemHandlers(): void {
 			// inherit the rejection for the rest of the TTL.
 			pending.catch(() => directorySizeCache.delete(cacheKey));
 			return pending;
+
+			/**
+			 * The local walk's rule on an SSH remote, in one round trip: the same
+			 * patterns (with the root's .gitignore read on the remote), the same
+			 * depth, and every surviving file's size. `listTreeRemote()` prunes by
+			 * `find -name`; each path is then checked with `shouldIgnore()` too, the
+			 * check the local walk makes, so a case the remote `find` does not fold
+			 * is dropped as it is here.
+			 */
+			async function computeRemoteDirectorySize(
+				remote: SshRemoteConfig
+			): Promise<DirectorySizeResult> {
+				let effectivePatterns = ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
+				if (honorGitignore) {
+					const gitignore = await readFileRemote(path.posix.join(dirPath, '.gitignore'), remote);
+					if (gitignore.success && gitignore.data) {
+						effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(gitignore.data)];
+					}
+				}
+				const listed = await listTreeRemote(
+					dirPath,
+					{
+						maxDepth: DIRECTORY_SIZE_MAX_DEPTH,
+						ignorePatterns: effectivePatterns,
+						withSizes: true,
+					},
+					remote
+				);
+				if (!listed.success || !listed.data) {
+					throw new Error(listed.error || 'Failed to get remote directory size');
+				}
+				const kept = (relative: string) =>
+					!relative.split('/').some((name) => shouldIgnore(name, effectivePatterns));
+				const { directories, files, fileSizes } = listed.data;
+				let totalSize = 0;
+				let fileCount = 0;
+				files.forEach((file, index) => {
+					if (!kept(file)) return;
+					fileCount++;
+					totalSize += fileSizes?.[index] ?? 0;
+				});
+				return { totalSize, fileCount, folderCount: directories.filter(kept).length };
+			}
 
 			async function computeDirectorySize(): Promise<DirectorySizeResult> {
 				// Build effective ignore patterns (same logic as loadFileTree)
@@ -1024,7 +1172,7 @@ export function registerFilesystemHandlers(): void {
 
 				const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
 					// Limit recursion depth to match file tree loading
-					if (depth >= 10) return;
+					if (depth >= DIRECTORY_SIZE_MAX_DEPTH) return;
 
 					try {
 						const entries = await fs.readdir(currentPath, { withFileTypes: true });
@@ -1050,12 +1198,19 @@ export function registerFilesystemHandlers(): void {
 								continue;
 							}
 
-							if (entry.isDirectory()) {
+							// A symlink counts as its target, as the Files panel tree draws it
+							// and as the remote walk (`find -L`) counts it; the depth bound
+							// ends a link loop, as it does in the tree.
+							const childPath = childPrefix + entry.name;
+							const kind = entry.isSymbolicLink()
+								? await resolveDirentType(entry, childPath)
+								: { isDirectory: entry.isDirectory(), isFile: entry.isFile() };
+							if (kind.isDirectory) {
 								folderCount++;
-								await calculateSize(childPrefix + entry.name, depth + 1);
-							} else if (entry.isFile()) {
+								await calculateSize(childPath, depth + 1);
+							} else if (kind.isFile) {
 								fileCount++;
-								filePaths.push(childPrefix + entry.name);
+								filePaths.push(childPath);
 							}
 						}
 

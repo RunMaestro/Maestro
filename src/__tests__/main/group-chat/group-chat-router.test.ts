@@ -2246,6 +2246,14 @@ describe('group-chat-router', () => {
 				busy = false;
 				await runPollsUntil(() => emitAutoRunTriggered.mock.calls.length > 0);
 				expect(emitAutoRunTriggered).toHaveBeenCalledTimes(1);
+				// The participant's agent id rides along, so the renderer starts the run
+				// on that agent even after a rename.
+				expect(emitAutoRunTriggered).toHaveBeenCalledWith(
+					chat.id,
+					'Client',
+					undefined,
+					'session-client'
+				);
 
 				clearPendingParticipants(chat.id);
 			} finally {

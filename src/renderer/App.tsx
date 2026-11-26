@@ -152,6 +152,7 @@ import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useAutoRunRestartResume } from './hooks/batch/useAutoRunRestartResume';
+import { useGroupChatAutoRunTrigger } from './hooks/groupChat/useGroupChatAutoRunTrigger';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
@@ -1815,6 +1816,8 @@ function MaestroConsoleInner() {
 	// Starts the Auto Runs the update modal saved before the app restarted, at
 	// the document and loop pass each one stopped on. Primary window only.
 	useAutoRunRestartResume({ enabled: isLifecycleOwner, sessionsLoaded, startBatchRun });
+	// A group chat moderator's `!autorun` starts the participant's run here.
+	useGroupChatAutoRunTrigger({ enabled: isLifecycleOwner, startBatchRun });
 
 	// --- AGENT CAPABILITY CACHE PRIMING ---
 	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
