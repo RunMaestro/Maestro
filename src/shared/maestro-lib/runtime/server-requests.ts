@@ -325,6 +325,8 @@ function imagesOf(message: Request): string[] | undefined {
  */
 function receiptFields(receipt: TurnSendReceipt): Frame {
 	if (receipt.status === 'ran') return { queued: false, ran: true };
+	// The message it named already ran (`entryId`): nothing began, and the sender must not wait.
+	if (receipt.status === 'answered') return { queued: false, answered: true };
 	return receipt.status === 'queued'
 		? {
 				queued: true,

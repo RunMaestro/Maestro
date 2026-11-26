@@ -577,6 +577,12 @@ export type TurnSendReceipt =
 	 * turn started: what it writes reaches the tab's transcript.
 	 */
 	| { status: 'ran' }
+	/**
+	 * The send named a message the tab already holds with an answer after it (`TurnInput.entryId`,
+	 * `userEntryAnswered()`): it ran once, so nothing ran now. The resend of a turn its sender lost
+	 * track of (a cut link, a restart) reads this as "already ran". An older host never says it.
+	 */
+	| { status: 'answered' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
 	| {
 			status: 'queued';

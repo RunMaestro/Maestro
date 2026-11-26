@@ -255,6 +255,24 @@ export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undef
 	return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
+/**
+ * The host already had a message this machine kept (a turn its link or a restart lost track of):
+ * nothing is sent or held. The resend's own retry ends saying so (`settleRetryOnHost()`); one a
+ * later message started after a Stop is that message's, and is left alone. A send no retry owns
+ * (Force Send of a copy parked by Stop) says it with a toast, so it never vanishes unexplained.
+ */
+function notHostedAgain(sessionId: string, tabId: string, retryOutage: string | undefined): void {
+	if (retryOutage !== undefined && getRetryEntry(sessionId, tabId)?.outageId === retryOutage) {
+		settleRetryOnHost(sessionId, tabId);
+		return;
+	}
+	notifyToast({
+		color: 'theme',
+		title: 'Not sent again',
+		message: 'The host already had this message, so it was not sent again.',
+	});
+}
+
 /** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
 function forwardToHost(
 	sessionId: string,
@@ -280,6 +298,9 @@ function forwardToHost(
 			: (item.agentNotes ?? mentionNotes);
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
 	const overrides = queuedItemHostOverrides(item);
+	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
+	const retry = getRetryEntry(sessionId, item.tabId);
+	const retryOutage = retry?.heldItemId === item.id ? retry.outageId : undefined;
 	const sendToHost = () =>
 		sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
 			held: item.paused === true,
@@ -299,6 +320,11 @@ function forwardToHost(
 					}),
 		}).then(
 			(receipt) => {
+				if (receipt?.status === 'answered') {
+					// The host had already answered this message: it ran once, and nothing ran now.
+					notHostedAgain(sessionId, item.tabId, retryOutage);
+					return null;
+				}
 				if (receipt) {
 					// The host took a resend: the outage it was kept through is over.
 					clearRetryIfSettled(sessionId, item.tabId);
@@ -319,10 +345,7 @@ function forwardToHost(
 	// The message of a turn a lost link cut goes again only once the host says that turn died: it
 	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
-	const fate = cutTurnFate(sessionId, item, connected);
-	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
-	const retry = getRetryEntry(sessionId, item.tabId);
-	const retryOutage = retry?.heldItemId === item.id ? retry.outageId : undefined;
+	const fate = cutTurnFate(sessionId, item, target, connected);
 	const send = !fate
 		? sendToHost()
 		: fate.then((decided) => {
@@ -330,9 +353,7 @@ function forwardToHost(
 					retryOutage !== undefined &&
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
 				if (decided === 'answered') {
-					// The host had it: nothing is sent or held. Only this resend's own retry ends here;
-					// one a later message started after a Stop is that message's.
-					if (stillOwned) settleRetryOnHost(sessionId, item.tabId);
+					notHostedAgain(sessionId, item.tabId, retryOutage);
 					return null;
 				}
 				if (retryOutage && !stillOwned) {

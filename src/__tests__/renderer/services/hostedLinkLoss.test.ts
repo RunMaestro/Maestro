@@ -17,7 +17,7 @@ import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { __resetHostedLinkLossForTests } from '../../../renderer/services/hostedLinkLoss';
-import { keepTurnForHost } from '../../../renderer/services/hostedQueuedTurn';
+import { handQueuedItemToHost, keepTurnForHost } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
@@ -814,5 +814,96 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()).toHaveLength(0);
 		expect(getRetryEntry('row', 't1')).toMatchObject({ outageId, status: 'scheduled', attempt: 1 });
 		expect(queue()).toHaveLength(1);
+	});
+});
+
+describe('a kept cut message after the app restarted asks the host how its turn ended (R19)', () => {
+	const ANSWER: LogEntry = { id: 'a1', timestamp: 20, source: 'ai', text: 'The docs say...' };
+	const queue = () => record().executionQueue ?? [];
+	const sends = () => act$.mock.calls.filter(([, , action]) => action.kind === 'send');
+
+	beforeEach(() => {
+		resetStores(usePeerMirrorStore, useSessionStore);
+		useSshOutageStore.setState({ outages: {} });
+		useRetryStore.setState({ retries: {}, outages: {} });
+		useSettingsStore.setState({ federationHostedAgents: true });
+		// A relaunch: nothing about the cut survives in memory, only the saved queue does.
+		__resetHostedLinkLossForTests();
+		toastMock.mockReset();
+		transcript.mockReset();
+		act$.mockReset();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
+		maestro.federation = { transcript, act: act$ };
+		registerDispatchDepsProvider(() => ({}) as never);
+	});
+
+	afterEach(() => {
+		delete maestro.federation;
+		registerDispatchDepsProvider(null);
+	});
+
+	/** The relaunched state: the host connected with its tab `state`, the kept copy in the queue. */
+	function relaunch(state: 'idle' | 'busy', entries: LogEntry[], text = QUESTION.text) {
+		usePeerMirrorStore.getState().hydrate([peerWith(state, 'connected')]);
+		const session = createModeSession('hosted', {
+			id: 'row',
+			name: 'Docs',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', logs: entries })],
+			executionQueue: [
+				{ id: 'k1', timestamp: 1, tabId: 't1', type: 'message', text, hostEntryId: 'u1' },
+			],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		transcript.mockResolvedValue(entries);
+	}
+
+	it.each([
+		['finished while this app was closed', 'idle' as const, [QUESTION, ANSWER]],
+		['is still running on the host', 'busy' as const, [QUESTION]],
+	])('never sends the kept message again when its turn %s', async (_how, state, entries) => {
+		relaunch(state, entries);
+		expect(handQueuedItemToHost('row', 'k1')).toBe(true);
+		await flush();
+		await flush();
+		expect(transcript).toHaveBeenCalledWith('box', 'h1', 't1', expect.anything());
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
+		expect(toastMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: 'The host already had this message, so it was not sent again.',
+			})
+		);
+	});
+
+	it('sends the kept message, naming its entry, when the turn died with the host', async () => {
+		relaunch('idle', [QUESTION]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	it('keeps the message, unsent, when the host tab cannot be read', async () => {
+		relaunch('idle', [QUESTION]);
+		transcript.mockRejectedValue(new Error('read failed'));
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+	});
+
+	it('takes the host saying the message already ran as "already ran"', async () => {
+		// The host's own check (`userEntryAnswered()`) answers before this machine's read could.
+		relaunch('idle', [QUESTION]);
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'answered' } } });
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(queue()).toHaveLength(0);
+		expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not sent again' }));
 	});
 });

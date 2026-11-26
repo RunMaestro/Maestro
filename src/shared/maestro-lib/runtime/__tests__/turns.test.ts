@@ -1540,6 +1540,29 @@ describe('runtime turns', () => {
 				});
 			});
 
+			// Parity R19: the resend of a message whose turn already answered (its sender lost the
+			// link or restarted while it ran) never runs again; the sender is told it already ran.
+			it('answers "already ran" and starts nothing for the resend of a message the tab answered', async () => {
+				const ANSWER = { id: 'a1', timestamp: 2, source: 'stdout', text: 'The docs say...' };
+				const runtime = await start([cutTab([QUESTION, ANSWER])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(argvFiles).toHaveLength(0);
+				expect(turn.events).toEqual([]);
+				expect((await transcript(runtime)).map((entry) => entry.id)).toEqual(['u1', 'a1']);
+				// Another message that names the entry (edited while kept) runs, as its own entry.
+				value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'Summarize the docs, briefly',
+						entryId: 'u1',
+					})
+				);
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
 			it('gives a new message the id it names', async () => {
 				const runtime = await start();
 				const turn = watch(runtime);

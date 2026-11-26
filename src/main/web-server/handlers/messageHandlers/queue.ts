@@ -31,8 +31,11 @@ import {
 	normalizeTurnOverrides,
 	parseQueuedTurnEdit,
 	readTurnAgentText,
+	readTurnEntryId,
 	type TurnAgentText,
 } from '../../../../shared/maestro-lib/client/types';
+import { userEntryAnswered, type SentUserEntry } from '../../../../shared/maestro-lib/agents/rules';
+import { invokeAsBridge } from '../bridgeHandlers';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueueSessionSnapshot } from '../../types';
 
@@ -227,7 +230,8 @@ export function handleEnqueueCommand(
 		return;
 	}
 
-	if (!ctx.callbacks.enqueueCommand) {
+	const enqueueCommand = ctx.callbacks.enqueueCommand;
+	if (!enqueueCommand) {
 		sendErrorResult('Enqueue not configured');
 		return;
 	}
@@ -239,94 +243,127 @@ export function handleEnqueueCommand(
 		sendErrorResult(routingField.error);
 		return;
 	}
+	const routing = routingField.routing;
 
-	// Same pre-arm rationale as send_command. A queued prompt can sit behind a
-	// predecessor turn for minutes; the entry stays `pending` until OUR
-	// process spawns, so the predecessor's exit cannot fire it.
-	let enqueueCallbackId: string | undefined;
-	// An Auto Run task's dispatch is tracked the same way, but only with a tab
-	// to correlate on: without one it is handed over untracked, never refused.
-	if (wantsDispatchCallback(message) && (requestedTabId || !readAutoRunCallbackRequest(message))) {
-		if (!requestedTabId) {
-			sendErrorResult('--notify-on-complete requires an explicit target tab');
-			return;
+	const enqueue = (): void => {
+		// Same pre-arm rationale as send_command. A queued prompt can sit behind a
+		// predecessor turn for minutes; the entry stays `pending` until OUR
+		// process spawns, so the predecessor's exit cannot fire it.
+		let enqueueCallbackId: string | undefined;
+		// An Auto Run task's dispatch is tracked the same way, but only with a tab
+		// to correlate on: without one it is handed over untracked, never refused.
+		if (
+			wantsDispatchCallback(message) &&
+			(requestedTabId || !readAutoRunCallbackRequest(message))
+		) {
+			if (!requestedTabId) {
+				sendErrorResult('--notify-on-complete requires an explicit target tab');
+				return;
+			}
+			const armed = armDispatchCallback(ctx, message, {
+				agentId: sessionId,
+				tabId: requestedTabId,
+				prompt: command ?? '',
+				isNewTab: false,
+			});
+			if (armed.error) {
+				sendErrorResult(armed.error);
+				return;
+			}
+			enqueueCallbackId = armed.callbackId;
 		}
-		const armed = armDispatchCallback(ctx, message, {
-			agentId: sessionId,
-			tabId: requestedTabId,
-			prompt: command ?? '',
-			isNewTab: false,
-		});
-		if (armed.error) {
-			sendErrorResult(armed.error);
-			return;
-		}
-		enqueueCallbackId = armed.callbackId;
-	}
-	const cancelArmedCallback = () => {
-		if (enqueueCallbackId) getDispatchCallbackRegistry()?.cancel(enqueueCallbackId);
+		const cancelArmedCallback = () => {
+			if (enqueueCallbackId) getDispatchCallbackRegistry()?.cancel(enqueueCallbackId);
+		};
+
+		const enqueueArgs: Parameters<MessageHandlerCallbacks['enqueueCommand']> = [
+			sessionId,
+			command ?? '',
+			clientInputMode,
+			requestedTabId,
+			images,
+			background,
+			held,
+			routing,
+		];
+		// The overrides ride after the dispatch-callback and admission slots, which this path leaves
+		// empty; the agent-only text rides after the overrides.
+		if (turnOverrides || agentText) enqueueArgs.push(undefined, undefined, turnOverrides);
+		if (agentText) enqueueArgs.push(agentText);
+
+		enqueueCommand(...enqueueArgs)
+			.then((result) => {
+				if (!result.success) cancelArmedCallback();
+				ctx.send(client, {
+					type: 'enqueue_command_result',
+					success: result.success,
+					sessionId,
+					...(coverage.receipt
+						? {
+								dispatchId,
+								admission: {
+									...coverage.receipt,
+									targetTabId: result.tabId,
+									queueItemId: result.itemId,
+									outcome: result.success ? (result.queued ? 'queued' : 'accepted') : 'rejected',
+								},
+							}
+						: {}),
+					...(result.success && enqueueCallbackId ? { callbackId: enqueueCallbackId } : {}),
+					...(result.tabId ? { tabId: result.tabId } : {}),
+					...(result.queued !== undefined ? { queued: result.queued } : {}),
+					...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
+					...(result.queueLength !== undefined ? { queueLength: result.queueLength } : {}),
+					...(result.itemId ? { itemId: result.itemId } : {}),
+					...(result.ran ? { ran: true } : {}),
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+				if (result.success && clientInputMode !== 'terminal') {
+					noteDispatchDelegation(ctx, message, {
+						targetSessionId: sessionId,
+						targetTabId: result.tabId ?? requestedTabId,
+						prompt: command ?? '',
+						queued: result.queued === true,
+					});
+				}
+			})
+			.catch((error) => {
+				cancelArmedCallback();
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'enqueue_command', sessionId },
+				});
+				sendErrorResult(`Failed to enqueue command: ${error.message}`);
+			});
 	};
 
-	const enqueueArgs: Parameters<MessageHandlerCallbacks['enqueueCommand']> = [
-		sessionId,
-		command ?? '',
-		clientInputMode,
-		requestedTabId,
-		images,
-		background,
-		held,
-		routingField.routing,
-	];
-	// The overrides ride after the dispatch-callback and admission slots, which this path leaves
-	// empty; the agent-only text rides after the overrides.
-	if (turnOverrides || agentText) enqueueArgs.push(undefined, undefined, turnOverrides);
-	if (agentText) enqueueArgs.push(agentText);
-
-	ctx.callbacks
-		.enqueueCommand(...enqueueArgs)
-		.then((result) => {
-			if (!result.success) cancelArmedCallback();
+	// The resend of a message this tab already answered (a Federation client lost track of the turn:
+	// a cut link, a restart): it ran once and never runs again, and the client is told it already
+	// ran (`TurnSendReceipt` `answered`), as a headless host answers it.
+	const entryId = readTurnEntryId(message.entryId);
+	if (entryId && requestedTabId) {
+		void desktopTabAnswered(sessionId, requestedTabId, {
+			id: entryId,
+			text: command,
+			images,
+		}).then((answered) => {
+			if (!answered) {
+				enqueue();
+				return;
+			}
 			ctx.send(client, {
 				type: 'enqueue_command_result',
-				success: result.success,
+				success: true,
 				sessionId,
-				...(coverage.receipt
-					? {
-							dispatchId,
-							admission: {
-								...coverage.receipt,
-								targetTabId: result.tabId,
-								queueItemId: result.itemId,
-								outcome: result.success ? (result.queued ? 'queued' : 'accepted') : 'rejected',
-							},
-						}
-					: {}),
-				...(result.success && enqueueCallbackId ? { callbackId: enqueueCallbackId } : {}),
-				...(result.tabId ? { tabId: result.tabId } : {}),
-				...(result.queued !== undefined ? { queued: result.queued } : {}),
-				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
-				...(result.queueLength !== undefined ? { queueLength: result.queueLength } : {}),
-				...(result.itemId ? { itemId: result.itemId } : {}),
-				...(result.ran ? { ran: true } : {}),
-				...(result.error ? { error: result.error } : {}),
+				tabId: requestedTabId,
+				queued: false,
+				answered: true,
 				requestId: message.requestId,
 			});
-			if (result.success && clientInputMode !== 'terminal') {
-				noteDispatchDelegation(ctx, message, {
-					targetSessionId: sessionId,
-					targetTabId: result.tabId ?? requestedTabId,
-					prompt: command ?? '',
-					queued: result.queued === true,
-				});
-			}
-		})
-		.catch((error) => {
-			cancelArmedCallback();
-			captureException(error instanceof Error ? error : new Error(String(error)), {
-				extra: { area: 'web-server', handler: 'enqueue_command', sessionId },
-			});
-			sendErrorResult(`Failed to enqueue command: ${error.message}`);
 		});
+		return;
+	}
+	enqueue();
 }
 
 /**
@@ -737,4 +774,45 @@ export function handleSendQueueItemNow(
 				error: `Failed to send queue item now: ${error.message}`,
 			});
 		});
+}
+
+/**
+ * Whether this desktop's tab holds the user message `entry` with an answer after it, read as a
+ * bridge client reads the tab (the owning window's live transcript). Images are compared as data
+ * URLs: the tab keeps its own as store refs, the client sends the bytes. A read that fails answers
+ * false: the client already read the host's tab before it sent, and a message is never dropped on
+ * a read error.
+ */
+async function desktopTabAnswered(
+	sessionId: string,
+	tabId: string,
+	entry: SentUserEntry
+): Promise<boolean> {
+	try {
+		const read = (await invokeAsBridge('sessions:getDeferredContent', sessionId, tabId, false)) as
+			| { logs?: unknown }
+			| undefined;
+		const logs: unknown[] = Array.isArray(read?.logs) ? read.logs : [];
+		const asDataUrls = (images: readonly unknown[]) =>
+			Promise.all(
+				images.map((image) => (typeof image === 'string' ? resolveToDataUrl(image) : null))
+			);
+		const at = logs.findIndex(
+			(candidate) => (candidate as { id?: unknown } | null)?.id === entry.id
+		);
+		if (at === -1) return false;
+		const held = logs[at] as { images?: unknown };
+		const comparable = [...logs];
+		if (Array.isArray(held.images)) {
+			comparable[at] = { ...held, images: await asDataUrls(held.images) };
+		}
+		const sent = entry.images?.length ? await asDataUrls(entry.images) : undefined;
+		return userEntryAnswered(comparable, {
+			...entry,
+			...(sent ? { images: sent.filter((image): image is string => image !== null) } : {}),
+		});
+	} catch (error) {
+		logger.warn(`Could not read tab ${tabId} to check a resend: ${String(error)}`, LOG_CONTEXT);
+		return false;
+	}
 }

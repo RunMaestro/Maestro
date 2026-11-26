@@ -726,25 +726,56 @@ export interface TurnBegin {
 	consumedMergedContext: boolean;
 }
 
+/** A user message as a resend names it (`TurnInput.entryId`): its entry id, text, and images. */
+export interface SentUserEntry {
+	id: string;
+	text: string;
+	images?: readonly string[];
+}
+
+/**
+ * Whether `candidate` is the user message `entry`: the same id, a user entry, and the same text and
+ * images. A resend of it is that entry. A stored entry is not checked on load: a malformed
+ * `images` reads as another message. An id alone never matches.
+ */
+export function isSameUserEntry(candidate: unknown, entry: SentUserEntry): boolean {
+	const existing = candidate as Partial<LogEntryRecord> | null;
+	if (!existing || existing.id !== entry.id || existing.source !== 'user') return false;
+	if (existing.images !== undefined && !Array.isArray(existing.images)) return false;
+	const held = existing.images ?? [];
+	const sent = entry.images ?? [];
+	return (
+		existing.text === entry.text &&
+		held.length === sent.length &&
+		held.every((image, i) => image === sent[i])
+	);
+}
+
+/** The transcript sources that say a turn ended: its answer, or its own error. */
+export const TURN_ENDED_SOURCES: ReadonlySet<string> = new Set(['stdout', 'ai', 'error']);
+
+/**
+ * Whether `logs` hold the user message `entry` with the end of its turn after it (an answer or an
+ * error): that message already ran, so a resend of it must not run again.
+ */
+export function userEntryAnswered(logs: readonly unknown[], entry: SentUserEntry): boolean {
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	if (at === -1) return false;
+	for (let i = at + 1; i < logs.length; i += 1) {
+		const source = (logs[i] as Partial<LogEntryRecord> | null)?.source;
+		if (typeof source === 'string' && TURN_ENDED_SOURCES.has(source)) return true;
+	}
+	return false;
+}
+
 /**
  * `logs` with the message a turn starts on. A resend of a message the transcript already holds
  * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
  * the transcript stays as it is. An id alone never drops a message.
  */
 function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
-	const sent = entry.images ?? [];
-	const held = logs.some((candidate) => {
-		const existing = candidate as Partial<LogEntryRecord> | null;
-		const images = Array.isArray(existing?.images) ? existing.images : [];
-		return (
-			(existing?.images === undefined || Array.isArray(existing.images)) &&
-			existing?.id === entry.id &&
-			existing.source === 'user' &&
-			existing.text === entry.text &&
-			images.length === sent.length &&
-			images.every((image, i) => image === sent[i])
-		);
-	});
+	const sent: SentUserEntry = { id: entry.id, text: entry.text, images: entry.images };
+	const held = logs.some((candidate) => isSameUserEntry(candidate, sent));
 	return held ? [...logs] : [...logs, entry];
 }
 

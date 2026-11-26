@@ -448,7 +448,9 @@ export async function sendHostedTurn(
 	);
 	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).
-	if (receipt && mergedContext && tabId) {
+	// A message the host had already answered ran nothing now: nothing was spent, nothing to name.
+	const ranNow = receipt !== null && receipt.status !== 'answered';
+	if (ranNow && mergedContext && tabId) {
 		updateAiTab(session.id, tabId, (candidate) =>
 			candidate.pendingMergedContext === mergedContext
 				? { ...candidate, pendingMergedContext: undefined }
@@ -460,7 +462,7 @@ export async function sendHostedTurn(
 		watchHostedHistoryCommand(session.id, target, hostTabId, { baseline: historyBaseline });
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
-	if (receipt && opts.nameFrom && hostTabId) {
+	if (ranNow && opts.nameFrom && hostTabId) {
 		requestTabAutoNameForMessage(session, hostTabId, opts.nameFrom.text, opts.nameFrom.label);
 	}
 	return receipt;

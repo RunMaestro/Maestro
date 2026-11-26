@@ -881,6 +881,17 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual([]);
 		});
 
+		it('reports answered, and begins no turn, when the host had already answered the message it names (R19)', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false, answered: true })
+			);
+			const result = await client.turns.send(A1, A1_TAB, { text: 'hello', entryId: 'u1' });
+			expect(result).toEqual({ ok: true, value: { status: 'answered' } });
+			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ entryId: 'u1' });
+			expect(turnKinds()).toEqual([]);
+		});
+
 		it('reads a transcript-changed frame for an idle tab as a gap, so the tab is read again (M13)', async () => {
 			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID, A1, A1_TAB);
 			await vi.waitFor(() => expect(turnKinds()).toEqual(['gap']));

@@ -24,6 +24,11 @@
  *   never sent again while the host's transcript cannot be read.
  */
 
+import {
+	isSameUserEntry,
+	TURN_ENDED_SOURCES,
+	userEntryAnswered,
+} from '../../shared/maestro-lib/agents/rules';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { PeerMirrorConnection } from '../../shared/maestro-lib/client/peer-mirror';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
@@ -254,34 +259,89 @@ function sameAsCut(item: Pick<QueuedItem, 'text' | 'images'>, cut: CutTurn): boo
 	);
 }
 
+/** Where a hosted record runs: the peer and the host's id for the agent. */
+type HostAgentRef = Pick<HostLink, 'peerId' | 'agentId'>;
+
 /**
  * Whether the resend of `item` must wait for the host to say how the turn it repeats ended, and if
- * so, that answer. Null: send now (not a cut turn's message, already decided, edited while kept so
- * it is a message of its own, or the host is not connected, so the send is refused and the message
- * stays kept).
+ * so, that answer. Null: send now (not the message of a turn the host already wrote down, or the
+ * host is not connected, so the send is refused and the message stays kept).
+ *
+ * A cut still on record decides (edited while kept: the user's own message, sent as one). With no
+ * cut on record for it (the app restarted since the cut, or the user stopped the cut and now sends
+ * the parked copy), the host's transcript decides (`readKeptEntryFate()`), never memory alone.
  */
 export function cutTurnFate(
 	sessionId: string,
 	item: Pick<QueuedItem, 'tabId' | 'hostEntryId' | 'text' | 'images'>,
+	host: HostAgentRef,
 	connected: boolean
 ): Promise<CutTurnFate> | null {
 	if (!item.hostEntryId || !connected) return null;
-	const cut = cutTurns.get(cutKey(sessionId, item.tabId));
-	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) return null;
+	const key = cutKey(sessionId, item.tabId);
+	const cut = cutTurns.get(key);
+	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) {
+		return readKeptEntryFate(host, { ...item, hostEntryId: item.hostEntryId });
+	}
 	// Edited while it was kept: the user's own message now, sent as one whatever the turn did.
 	if (!sameAsCut(item, cut)) return null;
-	if (cut.awaitingRead) return Promise.resolve('unknown');
-	return new Promise<CutTurnFate>((resolve) => {
+	const fate = new Promise<CutTurnFate>((resolve) => {
 		const timer = setTimeout(() => {
 			cut.waiters = cut.waiters?.filter((waiter) => waiter !== answer);
 			resolve('unknown');
 		}, CUT_TURN_FATE_WAIT_MS);
-		const answer = (fate: CutTurnFate) => {
+		const answer = (decided: CutTurnFate) => {
 			clearTimeout(timer);
-			resolve(fate);
+			resolve(decided);
 		};
 		(cut.waiters ??= []).push(answer);
 	});
+	// The last read said nothing: this resend starts one read (one per try, never a loop), and
+	// its answer decides the cut.
+	if (cut.awaitingRead && !cut.reading) {
+		cut.awaitingRead = false;
+		cut.reading = true;
+		void readMirrorTranscript(host.peerId, host.agentId, cut.tabId).then(() =>
+			decideCutTurn(key, host)
+		);
+	}
+	return fate;
+}
+
+/**
+ * How a kept message the host already wrote down goes on, read from the host's tab (no cut on
+ * record for it). Running there now with it as its message, or answered after it (or the entry is
+ * gone): `answered`, never sent again. Not answered and not running: `send`. The tab could not be
+ * read: `unknown`, kept for the next try.
+ */
+async function readKeptEntryFate(
+	host: HostAgentRef,
+	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'> & { hostEntryId: string }
+): Promise<CutTurnFate> {
+	await readMirrorTranscript(host.peerId, host.agentId, item.tabId);
+	const mirror = usePeerMirrorStore.getState();
+	const hostTab = mirror.peers[host.peerId]?.agents
+		.find((agent) => agent.id === host.agentId)
+		?.aiTabs?.find((tab) => tab.id === item.tabId);
+	// Closed on the host: nothing there to send it to as that entry, and it may have run.
+	if (!hostTab) return 'answered';
+	const slot = mirror.transcripts[host.peerId]?.[liveTurnKey(host.agentId, item.tabId)];
+	if (!slot?.loaded || slot.loading || slot.error || slot.stale) return 'unknown';
+	const entry = {
+		id: item.hostEntryId,
+		text: item.text ?? '',
+		...(item.images?.length ? { images: item.images } : {}),
+	};
+	const at = slot.entries.findIndex((candidate) => candidate.id === entry.id);
+	// Past the tail read, or gone: it has a history after it. Never sent twice.
+	if (at === -1) return 'answered';
+	// Edited while it was kept: the user's own message now, sent as one (the host gives it an entry
+	// of its own, since it no longer matches the one it names).
+	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
+	if (userEntryAnswered(slot.entries, entry)) return 'answered';
+	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
+	if (hostTab.state === 'busy' && newestUser?.id === entry.id) return 'answered';
+	return 'send';
 }
 
 /**
@@ -320,23 +380,18 @@ function settleKeptCut(cut: CutTurn): void {
 	}
 }
 
-/** Sources that say a turn ended on the host: its answer, or its own error. */
-const ENDED_SOURCES = new Set<LogEntry['source']>(['stdout', 'ai', 'error']);
-
 /** The host's transcript says the turn answering `message` ended (an answer or an error after it). */
 function turnEnded(entries: readonly { id: string; source: string }[], messageId: string): boolean {
 	const at = entries.findIndex((entry) => entry.id === messageId);
 	if (at === -1) return true;
-	return entries
-		.slice(at + 1)
-		.some((entry) => ENDED_SOURCES.has(entry.source as LogEntry['source']));
+	return entries.slice(at + 1).some((entry) => TURN_ENDED_SOURCES.has(entry.source));
 }
 
 /**
  * Decide one cut turn from the host's transcript, read after the host came back. A read that says
  * nothing conclusive keeps the cut for the next one.
  */
-function decideCutTurn(key: string, link: HostLink): void {
+function decideCutTurn(key: string, link: HostAgentRef): void {
 	const cut = cutTurns.get(key);
 	if (!cut) return;
 	cut.reading = false;

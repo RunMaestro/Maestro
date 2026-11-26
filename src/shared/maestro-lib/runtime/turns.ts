@@ -39,7 +39,9 @@ import type { AgentRepository, TabWriteGuard } from '../agents/repository';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import {
 	DEFAULT_RULE_CONTEXT,
+	isSameUserEntry,
 	recordTabSession,
+	userEntryAnswered,
 	type RuleContext,
 	type TabSessionUpdate,
 } from '../agents/rules';
@@ -252,16 +254,7 @@ function turnEntryIdFor(
 	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
 	const existing = logs.find((entry) => entry?.id === entryId);
 	if (!existing) return entryId;
-	// A stored entry is not checked on load: a malformed `images` reads as another message.
-	if (existing.images !== undefined && !Array.isArray(existing.images)) return undefined;
-	const held = existing.images ?? [];
-	const sent = images ?? [];
-	const same =
-		existing.source === 'user' &&
-		existing.text === text &&
-		held.length === sent.length &&
-		held.every((image, i) => image === sent[i]);
-	return same ? entryId : undefined;
+	return isSameUserEntry(existing, { id: entryId, text, images }) ? entryId : undefined;
 }
 
 /** A start the provider layer refused before anything ran, with its reason. */
@@ -1116,6 +1109,19 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const kept = await keepImages(admitted.images);
 		if (!kept.ok) return fail(method, 'failed', kept.error);
 		const images = kept.images;
+		// The resend of a message whose turn already answered (its sender lost the link, or quit, while
+		// it ran): it ran once, and never runs again. The sender reads `answered` as "already ran".
+		const entryId = readTurnEntryId(input.entryId);
+		if (
+			entryId &&
+			userEntryAnswered(Array.isArray(tabRecord.logs) ? tabRecord.logs : [], {
+				id: entryId,
+				text,
+				images,
+			})
+		) {
+			return ok({ status: 'answered' });
+		}
 
 		const item: TurnItem = {
 			id: ctx.newId(),
@@ -1138,9 +1144,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (overrides) item.overrides = overrides;
 		if (agentContext.value) item.agentContext = agentContext.value;
 		if (agentNotes.value) item.agentNotes = agentNotes.value;
-		// Only its form is checked now: whether it stands for an entry the tab holds is decided against
-		// the entry the turn writes (a command's expanded prompt, an edit while it waited).
-		const entryId = readTurnEntryId(input.entryId);
+		// Whether it stands for an entry the tab holds is decided against the entry the turn writes (a
+		// command's expanded prompt, an edit while it waited).
 		if (entryId) item.entryId = entryId;
 
 		const queue = queueFor(agentId);
