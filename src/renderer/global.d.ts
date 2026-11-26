@@ -4906,6 +4906,7 @@ interface MaestroAPI {
 	aiCommand: {
 		suggest: (config: {
 			request: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			isGitRepo?: boolean;
@@ -4933,6 +4934,7 @@ interface MaestroAPI {
 	sideQuestion: {
 		ask: (config: {
 			question: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			agentSessionId?: string;

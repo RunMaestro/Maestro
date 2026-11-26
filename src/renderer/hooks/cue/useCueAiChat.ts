@@ -8,6 +8,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { buildSpawnConfigForAgent } from '../../utils/sessionHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { cueAssistProcessId } from '../../../shared/maestro-lib/agents/hosted-launch';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { isImeComposing } from '../../utils/ime';
@@ -59,7 +60,7 @@ export function useCueAiChat({
 	const [chatInput, setChatInput] = useState('');
 	const [chatBusy, setChatBusy] = useState(false);
 	const agentSessionIdRef = useRef<string | null>(null);
-	const spawnSessionIdRef = useRef<string>(`${sessionId}-cue-assist-${Date.now()}`);
+	const spawnSessionIdRef = useRef<string>(cueAssistProcessId(sessionId, Date.now()));
 	const aiCleanupRef = useRef<(() => void)[]>([]);
 	const aiResponseRef = useRef('');
 	const chatEndRef = useRef<HTMLDivElement>(null);
@@ -75,7 +76,7 @@ export function useCueAiChat({
 			setChatInput('');
 			setChatBusy(false);
 			agentSessionIdRef.current = null;
-			spawnSessionIdRef.current = `${sessionId}-cue-assist-${Date.now()}`;
+			spawnSessionIdRef.current = cueAssistProcessId(sessionId, Date.now());
 		}
 	}, [isOpen, sessionId]);
 

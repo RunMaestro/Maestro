@@ -78,6 +78,7 @@ export async function askSideQuestion(options: {
 	try {
 		const result = await window.maestro.sideQuestion.ask({
 			question,
+			ownerAgentId: session.id,
 			agentType: session.toolType,
 			cwd: session.cwd,
 			agentSessionId: tab?.agentSessionId ?? undefined,
