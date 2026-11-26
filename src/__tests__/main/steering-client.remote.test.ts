@@ -26,7 +26,12 @@ vi.mock('../../main/utils/logger', () => ({
 }));
 
 const ssh = vi.hoisted(() => ({
-	built: [] as Array<{ command: string; args: string[]; useStdin?: boolean }>,
+	built: [] as Array<{
+		command: string;
+		args: string[];
+		useStdin?: boolean;
+		env?: Record<string, string>;
+	}>,
 	execs: [] as Array<{ input?: string; timeout?: number }>,
 	result: { stdout: '', stderr: '', exitCode: 0 as number | string },
 	buildThrows: false,
@@ -34,7 +39,10 @@ const ssh = vi.hoisted(() => ({
 
 vi.mock('../../main/utils/ssh-command-builder', () => ({
 	buildSshCommand: vi.fn(
-		async (_remote: unknown, options: { command: string; args: string[]; useStdin?: boolean }) => {
+		async (
+			_remote: unknown,
+			options: { command: string; args: string[]; useStdin?: boolean; env?: Record<string, string> }
+		) => {
 			if (ssh.buildThrows) throw new Error('no ssh binary');
 			ssh.built.push(options);
 			return {
@@ -81,12 +89,14 @@ function verdictLine(id: string, verdict: string, extra: Record<string, unknown>
 }
 
 describe('remoteSteeringSocketFor', () => {
-	it('names a home-relative socket in the remote steering folder, stable per key', () => {
+	it('names a fresh home-relative socket per spawn, so a later turn on the tab never reuses it', () => {
 		const a = remoteSteeringSocketFor('s1-ai-tab-1');
+		const b = remoteSteeringSocketFor('s1-ai-tab-1');
 		expect(a.startsWith(`${REMOTE_STEERING_SOCKET_DIR}/maestro-steer-`)).toBe(true);
-		expect(a.endsWith('.sock')).toBe(true);
-		expect(remoteSteeringSocketFor('s1-ai-tab-1')).toBe(a);
-		expect(remoteSteeringSocketFor('s1-ai-tab-2')).not.toBe(a);
+		expect(a).toMatch(/^~\/\.maestro\/steer\/maestro-steer-[0-9a-f]{16}-[0-9a-f]{8}\.sock$/);
+		expect(b).not.toBe(a);
+		// Same key, same prefix: the process key stays readable in the name.
+		expect(b.slice(0, -14)).toBe(a.slice(0, -14));
 	});
 });
 
@@ -148,6 +158,38 @@ describe('sendRemoteSteeringRequest', () => {
 		});
 		expect(result).toMatchObject({ id: 'id-3', verdict: 'refused', refusal: 'not-running' });
 		expect(result.detail).toContain('box');
+	});
+
+	it('answers `unknown` for a connection that dropped with no proof it never opened', async () => {
+		// ssh exits 255 when a live connection drops too, possibly after the relay
+		// typed the text and before its output arrived.
+		ssh.result = {
+			stdout: '',
+			stderr: 'Connection to box.example closed by remote host.',
+			exitCode: 255,
+		};
+		const result = await sendRemoteSteeringRequest({
+			channel,
+			processKey: 'k',
+			text: 'hi',
+			id: 'id-3b',
+		});
+		expect(result).toMatchObject({ id: 'id-3b', verdict: 'unknown' });
+	});
+
+	it('runs the relay under the HOME the turn ran under', async () => {
+		ssh.result = {
+			stdout: `${STEERING_RELAY_STARTED_LINE}\n${verdictLine('id-h', 'delivered')}\n`,
+			stderr: '',
+			exitCode: 0,
+		};
+		await sendRemoteSteeringRequest({
+			channel: { ...channel, env: { HOME: '/srv/agent-home' } },
+			processKey: 'k',
+			text: 'hi',
+			id: 'id-h',
+		});
+		expect(ssh.built[0]).toMatchObject({ env: { HOME: '/srv/agent-home' } });
 	});
 
 	it('refuses when the relay never started (maestro-p missing on the remote)', async () => {

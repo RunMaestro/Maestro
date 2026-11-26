@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SshRemoteConfig } from '../../../../../shared/types';
 import { STEERING_SOCKET_ENV_VAR } from '../../../../../shared/chatSteering';
-import { remoteSteeringSocketFor } from '../../../../../main/process-manager/steering-client';
 import type { ClaudeSpawnContext } from '../../../../../main/ipc/handlers/process/resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from '../../../../../main/ipc/handlers/process/spawn-types';
 
@@ -57,7 +56,7 @@ function claudeContext(overrides: Partial<ClaudeSpawnContext> = {}): ClaudeSpawn
 	};
 }
 
-async function wrap(context: ClaudeSpawnContext) {
+async function wrap(context: ClaudeSpawnContext, agentEnv?: Record<string, string>) {
 	const config = {
 		sessionId: 's1-ai-tab-1',
 		toolType: 'claude-code',
@@ -75,7 +74,7 @@ async function wrap(context: ClaudeSpawnContext) {
 		argsToSpawn: ['--print'],
 		headlessArgs: ['--print'],
 		customEnvVarsToPass: undefined,
-		effectiveCustomEnvVars: undefined,
+		effectiveCustomEnvVars: agentEnv,
 		effectivePrompt: 'hello',
 		resolvedRemote: remote,
 		globalShellEnvVars: {},
@@ -92,11 +91,18 @@ beforeEach(() => {
 describe('wrapSpawnForSsh steering channel', () => {
 	it('names the socket on the remote and records how to reach it when maestro-p can relay', async () => {
 		const result = await wrap(claudeContext({ remoteMaestroPCanSteer: true }));
-		const socket = remoteSteeringSocketFor('s1-ai-tab-1');
-		expect(built.env[0]?.[STEERING_SOCKET_ENV_VAR]).toBe(socket);
+		const socket = built.env[0]?.[STEERING_SOCKET_ENV_VAR];
+		expect(socket).toMatch(/^~\/\.maestro\/steer\/maestro-steer-[0-9a-f-]+\.sock$/);
 		expect(result.remoteSteering).toEqual({ remote, command: 'maestro-p', socket });
 		// The remote env is exported by the remote script; nothing goes to the local ssh.
 		expect(result.customEnvVarsToPass).toBeUndefined();
+	});
+
+	it("hands the relay the turn's own HOME when the turn's env sets one", async () => {
+		const result = await wrap(claudeContext({ remoteMaestroPCanSteer: true }), {
+			HOME: '/srv/agent-home',
+		});
+		expect(result.remoteSteering?.env).toEqual({ HOME: '/srv/agent-home' });
 	});
 
 	it('opens no channel on a remote whose maestro-p predates the relay', async () => {

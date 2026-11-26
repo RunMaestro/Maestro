@@ -8,6 +8,7 @@
  */
 
 import * as fs from 'fs';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -20,9 +21,11 @@ import {
 } from '../../maestro-p/steering-relay';
 import {
 	ensureSteeringSocketDir,
-	resolveSteeringSocketPath,
 	startSteeringServer,
+	sweepStaleSteeringSockets,
 } from '../../maestro-p/steering-server';
+import { expandTilde } from '../../shared/pathUtils';
+import { isWindows as isWindowsPlatform } from '../../shared/platformDetection';
 import {
 	MAESTRO_P_CAPABILITIES_FLAG,
 	parseMaestroPCapabilities,
@@ -31,7 +34,7 @@ import {
 	STEERING_RELAY_STARTED_LINE,
 } from '../../shared/chatSteering';
 
-const isWindows = process.platform === 'win32';
+const isWindows = isWindowsPlatform();
 const homes: string[] = [];
 const closers: Array<() => void> = [];
 
@@ -82,19 +85,64 @@ describe('capabilities line', () => {
 	});
 });
 
-describe('resolveSteeringSocketPath / ensureSteeringSocketDir', () => {
-	it('expands a home-relative socket and leaves an absolute one alone', () => {
-		expect(resolveSteeringSocketPath('~/.maestro/steer/a.sock', '/home/u')).toBe(
-			path.join('/home/u', '.maestro/steer/a.sock')
-		);
-		expect(resolveSteeringSocketPath('/tmp/a.sock', '/home/u')).toBe('/tmp/a.sock');
-	});
+describe.skipIf(isWindows)('ensureSteeringSocketDir', () => {
+	const steerDir = (home: string) => path.join(home, '.maestro', 'steer');
 
-	it.skipIf(isWindows)('creates the remote steering folder owner-only', () => {
+	it('creates the remote steering folder owner-only', () => {
 		const home = tempHome();
 		expect(ensureSteeringSocketDir('~/.maestro/steer/a.sock', () => {}, home)).toBe(true);
-		const mode = fs.statSync(path.join(home, '.maestro', 'steer')).mode & 0o777;
-		expect(mode).toBe(0o700);
+		expect(fs.statSync(steerDir(home)).mode & 0o777).toBe(0o700);
+	});
+
+	it('tightens an existing folder others could write to', () => {
+		const home = tempHome();
+		fs.mkdirSync(steerDir(home), { recursive: true });
+		fs.chmodSync(steerDir(home), 0o777);
+		expect(ensureSteeringSocketDir('~/.maestro/steer/a.sock', () => {}, home)).toBe(true);
+		expect(fs.statSync(steerDir(home)).mode & 0o777).toBe(0o700);
+	});
+
+	it('refuses a folder that is a symlink, so the turn runs un-steerable', () => {
+		const home = tempHome();
+		const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'mpx-'));
+		homes.push(elsewhere);
+		fs.mkdirSync(path.join(home, '.maestro'), { recursive: true });
+		fs.symlinkSync(elsewhere, steerDir(home));
+		const warnings: string[] = [];
+		expect(ensureSteeringSocketDir('~/.maestro/steer/a.sock', (m) => warnings.push(m), home)).toBe(
+			false
+		);
+		expect(warnings[0]).toContain('cannot be steered');
+	});
+
+	it('leaves an absolute (local) socket path alone', () => {
+		expect(ensureSteeringSocketDir('/nonexistent/dir/a.sock', () => {})).toBe(true);
+		expect(expandTilde('/tmp/a.sock', '/home/u')).toBe('/tmp/a.sock');
+	});
+});
+
+describe.skipIf(isWindows)('sweepStaleSteeringSockets', () => {
+	it('removes sockets nothing answers on and keeps live ones and its own', async () => {
+		const dir = path.join(tempHome(), 'steer');
+		fs.mkdirSync(dir);
+		const stale = path.join(dir, 'maestro-steer-aaaa-0001.sock');
+		const own = path.join(dir, 'maestro-steer-bbbb-0002.sock');
+		const live = path.join(dir, 'maestro-steer-cccc-0003.sock');
+		const unrelated = path.join(dir, 'notes.txt');
+		fs.writeFileSync(stale, '');
+		fs.writeFileSync(own, '');
+		fs.writeFileSync(unrelated, '');
+		const server = net.createServer();
+		await new Promise<void>((resolve) => server.listen(live, resolve));
+		closers.push(() => server.close());
+
+		const removed = await new Promise<string[]>((resolve) =>
+			sweepStaleSteeringSockets(dir, own, resolve)
+		);
+		expect(removed).toEqual([stale]);
+		expect(fs.existsSync(own)).toBe(true);
+		expect(fs.existsSync(live)).toBe(true);
+		expect(fs.existsSync(unrelated)).toBe(true);
 	});
 });
 
@@ -105,7 +153,7 @@ describe.skipIf(isWindows)('runSteeringRelay', () => {
 		expect(ensureSteeringSocketDir(spec, () => {}, home)).toBe(true);
 		const received: Array<{ id: string; text: string }> = [];
 		const server = startSteeringServer({
-			socketPath: resolveSteeringSocketPath(spec, home),
+			socketPath: expandTilde(spec, home),
 			onSteer: async (id, text) => {
 				received.push({ id, text });
 				return { type: 'steering', id, verdict: 'delivered' };
@@ -147,6 +195,24 @@ describe.skipIf(isWindows)('runSteeringRelay', () => {
 			verdict: 'refused',
 			refusal: 'not-running',
 		});
+	});
+
+	it('delivers nothing, and prints no started line, into an untrusted folder', async () => {
+		const home = tempHome();
+		const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'mpx-'));
+		homes.push(elsewhere);
+		fs.mkdirSync(path.join(home, '.maestro'), { recursive: true });
+		fs.symlinkSync(elsewhere, path.join(home, '.maestro', 'steer'));
+		const lines: string[] = [];
+		const code = await runSteeringRelay({
+			socketSpec: '~/.maestro/steer/x.sock',
+			stdinText: JSON.stringify({ type: 'steer', id: 'r3', text: 'hi' }),
+			writeLine: (line) => lines.push(line),
+			warn: () => {},
+			home,
+		});
+		expect(code).toBe(3);
+		expect(lines).toEqual([]);
 	});
 
 	it('prints nothing (so the desktop reads a refusal) when stdin holds no frame', async () => {

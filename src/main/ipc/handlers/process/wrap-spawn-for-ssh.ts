@@ -259,6 +259,13 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 				[QUERY_SOURCE_ENV_VAR]: config.querySource ?? DEFAULT_QUERY_SOURCE,
 			};
 
+			// The turn expands its socket's `~/` with the HOME it runs under; a relay
+			// that ran under another would look in a different folder.
+			const turnHome = (mergedSshEnvVars as Record<string, string | undefined>).HOME;
+			if (remoteSteering && turnHome) {
+				remoteSteering.env = { HOME: turnHome };
+			}
+
 			if (
 				promptArtifact &&
 				wantsCodexAppServer({

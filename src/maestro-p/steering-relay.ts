@@ -23,7 +23,8 @@ import {
 	type SteeringResultFrame,
 } from '../shared/chatSteering';
 import { requestSteeringOverSocket } from '../shared/chatSteeringSocket';
-import { resolveSteeringSocketPath } from './steering-server';
+import { expandTilde } from '../shared/pathUtils';
+import { ensureSteeringSocketDir } from './steering-server';
 
 export interface SteeringRelayOptions {
 	/** The socket the turn listens on, as the desktop named it (may be `~/`-relative). */
@@ -40,8 +41,9 @@ export interface SteeringRelayOptions {
 
 /**
  * Run the relay. Resolves with the exit code: 0 once a verdict was printed, 2 when
- * stdin held no request frame (nothing was sent, and no started line is printed,
- * so the desktop reads it as a refusal).
+ * stdin held no request frame, 3 when the steering folder cannot be trusted. Neither
+ * failure prints the started line, so the desktop reads it as a refusal: nothing
+ * was sent.
  */
 export async function runSteeringRelay(options: SteeringRelayOptions): Promise<number> {
 	const warn = options.warn ?? ((m: string) => process.stderr.write(`${m}\n`));
@@ -51,9 +53,13 @@ export async function runSteeringRelay(options: SteeringRelayOptions): Promise<n
 		warn('maestro-p: --steer-relay expects one steering request frame on stdin.');
 		return 2;
 	}
+	// The same trust check the turn made before binding: a socket in a folder
+	// someone else can write may be their listener, not the turn. Refused before the
+	// started line, so the desktop knows nothing was sent.
+	if (!ensureSteeringSocketDir(options.socketSpec, warn, options.home)) return 3;
 	options.writeLine(STEERING_RELAY_STARTED_LINE);
 	const result: SteeringResultFrame = await requestSteeringOverSocket({
-		socketPath: resolveSteeringSocketPath(options.socketSpec, options.home),
+		socketPath: expandTilde(options.socketSpec, options.home),
 		frame,
 		timeoutMs: options.timeoutMs ?? STEERING_RELAY_SOCKET_TIMEOUT_MS,
 		warn: (message) => warn(`maestro-p: steering relay: ${message}`),

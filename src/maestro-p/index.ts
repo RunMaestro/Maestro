@@ -51,10 +51,11 @@ import {
 	steeringTextMatches,
 	type SteeringResultFrame,
 } from '../shared/chatSteering';
+import { expandTilde } from '../shared/pathUtils';
 import {
 	ensureSteeringSocketDir,
-	resolveSteeringSocketPath,
 	startSteeringServer,
+	sweepStaleSteeringSockets,
 	type SteeringServer,
 } from './steering-server';
 import {
@@ -1189,8 +1190,9 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// A turn on an SSH remote is handed a home-relative path (the desktop does not
 	// know this host's home); its folder is made owner-only here.
 	if (steeringSocketPath && ensureSteeringSocketDir(steeringSocketPath, warnSteering)) {
+		const resolvedSteeringSocket = expandTilde(steeringSocketPath);
 		steeringServer = startSteeringServer({
-			socketPath: resolveSteeringSocketPath(steeringSocketPath),
+			socketPath: resolvedSteeringSocket,
 			onSteer: (id, text): Promise<SteeringResultFrame> => {
 				const handling = handleSteer(id, text);
 				steersInFlight.add(handling);
@@ -1201,6 +1203,11 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				return handling;
 			},
 		});
+		// Each remote turn names a fresh socket, so a turn killed before its cleanup
+		// (a dropped connection) leaves one nothing else reclaims. Sweep those here.
+		if (steeringServer && steeringSocketPath.startsWith('~/')) {
+			sweepStaleSteeringSockets(path.dirname(resolvedSteeringSocket), resolvedSteeringSocket);
+		}
 	}
 
 	driver.on('limit-hit', markLimitHit);

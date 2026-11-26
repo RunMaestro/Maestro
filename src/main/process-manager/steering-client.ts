@@ -26,7 +26,11 @@ import {
 } from '../../shared/chatSteering';
 import { requestSteeringOverSocket } from '../../shared/chatSteeringSocket';
 import { isWindows } from '../../shared/platformDetection';
-import { describeSshUnreachable, isSshConnectionFailure } from '../../shared/sshConnection';
+import {
+	describeSshUnreachable,
+	isSshConnectionFailure,
+	sshFailedBeforeSession,
+} from '../../shared/sshConnection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { logger } from '../utils/logger';
 import { buildSshCommand, execSshCommand } from '../utils/ssh-command-builder';
@@ -62,13 +66,17 @@ function steeringSocketDigest(processKey: string): string {
 }
 
 /**
- * The socket a turn on an SSH remote listens on, for a given process key. Derived
- * the same way as the local path, so the spawn and the steer agree without one
- * telling the other, and home-relative because only the remote knows its home
- * (maestro-p expands it there).
+ * A fresh socket for one turn on an SSH remote, named from its process key plus a
+ * per-spawn token. Unlike the local path it is not re-derived later: the spawn
+ * records it on the process ({@link RemoteSteeringChannel}), so it can be unique.
+ * It has to be: a steer takes an ssh round trip to land, and a path the tab's NEXT
+ * turn could bind again would let a steer meant for a turn that just ended be typed
+ * into the one that replaced it. Home-relative because only the remote knows its
+ * home (maestro-p expands it there).
  */
 export function remoteSteeringSocketFor(processKey: string): string {
-	return remoteSteeringSocketSpec(steeringSocketDigest(processKey));
+	const token = crypto.randomBytes(4).toString('hex');
+	return remoteSteeringSocketSpec(`${steeringSocketDigest(processKey)}-${token}`);
 }
 
 /**
@@ -84,6 +92,11 @@ export interface RemoteSteeringChannel {
 	command: string;
 	/** Home-relative socket path on the remote ({@link remoteSteeringSocketFor}). */
 	socket: string;
+	/**
+	 * Environment the relay needs to find that socket: the turn's own `HOME` when
+	 * its env set one, so the relay expands `~/` to the same folder the turn did.
+	 */
+	env?: Record<string, string>;
 }
 
 // The socket reply budget lives in shared/chatSteering.ts so the CLI and the
@@ -172,6 +185,7 @@ export async function sendRemoteSteeringRequest(options: {
 		const sshCommand = await buildSshCommand(channel.remote, {
 			command: channel.command,
 			args: [STEERING_RELAY_FLAG, channel.socket],
+			...(channel.env ? { env: channel.env } : {}),
 			useStdin: true,
 		});
 		result = await execSshCommand(channel.remote, sshCommand, {
@@ -197,10 +211,16 @@ export async function sendRemoteSteeringRequest(options: {
 		if (parsed && parsed.id === id) return parsed;
 	}
 	if (!started) {
+		// ssh exits 255 both when it never connected and when a live connection
+		// dropped, possibly after the relay already delivered the text and before
+		// its output arrived. Only stderr that proves no session opened is a refusal.
 		if (isSshConnectionFailure(result.exitCode)) {
-			return notSent(describeSshUnreachable(channel.remote, result.stderr));
-		}
-		if (result.exitCode !== 'ETIMEDOUT') {
+			if (sshFailedBeforeSession(result.stderr)) {
+				return notSent(describeSshUnreachable(channel.remote, result.stderr));
+			}
+		} else if (result.exitCode !== 'ETIMEDOUT') {
+			// Any other exit is the remote command's own: the session ran to its end
+			// and its whole stdout arrived, so no started line means the relay never ran.
 			logger.warn('Remote steering relay did not run', LOG_CONTEXT, {
 				processKey: options.processKey,
 				exitCode: result.exitCode,
@@ -208,8 +228,8 @@ export async function sendRemoteSteeringRequest(options: {
 			return notSent('maestro-p on the SSH remote could not run the steering relay');
 		}
 	}
-	// The relay started (or ssh ran out of time with the relay maybe running), so
-	// the text may have been typed. Never invite a re-send that doubles it.
+	// The relay started, or may have (a dropped connection, a timeout), so the text
+	// may have been typed. Never invite a re-send that doubles it.
 	logger.warn('Remote steering relay ended without a verdict', LOG_CONTEXT, {
 		processKey: options.processKey,
 		exitCode: result.exitCode,

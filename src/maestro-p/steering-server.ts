@@ -23,9 +23,9 @@
 
 import * as fs from 'fs';
 import * as net from 'net';
-import * as os from 'os';
 import * as path from 'path';
 
+import { expandTilde } from '../shared/pathUtils';
 import {
 	oversizeSteeringRequestId,
 	parseSteeringRequest,
@@ -262,37 +262,96 @@ export function isNamedPipePath(socketPath: string): boolean {
 export const MAX_PENDING_LINE_BYTES = 64 * 1024;
 
 /**
- * The real path for a socket the caller named, expanding a home-relative `~/`
- * form. A turn on an SSH remote is handed one of those (see
- * `remoteSteeringSocketSpec` in src/shared/chatSteering.ts), because the desktop
- * that names it does not know the remote's home. Any other path is used as is.
- */
-export function resolveSteeringSocketPath(spec: string, home: string = os.homedir()): string {
-	if (spec === '~') return home;
-	if (spec.startsWith('~/')) return path.join(home, spec.slice(2));
-	return spec;
-}
-
-/**
- * Create the folder a home-relative socket lives in, owner-only. Only for the
- * `~/` form: a caller-named absolute path sits in a folder the caller already
+ * Make sure the folder a home-relative socket lives in exists and is the user's
+ * alone, before maestro-p binds a socket there or the relay dials one. A folder
+ * someone else can write lets them swap the socket for a listener of their own,
+ * which would receive the user's text. Created owner-only; an existing one is
+ * accepted only as a real folder (not a symlink) owned by this user, and tightened
+ * to owner-only if it is not already.
+ *
+ * Only for the `~/` form: an absolute path sits in a folder the caller already
  * owns (the local temp dir), and maestro-p has no business creating folders there.
- * Returns false when the folder cannot be made, so the turn runs un-steerable.
+ * Returns false when the folder cannot be trusted, so the turn runs un-steerable
+ * and the relay delivers nothing.
  */
 export function ensureSteeringSocketDir(
 	spec: string,
 	warn: (message: string) => void,
-	home: string = os.homedir()
+	home?: string
 ): boolean {
 	if (!spec.startsWith('~/')) return true;
-	const dir = path.dirname(resolveSteeringSocketPath(spec, home));
+	// A turn on an SSH remote is handed a `~/` path (`remoteSteeringSocketSpec` in
+	// src/shared/chatSteering.ts): the desktop that names it does not know this home.
+	const dir = path.dirname(expandTilde(spec, home));
+	const refuse = (why: string): false => {
+		warn(`maestro-p: the steering folder ${dir} ${why}; this turn cannot be steered.`);
+		return false;
+	};
 	try {
 		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+		const stat = fs.lstatSync(dir);
+		if (stat.isSymbolicLink() || !stat.isDirectory()) return refuse('is not a plain folder');
+		const uid = process.getuid?.();
+		if (uid !== undefined && stat.uid !== uid) return refuse('belongs to another user');
+		if ((stat.mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
 		return true;
 	} catch (err) {
-		warn(
-			`maestro-p: could not create the steering folder (${String(err)}); this turn cannot be steered.`
-		);
-		return false;
+		return refuse(`could not be prepared (${String(err)})`);
+	}
+}
+
+/**
+ * Remove sockets left in a steering folder by turns that died without closing
+ * them (a dropped ssh connection kills maestro-p before its cleanup runs). Each
+ * remote turn names a fresh socket, so nothing else would ever reclaim them. A
+ * socket is removed only when nothing answers on it, the same test
+ * `reclaimIfStale` applies, so a live turn's channel is never touched. Best
+ * effort and fire-and-forget: it never delays or fails the turn.
+ */
+export function sweepStaleSteeringSockets(
+	dir: string,
+	keep: string,
+	onDone?: (removed: string[]) => void
+): void {
+	let names: string[];
+	try {
+		names = fs.readdirSync(dir);
+	} catch {
+		onDone?.([]);
+		return;
+	}
+	const candidates = names
+		.filter((name) => /^maestro-steer-[0-9a-f-]+\.sock$/.test(name))
+		.map((name) => path.join(dir, name))
+		.filter((file) => file !== keep);
+	const removed: string[] = [];
+	let pending = candidates.length;
+	if (pending === 0) {
+		onDone?.(removed);
+		return;
+	}
+	const settle = (): void => {
+		pending -= 1;
+		if (pending === 0) onDone?.(removed);
+	};
+	for (const file of candidates) {
+		const probe = net.connect(file);
+		probe.unref();
+		probe.once('connect', () => {
+			probe.destroy();
+			settle();
+		});
+		probe.once('error', (err: NodeJS.ErrnoException) => {
+			probe.destroy();
+			if (STALE_SOCKET_CODES.has(err.code ?? '')) {
+				try {
+					fs.unlinkSync(file);
+					removed.push(file);
+				} catch {
+					// Gone already, or not ours to remove.
+				}
+			}
+			settle();
+		});
 	}
 }

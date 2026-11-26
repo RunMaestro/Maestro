@@ -150,6 +150,28 @@ export function isSshConnectionFailure(exitCode: number | string): boolean {
 }
 
 /**
+ * True only when ssh's stderr PROVES it failed before a session opened (the host
+ * refused, could not be resolved or routed to, or authentication failed), so no
+ * remote command can have run. Exit 255 alone does not say that: ssh exits 255 too
+ * when a working connection drops mid-command, after the remote side has acted.
+ * A caller that must never repeat a remote side effect treats anything this does
+ * not recognize as "it may have run".
+ */
+export function sshFailedBeforeSession(stderr: string): boolean {
+	const lower = stderr.toLowerCase();
+	return [
+		'permission denied',
+		'connection refused',
+		'connection timed out',
+		'no route to host',
+		'could not resolve hostname',
+		'name or service not known',
+		'host key verification failed',
+		'remote host identification has changed',
+	].some((marker) => lower.includes(marker));
+}
+
+/**
  * The message for an ssh run that never reached the host, naming the remote so
  * the user knows which link is down: `Unable to connect to "pedtome" over SSH.
  * tailcat Ping: context deadline exceeded; Connection closed by ...`.

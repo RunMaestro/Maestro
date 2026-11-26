@@ -688,10 +688,11 @@ describe('agents IPC handlers', () => {
 
 				// The maestro-p availability check is a LAUNCH test, not a path check:
 				// it runs `maestro-p --version` (which loads node + node-pty) rather
-				// than `command -v maestro-p`, so a host with no node fails it.
+				// than `command -v maestro-p`, so a host with no node fails it. The
+				// trailing `--capabilities` asks whether it can relay a steer.
 				const maestroPProbe = calls.find(([, o]) => o.command === 'maestro-p');
 				expect(maestroPProbe).toBeDefined();
-				expect(maestroPProbe![1].args).toEqual(['--version']);
+				expect(maestroPProbe![1].args).toEqual(['--version', '--capabilities']);
 
 				// Every other (per-agent) probe should invoke 'command -v <binary>',
 				// never 'which'. Asserting one such call per AGENT_DEFINITION catches
