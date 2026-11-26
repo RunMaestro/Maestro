@@ -130,6 +130,19 @@ export function toInstallPlatform(platform: string): InstallPlatform | null {
 }
 
 /**
+ * The platform an agent's install runs for: the machine its turns run on. An
+ * agent on an SSH remote (a hosted agent's host is that remote too) installs
+ * through the remote's POSIX shell, so it takes the `linux` line; every
+ * provider's `darwin` and `linux` lines are the same command.
+ */
+export function agentInstallPlatform(
+	runsOnRemote: boolean,
+	hostPlatform: string
+): InstallPlatform | null {
+	return runsOnRemote ? 'linux' : toInstallPlatform(hostPlatform);
+}
+
+/**
  * The one-line install command for an agent on a platform, or null when there
  * is no install path for that pairing.
  */

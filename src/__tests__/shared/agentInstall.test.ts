@@ -4,6 +4,7 @@ import {
 	agentNotInstalledMessage,
 	classifyAgentErrorMissingBinary,
 	classifyMissingBinary,
+	agentInstallPlatform,
 	getAgentInstallCommand,
 	getAgentInstallInfo,
 	toInstallPlatform,
@@ -11,6 +12,20 @@ import {
 import { AGENT_IDS } from '../../shared/agentIds';
 
 describe('agentInstall', () => {
+	describe('agentInstallPlatform', () => {
+		it('installs for this machine locally, and for the remote POSIX shell over SSH', () => {
+			expect(agentInstallPlatform(false, 'win32')).toBe('win32');
+			expect(agentInstallPlatform(false, 'browser')).toBeNull();
+			expect(agentInstallPlatform(true, 'win32')).toBe('linux');
+		});
+
+		it('relies on every provider giving darwin and linux the same line', () => {
+			for (const id of AGENT_IDS) {
+				expect(getAgentInstallCommand(id, 'linux')).toBe(getAgentInstallCommand(id, 'darwin'));
+			}
+		});
+	});
+
 	describe('getAgentInstallCommand', () => {
 		it('returns the per-platform install for Codex', () => {
 			expect(getAgentInstallCommand('codex', 'darwin')).toBe('npm install -g @openai/codex');

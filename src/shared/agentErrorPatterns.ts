@@ -1006,6 +1006,51 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 	],
 
+	// The agent's CLI is not on the remote (exit 127 from the remote shell). The
+	// same type a local missing CLI gets, so the error dialog offers the same
+	// Install action, which runs the install on the remote (parity B1.14).
+	agent_not_installed: [
+		{
+			// Agent command not found (shell reports command not found)
+			// bash/sh format: "bash: claude: command not found"
+			// zsh format: "zsh: command not found: claude"
+			pattern:
+				/bash:.*claude.*command not found|sh:.*claude.*command not found|zsh:.*command not found:.*claude/i,
+			message: 'Claude command not found. Ensure Claude Code is installed.',
+			recoverable: true,
+		},
+		{
+			// Agent command not found for other agents
+			pattern:
+				/bash:.*opencode.*command not found|sh:.*opencode.*command not found|zsh:.*command not found:.*opencode/i,
+			message: 'OpenCode command not found. Ensure OpenCode is installed.',
+			recoverable: true,
+		},
+		{
+			// Agent command not found for kilo
+			pattern:
+				/bash:.*kilo.*command not found|sh:.*kilo.*command not found|zsh:.*command not found:.*kilo/i,
+			message: 'Kilo command not found. Ensure Kilo is installed.',
+			recoverable: true,
+		},
+		{
+			// Agent command not found for codex
+			pattern:
+				/bash:.*codex.*command not found|sh:.*codex.*command not found|zsh:.*command not found:.*codex/i,
+			message: 'Codex command not found. Ensure Codex is installed.',
+			recoverable: true,
+		},
+		{
+			// Agent binary missing (executable file not found at path)
+			// More specific pattern: requires path-like structure before the binary name
+			// Matches: "/usr/local/bin/claude: No such file or directory"
+			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
+			pattern: /\/[^\s:]*\/(claude|opencode|kilo|codex):\s*No such file or directory/i,
+			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
+			recoverable: true,
+		},
+	],
+
 	agent_crashed: [
 		// Windows remote host detection (issue #995).
 		// Maestro builds the remote command for a POSIX shell. When the SSH
@@ -1029,45 +1074,6 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			// cmd.exe / Windows API: "The system cannot find the path specified"
 			pattern: /the system cannot find the path specified/i,
 			message: WINDOWS_REMOTE_SHELL_MESSAGE,
-			recoverable: false,
-		},
-		{
-			// Agent command not found (shell reports command not found)
-			// bash/sh format: "bash: claude: command not found"
-			// zsh format: "zsh: command not found: claude"
-			pattern:
-				/bash:.*claude.*command not found|sh:.*claude.*command not found|zsh:.*command not found:.*claude/i,
-			message: 'Claude command not found. Ensure Claude Code is installed.',
-			recoverable: false,
-		},
-		{
-			// Agent command not found for other agents
-			pattern:
-				/bash:.*opencode.*command not found|sh:.*opencode.*command not found|zsh:.*command not found:.*opencode/i,
-			message: 'OpenCode command not found. Ensure OpenCode is installed.',
-			recoverable: false,
-		},
-		{
-			// Agent command not found for kilo
-			pattern:
-				/bash:.*kilo.*command not found|sh:.*kilo.*command not found|zsh:.*command not found:.*kilo/i,
-			message: 'Kilo command not found. Ensure Kilo is installed.',
-			recoverable: false,
-		},
-		{
-			// Agent command not found for codex
-			pattern:
-				/bash:.*codex.*command not found|sh:.*codex.*command not found|zsh:.*command not found:.*codex/i,
-			message: 'Codex command not found. Ensure Codex is installed.',
-			recoverable: false,
-		},
-		{
-			// Agent binary missing (executable file not found at path)
-			// More specific pattern: requires path-like structure before the binary name
-			// Matches: "/usr/local/bin/claude: No such file or directory"
-			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
-			pattern: /\/[^\s:]*\/(claude|opencode|kilo|codex):\s*No such file or directory/i,
-			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
 			recoverable: false,
 		},
 		{
@@ -1767,6 +1773,7 @@ const ERROR_TYPES_BY_HIT_FREQUENCY: AgentErrorType[] = [
 	'agent_crashed',
 	'session_not_found',
 	'permission_denied',
+	'agent_not_installed',
 ];
 
 export interface MatchErrorPatternOptions {

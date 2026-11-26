@@ -34,6 +34,7 @@ import {
 	getAgentLoginCommand,
 } from '../../../shared/agentMetadata';
 import {
+	agentInstallPlatform,
 	classifyAgentErrorMissingBinary,
 	getAgentInstallCommand,
 	missingRuntimeLabel,
@@ -59,9 +60,9 @@ export interface UseAgentErrorRecoveryOptions {
 	onRestartAgent?: () => void;
 	/** Callback to open authentication flow */
 	onAuthenticate?: () => void;
-	/** Callback to open the provider CLI install dialog (local agents only) */
+	/** Callback to open the provider CLI install dialog (it installs where the agent runs) */
 	onInstall?: () => void;
-	/** Whether the agent runs on an SSH remote host (disables local install) */
+	/** Whether the agent runs on an SSH remote host: its install is the remote's command */
 	isRemote?: boolean;
 }
 
@@ -122,10 +123,8 @@ function getRecoveryActionsForError(
 		}
 
 		case 'agent_not_installed': {
-			// Defense in depth: ExitHandler does not emit agent_not_installed for SSH
-			// processes, and a local install dialog must never be offered for a remote host.
-			if (options.isRemote) break;
-
+			// The same action in every mode: the install dialog runs the command where
+			// the agent's turns run, on the SSH remote for a remote or hosted agent.
 			const missingBinary = classifyAgentErrorMissingBinary(error);
 			const isRuntimeMissing = missingBinary?.reason === 'runtime-missing';
 
@@ -134,7 +133,9 @@ function getRecoveryActionsForError(
 			// platform; when its runtime (e.g. Node.js) is missing, running an
 			// npm-based install would hit the same missing runtime, so withhold
 			// Install and point the user to restoring that runtime instead.
-			const install = isRuntimeMissing ? null : getAgentInstallCommand(agentId, getPlatform());
+			const platform = agentInstallPlatform(options.isRemote === true, getPlatform());
+			const install =
+				isRuntimeMissing || !platform ? null : getAgentInstallCommand(agentId, platform);
 			if (options.onInstall && install) {
 				actions.push({
 					id: 'install',
