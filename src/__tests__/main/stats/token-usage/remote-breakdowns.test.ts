@@ -128,6 +128,29 @@ describe('collectRemoteBreakdowns', () => {
 		);
 	});
 
+	it('reports a remote done only once its last chunk settles, whichever order they finish in', async () => {
+		const many = Array.from({ length: 70 }, (_, i) =>
+			agent({ id: `a${i}`, projectPath: `/p/${i}` })
+		);
+		let releaseBig!: () => void;
+		const big = new Promise<void>((resolve) => (releaseBig = resolve));
+		const onRemoteDone = vi.fn();
+		const pending = collectRemoteBreakdowns(
+			many,
+			async (_remoteId, projects) => {
+				if (projects.length === 64) await big;
+				return answered(projects);
+			},
+			{ onRemoteDone }
+		);
+		// The six-project chunk answers first; the remote is not done yet.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(onRemoteDone).not.toHaveBeenCalled();
+		releaseBig();
+		await pending;
+		expect(onRemoteDone).toHaveBeenCalledTimes(1);
+	});
+
 	it('names an agent whose project its host failed to read, cut short, or cannot read, and merges none of it', async () => {
 		const result = await collectRemoteBreakdowns(
 			[

@@ -123,14 +123,16 @@ export async function collectRemoteBreakdowns(
 
 	// A host reads at most MAX_PROJECT_TOKEN_USAGE_PROJECTS per request, so a remote with more
 	// projects is asked in chunks (`chunkProjects`); each chunk stands or falls on its own.
-	const asks = [...byRemote].flatMap(([remoteId, remoteAgents]) => {
-		const chunks = chunkProjects(
+	const asks = [...byRemote].flatMap(([remoteId, remoteAgents]) =>
+		chunkProjects(
 			remoteAgents.map((agent) => ({ provider: agent.provider, projectPath: agent.projectPath }))
-		);
-		return chunks.map((chunk, index) => ({ remoteId, chunk, last: index === chunks.length - 1 }));
-	});
+		).map((chunk) => ({ remoteId, chunk }))
+	);
+	// A remote is done once every one of its chunks settles, whichever finishes last.
+	const outstanding = new Map<string, number>();
+	for (const { remoteId } of asks) outstanding.set(remoteId, (outstanding.get(remoteId) ?? 0) + 1);
 	const answers = await Promise.all(
-		asks.map(async ({ remoteId, chunk, last }) => {
+		asks.map(async ({ remoteId, chunk }) => {
 			let usage: ProjectTokenUsage | undefined;
 			try {
 				usage = await withTimeout(request(remoteId, chunk, timeoutMs), timeoutMs);
@@ -138,7 +140,9 @@ export async function collectRemoteBreakdowns(
 				options.onError?.(error);
 				usage = undefined;
 			}
-			if (last) options.onRemoteDone?.();
+			const left = (outstanding.get(remoteId) ?? 1) - 1;
+			outstanding.set(remoteId, left);
+			if (left === 0) options.onRemoteDone?.();
 			return { remoteId, chunk, usage };
 		})
 	);
