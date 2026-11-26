@@ -4870,6 +4870,7 @@ interface MaestroAPI {
 	tabNaming: {
 		generateTabName: (config: {
 			userMessage: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			sessionSshRemoteConfig?: {

@@ -192,6 +192,7 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 	window.maestro.tabNaming
 		.generateTabName({
 			userMessage: prompt,
+			ownerAgentId: sessionId,
 			agentType: session.toolType,
 			cwd: session.cwd,
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
