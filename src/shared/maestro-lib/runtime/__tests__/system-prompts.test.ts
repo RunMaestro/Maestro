@@ -282,6 +282,7 @@ describe('a headless consult', () => {
 				append: async () => ({ ok: true }) as never,
 				remove: async () => ({ ok: true, changed: false }),
 				update: async () => ({ ok: true, changed: false }),
+				drain: async () => undefined,
 			},
 			now: () => T0,
 			options: { bundledPromptsDir: BUNDLED_PROMPTS },

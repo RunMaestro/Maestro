@@ -126,6 +126,14 @@ export function NewInstanceModal({
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const agentLoadSequence = useRef(0);
 	const initialSeedPending = useRef(false);
+	/**
+	 * The open's seeding finished (configs loaded, the draft marked ready). A first load that stops
+	 * early (its SSH remote is offline) leaves this false, so the redetect for the next remote the
+	 * user picks finishes the seeding instead of only refreshing availability.
+	 */
+	const initialSeedDone = useRef(false);
+	/** The duplicate source the open's seeding was started with, for a redetect that finishes it. */
+	const seedSource = useRef<Session | undefined>(undefined);
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
@@ -204,13 +212,23 @@ export function NewInstanceModal({
 	});
 
 	// Define handlers first before they're used in effects
-	const loadAgents = async (source?: Session, sshRemoteId?: string, redetect = false) => {
+	const loadAgents = async (requestedSource?: Session, sshRemoteId?: string, redetect = false) => {
+		if (!redetect) {
+			initialSeedDone.current = false;
+			seedSource.current = requestedSource;
+		}
+		// A redetect before the seeding finished picks the seeding up where it stopped.
+		const resumingSeed = redetect && !initialSeedDone.current;
+		const source = resumingSeed ? seedSource.current : requestedSource;
 		const sourceSshConfig: AgentSshRemoteConfig | undefined =
 			source?.sessionSshRemoteConfig ??
 			(source?.sshRemoteId ? { enabled: true, remoteId: source.sshRemoteId } : undefined);
-		const selectedSshRemoteId =
-			sshRemoteId ??
-			(sourceSshConfig?.enabled ? (sourceSshConfig.remoteId ?? undefined) : undefined);
+		// A redetect names the remote the user picked (none: this machine); only an open's seeding
+		// falls back to the source's.
+		const selectedSshRemoteId = redetect
+			? sshRemoteId
+			: (sshRemoteId ??
+				(sourceSshConfig?.enabled ? (sourceSshConfig.remoteId ?? undefined) : undefined));
 		const sequence = ++agentLoadSequence.current;
 		if (!redetect) {
 			initialSeedPending.current = true;
@@ -248,7 +266,7 @@ export function NewInstanceModal({
 			setAgents(detectedAgents);
 			setDetectedSshRemoteId(selectedSshRemoteId ?? null);
 			// A host change refreshes availability, not the user's draft selections.
-			if (redetect) return;
+			if (redetect && !resumingSeed) return;
 
 			// Per-agent config (path, args, env vars) starts empty - each agent gets its own config
 			// No provider-level loading - config is set per-agent during creation
@@ -402,16 +420,21 @@ export function NewInstanceModal({
 				// unresolved stays remote (Create waits for a remote) rather than
 				// silently running the copy locally. Explicit disablement wins. The
 				// override is the copy's own directory, as in buildDuplicateAgentInput().
+				// Finishing a seeding the user moved to another remote keeps their pick.
+				const draftSshConfig = resumingSeed
+					? { enabled: !!selectedSshRemoteId, remoteId: selectedSshRemoteId ?? null }
+					: sourceSshConfig;
 				setAgentSshRemoteConfigs({
-					[toolType]: sourceSshConfig?.enabled
+					[toolType]: draftSshConfig?.enabled
 						? {
 								enabled: true,
-								remoteId: sourceSshConfig.remoteId ?? null,
+								remoteId: draftSshConfig.remoteId ?? null,
 								workingDirOverride: duplicate.cwd || undefined,
 							}
 						: { enabled: false, remoteId: null },
 				});
 			}
+			initialSeedDone.current = true;
 			setReadyDraftSource(source?.id ?? null);
 		} catch (error) {
 			logger.error('Failed to load agents:', undefined, error);

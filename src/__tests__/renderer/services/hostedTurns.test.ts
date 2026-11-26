@@ -421,9 +421,21 @@ describe('hosted Auto Run', () => {
 		delete maestro.federation;
 	});
 
-	it('starts the run on the host over its own folder, with the run choices made here', async () => {
+	it('names the documents under the folder the panel listed, even when the host has another', async () => {
 		act$.mockResolvedValue({ ok: true, result: { kind: 'auto-run' } });
-		await expect(startHostedAutoRun(row(), runConfig, '/local/copy')).resolves.toBe(true);
+		// A wizard just pointed the panel at a new subfolder; the host's record has not caught up.
+		await expect(startHostedAutoRun(row(), runConfig, '/home/me/docs/Wizard-1')).resolves.toBe(
+			true
+		);
+		expect(act$.mock.calls[0][2].launch.documents).toEqual([
+			{ file: '/home/me/docs/Wizard-1/phase-1.md' },
+			{ file: '/home/me/docs/Wizard-1/nested/phase-2.md', resetOnCompletion: true },
+		]);
+	});
+
+	it('starts the run on the host over its own folder when none was passed, with the run choices made here', async () => {
+		act$.mockResolvedValue({ ok: true, result: { kind: 'auto-run' } });
+		await expect(startHostedAutoRun(row(), runConfig, '')).resolves.toBe(true);
 		expect(act$).toHaveBeenCalledWith('box', 'h1', {
 			kind: 'auto-run',
 			launch: {

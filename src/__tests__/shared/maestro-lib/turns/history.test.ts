@@ -276,6 +276,23 @@ describe('createHistoryWriter', () => {
 			expect(read.status === 'ok' && read.entries).toEqual([]);
 		});
 
+		it('drains only once every edit accepted so far has landed on disk', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			await writer.append('a1', entry('e1', 1));
+			await writer.append('a1', entry('e2', 2));
+			void writer.remove('a1', 'e1');
+			void writer.update('a1', 'e2', { validated: true });
+			await writer.drain();
+			const lines = fs
+				.readFileSync(file(), 'utf-8')
+				.trim()
+				.split('\n')
+				.map((l) => JSON.parse(l));
+			expect(lines.map((line) => [line.id, line.validated])).toEqual([['e2', true]]);
+			// Nothing in flight: it resolves at once.
+			await writer.drain();
+		});
+
 		it('refuses an agent still on the legacy file', async () => {
 			fs.mkdirSync(historyDir, { recursive: true });
 			fs.writeFileSync(

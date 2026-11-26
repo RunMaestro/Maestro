@@ -86,6 +86,12 @@ export interface HistoryWriter {
 		entryId: string,
 		updates: HistoryEntryUpdates
 	): Promise<HistoryEditResult>;
+	/**
+	 * Resolves once every append and edit accepted so far has finished. Shutdown awaits it before
+	 * releasing the data-dir lock, so a rewrite still in flight cannot rename over a file the next
+	 * owner has appended to.
+	 */
+	drain(): Promise<void>;
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -240,5 +246,6 @@ export function createHistoryWriter(options: HistoryWriterOptions): HistoryWrite
 					...(updates.validated !== undefined ? { validated: updates.validated } : {}),
 				}))
 			),
+		drain: () => queue.idle(),
 	};
 }

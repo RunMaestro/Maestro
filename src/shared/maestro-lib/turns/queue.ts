@@ -315,8 +315,9 @@ export interface ExecutionQueue<T extends QueueItem> {
 	move(id: string, toIndex: number, tabId?: string): boolean;
 	/**
 	 * Run a waiting item now instead of in its turn (the queued card's Force Send). Never over a
-	 * turn on its own tab; beside another tab's turn it runs `forceParallel`. Returns false when
-	 * no waiting item has that id, or its tab is busy.
+	 * turn on its own tab; beside another tab's turn it runs `forceParallel`. Never past an Auto
+	 * Run's working-tree hold either, unless the item only reads or is already `forceParallel`.
+	 * Returns false when no waiting item has that id, its tab is busy, or the tree hold keeps it.
 	 */
 	sendNow(id: string): boolean;
 	/** Look at the queue again, for a hold that cleared (a retry that landed). */
@@ -587,6 +588,7 @@ export function createExecutionQueue<T extends QueueItem>(
 			const entry = entries.find((e) => e.state === 'queued' && e.item.id === id);
 			if (!entry) return false;
 			if (active.has(entry.item.tabId) || starting.has(entry.item.tabId)) return false;
+			if (blockedByTreeHold(entry.item, view())) return false;
 			if (busyTurns().length > 0) entry.item = { ...entry.item, forceParallel: true };
 			void dispatch(entry, true);
 			return true;

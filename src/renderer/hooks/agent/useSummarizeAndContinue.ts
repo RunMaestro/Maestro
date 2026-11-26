@@ -20,6 +20,7 @@ import type { Session, LogEntry } from '../../types';
 import type { SummarizeProgress, SummarizeResult } from '../../types/contextMerge';
 import { contextSummarizationService } from '../../services/contextSummarizer';
 import { createTabAtPosition } from '../../utils/tabHelpers';
+import { formatLogsForContextInjection } from '../../utils/contextExtractor';
 import { useOperationStore, selectIsAnySummarizing } from '../../stores/operationStore';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -252,6 +253,13 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 
 				// Create the new compacted tab
 				const compactedTabName = contextSummarizationService.formatCompactedTabName(sourceTab.name);
+				// The compacted tab starts a new provider session, so the summary has to reach the
+				// provider as context on its first turn, the way merge and recovery hand theirs over
+				// (`pendingMergedContext`). A local send prepends it; a hosted send hands it to the host.
+				const summaryText = formatLogsForContextInjection(summarizeResult.summarizedLogs).text;
+				const pendingMergedContext = summaryText
+					? `Summary of the earlier conversation this tab continues:\n\n${summaryText}`
+					: undefined;
 
 				// A hosted agent's tab lives on its host: the host opens it right after the source and
 				// takes its name, and the summary draws here as the tab's transcript, as it does in a
@@ -265,6 +273,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 						fields: {
 							logs: summarizeResult.summarizedLogs,
 							saveToHistory: sourceTab.saveToHistory,
+							...(pendingMergedContext ? { pendingMergedContext } : {}),
 						},
 						...(options.background ? { background: true } : {}),
 					});
@@ -285,7 +294,14 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 						throw new Error('Failed to create compacted tab');
 					}
 					newTabId = tabResult.tab.id;
-					updatedSession = tabResult.session;
+					updatedSession = pendingMergedContext
+						? {
+								...tabResult.session,
+								aiTabs: tabResult.session.aiTabs.map((tab) =>
+									tab.id === newTabId ? { ...tab, pendingMergedContext } : tab
+								),
+							}
+						: tabResult.session;
 				}
 
 				// Calculate final result

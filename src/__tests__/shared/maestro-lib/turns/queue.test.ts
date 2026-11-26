@@ -818,6 +818,23 @@ describe('createExecutionQueue with an Auto Run holding the tree', () => {
 		await h.flush();
 		expect(h.startOrder).toEqual(['r']);
 	});
+
+	it('keeps the hold on Send Now for a write, and sends a read-only item past it', async () => {
+		const h = harness({ holdsTree: { on: true } });
+		h.queue.submit(item('w', 't1'));
+		h.queue.submit(item('r', 't2', { readOnly: true, paused: true }));
+		await h.flush();
+		expect(h.startOrder).toEqual([]);
+		// No turn is busy, but the Auto Run holds the tree: a write waits.
+		expect(h.queue.sendNow('w')).toBe(false);
+		await h.flush();
+		expect(h.startOrder).toEqual([]);
+		// A held read-only item only reads, so the hold does not keep it.
+		expect(h.queue.sendNow('r')).toBe(true);
+		await h.flush();
+		expect(h.startOrder).toEqual(['r']);
+		expect(h.queue.items().map((i) => i.id)).toEqual(['w']);
+	});
 });
 
 describe('findQueueMergeTarget', () => {

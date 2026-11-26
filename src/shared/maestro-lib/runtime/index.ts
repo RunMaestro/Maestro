@@ -449,6 +449,9 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 				await consults.settled();
 				await groupChats.drain();
 				await repository.drain();
+				// A History edit still in flight renames its rewrite into place; it must land while
+				// the lock is held, or it could replace entries the next owner appended.
+				await historyWriter.drain();
 			} finally {
 				process.off('exit', onExit);
 				lock.release();

@@ -33,6 +33,7 @@ import {
 	type MaestroRuntimeOptions,
 	type RuntimeDeps,
 } from '../index';
+import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -505,6 +506,29 @@ describe('runtime turns', () => {
 				removed: true,
 			});
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+		});
+
+		it('launches no provider once another process took the data directory, and holds the message', async () => {
+			const runtime = await start();
+			// Another process holds the lock now; the runtime learns it at its next fence check.
+			fs.writeFileSync(
+				path.join(dir, RUNTIME_LOCK_FILE_NAME),
+				JSON.stringify({
+					pid: 200,
+					mode: 'host',
+					startedAt: new Date(T0).toISOString(),
+					heartbeatAt: new Date(T0).toISOString(),
+					bootTime: T0 - 3_600_000,
+				})
+			);
+
+			const failure = errorOf(await runtime.turns.send('a1', 't1', { text: 'do the thing' }));
+			expect(failure.code).toBe('failed');
+			expect(failure.message).toContain('held in the queue');
+			expect(launched).toEqual([]);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ tabId: 't1', text: 'do the thing', paused: true }),
+			]);
 		});
 	});
 

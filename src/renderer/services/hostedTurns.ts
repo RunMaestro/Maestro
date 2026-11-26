@@ -388,8 +388,8 @@ export function starHostedTab(
 
 /**
  * Start an Auto Run on the host: the Auto Run panel's Run for a hosted agent. The host runs the
- * loop, as it does for `maestro-cli auto-run`, over the same documents (its own Auto Run folder,
- * which the record reads over SSH), prompt, loop, model, and effort. True when the host took it;
+ * loop, as it does for `maestro-cli auto-run`, over the same documents (the folder the panel
+ * reads on the host's machine over SSH), prompt, loop, model, and effort. True when the host took it;
  * a refusal shows as a toast. A no-op (false) for an agent that is not hosted.
  *
  * Not carried: a worktree, the task selection mode, and the auto-resume policy. The host runs the
@@ -416,8 +416,12 @@ export async function startHostedAutoRun(
 		});
 		return result?.kind === 'goal-run';
 	}
-	// The host works out each name under its own folder, so name each document by its full path.
-	const hostFolder = target.agent?.autoRunFolderPath || session.autoRunFolderPath || folderPath;
+	// The documents were listed from `folderPath`, the folder the panel reads on the host's machine
+	// over SSH, so each is named by its full path under it. The host's own folder is only a fallback:
+	// it can lag a folder chosen here (the settings sync keeps one outside the working directory
+	// behind), and a document outside it is refused by the host instead of running the wrong file.
+	const hostFolder =
+		folderPath || session.autoRunFolderPath || target.agent?.autoRunFolderPath || '';
 	const result = await actOnMirroredAgent(target.peerId, target.agentId, {
 		kind: 'auto-run',
 		launch: {

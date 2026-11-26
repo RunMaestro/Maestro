@@ -375,6 +375,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			isWorktree,
 		});
 
+		// A fenced runtime could not write this turn down, so it must not launch the provider either:
+		// the item stays held instead of starting a process that is stopped at its first record.
+		const fenced = repository.writeRefusal();
+		if (fenced) throw new Error(fenced);
 		const started = await deps.runAgentTurn(turn, {
 			sessionId: `${agentId}-ai-${item.tabId}`,
 			grokLaunchScope: host.grokLaunchScope,

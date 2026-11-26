@@ -4661,5 +4661,77 @@ describe('NewInstanceModal', () => {
 				})
 			);
 		});
+
+		it('finishes seeding on the next remote when the preset remote is offline', async () => {
+			vi.mocked(window.maestro.agents.detect).mockImplementation(async (sshRemoteId?: string) =>
+				sshRemoteId === 'remote-1'
+					? [
+							{
+								...createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: false }),
+								error: 'Connection refused',
+							},
+						]
+					: [createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true })]
+			);
+			const remote = (id: string, host: string) => ({
+				id,
+				name: host,
+				host,
+				port: 22,
+				username: 'devuser',
+				privateKeyPath: '/path/to/key',
+				enabled: true,
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [remote('remote-1', 'down.example.com'), remote('remote-2', 'up.example.com')],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/home/devuser/my-project/docs"
+					presetSshRemoteId="remote-1"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Unable to Connect')).toBeInTheDocument();
+			});
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-2' } });
+			await waitFor(() => {
+				expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-2');
+			});
+			const agentOption = await screen.findByRole('option', { name: /Claude Code/i });
+			await act(async () => {
+				fireEvent.click(agentOption);
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on up.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// The interrupted seeding finished, so the draft is ready to create.
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			expect(onCreate.mock.calls[0][11]).toEqual(
+				expect.objectContaining({ enabled: true, remoteId: 'remote-2' })
+			);
+		});
 	});
 });

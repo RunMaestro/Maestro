@@ -249,6 +249,10 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 				const compacted = updated.aiTabs[1];
 				expect(compacted.name).toBe('Tab 1 Compacted');
 				expect(compacted.logs.map((log) => log.text)).toEqual(['compacted']);
+				// The new provider session gets the summary on its first turn, in every mode.
+				expect(compacted.pendingMergedContext).toBe(
+					'Summary of the earlier conversation this tab continues:\n\nUser: compacted'
+				);
 				expect(updated.aiTabs[0].logs.at(-1)?.text).toContain(
 					'Context summarized and continued in new tab "Tab 1 Compacted"'
 				);
