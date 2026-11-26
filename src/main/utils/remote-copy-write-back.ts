@@ -125,12 +125,22 @@ export interface RemoteCopyWriteBackDeps {
 	debounceMs?: number;
 	/** How often each watched copy's size and modification time are compared (no file events needed). */
 	pollMs?: number;
-	/** The most copies watched at once; the oldest watch stops first. */
+	/** The most copies watched at once; the oldest watch stops first (its copy stays known). */
 	maxWatched?: number;
+	/** The most copies known at all (watched or not); the oldest is forgotten first. */
+	maxKnown?: number;
 	/** The largest copy written back (default {@link REMOTE_COPY_WRITE_BACK_MAX_BYTES}). */
 	maxBytes?: number;
 	/** Clock for the kept-version name. */
 	now?: () => Date;
+}
+
+/** Fetched bytes written beside the copy, not yet in its place. */
+export interface StagedCopy {
+	/** Put the staged bytes at the copy's path (a rename). */
+	commit(): Promise<void>;
+	/** Remove the staged bytes; the copy stays as it is. */
+	discard(): Promise<void>;
 }
 
 export interface RemoteCopyWriteBack {
@@ -150,13 +160,15 @@ export interface RemoteCopyWriteBack {
 	 *    copy: resolves `kept`, and no bytes are fetched. On a copy that no
 	 *    longer saves back, that change is kept beside it instead, and the fetch
 	 *    goes on.
-	 * 3. `download()` gets the remote's bytes; `place()` puts them at the copy,
-	 *    and they are the new baseline. A save the app made while they were
-	 *    coming keeps the copy instead (and goes to the remote): `kept`.
+	 * 3. `download()` gets the remote's bytes and `stage()` writes them beside
+	 *    the copy. Only then is the copy read one last time: a save the app made
+	 *    meanwhile keeps the copy (and goes to the remote), the staged bytes are
+	 *    discarded, and it resolves `kept`. Otherwise `commit()` puts them in
+	 *    place, and they are the new baseline.
 	 */
 	refetch(
 		localPath: string,
-		io: { download(): Promise<Buffer>; place(bytes: Buffer): Promise<void> }
+		io: { download(): Promise<Buffer>; stage(bytes: Buffer): Promise<StagedCopy> }
 	): Promise<'fetched' | 'kept'>;
 	/** Resolves once every change seen so far has been handled. */
 	idle(): Promise<void>;
@@ -196,6 +208,8 @@ const DEFAULT_DEBOUNCE_MS = 400;
 /** Slow on purpose: it only backs up the file events, and costs one stat per watched copy. */
 const DEFAULT_POLL_MS = 3000;
 const DEFAULT_MAX_WATCHED = 64;
+/** A known copy costs a few hashes of memory; this only bounds a very long session. */
+const DEFAULT_MAX_KNOWN = 1024;
 /** How many kept-version names are tried before giving up. */
 const MAX_KEPT_NAME_ATTEMPTS = 100;
 
@@ -229,6 +243,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 	const pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
 	const maxWatched = deps.maxWatched ?? DEFAULT_MAX_WATCHED;
+	const maxKnown = Math.max(deps.maxKnown ?? DEFAULT_MAX_KNOWN, maxWatched);
 	const maxBytes = deps.maxBytes ?? REMOTE_COPY_WRITE_BACK_MAX_BYTES;
 
 	/** Why a halted copy does not save back, for `watch()` to say instead of "saves back". */
@@ -271,7 +286,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 		try {
 			for (const entry of [...watched.values()]) {
 				// A copy that no longer saves back has nothing to look for.
-				if (entry.halted) continue;
+				if (entry.halted || entry.watcherLost) continue;
 				const key = await statKey(entry.localPath);
 				if (key === null || key === entry.lastStat) continue;
 				entry.lastStat = key;
@@ -283,28 +298,45 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	}
 
 	function updatePoller(): void {
-		if (watched.size > 0 && !poller) {
+		const anyWatcher = [...watched.values()].some((entry) => !entry.watcherLost);
+		if (anyWatcher && !poller) {
 			poller = setInterval(() => void poll(), pollMs);
 			// Never what keeps the process alive.
 			(poller as { unref?: () => void }).unref?.();
-		} else if (watched.size === 0 && poller) {
+		} else if (!anyWatcher && poller) {
 			clearInterval(poller);
 			poller = null;
 		}
 	}
 
 	/**
-	 * Stop one watch (evicted at the cap, or disposed). A save the user made just
-	 * before must still reach the remote: the copy is read once more and any
-	 * change not sent yet goes now, instead of being dropped with its timer.
+	 * Stop one copy's watcher (evicted at the cap, or disposed). A save the user
+	 * made just before must still reach the remote: the copy is read once more
+	 * and any change not sent yet goes now, instead of being dropped with its
+	 * timer. The copy stays known (its baseline, its kept version), so a fresh
+	 * Open still keeps a change made in it; the next `watch()` starts a new one.
 	 */
-	function stop(entry: WatchedCopy): void {
+	function retire(entry: WatchedCopy): void {
 		if (entry.timer) clearTimeout(entry.timer);
 		entry.timer = null;
 		runSync(entry);
-		entry.watcher.close();
+		if (!entry.watcherLost) entry.watcher.close();
+		entry.watcherLost = true;
+		updatePoller();
+	}
+
+	/** Retire the copy's watcher and forget the copy (dispose, or past {@link maxKnown}). */
+	function stop(entry: WatchedCopy): void {
+		retire(entry);
 		watched.delete(entry.localPath);
 		updatePoller();
+	}
+
+	/** Keep at most `maxWatched` watchers and `maxKnown` copies; the oldest go first. */
+	function enforceCaps(): void {
+		const live = [...watched.values()].filter((entry) => !entry.watcherLost);
+		for (const entry of live.slice(0, Math.max(0, live.length - maxWatched))) retire(entry);
+		while (watched.size > maxKnown) stop(watched.values().next().value as WatchedCopy);
 	}
 
 	/**
@@ -318,6 +350,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 		if (entry.timer) clearTimeout(entry.timer);
 		entry.timer = null;
 		entry.watcher.close();
+		updatePoller();
 		track(
 			queue.enqueue(entry.localPath, async () => {
 				await sync(entry);
@@ -365,7 +398,14 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			// The next change event reads it once the save has put it back.
 			if (!local) return;
 			const localHash = hashOf(local);
-			if (localHash === entry.baseline || localHash === entry.kept) return;
+			// An unconfirmed write (it failed with its connection) may have landed:
+			// the baseline is not known until the remote is asked, so no shortcut.
+			if (
+				entry.unconfirmed === null &&
+				(localHash === entry.baseline || localHash === entry.kept)
+			) {
+				return;
+			}
 			// Said once already; a fresh Open starts over from the remote's bytes.
 			if (entry.halted) return;
 			if (local.length > maxBytes) {
@@ -447,11 +487,17 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					if (existing.halted) throw haltError(existing.halted);
 					if (existing.watcherLost) {
 						existing.watcherLost = false;
+						existing.lastStat = await statKey(localPath);
 						existing.watcher = deps.watchFile(
 							localPath,
 							() => schedule(existing),
 							() => lose(existing)
 						);
+						// Newest again: it is the last to lose its watcher.
+						watched.delete(localPath);
+						watched.set(localPath, existing);
+						updatePoller();
+						enforceCaps();
 					}
 					return;
 				}
@@ -481,13 +527,13 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				}
 				watched.set(localPath, entry);
 				updatePoller();
-				while (watched.size > maxWatched) {
-					stop(watched.values().next().value as WatchedCopy);
-				}
+				// Only copies with a watcher count toward `maxWatched`: a copy too large
+				// to send back never evicts a live one.
+				enforceCaps();
 				if (tooLarge) throw new RemoteCopyTooLargeError(maxBytes);
 			});
 		},
-		async refetch(localPath, { download, place }) {
+		async refetch(localPath, { download, stage }) {
 			const outcome = await queue.enqueue(localPath, async () => {
 				const entry = watched.get(localPath);
 				let checked: string | null = null;
@@ -517,16 +563,22 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				let replaced = false;
 				try {
 					const bytes = await download();
-					// The app may have saved the copy while the bytes were coming (this
-					// queue orders Maestro's own steps, not the app's): that save stays,
-					// and goes to the remote, instead of being replaced. Checked even when
-					// the watch was evicted meanwhile: it decides whether replacing is safe.
-					if (entry) {
-						const local = await readCopy(localPath);
-						if (local && hashOf(local) !== checked) return 'saved-during-fetch' as const;
+					const staged = await stage(bytes);
+					try {
+						// The app may have saved the copy while the bytes were coming or
+						// being staged (this queue orders Maestro's own steps, not the
+						// app's): that save stays, and goes to the remote, instead of being
+						// replaced. Checked after staging, so only the rename is left in the
+						// window, and checked even when the watch was evicted meanwhile.
+						if (entry) {
+							const local = await readCopy(localPath);
+							if (local && hashOf(local) !== checked) return 'saved-during-fetch' as const;
+						}
+						await staged.commit();
+						replaced = true;
+					} finally {
+						if (!replaced) await staged.discard().catch(() => undefined);
 					}
-					await place(bytes);
-					replaced = true;
 					if (entry) {
 						// The next poll reads the copy once (a save may have landed beside the
 						// rename); the read sends nothing when it holds these bytes.

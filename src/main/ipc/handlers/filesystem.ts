@@ -76,6 +76,7 @@ import {
 	RemoteCopyNotSavedBackError,
 	type RemoteCopyWriteBack,
 	type RemoteCopyWriteBackEvent,
+	type StagedCopy,
 } from '../../utils/remote-copy-write-back';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
@@ -237,22 +238,41 @@ async function downloadRemoteFileTo(
 }
 
 /**
- * Put `bytes` at a local path through a sibling and a rename, so the path never
- * names a half-written file, and a failed write leaves the earlier file as it was.
+ * Write `bytes` beside a local path, to be renamed over it (`commit`) or removed
+ * (`discard`). The path never names a half-written file, and a failed write or
+ * rename leaves the earlier file as it was.
  */
-async function placeLocalFile(localPath: string, bytes: Buffer): Promise<void> {
+async function stageLocalFile(localPath: string, bytes: Buffer): Promise<StagedCopy> {
 	const staged = stagingPathFor(localPath);
-	try {
-		await fs.writeFile(staged, bytes);
-		await fs.rename(staged, localPath);
-	} catch (error) {
+	const discard = async () => {
 		try {
 			await fs.rm(staged, { force: true });
 		} catch {
-			// The download's own failure is the one to report.
+			// The write's own failure is the one to report.
 		}
+	};
+	try {
+		await fs.writeFile(staged, bytes);
+	} catch (error) {
+		await discard();
 		throw error;
 	}
+	return {
+		commit: async () => {
+			try {
+				await fs.rename(staged, localPath);
+			} catch (error) {
+				await discard();
+				throw error;
+			}
+		},
+		discard,
+	};
+}
+
+/** Put `bytes` at a local path through a sibling and a rename ({@link stageLocalFile}). */
+async function placeLocalFile(localPath: string, bytes: Buffer): Promise<void> {
+	await (await stageLocalFile(localPath, bytes)).commit();
 }
 
 /** The most files one folder download fetches; a bigger folder is refused, never cut short. */
@@ -1023,9 +1043,9 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 			// fetch runs in that copy's own queue, so no save of it interleaves.
 			await writeBack.refetch(destPath, {
 				download: () => readRemoteFileBytes(remotePath, sshConfig),
-				place: async (bytes) => {
+				stage: async (bytes) => {
 					await fs.mkdir(path.dirname(destPath), { recursive: true });
-					await placeLocalFile(destPath, bytes);
+					return stageLocalFile(destPath, bytes);
 				},
 			});
 			return { success: true, path: destPath };
