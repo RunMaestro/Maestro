@@ -52,6 +52,7 @@ import type {
 	TabRefRecord,
 } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
+import { switchTabProvider } from '../translation/session';
 import {
 	matchesNativeSessionBinding,
 	switchAgentProvider,
@@ -510,7 +511,12 @@ export function closeTabRecord(
 	const index = tabs.findIndex((tab) => tab.id === tabId);
 	if (index === -1 || tabs[index].hidden === true) return null;
 
-	const closed: ClosedTabRecord = { tab: { ...tabs[index] }, index, closedAt: ctx.now() };
+	const closed: ClosedTabRecord = {
+		tab: { ...tabs[index] },
+		index,
+		closedAt: ctx.now(),
+		...(typeof agent.toolType === 'string' ? { toolType: agent.toolType } : {}),
+	};
 	let aiTabs = tabs.filter((tab) => tab.id !== tabId);
 	const visible = aiTabs.filter((tab) => tab.hidden !== true);
 	const otherTabs =
@@ -562,10 +568,23 @@ export function reopenTabRecord(
 	ctx: RuleContext
 ): ReopenTabOutcome {
 	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
-	const sessionId = closed.tab.agentSessionId;
+	// The live session fields belong to the provider the tab closed under. After a provider switch
+	// they are parked under it, so the next turn never resumes another provider's session.
+	const owner = typeof closed.toolType === 'string' ? closed.toolType : agent.toolType;
+	// The record's fields are the translation tab's, with `agentSessionId` optional on disk.
+	type ParkableTab = Parameters<typeof switchTabProvider>[0];
+	const archived: AITabRecord =
+		typeof owner === 'string' && typeof agent.toolType === 'string'
+			? (switchTabProvider(
+					closed.tab as unknown as ParkableTab,
+					owner as ToolType,
+					agent.toolType as ToolType
+				) as unknown as AITabRecord)
+			: closed.tab;
+	const sessionId = archived.agentSessionId;
 	// A native session id alone does not prove the same conversation: an archived tab that carries
 	// a binding is a duplicate only of a tab with the same observed binding.
-	const binding = closed.tab.nativeSessionBinding;
+	const binding = archived.nativeSessionBinding;
 	const open = sessionId
 		? tabs.find(
 				(tab) =>
@@ -577,8 +596,8 @@ export function reopenTabRecord(
 			)
 		: undefined;
 	if (open) return { agent, tabId: open.id, wasDuplicate: true };
-	const id = tabs.some((tab) => tab.id === closed.tab.id) ? ctx.newId() : closed.tab.id;
-	const tab: AITabRecord = { ...closed.tab, id, state: 'idle' };
+	const id = tabs.some((tab) => tab.id === archived.id) ? ctx.newId() : archived.id;
+	const tab: AITabRecord = { ...archived, id, state: 'idle' };
 	const at = Math.max(
 		0,
 		Math.min(Number.isInteger(closed.index) ? closed.index : tabs.length, tabs.length)

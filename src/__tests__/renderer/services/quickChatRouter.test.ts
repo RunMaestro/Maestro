@@ -264,6 +264,46 @@ describe('routeQuickChatMessage', () => {
 		}
 	);
 
+	it('keeps two host tabs of one provider session apart, so each can be chosen', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const act = vi.fn(async () => ({
+			ok: true,
+			result: {
+				kind: 'closed-tabs',
+				closedTabs: [
+					{
+						index: 0,
+						type: 'ai',
+						label: 'Home office deduction',
+						tabId: 'h-tax',
+						closedAt: Date.now(),
+						agentSessionId: 's1',
+					},
+					{
+						index: 1,
+						type: 'ai',
+						label: 'Groceries list',
+						tabId: 'h-food',
+						closedAt: Date.now(),
+						agentSessionId: 's1',
+					},
+				],
+			},
+		}));
+		(window.maestro as unknown as { federation: unknown }).federation = {
+			act,
+			historyPage: vi.fn(async () => ({ entries: [], hasMore: false, total: 0 })),
+		};
+		try {
+			const session = agentWith([buildTab()], agentModeFields('hosted'));
+			expect(
+				await routeQuickChatMessage(session, 'home office deduction limits?', noChat)
+			).toMatchObject({ kind: 'closed', hostTabId: 'h-tax' });
+		} finally {
+			delete (window.maestro as unknown as { federation?: unknown }).federation;
+		}
+	});
+
 	it('never serves one source cached list for the other when the agent stops being hosted', async () => {
 		useSettingsStore.setState({ federationHostedAgents: true });
 		history([entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })]);

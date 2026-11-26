@@ -327,7 +327,7 @@ export async function routeQuickChatMessage(
 			)
 		)
 			continue;
-		const key = `session:${canonicalJson({ ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId })}`;
+		const key = `session:${canonicalJson({ ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId, hostTabId: conversation.hostTabId })}`;
 		targets.set(key, {
 			kind: 'closed',
 			agentSessionId: conversation.agentSessionId,

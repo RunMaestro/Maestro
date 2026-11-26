@@ -1243,7 +1243,12 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				ok: true,
 				plan: {
 					value,
-					after: taken.commit,
+					// Fenced too: a process that lost the directory after its write must not take an
+					// entry a newer writer archived under the same tab id.
+					after: async () => {
+						guardWrite();
+						await taken.commit();
+					},
 					sessions: withAgents(new Map([[agentId, outcome.agent]])),
 					events: [
 						...(tab ? [{ type: 'tab.added' as const, agentId, tab: projectTab(tab) }] : []),

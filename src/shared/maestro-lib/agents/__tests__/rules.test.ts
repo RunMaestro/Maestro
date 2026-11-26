@@ -415,6 +415,35 @@ describe('tabs', () => {
 			expect(outcome).toMatchObject({ tabId: 't1', wasDuplicate: true });
 		});
 
+		it('parks the session of the provider it closed under after a provider switch', () => {
+			const outcome = reopenTabRecord(
+				{ ...base, toolType: 'claude-code', aiTabs: [] } as unknown as AgentRecord,
+				{
+					tab: { id: 't2', agentSessionId: 'codex-thread', customModel: 'gpt', logs: [] },
+					index: 0,
+					closedAt: 1,
+					toolType: 'codex',
+				} as never,
+				makeContext()
+			);
+			const tab = outcome.agent.aiTabs![0];
+			expect(tab.agentSessionId).toBeNull();
+			expect(tab.providerSessions?.codex).toMatchObject({
+				agentSessionId: 'codex-thread',
+				customModel: 'gpt',
+			});
+		});
+
+		it('records the provider a tab closes under, for that park', () => {
+			const outcome = closeTabRecord(
+				{ ...agent(), toolType: 'codex' } as AgentRecord,
+				't2',
+				makeContext(),
+				DEFAULT_TAB_DEFAULTS
+			)!;
+			expect(outcome.closed.toolType).toBe('codex');
+		});
+
 		it('matches on the observed binding, not on the session id alone', () => {
 			const withBinding = {
 				...base,
