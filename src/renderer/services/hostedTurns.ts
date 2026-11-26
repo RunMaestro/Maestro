@@ -31,6 +31,10 @@ import type {
 } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { BatchRunConfig } from '../../shared/types';
+import type {
+	SteeringCommandInput,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -53,6 +57,7 @@ import {
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
 	starMirrorTab,
+	steerMirrorAutoRun,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
 
@@ -592,6 +597,20 @@ export async function startHostedAutoRun(
 		},
 	});
 	return result?.kind === 'auto-run';
+}
+
+/**
+ * Steer a hosted agent's run on the host that runs it (the Thought Stream's Steer). Undefined for
+ * an agent that is not hosted, so the caller steers its own run; otherwise the host's answer, or
+ * null when the host could not be reached (already a red toast).
+ */
+export function steerHostedAutoRun(
+	session: Pick<Session, 'liftedTo'> | null | undefined,
+	input: SteeringCommandInput
+): Promise<SteeringCommandResult | null> | undefined {
+	const target = hostedTargetOf(session);
+	if (!target) return undefined;
+	return steerMirrorAutoRun(target.peerId, target.agentId, input);
 }
 
 /**

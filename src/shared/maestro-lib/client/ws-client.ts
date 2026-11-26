@@ -64,6 +64,11 @@ import {
 	type QueueSteerResult,
 } from '../../chatSteering';
 import {
+	normalizeSteeringCommandResult,
+	type SteeringCommandInput,
+	type SteeringCommandResult,
+} from '../../autoRunSteeringCommands';
+import {
 	PROJECT_TOKEN_USAGE_REPLY,
 	parseProjectTokenUsageReply,
 	projectTokenUsageRequest,
@@ -467,6 +472,7 @@ class WsMaestroClient implements MaestroClient {
 				'abort_auto_run_error',
 				'abort_auto_run_error_result'
 			),
+		steer: (agentId: string, input: SteeringCommandInput) => this.autoRunSteer(agentId, input),
 	};
 
 	readonly groupChats = {
@@ -2328,6 +2334,33 @@ class WsMaestroClient implements MaestroClient {
 		if (!sent.ok) return sent;
 		const result = this.checkResult(method, sent.value, { stateRefusal: true });
 		return result.ok ? ok(undefined) : result;
+	}
+
+	/**
+	 * The message `maestro-cli steer-auto-run` sends a desktop, which a headless host answers too.
+	 * A refusal (no run, the cap, a note already taken) is the host's answer, not a failure.
+	 */
+	private async autoRunSteer(
+		agentId: string,
+		input: SteeringCommandInput
+	): Promise<ClientResult<SteeringCommandResult>> {
+		const method: ClientMethod = 'autoRun.steer';
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		const sent = await this.send(
+			method,
+			{
+				type: 'auto_run_steering_command',
+				sessionId: agentId,
+				action: input.action,
+				...(input.text !== undefined ? { text: input.text } : {}),
+				...(input.noteId !== undefined ? { noteId: input.noteId } : {}),
+				...(input.deliveryId !== undefined ? { deliveryId: input.deliveryId } : {}),
+			},
+			'auto_run_steering_command_result'
+		);
+		if (!sent.ok) return sent;
+		return ok(normalizeSteeringCommandResult(sent.value));
 	}
 
 	// =======================================================================

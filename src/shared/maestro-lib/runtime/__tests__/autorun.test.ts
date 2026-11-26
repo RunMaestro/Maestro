@@ -33,6 +33,7 @@ import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-hist
 import { AUTO_RUN_SESSION_COLUMNS, AUTO_RUN_TASK_COLUMNS } from '../../stats/auto-run-insert';
 import { QUERY_EVENT_COLUMNS } from '../../stats/query-event-insert';
 import { runAgentTurn } from '../../turns/run-agent-turn';
+import { STEERING_BLOCK_START } from '../../../autorunSteering';
 import { outcomeOfEngineEvent } from '../autorun';
 import {
 	createMaestroRuntime,
@@ -436,6 +437,35 @@ describe('runtime Auto Run', () => {
 			expect(thought?.kind === 'thinking' && thought.processId).toBe(
 				tool?.kind === 'tool' && tool.processId
 			);
+		});
+
+		it('opens the next task with a steering note, and keeps the reply beside it', async () => {
+			const file = doc('tasks', tasks(2));
+			script = [1, 2].map((n) => ({ text: `Finished task ${n}.`, tick: file }));
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			expect(value(await runtime.autoRun.steer('a1', { action: 'send', text: 'x' }))).toMatchObject(
+				{ success: false, error: 'No Auto Run is active on this agent' }
+			);
+			expect(value(await runtime.autoRun.launch('a1', { documents: [{ file }] }))).toBeUndefined();
+			const sent = value(
+				await runtime.autoRun.steer('a1', { action: 'send', text: 'Prefer the fixtures' })
+			);
+			expect(sent).toMatchObject({ success: true, note: { text: 'Prefer the fixtures' } });
+			await run.ended();
+
+			// The default prompt names the block's marker too, so the note's own text is what is counted.
+			const steered = runLaunches.filter((launch) => launch.prompt.includes('Prefer the fixtures'));
+			expect(steered).toHaveLength(1);
+			expect(steered[0].prompt.startsWith(STEERING_BLOCK_START)).toBe(true);
+			const listed = value(await runtime.autoRun.steer('a1', { action: 'list' }));
+			expect(listed).toMatchObject({ success: true, steerable: false, pending: [] });
+			expect(listed.deliveries).toHaveLength(1);
+			expect(listed.deliveries?.[0]).toMatchObject({
+				notes: [{ text: 'Prefer the fixtures' }],
+				reply: { success: true, text: expect.stringMatching(/^Finished task [12]\.$/) },
+			});
 		});
 
 		it('starts its progress frame from the tasks already checked, as the desktop runner does', async () => {

@@ -2016,6 +2016,35 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		it("steers the host's run with the desktop's own message, and reads a refusal as its answer", async () => {
+			await connect();
+			const type = 'auto_run_steering_command';
+			bridge.typed.set(type, () => ({
+				type: `${type}_result`,
+				success: true,
+				note: { id: 'n1', text: 'Prefer the fixtures', timestamp: 5 },
+			}));
+			expect(
+				await client.autoRun.steer(A1, { action: 'send', text: 'Prefer the fixtures' })
+			).toEqual({
+				ok: true,
+				value: { success: true, note: { id: 'n1', text: 'Prefer the fixtures', timestamp: 5 } },
+			});
+			expect(bridge.sent(type)).toEqual([
+				expect.objectContaining({ sessionId: A1, action: 'send', text: 'Prefer the fixtures' }),
+			]);
+
+			bridge.typed.set(type, () => ({
+				type: `${type}_result`,
+				success: false,
+				error: 'No Auto Run is active on this agent',
+			}));
+			expect(await client.autoRun.steer(A1, { action: 'list' })).toEqual({
+				ok: true,
+				value: { success: false, error: 'No Auto Run is active on this agent' },
+			});
+		});
+
 		it('turns the host state frames into autorun events, with the null that clears them', async () => {
 			await connect();
 			bridge.push({

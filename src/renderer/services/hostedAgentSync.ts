@@ -14,7 +14,8 @@
  * pill, and the Left Bar draw it as they draw a local run; its controls go to the host. When the
  * host's run ends, the window that owns app-wide effects raises the same "Auto-Run Complete" toast
  * a local run raises (`notifyAutoRunComplete()`). The run's reasoning and tool calls feed the same
- * Thought Stream a local run's do (`feedHostedAutoRunActivity()`).
+ * Thought Stream a local run's do (`feedHostedAutoRunActivity()`), and its steering notes are
+ * read back from the host as the run moves on (`refreshHostedSteering()`).
  *
  * With hosted agents switched off (`hostingEnabled()`) it folds nothing in, and releases each
  * hosted record once (`releaseHostedSession()`), so it works as its SSH agent.
@@ -41,6 +42,8 @@ import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../stores/batchStore';
 import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunCompletion';
 import { closingHostTabIds, hostingEnabled } from './hostedTurns';
+import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
+import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
 import { readMirrorTranscript } from './peerMirror';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
@@ -104,6 +107,22 @@ function syncHostedAutoRun(
 		// host sends its final counts before that `null`, so the last mirror holds how it ended.
 		notifyAutoRunComplete(mirroredRunCompleteInfo(sessionId, sessionName, before));
 	}
+	if (ended) {
+		// The run's end drops the notes no task took, as a local run's end does; the host's replies stay.
+		clearPendingSteeringNotes(sessionId);
+	} else if (connected && frame?.isRunning && awaitsHostSteering(sessionId)) {
+		// The run moved on: a task may have taken the waiting notes, or replied to them.
+		void refreshHostedSteering(sessionId);
+	}
+}
+
+/** Whether a hosted record shows a note the host may since have taken, or a reply still to come. */
+function awaitsHostSteering(sessionId: string): boolean {
+	const { notes, delivered } = useAutoRunSteeringStore.getState();
+	return (
+		(notes[sessionId]?.length ?? 0) > 0 ||
+		(delivered[sessionId] ?? []).some((note) => note.response === undefined)
+	);
 }
 
 /** Whether this window raises the toast a hosted run's end raises (`startHostedAgentSync()`). */

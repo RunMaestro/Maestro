@@ -22,6 +22,10 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type {
+	SteeringCommandInput,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import type { ClosedTabSummary } from '../../shared/closedTabCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -96,6 +100,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'auto-run': 'Auto Run did not start',
 	'goal-run': 'Auto Run did not start',
 	'auto-run-control': 'Auto Run control failed',
+	'steer-auto-run': 'Could not steer the Auto Run',
 };
 
 /** What the main-process service answered for one action (`PeerMirrorService.act()`). */
@@ -360,6 +365,20 @@ export async function steerMirrorQueuedItem(
 ): Promise<QueueSteerResult | null> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'steer-queued', itemId });
 	return result?.kind === 'steer-queued' ? result.result : null;
+}
+
+/**
+ * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss). The host's
+ * answer as is, a refusal included (`success: false`, no toast: the caller says it where the user
+ * looked). Null when the host could not be reached (already a red toast).
+ */
+export async function steerMirrorAutoRun(
+	peerId: string,
+	agentId: string,
+	input: SteeringCommandInput
+): Promise<SteeringCommandResult | null> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'steer-auto-run', input });
+	return result?.kind === 'steer-auto-run' ? result.result : null;
 }
 
 /**

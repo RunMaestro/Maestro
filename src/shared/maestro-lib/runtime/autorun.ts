@@ -31,17 +31,22 @@
  *   stopped by a person, failed with the engine's reason, or an engine error. The progress frames
  *   cannot say it, since a run that died and one that finished both end in `null`.
  *
+ * - **Steering notes** wait for the next task or goal iteration and open its prompt, as the
+ *   desktop's do (`autorun-steering.ts`); `steer` is the Thought Stream's Steer.
+ *
  * Deferred, with the reason in `Plans/maestro-tui-autorun-engine.md`: worktree runs (AE13),
- * steering notes (AE14), a working copy per loop (AE21), Agent Resilience retry (W4), and Auto Run
+ * a working copy per loop (AE21), Agent Resilience retry (W4), and Auto Run
  * for an SSH-remote agent (W6).
  */
 
 import * as path from 'path';
 
 import { describeUnresolvedHaltMarker } from '../../autorunMarkers';
+import { formatSteeringNotesBlock, joinAutoRunPromptBlocks } from '../../autorunSteering';
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { GoalRunConfig } from '../../goalDriven/types';
 import type { Playbook, SessionInfo } from '../../types';
+import { generateUUID } from '../../uuid';
 import {
 	registerCliActivity,
 	unregisterCliActivity,
@@ -50,7 +55,12 @@ import {
 import { sshRecordOf } from '../agents/rules';
 import type { AgentRepository } from '../agents/repository';
 import { resolveAutoRunFolder } from '../autorun/documents';
-import type { AutoRunDeps, AutoRunEvent } from '../autorun/engine-types';
+import type {
+	AutoRunDeps,
+	AutoRunEvent,
+	AutoRunTurnRequest,
+	AutoRunTurnResult,
+} from '../autorun/engine-types';
 import {
 	DEFAULT_GOAL_MAX_ITERATIONS,
 	validateAutoRunLaunch,
@@ -87,6 +97,7 @@ import {
 	readStatsCollectionEnabled,
 	type StatsRecorder,
 } from '../turns/stats';
+import { createSteeringLedger } from './autorun-steering';
 import { createAutoRunTurnRunner, type AutoRunStreamEvent } from './autorun-turns';
 import type { DataDirVerdict } from './data-dir-lock';
 import { commitAll, isGitRepository, readGitBranch } from './git';
@@ -413,6 +424,47 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 	}
 
 	// -----------------------------------------------------------------------
+	// Steering notes (the Thought Stream's Steer)
+	// -----------------------------------------------------------------------
+
+	const steering = createSteeringLedger({ now, newId: generateUUID });
+
+	/**
+	 * A task or goal iteration takes every note waiting for its run and opens with the block an
+	 * agent reads, as the desktop's runners do; its reply comes back to the notes. Synopsis and
+	 * handoff turns take none.
+	 */
+	async function runSteered(
+		agentId: string,
+		request: AutoRunTurnRequest,
+		run: (request: AutoRunTurnRequest) => Promise<AutoRunTurnResult>
+	): Promise<AutoRunTurnResult> {
+		if (request.purpose !== 'task' && request.purpose !== 'goal-iteration') return run(request);
+		const taken = steering.take(agentId);
+		if (!taken) return run(request);
+		const block = formatSteeringNotesBlock(
+			taken.notes,
+			request.purpose === 'goal-iteration' ? 'goal' : 'document'
+		);
+		try {
+			const result = await run({
+				...request,
+				prompt: joinAutoRunPromptBlocks([block, request.prompt]),
+			});
+			steering.reply(agentId, taken.deliveryId, {
+				text: result.success
+					? (result.response ?? '')
+					: (result.error ?? result.response ?? 'The task failed.'),
+				success: result.success,
+			});
+			return result;
+		} catch (error) {
+			steering.reply(agentId, taken.deliveryId, { text: errorText(error), success: false });
+			throw error;
+		}
+	}
+
+	// -----------------------------------------------------------------------
 	// The engine's ports
 	// -----------------------------------------------------------------------
 
@@ -438,7 +490,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 			return text;
 		};
 		return {
-			turns: { run: (request) => turns.run(request) },
+			turns: { run: (request) => runSteered(agentId, request, (steered) => turns.run(steered)) },
 			documents,
 			history: {
 				append: async (entry) => {
@@ -537,6 +589,8 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 	function startRun(handle: Omit<RunHandle, 'done'>, events: AsyncGenerator<AutoRunEvent>): void {
 		const run: RunHandle = { ...handle, done: Promise.resolve() };
 		runs.set(run.agentId, run);
+		// A new run begins with no notes, as the desktop's does.
+		steering.startRun(run.agentId);
 		run.done = (async () => {
 			publish(run);
 			let outcome: AutoRunOutcome | undefined;
@@ -551,6 +605,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 				outcome = { status: 'error', reason: errorText(error) };
 			} finally {
 				runs.delete(run.agentId);
+				steering.endRun(run.agentId);
 				bus.emit({
 					type: 'autorun.ended',
 					agentId: run.agentId,
@@ -817,6 +872,14 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 		resume: async (agentId) => answer('autoRun.resume', agentId, 'resume'),
 		skip: async (agentId) => answer('autoRun.skip', agentId, 'skip'),
 		abort: async (agentId) => answer('autoRun.abort', agentId, 'abort'),
+		steer: async (agentId, input) =>
+			ok(
+				steering.command(
+					agentId,
+					input,
+					runs.has(agentId) ? null : 'No Auto Run is active on this agent'
+				)
+			),
 	};
 
 	return {
