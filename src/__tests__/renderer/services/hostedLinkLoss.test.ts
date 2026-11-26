@@ -194,6 +194,27 @@ describe('a turn cut by a lost link', () => {
 		expect(tab().agentError?.source).toBe('host-link');
 	});
 
+	it('draws one link card for one cut, reworded when the outage is confirmed after the connection was lost (R12)', () => {
+		const linkNotes = () => tab().logs.filter((entry) => entry.agentError?.source === 'host-link');
+		hostReports('busy', 'lost');
+		syncHostedAgents();
+		expect(linkNotes()).toHaveLength(1);
+		const first = linkNotes()[0];
+
+		confirmOutage();
+		syncHostedAgents();
+		expect(linkNotes()).toHaveLength(1);
+		expect(linkNotes()[0].id).toBe(first.id);
+		expect(linkNotes()[0].text).toContain(hostOutage.message);
+		expect(tab().agentError?.timestamp).toBe(first.timestamp);
+
+		// Back to "connection lost" only: still the one card.
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		syncHostedAgents();
+		expect(linkNotes()).toHaveLength(1);
+		expect(linkNotes()[0].id).toBe(first.id);
+	});
+
 	it('draws the host turn Thinking again when the host is back and still runs it, with the error cleared', async () => {
 		hostReports('busy', 'reconnecting');
 		confirmOutage();
@@ -363,6 +384,37 @@ describe('a turn cut by a lost link', () => {
 		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'interrupt', tabId: 't1' });
 		expect(toastMock).not.toHaveBeenCalled();
 	});
+
+	it('draws a running turn running once the mirror is connected, while the SSH outage is still on record (R11)', async () => {
+		// The SSH link drops: the SSH outage is confirmed, and the tab is drawn ended.
+		const sshOutage: SshReachabilityEvent = { ...hostOutage, cause: 'ssh', message: 'ssh died' };
+		hostReports('busy', 'reconnecting');
+		useSshOutageStore.getState().applyReachability(sshOutage);
+		syncHostedAgents();
+		expect(tab().state).toBe('idle');
+
+		// The mirror reconnects and the host still runs the turn. The SSH outage clears only on its
+		// own 30 s re-probe, so it is still on record here.
+		transcript.mockResolvedValue([QUESTION]);
+		hostReports('busy', 'connected');
+		syncHostedAgents();
+		expect(useSshOutageStore.getState().outages.r1).toBeDefined();
+		expect(tab().state).toBe('busy');
+		expect(tab().agentError).toBeUndefined();
+		expect(record().state).toBe('busy');
+
+		// Stop goes to the host, as for any running hosted turn: nothing ends here.
+		act$.mockResolvedValue({ ok: true, result: { kind: 'interrupt' } });
+		await interruptTurn('row', { tabId: 't1' });
+		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'interrupt', tabId: 't1' });
+		expect(toastMock).not.toHaveBeenCalled();
+
+		// The cut is settled by the host's report: nothing is kept or sent again.
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(raised).toEqual([]);
+	});
 });
 
 describe('projectHostedSession with the link lost', () => {
@@ -392,7 +444,7 @@ describe('projectHostedSession with the link lost', () => {
 		expect(once.aiTabs[0].logs.map((entry) => entry.id)).toEqual([
 			'u1',
 			'live1',
-			'host-link-50-t1',
+			'host-link-t1-u1',
 		]);
 		expect(projectHostedSession(once, { agent, liveTurns, linkLost })).toBe(once);
 	});
@@ -416,6 +468,25 @@ describe('projectHostedSession with the link lost', () => {
 			linkLost,
 		});
 		expect(twice.aiTabs[0].logs.find((entry) => entry.id === 'live1')?.text).toBe('partial answer');
-		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-50-t1');
+		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-t1-u1');
+	});
+
+	it('keeps one note when the turn message lands after the cut was drawn (a late transcript read)', () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', logs: [] })],
+		});
+		const once = projectHostedSession(local, { agent, linkLost });
+		expect(once.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['host-link-t1-50']);
+
+		// A read already in flight lands during the loss, with the turn's message before the note.
+		const late = {
+			...once,
+			aiTabs: [{ ...once.aiTabs[0], logs: [QUESTION, ...once.aiTabs[0].logs] }],
+		};
+		const twice = projectHostedSession(late, { agent, linkLost });
+		const notes = twice.aiTabs[0].logs.filter((entry) => entry.agentError?.source === 'host-link');
+		expect(notes.map((entry) => entry.id)).toEqual(['host-link-t1-50']);
 	});
 });
