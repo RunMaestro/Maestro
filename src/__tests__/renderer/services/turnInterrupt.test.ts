@@ -9,9 +9,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {} from '../../../renderer/global';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { QueuedItem, Session } from '../../../renderer/types';
+import { TURN_CANCELED_NOTE } from '../../../shared/maestro-lib/store/transcript';
 
 vi.mock('../../../renderer/stores/retryStore', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/stores/retryStore')>()),
@@ -22,11 +23,17 @@ vi.mock('../../../renderer/services/crossAgentHandoff', async (importOriginal) =
 	...(await importOriginal<typeof import('../../../renderer/services/crossAgentHandoff')>()),
 	dropMentionHandoffs: vi.fn(),
 }));
+vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
+	interruptMirroredAgent: vi.fn(async () => undefined),
+}));
 
 import { interruptTurn, registerTurnInterruptDeps } from '../../../renderer/services/turnInterrupt';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/stores/retryStore';
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
+import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 const originalMaestro = window.maestro;
 const processApi = {
@@ -349,5 +356,52 @@ describe('interruptTurn: a signal that fails', () => {
 		expect(result).toMatchObject({ success: true, interrupted: true, stoppedTabIds: ['tab-b'] });
 		expect(tab('tab-b').state).toBe('idle');
 		expect(tab('tab-b').logs.at(-1)?.text).toBe('Process forcefully terminated');
+	});
+});
+
+describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
+	afterEach(() => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+	});
+
+	it('answers the same Stop in every mode; only the transport differs', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const results = [];
+		for (const mode of AGENT_MODES) {
+			vi.clearAllMocks();
+			processApi.interrupt.mockResolvedValue(true);
+			processApi.getActiveProcesses.mockResolvedValue([]);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+			results.push(await interruptTurn('agent-1'));
+
+			if (mode === 'hosted') {
+				// The host runs the turn: Stop goes there, and its transcript ends on the same
+				// note (`buildTurnTranscript`, record-turn.test.ts).
+				expect(interruptMirroredAgent).toHaveBeenCalledWith('box', 'h1', undefined);
+				expect(processApi.interrupt).not.toHaveBeenCalled();
+			} else {
+				expect(processApi.interrupt.mock.calls.map(([id]) => id)).toEqual([
+					'agent-1-ai-tab-a',
+					'agent-1-ai-tab-b',
+				]);
+				expect(interruptMirroredAgent).not.toHaveBeenCalled();
+				expect(tab('tab-a').logs.at(-1)?.text).toBe(TURN_CANCELED_NOTE);
+			}
+		}
+		const [local, ssh, hosted] = results;
+		expect(local).toEqual({
+			success: true,
+			sessionId: 'agent-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-a', 'tab-b'],
+			exited: false,
+		});
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
 	});
 });

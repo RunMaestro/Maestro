@@ -36,6 +36,13 @@ export const LOG_ENTRY_SOURCES = [
 /** Who or what produced a transcript entry. */
 export type LogEntrySource = (typeof LOG_ENTRY_SOURCES)[number];
 
+/**
+ * The `system` note a turn the person stopped ends on. One string for every mode: the desktop
+ * writes it when Stop ends a local or SSH turn (`turnInterrupt.ts`), and a host writes it into the
+ * transcript of an interrupted turn (`buildTurnTranscript()`), so a hosted tab reads the same.
+ */
+export const TURN_CANCELED_NOTE = 'Canceled by user';
+
 /** A tool call's progress, carried on `source: 'tool'` entries. */
 export interface LogEntryToolState extends UnknownFields {
 	status?: 'running' | 'completed' | 'error' | 'failed';

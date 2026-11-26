@@ -31,7 +31,7 @@ import {
 import { createEventBus } from '../../../../shared/maestro-lib/client/event-bus';
 import { resolveMaestroPaths } from '../../../../shared/maestro-lib/paths/resolve';
 import type { MaestroPaths } from '../../../../shared/maestro-lib/paths/resolve';
-import { transcriptOf } from '../../../../shared/maestro-lib/store/transcript';
+import { TURN_CANCELED_NOTE, transcriptOf } from '../../../../shared/maestro-lib/store/transcript';
 import {
 	buildTurnTranscript,
 	buildUserTranscriptEntry,
@@ -652,9 +652,11 @@ describe('turn records', () => {
 			})
 		);
 		expect(result.history).toMatchObject({ ok: false, reason: 'not-recorded' });
-		expect(transcriptOf(repository.getTab('a1', 't1')!).map((e) => e.source)).toEqual([
-			'user',
-			'stdout',
+		// It ends on the note a local Stop writes, so a hosted tab reads the same.
+		expect(transcriptOf(repository.getTab('a1', 't1')!).map((e) => [e.source, e.text])).toEqual([
+			['user', 'fix the login bug'],
+			['stdout', expect.any(String)],
+			['system', TURN_CANCELED_NOTE],
 		]);
 		expect(statsEvents).toHaveLength(1);
 	});
@@ -693,6 +695,26 @@ describe('turn records', () => {
 
 	describe('buildTurnTranscript', () => {
 		const ctx = context();
+
+		it('ends a stopped turn on the note a local Stop writes, after its partial answer', () => {
+			const entries = buildTurnTranscript(
+				turn({
+					completed: {
+						...turn().completed,
+						outcome: 'interrupted',
+						answerText: 'Partial answer',
+						exit: { ...CLEAN_EXIT, interrupted: true },
+					},
+				}),
+				ctx
+			);
+			expect(entries.map((e) => [e.source, e.text])).toEqual([
+				['user', 'fix the login bug'],
+				['stdout', 'Partial answer'],
+				['system', TURN_CANCELED_NOTE],
+			]);
+			expect(TURN_CANCELED_NOTE).toBe('Canceled by user');
+		});
 
 		it('words an unclassified crash from the exit facts', () => {
 			const crash = (exit: Partial<TurnExit>) =>
