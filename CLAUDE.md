@@ -176,6 +176,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`
+- **Reading a transcript file that may be missing or unreadable:** `forEachLocalTranscriptLine()`, `readLocalTranscript()`, `readRemoteTranscript()`, `isMissingFileError()`, `isMissingRemoteFile()` in `src/main/storage/transcript-read.ts`
 - **A cache derivation upgrade that survives being killed:** `isDerivationStale()`, `accumulateUpgradeBaseline()`, `finishDerivationUpgrade()` in `src/main/utils/statsCache.ts`; `createCacheCheckpointer()` in `src/main/utils/cache-checkpointer.ts`
 - **Showing the progress of a long scan:** `withStatsIndexing()` in `src/main/stats/stats-indexing.ts`, `summarizeStatsIndexing()` in `src/shared/statsIndexing.ts`, drawn by `<StatsIndexingHost>`
 - **Context and grouping on Sentry events:** `v8OomFingerprint()` in `src/shared/sentryGrouping.ts`; `sentryUserForInstallation()`, `workContextTags()`, `agentInventoryTags()` in `src/shared/sentryContext.ts`; `setSentryScopeTags()`, `noteSentryWorkReasons()`, `noteSentryAgentInventory()` in `src/main/utils/sentry.ts`
@@ -253,11 +254,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The words for an agent's mode (Local / Remote / Hosted):** `AGENT_MODE_LABELS`, `agentModePillLabel()`, `agentModeKind()` in `src/renderer/utils/agentModeLabels.ts`
 - **Which hosted agents the Left Bar shows, and adding one:** `liftedAgentKeys()`, `findLiftedAgent()` in `src/shared/maestro-lib/agents/lift-pointer.ts`; `listHostedAgents()`, `addHostedAgent()`, `resolveHostAgentRef()` in `src/renderer/services/hostedAgents.ts`
 - **A hosted agent drawn as its own Left Bar record (renderer):** `projectHostedSession()` in `src/renderer/utils/hostedSession.ts`; `startHostedAgentSync()` in `src/renderer/services/hostedAgentSync.ts`; `sendHostedTurn()`, `interruptHostedTurn()`, `openHostedTab()` in `src/renderer/services/hostedTurns.ts`
+- **Keeping a closed hosted tab closed while its host catches up:** `closingHostTabIds()`, `closeHostedTab()` in `src/renderer/services/hostedTurns.ts`, fed to `projectHostedSession()` as `closing`
 - **A turn queued on this machine for a hosted agent:** `handQueuedItemToHost()`, `sendTakenItemToHost()`, `isQueuedItemForHost()`, `queuedItemHostSend()` in `src/renderer/services/hostedQueuedTurn.ts`
 - **Whether a provider launch for a hosted agent may start on this machine:** `checkHostedAgentLaunch()` in `src/main/utils/hosted-launch-guard.ts`; `HOSTED_STATELESS_HELPERS`, `statelessHelperOfProcess()`, `hostedLaunchVerdict()` in `src/shared/maestro-lib/agents/hosted-launch.ts`
 - **Consulting a hosted agent on its host:** `askMirrorConsult()` in `src/renderer/services/peerMirror.ts`; `RemoteAskerContext`, `parseWireTranscript()`, `buildRemoteAskerKey()`, `parseWireAskerKey()` in `src/shared/crossAgentTypes.ts`; `cancelHostedConsults()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`
 - **A hosted agent's History with this machine's Cue runs:** `withHostedCueRuns()`, `hostedCueScopeAgents()` in `src/main/utils/cue-history-merge.ts`
-- **The peer mirror's store and record adapters (renderer):** `usePeerMirrorStore`, `reducePeerMirrorPush()` in `src/renderer/stores/peerMirrorStore.ts`; `mirrorTab()`, `mirrorLogEntry()` in `src/renderer/utils/peerMirrorView.ts`
+- **The peer mirror's store and record adapters (renderer):** `usePeerMirrorStore`, `reducePeerMirrorPush()` in `src/renderer/stores/peerMirrorStore.ts`; `mirrorTab()`, `mirrorLogEntry()`, `mirrorUsageStats()` in `src/renderer/utils/peerMirrorView.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
@@ -270,7 +272,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Suggesting an env-var NAME:** `suggestEnvVarKeys()`, `PROVIDER_ENV_VAR_SUGGESTIONS`, `withBlankEnvVarRow()` in `src/shared/envVarCatalog.ts`, rendered by `<EnvVarKeyInput>` in `src/renderer/components/shared/EnvVarKeyInput.tsx`
 - **`.env` text for an env-var editor (Advanced mode):** `parseDotEnv()`, `serializeDotEnv()`, `envVarRecordsFingerprint()`, `validateEnvVarEntry()` in `src/shared/dotEnv.ts`, drawn by `<EnvVarsDotEnvInput>` / `<EnvVarsModeToggle>` in `src/renderer/components/shared/EnvVarsDotEnvInput.tsx`
 - **Assembling the prompt, arguments and launch request of a chat turn:** `assembleTurn()` in `src/shared/maestro-lib/turns/assemble.ts`
-- **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()` in `src/shared/maestro-lib/runtime/turns.ts`
+- **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()`, `MAX_WAITING_TURNS_PER_AGENT` in `src/shared/maestro-lib/runtime/turns.ts`; `installedMaestroPCandidates()` in `src/shared/maestro-lib/runtime/turn-options.ts`
+- **Steering a turn on this machine or a headless host (the local steering socket):** `steeringSocketPathFor()`, `steerOverSocket()`, `steeringTooLongResult()` in `src/shared/chatSteeringSocket.ts`; `createRuntimeSteering()`, `runtimeSteerBlockedReason()` in `src/shared/maestro-lib/runtime/steering.ts`
+- **How a turn's images reach a provider, and the bounds on images from another machine:** `planImageDelivery()`, `admitTurnImages()`, `turnImageBoundsError()`, `writeImageTempFile()`, `MAX_TURN_IMAGES` in `src/shared/maestro-lib/launch/image-delivery.ts`
+- **Image refs as data URLs where images leave a machine:** `inlineImageList()`, `withInlineEntryImages()` in `src/shared/maestro-lib/launch/image-refs.ts`
 - **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()` in `src/shared/maestro-lib/turns/record-turn.ts`
 - **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`, `withLiveTabState()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 
@@ -280,13 +285,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
+- **Discovering a project's Claude Code skills:** `discoverClaudeSkills()` in `src/shared/maestro-lib/agents/claude-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
 - **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
 - **Detecting or installing an agent's CLI where the agent runs:** `useRemoteAgentDetection()` in `src/renderer/hooks/agent/useRemoteAgentDetection.ts`; `agentInstallPlatform()` in `src/shared/agentInstall.ts`; `loginTerminalSshConfig(session)` in `src/renderer/components/LoginTerminal.tsx`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
-- **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
+- **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()`, `PROVIDER_IMAGE_MEDIA_TYPES`, `isProviderImageMediaType()` in `src/shared/maestro-lib/providers/capabilities.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()`, `isImplicitDefaultProfile()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **Naming an agent's provider account on a surface about that one agent:** `profileAccountShortLabel()`, `isImplicitDefaultProfile()` in `src/shared/providerProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
@@ -344,6 +350,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
+- **Putting an AI tab at a slot of the tab strip (a reopened tab, local or hosted):** `insertAiTabAtUnifiedIndex()` in `src/renderer/utils/tabHelpers/index.ts`
 - **Storing the closed-tab stack (Cmd+Shift+T):** `projectClosedTabHistory()`, `normalizeStoredClosedTabs()`, `MAX_CLOSED_TAB_HISTORY` in `src/shared/closedTabHistory.ts`; `loadReopenedTabContent()` in `src/renderer/services/reopenedTabContent.ts`
 - **Reading or reopening the closed-tab stack from a script (`maestro-cli tab closed` / `tab reopen`):** `runRemoteClosedTabCommand()`, `listClosedTabs()`, `getClosedTabLabel()` in `src/renderer/services/closedTabCommands.ts`, wire in `src/shared/closedTabCommands.ts`
 - **Pinning a message in a tab (pin button, pin panel, `maestro-cli tab pins`):** `toggleMessagePin()`, `persistTabPins()`, `runRemoteMessagePinCommand()` in `src/renderer/services/messagePins.ts`, over `resolvePinnedRows()`, `findPinForRow()` in `src/shared/messagePins.ts`
@@ -375,7 +382,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
-- **Maestro's own slash commands (`/history`, `/skills`, `/wizard`, `/btw`):** `parseMaestroBuiltinCommand()` in `src/shared/maestroBuiltinCommands.ts`; `runMaestroBuiltinCommand()`, `registerMaestroBuiltinCommandHandlers()` in `src/renderer/services/maestroBuiltinCommands.ts`
+- **Maestro's own slash commands (`/history`, `/skills`, `/wizard`, `/btw`):** `parseMaestroBuiltinCommand()`, `runsOutsideComposer()` in `src/shared/maestroBuiltinCommands.ts`; `runMaestroBuiltinCommand()`, `registerMaestroBuiltinCommandHandlers()` in `src/renderer/services/maestroBuiltinCommands.ts`
+- **What `/history` and `/skills` write, and running them with no desktop:** `HISTORY_COMMAND_TEXT`, `historySynopsisPrompt()`, `formatClaudeSkillsMessage()` in `src/shared/maestroBuiltinCommandText.ts`; `createRuntimeBuiltinCommands()` in `src/shared/maestro-lib/runtime/builtin-commands.ts`
+- **A `/btw` side question (which tab, the fork, the turn):** `resolveSideQuestionTarget()`, `sideQuestionForkRefusal()` in `src/shared/sideQuestion.ts`; `assembleSideQuestionTurn()` in `src/shared/maestro-lib/turns/assemble.ts`; `createRuntimeSideQuestions()` in `src/shared/maestro-lib/runtime/side-questions.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
@@ -400,6 +409,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Running or withdrawing one queued item now:** `sendQueuedItemNow()`, `removeQueuedItem()` in `src/renderer/services/queuedPrompt.ts`
 - **The tab a queued item is going to:** `resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` (label), `resolveQueuedItemTarget()` in `src/renderer/utils/tabHelpers` (tab); never render `item.tabName`
 - **Whether a queued item's tab is still mid-turn:** `isQueuedItemTargetBusy(session, item)` in `src/renderer/utils/tabHelpers` (every queue drain path asks it before dequeuing)
+- **The images of two merged queued messages:** `joinMergedQueueImages()` in `src/shared/maestro-lib/turns/queue.ts`
 - **Editing the newest queued message:** `requestEditLastQueuedMessage()` in `src/renderer/services/editQueuedMessage.ts`
 - **Recovering a turn refused on the context limit:** `getContextCompactCommand()` in `src/shared/contextCompaction.ts`; `compactTabContext()`, `recordContextCompaction()` in `src/renderer/services/contextCompaction.ts`; driven by `scheduleRetryForError()` in `src/renderer/stores/retryStore.ts`
 - **Whether a Force Send control exists at all:** `shouldOfferForceSend()`, `getForceSendEligibility()`, `getForceSendTitle()` in `src/renderer/utils/executionQueue.ts`
@@ -409,6 +419,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Opening the expanded staged-image organizer:** `requestOpenStagedImagesOrganizer()` in `src/renderer/services/stagedImagesOrganizer.ts`
 - **The `src` of a conversation image:** `displayImageSrc(src)` in `src/renderer/utils/sessionImageSrc.ts`, over `src/shared/sessionImageRefs.ts`; a chip wraps the RESULT in `sessionImageThumbnailSrc()`
 - **Referencing / thumbnailing a pasted transcript image:** `isSessionImageRef()`, `sessionImageThumbnailSrc()` in `src/shared/sessionImageRefs.ts`
+- **Storing a pasted image as a file (the session image store):** `createSessionImageStore()`, `hasInlineSessionImages()`, `isInlineImageDataUrl()`, `extFromMediaType()` in `src/shared/maestro-lib/store/session-images.ts`; the desktop's wrapper is `src/main/storage/session-image-store.ts`
 
 #### Cross-agent consults
 
@@ -418,6 +429,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An agent asking another agent (`maestro-cli ask`):** `runCrossAgentAsk()` in `src/renderer/services/crossAgentAsk.ts` (a question is `ask`, never `dispatch`)
 - **Marking an agent's own hand-off in its transcript (`dispatch` / `ask` from its shell):** `readCallerIdentity()`, `callerMessageFields()`, `isSelfDispatch()` in `src/shared/agentDelegation.ts`; `recordAgentDelegation()`, `settleAgentDelegation()` in `src/renderer/services/agentDelegation.ts`
 - **Running a consult (prompt, budgets, completion, Stop):** `createConsultService()` in `src/shared/maestro-lib/agents/consult.ts`
+- **Capping an agent's hidden consult tabs:** `MAX_CONSULT_TABS_PER_AGENT`, `consultTabToReplace()`, `consultTabLastUsedAt()` in `src/shared/maestro-lib/agents/rules.ts`
 - **Which agents a message mentions, and the `@` picker's rules:** `planMentions()`, `resolveMentionedTargetSessionIds()`, `buildAgentMentionSuggestions()` in `src/shared/maestro-lib/mentions/roster.ts`
 
 #### Auto Run, Cue, Group Chat, Director's Notes
@@ -463,6 +475,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)` in `src/shared/groupChatActivity.ts` (never the first-to-last message span)
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()`, `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`
 - **Which agent a persisted group chat participant came from:** `findSessionForParticipantName(participantName, sessions)` in `src/shared/group-chat-types.ts`
+- **Ending an Auto Run whose turn never settles (force-end):** `abortAutoRunTurns()`, `abortableAutoRunSpawn()`, `untilAutoRunTurnAborted()`, `AUTO_RUN_TURN_ABORTED` in `src/renderer/hooks/batch/internal/autoRunTurnAbort.ts`; `isAutoRunAlreadyStopping()` in `src/renderer/stores/batchStore.ts`
+- **The Auto-Run Complete toast (a local run and a hosted run's end):** `notifyAutoRunComplete()`, `mirroredRunCompleteInfo()`, `resolveAutoRunGroupName()` in `src/renderer/services/autoRunCompletion.ts`
 - **Running an Auto Run with no desktop (launch, progress, pause, stop):** `createRuntimeAutoRun()` in `src/shared/maestro-lib/runtime/autorun.ts`
 - **Running a group chat or a consult with no desktop (rounds, `@participant`, `ask`):** `createRuntimeGroupChats()` in `src/shared/maestro-lib/runtime/group-chats.ts`, `createRuntimeConsults()` in `src/shared/maestro-lib/runtime/consults.ts`
 - **Prompt Links (`maestro://run/<token>`):** rules in `src/shared/promptLinks.ts`, service in `src/main/prompt-links/index.ts`, renderer gate `openPromptLinks()` / `promptLinksAvailable()` in `src/renderer/services/promptLinks.ts`, log redaction `redactDeepLinkUrl()` in `src/shared/deep-link-urls.ts`
