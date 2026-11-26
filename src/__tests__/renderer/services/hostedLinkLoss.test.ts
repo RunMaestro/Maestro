@@ -250,7 +250,7 @@ describe('a turn cut by a lost link', () => {
 		expect(raised).toHaveLength(1);
 	});
 
-	it('never sends the message again when the host transcript cannot be read', async () => {
+	it('never sends the message again on a failed read, and decides on the next read that lands', async () => {
 		hostReports('busy', 'reconnecting');
 		confirmOutage();
 		syncHostedAgents();
@@ -260,8 +260,56 @@ describe('a turn cut by a lost link', () => {
 		hostReports('idle', 'connected');
 		syncHostedAgents();
 		await flush();
+		const reads = transcript.mock.calls.length;
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
 		expect(raised).toEqual([]);
+		// No read loop against a host that errors.
+		expect(transcript).toHaveBeenCalledTimes(reads);
+
+		// The tab's next read (a reconnect marked it stale, or the user opened it) lands.
+		const version = usePeerMirrorStore.getState().beginTranscriptRead('box', 'h1', 't1');
+		usePeerMirrorStore
+			.getState()
+			.finishTranscriptRead('box', 'h1', 't1', [QUESTION] as never, version);
+		syncHostedAgents();
+		await flush();
+		expect(raised).toHaveLength(1);
+		expect(raised[0].error.message).toContain('stopped before this turn finished');
 	});
+
+	it.each(['before', 'after'] as const)(
+		'never sends again a turn stopped here while the host could not be told (outage confirmed %s Stop)',
+		async (order) => {
+			hostReports('busy', 'reconnecting');
+			if (order === 'before') {
+				confirmOutage();
+				syncHostedAgents();
+				// Already ended by the outage; Stop has nothing to forward, so mark it as a Stop here.
+				hostReports('busy', 'reconnecting');
+			}
+			syncHostedAgents();
+			if (order === 'after') {
+				await interruptTurn('row', { tabId: 't1' });
+				confirmOutage();
+				syncHostedAgents();
+			} else {
+				const { endHostedTurnsHere } = await import('../../../renderer/services/hostedLinkLoss');
+				endHostedTurnsHere('row', ['t1'], 'Box');
+			}
+
+			transcript.mockResolvedValue([QUESTION]);
+			useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+			hostReports('idle', 'connected');
+			syncHostedAgents();
+			await flush();
+			syncHostedAgents();
+			await flush();
+			expect(raised).toEqual([]);
+		}
+	);
 
 	it('Stop while the host is not connected ends the turn here and says the host was not told', async () => {
 		hostReports('busy', 'reconnecting');
@@ -323,5 +371,27 @@ describe('projectHostedSession with the link lost', () => {
 			'host-link-50-t1',
 		]);
 		expect(projectHostedSession(once, { agent, liveTurns, linkLost })).toBe(once);
+	});
+
+	it('still draws a live entry that moves on while the note is last', () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', logs: [QUESTION] })],
+		});
+		const live = (text: string) =>
+			({
+				[liveTurnKey('h1', 't1')]: {
+					entries: [{ id: 'live1', timestamp: 70, source: 'stdout', text }],
+				},
+			}) as never;
+		const once = projectHostedSession(local, { agent, liveTurns: live('partial'), linkLost });
+		const twice = projectHostedSession(once, {
+			agent,
+			liveTurns: live('partial answer'),
+			linkLost,
+		});
+		expect(twice.aiTabs[0].logs.find((entry) => entry.id === 'live1')?.text).toBe('partial answer');
+		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-50-t1');
 	});
 });

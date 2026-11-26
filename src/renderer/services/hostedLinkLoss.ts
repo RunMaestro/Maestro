@@ -86,6 +86,14 @@ interface CutTurn {
 	message?: Pick<LogEntry, 'id' | 'text' | 'images'>;
 	/** A read of the host's transcript after it came back is running. */
 	reading?: boolean;
+	/**
+	 * The read answered nothing conclusive (it failed, or was already behind). The cut waits for the
+	 * tab's next successful read (a reconnect marks it stale, or the user opens it) instead of
+	 * reading again in a loop against a host that errors.
+	 */
+	awaitingRead?: boolean;
+	/** The user stopped this turn here while the host could not be told: never sent again. */
+	stopped?: boolean;
 }
 
 /** By `sessionId:tabId`. */
@@ -145,22 +153,33 @@ function turnEnded(entries: readonly { id: string; source: string }[], messageId
 		.some((entry) => ENDED_SOURCES.has(entry.source as LogEntry['source']));
 }
 
-/** Decide one cut turn from the host's transcript, read after the host came back. */
+/**
+ * Decide one cut turn from the host's transcript, read after the host came back. A read that says
+ * nothing conclusive keeps the cut for the next one.
+ */
 function decideCutTurn(key: string, link: HostLink): void {
 	const cut = cutTurns.get(key);
 	if (!cut) return;
-	cutTurns.delete(key);
+	cut.reading = false;
 	const mirror = usePeerMirrorStore.getState();
 	// Read now, not when the host came back: the host's fresh snapshot follows its reconnect, and
 	// lands before the answer to a read sent after it.
 	const hostTab = mirror.peers[link.peerId]?.agents
 		.find((agent) => agent.id === link.agentId)
 		?.aiTabs?.find((tab) => tab.id === cut.tabId);
-	// Closed on the host, or still running there (it draws Thinking again): nothing to settle.
-	if (!hostTab || hostTab.state === 'busy') return;
+	// Closed on the host, still running there (it draws Thinking again), stopped by the user, or
+	// no message to send: nothing to settle.
+	if (!hostTab || hostTab.state === 'busy' || cut.stopped || !cut.message) {
+		cutTurns.delete(key);
+		return;
+	}
 	const slot = mirror.transcripts[link.peerId]?.[liveTurnKey(link.agentId, cut.tabId)];
 	// A read that failed, or one already behind, cannot prove the turn died: never send twice.
-	if (!slot?.loaded || slot.error || slot.stale || !cut.message) return;
+	if (!slot?.loaded || slot.loading || slot.error || slot.stale) {
+		cut.awaitingRead = true;
+		return;
+	}
+	cutTurns.delete(key);
 	if (turnEnded(slot.entries, cut.message.id)) return;
 	const item: QueuedItem = {
 		id: generateId(),
@@ -184,6 +203,15 @@ function decideCutTurn(key: string, link: HostLink): void {
 export function settleCutHostedTurns(sessionId: string, link: HostLink): void {
 	for (const [key, cut] of cutTurns) {
 		if (cut.sessionId !== sessionId || cut.reading) continue;
+		if (cut.stopped) {
+			cutTurns.delete(key);
+			continue;
+		}
+		if (cut.awaitingRead) {
+			// Decided by the tab's next read that lands: never by another read started here.
+			decideCutTurn(key, link);
+			continue;
+		}
 		cut.reading = true;
 		void readMirrorTranscript(link.peerId, link.agentId, cut.tabId).then(() =>
 			decideCutTurn(key, link)
@@ -221,7 +249,15 @@ export function endHostedTurnsHere(
 ): void {
 	if (tabIds.length === 0) return;
 	const tabs = endedHere.get(sessionId) ?? new Set<string>();
-	for (const tabId of tabIds) tabs.add(tabId);
+	for (const tabId of tabIds) {
+		tabs.add(tabId);
+		// Stop means stop: when the host is back, this turn's message is not sent again, whether
+		// the link loss was confirmed before the Stop or after it.
+		const key = cutKey(sessionId, tabId);
+		const cut = cutTurns.get(key);
+		if (cut) cut.stopped = true;
+		else cutTurns.set(key, { sessionId, tabId, remoteName, stopped: true });
+	}
 	endedHere.set(sessionId, tabs);
 	updateSessionWith(sessionId, (session) =>
 		tabIds.reduce((current, tabId) => settleTabThinkingState(current, tabId), session)

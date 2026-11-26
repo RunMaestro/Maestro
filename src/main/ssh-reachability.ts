@@ -397,6 +397,8 @@ async function confirmHostDown(remoteId: string): Promise<void> {
 	// own grace.
 	if (still !== pending) return;
 	clearHostPending(remoteId);
+	// The last hosted agent moved back (or hosted agents were switched off) while the probe ran.
+	if (!deps?.hostsAgents?.(still.report.peerId)) return;
 	markHostDown(still.report);
 }
 

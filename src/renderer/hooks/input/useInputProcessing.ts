@@ -491,6 +491,35 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// `let` because Design Mode chips add their screenshots below.
 			let effectiveImages = options?.images ?? (isComposerSubmit ? stagedImages : []);
 			const usingOverrideImages = options?.images !== undefined;
+			/**
+			 * Clear, on the tab a submit came from, only the draft fields that are still the ones it
+			 * sent: text typed or images staged since belong to the next message. For a composer that
+			 * now shows another agent or tab, whose draft was flushed to the tab it came from.
+			 */
+			const clearSubmittedDraftOnTab = (
+				sessionId: string,
+				tabId: string | undefined,
+				images: readonly string[]
+			) => {
+				updateSessionWith(sessionId, (session) => ({
+					...session,
+					aiTabs: session.aiTabs.map((tab) => {
+						if (tab.id !== tabId) return tab;
+						const clearText = tab.inputValue === inputValueAtSubmit;
+						const staged = tab.stagedImages ?? [];
+						const clearImages =
+							!usingOverrideImages &&
+							staged.length === images.length &&
+							staged.every((image, index) => image === images[index]);
+						if (!clearText && !clearImages) return tab;
+						return {
+							...tab,
+							...(clearText ? { inputValue: '' } : {}),
+							...(clearImages ? { stagedImages: [] } : {}),
+						};
+					}),
+				}));
+			};
 			// Design Mode chips staged on the tab this submit sends from. Like the
 			// staged images, only a composer submit in AI mode takes them, and not
 			// when the caller hands in attachments of its own. Read from the live
@@ -742,11 +771,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					void steerHostedSentMessage(activeSession, targetTabId, receipt.itemId);
 				}
 				if ((receipt || kept) && isComposerSubmit) {
-					setInputValue('');
-					if (!usingOverrideImages) setStagedImages([]);
+					// The host round trip is a window the user may type the next message in: clear only
+					// what this submit took.
 					clearSentDesignPicks();
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					const selected = selectActiveSession(useSessionStore.getState());
+					if (selected?.id === activeSession.id && getActiveTab(selected)?.id === targetTabId) {
+						if (getInputValue() === inputValueAtSubmit) {
+							setInputValue('');
+							syncAiInputToSession('', syncTarget);
+							if (inputRef.current) inputRef.current.style.height = 'auto';
+						}
+						if (!usingOverrideImages && stagedImagesRef.current === effectiveImages) {
+							setStagedImages([]);
+						}
+					} else {
+						clearSubmittedDraftOnTab(activeSession.id, targetTabId, effectiveImages);
+					}
 				}
 				// Up arrow recalls it, as it recalls a message a local send took.
 				if (receipt || kept) {
@@ -1054,24 +1094,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (!isWebDesktop() || currentMode !== 'ai' || !isComposerSubmit) return;
 				// Switching owners flushes the original draft. Clear only the submitted
 				// fields there, without cancelling or stamping the new owner's composer.
-				updateSessionWith(activeSession.id, (session) => ({
-					...session,
-					aiTabs: session.aiTabs.map((tab) => {
-						if (tab.id !== targetTabId) return tab;
-						const clearText = tab.inputValue === inputValueAtSubmit;
-						const images = tab.stagedImages ?? [];
-						const clearImages =
-							!usingOverrideImages &&
-							images.length === submitted.images.length &&
-							images.every((image, index) => image === submitted.images[index]);
-						if (!clearText && !clearImages) return tab;
-						return {
-							...tab,
-							...(clearText ? { inputValue: '' } : {}),
-							...(clearImages ? { stagedImages: [] } : {}),
-						};
-					}),
-				}));
+				clearSubmittedDraftOnTab(activeSession.id, targetTabId, submitted.images);
 			};
 			const probeForSubmit = async (tabId: string | undefined) => {
 				const releaseSubmit = isComposerSubmit

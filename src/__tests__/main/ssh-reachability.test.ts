@@ -386,6 +386,20 @@ describe('ssh-reachability', () => {
 			expect(reconnectHost).toHaveBeenCalledWith('r1');
 		});
 
+		it('raises nothing when the last hosted agent moves back while the ssh probe runs', async () => {
+			let answer!: (outcome: SshProbeOutcome) => void;
+			probe.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(probe).toHaveBeenCalledTimes(1);
+
+			hosts = false;
+			answer(UP);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(emitted).toEqual([]);
+			expect(getUnreachableSshRemotes()).toEqual([]);
+		});
+
 		it('drops every host outage when Federation stops, and never re-checks it again', async () => {
 			noteHostConnection(report('lost'));
 			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);

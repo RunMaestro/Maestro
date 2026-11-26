@@ -81,7 +81,22 @@ function withLinkNote(logs: LogEntry[], prior: readonly LogEntry[], note: LogEnt
 	const last = logs[logs.length - 1];
 	if (last?.id === note.id) return logs;
 	const next = [...logs.filter((entry) => entry.id !== note.id), note];
-	return sameIds(next, prior) ? (prior as LogEntry[]) : next;
+	return sameEntries(next, prior) ? (prior as LogEntry[]) : next;
+}
+
+/**
+ * Whether two transcripts draw the same: the same entries in the same order, each with the same
+ * text, tool card, and delivered tick (the fields a pass of `mergeHostedLogs()` can move on).
+ */
+function sameEntries(a: readonly LogEntry[], b: readonly LogEntry[]): boolean {
+	if (!sameIds(a, b)) return false;
+	return a.every(
+		(entry, i) =>
+			entry === b[i] ||
+			(entry.text === b[i].text &&
+				!!entry.delivered === !!b[i].delivered &&
+				sameMetadata(entry.metadata, b[i].metadata))
+	);
 }
 
 const persistedViews = new WeakMap<readonly LogEntryRecord[], LogEntry[]>();

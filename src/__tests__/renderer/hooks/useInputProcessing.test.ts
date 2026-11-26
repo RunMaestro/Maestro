@@ -1842,6 +1842,36 @@ describe('useInputProcessing', () => {
 			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
 		});
 
+		it('keeps a draft typed while the hosted send was in flight when the message is kept', async () => {
+			vi.mocked(keepTurnForHost).mockClear();
+			vi.mocked(keepTurnForHost).mockReturnValue(true);
+			mockSetInputValue.mockClear();
+			let draft = 'first';
+			vi.mocked(sendHostedTurn).mockImplementation(async (_s, _t, _x, _i, opts) => {
+				// The user types the next message during the host round trip.
+				draft = 'second, typed meanwhile';
+				opts?.onHostUnavailable?.('Not connected to peer "build-box" (lost). Nothing was sent.');
+				return null;
+			});
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, getInputValue: () => draft });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(keepTurnForHost).toHaveBeenCalledWith(
+				session.id,
+				expect.objectContaining({ text: 'first' }),
+				expect.any(String)
+			);
+			expect(mockSetInputValue).not.toHaveBeenCalledWith('');
+			expect(draft).toBe('second, typed meanwhile');
+			vi.mocked(sendHostedTurn).mockReset();
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+		});
+
 		it('Queue Held while an earlier message waits for its retry says so and keeps the draft', async () => {
 			vi.mocked(sendHostedTurn).mockClear();
 			vi.mocked(keepTurnForHost).mockReturnValue(false);
