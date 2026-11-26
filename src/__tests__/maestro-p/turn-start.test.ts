@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPreTurnRow } from '../../maestro-p/turn-start';
+import { isPreTurnRow, isRowFromBeforeRun, rowTimestampMs } from '../../maestro-p/turn-start';
 
 describe('isPreTurnRow', () => {
 	it('treats the SessionStart hook result claude logs at resume as pre-turn', () => {
@@ -55,5 +55,56 @@ describe('isPreTurnRow', () => {
 		expect(isPreTurnRow(null)).toBe(false);
 		expect(isPreTurnRow('attachment')).toBe(false);
 		expect(isPreTurnRow({ type: 'attachment' })).toBe(false);
+	});
+});
+
+describe('isRowFromBeforeRun', () => {
+	const runStartedAt = Date.parse('2026-11-26T15:40:42.501Z');
+
+	it("treats the previous turn's late-flushed /exit row as stale", () => {
+		// The row that failed a resumed turn as prompt_truncated: written by the
+		// previous claude two seconds before this run spawned, read after it did.
+		const exitRow = {
+			type: 'user',
+			timestamp: '2026-11-26T15:40:40.334Z',
+			message: {
+				role: 'user',
+				content:
+					'<command-name>/exit</command-name>\n            <command-message>exit</command-message>\n            <command-args></command-args>',
+			},
+		};
+		expect(isRowFromBeforeRun(exitRow, runStartedAt)).toBe(true);
+	});
+
+	it('keeps rows made at or after the run started', () => {
+		const echo = {
+			type: 'user',
+			timestamp: '2026-11-26T15:40:43.010Z',
+			message: { content: 'hi' },
+		};
+		expect(isRowFromBeforeRun(echo, runStartedAt)).toBe(false);
+		expect(
+			isRowFromBeforeRun({ type: 'user', timestamp: '2026-11-26T15:40:42.501Z' }, runStartedAt)
+		).toBe(false);
+	});
+
+	it('does not judge rows without a usable timestamp', () => {
+		expect(isRowFromBeforeRun({ type: 'cost-state' }, runStartedAt)).toBe(false);
+		expect(isRowFromBeforeRun({ type: 'user', timestamp: 'not a time' }, runStartedAt)).toBe(false);
+		expect(isRowFromBeforeRun({ type: 'user', timestamp: 1 }, runStartedAt)).toBe(false);
+		expect(isRowFromBeforeRun(null, runStartedAt)).toBe(false);
+	});
+});
+
+describe('rowTimestampMs', () => {
+	it('reads the ISO timestamp claude stamps on a row', () => {
+		expect(rowTimestampMs({ timestamp: '2026-11-26T15:40:40.334Z' })).toBe(
+			Date.parse('2026-11-26T15:40:40.334Z')
+		);
+	});
+
+	it('is null for rows claude writes without one', () => {
+		expect(rowTimestampMs({ type: 'file-history-snapshot' })).toBeNull();
+		expect(rowTimestampMs('row')).toBeNull();
 	});
 });

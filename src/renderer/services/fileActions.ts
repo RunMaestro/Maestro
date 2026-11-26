@@ -268,32 +268,45 @@ async function runFileAction(
 	}
 }
 
+/** Whether a handed-over copy saves back, and if not, why (in words for the user). */
+interface CopyWriteBack {
+	savesBack: boolean;
+	reason?: string;
+}
+
 /**
  * Have main write a change saved in the fetched copy back to the remote file.
- * Resolves whether it will: a watch that cannot start leaves a copy that does
- * not save back, and the flash must say that instead.
+ * Resolves whether it will: a watch that cannot start (or a copy too large to
+ * send back) leaves a copy that does not save back, and the flash must say that
+ * instead.
  */
 async function watchCopyForWriteBack(
 	target: FileActionTarget & { sshRemoteId: string }
-): Promise<boolean> {
+): Promise<CopyWriteBack> {
 	try {
-		await window.maestro.fs.watchRemoteCopy(target.path, target.sshRemoteId);
-		return true;
+		const { savesBack, reason } = await window.maestro.fs.watchRemoteCopy(
+			target.path,
+			target.sshRemoteId
+		);
+		return { savesBack: savesBack !== false, reason };
 	} catch (error) {
 		captureException(error, {
 			extra: { action: 'watch-remote-copy', path: target.path, sshRemoteId: target.sshRemoteId },
 		});
-		return false;
+		return { savesBack: false };
 	}
 }
 
 /** Say once, after the copy is handed over, what the user is holding. */
-function flashRemoteCopy(savesBack: boolean): void {
+function flashRemoteCopy({ savesBack, reason }: CopyWriteBack): void {
+	const stays = 'Changes you save stay on this computer.';
 	notifyCenterFlash({
 		message: 'This is a copy of the remote file',
 		detail: savesBack
 			? 'Changes you save go back to the remote host.'
-			: 'Changes you save stay on this computer.',
+			: reason
+				? `${reason}. ${stays}`
+				: stays,
 		color: savesBack ? 'theme' : 'yellow',
 		duration: 4000,
 	});
@@ -309,13 +322,13 @@ async function handOverFile(
 	target: FileActionTarget,
 	action: (localPath: string) => Promise<unknown> | unknown
 ): Promise<boolean> {
-	let savesBack: boolean | null = null;
+	let writeBack: CopyWriteBack | null = null;
 	const done = await runFileAction(title, target, action, async (fileTarget) => {
 		const localPath = await fetchLocalCopy(fileTarget);
-		if (isRemote(fileTarget)) savesBack = await watchCopyForWriteBack(fileTarget);
+		if (isRemote(fileTarget)) writeBack = await watchCopyForWriteBack(fileTarget);
 		return localPath;
 	});
-	if (done && savesBack !== null) flashRemoteCopy(savesBack);
+	if (done && writeBack) flashRemoteCopy(writeBack);
 	return done;
 }
 
