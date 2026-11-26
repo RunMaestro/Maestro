@@ -62,15 +62,8 @@ interface TokenUsageCacheFile {
 	sessions: Record<string, CachedSession>;
 }
 
-/** Stable cache key for a session across agents. */
-export function tokenCacheKey(agentType: string, sessionId: string): string {
-	return `${agentType}:${sessionId}`;
-}
-
-/** Fingerprint a session from the cheap metadata `listSessions` already returns. */
-export function sessionFingerprint(modifiedAt: string, sizeBytes: number): string {
-	return `${modifiedAt}-${sizeBytes}`;
-}
+// The keys live in a module with no Electron import, so a plain-Node host can share them.
+export { sessionFingerprint, tokenCacheKey } from './token-usage-keys';
 
 /**
  * In-memory map backed by a single JSON file under `userData`. Lazy-loaded on

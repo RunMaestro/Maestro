@@ -56,7 +56,43 @@ export async function forEachJsonlLine(
  * far as that line, so finding a transcript by its header does not load the
  * whole transcript.
  */
-export async function readFirstJsonlLine(filePath: string): Promise<string | null> {
+export async function readFirstJsonlLine(
+	filePath: string,
+	options: { maxBytes?: number } = {}
+): Promise<string | null> {
+	if (options.maxBytes !== undefined) return readFirstLineWithin(filePath, options.maxBytes);
 	for await (const line of jsonlLines(filePath)) return line;
 	return null;
+}
+
+/**
+ * The first non-blank line that ends within the first `maxBytes` of a file, or null when none
+ * does. A file with no newline in that span (one huge header line) is never read further.
+ */
+async function readFirstLineWithin(filePath: string, maxBytes: number): Promise<string | null> {
+	const handle = await fsp.open(filePath, 'r');
+	try {
+		const buffer = Buffer.alloc(Math.max(0, Math.floor(maxBytes)));
+		let filled = 0;
+		while (filled < buffer.length) {
+			const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+			if (bytesRead === 0) break;
+			filled += bytesRead;
+		}
+		const text = buffer.subarray(0, filled);
+		const atEnd = filled < buffer.length;
+		let start = 0;
+		while (start < text.length) {
+			const newline = text.indexOf(0x0a, start);
+			// The last line counts only when the whole file fit: else it may go on past the span.
+			if (newline === -1 && !atEnd) return null;
+			const end = newline === -1 ? text.length : newline;
+			const line = text.subarray(start, end).toString('utf8').replace(/\r$/, '');
+			if (line.trim()) return line;
+			start = end + 1;
+		}
+		return null;
+	} finally {
+		await handle.close();
+	}
 }

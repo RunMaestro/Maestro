@@ -723,7 +723,7 @@ const mockMaestro = {
 			},
 			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
-			excluded: { unsupportedAgents: [], remoteProjects: 0 },
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
 			granularity: 'day',
 			windowStartMs: 0,
 			windowEndMs: 0,
