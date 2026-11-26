@@ -19,6 +19,7 @@ import { getParentDir } from '../../../shared/formatters';
 import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useListNavigation } from '../../hooks/keyboard/useListNavigation';
 import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
+import { isImeComposing } from '../../utils/ime';
 import { isCoarsePointer } from '../../utils/touch';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { Spinner } from '../ui/Spinner';
@@ -110,12 +111,15 @@ export function PathPickerModal({ theme, request, onSettle }: PathPickerModalPro
 
 	const openRow = useCallback(
 		(index: number) => {
+			// While a folder is loading, or after it failed, `rows` still holds the previous
+			// listing, which is not drawn. Enter must not open or pick a row nobody can see.
+			if (loading || error) return;
 			const row = rows[index];
 			if (!row) return;
 			if (row.isDirectory) void load(row.path);
 			else onSettle(row.path);
 		},
-		[rows, load, onSettle]
+		[rows, load, onSettle, loading, error]
 	);
 
 	const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
@@ -188,6 +192,8 @@ export function PathPickerModal({ theme, request, onSettle }: PathPickerModalPro
 					value={pathDraft}
 					onChange={(e) => setPathDraft(e.target.value)}
 					onKeyDown={(e) => {
+						// Enter that confirms an input-method candidate belongs to the input method.
+						if (isImeComposing(e)) return;
 						if (e.key === 'Enter' && pathDraft.trim()) {
 							e.preventDefault();
 							e.stopPropagation();

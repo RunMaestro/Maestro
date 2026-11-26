@@ -9,7 +9,7 @@ import { useBatchStore } from '../../stores/batchStore';
 import { readTaskCountsAndContent } from './useAutoRunDocumentLoader';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
-import { pickDirectory } from '../../services/pathPicker';
+import { pathPickerRemoteId, pickDirectory } from '../../services/pathPicker';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	reserveGoalRunLaunch,
@@ -58,8 +58,11 @@ export interface UseAutoRunHandlersDeps {
  * Return type for the useAutoRunHandlers hook
  */
 export interface UseAutoRunHandlersReturn {
-	/** Handle folder selection from Auto Run setup modal */
-	handleAutoRunFolderSelected: (folderPath: string) => Promise<void>;
+	/**
+	 * Handle folder selection from Auto Run setup modal. `sessionId` names the agent the folder is
+	 * for; omit it for the active agent.
+	 */
+	handleAutoRunFolderSelected: (folderPath: string, sessionId?: string) => Promise<void>;
 	/** Start a batch run with the given configuration */
 	handleStartBatchRun: (config: BatchRunConfig) => Promise<void>;
 	/** Get the number of unchecked tasks in a document */
@@ -115,12 +118,21 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	} = deps;
 
 	// Handler for auto run folder selection from setup modal
+	// `sessionId` binds the folder to the agent that asked for it. A caller that awaited a picker
+	// passes it, because the active agent can change while the picker is open. Without it the
+	// folder goes to the active agent (the setup modal is only open over that agent).
 	const handleAutoRunFolderSelected = useCallback(
-		async (folderPath: string) => {
-			const activeSession = selectActiveSession(useSessionStore.getState());
-			if (!activeSession) return;
+		async (folderPath: string, sessionId?: string) => {
+			const state = useSessionStore.getState();
+			const target = sessionId ? selectSessionById(sessionId)(state) : selectActiveSession(state);
+			// The agent that opened the picker was removed while it was open: nothing to apply to.
+			if (!target) return;
+			// The document list, the Right Bar, and the setup modal show the active agent. When the
+			// user has moved to another agent, only the target's own record changes; its documents
+			// load when the user returns to it.
+			const isShown = () => selectActiveSession(useSessionStore.getState())?.id === target.id;
 
-			const sshRemoteId = getSessionSshRemoteId(activeSession);
+			const sshRemoteId = getSessionSshRemoteId(target);
 			let result: { success: boolean; files?: string[]; tree?: AutoRunTreeNode[] } | null = null;
 
 			try {
@@ -131,8 +143,10 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			}
 
 			if (result?.success) {
-				setAutoRunDocumentList(result.files || []);
-				setAutoRunDocumentTree(result.tree || []);
+				if (isShown()) {
+					setAutoRunDocumentList(result.files || []);
+					setAutoRunDocumentTree(result.tree || []);
+				}
 				// Auto-select first document if available
 				const firstFile = result.files?.[0];
 				// Load content of first document
@@ -150,7 +164,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				// Update session with folder, file, AND content (atomically)
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === activeSession.id
+						s.id === target.id
 							? {
 									...s,
 									autoRunFolderPath: folderPath,
@@ -162,11 +176,13 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 					)
 				);
 			} else {
-				setAutoRunDocumentList([]);
-				setAutoRunDocumentTree([]);
+				if (isShown()) {
+					setAutoRunDocumentList([]);
+					setAutoRunDocumentTree([]);
+				}
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === activeSession.id
+						s.id === target.id
 							? {
 									...s,
 									autoRunFolderPath: folderPath,
@@ -178,6 +194,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 					)
 				);
 			}
+			if (!isShown()) return;
 			setAutoRunSetupModalOpen(false);
 			// Switch to the autorun tab now that folder is configured
 			setActiveRightTab('autorun');
@@ -534,13 +551,16 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			setAutoRunSetupModalOpen(true);
 			return;
 		}
+		// The picker stays open while the user can switch agents, so the pick belongs to the agent
+		// that opened it, by id, not to whichever agent is active when it resolves.
+		const openerId = activeSession?.id;
 		const folder = await pickDirectory({
-			sshRemoteId: getSessionSshRemoteId(activeSession),
+			sshRemoteId: pathPickerRemoteId(activeSession),
 			title: 'Select Auto Run Folder',
 			startPath: activeSession?.cwd,
 		});
-		if (folder) {
-			handleAutoRunFolderSelected(folder);
+		if (folder && openerId) {
+			handleAutoRunFolderSelected(folder, openerId);
 		}
 	}, [setAutoRunSetupModalOpen, handleAutoRunFolderSelected]);
 

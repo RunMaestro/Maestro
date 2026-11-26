@@ -11,7 +11,7 @@ import { getParentDir } from '../../shared/formatters';
 import { isImeComposing } from '../utils/ime';
 import { openUrl } from '../utils/openUrl';
 import { getSessionSshRemoteId } from '../utils/sessionHelpers';
-import { pickDirectory } from '../services/pathPicker';
+import { pathPickerRemoteId, pickDirectory } from '../services/pathPicker';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 interface WorktreeConfigModalProps {
@@ -77,6 +77,9 @@ export function WorktreeConfigModal({
 	// Where the worktree directory lives (SSH and hosted alike). It only routes the reads and the
 	// Browse; the modal looks the same in every mode.
 	const sshRemoteId = getSessionSshRemoteId(session);
+	// Browse asks `pathPickerRemoteId()`, which ignores a remote id left on an agent with SSH
+	// switched off: that agent is local, so its Browse is the native dialog.
+	const browseRemoteId = pathPickerRemoteId(session);
 
 	// Register with layer stack for Escape handling
 	useEffect(() => {
@@ -116,7 +119,7 @@ export function WorktreeConfigModal({
 
 	const handleBrowse = async () => {
 		const result = await pickDirectory({
-			sshRemoteId,
+			sshRemoteId: browseRemoteId,
 			title: 'Select Worktree Directory',
 			startPath: basePath.trim() || getParentDir(session.cwd),
 		});

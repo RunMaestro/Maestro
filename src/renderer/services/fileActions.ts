@@ -14,6 +14,7 @@
  * thing is the Files panel at that folder, with a center flash that says so.
  */
 
+import { joinPath } from '../../shared/formatters';
 import { isMediaFile } from '../../shared/mediaTypes';
 import {
 	dismissCenterFlash,
@@ -131,13 +132,74 @@ export async function resolveOpenSource(
 	return { path: target.path, sshRemoteId: target.sshRemoteId || undefined };
 }
 
+/**
+ * Whether an HTML page points at a file beside it (`app.js`, `./site.css`,
+ * `img/logo.png`). A URL with a scheme, a `//host` URL, a `/rooted` path, and a
+ * bare `#fragment` or `?query` do not count: none is read from the page's own
+ * folder.
+ */
+function pageReferencesNearbyFiles(html: string): boolean {
+	const page = new DOMParser().parseFromString(html, 'text/html');
+	for (const element of Array.from(page.querySelectorAll('[src], link[href]'))) {
+		const reference = (element.getAttribute('src') ?? element.getAttribute('href') ?? '').trim();
+		if (reference && !/^([a-z][a-z0-9+.-]*:|[/#?])/i.test(reference)) return true;
+	}
+	return false;
+}
+
+/**
+ * A path on THIS machine to open a page from in the Maestro Browser.
+ *
+ * A remote HTML page that points at files beside it needs them beside its copy
+ * too, or it renders without its styles, scripts, and images. So that page's
+ * whole folder is fetched and the page opens from inside the folder's copy. A
+ * page that stands alone opens from its own copy, and so does one whose folder
+ * is too large to copy whole or fails to fetch: this step never fails an open
+ * that the page's own copy can serve. Every other file is
+ * {@link fetchLocalCopy}.
+ */
+async function fetchLocalPageCopy(target: FileActionTarget): Promise<string> {
+	const pageCopy = await fetchLocalCopy(target);
+	if (!isRemote(target) || !/\.html?$/i.test(target.path)) return pageCopy;
+	// A remote path is POSIX: only `/` separates the page from its folder.
+	const cut = target.path.lastIndexOf('/');
+	const name = target.path.slice(cut + 1);
+	// A page in `/` has the whole host as its folder. `joinPath()` reads `\` as
+	// a separator, so a page with one in its name keeps its own copy.
+	if (cut <= 0 || name.includes('\\')) return pageCopy;
+	let html: unknown;
+	try {
+		html = await window.maestro.fs.readFile(pageCopy);
+	} catch (error) {
+		// Unexpected, since the copy was just written. The page opened from its
+		// own copy before this read existed, and it still does.
+		captureException(error, {
+			extra: { action: 'open-page.read-copy', path: target.path, sshRemoteId: target.sshRemoteId },
+		});
+		return pageCopy;
+	}
+	if (typeof html !== 'string' || !pageReferencesNearbyFiles(html)) return pageCopy;
+	try {
+		const folderCopy = await fetchLocalFolderCopy({
+			path: target.path.slice(0, cut),
+			sshRemoteId: target.sshRemoteId,
+		});
+		return joinPath(folderCopy, name);
+	} catch {
+		// Expected: the folder is too large to copy whole, or the fetch failed.
+		// The page still opens, from its own copy.
+		return pageCopy;
+	}
+}
+
 async function runFileAction(
 	title: string,
 	target: FileActionTarget,
-	action: (localPath: string) => Promise<unknown> | unknown
+	action: (localPath: string) => Promise<unknown> | unknown,
+	fetchCopyOf: (target: FileActionTarget) => Promise<string> = fetchLocalCopy
 ): Promise<boolean> {
 	try {
-		await action(await fetchLocalCopy(target));
+		await action(await fetchCopyOf(target));
 		return true;
 	} catch (error) {
 		captureException(error, {
@@ -168,14 +230,20 @@ export async function openFilesInDefaultApp(targets: FileActionTarget[]): Promis
 	return opened;
 }
 
-/** Open a file in a Maestro Browser tab (a remote file opens its fetched copy). */
+/**
+ * Open a file in a Maestro Browser tab (a remote file opens its fetched copy; a
+ * remote page that points at files beside it opens from a copy of its folder).
+ */
 export function openFileInMaestroBrowser(
 	target: FileActionTarget,
 	openBrowserTabAt: (url: string, options?: { title?: string }) => void,
 	title?: string
 ): Promise<boolean> {
-	return runFileAction('Open failed', target, (localPath) =>
-		openBrowserTabAt(pathToFileUrl(localPath), title ? { title } : undefined)
+	return runFileAction(
+		'Open failed',
+		target,
+		(localPath) => openBrowserTabAt(pathToFileUrl(localPath), title ? { title } : undefined),
+		fetchLocalPageCopy
 	);
 }
 

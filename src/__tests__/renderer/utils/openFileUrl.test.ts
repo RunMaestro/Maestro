@@ -159,8 +159,20 @@ describe('pathToFileUrl', () => {
 		);
 	});
 
+	it('keeps a backslash that is part of a POSIX file name', () => {
+		// On POSIX `a\b.html` is one file. Read as a separator it would name
+		// `b.html` in a folder `a`, a different file.
+		expect(pathToFileUrl('/tmp/a\\b.html')).toBe('file:///tmp/a%5Cb.html');
+		expect(pathToFileUrl('/srv/..\\..\\x.html')).toBe('file:///srv/..%5C..%5Cx.html');
+	});
+
+	it('still reads a backslash as the separator in a Windows path', () => {
+		expect(pathToFileUrl('D:\\site\\a b.html')).toBe('file:///D:/site/a%20b.html');
+		expect(pathToFileUrl('\\\\server\\share\\a.html')).toBe('file:////server/share/a.html');
+	});
+
 	it('round-trips through fileUrlToPath', () => {
-		for (const path of ['/tmp/a b/#c.html', 'D:/x y/z.html']) {
+		for (const path of ['/tmp/a b/#c.html', 'D:/x y/z.html', '/tmp/a\\b.html']) {
 			expect(fileUrlToPath(pathToFileUrl(path))).toBe(path);
 		}
 	});

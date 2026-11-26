@@ -13,14 +13,19 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers';
 import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 import { mockTheme } from '../../helpers/mockTheme';
+import type { Session } from '../../../renderer/types';
 
 afterEach(() => {
 	resetPathPicker();
 	vi.mocked(window.maestro.fs.readDir).mockReset();
 });
 
-function renderMode(mode: AgentMode, onSaveConfig = vi.fn()) {
-	const session = createModeSession(mode, { cwd: '/work/repo', projectRoot: '/work/repo' });
+function renderMode(mode: AgentMode, onSaveConfig = vi.fn(), overrides: Partial<Session> = {}) {
+	const session = createModeSession(mode, {
+		cwd: '/work/repo',
+		projectRoot: '/work/repo',
+		...overrides,
+	});
 	const view = render(
 		<LayerStackProvider>
 			<WorktreeConfigModal
@@ -68,6 +73,20 @@ describe('WorktreeConfigModal: mode parity (local, SSH, hosted)', () => {
 		renderMode(mode);
 		await browseAndPick(
 			mode,
+			() => fireEvent.click(screen.getByTitle('Browse for directory')),
+			'/picked/worktrees'
+		);
+		expect(screen.getByPlaceholderText('/path/to/worktrees')).toHaveValue('/picked/worktrees');
+	});
+
+	// SSH switched off keeps the remote id it had. That agent is local, so Browse is the native
+	// dialog, never the remote picker on the stale id.
+	it('a remote id left on an agent with SSH off does not route Browse to that remote', async () => {
+		renderMode('local', vi.fn(), {
+			sessionSshRemoteConfig: { enabled: false, remoteId: MODE_REMOTE_ID },
+		});
+		await browseAndPick(
+			'local',
 			() => fireEvent.click(screen.getByTitle('Browse for directory')),
 			'/picked/worktrees'
 		);

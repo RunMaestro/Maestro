@@ -73,9 +73,17 @@ export const usePathPickerStore = create<PathPickerState>((set, get) => ({
 	},
 }));
 
-/** The remote a session's paths live on, or `undefined` for a local agent (SSH and hosted alike). */
-export function pathPickerRemoteId(session: SessionSshInfo | null | undefined): string | undefined {
-	return isSessionRemote(session) ? getSessionSshRemoteId(session) : undefined;
+/**
+ * The remote a session's paths live on (SSH and hosted alike), or `undefined` for a local agent.
+ * An SSH agent whose remote is not resolved yet gets `null`, never `undefined`: the pickers read
+ * `undefined` as this machine, which is the wrong disk for that agent. A remote id stored on an
+ * agent with SSH switched off is ignored, so this is the one place that decides where Browse looks.
+ */
+export function pathPickerRemoteId(
+	session: SessionSshInfo | null | undefined
+): string | null | undefined {
+	if (!isSessionRemote(session)) return undefined;
+	return getSessionSshRemoteId(session) ?? null;
 }
 
 /** The folder the remote picker opens in when the caller has none: the remote user's home. */

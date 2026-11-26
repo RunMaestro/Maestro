@@ -320,14 +320,16 @@ describe('MarketplaceModal', () => {
 
 			const browse = screen.getByTitle('Browse for folder');
 			expect(browse).not.toBeDisabled();
-			await browseAndPick(mode, () => fireEvent.click(browse), '/picked/import');
-			await waitFor(() => expect(screen.getByDisplayValue('/picked/import')).toBeTruthy());
+			// The field holds a folder name inside the Auto Run folder, never the picked path: the
+			// import refuses a path.
+			await browseAndPick(mode, () => fireEvent.click(browse), '/autorun/import');
+			await waitFor(() => expect(screen.getByDisplayValue('import')).toBeTruthy());
 
 			fireEvent.click(screen.getByText('Import Playbook'));
 			await waitFor(() => {
 				expect(importPlaybook).toHaveBeenCalledWith(
 					expect.objectContaining({ id: 'alpha' }),
-					'/picked/import',
+					'import',
 					'/autorun',
 					'session-1',
 					sshRemoteId

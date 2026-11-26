@@ -4,6 +4,7 @@ import { usePlaybookImportActions } from '../../../../../renderer/components/Mar
 import { makePlaybook } from '../_fixtures';
 import { AGENT_MODES } from '../../../../helpers/mockSession';
 import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../../../helpers/pathPicker';
+import { usePathPickerStore } from '../../../../../renderer/services/pathPicker';
 
 const notifyToastMock = vi.fn();
 const loggerErrorMock = vi.fn();
@@ -122,7 +123,10 @@ describe('usePlaybookImportActions', () => {
 		expect(result.onClose).not.toHaveBeenCalled();
 	});
 
-	it('updates the target folder from local browse', async () => {
+	// The import target is a folder name inside the Auto Run folder. The import refuses a path, so
+	// Browse must never put the picked folder's full path in the field.
+	it('updates the target folder name from local browse', async () => {
+		vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue('/autorun/folder');
 		const result = setup();
 
 		await act(async () => {
@@ -130,7 +134,7 @@ describe('usePlaybookImportActions', () => {
 		});
 
 		expect(window.maestro.dialog.selectFolder).toHaveBeenCalledTimes(1);
-		expect(result.setTargetFolderName).toHaveBeenCalledWith('/picked/folder');
+		expect(result.setTargetFolderName).toHaveBeenCalledWith('folder');
 	});
 
 	it.each(AGENT_MODES)(
@@ -140,16 +144,58 @@ describe('usePlaybookImportActions', () => {
 
 			await browseAndPick(
 				mode,
-				() => void result.result.current.handleBrowseFolder(),
-				'/picked/playbooks'
+				() => {
+					void result.result.current.handleBrowseFolder();
+					if (mode !== 'local') {
+						expect(usePathPickerStore.getState().request).toMatchObject({ startPath: '/autorun' });
+					}
+				},
+				'/autorun/playbooks/'
 			);
 
-			expect(result.setTargetFolderName).toHaveBeenCalledWith('/picked/playbooks');
+			expect(result.setTargetFolderName).toHaveBeenCalledWith('playbooks');
+			expect(notifyToastMock).not.toHaveBeenCalled();
 			if (mode !== 'local') {
-				// The remote picker opened in the Auto Run folder (asserted before the pick settled).
 				expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
 			}
 			resetPathPicker();
 		}
 	);
+
+	it.each(AGENT_MODES)(
+		'%s: a pick that is not a folder directly inside the Auto Run folder is refused, with the reason',
+		async (mode) => {
+			const result = setup({ sshRemoteId: mode === 'local' ? undefined : MODE_REMOTE_ID });
+			const browse = () => void result.result.current.handleBrowseFolder();
+
+			// Elsewhere, the Auto Run folder itself, a folder two levels down, and a sibling whose
+			// name only starts the same.
+			for (const picked of ['/picked/playbooks', '/autorun', '/autorun/a/b', '/autorun-old/a']) {
+				await browseAndPick(mode, browse, picked);
+			}
+
+			expect(result.setTargetFolderName).not.toHaveBeenCalled();
+			expect(notifyToastMock).toHaveBeenCalledTimes(4);
+			expect(notifyToastMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					color: 'orange',
+					title: 'Pick a folder inside the Auto Run folder',
+				})
+			);
+			resetPathPicker();
+		}
+	);
+
+	it('reads a Windows pick inside the Auto Run folder as its folder name', async () => {
+		vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue(
+			'C:\\Users\\me\\autorun\\security'
+		);
+		const result = setup({ autoRunFolderPath: 'C:\\Users\\me\\autorun' });
+
+		await act(async () => {
+			await result.result.current.handleBrowseFolder();
+		});
+
+		expect(result.setTargetFolderName).toHaveBeenCalledWith('security');
+	});
 });

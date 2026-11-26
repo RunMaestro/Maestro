@@ -33,6 +33,7 @@ let downloadRemoteFolder: ReturnType<typeof vi.fn>;
 let openPath: ReturnType<typeof vi.fn>;
 let showItemInFolder: ReturnType<typeof vi.fn>;
 let copyPath: ReturnType<typeof vi.fn>;
+let readFile: ReturnType<typeof vi.fn>;
 let saveFile: ReturnType<typeof vi.fn>;
 const original = (window as any).maestro;
 
@@ -48,11 +49,12 @@ beforeEach(() => {
 	openPath = vi.fn().mockResolvedValue(undefined);
 	showItemInFolder = vi.fn().mockResolvedValue(undefined);
 	copyPath = vi.fn().mockResolvedValue({ success: true });
+	readFile = vi.fn().mockResolvedValue('<p>A page that stands alone.</p>');
 	saveFile = vi.fn().mockResolvedValue('/Users/me/Desktop/report.pdf');
 	(window as any).maestro = {
 		...original,
 		shell: { ...original.shell, openPath, showItemInFolder },
-		fs: { ...original.fs, downloadRemoteFile, downloadRemoteFolder, copyPath },
+		fs: { ...original.fs, downloadRemoteFile, downloadRemoteFolder, copyPath, readFile },
 		dialog: { ...original.dialog, saveFile },
 	};
 });
@@ -81,6 +83,40 @@ describe.each(AGENT_MODES)('file actions in %s mode', (mode) => {
 		const openBrowserTabAt = vi.fn();
 		await openFileInMaestroBrowser(target, openBrowserTabAt, 'report.pdf');
 		expect(openBrowserTabAt).toHaveBeenCalledWith(`file://${expected}`, { title: 'report.pdf' });
+	});
+
+	it('opens an HTML page with the files it points at beside it', async () => {
+		const PAGE_COPY = '/tmp/maestro-remote-downloads/abc/index.html';
+		const SITE_COPY = '/tmp/maestro-remote-downloads/def/site';
+		downloadRemoteFile.mockResolvedValue({ success: true, path: PAGE_COPY });
+		downloadRemoteFolder.mockResolvedValue({ success: true, path: SITE_COPY, fileCount: 3 });
+		readFile.mockResolvedValue(
+			'<link rel="stylesheet" href="css/site.css"><script src="./app.js"></script>'
+		);
+		const openBrowserTabAt = vi.fn();
+		await expect(
+			openFileInMaestroBrowser(
+				{ path: '/work/site/index.html', sshRemoteId },
+				openBrowserTabAt,
+				'index.html'
+			)
+		).resolves.toBe(true);
+
+		if (mode === 'local') {
+			// Already beside its files: opened in place, nothing fetched or read.
+			expect(openBrowserTabAt).toHaveBeenCalledWith('file:///work/site/index.html', {
+				title: 'index.html',
+			});
+			expect(readFile).not.toHaveBeenCalled();
+			expect(downloadRemoteFolder).not.toHaveBeenCalled();
+		} else {
+			// The page's whole folder is fetched, and the page opens from inside it.
+			expect(readFile).toHaveBeenCalledWith(PAGE_COPY);
+			expect(downloadRemoteFolder).toHaveBeenCalledWith('/work/site', 'r1');
+			expect(openBrowserTabAt).toHaveBeenCalledWith(`file://${SITE_COPY}/index.html`, {
+				title: 'index.html',
+			});
+		}
 	});
 
 	it('saves a copy to the chosen path', async () => {
@@ -140,6 +176,75 @@ describe.each(AGENT_MODES)('file actions in %s mode', (mode) => {
 				'Showing the folder in the Files panel'
 			);
 		}
+	});
+});
+
+describe('a remote page in the Maestro Browser', () => {
+	const PAGE_COPY = '/tmp/maestro-remote-downloads/abc/index.html';
+	const page = { path: '/work/site/index.html', sshRemoteId: 'r1' };
+
+	beforeEach(() => {
+		downloadRemoteFile.mockResolvedValue({ success: true, path: PAGE_COPY });
+	});
+
+	it('opens a page that stands alone from its own copy, without fetching its folder', async () => {
+		// None of these is read from the page's folder.
+		readFile.mockResolvedValue(
+			[
+				'<script src="https://cdn.example.com/app.js"></script>',
+				'<script src="//cdn.example.com/app.js"></script>',
+				'<link rel="stylesheet" href="/assets/site.css">',
+				'<img src="data:image/png;base64,AAAA">',
+				'<a href="other.html">A link is not fetched to draw the page</a>',
+				'<a href="#top">Top</a>',
+			].join('')
+		);
+		const openBrowserTabAt = vi.fn();
+		await expect(openFileInMaestroBrowser(page, openBrowserTabAt)).resolves.toBe(true);
+		expect(downloadRemoteFolder).not.toHaveBeenCalled();
+		expect(openBrowserTabAt).toHaveBeenCalledWith(`file://${PAGE_COPY}`, undefined);
+	});
+
+	it('opens the page from its own copy when its folder is too large to copy whole', async () => {
+		readFile.mockResolvedValue('<img src="img/logo.png">');
+		downloadRemoteFolder.mockRejectedValue(
+			new Error('The folder has more than 2000 files, too many to copy to this computer')
+		);
+		const toastsBefore = useNotificationStore.getState().toasts.length;
+		const openBrowserTabAt = vi.fn();
+		await expect(openFileInMaestroBrowser(page, openBrowserTabAt)).resolves.toBe(true);
+		expect(downloadRemoteFolder).toHaveBeenCalledWith('/work/site', 'r1');
+		expect(openBrowserTabAt).toHaveBeenCalledWith(`file://${PAGE_COPY}`, undefined);
+		// The page opened, so nothing is reported as failed.
+		expect(useNotificationStore.getState().toasts).toHaveLength(toastsBefore);
+	});
+
+	it('opens the page from its own copy when the copy cannot be read back', async () => {
+		readFile.mockRejectedValue(new Error('Failed to read file'));
+		const toastsBefore = useNotificationStore.getState().toasts.length;
+		const openBrowserTabAt = vi.fn();
+		await expect(openFileInMaestroBrowser(page, openBrowserTabAt)).resolves.toBe(true);
+		expect(downloadRemoteFolder).not.toHaveBeenCalled();
+		expect(openBrowserTabAt).toHaveBeenCalledWith(`file://${PAGE_COPY}`, undefined);
+		expect(useNotificationStore.getState().toasts).toHaveLength(toastsBefore);
+	});
+
+	it('never fetches a folder for a file that is not a page', async () => {
+		const openBrowserTabAt = vi.fn();
+		await openFileInMaestroBrowser(
+			{ path: '/work/site/chart.svg', sshRemoteId: 'r1' },
+			openBrowserTabAt
+		);
+		expect(readFile).not.toHaveBeenCalled();
+		expect(downloadRemoteFolder).not.toHaveBeenCalled();
+	});
+
+	it('keeps a page in the root folder on its own copy: its folder is the whole host', async () => {
+		readFile.mockResolvedValue('<img src="img/logo.png">');
+		const openBrowserTabAt = vi.fn();
+		await openFileInMaestroBrowser({ path: '/index.html', sshRemoteId: 'r1' }, openBrowserTabAt);
+		expect(downloadRemoteFolder).not.toHaveBeenCalled();
+		expect(openBrowserTabAt).toHaveBeenCalledWith(`file://${PAGE_COPY}`, undefined);
 	});
 });
 

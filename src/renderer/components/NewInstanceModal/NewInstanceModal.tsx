@@ -7,7 +7,7 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { pickDirectory, usePathPickerStore } from '../../services/pathPicker';
+import { pathPickerRemoteId, pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
@@ -452,18 +452,31 @@ export function NewInstanceModal({
 		return config?.remoteId || undefined;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
 
+	// Where Browse looks: this disk (`undefined`), the chosen remote, or `null` for an SSH draft
+	// with no remote resolved yet (a duplicate of such an agent). `isSshEnabled` is false for that
+	// draft, so it cannot route Browse: it would open the native dialog on the wrong machine.
+	const browseRemoteId = useMemo(
+		() =>
+			pathPickerRemoteId({
+				sessionSshRemoteConfig: selectedAgent
+					? agentSshRemoteConfigs[selectedAgent]
+					: agentSshRemoteConfigs['_pending_'],
+			}),
+		[selectedAgent, agentSshRemoteConfigs]
+	);
+
 	// Browse is the same control in every mode: the native dialog for this disk, the remote
 	// folder picker when the agent will run on an SSH remote.
 	const handleSelectFolder = React.useCallback(async () => {
 		const folder = await pickDirectory({
-			sshRemoteId: isSshEnabled ? (effectiveSshRemoteId ?? null) : undefined,
+			sshRemoteId: browseRemoteId,
 			title: 'Select Working Directory',
 			startPath: workingDir.trim() || undefined,
 		});
 		if (folder) {
 			handleWorkingDirChange(folder);
 		}
-	}, [isSshEnabled, effectiveSshRemoteId, workingDir, handleWorkingDirChange]);
+	}, [browseRemoteId, workingDir, handleWorkingDirChange]);
 
 	// Debounced git repo detection - checks if the selected working dir is
 	// already a git repo so we can offer to `git init` it if not.
@@ -1442,7 +1455,7 @@ export function NewInstanceModal({
 					theme={theme}
 					directories={additionalDirectories}
 					onChange={setAdditionalDirectories}
-					sshRemoteId={isSshEnabled ? (effectiveSshRemoteId ?? null) : undefined}
+					sshRemoteId={browseRemoteId}
 					nativelyEnforced={
 						!!agents.find((a) => a.id === selectedAgent)?.capabilities
 							?.supportsAdditionalDirectories

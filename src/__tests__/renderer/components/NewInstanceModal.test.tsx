@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { usePathPickerStore } from '../../../renderer/services/pathPicker';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
@@ -2569,6 +2570,45 @@ describe('NewInstanceModal', () => {
 			} else {
 				expect(window.maestro.agents.detect).toHaveBeenCalledWith(draft.sshRemoteId);
 			}
+		});
+
+		// A copy of an SSH agent whose remote is not resolved yet is still an SSH draft. Its
+		// folders are not on this disk, so neither Browse may open the native dialog.
+		it('an unresolved SSH draft never browses this machine', async () => {
+			render(
+				<NewInstanceModal
+					isOpen
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={{ ...source, sessionSshRemoteConfig: { enabled: true, remoteId: null } }}
+				/>
+			);
+			await act(async () => {});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			vi.mocked(window.maestro.dialog.selectFolder).mockClear();
+			vi.mocked(window.maestro.logger.toast).mockClear();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`));
+			});
+			expect(window.maestro.logger.toast).toHaveBeenCalledTimes(1);
+
+			// The Additional Directories rows browse the same place.
+			fireEvent.click(screen.getByText('Add Directory'));
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Browse folders'));
+			});
+			expect(window.maestro.logger.toast).toHaveBeenCalledTimes(2);
+			expect(window.maestro.logger.toast).toHaveBeenLastCalledWith(
+				'Nothing to browse yet',
+				expect.anything()
+			);
+			expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+			expect(usePathPickerStore.getState().request).toBeNull();
 		});
 
 		it.each([

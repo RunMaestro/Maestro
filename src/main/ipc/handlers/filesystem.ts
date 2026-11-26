@@ -37,6 +37,9 @@ import {
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
 import { normalizeRootRelativePath } from '../../../shared/pathContainment';
+import { isWindows } from '../../../shared/platformDetection';
+import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
+import { generateUUID } from '../../../shared/uuid';
 import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
 import { buildSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { isSqliteDatabaseFile } from '../../sqlite/sqlite-detect';
@@ -154,44 +157,104 @@ async function uploadLocalPathToRemote(
  * and the opener show.
  */
 function remoteDownloadTempPath(sshRemoteId: string, remotePath: string): string {
+	const name = path.posix.basename(remotePath);
+	if (!isLocalPathSegment(name)) {
+		throw new Error(`Refusing a remote name that is not one file name on this computer: ${name}`);
+	}
 	const folderKey = createHash('sha1')
 		.update(`${sshRemoteId}\0${path.posix.dirname(remotePath)}`)
 		.digest('hex')
 		.slice(0, 12);
-	return path.join(
-		os.tmpdir(),
-		'maestro-remote-downloads',
-		folderKey,
-		path.posix.basename(remotePath)
-	);
+	const folder = path.join(os.tmpdir(), 'maestro-remote-downloads', folderKey);
+	const dest = path.join(folder, name);
+	// The join is checked as well, so the name rule is not the only thing
+	// between a remote name and a path outside the folder.
+	if (path.dirname(dest) !== folder || path.basename(dest) !== name) {
+		throw new Error(`Refusing a remote name that is not one file name on this computer: ${name}`);
+	}
+	return dest;
 }
 
-/** Read one remote file (binary-safe) and write its bytes to a local path. */
+/**
+ * Whether a name off a POSIX remote is exactly one path segment on this
+ * machine. A remote name can hold `\` and `C:`, which Windows reads as a
+ * separator and a drive: a remote folder named `..\..\victim` would join to a
+ * path outside the download folder. So Windows takes only a name
+ * `normalizeRootRelativePath()` leaves as it is. Elsewhere those are ordinary
+ * characters and the name is kept, so the copy is the file the remote listed.
+ */
+function isLocalPathSegment(name: string): boolean {
+	if (name === '' || name === '.' || name === '..') return false;
+	if (name.includes('/') || name.includes('\0')) return false;
+	return !isWindows() || normalizeRootRelativePath(name) === name;
+}
+
+/**
+ * A sibling of `localPath` to write into before it takes `localPath`'s place.
+ * Same folder, because a rename cannot cross volumes; a fresh name each time,
+ * so two downloads of one path never share it.
+ */
+function stagingPathFor(localPath: string): string {
+	return path.join(path.dirname(localPath), `.maestro-part-${generateUUID()}`);
+}
+
+/** Read one remote file's bytes (binary-safe). */
+async function readRemoteFileBytes(
+	remotePath: string,
+	sshConfig: SshRemoteConfig
+): Promise<Buffer> {
+	const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
+	if (!result.success) {
+		throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+	}
+	return Buffer.from(result.data ?? '', 'base64');
+}
+
+/**
+ * Read one remote file (binary-safe) and put its bytes at a local path. The
+ * bytes are written beside `localPath` and renamed over it, so the path never
+ * names a half-written file: a reader gets the earlier copy or the new one, and
+ * a failed download leaves the earlier copy as it was.
+ */
 async function downloadRemoteFileTo(
 	remotePath: string,
 	localPath: string,
 	sshConfig: SshRemoteConfig
 ): Promise<void> {
-	const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
-	if (!result.success) {
-		throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+	const bytes = await readRemoteFileBytes(remotePath, sshConfig);
+	const staged = stagingPathFor(localPath);
+	try {
+		await fs.writeFile(staged, bytes);
+		await fs.rename(staged, localPath);
+	} catch (error) {
+		try {
+			await fs.rm(staged, { force: true });
+		} catch {
+			// The download's own failure is the one to report.
+		}
+		throw error;
 	}
-	await fs.writeFile(localPath, Buffer.from(result.data ?? '', 'base64'));
 }
 
 /** The most files one folder download fetches; a bigger folder is refused, never cut short. */
 export const REMOTE_FOLDER_DOWNLOAD_MAX_FILES = 2000;
 /** The deepest a folder download walks (the tree listing's own default is 5). */
-const REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH = 64;
+export const REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH = 64;
 /** Parallel SSH reads while downloading a folder. */
 const REMOTE_FOLDER_DOWNLOAD_CONCURRENCY = 4;
+
+/** One folder download per local folder at a time: two never build the same copy at once. */
+const remoteFolderDownloads = createKeyedWriteQueue();
 
 /**
  * Download a remote directory tree to a local directory - the mirror of
  * {@link uploadDirToRemote}. One SSH listing, then each file read binary-safe.
- * Replaces any earlier copy at `localDir` so a file deleted on the remote does
- * not linger in the copy. Refuses (throws) a tree larger than
- * {@link REMOTE_FOLDER_DOWNLOAD_MAX_FILES} rather than handing back a partial
+ * The tree is built in a folder beside `localDir` and swapped in only when
+ * every file is there, so `localDir` never holds part of a copy: a failed
+ * download leaves the earlier copy as it was. The swap replaces the earlier
+ * copy whole, so a file deleted on the remote does not linger. Refuses (throws)
+ * a tree larger than {@link REMOTE_FOLDER_DOWNLOAD_MAX_FILES} or as deep as
+ * {@link REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH} rather than handing back a partial
  * folder, and any listed path that would land outside `localDir`.
  */
 async function downloadRemoteDirToLocal(
@@ -215,28 +278,60 @@ async function downloadRemoteDirToLocal(
 			`The folder has more than ${REMOTE_FOLDER_DOWNLOAD_MAX_FILES} files, too many to copy to this computer`
 		);
 	}
-	const contained = (rel: string): string => {
-		const safe = normalizeRootRelativePath(rel);
-		if (!safe) throw new Error(`Refusing a remote path outside the folder: ${rel}`);
-		return safe;
+	// A listed path is read on the remote exactly as listed, and lands here
+	// segment for segment. One this machine would read as some other path is
+	// refused, never rewritten into a different name.
+	const toSegments = (rel: string): string[] => {
+		const segments = rel.split('/');
+		if (!segments.every(isLocalPathSegment)) {
+			throw new Error(`Refusing a remote path outside the folder: ${rel}`);
+		}
+		return segments;
 	};
-	const toLocal = (safe: string): string => path.join(localDir, ...safe.split('/'));
-	const remoteRoot = remoteDir.replace(/\/+$/, '');
-	const dirs = listed.data!.directories.map((rel) => toLocal(contained(rel)));
-	const files = listed.data!.files.map((rel) => {
-		const safe = contained(rel);
-		return { remote: `${remoteRoot}/${safe}`, local: toLocal(safe) };
-	});
-
-	await fs.rm(localDir, { recursive: true, force: true });
-	await fs.mkdir(localDir, { recursive: true });
-	for (const dir of dirs) {
-		await fs.mkdir(dir, { recursive: true });
+	const dirs = listed.data!.directories.map(toSegments);
+	// The listing stops at the depth limit without saying so. A folder that
+	// deep may hold entries the listing never saw.
+	if (dirs.some((segments) => segments.length >= REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH)) {
+		throw new Error(
+			`The folder is nested ${REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH} folders deep or more, too deep to copy to this computer`
+		);
 	}
-	await mapWithConcurrency(files, REMOTE_FOLDER_DOWNLOAD_CONCURRENCY, async (file) => {
-		await fs.mkdir(path.dirname(file.local), { recursive: true });
-		await downloadRemoteFileTo(file.remote, file.local, sshConfig);
-	});
+	const remoteRoot = remoteDir.replace(/\/+$/, '');
+	const files = listed.data!.files.map((rel) => ({
+		remote: `${remoteRoot}/${rel}`,
+		segments: toSegments(rel),
+	}));
+
+	const staging = stagingPathFor(localDir);
+	try {
+		await fs.mkdir(staging, { recursive: true });
+		for (const segments of dirs) {
+			await fs.mkdir(path.join(staging, ...segments), { recursive: true });
+		}
+		// The first failure stops the rest from starting, and the reads already
+		// running settle before the staging folder is removed under them.
+		const failures: unknown[] = [];
+		await mapWithConcurrency(files, REMOTE_FOLDER_DOWNLOAD_CONCURRENCY, async (file) => {
+			if (failures.length > 0) return;
+			try {
+				const local = path.join(staging, ...file.segments);
+				await fs.mkdir(path.dirname(local), { recursive: true });
+				await fs.writeFile(local, await readRemoteFileBytes(file.remote, sshConfig));
+			} catch (error) {
+				failures.push(error);
+			}
+		});
+		if (failures.length > 0) throw failures[0];
+		await fs.rm(localDir, { recursive: true, force: true });
+		await fs.rename(staging, localDir);
+	} catch (error) {
+		try {
+			await fs.rm(staging, { recursive: true, force: true });
+		} catch {
+			// The download's own failure is the one to report.
+		}
+		throw error;
+	}
 	return files.length;
 }
 
@@ -670,7 +765,9 @@ export function registerFilesystemHandlers(): void {
 			throw new Error(`SSH remote not found: ${sshRemoteId}`);
 		}
 		const destPath = remoteDownloadTempPath(sshRemoteId, remotePath.replace(/\/+$/, ''));
-		const fileCount = await downloadRemoteDirToLocal(remotePath, destPath, sshConfig);
+		const fileCount = await remoteFolderDownloads.enqueue(destPath, () =>
+			downloadRemoteDirToLocal(remotePath, destPath, sshConfig)
+		);
 		return { success: true, path: destPath, fileCount };
 	});
 

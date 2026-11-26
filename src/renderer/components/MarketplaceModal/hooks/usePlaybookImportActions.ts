@@ -3,6 +3,7 @@ import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { pickDirectory } from '../../../services/pathPicker';
+import { normalizeWorktreePath } from '../../../../shared/worktreePaths';
 
 export interface UsePlaybookImportActionsParams {
 	selectedPlaybook: MarketplacePlaybook | null;
@@ -68,15 +69,33 @@ export function usePlaybookImportActions({
 		onClose,
 	]);
 
+	// The import target is a folder NAME inside the Auto Run folder: the import refuses a path
+	// (`assertSafeTargetFolderName`). Browse returns a full path, so only a folder directly inside
+	// the Auto Run folder counts, and its name is what goes in the field. Anything else would
+	// import somewhere the user did not pick, so it is refused here, with the reason.
 	const handleBrowseFolder = useCallback(async () => {
 		const folder = await pickDirectory({
 			sshRemoteId,
 			title: 'Select Import Folder',
 			startPath: autoRunFolderPath,
 		});
-		if (folder) {
-			setTargetFolderName(folder);
+		if (!folder) return;
+		// A remote path is always POSIX; a local one may use either separator.
+		const posix = !!sshRemoteId;
+		const picked = normalizeWorktreePath(folder, posix);
+		const root = normalizeWorktreePath(autoRunFolderPath, posix);
+		const prefix = root.endsWith('/') ? root : `${root}/`;
+		const name = root && picked.startsWith(prefix) ? picked.slice(prefix.length) : '';
+		if (!name || name.includes('/')) {
+			notifyToast({
+				color: 'orange',
+				title: 'Pick a folder inside the Auto Run folder',
+				message:
+					'A playbook is imported into a folder directly inside the Auto Run folder. Pick one there, or type a new folder name.',
+			});
+			return;
 		}
+		setTargetFolderName(name);
 	}, [sshRemoteId, autoRunFolderPath, setTargetFolderName]);
 
 	return { handleImport, handleBrowseFolder };

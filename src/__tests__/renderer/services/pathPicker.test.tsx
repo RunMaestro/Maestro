@@ -21,6 +21,12 @@ import {
 import { AGENT_MODES, createModeSession } from '../../helpers';
 import { browseAndPick, resetPathPicker } from '../../helpers/pathPicker';
 import { mockTheme } from '../../helpers/mockTheme';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: vi.fn() };
+});
 
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
@@ -65,6 +71,33 @@ afterEach(() => {
 describe('pathPicker service: mode parity (local, SSH, hosted)', () => {
 	it.each(AGENT_MODES)('%s: resolves the remote a session browses', (mode) => {
 		expect(pathPickerRemoteId(createModeSession(mode))).toBe(mode === 'local' ? undefined : 'r1');
+	});
+
+	// An SSH agent with no remote resolved yet keeps the `null` sentinel. `undefined` would read
+	// as "this machine" and open the native dialog on the wrong disk.
+	it('an SSH agent with no remote resolved yet is null, and Browse says so', async () => {
+		const sshRemoteId = pathPickerRemoteId(
+			createModeSession('local', { sessionSshRemoteConfig: { enabled: true, remoteId: null } })
+		);
+		expect(sshRemoteId).toBeNull();
+
+		await expect(pickDirectory({ sshRemoteId })).resolves.toBeNull();
+		await expect(pickFile({ sshRemoteId })).resolves.toBeNull();
+		expect(selectFolder).not.toHaveBeenCalled();
+		expect(selectFile).not.toHaveBeenCalled();
+		expect(usePathPickerStore.getState().request).toBeNull();
+		expect(notifyToast).toHaveBeenCalledTimes(2);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Nothing to browse yet' })
+		);
+	});
+
+	it('a remote id left on an agent with SSH off is this machine', () => {
+		expect(
+			pathPickerRemoteId(
+				createModeSession('local', { sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' } })
+			)
+		).toBeUndefined();
 	});
 
 	it.each(AGENT_MODES)('%s: pickDirectory returns the picked folder', async (mode) => {
@@ -204,6 +237,40 @@ describe('PathPickerModal', () => {
 		expect(confirm).not.toBeDisabled();
 		fireEvent.click(confirm);
 		await expect(picked()).resolves.toBe('/home/me/notes.md');
+	});
+
+	// The previous listing stays in memory while the next one loads or after it fails, but it is
+	// not drawn. Enter must not pick a file from it.
+	it('Enter does not pick a row from the previous listing while loading or after a failure', async () => {
+		open('file');
+		await waitFor(() => expect(screen.getAllByTestId('path-picker-row')).toHaveLength(3));
+		const list = screen.getByTestId('path-picker-list');
+		// Highlight the file (alpha, zeta, notes.md).
+		fireEvent.keyDown(list, { key: 'ArrowDown' });
+		fireEvent.keyDown(list, { key: 'ArrowDown' });
+		expect(screen.getByRole('option', { selected: true }).textContent).toBe('notes.md');
+
+		// Loading: the parent listing has not answered yet.
+		let answer!: (entries: ReturnType<typeof dir>[]) => void;
+		readDir.mockImplementationOnce(
+			() => new Promise((resolve) => (answer = resolve as typeof answer))
+		);
+		fireEvent.keyDown(list, { key: 'Backspace' });
+		await waitFor(() => expect(screen.queryAllByTestId('path-picker-row')).toHaveLength(0));
+		fireEvent.keyDown(list, { key: 'Enter' });
+		expect(usePathPickerStore.getState().request).not.toBeNull();
+		await act(async () => answer([dir('/home', 'me')]));
+		await waitFor(() => expect(screen.getByTestId('path-picker-path')).toHaveValue('/home'));
+
+		// Failed: the typed folder does not exist, and the list shows the error.
+		const input = screen.getByTestId('path-picker-path');
+		fireEvent.change(input, { target: { value: '/nope' } });
+		fireEvent.keyDown(input, { key: 'Enter' });
+		await waitFor(() => expect(screen.getByTestId('path-picker-error')).toBeInTheDocument());
+		readDir.mockClear();
+		fireEvent.keyDown(list, { key: 'Enter' });
+		expect(readDir).not.toHaveBeenCalled();
+		expect(usePathPickerStore.getState().request).not.toBeNull();
 	});
 
 	it('Cancel resolves null', async () => {

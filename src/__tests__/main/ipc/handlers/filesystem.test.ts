@@ -117,7 +117,10 @@ vi.mock('../../../../main/stores', () => ({
 	getSshRemoteById: vi.fn(),
 }));
 
-import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesystem';
+import {
+	registerFilesystemHandlers,
+	REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
+} from '../../../../main/ipc/handlers/filesystem';
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
@@ -139,6 +142,18 @@ import {
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
 import path from 'path';
+import { withPlatform } from '../../../helpers/pathExpect';
+
+/**
+ * A temp download path: `<tmp>/maestro-remote-downloads/<12 hex>/<name>`. Read
+ * through `path`, so it holds whichever separator this OS joins with.
+ */
+function expectTempDownloadPath(actual: string, name: string): void {
+	const folder = path.dirname(actual);
+	expect(path.basename(actual)).toBe(name);
+	expect(path.basename(folder)).toMatch(/^[0-9a-f]{12}$/);
+	expect(path.dirname(folder)).toBe(path.join('/tmp', 'maestro-remote-downloads'));
+}
 
 describe('filesystem handlers', () => {
 	beforeEach(() => {
@@ -187,16 +202,47 @@ describe('filesystem handlers', () => {
 			const b = await handler({}, '/work/b/notes.pdf', 'r1');
 			const again = await handler({}, '/work/a/notes.pdf', 'r1');
 
-			expect(a.path).toMatch(/^\/tmp\/maestro-remote-downloads\/[0-9a-f]{12}\/notes\.pdf$/);
+			expectTempDownloadPath(a.path, 'notes.pdf');
 			expect(b.path).not.toBe(a.path);
 			expect(again.path).toBe(a.path);
-			expect(fs.writeFile).toHaveBeenCalledWith(a.path, Buffer.from('bytes'));
+		});
+
+		it('writes the bytes beside the copy and renames them over it in one step', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			const first = await handler({}, '/work/a/notes.pdf', 'r1');
+			const second = await handler({}, '/work/a/notes.pdf', 'r1');
+			expect(second.path).toBe(first.path);
+
+			// The published path is never the one being written.
+			const written = vi.mocked(fs.writeFile).mock.calls.map(([target]) => target as string);
+			expect(written).toHaveLength(2);
+			expect(written).not.toContain(first.path);
+			expect(written[1]).not.toBe(written[0]);
+			for (const staged of written) {
+				expect(path.dirname(staged)).toBe(path.dirname(first.path));
+			}
+			expect(fs.writeFile).toHaveBeenCalledWith(written[0], Buffer.from('bytes'));
+			expect(vi.mocked(fs.rename).mock.calls).toEqual([
+				[written[0], first.path],
+				[written[1], first.path],
+			]);
+		});
+
+		it('leaves the earlier copy alone when the new bytes cannot be written', async () => {
+			vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('ENOSPC'));
+			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
+			await expect(handler({}, '/work/a/notes.pdf', 'r1')).rejects.toThrow('ENOSPC');
+
+			const staged = vi.mocked(fs.writeFile).mock.calls[0][0] as string;
+			expect(fs.rename).not.toHaveBeenCalled();
+			expect(fs.rm).toHaveBeenCalledWith(staged, { force: true });
 		});
 
 		it('writes to the chosen path when one is given', async () => {
 			const handler = registeredHandlers.get('fs:downloadRemoteFile')!;
 			const result = await handler({}, '/work/a/notes.pdf', 'r1', '/Users/me/notes.pdf');
 			expect(result).toEqual({ success: true, path: '/Users/me/notes.pdf' });
+			expect(fs.rename).toHaveBeenCalledWith(expect.any(String), '/Users/me/notes.pdf');
 		});
 	});
 
@@ -209,6 +255,13 @@ describe('filesystem handlers', () => {
 			}));
 		});
 
+		/** The folder the tree was built in before it took the copy's place. */
+		const stagingOf = (dest: string): string => {
+			const swap = vi.mocked(fs.rename).mock.calls.find(([, to]) => to === dest);
+			expect(swap, `no folder was renamed to ${dest}`).toBeDefined();
+			return swap![0] as string;
+		};
+
 		it('copies the whole tree into a fresh temp folder named like the remote folder', async () => {
 			vi.mocked(listTreeRemote).mockResolvedValue({
 				success: true,
@@ -217,23 +270,91 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
 			const result = await handler({}, '/work/src/', 'r1');
 
-			expect(result.path).toMatch(/^\/tmp\/maestro-remote-downloads\/[0-9a-f]{12}\/src$/);
+			expectTempDownloadPath(result.path, 'src');
 			expect(result.fileCount).toBe(2);
-			// A stale copy is replaced, never merged into.
-			expect(fs.rm).toHaveBeenCalledWith(result.path, { recursive: true, force: true });
 			expect(listTreeRemote).toHaveBeenCalledWith(
 				'/work/src/',
 				expect.objectContaining({ maxFiles: 2000 }),
 				{ id: 'r1' }
 			);
+			// The tree is built beside the copy, never inside it.
+			const staging = stagingOf(result.path);
+			expect(path.dirname(staging)).toBe(path.dirname(result.path));
+			expect(staging).not.toBe(result.path);
 			expect(fs.writeFile).toHaveBeenCalledWith(
-				path.join(result.path, 'lib', 'b.ts'),
+				path.join(staging, 'lib', 'b.ts'),
 				Buffer.from('bytes of /work/src/lib/b.ts')
 			);
 			expect(fs.writeFile).toHaveBeenCalledWith(
-				path.join(result.path, 'a.ts'),
+				path.join(staging, 'a.ts'),
 				Buffer.from('bytes of /work/src/a.ts')
 			);
+			// A stale copy is replaced, never merged into: it goes only once the
+			// whole new tree is written, and the new tree takes its place.
+			const order = (mock: unknown): number[] =>
+				(mock as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder;
+			const removal = vi
+				.mocked(fs.rm)
+				.mock.calls.findIndex(
+					([target, options]) =>
+						target === result.path && options?.recursive === true && options?.force === true
+				);
+			expect(removal).toBeGreaterThanOrEqual(0);
+			const removedAt = order(fs.rm)[removal];
+			expect(Math.max(...order(fs.writeFile))).toBeLessThan(removedAt);
+			expect(removedAt).toBeLessThan(Math.max(...order(fs.rename)));
+		});
+
+		it('leaves the earlier copy alone when a file cannot be fetched', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts', 'b.ts', 'c.ts'], truncated: false },
+			});
+			vi.mocked(readBinaryFileRemoteAsBase64).mockImplementation(async (remotePath) =>
+				remotePath.endsWith('/a.ts')
+					? { success: false, error: 'Permission denied: a.ts' }
+					: { success: true, data: Buffer.from('ok').toString('base64') }
+			);
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow('Permission denied: a.ts');
+
+			// Nothing was swapped in and the earlier copy was not removed. Only the
+			// half-built folder beside it went.
+			expect(fs.rename).not.toHaveBeenCalled();
+			const removed = vi.mocked(fs.rm).mock.calls.map(([target]) => target as string);
+			expect(removed).toHaveLength(1);
+			expect(path.basename(path.dirname(removed[0]))).toMatch(/^[0-9a-f]{12}$/);
+			expect(path.basename(removed[0])).not.toBe('src');
+			expect(vi.mocked(fs.mkdir).mock.calls[0][0]).toBe(removed[0]);
+		});
+
+		it('builds one copy of a folder at a time when two downloads overlap', async () => {
+			const listing = {
+				success: true as const,
+				data: { directories: [], files: ['a.ts'], truncated: false },
+			};
+			let releaseFirst!: () => void;
+			vi.mocked(listTreeRemote)
+				.mockImplementationOnce(
+					() => new Promise((resolve) => (releaseFirst = () => resolve(listing)))
+				)
+				.mockResolvedValue(listing);
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			const first = handler({}, '/work/src', 'r1');
+			const second = handler({}, '/work/src', 'r1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// The second has not started: the first still owns the folder.
+			expect(listTreeRemote).toHaveBeenCalledTimes(1);
+			expect(fs.rename).not.toHaveBeenCalled();
+
+			releaseFirst();
+			const [a, b] = await Promise.all([first, second]);
+			expect(b.path).toBe(a.path);
+			expect(listTreeRemote).toHaveBeenCalledTimes(2);
+			const swaps = vi.mocked(fs.rename).mock.calls;
+			expect(swaps.map(([, to]) => to)).toEqual([a.path, a.path]);
+			expect(swaps[0][0]).not.toBe(swaps[1][0]);
 		});
 
 		it('refuses a folder too large to copy whole', async () => {
@@ -246,6 +367,36 @@ describe('filesystem handlers', () => {
 			expect(fs.writeFile).not.toHaveBeenCalled();
 		});
 
+		it('refuses a folder nested as deep as the listing reaches, and copies one just short of it', async () => {
+			const nested = (depth: number): string => Array.from({ length: depth }, () => 'd').join('/');
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+
+			// The listing stops at the limit without saying so, so a folder that
+			// deep may hold files it never listed.
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: [nested(REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH)],
+					files: ['a.ts'],
+					truncated: false,
+				},
+			});
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(/too deep to copy/);
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: {
+					directories: [nested(REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH - 1)],
+					files: ['a.ts'],
+					truncated: false,
+				},
+			});
+			await expect(handler({}, '/work/src', 'r1')).resolves.toMatchObject({ fileCount: 1 });
+		});
+
 		it('refuses a listed path that would land outside the folder', async () => {
 			vi.mocked(listTreeRemote).mockResolvedValue({
 				success: true,
@@ -256,6 +407,135 @@ describe('filesystem handlers', () => {
 			expect(fs.rm).not.toHaveBeenCalled();
 			expect(fs.writeFile).not.toHaveBeenCalled();
 		});
+
+		// A backslash is a separator on Windows only, so the native join below
+		// cannot keep it in a name there.
+		it.skipIf(process.platform === 'win32')(
+			'reads a file whose name holds a backslash by its own name, apart from its look-alike',
+			async () => {
+				vi.mocked(listTreeRemote).mockResolvedValue({
+					success: true,
+					data: {
+						directories: ['report'],
+						files: ['report\\2026.txt', 'report/2026.txt'],
+						truncated: false,
+					},
+				});
+				const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+				const result = await handler({}, '/work/src', 'r1');
+				const staging = stagingOf(result.path);
+
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join(staging, 'report\\2026.txt'),
+					Buffer.from('bytes of /work/src/report\\2026.txt')
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join(staging, 'report', '2026.txt'),
+					Buffer.from('bytes of /work/src/report/2026.txt')
+				);
+			}
+		);
+
+		it('refuses a listed name Windows would read as another path, and never rewrites it', async () => {
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			for (const hostile of ['report\\2026.txt', '..\\..\\evil', 'lib/C:evil', 'lib/.. /evil']) {
+				vi.mocked(listTreeRemote).mockResolvedValue({
+					success: true,
+					data: { directories: [], files: ['a.ts', hostile], truncated: false },
+				});
+				await withPlatform('win32', async () => {
+					await expect(handler({}, '/work/src', 'r1'), hostile).rejects.toThrow(
+						/outside the folder/
+					);
+				});
+			}
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+	});
+
+	// The remote names the file or folder; this machine decides where the copy
+	// goes. No remote name may put it outside the download folder.
+	describe('a hostile remote name and the download folder', () => {
+		const downloadRoot = path.join('/tmp', 'maestro-remote-downloads');
+		const channels = ['fs:downloadRemoteFile', 'fs:downloadRemoteFolder'] as const;
+
+		beforeEach(() => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.from('bytes').toString('base64'),
+			} as any);
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['a.ts'], truncated: false },
+			});
+		});
+
+		const expectNothingTouched = (): void => {
+			expect(listTreeRemote).not.toHaveBeenCalled();
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rm).not.toHaveBeenCalled();
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+		};
+
+		it.each(['/srv/..', '/srv/.', '/', '/srv/a\0b'])(
+			'refuses %j, which is not a name inside the folder on any platform',
+			async (remotePath) => {
+				for (const channel of channels) {
+					const handler = registeredHandlers.get(channel)!;
+					await expect(handler({}, remotePath, 'r1'), channel).rejects.toThrow(
+						/not one file name on this computer/
+					);
+				}
+				expectNothingTouched();
+			}
+		);
+
+		it.each(['/srv/..\\..\\victim', '/srv/..\\victim', '/srv/a\\b', '/srv/C:victim', '/srv/.. '])(
+			'refuses %j on Windows, where it would join to another path',
+			async (remotePath) => {
+				for (const channel of channels) {
+					const handler = registeredHandlers.get(channel)!;
+					await withPlatform('win32', async () => {
+						await expect(handler({}, remotePath, 'r1'), channel).rejects.toThrow(
+							/not one file name on this computer/
+						);
+					});
+				}
+				expectNothingTouched();
+			}
+		);
+
+		// Off Windows a backslash is a character in a name, so these stay one
+		// file inside the hashed folder. The `/` forms never leave it either:
+		// only the last remote segment names the copy.
+		it.skipIf(process.platform === 'win32')(
+			'keeps every other name as one entry inside its own hashed folder',
+			async () => {
+				for (const [remotePath, name] of [
+					['/srv/..\\..\\victim', '..\\..\\victim'],
+					['/srv/a\\b', 'a\\b'],
+					['/srv/../../victim', 'victim'],
+					['/srv/sub/../../../etc/passwd', 'passwd'],
+				]) {
+					for (const channel of channels) {
+						vi.mocked(fs.rm).mockClear();
+						const result = await registeredHandlers.get(channel)!({}, remotePath, 'r1');
+						expectTempDownloadPath(result.path, name);
+						expect(path.relative(downloadRoot, result.path).split(path.sep)).toHaveLength(2);
+						// Nothing outside the download folder is ever removed.
+						for (const [removed] of vi.mocked(fs.rm).mock.calls) {
+							expect(path.relative(downloadRoot, removed as string)).not.toMatch(/^\.\./);
+						}
+					}
+				}
+			}
+		);
 	});
 
 	describe('fs:homeDir', () => {

@@ -2129,7 +2129,12 @@ describe('useInputProcessing', () => {
 						1
 					);
 					usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
-					vi.mocked(sendHostedTurn).mockImplementationOnce(actual.sendHostedTurn);
+					// Only the hosted send reaches this service. A once-implementation queued
+					// for another mode is never consumed, and clearAllMocks() keeps it, so
+					// it would run in place of the next test's own implementation.
+					if (mode === 'hosted') {
+						vi.mocked(sendHostedTurn).mockImplementationOnce(actual.sendHostedTurn);
+					}
 					const session = createMockSession({
 						state: 'idle',
 						aiTabs: [tab],
@@ -2168,6 +2173,8 @@ describe('useInputProcessing', () => {
 				delete maestro.federation;
 				usePeerMirrorStore.setState({ peers: {} } as never);
 			}
+			// The real service was used up here: none of it is left for a later test.
+			expect(vi.mocked(sendHostedTurn).getMockImplementation()).not.toBe(actual.sendHostedTurn);
 			expect(settings[0]).toEqual({ model: 'opus', effort: 'high', readOnly: true });
 			expect(settings[1]).toEqual(settings[0]);
 			expect(settings[2]).toEqual(settings[0]);
@@ -4277,6 +4284,8 @@ describe('useInputProcessing', () => {
 				agentType: 'claude-code',
 				cwd: '/test/project',
 				sessionSshRemoteConfig: undefined,
+				// The agent the name is for, so main's hosted-launch check knows whose launch it is.
+				ownerAgentId: 'session-1',
 			});
 		});
 
