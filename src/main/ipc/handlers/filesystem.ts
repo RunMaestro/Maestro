@@ -63,17 +63,20 @@ import {
 	countItemsRemote,
 	compressFolderRemote,
 	listTreeRemote,
+	sha256FileRemote,
 	type ListTreeOptions,
 } from '../../utils/remote-fs';
-import type { SshRemoteConfig } from '../../../shared/types';
+import type { RemoteCopyWatchResult, SshRemoteConfig } from '../../../shared/types';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import {
 	createRemoteCopyWriteBack,
+	RemoteCopyNotSavedBackError,
 	type RemoteCopyWriteBack,
 	type RemoteCopyWriteBackEvent,
+	type StagedCopy,
 } from '../../utils/remote-copy-write-back';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
@@ -230,19 +233,46 @@ async function downloadRemoteFileTo(
 	sshConfig: SshRemoteConfig
 ): Promise<Buffer> {
 	const bytes = await readRemoteFileBytes(remotePath, sshConfig);
+	await placeLocalFile(localPath, bytes);
+	return bytes;
+}
+
+/**
+ * Write `bytes` beside a local path, to be renamed over it (`commit`) or removed
+ * (`discard`). The path never names a half-written file, and a failed write or
+ * rename leaves the earlier file as it was.
+ */
+async function stageLocalFile(localPath: string, bytes: Buffer): Promise<StagedCopy> {
 	const staged = stagingPathFor(localPath);
-	try {
-		await fs.writeFile(staged, bytes);
-		await fs.rename(staged, localPath);
-	} catch (error) {
+	const discard = async () => {
 		try {
 			await fs.rm(staged, { force: true });
 		} catch {
-			// The download's own failure is the one to report.
+			// The write's own failure is the one to report.
 		}
+	};
+	try {
+		await fs.writeFile(staged, bytes);
+	} catch (error) {
+		await discard();
 		throw error;
 	}
-	return bytes;
+	return {
+		commit: async () => {
+			try {
+				await fs.rename(staged, localPath);
+			} catch (error) {
+				await discard();
+				throw error;
+			}
+		},
+		discard,
+	};
+}
+
+/** Put `bytes` at a local path through a sibling and a rename ({@link stageLocalFile}). */
+async function placeLocalFile(localPath: string, bytes: Buffer): Promise<void> {
+	await (await stageLocalFile(localPath, bytes)).commit();
 }
 
 /** The most files one folder download fetches; a bigger folder is refused, never cut short. */
@@ -461,6 +491,8 @@ interface DirectorySizeResult {
 	totalSize: number;
 	fileCount: number;
 	folderCount: number;
+	/** The walk stopped counting files at {@link DIRECTORY_SIZE_MAX_FILES}: the count and size are at least these. */
+	fileCountCapped: boolean;
 }
 
 /**
@@ -476,6 +508,13 @@ const DIRECTORY_SIZE_CACHE_MS = 2_000;
 
 /** How deep the Files panel's size walk goes: entries up to 10 levels below the root, in every mode. */
 const DIRECTORY_SIZE_MAX_DEPTH = 10;
+
+/**
+ * The most files the Files panel's size walk counts, in every mode. A remote
+ * walk lists every file over SSH, so a huge tree would send megabytes of
+ * paths; past the cap the footer shows the count as "N+".
+ */
+export const DIRECTORY_SIZE_MAX_FILES = 50_000;
 
 /**
  * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
@@ -595,12 +634,32 @@ function announceWriteBack(
 		});
 		return;
 	}
+	if (event.kind === 'unwatched') {
+		safeSend('remote:notifyToast', {
+			title: 'No longer saving to the remote host',
+			message: `Maestro can no longer watch the copy of ${name} on this computer, so changes you save to it from now on stay here. Open the file again to start saving back.`,
+			color: 'yellow',
+			dismissible: true,
+		});
+		return;
+	}
+	if (event.kind === 'kept') {
+		safeSend('remote:notifyToast', {
+			title: 'Your change was kept',
+			message: event.replaced
+				? `${name} was opened again, so the copy now holds the remote file. Your change, which was not saved there, is kept at ${event.keptAt}.`
+				: `Your change to ${name}, which was not saved to the remote host, is kept at ${event.keptAt}.`,
+			color: 'yellow',
+			dismissible: true,
+		});
+		return;
+	}
 	safeSend('remote:notifyToast', {
 		title:
 			event.kind === 'conflict' ? 'Not saved to the remote host' : 'Save to the remote host failed',
 		message:
 			event.kind === 'conflict'
-				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}.`
+				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}. Later changes to this copy are not saved back: open the file again to start from the remote version.`
 				: `${name}: ${event.message}. Your change is still in the copy on this computer.`,
 		color: 'red',
 		dismissible: true,
@@ -619,7 +678,7 @@ function sshConfigOrThrow(sshRemoteId: string): SshRemoteConfig {
  */
 function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopyWriteBack {
 	return createRemoteCopyWriteBack({
-		watchFile: (localPath, onChange) => {
+		watchFile: (localPath, onChange, onError) => {
 			const watcher = chokidar.watch(localPath, {
 				ignoreInitial: true,
 				persistent: false,
@@ -630,19 +689,32 @@ function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopy
 			});
 			watcher.on('add', onChange);
 			watcher.on('change', onChange);
-			watcher.on('error', (error) =>
+			watcher.on('error', (error) => {
 				logger.warn('Remote copy watcher failed', 'fs:watchRemoteCopy', {
 					localPath,
 					error: String(error),
-				})
-			);
+				});
+				onError(error);
+			});
 			return { close: () => watcher.close() };
+		},
+		statLocal: async (localPath) => {
+			try {
+				const stat = await fs.stat(localPath);
+				return { size: stat.size, mtimeMs: stat.mtimeMs };
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+				throw error;
+			}
 		},
 		readLocal: (localPath) => fs.readFile(localPath),
 		// `wx`: a kept version never replaces an earlier one.
 		createLocal: (localPath, bytes) => fs.writeFile(localPath, bytes, { flag: 'wx' }),
-		readRemote: (remotePath, sshRemoteId) =>
-			readRemoteFileBytes(remotePath, sshConfigOrThrow(sshRemoteId)),
+		hashRemote: async (remotePath, sshRemoteId) => {
+			const result = await sha256FileRemote(remotePath, sshConfigOrThrow(sshRemoteId));
+			if (!result.success) throw new Error(result.error || 'The remote file could not be read');
+			return result.data ?? null;
+		},
 		writeRemote: async (remotePath, bytes, sshRemoteId, expectedSha256) => {
 			const result = await replaceFileRemoteIfUnchanged(
 				remotePath,
@@ -660,13 +732,21 @@ function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopy
 
 let remoteCopyWriteBack: RemoteCopyWriteBack | null = null;
 
+/**
+ * On quit: send every opened remote copy's change not sent yet, then stop the
+ * watches. Resolves when those writes are done; the quit path bounds the wait.
+ */
+export function flushRemoteCopyWriteBack(): Promise<void> {
+	return remoteCopyWriteBack?.dispose() ?? Promise.resolve();
+}
+
 export interface FilesystemHandlerDependencies {
 	/** Broadcast to the renderers: the write-back of a remote copy reports through it. */
 	safeSend?: SafeSendFn;
 }
 
 export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies = {}): void {
-	remoteCopyWriteBack?.dispose();
+	void remoteCopyWriteBack?.dispose();
 	remoteCopyWriteBack = createFilesystemWriteBack(deps.safeSend);
 	const writeBack = remoteCopyWriteBack;
 
@@ -959,13 +1039,15 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 			}
 			const destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
 			// A copy opened in another app may hold a change the remote does not have
-			// yet: it stays (the write is tried again), never replaced by a fetch.
-			if ((await writeBack.beforeRefetch(destPath)) === 'keep') {
-				return { success: true, path: destPath };
-			}
-			await fs.mkdir(path.dirname(destPath), { recursive: true });
-			const bytes = await downloadRemoteFileTo(remotePath, destPath, sshConfig);
-			await writeBack.noteFetched(destPath, bytes);
+			// yet: it stays (the write is tried again), never replaced by a fetch. The
+			// fetch runs in that copy's own queue, so no save of it interleaves.
+			await writeBack.refetch(destPath, {
+				download: () => readRemoteFileBytes(remotePath, sshConfig),
+				stage: async (bytes) => {
+					await fs.mkdir(path.dirname(destPath), { recursive: true });
+					return stageLocalFile(destPath, bytes);
+				},
+			});
 			return { success: true, path: destPath };
 		}
 	);
@@ -974,13 +1056,23 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 	// destination named), and write a change saved in another app back to the
 	// remote file. The copy's path is derived here, never taken from the caller,
 	// so only a fetched copy can be sent to the remote. Call it right after the
-	// fetch: the copy's bytes now are what the remote held.
-	ipcMain.handle('fs:watchRemoteCopy', async (_, remotePath: string, sshRemoteId: string) => {
-		sshConfigOrThrow(sshRemoteId);
-		const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
-		await writeBack.watch({ localPath, remotePath, sshRemoteId });
-		return { path: localPath };
-	});
+	// fetch: the copy's bytes now are what the remote held. A copy that does not
+	// save back (too large, or one a refetch could not start over) answers why,
+	// for the flash.
+	ipcMain.handle(
+		'fs:watchRemoteCopy',
+		async (_, remotePath: string, sshRemoteId: string): Promise<RemoteCopyWatchResult> => {
+			sshConfigOrThrow(sshRemoteId);
+			const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+			try {
+				await writeBack.watch({ localPath, remotePath, sshRemoteId });
+			} catch (error) {
+				if (!(error instanceof RemoteCopyNotSavedBackError)) throw error;
+				return { path: localPath, savesBack: false, reason: error.message };
+			}
+			return { path: localPath, savesBack: true };
+		}
+	);
 
 	// Download a remote SSH folder (its whole tree) to a temp folder on this
 	// machine, for actions that must hand a real folder to the OS (the Files
@@ -1130,6 +1222,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 						maxDepth: DIRECTORY_SIZE_MAX_DEPTH,
 						ignorePatterns: effectivePatterns,
 						withSizes: true,
+						maxFiles: DIRECTORY_SIZE_MAX_FILES,
 					},
 					remote
 				);
@@ -1138,7 +1231,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 				}
 				const kept = (relative: string) =>
 					!relative.split('/').some((name) => shouldIgnore(name, effectivePatterns));
-				const { directories, files, fileSizes } = listed.data;
+				const { directories, files, fileSizes, truncated } = listed.data;
 				let totalSize = 0;
 				let fileCount = 0;
 				files.forEach((file, index) => {
@@ -1146,7 +1239,12 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 					fileCount++;
 					totalSize += fileSizes?.[index] ?? 0;
 				});
-				return { totalSize, fileCount, folderCount: directories.filter(kept).length };
+				return {
+					totalSize,
+					fileCount,
+					folderCount: directories.filter(kept).length,
+					fileCountCapped: truncated,
+				};
 			}
 
 			async function computeDirectorySize(): Promise<DirectorySizeResult> {
@@ -1169,6 +1267,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 				let totalSize = 0;
 				let fileCount = 0;
 				let folderCount = 0;
+				let fileCountCapped = false;
 
 				const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
 					// Limit recursion depth to match file tree loading
@@ -1209,6 +1308,11 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 								folderCount++;
 								await calculateSize(childPath, depth + 1);
 							} else if (kind.isFile) {
+								// The remote walk's cap, so a huge tree reads "N+" in every mode.
+								if (fileCount >= DIRECTORY_SIZE_MAX_FILES) {
+									fileCountCapped = true;
+									continue;
+								}
 								fileCount++;
 								filePaths.push(childPath);
 							}
@@ -1236,6 +1340,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 					totalSize,
 					fileCount,
 					folderCount,
+					fileCountCapped,
 				};
 			}
 		}

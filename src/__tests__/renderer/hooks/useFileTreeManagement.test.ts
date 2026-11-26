@@ -345,6 +345,21 @@ describe('useFileTreeManagement', () => {
 		}
 	);
 
+	it('keeps the size walk saying it stopped at its cap, for the footer\'s "N+"', async () => {
+		const tree: FileNode[] = [{ name: 'loaded.txt', type: 'file' }];
+		const state = createSessionsState([createMockSession()]);
+		vi.mocked(loadFileTree).mockResolvedValue(asResult(tree));
+		const stats = { fileCount: 50_000, folderCount: 3, totalSize: 9, fileCountCapped: true };
+		vi.mocked(window.maestro.fs.directorySize).mockResolvedValueOnce(stats);
+		const { unmount } = renderHook(() => useFileTreeManagement(createDeps(state)));
+		try {
+			await act(async () => {});
+			expect(state.getSessions()[0].fileTreeStats).toEqual(stats);
+		} finally {
+			unmount();
+		}
+	});
+
 	it.each(['before', 'after'])(
 		'does not replay a connected initial timeout after its timed retry and a later Load all (stats resolve %s the timeout)',
 		async (statsTiming) => {

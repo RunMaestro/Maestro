@@ -122,6 +122,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
 	replaceFileRemoteIfUnchanged: vi.fn(),
+	sha256FileRemote: vi.fn(),
 	existsRemote: vi.fn(),
 	readBinaryFileRemoteAsBase64: vi.fn(),
 	listTreeRemote: vi.fn(),
@@ -138,12 +139,17 @@ vi.mock('../../../../main/stores', () => ({
 }));
 
 import {
+	DIRECTORY_SIZE_MAX_FILES,
 	registerFilesystemHandlers,
 	REMOTE_FOLDER_DOWNLOAD_MAX_BYTES,
 	REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
 	REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES,
 	remoteFolderTooLarge,
 } from '../../../../main/ipc/handlers/filesystem';
+import {
+	REMOTE_COPY_WRITE_BACK_MAX_BYTES,
+	remoteCopyTooLargeMessage,
+} from '../../../../main/utils/remote-copy-write-back';
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
@@ -161,6 +167,7 @@ import {
 	deleteManyRemote,
 	writeFileRemote,
 	replaceFileRemoteIfUnchanged,
+	sha256FileRemote,
 	existsRemote,
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
@@ -285,6 +292,7 @@ describe('filesystem handlers', () => {
 				data: fetched.toString('base64'),
 			} as any);
 			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({ success: true });
+			vi.mocked(sha256FileRemote).mockResolvedValue({ success: true, data: sha(fetched) });
 		});
 
 		afterEach(() => {
@@ -310,8 +318,24 @@ describe('filesystem handlers', () => {
 				'/work/a/notes.md',
 				'r1'
 			);
-			expect(watched.path).toBe(download.path);
+			expect(watched).toEqual({ path: download.path, savesBack: true });
 			expect(chokidarWatchers.map((w) => w.path)).toEqual([download.path]);
+		});
+
+		it('does not watch a copy too large to send back, and says why', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				Buffer.alloc(REMOTE_COPY_WRITE_BACK_MAX_BYTES + 1) as any
+			);
+			const watched = await registeredHandlers.get('fs:watchRemoteCopy')!(
+				{},
+				'/work/a/big.bin',
+				'r1'
+			);
+			expect(watched).toMatchObject({
+				savesBack: false,
+				reason: remoteCopyTooLargeMessage(),
+			});
+			expect(chokidarWatchers).toEqual([]);
 		});
 
 		it('refuses an unknown remote', async () => {
@@ -343,10 +367,10 @@ describe('filesystem handlers', () => {
 			vi.useFakeTimers();
 			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
 			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
-			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+			vi.mocked(sha256FileRemote).mockResolvedValue({
 				success: true,
-				data: Buffer.from('someone else').toString('base64'),
-			} as any);
+				data: sha(Buffer.from('someone else')),
+			});
 			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
 				success: false,
 				changed: true,
@@ -359,8 +383,43 @@ describe('filesystem handlers', () => {
 			expect(kept[2]).toEqual({ flag: 'wx' });
 			expect(safeSend).toHaveBeenCalledWith(
 				'remote:notifyToast',
-				expect.objectContaining({ title: 'Not saved to the remote host', color: 'red' })
+				expect.objectContaining({
+					title: 'Not saved to the remote host',
+					color: 'red',
+					message: expect.stringContaining('Later changes to this copy are not saved back'),
+				})
 			);
+			// A later save is not sent, and no second toast says so again.
+			safeSend.mockClear();
+			await saveCopyAs('edited again');
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledTimes(1);
+			expect(safeSend).not.toHaveBeenCalled();
+		});
+
+		it('sees a save by polling when no file event arrives, and says once when the watcher fails', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 7, mtimeMs: 1 } as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			// The app saves; the OS never reports it.
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('edited!') as any);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 7, mtimeMs: 2 } as any);
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited!'),
+				sha(fetched),
+				{ id: 'r1' }
+			);
+
+			chokidarWatchers[0].handlers.get('error')!(new Error('EMFILE'));
+			chokidarWatchers[0].handlers.get('error')!(new Error('EMFILE'));
+			await vi.advanceTimersByTimeAsync(0);
+			const notices = safeSend.mock.calls.filter(
+				([channel, toast]) =>
+					channel === 'remote:notifyToast' && toast.title === 'No longer saving to the remote host'
+			);
+			expect(notices).toHaveLength(1);
 		});
 
 		it('a second Open keeps a copy whose saved change has not reached the remote', async () => {
@@ -369,16 +428,19 @@ describe('filesystem handlers', () => {
 			const download = registeredHandlers.get('fs:downloadRemoteFile')!;
 			await download({}, '/work/a/notes.md', 'r1');
 			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
-			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValueOnce({
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
 				success: false,
 				error: 'Connection refused',
 			});
 			await saveCopyAs('edited');
 			vi.mocked(fs.rename).mockClear();
+			vi.mocked(readBinaryFileRemoteAsBase64).mockClear();
 
 			await download({}, '/work/a/notes.md', 'r1');
-			await vi.advanceTimersByTimeAsync(0);
-			// The copy was not replaced, and the change was sent again.
+			// The change was sent again first; it still failed, so the copy was not
+			// replaced and nothing was fetched over it.
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledTimes(2);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
 			expect(fs.rename).not.toHaveBeenCalled();
 			expect(replaceFileRemoteIfUnchanged).toHaveBeenLastCalledWith(
 				'/work/a/notes.md',
@@ -2021,9 +2083,70 @@ describe('filesystem handlers', () => {
 						true
 					);
 				}
-				expect(results.local).toEqual({ totalSize: 15, fileCount: 3, folderCount: 2 });
+				expect(results.local).toEqual({
+					totalSize: 15,
+					fileCount: 3,
+					folderCount: 2,
+					fileCountCapped: false,
+				});
 				expect(results.ssh).toEqual(results.local);
 				expect(results.hosted).toEqual(results.local);
+			});
+
+			it('stops counting a huge tree at the same cap in every mode, and says so', async () => {
+				const handler = registeredHandlers.get('fs:directorySize');
+				const total = DIRECTORY_SIZE_MAX_FILES + 5;
+				const names = Array.from({ length: total }, (_, i) => `f${i}.txt`);
+				const results: Record<string, unknown> = {};
+				for (const mode of ['local', 'ssh', 'hosted'] as const) {
+					if (mode === 'local') {
+						const mockFs = (await import('fs/promises')).default;
+						vi.mocked(mockFs.readFile).mockRejectedValue(new Error('ENOENT'));
+						vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) =>
+							String(dirPath).replace(/\\/g, '/') === '/srv/huge'
+								? (names.map((name) => ({
+										name,
+										isDirectory: () => false,
+										isFile: () => true,
+										isSymbolicLink: () => false,
+									})) as any)
+								: []
+						);
+						vi.mocked(mockFs.stat).mockResolvedValue({ size: 1 } as any);
+					} else {
+						vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+						// The listing itself is capped on the remote (`head`), and says it was.
+						vi.mocked(listTreeRemote).mockResolvedValue({
+							success: true,
+							data: {
+								directories: [],
+								files: names.slice(0, DIRECTORY_SIZE_MAX_FILES),
+								fileSizes: names.slice(0, DIRECTORY_SIZE_MAX_FILES).map(() => 1),
+								truncated: true,
+							},
+						});
+					}
+					results[mode] = await handler!(
+						{},
+						'/srv/huge',
+						mode === 'local' ? undefined : 'r1',
+						[],
+						false
+					);
+				}
+				expect(results.local).toEqual({
+					totalSize: DIRECTORY_SIZE_MAX_FILES,
+					fileCount: DIRECTORY_SIZE_MAX_FILES,
+					folderCount: 0,
+					fileCountCapped: true,
+				});
+				expect(results.ssh).toEqual(results.local);
+				expect(results.hosted).toEqual(results.local);
+				expect(listTreeRemote).toHaveBeenCalledWith(
+					'/srv/huge',
+					expect.objectContaining({ maxFiles: DIRECTORY_SIZE_MAX_FILES }),
+					expect.anything()
+				);
 			});
 
 			it('asks the remote for the same patterns, its own .gitignore, and the same depth', async () => {
@@ -2037,7 +2160,12 @@ describe('filesystem handlers', () => {
 				);
 				expect(listTreeRemote).toHaveBeenCalledWith(
 					'/srv/remote-only',
-					{ maxDepth: 10, ignorePatterns: ['.git', 'dist'], withSizes: true },
+					{
+						maxDepth: 10,
+						ignorePatterns: ['.git', 'dist'],
+						withSizes: true,
+						maxFiles: DIRECTORY_SIZE_MAX_FILES,
+					},
 					expect.objectContaining({ id: 'r1' })
 				);
 			});
@@ -2085,7 +2213,7 @@ describe('filesystem handlers', () => {
 			]);
 			const c = await handler!({}, '/dedupe', undefined, patterns, false);
 
-			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0 });
+			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0, fileCountCapped: false });
 			expect(b).toEqual(a);
 			expect(c).toEqual(a);
 			expect(vi.mocked(mockFs.readdir)).toHaveBeenCalledTimes(1);

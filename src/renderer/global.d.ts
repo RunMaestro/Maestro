@@ -2136,7 +2136,10 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
-		watchRemoteCopy: (remotePath: string, sshRemoteId: string) => Promise<{ path: string }>;
+		watchRemoteCopy: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<import('../shared/types').RemoteCopyWatchResult>;
 		downloadRemoteFolder: (
 			remotePath: string,
 			sshRemoteId: string
@@ -2171,6 +2174,7 @@ interface MaestroAPI {
 			totalSize: number;
 			fileCount: number;
 			folderCount: number;
+			fileCountCapped?: boolean;
 		}>;
 		fetchImageAsBase64: (url: string) => Promise<string | null>;
 		rename: (

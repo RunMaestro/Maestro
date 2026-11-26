@@ -1491,6 +1491,8 @@ export interface Session {
 		fileCount: number;
 		folderCount: number;
 		totalSize: number;
+		/** The size walk stopped counting files at its cap: the footer shows "N+". */
+		fileCountCapped?: boolean;
 	};
 	/** True when the last file tree load hit the entry cap and stopped early. */
 	fileTreeTruncated?: boolean;
