@@ -2773,8 +2773,12 @@ describe('useRemoteHandlers', () => {
 			registerMaestroBuiltinCommandHandlers(null);
 		});
 
-		const send = async (mode: AgentMode, command: string) => {
-			const session = createMockSession({ ...agentModeFields(mode), inputMode: 'ai' });
+		const send = async (mode: AgentMode, command: string, overrides: Partial<Session> = {}) => {
+			const session = createMockSession({
+				...agentModeFields(mode),
+				inputMode: 'ai',
+				...overrides,
+			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
 			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
 			await act(async () =>
@@ -2842,6 +2846,24 @@ describe('useRemoteHandlers', () => {
 			} else {
 				expect(history).toHaveBeenCalledExactlyOnceWith({ sessionId: session.id, tabId: 'tab-1' });
 			}
+		});
+
+		// Parity round 3, N1: a dispatched message names the tab it lands in, in every mode, through
+		// the same namer with the same text (a hosted send names it once the host took it).
+		it.each(AGENT_MODES)('%s: a dispatched message names the tab it lands in', async (mode) => {
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+			const session = await send(mode, 'Fix the login bug');
+
+			expect(vi.mocked(requestTabAutoNameForMessage).mock.calls).toEqual([
+				[expect.objectContaining({ id: session.id }), 'tab-1', 'Fix the login bug', 'remote'],
+			]);
+		});
+
+		it.each(AGENT_MODES)('%s: a dispatched slash command names no tab', async (mode) => {
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+			await send(mode, '/not-a-command');
+
+			expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
 		});
 
 		it('hosted: a host that refuses the message acks it undelivered and spawns nothing', async () => {

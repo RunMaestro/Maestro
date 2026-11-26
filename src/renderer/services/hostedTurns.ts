@@ -22,6 +22,7 @@
 
 import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
+import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
 import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
@@ -51,6 +52,7 @@ import {
 	sendToMirroredTab,
 	starMirrorTab,
 } from './peerMirror';
+import { requestTabAutoNameForMessage } from './tabAutoNaming';
 
 export interface HostedTarget {
 	peerId: string;
@@ -182,18 +184,31 @@ function focusHostTab(sessionId: string, tabId: string, placement: HostedTabPlac
 
 /**
  * Open a tab on the host and show it, at `placement` when given. Answers the new tab's id, or null
- * when the host refused.
+ * when the host refused. The tab starts with Save to History and thinking as `createTab()` starts
+ * a local one: what `placement.fields` sets (New Tab passes the user's defaults, a fork its source
+ * tab's), else `DEFAULT_TAB_DEFAULTS`. The host's tab is given the same, so the pills show what the
+ * host will do.
  */
 export async function openHostedTab(
 	session: Pick<Session, 'id' | 'liftedTo'>,
-	placement?: HostedTabPlacement
+	placement: HostedTabPlacement = {}
 ): Promise<string | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
 	const result = await actOnMirroredAgent(target.peerId, target.agentId, { kind: 'new-tab' });
 	if (result?.kind !== 'new-tab') return null;
 	openedHostTabs.add(hostTabKey(target, result.tabId));
-	focusHostTab(session.id, result.tabId, placement);
+	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
+	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
+	focusHostTab(session.id, result.tabId, {
+		...placement,
+		fields: { ...placement.fields, saveToHistory, showThinking },
+	});
+	void actOnMirroredAgent(target.peerId, target.agentId, {
+		kind: 'update-tab',
+		tabId: result.tabId,
+		patch: { saveToHistory, thinking: showThinking },
+	});
 	return result.tabId;
 }
 
@@ -263,13 +278,21 @@ export async function startHostedConversation(
  * `opts.held` is Queue Held: the host queues the message paused, even on an idle tab.
  * `opts.overrides` are a sender's own chips for this one message (a Federation client's
  * `TurnInput.overrides`); they win over the tab's settings, as they do on a local queued item.
+ * `opts.nameFrom` is the text the tab is named from once the host took the message, through the
+ * namer a local send calls (`requestTabAutoNameForMessage()`), so a hosted tab gets its name from
+ * its first message as a local one does. The caller leaves it out where a local send does not name
+ * (a matched slash command, a consult's note).
  */
 export async function sendHostedTurn(
 	session: Session,
 	tabId: string | undefined,
 	text: string,
 	images: readonly string[],
-	opts: { held?: boolean; overrides?: TurnOverrides } = {}
+	opts: {
+		held?: boolean;
+		overrides?: TurnOverrides;
+		nameFrom?: { text: string; label?: string };
+	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
@@ -321,6 +344,10 @@ export async function sendHostedTurn(
 				? { ...candidate, pendingMergedContext: undefined }
 				: candidate
 		);
+	}
+	// The tab the message landed in: a kept tab's message opened a new host tab above.
+	if (receipt && opts.nameFrom && hostTabId) {
+		requestTabAutoNameForMessage(session, hostTabId, opts.nameFrom.text, opts.nameFrom.label);
 	}
 	return receipt;
 }

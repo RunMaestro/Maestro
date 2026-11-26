@@ -90,6 +90,29 @@ describe('tabs', () => {
 		).toBeUndefined();
 		expect(mirrorTab({ id: 't1', thinkingStartTime: 42 }).thinkingStartTime).toBeUndefined();
 	});
+
+	// Parity round 3, N2: a tab the host opened (another client, the CLI) shows the composer
+	// settings the host will run it with, so its pills match a local tab's.
+	it("carries the host tab's Save to History, thinking, read-only, model, and effort", () => {
+		expect(
+			mirrorTab({
+				id: 't1',
+				saveToHistory: true,
+				showThinking: 'sticky',
+				readOnlyMode: false,
+				customModel: 'opus',
+				customEffort: 'high',
+			})
+		).toMatchObject({
+			saveToHistory: true,
+			showThinking: 'sticky',
+			readOnlyMode: false,
+			customModel: 'opus',
+			customEffort: 'high',
+		});
+		const bare = mirrorTab({ id: 't1', showThinking: 'loud' });
+		expect('saveToHistory' in bare || 'showThinking' in bare || 'customModel' in bare).toBe(false);
+	});
 });
 
 const queued = (itemId: string, extra: Partial<QueuedTurn> = {}): QueuedTurn => ({

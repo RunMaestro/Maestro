@@ -29,6 +29,7 @@ import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab } from './peerMirrorView';
+import { isAiTabHidden } from './unifiedTabOrderUtils';
 
 /** One tab's transcript as the mirror holds it (`MirrorTranscriptSlot`, the fields read here). */
 export interface HostedTranscript {
@@ -46,6 +47,8 @@ export interface HostedProjectionInput {
 	liveTurns?: Readonly<Record<string, LiveTurn>>;
 	/** What waits in the host's queue for this agent. */
 	queue?: readonly QueuedTurn[];
+	/** This record is the agent the window shows now (the unread rule reads it). */
+	viewing?: boolean;
 }
 
 const persistedViews = new WeakMap<readonly LogEntryRecord[], LogEntry[]>();
@@ -86,9 +89,48 @@ function byTime(local: readonly LogEntry[], host: readonly LogEntry[]): LogEntry
 	return out;
 }
 
+/** Sources of an agent's answer text. */
+const ANSWER_SOURCES = new Set<LogEntry['source']>(['stdout', 'ai']);
+
+/**
+ * The host's user entries with "Message delivered" set by the rule a local tab follows: a local
+ * send marks its message delivered when the agent's answer reaches the tab as data
+ * (`markDelivered()`), which the main process emits when the provider reports its result, at the
+ * end of the turn (partial text streams as thinking, which marks nothing). The host records
+ * `delivered` when its turn starts and streams partial text as live entries; here the tick waits
+ * for the answer the host recorded when the turn ended (a persisted answer entry after the
+ * message, before the next one). Only entries in `fromHost` are judged; one written here keeps its
+ * own flag. An entry whose flag is already right is kept as is.
+ */
+function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>): LogEntry[] {
+	let out: LogEntry[] | undefined;
+	let pendingUser = -1;
+	let answered = false;
+	const settle = () => {
+		if (pendingUser === -1) return;
+		const entry = entries[pendingUser];
+		if (fromHost.has(entry.id) && !!entry.delivered !== answered) {
+			out ??= [...entries];
+			out[pendingUser] = { ...entry, delivered: answered };
+		}
+	};
+	entries.forEach((entry, i) => {
+		if (entry.source === 'user') {
+			settle();
+			pendingUser = i;
+			answered = false;
+		} else if (ANSWER_SOURCES.has(entry.source) && !entry.hostLive) {
+			answered = true;
+		}
+	});
+	settle();
+	return out ?? entries;
+}
+
 /**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
- * entries; the live tail still shows. Returns `local` itself when nothing changed.
+ * entries; the live tail still shows. Returns `local` itself when nothing changed. A host user
+ * entry shows "Message delivered" when the agent's answer to it arrived (`withAnswerDelivery()`).
  */
 export function mergeHostedLogs(
 	local: LogEntry[],
@@ -106,14 +148,17 @@ export function mergeHostedLogs(
 		seen.add(record.id);
 		live.push({ ...mirrorLogEntry(record), hostLive: true });
 	}
-	const next = [...byTime(older, hostEntries), ...live];
+	const fromHost = new Set([...hostIds, ...live.map((entry) => entry.id)]);
+	const next = withAnswerDelivery([...byTime(older, hostEntries), ...live], fromHost);
 	if (sameIds(next, local)) {
-		// Same entries in the same order: keep the old array unless a live entry's text moved on.
+		// Same entries in the same order: keep the old array unless a live entry's text moved on,
+		// or a message's delivered tick did.
 		const liveChanged = live.some((entry, i) => {
 			const prior = local[older.length + hostEntries.length + i];
 			return prior?.text !== entry.text || prior?.metadata !== entry.metadata;
 		});
-		if (!liveChanged) return local;
+		const tickChanged = next.some((entry, i) => !!entry.delivered !== !!local[i].delivered);
+		if (!liveChanged && !tickChanged) return local;
 	}
 	return next;
 }
@@ -172,11 +217,47 @@ function hostedTabError(
 	return error;
 }
 
+/**
+ * Whether the answer of a turn this record watched run reached `logs`: an answer entry the host
+ * recorded (not a live one) that `prior` did not draw, while the tab was running or showing the
+ * turn's live entries. The same moment a local tab gets its answer as data (`markDelivered()`,
+ * `markUnread()`), at the provider's result. An answer that was already there when the
+ * transcript was first read (a conversation loaded at startup) is no new answer.
+ */
+function answerArrived(local: AITab, logs: readonly LogEntry[]): boolean {
+	const prior = local.logs ?? [];
+	if (logs === prior) return false;
+	const watchedRun = local.state === 'busy' || prior.some((entry) => entry.hostLive);
+	if (!watchedRun) return false;
+	const drawn = new Set(prior.map((entry) => entry.id));
+	return logs.some(
+		(entry) => !entry.hostLive && ANSWER_SOURCES.has(entry.source) && !drawn.has(entry.id)
+	);
+}
+
+/**
+ * A tab's unread flag once its answer arrived, by the rule a local tab follows
+ * (`useAgentDataListener`): the answer marks it unread unless its agent is the active agent, it
+ * is the agent's active AI tab (`activeTabId`, whichever panel is drawn), and it is scrolled to
+ * the bottom; then the answer clears it. A hidden tab is never set unread: it has no chip to clear
+ * it from.
+ */
+function hostedTabUnread(
+	local: AITab,
+	logs: readonly LogEntry[],
+	watched: boolean
+): boolean | undefined {
+	if (!answerArrived(local, logs)) return local.hasUnread;
+	const unread = !watched || local.isAtBottom === false;
+	return unread && isAiTabHidden(local) ? local.hasUnread : unread;
+}
+
 function projectTab(
 	local: AITab,
 	host: AITabRecord,
 	logs: LogEntry[],
-	liveTurn: LiveTurn | undefined
+	liveTurn: LiveTurn | undefined,
+	watched: boolean
 ): AITab {
 	const busy = host.state === 'busy';
 	const thinkingStartTime = busy
@@ -187,6 +268,7 @@ function projectTab(
 	const starred = host.starred === true;
 	const state = busy ? 'busy' : 'idle';
 	const agentError = hostedTabError(local, busy, logs);
+	const hasUnread = hostedTabUnread(local, logs, watched);
 	if (
 		local.name === name &&
 		local.agentSessionId === agentSessionId &&
@@ -194,11 +276,22 @@ function projectTab(
 		local.state === state &&
 		local.thinkingStartTime === thinkingStartTime &&
 		local.logs === logs &&
-		local.agentError === agentError
+		local.agentError === agentError &&
+		local.hasUnread === hasUnread
 	) {
 		return local;
 	}
-	return { ...local, name, agentSessionId, starred, state, thinkingStartTime, logs, agentError };
+	return {
+		...local,
+		name,
+		agentSessionId,
+		starred,
+		state,
+		thinkingStartTime,
+		logs,
+		agentError,
+		...(hasUnread !== undefined ? { hasUnread } : {}),
+	};
 }
 
 /**
@@ -262,7 +355,8 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 			local,
 			host,
 			logsFor(local.id, local.logs ?? []),
-			input.liveTurns?.[liveTurnKey(agent.id, local.id)]
+			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
+			input.viewing === true && local.id === session.activeTabId
 		);
 		if (next !== local) changed = true;
 		aiTabs.push(next);

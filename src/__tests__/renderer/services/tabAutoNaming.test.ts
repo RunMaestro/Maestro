@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	collectNamingPrompt,
 	isWizardTabAutoNameable,
+	queuedItemNamingText,
 	requestTabAutoName,
 	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
@@ -23,7 +24,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { renameHostedTab } from '../../../renderer/services/hostedTurns';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession, createMockAITab } from '../../helpers';
-import type { Session } from '../../../renderer/types';
+import type { QueuedItem, Session } from '../../../renderer/types';
 
 // A hosted tab's name reaches its host through this; hostedTurns.test.ts covers the wire.
 vi.mock('../../../renderer/services/hostedTurns', () => ({ renameHostedTab: vi.fn() }));
@@ -335,5 +336,31 @@ describe('requestTabAutoNameForMessage', () => {
 			requestTabAutoNameForMessage(session, tab.id, 'rewrite the ingest pipeline')
 		).not.toThrow();
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].isGeneratingName).toBe(false);
+	});
+});
+
+describe('queuedItemNamingText', () => {
+	const item = (overrides: Partial<QueuedItem> = {}): QueuedItem => ({
+		id: 'q1',
+		timestamp: 1,
+		tabId: 't1',
+		type: 'message',
+		text: 'fix the login bug',
+		...overrides,
+	});
+
+	it("names from a message's text, the same rule for the local drain and a hosted hand-off", () => {
+		expect(queuedItemNamingText(item())).toBe('fix the login bug');
+	});
+
+	it('names nothing from a command, a consult note, a turn waiting on a consult, or blank text', () => {
+		expect(
+			queuedItemNamingText(item({ type: 'command', text: undefined, command: '/commit' }))
+		).toBeUndefined();
+		expect(queuedItemNamingText(item({ agentContext: 'Docs replied' }))).toBeUndefined();
+		expect(
+			queuedItemNamingText(item({ awaitingConsult: { pending: [], replies: [] } }))
+		).toBeUndefined();
+		expect(queuedItemNamingText(item({ text: '   ' }))).toBeUndefined();
 	});
 });

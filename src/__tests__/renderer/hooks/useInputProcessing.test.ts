@@ -1796,10 +1796,13 @@ describe('useInputProcessing', () => {
 				session.activeTabId,
 				'hello',
 				expect.any(Array),
-				{ held: false }
+				{ held: false, nameFrom: { text: 'hello' } }
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
-			expect(mockSetSessions).not.toHaveBeenCalled();
+			// Nothing is drawn here: the host's record brings the bubble. Only Up-arrow recall is.
+			const live = useSessionStore.getState().sessions.find((s) => s.id === session.id)!;
+			expect(live.aiTabs).toEqual(session.aiTabs);
+			expect(live.aiCommandHistory).toEqual(['hello']);
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 		});
 
@@ -1819,7 +1822,7 @@ describe('useInputProcessing', () => {
 				session.activeTabId,
 				'later',
 				expect.any(Array),
-				{ held: true }
+				{ held: true, nameFrom: { text: 'later' } }
 			);
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -2178,6 +2181,135 @@ describe('useInputProcessing', () => {
 			expect(settings[0]).toEqual({ model: 'opus', effort: 'high', readOnly: true });
 			expect(settings[1]).toEqual(settings[0]);
 			expect(settings[2]).toEqual(settings[0]);
+		});
+
+		// Parity round 3, N6: Up arrow recalls a sent message in every mode.
+		it('local, SSH, and hosted agents add a sent message to Up-arrow recall', async () => {
+			const actual = await vi.importActual<typeof import('../../../renderer/services/hostedTurns')>(
+				'../../../renderer/services/hostedTurns'
+			);
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			maestro.federation = {
+				act: vi.fn().mockResolvedValue({
+					ok: true,
+					result: { kind: 'send', receipt: { status: 'started' } },
+				}),
+			};
+			const recalls: Array<string[] | undefined> = [];
+			try {
+				for (const [mode, fields] of modes) {
+					const tab = createMockTab();
+					const { peer } = replacePeerAgents(
+						createMirroredPeer({ peerId: 'build-box', remoteId: 'build-box', name: 'Box' }),
+						[{ id: 'host-1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: tab.id }] }],
+						[],
+						1
+					);
+					usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+					if (mode === 'hosted') {
+						vi.mocked(sendHostedTurn).mockImplementationOnce(actual.sendHostedTurn);
+					}
+					const session = createMockSession({
+						state: 'idle',
+						aiTabs: [tab],
+						activeTabId: tab.id,
+						aiCommandHistory: ['earlier'],
+						...fields,
+					});
+					const deps = createDeps({
+						activeSession: session,
+						sessionsRef: { current: [session] },
+						inputValue: '  Fix the login bug  ',
+					});
+					const { result, unmount } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					unmount();
+					recalls.push(
+						useSessionStore.getState().sessions.find((s) => s.id === session.id)?.aiCommandHistory
+					);
+				}
+			} finally {
+				delete maestro.federation;
+				usePeerMirrorStore.setState({ peers: {} } as never);
+			}
+			expect(recalls[0]).toEqual(['earlier', 'Fix the login bug']);
+			expect(recalls[1]).toEqual(recalls[0]);
+			expect(recalls[2]).toEqual(recalls[0]);
+		});
+
+		// Parity round 3, N1: a hosted tab is named from its first message as a local and an SSH
+		// tab are, through the same namer, and the name reaches the host tab.
+		it('local, SSH, and hosted agents name a new tab from its first message', async () => {
+			const actual = await vi.importActual<typeof import('../../../renderer/services/hostedTurns')>(
+				'../../../renderer/services/hostedTurns'
+			);
+			const federationAct = vi.fn(
+				async (_peer: string, _agent: string, action: { kind: string }) =>
+					action.kind === 'send'
+						? { ok: true, result: { kind: 'send', receipt: { status: 'started' } } }
+						: { ok: true, result: { kind: action.kind } }
+			);
+			const generateTabName = vi.fn().mockResolvedValue('Login Bug Fix');
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			maestro.federation = { act: federationAct };
+			maestro.tabNaming = { generateTabName };
+			useSettingsStore.setState({ automaticTabNamingEnabled: true } as never);
+			const names: Array<{ name: string | null; asked: string; hostRename?: unknown }> = [];
+			try {
+				for (const [mode, fields] of modes) {
+					federationAct.mockClear();
+					generateTabName.mockClear();
+					const tab = createMockTab({ name: null, agentSessionId: null });
+					const { peer } = replacePeerAgents(
+						createMirroredPeer({ peerId: 'build-box', remoteId: 'build-box', name: 'Box' }),
+						[{ id: 'host-1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: tab.id }] }],
+						[],
+						1
+					);
+					usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+					if (mode === 'hosted') {
+						vi.mocked(sendHostedTurn).mockImplementationOnce(actual.sendHostedTurn);
+					}
+					const session = createMockSession({
+						state: 'idle',
+						aiTabs: [tab],
+						activeTabId: tab.id,
+						...fields,
+					});
+					const deps = createDeps({
+						activeSession: session,
+						sessionsRef: { current: [session] },
+						inputValue: 'Fix the login bug',
+					});
+					const { result, unmount } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					unmount();
+					const named = useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === session.id)
+						?.aiTabs.find((t) => t.id === tab.id);
+					names.push({
+						name: named?.name ?? null,
+						asked: generateTabName.mock.calls[0]?.[0]?.userMessage,
+					});
+					if (mode === 'hosted') {
+						expect(
+							federationAct.mock.calls.map(([, , action]) => action),
+							mode
+						).toContainEqual({ kind: 'rename-tab', tabId: tab.id, name: 'Login Bug Fix' });
+					}
+				}
+			} finally {
+				delete maestro.federation;
+				usePeerMirrorStore.setState({ peers: {} } as never);
+			}
+			expect(names[0]).toEqual({ name: 'Login Bug Fix', asked: 'Fix the login bug' });
+			expect(names[1]).toEqual(names[0]);
+			expect(names[2]).toEqual(names[0]);
 		});
 
 		// docs/parity/agent-ux-parity.md, Composer "Repeat-submit guard": a second Enter that
