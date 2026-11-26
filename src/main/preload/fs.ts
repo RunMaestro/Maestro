@@ -155,6 +155,17 @@ export function createFsApi() {
 			ipcRenderer.invoke('fs:downloadRemoteFile', remotePath, sshRemoteId, localDestPath),
 
 		/**
+		 * Download a remote SSH folder (its whole tree) to a temp folder on this
+		 * machine. Rejects when the folder is too large to copy whole. Resolves with
+		 * the local folder path and how many files it holds.
+		 */
+		downloadRemoteFolder: (
+			remotePath: string,
+			sshRemoteId: string
+		): Promise<{ success: boolean; path: string; fileCount: number }> =>
+			ipcRenderer.invoke('fs:downloadRemoteFolder', remotePath, sshRemoteId),
+
+		/**
 		 * Write file contents
 		 */
 		writeFile: (

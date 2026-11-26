@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	fileUrlToPath,
 	openFileUrl,
+	pathToFileUrl,
 	windowsDrivePathToFileUrl,
 } from '../../../renderer/utils/openFileUrl';
 
@@ -142,5 +143,25 @@ describe('windowsDrivePathToFileUrl', () => {
 		expect(windowsDrivePathToFileUrl('/Users/me/a.png')).toBeNull();
 		expect(windowsDrivePathToFileUrl('https://example.com/a.png')).toBeNull();
 		expect(windowsDrivePathToFileUrl('D:relative.png')).toBeNull();
+	});
+});
+
+describe('pathToFileUrl', () => {
+	it('encodes each segment of a POSIX path', () => {
+		expect(pathToFileUrl('/Users/me/My Site/index.html')).toBe(
+			'file:///Users/me/My%20Site/index.html'
+		);
+	});
+
+	it('keeps a Windows drive colon and normalizes backslashes', () => {
+		expect(pathToFileUrl('C:\\Users\\Test Project\\a.html')).toBe(
+			'file:///C:/Users/Test%20Project/a.html'
+		);
+	});
+
+	it('round-trips through fileUrlToPath', () => {
+		for (const path of ['/tmp/a b/#c.html', 'D:/x y/z.html']) {
+			expect(fileUrlToPath(pathToFileUrl(path))).toBe(path);
+		}
 	});
 });

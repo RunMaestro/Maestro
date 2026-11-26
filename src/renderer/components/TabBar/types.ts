@@ -148,8 +148,8 @@ export interface TabBarProps {
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
 
-	/** True when the owning agent is running on an SSH remote - hides local-only OS actions in tab menus */
-	sshRemote?: boolean;
+	/** The SSH remote the agent's files live on; file tab OS actions fetch through it */
+	sshRemoteId?: string;
 
 	// === Optional pinned slot (used by Pianola's manager surface) ===
 	/** Pinned content rendered inside the sticky-left group, before the tab

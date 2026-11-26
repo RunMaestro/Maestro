@@ -35,6 +35,11 @@ import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../../../renderer/stores/tabStore';
+import { openFolderInFileManager } from '../../../../../renderer/services/fileActions';
+
+vi.mock('../../../../../renderer/services/fileActions', () => ({
+	openFolderInFileManager: vi.fn(),
+}));
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -348,7 +353,6 @@ describe('QuickActions command builders', () => {
 				deleteSession: vi.fn(),
 				getOpenInLabel: () => 'Open',
 				platform: 'darwin',
-				openPath: vi.fn(),
 				onGoToNextUnread: vi.fn(),
 				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
@@ -1386,7 +1390,6 @@ describe('mode parity (local, SSH, hosted)', () => {
 				deleteSession: vi.fn(),
 				getOpenInLabel: () => 'Open in Finder',
 				platform: 'darwin',
-				openPath: vi.fn(),
 				shortcuts: {},
 			}),
 			...buildSessionManagementCommands({
@@ -1454,17 +1457,39 @@ describe('mode parity (local, SSH, hosted)', () => {
 		return commands.map(({ id, label, subtext, shortcut }) => ({ id, label, subtext, shortcut }));
 	}
 
-	it('offers SSH and hosted agents the same commands', () => {
+	it('offers local, SSH, and hosted agents the same commands', () => {
 		const [local, ssh, hosted] = AGENT_MODES.map(paletteFor);
-		expect(hosted).toEqual(ssh);
-		// 🔒 The one difference from local: the working directory is on the remote, not
-		// this disk, so there is nothing for Finder to open.
-		expect(local.filter((c) => c.id !== 'openWorkingDirectory')).toEqual(ssh);
 		expect(local.map((c) => c.id)).toContain('openWorkingDirectory');
-		expect(ssh.map((c) => c.id)).not.toContain('openWorkingDirectory');
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
 	});
 
-	it('hides Open Working Directory for an SSH agent before its first spawn', () => {
+	it.each(AGENT_MODES)(
+		'%s: Open Working Directory opens the folder, or shows a remote one in the Files panel',
+		(mode) => {
+			const session = createModeSession(mode, { id: 's1', fullPath: '/work/atlas' });
+			const action = buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open in Finder',
+				platform: 'darwin',
+				shortcuts: {},
+			}).find((c) => c.id === 'openWorkingDirectory')!;
+			action.action();
+			expect(openFolderInFileManager).toHaveBeenCalledWith(
+				{ path: '/work/atlas', sshRemoteId: mode === 'local' ? undefined : 'r1' },
+				{ sessionId: 's1' }
+			);
+			expect(close).toHaveBeenCalledWith(false);
+		}
+	);
+
+	it('offers Open Working Directory for an SSH agent before its first spawn', () => {
 		const pending = createMockSession({
 			id: 's1',
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
@@ -1481,6 +1506,6 @@ describe('mode parity (local, SSH, hosted)', () => {
 			platform: 'darwin',
 			shortcuts: {},
 		}).map((a) => a.id);
-		expect(ids).not.toContain('openWorkingDirectory');
+		expect(ids).toContain('openWorkingDirectory');
 	});
 });

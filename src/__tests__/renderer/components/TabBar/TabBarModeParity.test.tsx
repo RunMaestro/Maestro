@@ -1,7 +1,7 @@
 /**
  * @fileoverview The tab strip and a tab's hover menu draw the same for a local, an SSH, and a
  * hosted agent. A hosted agent's tabs come from its host through `projectHostedSession()`; the
- * strip takes them as it takes a local agent's, with only the `sshRemote` flag MainPanel passes
+ * strip takes them as it takes a local agent's, with only the `sshRemoteId` MainPanel passes
  * for any agent whose files live on a remote.
  */
 
@@ -120,8 +120,8 @@ function propsFor(mode: Mode): TabBarProps {
 		onFileTabClose: vi.fn(),
 		onNewFileTab: vi.fn(),
 		onNewTerminalTab: vi.fn(),
-		// MainPanel: `Boolean(filePreviewSshRemoteId)`, set for SSH and hosted agents alike.
-		sshRemote: mode !== 'local',
+		// MainPanel: `filePreviewSshRemoteId`, set for SSH and hosted agents alike.
+		sshRemoteId: mode === 'local' ? undefined : 'r1',
 	} as TabBarProps;
 }
 
@@ -169,11 +169,11 @@ describe('the tab strip: local, SSH, and hosted agents', () => {
 		expect(hosted).toBe(local);
 	});
 
-	it('draws the same file tab menu for SSH and hosted agents, whose files are on the remote', () => {
+	it('draws the same file tab menu, Reveal and Open in Default App included, in every mode', () => {
 		const [local, ssh, hosted] = MODES.map((mode) => draw(mode, 'f1').menu);
-		// 🔒 The OS file manager can only reveal a file on this machine's disk.
 		expect(local).toMatch(/Reveal in (Finder|Explorer|File Manager)/);
-		expect(ssh).not.toMatch(/Reveal in (Finder|Explorer|File Manager)/);
-		expect(hosted).toBe(ssh);
+		expect(local).toContain('Open in Default App');
+		expect(ssh).toBe(local);
+		expect(hosted).toBe(local);
 	});
 });

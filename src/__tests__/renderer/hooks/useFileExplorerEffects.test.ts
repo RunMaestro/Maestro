@@ -19,7 +19,12 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import type { Session } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import type { FileNode } from '../../../renderer/types/fileTree';
 import type { UseFileExplorerEffectsDeps } from '../../../renderer/hooks/git/useFileExplorerEffects';
 
@@ -1172,36 +1177,79 @@ describe('useFileExplorerEffects', () => {
 			);
 		});
 
-		it('skips external open for SSH sessions even if shouldOpenExternally returns true', async () => {
-			const useFileExplorerEffects = await loadHook();
-			const { shouldOpenExternally } = await import('../../../renderer/utils/fileExplorer');
-			vi.mocked(shouldOpenExternally).mockReturnValue(true);
+		// A local, an SSH, and a hosted agent open a chat link the same way. A
+		// remote file this machine must hand to the OS (or play) is fetched first.
+		describe.each(AGENT_MODES)('in %s mode', (mode) => {
+			const localCopy = '/tmp/maestro-remote-downloads/k/file';
+			const setup = async () => {
+				const useFileExplorerEffects = await loadHook();
+				(window as any).maestro.fs.downloadRemoteFile = vi
+					.fn()
+					.mockResolvedValue({ success: true, path: localCopy });
+				const session = createMockSession({ ...agentModeFields(mode), id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const handleOpenFileTab = vi.fn();
+				const deps = createDeps({
+					sessionsRef: { current: [session] },
+					activeSessionIdRef: { current: 'session-1' },
+					handleOpenFileTab,
+				});
+				const { result } = renderHook(() => useFileExplorerEffects(deps));
+				return { result, handleOpenFileTab };
+			};
 
-			const session = createMockSession({
-				sshRemoteId: 'ssh-remote-1',
+			it('opens a file Maestro cannot preview in the default app', async () => {
+				const { shouldOpenExternally } = await import('../../../renderer/utils/fileExplorer');
+				vi.mocked(shouldOpenExternally).mockReturnValue(true);
+				const { result, handleOpenFileTab } = await setup();
+
+				await act(async () => {
+					await result.current.handleMainPanelFileClick('docs/manual.pdf');
+				});
+
+				expect(window.maestro.shell.openPath).toHaveBeenCalledWith(
+					mode === 'local' ? '/test/project/docs/manual.pdf' : localCopy
+				);
+				expect(handleOpenFileTab).not.toHaveBeenCalled();
 			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'session-1',
+
+			it('plays a media file from a copy on this machine', async () => {
+				const { shouldOpenExternally } = await import('../../../renderer/utils/fileExplorer');
+				vi.mocked(shouldOpenExternally).mockReturnValue(false);
+				const { result, handleOpenFileTab } = await setup();
+
+				await act(async () => {
+					await result.current.handleMainPanelFileClick('audio/song.mp3');
+				});
+
+				const readPath = mode === 'local' ? '/test/project/audio/song.mp3' : localCopy;
+				expect(window.maestro.fs.readFile).toHaveBeenCalledWith(readPath, undefined);
+				expect(handleOpenFileTab).toHaveBeenCalledWith(
+					expect.objectContaining({ path: readPath, name: 'song.mp3', sshRemoteId: undefined }),
+					expect.anything()
+				);
 			});
 
-			const handleOpenFileTab = vi.fn();
-			const deps = createDeps({
-				sessionsRef: { current: [session] },
-				activeSessionIdRef: { current: 'session-1' },
-				handleOpenFileTab,
+			it('takes a folder outside the tree to the file manager, or says why it cannot', async () => {
+				(window.maestro.fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+					isDirectory: true,
+				});
+				const { result } = await setup();
+
+				await act(async () => {
+					await result.current.handleMainPanelFileClick('/elsewhere/folder');
+				});
+
+				if (mode === 'local') {
+					expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/elsewhere/folder');
+				} else {
+					// 🔒 A remote folder has no location on this computer.
+					expect(window.maestro.shell.openPath).not.toHaveBeenCalled();
+					expect(useCenterFlashStore.getState().active?.message).toBe(
+						'This folder is on the remote host'
+					);
+				}
 			});
-
-			const { result } = renderHook(() => useFileExplorerEffects(deps));
-
-			await act(async () => {
-				await result.current.handleMainPanelFileClick('docs/manual.pdf');
-			});
-
-			// Should NOT open externally - SSH files are read via the remote
-			expect((window as any).maestro.shell.openExternal).not.toHaveBeenCalled();
-			// Should read file and open in tab instead
-			expect(handleOpenFileTab).toHaveBeenCalled();
 		});
 
 		it('sets activeFocus to main after opening file', async () => {

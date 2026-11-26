@@ -15,6 +15,7 @@
  * - countItems: Count files and folders recursively (local & SSH remote)
  * - compressFolder: Zip a folder into its parent dir (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
+ * - downloadRemoteFile / downloadRemoteFolder: Fetch a remote file or folder to this machine
  *
  * Extracted from main/index.ts to improve code organization.
  */
@@ -22,6 +23,7 @@
 import { ipcMain } from 'electron';
 import path from 'path';
 import os from 'os';
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
@@ -34,6 +36,7 @@ import {
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
+import { normalizeRootRelativePath } from '../../../shared/pathContainment';
 import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
 import { buildSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { isSqliteDatabaseFile } from '../../sqlite/sqlite-detect';
@@ -140,6 +143,101 @@ async function uploadLocalPathToRemote(
 			throw new Error(res.error || `Failed to upload file: ${localSource}`);
 		}
 	}
+}
+
+/**
+ * Where `fs:downloadRemoteFile` / `fs:downloadRemoteFolder` put a fetched copy
+ * when the caller names no destination: one temp folder per remote parent
+ * folder, so two remote entries that share a name (`a/notes.pdf`,
+ * `b/notes.pdf`) never overwrite each other's copy while one of them is open,
+ * playing, or being dragged. The entry keeps its own name, which is what Finder
+ * and the opener show.
+ */
+function remoteDownloadTempPath(sshRemoteId: string, remotePath: string): string {
+	const folderKey = createHash('sha1')
+		.update(`${sshRemoteId}\0${path.posix.dirname(remotePath)}`)
+		.digest('hex')
+		.slice(0, 12);
+	return path.join(
+		os.tmpdir(),
+		'maestro-remote-downloads',
+		folderKey,
+		path.posix.basename(remotePath)
+	);
+}
+
+/** Read one remote file (binary-safe) and write its bytes to a local path. */
+async function downloadRemoteFileTo(
+	remotePath: string,
+	localPath: string,
+	sshConfig: SshRemoteConfig
+): Promise<void> {
+	const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
+	if (!result.success) {
+		throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+	}
+	await fs.writeFile(localPath, Buffer.from(result.data ?? '', 'base64'));
+}
+
+/** The most files one folder download fetches; a bigger folder is refused, never cut short. */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_FILES = 2000;
+/** The deepest a folder download walks (the tree listing's own default is 5). */
+const REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH = 64;
+/** Parallel SSH reads while downloading a folder. */
+const REMOTE_FOLDER_DOWNLOAD_CONCURRENCY = 4;
+
+/**
+ * Download a remote directory tree to a local directory - the mirror of
+ * {@link uploadDirToRemote}. One SSH listing, then each file read binary-safe.
+ * Replaces any earlier copy at `localDir` so a file deleted on the remote does
+ * not linger in the copy. Refuses (throws) a tree larger than
+ * {@link REMOTE_FOLDER_DOWNLOAD_MAX_FILES} rather than handing back a partial
+ * folder, and any listed path that would land outside `localDir`.
+ */
+async function downloadRemoteDirToLocal(
+	remoteDir: string,
+	localDir: string,
+	sshConfig: SshRemoteConfig
+): Promise<number> {
+	const listed = await listTreeRemote(
+		remoteDir,
+		{
+			maxDepth: REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
+			maxFiles: REMOTE_FOLDER_DOWNLOAD_MAX_FILES,
+		},
+		sshConfig
+	);
+	if (!listed.success) {
+		throw new Error(listed.error || `Failed to list remote folder: ${remoteDir}`);
+	}
+	if (listed.data!.truncated) {
+		throw new Error(
+			`The folder has more than ${REMOTE_FOLDER_DOWNLOAD_MAX_FILES} files, too many to copy to this computer`
+		);
+	}
+	const contained = (rel: string): string => {
+		const safe = normalizeRootRelativePath(rel);
+		if (!safe) throw new Error(`Refusing a remote path outside the folder: ${rel}`);
+		return safe;
+	};
+	const toLocal = (safe: string): string => path.join(localDir, ...safe.split('/'));
+	const remoteRoot = remoteDir.replace(/\/+$/, '');
+	const dirs = listed.data!.directories.map((rel) => toLocal(contained(rel)));
+	const files = listed.data!.files.map((rel) => {
+		const safe = contained(rel);
+		return { remote: `${remoteRoot}/${safe}`, local: toLocal(safe) };
+	});
+
+	await fs.rm(localDir, { recursive: true, force: true });
+	await fs.mkdir(localDir, { recursive: true });
+	for (const dir of dirs) {
+		await fs.mkdir(dir, { recursive: true });
+	}
+	await mapWithConcurrency(files, REMOTE_FOLDER_DOWNLOAD_CONCURRENCY, async (file) => {
+		await fs.mkdir(path.dirname(file.local), { recursive: true });
+		await downloadRemoteFileTo(file.remote, file.local, sshConfig);
+	});
+	return files.length;
 }
 
 /**
@@ -551,22 +649,30 @@ export function registerFilesystemHandlers(): void {
 				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
-			const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
-			if (!result.success) {
-				throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
-			}
-
 			let destPath = localDestPath;
 			if (!destPath) {
-				const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads');
-				await fs.mkdir(tempDir, { recursive: true });
-				destPath = path.join(tempDir, path.basename(remotePath));
+				destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+				await fs.mkdir(path.dirname(destPath), { recursive: true });
 			}
 
-			await fs.writeFile(destPath, Buffer.from(result.data ?? '', 'base64'));
+			await downloadRemoteFileTo(remotePath, destPath, sshConfig);
 			return { success: true, path: destPath };
 		}
 	);
+
+	// Download a remote SSH folder (its whole tree) to a temp folder on this
+	// machine, for actions that must hand a real folder to the OS (the Files
+	// panel's Option-drag out to Finder). Same temp layout as a single file.
+	// Returns the local folder path and how many files it holds.
+	ipcMain.handle('fs:downloadRemoteFolder', async (_, remotePath: string, sshRemoteId: string) => {
+		const sshConfig = getSshRemoteById(sshRemoteId);
+		if (!sshConfig) {
+			throw new Error(`SSH remote not found: ${sshRemoteId}`);
+		}
+		const destPath = remoteDownloadTempPath(sshRemoteId, remotePath.replace(/\/+$/, ''));
+		const fileCount = await downloadRemoteDirToLocal(remotePath, destPath, sshConfig);
+		return { success: true, path: destPath, fileCount };
+	});
 
 	// Get file/directory statistics (supports SSH remote)
 	ipcMain.handle('fs:stat', async (_, filePath: string, sshRemoteId?: string) => {

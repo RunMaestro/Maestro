@@ -2129,6 +2129,10 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
+		downloadRemoteFolder: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<{ success: boolean; path: string; fileCount: number }>;
 		writeFile: (
 			filePath: string,
 			content: string,
