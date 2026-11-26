@@ -167,9 +167,29 @@ describe('framesForEvent', () => {
 		expect(frames).toHaveLength(1);
 		expect(frames[0].channel).toBe(TRANSCRIPT_CHANGED_CHANNEL);
 		const args = frames[0].args as unknown[];
+		expect(args).toEqual([tabProcessId('a1', 't1'), 'a1', 't1']);
 		expect(parseTranscriptChangedFrame(args)).toEqual({ kind: 'tab', agentId: 'a1', tabId: 't1' });
 		// Not a process frame: an older client, which streams only those, ignores it.
 		expect(parseProcessFrame(TRANSCRIPT_CHANGED_CHANNEL, args)).toBeNull();
+	});
+
+	it("names a tab whose id holds '-ai-' by its own ids, never by splitting the process id (M13)", () => {
+		const [frame] = framesForEvent(
+			{ ...turn({ kind: 'gap', at: 1 }), tabId: 't-ai-1' } as MaestroEvent,
+			createFrameState()
+		);
+		expect(parseTranscriptChangedFrame(frame.args as unknown[])).toEqual({
+			kind: 'tab',
+			agentId: 'a1',
+			tabId: 't-ai-1',
+		});
+		// A frame with only the process id (no ids beside it) still parses as before.
+		expect(parseTranscriptChangedFrame([tabProcessId('a1', 't1')])).toEqual({
+			kind: 'tab',
+			agentId: 'a1',
+			tabId: 't1',
+		});
+		expect(parseTranscriptChangedFrame([42])).toBeNull();
 	});
 
 	it('pushes an agent as a lifecycle upsert and a removal as session_removed', () => {

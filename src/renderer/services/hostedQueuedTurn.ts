@@ -44,7 +44,12 @@ import {
 	previewMentionDispatch,
 	type CrossAgentMentionPlan,
 } from './crossAgentMentions';
-import { markHandoffSentToHost, releaseHostedHandoff } from './crossAgentHandoff';
+import {
+	deferHostedHandoff,
+	handoffSendBoundary,
+	hasDeferredHostedHandoff,
+	markHandoffSentToHost,
+} from './crossAgentHandoff';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
 import { queuedItemNamingText } from './tabAutoNaming';
 
@@ -204,11 +209,22 @@ function fireMentionsForHostTurn(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return;
-	// A tab holds one hand-off. One still waiting for its turn's saved answer goes now, with the
-	// answer the tab holds, rather than be replaced by this one and never reach its agents.
+	// A tab holds one hand-off. While one is armed, this one waits (with the send boundary it has
+	// now) until that one released with its own turn's answer, as a local tab's next turn runs
+	// only after its exit released the last one. Neither replaces nor releases the other early.
 	const armed = session.aiTabs.find((tab) => tab.id === tabId);
-	if (mention.routing === 'handoff' && armed?.pendingMentionHandoff?.hostTurn) {
-		releaseHostedHandoff(sessionId, armed);
+	if (
+		mention.routing === 'handoff' &&
+		(armed?.pendingMentionHandoff || hasDeferredHostedHandoff(sessionId, tabId))
+	) {
+		const boundary = { afterEntryId: handoffSendBoundary(armed?.logs ?? []) };
+		deferHostedHandoff(sessionId, tabId, () => {
+			const current = selectSessionById(sessionId)(useSessionStore.getState());
+			if (!current) return;
+			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
+			markHandoffSentToHost(sessionId, tabId, receipt, boundary);
+		});
+		return;
 	}
 	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
 	if (mention.routing === 'handoff') markHandoffSentToHost(sessionId, tabId, receipt);

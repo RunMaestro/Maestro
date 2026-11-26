@@ -409,7 +409,7 @@ export async function sendHostedTurn(
 	const historyCommand =
 		!opts.held && parseMaestroBuiltinCommand(text, session.toolType)?.name === '/history';
 	const historyBaseline = historyCommand
-		? hostedTranscriptBaseline(target.peerId, target.agentId, hostTabId as string)
+		? await hostedTranscriptBaseline(target.peerId, target.agentId, hostTabId as string)
 		: undefined;
 	const sentAt = Date.now();
 	const receipt = await sendToMirroredTab(

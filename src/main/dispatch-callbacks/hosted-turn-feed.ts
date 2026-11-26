@@ -3,7 +3,8 @@
  * Federation host, so no process here spawns or exits for it. The peer mirror's turn events for
  * the hosted record's tab stand in for them, keyed by the same `{agentId}-ai-{tabId}` the registry
  * minted for the local record (`buildProcessSessionId()`): a turn that starts is the spawn, its
- * text is the output, and its outcome is the exit. A local or SSH agent's turn feeds the registry
+ * text is the output, and its outcome is the exit (a `crashed` outcome fails the callback even
+ * with exit 0). A local or SSH agent's turn feeds the registry
  * from its process (`setupDispatchCallbackListener()`), so the callback fires the same way in every
  * mode.
  */
@@ -31,5 +32,10 @@ export function feedHostedTurnToDispatchCallbacks(
 	const processSessionId = buildProcessSessionId(local.id, tabId);
 	if (event.kind === 'started') registry.noteSpawn(processSessionId);
 	else if (event.kind === 'text') registry.noteData(processSessionId, event.text);
-	else registry.noteExit(processSessionId, event.exitCode ?? null);
+	// The host's classification decides failure as well as the exit code: an in-band provider
+	// error is `crashed` with exit 0. The real exit code stays for the caller's diagnostics.
+	else
+		registry.noteExit(processSessionId, event.exitCode ?? null, {
+			turnFailed: event.outcome === 'crashed',
+		});
 }

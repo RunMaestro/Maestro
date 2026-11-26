@@ -97,6 +97,11 @@ export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	/** Wall-clock ms when the dispatched process started (set on spawn). */
 	startedAt?: number;
 	exitCode?: number | null;
+	/**
+	 * The turn failed whatever its exit code said: a hosted turn whose host classified it `crashed`
+	 * (an in-band provider error with exit 0). Local exits leave it unset.
+	 */
+	turnFailed?: boolean;
 	durationMs?: number;
 	/**
 	 * The renderer reported a pending retry for this tab while the process was

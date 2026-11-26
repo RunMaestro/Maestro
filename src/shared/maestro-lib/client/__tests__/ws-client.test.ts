@@ -882,7 +882,7 @@ describe('createWsMaestroClient', () => {
 		});
 
 		it('reads a transcript-changed frame for an idle tab as a gap, so the tab is read again (M13)', async () => {
-			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID, A1, A1_TAB);
 			await vi.waitFor(() => expect(turnKinds()).toEqual(['gap']));
 			expect(turnEvents()[0]).toMatchObject({ kind: 'gap' });
 			expect(events.find((event) => event.type === 'turn')).toMatchObject({

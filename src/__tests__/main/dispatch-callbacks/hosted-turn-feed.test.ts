@@ -109,4 +109,25 @@ describe('feedHostedTurnToDispatchCallbacks', () => {
 		h.runTimers();
 		expect(h.fires[0]).toMatchObject({ status: 'failed', exitCode: 1 });
 	});
+
+	it('fails the callback of a hosted turn the host classed as crashed, even with exit 0, and keeps the exit code', () => {
+		const h = harness();
+		const record = { id: ROW, ...agentModeFields('hosted') };
+		const feed = (push: MirrorPush) =>
+			feedHostedTurnToDispatchCallbacks(push, () => [record], h.registry);
+		feed(turn({ kind: 'started', at: 1 }));
+		feed(turn({ kind: 'outcome', at: 3, outcome: 'crashed', exitCode: 0 }));
+		h.runTimers();
+		expect(h.fires).toHaveLength(1);
+		expect(h.fires[0]).toMatchObject({ status: 'failed', exitCode: 0 });
+	});
+
+	it('fails the callback when the exit says its turn failed, whatever the code', () => {
+		const h = harness();
+		const id = buildProcessSessionId(ROW, TAB);
+		h.registry.noteSpawn(id);
+		h.registry.noteExit(id, 0, { turnFailed: true });
+		h.runTimers();
+		expect(h.fires[0]).toMatchObject({ status: 'failed' });
+	});
 });

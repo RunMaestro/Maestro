@@ -85,14 +85,25 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * `bridge.event` channel a host sends when a tab's transcript grew outside a turn (a `/skills` or
- * `/history` that ran on an idle tab), with the tab's process id: read the tab again. A client
- * turns it into a turn `gap`; an older client ignores the channel, as it ignores any it does not know.
+ * `/history` that ran on an idle tab): read the tab again. Its arguments are the tab's process id,
+ * then the agent id and the tab id on their own, since an imported tab's id may hold `-ai-`, which
+ * the process id cannot carry unambiguously. A client turns it into a turn `gap`; an older client
+ * ignores the channel, as it ignores any it does not know.
  */
 export const TRANSCRIPT_CHANGED_CHANNEL = 'process:transcript-changed';
 
+/** The arguments of a `TRANSCRIPT_CHANGED_CHANNEL` frame for one tab. */
+export function transcriptChangedArgs(agentId: string, tabId: string): unknown[] {
+	return [`${agentId}-ai-${tabId}`, agentId, tabId];
+}
+
 /** The tab a `TRANSCRIPT_CHANGED_CHANNEL` frame names, or null when its arguments are malformed. */
 export function parseTranscriptChangedFrame(args: unknown[]): ProcessTarget | null {
-	return typeof args[0] === 'string' ? parseProcessId(args[0]) : null;
+	const [processId, agentId, tabId] = args;
+	if (typeof agentId === 'string' && agentId && typeof tabId === 'string' && tabId) {
+		return { kind: 'tab', agentId, tabId };
+	}
+	return typeof processId === 'string' ? parseProcessId(processId) : null;
 }
 
 /** `failed` is the error spelling some providers use; a missing status is a call still running. */

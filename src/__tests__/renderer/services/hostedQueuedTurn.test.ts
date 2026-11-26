@@ -22,6 +22,7 @@ import {
 import { enqueuePromptForTab } from '../../../renderer/services/queuedPrompt';
 import { loadCrossAgentConsultPrompts } from '../../../renderer/services/crossAgentConsultHold';
 import {
+	dropMentionHandoffs,
 	followHostedHandoffs,
 	hostedHandoffStep,
 	hostedHandoffTurn,
@@ -730,7 +731,73 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 	});
 
-	it('hosted: a second hand-off on the tab sends the first one out instead of replacing it', async () => {
+	it('hosted: a second hand-off waits for the first to release with its own answer, then arms', async () => {
+		seedWithBackend('hosted');
+		const setTab = (fields: Record<string, unknown>) =>
+			useSessionStore.setState((current) => ({
+				sessions: current.sessions.map((s) =>
+					s.id === 'row' ? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, ...fields })) } : s
+				),
+			}));
+		// The first hand-off's turn still runs on the host.
+		setTab({
+			state: 'busy',
+			logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'first' }],
+			pendingMentionHandoff: {
+				targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+				message: 'first, then tell @Backend',
+				hostTurn: { stage: 'running' },
+			},
+		});
+		await useAgentStore.getState().processQueuedItem(
+			'row',
+			queuedMessage({
+				text: 'second, then tell @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'handoff',
+			}),
+			drainDeps
+		);
+		await flush();
+		// Neither released early nor replaced.
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		expect(row().aiTabs[0].pendingMentionHandoff?.message).toBe('first, then tell @Backend');
+		followHostedHandoffs(row());
+		await flush();
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+
+		// Both host turns ended before the next sync: each hand-off sends its own turn's answer.
+		setTab({
+			state: 'idle',
+			logs: [
+				{ id: 'u1', timestamp: 1, source: 'user', text: 'first' },
+				{ id: 'a1', timestamp: 2, source: 'ai', text: 'first answer' },
+				{ id: 'u2', timestamp: 3, source: 'user', text: 'second' },
+				{ id: 'a2', timestamp: 4, source: 'ai', text: 'second answer' },
+			],
+		});
+		followHostedHandoffs(row());
+		await flush();
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+			userPrompt: 'first, then tell @Backend',
+			handoffAnswer: 'first answer',
+		});
+		// The second armed on the same sync, at the boundary it had when the host took it.
+		expect(row().aiTabs[0].pendingMentionHandoff).toMatchObject({
+			message: 'second, then tell @Backend',
+			hostTurn: { stage: 'sent', afterEntryId: 'u1' },
+		});
+		followHostedHandoffs(row());
+		await flush();
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(2);
+		expect(sendCrossAgentRequest.mock.calls[1][0]).toMatchObject({
+			userPrompt: 'second, then tell @Backend',
+			handoffAnswer: 'second answer',
+		});
+	});
+
+	it('hosted: Stop drops a hand-off waiting behind the armed one with it', async () => {
 		seedWithBackend('hosted');
 		useSessionStore.setState((current) => ({
 			sessions: current.sessions.map((s) =>
@@ -739,10 +806,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 							...s,
 							aiTabs: s.aiTabs.map((t) => ({
 								...t,
-								logs: [
-									{ id: 'u1', timestamp: 1, source: 'user', text: 'first' },
-									{ id: 'a1', timestamp: 2, source: 'ai', text: 'first answer' },
-								],
+								state: 'busy',
 								pendingMentionHandoff: {
 									targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
 									message: 'first, then tell @Backend',
@@ -763,12 +827,11 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			drainDeps
 		);
 		await flush();
-		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
-		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
-			userPrompt: 'first, then tell @Backend',
-			handoffAnswer: 'first answer',
-		});
-		expect(row().aiTabs[0].pendingMentionHandoff?.message).toBe('second, then tell @Backend');
+		dropMentionHandoffs('row');
+		followHostedHandoffs(row());
+		await flush();
+		expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 	});
 
 	it('hosted: a message addressed only at an agent that is gone sends this agent nothing', async () => {

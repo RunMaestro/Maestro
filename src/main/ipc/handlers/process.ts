@@ -46,7 +46,10 @@ import {
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { statelessHelperOfProcess } from '../../../shared/maestro-lib/agents/hosted-launch';
-import { TRANSCRIPT_CHANGED_CHANNEL } from '../../../shared/maestro-lib/client/bridge-frames';
+import {
+	TRANSCRIPT_CHANGED_CHANNEL,
+	transcriptChangedArgs,
+} from '../../../shared/maestro-lib/client/bridge-frames';
 import { installHostedLaunchGuard } from '../../utils/hosted-launch-guard';
 import {
 	initPermissionRelay,
@@ -551,7 +554,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			async (sessionId: unknown, tabId: unknown) => {
 				if (typeof sessionId !== 'string' || typeof tabId !== 'string') return;
 				if (!sessionId || !tabId) return;
-				safeSend?.(TRANSCRIPT_CHANGED_CHANNEL, `${sessionId}-ai-${tabId}`);
+				safeSend?.(TRANSCRIPT_CHANGED_CHANNEL, ...transcriptChangedArgs(sessionId, tabId));
 			}
 		)
 	);

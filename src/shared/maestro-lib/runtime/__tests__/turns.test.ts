@@ -1367,6 +1367,27 @@ describe('runtime turns', () => {
 				expect(notText.message).toContain('agentNotes must be text');
 				expect(argvFiles).toEqual([]);
 			});
+
+			it('refuses a /skills sent with text it cannot take, and runs nothing', async () => {
+				const runtime = await start();
+				const before = (await transcript(runtime)).length;
+				const refused = errorOf(
+					await runtime.turns.send('a1', 't1', {
+						text: '/skills',
+						agentNotes: 17 as unknown as string,
+					})
+				);
+				expect(refused).toMatchObject({ code: 'invalid' });
+				const tooLong = errorOf(
+					await runtime.turns.send('a1', 't1', {
+						text: '/skills',
+						agentContext: 'x'.repeat(MAX_TURN_AGENT_TEXT_CHARS + 1),
+					})
+				);
+				expect(tooLong).toMatchObject({ code: 'invalid' });
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				expect((await transcript(runtime)).length).toBe(before);
+			});
 		});
 
 		it('queues a held message paused on an idle tab, and runs it once resumed (M3)', async () => {

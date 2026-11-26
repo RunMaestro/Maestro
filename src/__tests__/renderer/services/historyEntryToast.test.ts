@@ -149,6 +149,38 @@ describe('historyEntryToast', () => {
 		expect(toastOf()).toEqual([]);
 	});
 
+	it('reads a tab this window never read before sending, so a run from 30 s ago is not taken for this one', async () => {
+		hydrateHost();
+		const session = createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' });
+		useSessionStore.setState({ sessions: [session] });
+		const earlier = line('old', HISTORY_COMMAND_TEXT.saved('earlier run'), Date.now() - 30_000);
+		hostTabHolds([earlier]);
+		await sendHostedTurn(session, 't1', '/history', []);
+		// The read came before the send went out.
+		expect(transcript$.mock.invocationCallOrder[0]).toBeLessThan(act$.mock.invocationCallOrder[0]);
+		hostTabHolds([earlier, line('p1', HISTORY_COMMAND_TEXT.nothingToReport)]);
+		hostWroteTab();
+		await vi.waitFor(() => expect(transcript$.mock.calls.length).toBeGreaterThanOrEqual(2));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(toastOf()).toEqual([]);
+	});
+
+	it('reads a stale copy again before sending, so the baseline holds what the host wrote since', async () => {
+		hydrateHost();
+		const session = createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' });
+		useSessionStore.setState({ sessions: [session] });
+		const store = usePeerMirrorStore.getState();
+		store.finishTranscriptRead('box', 'h1', 't1', [], store.beginTranscriptRead('box', 'h1', 't1'));
+		hostWroteTab();
+		const since = line('since', HISTORY_COMMAND_TEXT.saved('run another window started'));
+		hostTabHolds([since]);
+		await sendHostedTurn(session, 't1', '/history', []);
+		hostTabHolds([since, line('p1', HISTORY_COMMAND_TEXT.saved('this run'))]);
+		hostWroteTab();
+		await vi.waitFor(() => expect(toastOf()).toHaveLength(1));
+		expect(toastOf()[0][0]).toMatchObject({ message: 'this run' });
+	});
+
 	it('watches only a /history the host ran: a plain message or a held /history raises none', async () => {
 		hydrateHost();
 		const session = createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' });

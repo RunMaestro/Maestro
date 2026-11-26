@@ -21,8 +21,9 @@ import { readMirrorTranscript } from './peerMirror';
 export const HOSTED_HISTORY_WATCH_MS = 10 * 60 * 1000;
 
 /**
- * How far a host's clock may run behind this one. Only used when the tab's transcript was not read
- * before the send, so the lines already there cannot be told apart by id.
+ * How far a host's clock may run behind this one. Only used when the tab could not be read before
+ * the send (`hostedTranscriptBaseline()` failed), so the lines already there cannot be told apart
+ * by id.
  */
 export const HOSTED_HISTORY_CLOCK_SKEW_MS = 60 * 1000;
 
@@ -56,14 +57,25 @@ export function notifyHistoryEntryAdded(
 	});
 }
 
-/** The ids of the entries a mirrored tab holds now, or undefined when it was never read. */
-export function hostedTranscriptBaseline(
+/**
+ * The ids of the entries a mirrored tab holds before a `/history` is sent: every earlier run's
+ * lines, which the watch must not take for this one. This window's copy serves when it is current;
+ * a copy never read, or marked stale, is read from the host first. Undefined when that read fails.
+ */
+export async function hostedTranscriptBaseline(
 	peerId: string,
 	agentId: string,
 	tabId: string
-): ReadonlySet<string> | undefined {
-	const slot = usePeerMirrorStore.getState().transcripts[peerId]?.[liveTurnKey(agentId, tabId)];
-	return slot?.loaded ? new Set(slot.entries.map((entry) => entry.id)) : undefined;
+): Promise<ReadonlySet<string> | undefined> {
+	const slotOf = () =>
+		usePeerMirrorStore.getState().transcripts[peerId]?.[liveTurnKey(agentId, tabId)];
+	let slot = slotOf();
+	if (!slot?.loaded || slot.stale || slot.loading) {
+		await readMirrorTranscript(peerId, agentId, tabId);
+		slot = slotOf();
+	}
+	if (!slot?.loaded || slot.stale || slot.error) return undefined;
+	return new Set(slot.entries.map((entry) => entry.id));
 }
 
 /**

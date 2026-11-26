@@ -562,7 +562,9 @@ describe('process IPC handlers', () => {
 			await handler({} as any, 'agent-1', 'tab-2');
 			expect(safeSendSpy).toHaveBeenCalledExactlyOnceWith(
 				'process:transcript-changed',
-				'agent-1-ai-tab-2'
+				'agent-1-ai-tab-2',
+				'agent-1',
+				'tab-2'
 			);
 
 			safeSendSpy.mockClear();

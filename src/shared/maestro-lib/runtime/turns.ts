@@ -976,6 +976,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
+		// Agent-only text a desktop's `@mention` adds (a consult's replies, its notes). One this
+		// host cannot take refuses the send before anything runs, a builtin included: the turn
+		// would answer without what it was sent with.
+		const agentContext = readTurnAgentText(input.agentContext, 'agentContext');
+		if (!agentContext.ok) return fail(method, 'invalid', agentContext.error);
+		const agentNotes = readTurnAgentText(input.agentNotes, 'agentNotes');
+		if (!agentNotes.ok) return fail(method, 'invalid', agentNotes.error);
 		const tabRecord = repository.getTab(agentId, tabId);
 		// Maestro's own commands. `/history` and `/skills` run here for the tab, as a desktop host
 		// runs them for a send it receives; one that needs the typing window's composer is refused,
@@ -1000,12 +1007,6 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const tab = toTurnTab(tabRecord);
 		// The sender's own chips stand in for the tab's, for this message only (`TurnOverrides`).
 		const overrides = normalizeTurnOverrides(input.overrides);
-		// Agent-only text a desktop's `@mention` adds (a consult's replies, its notes). One this
-		// host cannot take refuses the send: the turn would answer without what it was sent with.
-		const agentContext = readTurnAgentText(input.agentContext, 'agentContext');
-		if (!agentContext.ok) return fail(method, 'invalid', agentContext.error);
-		const agentNotes = readTurnAgentText(input.agentNotes, 'agentNotes');
-		if (!agentNotes.ok) return fail(method, 'invalid', agentNotes.error);
 		if ((queues.get(agentId)?.items().length ?? 0) >= MAX_WAITING_TURNS_PER_AGENT) {
 			return fail(
 				method,
