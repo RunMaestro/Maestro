@@ -1127,6 +1127,47 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		describe('history.remove and history.update', () => {
+			it('deletes with delete_history_entry and reads back whether one was removed', async () => {
+				bridge.typed.set(
+					'delete_history_entry',
+					reply('delete_history_entry_result', { removed: true })
+				);
+				expect(await client.history.remove(A1, 'h1')).toEqual({
+					ok: true,
+					value: { removed: true },
+				});
+				expect(bridge.sent('delete_history_entry')[0]).toMatchObject({
+					sessionId: A1,
+					entryId: 'h1',
+				});
+			});
+
+			it('validates with update_history_entry, sending only validated', async () => {
+				bridge.typed.set(
+					'update_history_entry',
+					reply('update_history_entry_result', { updated: true })
+				);
+				expect(await client.history.update(A1, 'h1', { validated: false })).toEqual({
+					ok: true,
+					value: { updated: true },
+				});
+				expect(bridge.sent('update_history_entry')[0]).toEqual(
+					expect.objectContaining({ sessionId: A1, entryId: 'h1', validated: false })
+				);
+			});
+
+			it('reports a refused edit as a failure of its method', async () => {
+				bridge.typed.set('delete_history_entry', () => ({
+					type: 'delete_history_entry_result',
+					success: false,
+					error: 'No agent a1.',
+				}));
+				const result = await client.history.remove(A1, 'h1');
+				expect(!result.ok && result.error.method).toBe('history.remove');
+			});
+		});
+
 		it('holds and releases a queued item with set_queue_item_paused', async () => {
 			bridge.typed.set('set_queue_item_paused', (message) => ({
 				type: 'set_queue_item_paused_result',

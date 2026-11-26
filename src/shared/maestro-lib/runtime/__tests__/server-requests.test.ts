@@ -492,6 +492,15 @@ function recordingClient(
 				if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
 				return ok([{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }]);
 			},
+			remove: async (agentId: string, entryId: string) => {
+				note('history.remove', agentId, entryId);
+				if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+				return ok({ removed: entryId === 'h1' });
+			},
+			update: async (agentId: string, entryId: string, updates: unknown) => {
+				note('history.update', agentId, entryId, updates);
+				return ok({ updated: entryId === 'h1' });
+			},
 		},
 		consults: {
 			ask: async (input: unknown) => {
@@ -936,6 +945,52 @@ describe('get_history', () => {
 			success: false,
 			error: 'Not found: No agent nobody.',
 		});
+	});
+});
+
+describe('delete_history_entry and update_history_entry', () => {
+	it('deletes an entry and answers whether one was removed', async () => {
+		const host = recordingClient();
+		expect(
+			await host.handle({ type: 'delete_history_entry', sessionId: 'a1', entryId: 'h1' })
+		).toEqual({ type: 'delete_history_entry_result', success: true, removed: true });
+		expect(
+			await host.handle({ type: 'delete_history_entry', sessionId: 'a1', entryId: 'ghost' })
+		).toEqual({ type: 'delete_history_entry_result', success: true, removed: false });
+		expect(host.named('history.remove').map((call) => call.args)).toEqual([
+			['a1', 'h1'],
+			['a1', 'ghost'],
+		]);
+	});
+
+	it('answers an unknown agent as a failure with the reason', async () => {
+		const host = recordingClient();
+		expect(
+			await host.handle({ type: 'delete_history_entry', sessionId: 'nobody', entryId: 'h1' })
+		).toMatchObject({ type: 'delete_history_entry_result', success: false });
+	});
+
+	it('updates an entry with only a boolean validated', async () => {
+		const host = recordingClient();
+		expect(
+			await host.handle({
+				type: 'update_history_entry',
+				sessionId: 'a1',
+				entryId: 'h1',
+				validated: true,
+			})
+		).toEqual({ type: 'update_history_entry_result', success: true, updated: true });
+		await host.handle({
+			type: 'update_history_entry',
+			sessionId: 'a1',
+			entryId: 'h1',
+			validated: 'yes',
+			summary: 'rewritten',
+		});
+		expect(host.named('history.update').map((call) => call.args)).toEqual([
+			['a1', 'h1', { validated: true }],
+			['a1', 'h1', {}],
+		]);
 	});
 });
 

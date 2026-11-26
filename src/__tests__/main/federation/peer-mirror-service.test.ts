@@ -71,6 +71,9 @@ interface FakeHost {
 	setQueue(agentId: string, items: QueuedTurn[]): void;
 	/** `history.list`: one USER entry per call, its id counting the reads. */
 	historyList: ReturnType<typeof vi.fn>;
+	/** `history.remove` / `history.update`: an edit of the host's own History. */
+	historyRemove: ReturnType<typeof vi.fn>;
+	historyUpdate: ReturnType<typeof vi.fn>;
 	close: ReturnType<typeof vi.fn>;
 	/** Resolve the forward's `ready()`; until then a connect waits. */
 	open(): void;
@@ -129,6 +132,8 @@ function fakeHost(remoteId: string, options: { manualReady?: boolean } = {}): Fa
 			{ id: `h${++historyReads}`, type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' },
 		],
 	}));
+	const historyRemove = vi.fn(async () => ({ ok: true, value: { removed: true } }));
+	const historyUpdate = vi.fn(async () => ({ ok: true, value: { updated: true } }));
 	const close = vi.fn(async () => undefined);
 	const client = {
 		connection: { connect, reconnect, close, state: () => state },
@@ -136,7 +141,7 @@ function fakeHost(remoteId: string, options: { manualReady?: boolean } = {}): Fa
 		groups: { list: vi.fn(async () => ({ ok: true, value: [] })) },
 		tabs: { transcript },
 		turns: { queue: { list: queueList } },
-		history: { list: historyList },
+		history: { list: historyList, remove: historyRemove, update: historyUpdate },
 		events: {
 			subscribe: (listener: (event: MaestroEvent) => void) => {
 				eventListeners.add(listener);
@@ -159,6 +164,8 @@ function fakeHost(remoteId: string, options: { manualReady?: boolean } = {}): Fa
 		queueList,
 		setQueue: (agentId, items) => queues.set(agentId, items),
 		historyList,
+		historyRemove,
+		historyUpdate,
 		close,
 		open: () => resolveReady(ENDPOINT),
 		fail: (error) => rejectReady(error),
@@ -594,6 +601,37 @@ describe('PeerMirrorService', () => {
 			await settle();
 			await h.service.history('a', 'a-a1');
 			expect(a.historyList).toHaveBeenCalledTimes(5);
+		});
+
+		it('deletes and validates on the host, then reads the agent History again', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			expect(await h.service.historyRemove('a', 'a-a1', 'h1')).toBe(true);
+			expect(a.historyRemove).toHaveBeenCalledWith('a-a1', 'h1');
+			expect(await h.service.historyUpdate('a', 'a-a1', 'h2', { validated: true })).toBe(true);
+			expect(a.historyUpdate).toHaveBeenCalledWith('a-a1', 'h2', { validated: true });
+			await h.service.history('a', 'a-a1');
+			expect(a.historyList).toHaveBeenCalledTimes(2);
+		});
+
+		it('throws a refused edit with the peer named', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			a.historyRemove.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'host-lost', message: 'Taken over.', method: 'history.remove' },
+			} as never);
+			await expect(h.service.historyRemove('a', 'a-a1', 'h1')).rejects.toThrow(
+				'Peer "a": Taken over.'
+			);
+			await expect(
+				h.service.historyUpdate('b', 'a-a1', 'h1', { validated: true })
+			).rejects.toThrow();
 		});
 
 		it('does not keep a failed read: the next read asks the host again', async () => {

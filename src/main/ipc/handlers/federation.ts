@@ -288,6 +288,44 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			}
 		)
 	);
+	// The History panel's Delete and Validate on a mirrored agent: the same edits `history:delete`
+	// and `history:update` make on a local agent's History, made by its host.
+	ipcMain.handle(
+		'federation:historyDelete',
+		withIpcErrorLogging(
+			opts('historyDelete'),
+			async (peerId: unknown, agentId: unknown, entryId: unknown): Promise<boolean> =>
+				requireService().historyRemove(
+					requireId(peerId, 'peer id'),
+					requireId(agentId, 'agent id'),
+					requireId(entryId, 'entry id')
+				)
+		)
+	);
+	ipcMain.handle(
+		'federation:historyUpdate',
+		withIpcErrorLogging(
+			opts('historyUpdate'),
+			async (
+				peerId: unknown,
+				agentId: unknown,
+				entryId: unknown,
+				updates: unknown
+			): Promise<boolean> => {
+				const validated =
+					updates && typeof updates === 'object'
+						? (updates as { validated?: unknown }).validated
+						: undefined;
+				if (typeof validated !== 'boolean') throw new Error('validated must be a boolean');
+				return requireService().historyUpdate(
+					requireId(peerId, 'peer id'),
+					requireId(agentId, 'agent id'),
+					requireId(entryId, 'entry id'),
+					{ validated }
+				);
+			}
+		)
+	);
 	ipcMain.handle(
 		'federation:reconnect',
 		withIpcErrorLogging(

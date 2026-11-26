@@ -766,6 +766,24 @@ export function createRequestHandler(
 					(entries) => ({ entries })
 				);
 			}
+			case 'delete_history_entry':
+				return outcome(
+					'delete_history_entry_result',
+					await client.history.remove(sessionId(message), str(message.entryId) ?? ''),
+					(value) => ({ removed: value.removed })
+				);
+			case 'update_history_entry': {
+				const validated = bool(message.validated);
+				return outcome(
+					'update_history_entry_result',
+					await client.history.update(
+						sessionId(message),
+						str(message.entryId) ?? '',
+						validated !== undefined ? { validated } : {}
+					),
+					(value) => ({ updated: value.updated })
+				);
+			}
 			case 'list_queue': {
 				const agentId = sessionId(message);
 				const result = await client.turns.queue.list(agentId);

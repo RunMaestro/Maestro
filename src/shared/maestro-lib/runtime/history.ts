@@ -24,6 +24,8 @@ import type { AgentRepository } from '../agents/repository';
 import type { ClientError, ClientMethod, ClientResult, HistoryApi } from '../client/types';
 import { logger } from '../host';
 import type { MaestroPaths } from '../paths/resolve';
+import type { DataDirVerdict } from './data-dir-lock';
+import { createHistoryWriter, type HistoryEditResult, type HistoryWriter } from '../turns/history';
 import { readHistory } from '../store/read-history';
 import {
 	appendSharedHistoryEntry,
@@ -49,6 +51,8 @@ export interface RuntimeHistoryOptions {
 	shared?: SharedHistoryIdentity;
 	/** Entries a shared file keeps. Default `MAX_ENTRIES_PER_SESSION`. */
 	maxEntries?: number;
+	/** Is this process still the data directory's writer? Asked before every write. */
+	fence?: () => DataDirVerdict;
 }
 
 export interface RuntimeHistory {
@@ -58,6 +62,11 @@ export interface RuntimeHistory {
 	 * the agent shares. Never throws: the entry is already in the agent's own History.
 	 */
 	share(agentId: string, entry: HistoryEntry): void;
+	/**
+	 * The one writer of the agents' own History: every turn's entry (copied to the shared History
+	 * through `share`), and the panel's Delete and Validate (`api.remove` / `api.update`).
+	 */
+	readonly writer: HistoryWriter;
 }
 
 function fail<T = never>(method: ClientMethod, code: ClientError['code'], message: string) {
@@ -66,6 +75,17 @@ function fail<T = never>(method: ClientMethod, code: ClientError['code'], messag
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** An edit's result as the client API answers it. */
+function editOutcome<K extends 'removed' | 'updated'>(
+	method: ClientMethod,
+	key: K,
+	result: HistoryEditResult
+): ClientResult<Record<K, boolean>> {
+	if (result.ok) return { ok: true, value: { [key]: result.changed } as Record<K, boolean> };
+	if (result.reason === 'fenced') return fail(method, 'host-lost', result.message);
+	return fail(method, 'failed', result.message);
 }
 
 export function createRuntimeHistory(options: RuntimeHistoryOptions): RuntimeHistory {
@@ -120,23 +140,51 @@ export function createRuntimeHistory(options: RuntimeHistoryOptions): RuntimeHis
 				value: limit !== undefined && limit >= 0 ? merged.slice(0, limit) : merged,
 			};
 		},
-	};
-
-	return {
-		api,
-		share(agentId, entry) {
-			if (!shared) return;
-			try {
-				const project = sharingProject(agentId);
-				if (!project) return;
-				const file = appendSharedHistoryEntry(project, shared.label, {
-					...entry,
-					hostname: entry.hostname || shared.hostname,
-				});
-				rotateSharedHistoryFile(file, maxEntries);
-			} catch (error) {
-				logger.warn(`The entry was not shared to the project: ${errorText(error)}`, LOG_CONTEXT);
+		// Only the agent's own entries: an entry another Maestro shared stays theirs to edit, the
+		// same as `HistoryManager.deleteEntry` on a desktop finds only the agent's own file.
+		remove: async (agentId, entryId) => {
+			if (!repository.getAgent(agentId)) {
+				return fail('history.remove', 'not-found', `No agent ${agentId}.`);
 			}
+			if (!entryId) return fail('history.remove', 'invalid', 'An entry id is required.');
+			return editOutcome('history.remove', 'removed', await writer.remove(agentId, entryId));
+		},
+		update: async (agentId, entryId, updates) => {
+			if (!repository.getAgent(agentId)) {
+				return fail('history.update', 'not-found', `No agent ${agentId}.`);
+			}
+			if (!entryId) return fail('history.update', 'invalid', 'An entry id is required.');
+			if (updates.validated === undefined) {
+				return fail('history.update', 'invalid', 'Nothing to change: pass validated.');
+			}
+			return editOutcome(
+				'history.update',
+				'updated',
+				await writer.update(agentId, entryId, updates)
+			);
 		},
 	};
+
+	function share(agentId: string, entry: HistoryEntry): void {
+		if (!shared) return;
+		try {
+			const project = sharingProject(agentId);
+			if (!project) return;
+			const file = appendSharedHistoryEntry(project, shared.label, {
+				...entry,
+				hostname: entry.hostname || shared.hostname,
+			});
+			rotateSharedHistoryFile(file, maxEntries);
+		} catch (error) {
+			logger.warn(`The entry was not shared to the project: ${errorText(error)}`, LOG_CONTEXT);
+		}
+	}
+
+	const writer = createHistoryWriter({
+		paths,
+		...(options.fence ? { fence: options.fence } : {}),
+		onAppended: share,
+	});
+
+	return { api, share, writer };
 }

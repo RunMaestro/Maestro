@@ -44,7 +44,6 @@ import { createBackgroundTurns, type BackgroundTurnDeps } from './background-tur
 import { createRuntimeConsults } from './consults';
 import { createRuntimeGroupChats } from './group-chats';
 import { createRuntimeHistory, type SharedHistoryIdentity } from './history';
-import { createHistoryWriter } from '../turns/history';
 import { createProcessRegistry } from './processes';
 import { createRuntimeAutoRun, type RuntimeAutoRun } from './autorun';
 import { createProviderLister } from './providers';
@@ -321,13 +320,10 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	const history = createRuntimeHistory({
 		paths,
 		repository,
+		fence,
 		...(options.sharedHistory ? { shared: options.sharedHistory } : {}),
 	});
-	const historyWriter = createHistoryWriter({
-		paths,
-		fence,
-		onAppended: (agentId, entry) => history.share(agentId, entry),
-	});
+	const historyWriter = history.writer;
 
 	const autoRun = createRuntimeAutoRun({
 		paths,

@@ -87,6 +87,17 @@ export function createFederationApi() {
 				lookbackHours,
 				types
 			),
+		/** Delete one entry of a mirrored agent's History on its host. False: no such entry. */
+		historyDelete: (peerId: string, agentId: string, entryId: string): Promise<boolean> =>
+			ipcRenderer.invoke('federation:historyDelete', peerId, agentId, entryId),
+		/** Mark one entry of a mirrored agent's History validated (or not) on its host. */
+		historyUpdate: (
+			peerId: string,
+			agentId: string,
+			entryId: string,
+			updates: { validated: boolean }
+		): Promise<boolean> =>
+			ipcRenderer.invoke('federation:historyUpdate', peerId, agentId, entryId, updates),
 		/** Restart the forward or the client when down, then reload the peer's agents. */
 		reconnect: (peerId: string): Promise<PeerReconnectResult> =>
 			ipcRenderer.invoke('federation:reconnect', peerId),

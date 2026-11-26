@@ -20,6 +20,11 @@
  *
  * Never throws: a failure is a result, because history is the memory of a turn that already
  * happened and must not fail it.
+ *
+ * `remove` and `update` are the History panel's Delete and Validate on a host, the same edits
+ * `HistoryManager.deleteEntry` / `updateEntry` make on a desktop. They rewrite the whole file
+ * (atomically) on the same per-agent queue as the appends, so an edit never races a turn's entry.
+ * A line that does not parse is kept as it is: an edit must not drop what it cannot read.
  */
 
 import * as fsp from 'fs/promises';
@@ -31,8 +36,11 @@ import {
 	sanitizeSessionId,
 	serializeHistoryEntryLine,
 } from '../../history';
+import { stripJsonBom } from '../../jsonUtils';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import type { HistoryEntry } from '../../types';
+import type { HistoryEntryUpdates } from '../client/types';
+import { atomicWriteFile } from '../store/atomic-write';
 import { logger } from '../host';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import type { MaestroPaths } from '../paths/resolve';
@@ -48,6 +56,14 @@ export type HistoryAppendResult =
 			message: string;
 	  };
 
+export type HistoryEditResult =
+	| {
+			ok: true;
+			/** False: the agent's own History has no entry with that id (nothing was written). */
+			changed: boolean;
+	  }
+	| Extract<HistoryAppendResult, { ok: false }>;
+
 export interface HistoryWriterOptions {
 	paths: Pick<MaestroPaths, 'historyDir'>;
 	/** Is this process still the data directory's writer? Asked before every append. Default: always. */
@@ -62,6 +78,14 @@ export interface HistoryWriterOptions {
 export interface HistoryWriter {
 	/** Append one entry to `agentId`'s history. Appends to one agent are written in call order. */
 	append(agentId: string, entry: HistoryEntry): Promise<HistoryAppendResult>;
+	/** Delete the entry `entryId` from `agentId`'s own History. */
+	remove(agentId: string, entryId: string): Promise<HistoryEditResult>;
+	/** Change the entry `entryId` in `agentId`'s own History. */
+	update(
+		agentId: string,
+		entryId: string,
+		updates: HistoryEntryUpdates
+	): Promise<HistoryEditResult>;
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -88,16 +112,89 @@ async function endsCleanly(file: string): Promise<boolean> {
 	}
 }
 
+function isEntryWithId(value: unknown, entryId: string): value is HistoryEntry {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		!Array.isArray(value) &&
+		(value as { id?: unknown }).id === entryId
+	);
+}
+
 export function createHistoryWriter(options: HistoryWriterOptions): HistoryWriter {
 	const queue = createKeyedWriteQueue();
+
+	function agentFiles(agentId: string): { file: string; legacy: string } {
+		const safeId = sanitizeSessionId(agentId);
+		return {
+			file: path.join(options.paths.historyDir, `${safeId}${HISTORY_JSONL_EXT}`),
+			legacy: path.join(options.paths.historyDir, `${safeId}${HISTORY_LEGACY_JSON_EXT}`),
+		};
+	}
+
+	/**
+	 * Rewrite `agentId`'s file with every entry whose id is `entryId` passed through `edit`
+	 * (`null` drops it). Every other line is written back byte for byte.
+	 */
+	async function rewriteNow(
+		agentId: string,
+		entryId: string,
+		edit: (entry: HistoryEntry) => HistoryEntry | null
+	): Promise<HistoryEditResult> {
+		const verdict = options.fence?.();
+		if (verdict && !verdict.ok) return { ok: false, reason: 'fenced', message: verdict.reason };
+
+		const { file, legacy } = agentFiles(agentId);
+		try {
+			let raw: string;
+			try {
+				raw = await fsp.readFile(file, 'utf-8');
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				if (await exists(legacy)) {
+					return {
+						ok: false,
+						reason: 'legacy-format',
+						message: `${path.basename(legacy)} has not been migrated to JSONL yet; open the desktop once so it can, then entries can be edited.`,
+					};
+				}
+				return { ok: true, changed: false };
+			}
+
+			let changed = false;
+			const lines: string[] = [];
+			for (const line of stripJsonBom(raw).split('\n')) {
+				if (!line.trim()) continue;
+				let parsed: unknown;
+				try {
+					parsed = JSON.parse(line);
+				} catch {
+					lines.push(line);
+					continue;
+				}
+				if (!isEntryWithId(parsed, entryId)) {
+					lines.push(line);
+					continue;
+				}
+				changed = true;
+				const next = edit(parsed);
+				if (next) lines.push(serializeHistoryEntryLine(next).trimEnd());
+			}
+			if (!changed) return { ok: true, changed: false };
+			await atomicWriteFile(file, lines.map((line) => `${line}\n`).join(''));
+			return { ok: true, changed: true };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			logger.error(`Failed to edit history for agent ${agentId}: ${message}`, LOG_CONTEXT);
+			return { ok: false, reason: 'failed', message };
+		}
+	}
 
 	async function appendNow(agentId: string, entry: HistoryEntry): Promise<HistoryAppendResult> {
 		const verdict = options.fence?.();
 		if (verdict && !verdict.ok) return { ok: false, reason: 'fenced', message: verdict.reason };
 
-		const safeId = sanitizeSessionId(agentId);
-		const file = path.join(options.paths.historyDir, `${safeId}${HISTORY_JSONL_EXT}`);
-		const legacy = path.join(options.paths.historyDir, `${safeId}${HISTORY_LEGACY_JSON_EXT}`);
+		const { file, legacy } = agentFiles(agentId);
 		try {
 			await fsp.mkdir(options.paths.historyDir, { recursive: true });
 			const hasJsonl = await exists(file);
@@ -134,5 +231,14 @@ export function createHistoryWriter(options: HistoryWriterOptions): HistoryWrite
 				}
 				return result;
 			}),
+		remove: (agentId, entryId) =>
+			queue.enqueue(agentId, () => rewriteNow(agentId, entryId, () => null)),
+		update: (agentId, entryId, updates) =>
+			queue.enqueue(agentId, () =>
+				rewriteNow(agentId, entryId, (entry) => ({
+					...entry,
+					...(updates.validated !== undefined ? { validated: updates.validated } : {}),
+				}))
+			),
 	};
 }

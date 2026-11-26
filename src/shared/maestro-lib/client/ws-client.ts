@@ -104,6 +104,7 @@ import type {
 	ConsultAskInput,
 	EventFilter,
 	GroupCreateInput,
+	HistoryEntryUpdates,
 	HistoryListOptions,
 	HostInfo,
 	MaestroClient,
@@ -469,6 +470,9 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly history = {
 		list: (agentId: string, options?: HistoryListOptions) => this.historyList(agentId, options),
+		remove: (agentId: string, entryId: string) => this.historyRemove(agentId, entryId),
+		update: (agentId: string, entryId: string, updates: HistoryEntryUpdates) =>
+			this.historyUpdate(agentId, entryId, updates),
 	};
 
 	readonly settings = {
@@ -1983,6 +1987,44 @@ class WsMaestroClient implements MaestroClient {
 		const checked = this.checkResult('turns.queue.remove', sent.value);
 		if (!checked.ok) return checked;
 		return ok({ removed: sent.value.removed === true });
+	}
+
+	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	private async historyRemove(
+		agentId: string,
+		entryId: string
+	): Promise<ClientResult<{ removed: boolean }>> {
+		const sent = await this.send(
+			'history.remove',
+			{ type: 'delete_history_entry', sessionId: agentId, entryId },
+			'delete_history_entry_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('history.remove', sent.value);
+		if (!checked.ok) return checked;
+		return ok({ removed: sent.value.removed === true });
+	}
+
+	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	private async historyUpdate(
+		agentId: string,
+		entryId: string,
+		updates: HistoryEntryUpdates
+	): Promise<ClientResult<{ updated: boolean }>> {
+		const sent = await this.send(
+			'history.update',
+			{
+				type: 'update_history_entry',
+				sessionId: agentId,
+				entryId,
+				...(updates.validated !== undefined ? { validated: updates.validated } : {}),
+			},
+			'update_history_entry_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('history.update', sent.value);
+		if (!checked.ok) return checked;
+		return ok({ updated: sent.value.updated === true });
 	}
 
 	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */

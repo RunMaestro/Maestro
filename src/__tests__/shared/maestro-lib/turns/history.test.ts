@@ -208,4 +208,102 @@ describe('createHistoryWriter', () => {
 			expect(read.status === 'ok' && read.entries.map((e) => e.id)).toEqual(['e2', 'e1']);
 		});
 	});
+
+	// The History panel's Delete and Validate on a host: the same edits `HistoryManager.deleteEntry`
+	// and `updateEntry` make on a desktop, read back by the desktop's manager.
+	describe('remove and update', () => {
+		const file = () => path.join(historyDir, 'a1.jsonl');
+
+		it('deletes one entry and keeps the rest in file order', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			await writer.append('a1', entry('e1', 1));
+			await writer.append('a1', entry('e2', 2));
+			await writer.append('a1', entry('e3', 3));
+
+			expect(await writer.remove('a1', 'e2')).toEqual({ ok: true, changed: true });
+			const manager = new HistoryManager();
+			expect((await manager.getEntries('a1')).map((e) => e.id)).toEqual(['e3', 'e1']);
+		});
+
+		it('marks one entry validated, and only that entry', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			await writer.append('a1', entry('e1', 1));
+			await writer.append('a1', entry('e2', 2));
+
+			expect(await writer.update('a1', 'e1', { validated: true })).toEqual({
+				ok: true,
+				changed: true,
+			});
+			const manager = new HistoryManager();
+			const entries = await manager.getEntries('a1');
+			expect(entries.find((e) => e.id === 'e1')?.validated).toBe(true);
+			expect(entries.find((e) => e.id === 'e2')?.validated).toBeUndefined();
+		});
+
+		it('answers changed: false and writes nothing for an id it does not hold', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			await writer.append('a1', entry('e1', 1));
+			const before = fs.readFileSync(file(), 'utf-8');
+
+			expect(await writer.remove('a1', 'ghost')).toEqual({ ok: true, changed: false });
+			expect(await writer.update('a1', 'ghost', { validated: true })).toEqual({
+				ok: true,
+				changed: false,
+			});
+			expect(await writer.remove('nobody', 'e1')).toEqual({ ok: true, changed: false });
+			expect(fs.readFileSync(file(), 'utf-8')).toBe(before);
+		});
+
+		it('keeps a line it cannot parse, byte for byte', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			await writer.append('a1', entry('e1', 1));
+			fs.appendFileSync(file(), '{"torn": \n');
+			await writer.append('a1', entry('e2', 2));
+
+			await writer.remove('a1', 'e1');
+			const lines = fs.readFileSync(file(), 'utf-8').trim().split('\n');
+			expect(lines[0]).toBe('{"torn": ');
+			expect(JSON.parse(lines[1]).id).toBe('e2');
+		});
+
+		it('serializes an edit behind the appends already queued for the agent', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			const appended = writer.append('a1', entry('e1', 1));
+			const removed = writer.remove('a1', 'e1');
+			await appended;
+			expect(await removed).toEqual({ ok: true, changed: true });
+			const read = readHistory({ historyDir }, 'a1');
+			expect(read.status === 'ok' && read.entries).toEqual([]);
+		});
+
+		it('refuses an agent still on the legacy file', async () => {
+			fs.mkdirSync(historyDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(historyDir, 'a1.json'),
+				JSON.stringify({ entries: [entry('e1', 1)] })
+			);
+			const writer = createHistoryWriter({ paths: { historyDir } });
+
+			const result = await writer.remove('a1', 'e1');
+			expect(result).toMatchObject({ ok: false, reason: 'legacy-format' });
+			expect(fs.existsSync(file())).toBe(false);
+		});
+
+		it('writes nothing once the fence says another process owns the data directory', async () => {
+			const writer = createHistoryWriter({ paths: { historyDir } });
+			await writer.append('a1', entry('e1', 1));
+			const fenced = createHistoryWriter({
+				paths: { historyDir },
+				fence: () => ({ ok: false, reason: 'Another Maestro owns this data directory.' }),
+			});
+
+			expect(await fenced.remove('a1', 'e1')).toEqual({
+				ok: false,
+				reason: 'fenced',
+				message: 'Another Maestro owns this data directory.',
+			});
+			const read = readHistory({ historyDir }, 'a1');
+			expect(read.status === 'ok' && read.entries.map((e) => e.id)).toEqual(['e1']);
+		});
+	});
 });

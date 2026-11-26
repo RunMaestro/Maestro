@@ -106,6 +106,8 @@ export type ClientMethod =
 	| 'turns.queue.move'
 	| 'turns.queue.sendNow'
 	| 'history.list'
+	| 'history.remove'
+	| 'history.update'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
 	| 'autoRun.stop'
@@ -855,6 +857,23 @@ export interface HistoryApi {
 	 * (`.maestro/history/`), each carrying the `hostname` of the machine it came from.
 	 */
 	list(agentId: string, options?: HistoryListOptions): Promise<ClientResult<HistoryEntry[]>>;
+	/**
+	 * Delete one entry from the agent's own History (the History panel's Delete). `removed` is
+	 * false when the agent's own History has no such entry: a shared entry from another Maestro is
+	 * not this host's to delete.
+	 */
+	remove(agentId: string, entryId: string): Promise<ClientResult<{ removed: boolean }>>;
+	/** Change one entry of the agent's own History (the History panel's Validate). */
+	update(
+		agentId: string,
+		entryId: string,
+		updates: HistoryEntryUpdates
+	): Promise<ClientResult<{ updated: boolean }>>;
+}
+
+/** What `history.update` may change on an entry. */
+export interface HistoryEntryUpdates {
+	validated?: boolean;
 }
 
 export interface SettingsApi {

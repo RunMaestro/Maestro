@@ -3,8 +3,9 @@
  * peer's host for a mirrored agent. `HistoryPanel` draws every entry, the graph, the filters, and
  * the paging the same way for both; only this object differs.
  *
- * The mirrored source is read-only (no `remove` or `update`): the host owns the entries, and the
- * panel draws no delete or validate control without a handler.
+ * Both sources delete and validate an entry: a local agent's in the desktop's History, a mirrored
+ * agent's on its host. The panel draws no delete or validate control for a source without a
+ * handler.
  */
 
 import type { HistoryEntry, HistoryEntryType, Session } from '../../types';
@@ -110,9 +111,9 @@ export function localHistorySource(agent: LocalHistoryAgent): HistorySource {
 
 /**
  * A Federation peer's mirrored agent's History, read from its host through the main-process
- * mirror (`window.maestro.federation.history*`). Read-only. It reads again from the top when the
- * window's mirror says the agent's History moved: a turn of the agent ended, or the peer
- * reconnected or woke (`peerMirrorStore.historyVersions`).
+ * mirror (`window.maestro.federation.history*`); Delete and Validate are made by the host. It
+ * reads again from the top when the window's mirror says the agent's History moved: a turn of
+ * the agent ended, or the peer reconnected or woke (`peerMirrorStore.historyVersions`).
  */
 export function mirrorHistorySource(peerId: string, agentId: string): HistorySource {
 	const key = mirrorKey(peerId, agentId);
@@ -139,5 +140,12 @@ export function mirrorHistorySource(peerId: string, agentId: string): HistorySou
 				listener.onReset();
 			});
 		},
+		remove: (entryId) => window.maestro.federation.historyDelete(peerId, agentId, entryId),
+		update: (entryId, updates) =>
+			updates.validated === undefined
+				? Promise.resolve(false)
+				: window.maestro.federation.historyUpdate(peerId, agentId, entryId, {
+						validated: updates.validated,
+					}),
 	};
 }

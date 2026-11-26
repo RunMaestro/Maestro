@@ -300,6 +300,13 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		history: {
 			list: (agentId, options) =>
 				guarded('history.list', () => deps.history.list(agentId, options)),
+			// A fenced runtime does not write: the data directory belongs to another process.
+			remove: (agentId, entryId) =>
+				Promise.resolve(gate('history.remove', true) ?? deps.history.remove(agentId, entryId)),
+			update: (agentId, entryId, updates) =>
+				Promise.resolve(
+					gate('history.update', true) ?? deps.history.update(agentId, entryId, updates)
+				),
 		},
 
 		settings: {
