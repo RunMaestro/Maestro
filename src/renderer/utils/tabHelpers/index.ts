@@ -2042,6 +2042,38 @@ export interface ReopenUnifiedClosedTabResult {
 }
 
 /**
+ * `tab` placed at `unifiedIndex` of the strip (a closed tab's old slot), and among the AI tabs
+ * after as many AI tabs as come before that slot. A tab of the same id already in the session is
+ * moved there, not doubled, so a hosted reopen whose host update landed first (and appended it)
+ * still returns to its slot. The index is clamped to the strip.
+ */
+export function insertAiTabAtUnifiedIndex(
+	session: Pick<Session, 'aiTabs' | 'unifiedTabOrder'>,
+	tab: AITab,
+	unifiedIndex: number
+): Pick<Session, 'aiTabs' | 'unifiedTabOrder'> {
+	const order = (session.unifiedTabOrder ?? []).filter(
+		(ref) => !(ref.type === 'ai' && ref.id === tab.id)
+	);
+	const aiTabs = session.aiTabs.filter((candidate) => candidate.id !== tab.id);
+	const targetUnifiedIndex = Math.max(0, Math.min(unifiedIndex, order.length));
+	// Count how many AI tabs come before this position
+	let aiTabsBeforeIndex = 0;
+	for (let i = 0; i < targetUnifiedIndex; i++) {
+		if (order[i].type === 'ai') aiTabsBeforeIndex++;
+	}
+	const insertIndex = Math.min(aiTabsBeforeIndex, aiTabs.length);
+	return {
+		aiTabs: [...aiTabs.slice(0, insertIndex), tab, ...aiTabs.slice(insertIndex)],
+		unifiedTabOrder: [
+			...order.slice(0, targetUnifiedIndex),
+			{ type: 'ai', id: tab.id },
+			...order.slice(targetUnifiedIndex),
+		],
+	};
+}
+
+/**
  * Restore a closed AI tab into a session, handling orphan re-attach and
  * duplicate detection. Does NOT mutate either closed-tab history list - the
  * caller is responsible for popping/removing the entry it pulled this tab from
@@ -2109,42 +2141,16 @@ function restoreClosedAiTab(
 		id: restoredTabId ?? generateId(),
 	};
 
-	// Calculate insert position in aiTabs based on unified index
-	// Find where this tab should go in unifiedTabOrder
-	const targetUnifiedIndex = Math.min(unifiedIndex, session.unifiedTabOrder.length);
-
-	// Count how many AI tabs come before this position
-	let aiTabsBeforeIndex = 0;
-	for (let i = 0; i < targetUnifiedIndex && i < session.unifiedTabOrder.length; i++) {
-		if (session.unifiedTabOrder[i].type === 'ai') {
-			aiTabsBeforeIndex++;
-		}
-	}
-	const insertIndex = Math.min(aiTabsBeforeIndex, session.aiTabs.length);
-
-	const updatedAiTabs = [
-		...session.aiTabs.slice(0, insertIndex),
-		restoredTab,
-		...session.aiTabs.slice(insertIndex),
-	];
-
-	// Insert into unifiedTabOrder at the original position
-	const newTabRef: UnifiedTabRef = { type: 'ai', id: restoredTab.id };
-	const updatedUnifiedTabOrder = [
-		...session.unifiedTabOrder.slice(0, targetUnifiedIndex),
-		newTabRef,
-		...session.unifiedTabOrder.slice(targetUnifiedIndex),
-	];
+	const placed = insertAiTabAtUnifiedIndex(session, restoredTab, unifiedIndex);
 
 	return {
 		tabType: 'ai',
 		tabId: restoredTab.id,
 		session: {
 			...session,
-			aiTabs: updatedAiTabs,
+			...placed,
 			activeTabId: restoredTab.id,
 			activeFileTabId: null,
-			unifiedTabOrder: updatedUnifiedTabOrder,
 		},
 		wasDuplicate: false,
 	};

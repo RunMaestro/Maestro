@@ -18,6 +18,8 @@ import { DEFAULT_BATCH_STATE } from './batchReducer';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { hostedTargetOf } from '../../services/hostedTurns';
+import { onSystemSleep, sleepAwareElapsedSince } from '../../services/systemSleep';
+import { autoRunActiveElapsedMs } from './useTimeTracking';
 
 /**
  * Tooltip for an Auto Run control disabled because the run belongs to another
@@ -29,17 +31,61 @@ export const MIRRORED_RUN_CONTROL_TITLE =
 	'This Auto Run is being driven by another Maestro window. Control it from the window that started it.';
 
 /**
+ * The mirror's own active-time clock, in the tracker's fields (`autoRunActiveElapsedMs()` reads
+ * them). The owner's tracker (`useTimeTracking`) runs where the run runs and a frame does not
+ * carry it, so the mirror keeps one from the frames: it counts from `startTime` (machine sleep
+ * excluded) until the owner pauses the run (`errorPaused`, an agent error or a gate), holds still
+ * while it is paused, and counts on from the resume. Neither field set means "never paused".
+ */
+function mirroredClock(
+	incoming: AutoRunBroadcastState,
+	previous: BatchRunState | undefined,
+	now: number
+): Pick<BatchRunState, 'accumulatedElapsedMs' | 'lastActiveTimestamp'> {
+	const paused = incoming.errorPaused === true;
+	const startTime = incoming.startTime ?? previous?.startTime;
+	const neverPaused =
+		previous?.accumulatedElapsedMs === undefined && previous?.lastActiveTimestamp === undefined;
+	if (neverPaused) {
+		if (!paused) return { accumulatedElapsedMs: undefined, lastActiveTimestamp: undefined };
+		return {
+			accumulatedElapsedMs: startTime ? sleepAwareElapsedSince(startTime) : 0,
+			lastActiveTimestamp: undefined,
+		};
+	}
+	const accumulatedElapsedMs = autoRunActiveElapsedMs(previous, now);
+	if (paused) return { accumulatedElapsedMs, lastActiveTimestamp: undefined };
+	// Running: a resume starts a new span; a span already running keeps its start.
+	return previous.lastActiveTimestamp === undefined
+		? { accumulatedElapsedMs: previous.accumulatedElapsedMs, lastActiveTimestamp: now }
+		: {
+				accumulatedElapsedMs: previous.accumulatedElapsedMs,
+				lastActiveTimestamp: previous.lastActiveTimestamp,
+			};
+}
+
+/**
  * Build the mirrored `BatchRunState` for one broadcast frame.
  *
- * `previous` is the entry already on screen (also a mirror) so fields that only
- * ride along on some frames - and the local elapsed-time accumulation
- * `useTimeTracking` writes - survive a frame that omits them. Exported for
- * tests.
+ * `shown` is the entry already on screen (also a mirror) so fields that only
+ * ride along on some frames - and the mirror's own active-time clock
+ * (`mirroredClock()`) - survive a frame of the same run that omits them.
+ * Exported for tests.
  */
 export function buildMirroredBatchState(
 	incoming: AutoRunBroadcastState,
-	previous?: BatchRunState
+	shown?: BatchRunState,
+	now: number = Date.now()
 ): BatchRunState {
+	// A frame with another start time is another run: nothing of the one on screen carries over,
+	// its clock least of all.
+	const previous =
+		shown &&
+		(incoming.startTime === undefined ||
+			shown.startTime === undefined ||
+			incoming.startTime === shown.startTime)
+			? shown
+			: undefined;
 	const base = previous ?? DEFAULT_BATCH_STATE;
 	const documents = incoming.documents ?? base.documents ?? [];
 
@@ -72,6 +118,8 @@ export function buildMirroredBatchState(
 		// connected must not read as having started when the tab opened, so fall
 		// back to the previous mirror's value rather than to `Date.now()`.
 		startTime: incoming.startTime ?? base.startTime,
+		// Never the default's `accumulatedElapsedMs: 0`, which froze the ELAPSED readout at 0s.
+		...mirroredClock(incoming, previous, now),
 
 		errorPaused: incoming.errorPaused ?? false,
 		errorDocumentIndex: incoming.errorDocumentIndex,
@@ -281,6 +329,26 @@ export function useAutoRunStateMirror(): void {
 		}, MIRROR_REAP_INTERVAL_MS);
 		return () => clearInterval(timer);
 	}, []);
+
+	// Machine sleep is not active time, as the owner's tracker counts it.
+	useEffect(() => onSystemSleep(skipSleepInMirroredClocks), []);
+}
+
+/**
+ * Walk the live span of every running mirror past a machine sleep, as `useTimeTracking` does for a
+ * run this window owns. A mirror that never paused counts from `startTime` with sleep already taken
+ * out (`sleepAwareElapsedSince()`), so only a span started by a resume needs it. Exported for tests.
+ */
+export function skipSleepInMirroredClocks(sleptMs: number, now: number = Date.now()): void {
+	const { batchRunStates, setBatchRunStates } = useBatchStore.getState();
+	const shifted: Record<string, BatchRunState> = {};
+	for (const [sessionId, state] of Object.entries(batchRunStates)) {
+		const since = state.lastActiveTimestamp;
+		if (state.mirrored !== true || !state.isRunning || since === undefined) continue;
+		const skipMs = Math.min(sleptMs, Math.max(0, now - since));
+		if (skipMs > 0) shifted[sessionId] = { ...state, lastActiveTimestamp: since + skipMs };
+	}
+	if (Object.keys(shifted).length > 0) setBatchRunStates((prev) => ({ ...prev, ...shifted }));
 }
 
 /**

@@ -40,10 +40,11 @@ import {
 	updateSessionWith,
 	useSessionStore,
 } from '../stores/sessionStore';
-import type { AITab, Session } from '../types';
+import type { AITab, Session, UnifiedTabRef } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
 import { appendBlockToDraft } from '../utils/quoteSelection';
-import { setActiveTab } from '../utils/tabHelpers';
+import { insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
+import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
 import {
 	actOnMirroredAgent,
 	closeMirrorTab,
@@ -114,8 +115,10 @@ export function hostedTurnOverrides(tab: AITab | undefined): TurnOverrides | und
 
 /** Where a new host tab goes in the strip, and what it carries until the host's update fills it. */
 export interface HostedTabPlacement {
-	/** Right after this tab, as a local tab created at a position goes. Absent: at the end. */
+	/** Right after this tab, as a local tab created at a position goes. */
 	afterTabId?: string;
+	/** At this position of the strip: a reopened tab's old slot, as a local reopen restores it. */
+	slot?: number;
 	/**
 	 * Fields only this record holds (a permission mode, a local-only notice in `logs`). The host's
 	 * update keeps them: a projection takes the name, session, and state from the host, and merges
@@ -125,6 +128,13 @@ export interface HostedTabPlacement {
 	/** Leave the visible tab alone (`maestro-cli tab compact --background`). */
 	background?: boolean;
 }
+
+/** How `focusHostTab()` places the tab when the placement names no anchor and no slot. */
+type HostTabArrival =
+	/** A tab the host just made: where a local new tab goes (`newTabPlacement`). */
+	| 'new'
+	/** A tab coming back from the host: where it already is, else at the end. */
+	| 'existing';
 
 /** `list` with `item` moved (or added) right after the first element `isAnchor` matches. */
 function placeAfter<T>(
@@ -139,15 +149,69 @@ function placeAfter<T>(
 }
 
 /**
- * Show `tabId` on the record, adding a blank tab for it until the host's update fills it in. The
- * host's update may land first (it appends the tab); a placement then moves it into place.
+ * `session` with `tab` placed in the strip by the rule a local tab of the same kind follows: after
+ * an anchor (a fork), at its old slot (a reopen), or where a local new tab goes. The host's update
+ * may have appended the tab already; it is moved, never doubled.
  */
-function focusHostTab(sessionId: string, tabId: string, placement: HostedTabPlacement = {}): void {
+function placeHostTab(
+	session: Session,
+	tab: AITab,
+	placement: HostedTabPlacement,
+	arrival: HostTabArrival
+): Session {
+	const isTab = (candidate: AITab) => candidate.id === tab.id;
+	const isRef = (ref: UnifiedTabRef) => ref.type === 'ai' && ref.id === tab.id;
+	const ref: UnifiedTabRef = { type: 'ai', id: tab.id };
+	const { afterTabId, slot } = placement;
+	if (afterTabId) {
+		return {
+			...session,
+			aiTabs: placeAfter(session.aiTabs, tab, isTab, (candidate) => candidate.id === afterTabId),
+			unifiedTabOrder: placeAfter(
+				session.unifiedTabOrder ?? [],
+				ref,
+				isRef,
+				(candidate) => candidate.type === 'ai' && candidate.id === afterTabId
+			),
+		};
+	}
+	if (slot !== undefined) return { ...session, ...insertAiTabAtUnifiedIndex(session, tab, slot) };
+	const existing = session.aiTabs.some(isTab);
+	const aiTabs = existing
+		? session.aiTabs.map((candidate) => (isTab(candidate) ? tab : candidate))
+		: [...session.aiTabs, tab];
+	if (arrival === 'existing' && (session.unifiedTabOrder ?? []).some(isRef)) {
+		return { ...session, aiTabs };
+	}
+	const rest = {
+		...session,
+		unifiedTabOrder: (session.unifiedTabOrder ?? []).filter((r) => !isRef(r)),
+	};
+	return {
+		...session,
+		aiTabs,
+		unifiedTabOrder:
+			arrival === 'new'
+				? insertAfterActiveInUnifiedTabOrder(rest, ref)
+				: [...rest.unifiedTabOrder, ref],
+	};
+}
+
+/**
+ * Show `tabId` on the record, adding a blank tab for it until the host's update fills it in. The
+ * host's update may land first (it appends the tab); the placement then moves it into place.
+ */
+function focusHostTab(
+	sessionId: string,
+	tabId: string,
+	placement: HostedTabPlacement = {},
+	arrival: HostTabArrival = 'existing'
+): void {
 	updateSessionWith(sessionId, (session) => {
-		const { afterTabId, fields } = placement;
+		const { afterTabId, slot, fields } = placement;
 		const existing = session.aiTabs.find((tab) => tab.id === tabId);
 		let next = session;
-		if (!existing || afterTabId || fields) {
+		if (!existing || afterTabId || slot !== undefined || fields || arrival === 'new') {
 			const base = existing ?? mirrorTab({ id: tabId });
 			const seededLogs = fields?.logs ?? [];
 			const tab: AITab = {
@@ -158,25 +222,7 @@ function focusHostTab(sessionId: string, tabId: string, placement: HostedTabPlac
 					...(base.logs ?? []).filter((log) => !seededLogs.some((s) => s.id === log.id)),
 				],
 			};
-			const isTab = (candidate: AITab) => candidate.id === tabId;
-			const isRef = (ref: { type: string; id: string }) => ref.type === 'ai' && ref.id === tabId;
-			next = {
-				...session,
-				aiTabs: afterTabId
-					? placeAfter(session.aiTabs, tab, isTab, (candidate) => candidate.id === afterTabId)
-					: existing
-						? session.aiTabs.map((candidate) => (isTab(candidate) ? tab : candidate))
-						: [...session.aiTabs, tab],
-				unifiedTabOrder:
-					afterTabId || !existing
-						? placeAfter(
-								session.unifiedTabOrder ?? [],
-								{ type: 'ai', id: tabId },
-								isRef,
-								(ref) => !!afterTabId && ref.type === 'ai' && ref.id === afterTabId
-							)
-						: session.unifiedTabOrder,
-			};
+			next = placeHostTab(session, tab, placement, arrival);
 		}
 		if (placement.background) return next;
 		return setActiveTab(next, tabId)?.session ?? next;
@@ -201,10 +247,12 @@ export async function openHostedTab(
 	openedHostTabs.add(hostTabKey(target, result.tabId));
 	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
 	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
-	focusHostTab(session.id, result.tabId, {
-		...placement,
-		fields: { ...placement.fields, saveToHistory, showThinking },
-	});
+	focusHostTab(
+		session.id,
+		result.tabId,
+		{ ...placement, fields: { ...placement.fields, saveToHistory, showThinking } },
+		'new'
+	);
 	void actOnMirroredAgent(target.peerId, target.agentId, {
 		kind: 'update-tab',
 		tabId: result.tabId,
@@ -382,12 +430,46 @@ export async function interruptHostedTurn(
 	if (target) await interruptMirroredAgent(target.peerId, target.agentId, tabId);
 }
 
-/** Close a host tab too (the local close is the caller's). A kept local tab has none. */
+/**
+ * Tabs closed here whose close the host has not reported yet, by `peer/agent/tab`. Until the host's
+ * update drops the tab, the sync must not draw it back (`HostedProjectionInput.closing`).
+ */
+const closingHostTabs = new Set<string>();
+
+/**
+ * The tabs of `target` closed here that the host still lists. A close the host has reported (it no
+ * longer lists the tab) is settled and forgotten here.
+ */
+export function closingHostTabIds(target: HostedTarget): Set<string> {
+	const prefix = `${target.peerId}/${target.agentId}/`;
+	const listed = new Set((target.agent?.aiTabs ?? []).map((tab) => tab.id));
+	const closing = new Set<string>();
+	for (const key of [...closingHostTabs]) {
+		if (!key.startsWith(prefix)) continue;
+		const tabId = key.slice(prefix.length);
+		if (target.agent && !listed.has(tabId)) closingHostTabs.delete(key);
+		else closing.add(tabId);
+	}
+	return closing;
+}
+
+/**
+ * Close a host tab too (the local close is the caller's). A kept local tab has none. The tab stays
+ * closed here while the host catches up; a close the host refused (a red toast) lets the host's
+ * tab show again, because the host still has it.
+ */
 export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string): void {
 	const target = hostedTargetOf(session);
 	if (!target || !isHostTab(target, tabId)) return;
-	openedHostTabs.delete(hostTabKey(target, tabId));
-	void closeMirrorTab(target.peerId, target.agentId, tabId);
+	const key = hostTabKey(target, tabId);
+	openedHostTabs.delete(key);
+	closingHostTabs.add(key);
+	void closeMirrorTab(target.peerId, target.agentId, tabId).then((closed) => {
+		if (closed) return;
+		closingHostTabs.delete(key);
+		// The tab is still on the host: wake the sync so it draws it again.
+		usePeerMirrorStore.setState({});
+	});
 }
 
 /** Rename a host tab too. An empty name clears it. */

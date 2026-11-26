@@ -14,6 +14,12 @@ import type { AutoRunDeps } from './engine-types';
 export interface PlaybookPreflight {
 	/** Unchecked tasks across every document. */
 	initialTotalTasks: number;
+	/**
+	 * Checked tasks across every document before the run starts: the baseline a run's pace (and
+	 * its ETA) is measured from, as the desktop runner counts it. Zero when the reader does not
+	 * report checked counts.
+	 */
+	initialCheckedTasks: number;
 	/** Per document, in playbook order: what the pass read. */
 	scanned: Array<{ document: string; unchecked: number }>;
 	/** The first document that still carries a halt marker, if any. */
@@ -29,17 +35,22 @@ export async function preflightPlaybook(
 ): Promise<PlaybookPreflight> {
 	const scanned: PlaybookPreflight['scanned'] = [];
 	let initialTotalTasks = 0;
+	let initialCheckedTasks = 0;
 	let preExistingHalt: PlaybookPreflight['preExistingHalt'] = null;
 	const missingDocuments: string[] = [];
 	for (const doc of playbook.documents) {
-		const { unchecked, content, missingPath } = await documents.read(folderPath, doc.filename);
+		const { unchecked, checked, content, missingPath } = await documents.read(
+			folderPath,
+			doc.filename
+		);
 		if (missingPath) missingDocuments.push(missingPath);
 		scanned.push({ document: doc.filename, unchecked });
 		initialTotalTasks += unchecked;
+		initialCheckedTasks += checked ?? 0;
 		if (!preExistingHalt) {
 			const halt = findHaltMarker(content);
 			if (halt) preExistingHalt = { document: doc.filename, halt };
 		}
 	}
-	return { initialTotalTasks, scanned, preExistingHalt, missingDocuments };
+	return { initialTotalTasks, initialCheckedTasks, scanned, preExistingHalt, missingDocuments };
 }
