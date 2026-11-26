@@ -67,6 +67,7 @@ import { createMockAITab } from '../../helpers/mockTab';
 import type { QueuedItem, Session } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { resetStores } from '../../helpers/resetStores';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { fingerprintGrokSpawnSelection } from '../../../shared/grokSpawnSelection';
 import { sha256Hex } from '../../../shared/maestro-lib/grok/host-seams';
 
@@ -679,29 +680,60 @@ describe('reorderQueuedItems / moveQueuedItem', () => {
 		expect(moveQueuedItem('session-1', 'gone', 0)).toBe(false);
 	});
 
+	// The same drag reorders the same cards in every mode. A hosted agent's waiting messages are
+	// its host's, so the move is made there, counted in the host's own queue.
+	it.each(AGENT_MODES)('%s: dragging a waiting message onto another moves it there', (mode) => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const isHost = mode === 'hosted';
+		const queue = [queued('m1', 'a', isHost), queued('mx', 'b', isHost), queued('m2', 'a', isHost)];
+		seed({ ...agentModeFields(mode), executionQueue: queue });
+		moveMirrorQueuedItem.mockClear();
+
+		expect(reorderQueuedItems('session-1', 1, 0, 'a')).toBe(true);
+		if (isHost) {
+			expect(moveMirrorQueuedItem).toHaveBeenCalledExactlyOnceWith('box', 'h1', 'm2', 0, 'a');
+			// The host's queue update redraws the list; nothing changes here first.
+			expect(currentQueue()).toEqual(queue);
+		} else {
+			expect(moveMirrorQueuedItem).not.toHaveBeenCalled();
+			expect(currentQueue().map((i) => i.id)).toEqual(['m2', 'mx', 'm1']);
+		}
+	});
+
 	it("sends a hosted agent's move to its host, counted in the host's own queue", () => {
 		useSettingsStore.setState({ federationHostedAgents: true });
-		const queue = [
-			queued('local', 'a'),
-			queued('h1', 'a', true),
-			queued('hx', 'b', true),
-			queued('h2', 'a', true),
-		];
+		const queue = [queued('h1', 'a', true), queued('hx', 'b', true), queued('h2', 'a', true)];
 		seed({ liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 }, executionQueue: queue });
 		moveMirrorQueuedItem.mockClear();
 
-		// Tab a's list is [local, h1, h2]: h2 onto h1's place is the host's tab-a index 0.
-		expect(reorderQueuedItems('session-1', 2, 1, 'a')).toBe(true);
-		expect(moveMirrorQueuedItem).toHaveBeenCalledWith('box', 'host-agent', 'h2', 0, 'a');
 		// The Execution Queue's whole-queue indices: h2 onto hx's place is host index 1.
-		reorderQueuedItems('session-1', 3, 2);
+		expect(reorderQueuedItems('session-1', 2, 1)).toBe(true);
 		expect(moveMirrorQueuedItem).toHaveBeenLastCalledWith('box', 'host-agent', 'h2', 1, undefined);
-		// A place held by a message still on its way to the host is refused.
-		expect(reorderQueuedItems('session-1', 1, 0, 'a')).toBe(false);
+	});
+
+	// Turns go to the host as they are queued, so the only cards this machine holds for a hosted
+	// agent are sends the host refused, held until Resume sends them to the end of its line. They
+	// move among themselves; a move between the two lines is refused, and says so.
+	it('hosted: held cards move among themselves, and a move across the host line is refused aloud', () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		useNotificationStore.setState({ toasts: [] });
+		const held = (id: string) => ({ ...queued(id, 'a'), paused: true });
+		const queue = [held('l1'), queued('h1', 'a', true), held('l2')];
+		seed({ liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 }, executionQueue: queue });
+		moveMirrorQueuedItem.mockClear();
+
 		expect(reorderQueuedItems('session-1', 0, 1, 'a')).toBe(false);
-		expect(moveMirrorQueuedItem).toHaveBeenCalledTimes(2);
-		// The host's queue update redraws the list; nothing changes here first.
+		expect(reorderQueuedItems('session-1', 1, 2, 'a')).toBe(false);
+		expect(moveMirrorQueuedItem).not.toHaveBeenCalled();
 		expect(currentQueue()).toEqual(queue);
+		const toasts = useNotificationStore.getState().toasts;
+		expect(toasts).toHaveLength(2);
+		expect(toasts[0]).toMatchObject({ title: 'Cannot move it there' });
+		expect(toasts[0].message).toContain('box');
+
+		expect(reorderQueuedItems('session-1', 2, 0, 'a')).toBe(true);
+		expect(currentQueue().map((i) => i.id)).toEqual(['l2', 'l1', 'h1']);
+		expect(moveMirrorQueuedItem).not.toHaveBeenCalled();
 	});
 });
 

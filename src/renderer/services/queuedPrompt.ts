@@ -24,6 +24,7 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
+import { notifyToast } from '../stores/notificationStore';
 import { handQueuedItemToHost } from './hostedQueuedTurn';
 import {
 	type HostMergeAnswer,
@@ -669,8 +670,12 @@ function editOnHost(
  * tab's items as its inline list draws them, without it the agent's whole queue.
  *
  * A hosted agent's host item moves on its host, by the same rule: the target place is read as the
- * host item drawn there, and its queue update redraws the list. A move across an item the host
- * does not hold (one still on its way to it) is refused, since the host cannot place it there.
+ * host item drawn there, and its queue update redraws the list. Since a hosted agent's turns go
+ * to its host as they are queued (`handQueuedItemToHost()`), the only cards this machine holds for
+ * one are a send the host refused (held here until Resume sends it again, to the end of the
+ * host's line) and a managed admission. Those move among themselves here. A move that crosses
+ * between the two lines is refused with a toast, never silently: the host cannot place a message
+ * it does not hold, and a held card's place among the host's means nothing once Resume sends it.
  *
  * @returns Whether the move was made (or handed to the host).
  */
@@ -688,12 +693,11 @@ export function reorderQueuedItems(
 	if (!moved || !target || moved === target) return false;
 	const hostMove = moveOnHost(sessionId, moved, target, tabId);
 	if (hostMove !== undefined) {
-		if (!hostMove) return false;
+		if (!hostMove) return refuseCrossingMove(session);
 		void hostMove;
 		return true;
 	}
-	// A message still on its way to the host cannot take a place among the host's own.
-	if (target.hostQueued) return false;
+	if (target.hostQueued) return refuseCrossingMove(session);
 	let changed = false;
 	updateSessionWith(sessionId, (s) => {
 		const executionQueue = reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId);
@@ -702,6 +706,17 @@ export function reorderQueuedItems(
 		return { ...s, executionQueue };
 	});
 	return changed;
+}
+
+/** Say why a card cannot cross between this machine's held cards and its host's line. */
+function refuseCrossingMove(session: Pick<Session, 'liftedTo'>): false {
+	const host = hostedTargetOf(session)?.peerId ?? 'its host';
+	notifyToast({
+		color: 'theme',
+		title: 'Cannot move it there',
+		message: `A message held on this machine and the messages waiting on ${host} are two lines. Resume a held message to send it to the end of the host's line.`,
+	});
+	return false;
 }
 
 /**
