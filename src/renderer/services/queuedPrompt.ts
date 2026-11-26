@@ -24,6 +24,7 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
+import { handQueuedItemToHost } from './hostedQueuedTurn';
 import {
 	type HostMergeAnswer,
 	type HostQueueAnswer,
@@ -321,6 +322,9 @@ function matchSlashCommand(
  * composer queues it, instead of as the literal text `/commit`. Callers whose
  * text was written by a program leave it off.
  *
+ * A hosted agent's item goes to its host at once (`handQueuedItemToHost()`): its host queues or
+ * runs it, and a refusal brings it back here held.
+ *
  * @returns The queued item, or null when the agent is gone or has no AI tab.
  */
 export function enqueuePromptForTab(
@@ -368,6 +372,9 @@ export function enqueuePromptForTab(
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],
 	}));
+	// A hosted agent's host runs its turns: the item leaves this queue at once and goes there, as
+	// the composer's send does. Nothing waits here for a drain that would spawn on this machine.
+	handQueuedItemToHost(sessionId, item.id);
 	return item;
 }
 
