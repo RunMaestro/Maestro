@@ -57,6 +57,18 @@ const hostedRow = (aiTabs = [createMockAITab({ id: 't1', logs: [local('old')] })
 	});
 
 describe('mergeHostedLogs', () => {
+	it('takes the new text of a saved entry the host rewrote in place (M22)', () => {
+		const pending = { ...record('p1'), source: 'system', text: 'Generating history synopsis...' };
+		const first = mergeHostedLogs([], [pending], undefined);
+		const settled = mergeHostedLogs(
+			first,
+			[{ ...pending, text: 'Synopsis saved to history: x' }],
+			undefined
+		);
+		expect(settled).not.toBe(first);
+		expect(settled.map((entry) => entry.text)).toEqual(['Synopsis saved to history: x']);
+	});
+
 	it('keeps local entries the host read window does not hold, ahead of the host entries', () => {
 		const merged = mergeHostedLogs([local('a'), local('b')], [record('b'), record('c')], undefined);
 		expect(merged.map((entry) => entry.id)).toEqual(['a', 'b', 'c']);

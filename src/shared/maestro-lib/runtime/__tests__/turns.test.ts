@@ -902,12 +902,16 @@ describe('runtime turns', () => {
 				expect(value(await runtime.turns.send('a1', 't1', { text: '/history' }))).toEqual({
 					status: 'ran',
 				});
-				await settle(runtime, 4);
+				await vi.waitFor(
+					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					{ timeout: 8_000 }
+				);
 
+				// One line per run, as on the desktop: the outcome replaced the progress line (M22).
 				const lines = await transcriptLines(runtime);
-				expect(lines[2]).toEqual(['system', HISTORY_COMMAND_TEXT.pending]);
-				expect(lines[3][0]).toBe('system');
-				expect(lines[3][1]).toMatch(/^Synopsis saved to history: /);
+				expect(lines).toHaveLength(3);
+				expect(lines[2][0]).toBe('system');
+				expect(lines[2][1]).toMatch(/^Synopsis saved to history: /);
 				// The synopsis resumed the tab's own conversation.
 				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
 				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -916,7 +920,7 @@ describe('runtime turns', () => {
 					(entry) => entry.type === 'AUTO'
 				);
 				expect(auto).toHaveLength(1);
-				expect(lines[3][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
+				expect(lines[2][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
 			});
 
 			it('never runs two writers on one provider session: /history twice and a send take turns', async () => {
@@ -1007,9 +1011,16 @@ describe('runtime turns', () => {
 				value(await runtime.turns.interrupt('a1', 't1'));
 				await turn.outcome();
 				await vi.waitFor(() => expect(argvFiles).toHaveLength(2), { timeout: 8_000 });
+				// The outcome takes the progress line's place, where /history was typed (M22).
 				await vi.waitFor(
-					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					async () =>
+						expect(
+							(await transcript(runtime)).some((entry) => /^Synopsis saved/.test(entry.text))
+						).toBe(true),
 					{ timeout: 8_000 }
+				);
+				expect((await transcript(runtime)).map((entry) => entry.text)).not.toContain(
+					HISTORY_COMMAND_TEXT.pending
 				);
 				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
 				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -1030,7 +1041,6 @@ describe('runtime turns', () => {
 				await vi.waitFor(
 					async () =>
 						expect((await transcript(runtime)).map((entry) => entry.text)).toEqual([
-							HISTORY_COMMAND_TEXT.pending,
 							HISTORY_COMMAND_TEXT.failed,
 						]),
 					{ timeout: 8_000 }

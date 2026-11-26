@@ -243,6 +243,17 @@ export interface AgentRepository {
 		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
 	/**
+	 * Settle a progress line this host wrote itself (`/history`'s "Generating history synopsis..."):
+	 * the entry with `entry.id` takes `entry`'s place, as the desktop's handler replaces its line's
+	 * text. Appended when the tab no longer holds it. Never touches any other entry.
+	 */
+	replaceTranscriptEntry(
+		agentId: string,
+		tabId: string,
+		entry: LogEntryRecord,
+		guard?: TabWriteGuard
+	): Promise<ClientResult<void>>;
+	/**
 	 * Start a turn on a tab in one write: the person's message joins the transcript, the tab
 	 * records which provider owns the turn, and a merged context the prompt carried is cleared.
 	 * One write, so a crash cannot leave a message sent but its merge still pending.
@@ -1123,6 +1134,32 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			guard
 		);
 
+	const replaceTranscriptEntry = (
+		agentId: string,
+		tabId: string,
+		entry: LogEntryRecord,
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab) => {
+				const logs = Array.isArray(tab.logs) ? tab.logs : [];
+				const at = logs.findIndex(
+					(existing) =>
+						!!existing &&
+						typeof existing === 'object' &&
+						(existing as { id?: unknown }).id === entry.id
+				);
+				return {
+					...tab,
+					logs:
+						at === -1 ? [...logs, entry] : logs.map((existing, i) => (i === at ? entry : existing)),
+				};
+			},
+			guard
+		);
+
 	const beginTurn = (agentId: string, tabId: string, begin: TurnBegin, guard?: TabWriteGuard) =>
 		rewriteTab(agentId, tabId, (tab) => beginTurnRecord(tab, begin), guard);
 
@@ -1334,6 +1371,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		starTab,
 		updateTab,
 		appendTranscript,
+		replaceTranscriptEntry,
 		beginTurn,
 		recordTabSession: recordSession,
 		openConsultTab,

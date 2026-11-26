@@ -234,7 +234,10 @@ export function mergeHostedLogs(
 			return prior?.text !== entry.text || !sameMetadata(prior?.metadata, entry.metadata);
 		});
 		const tickChanged = next.some((entry, i) => !!entry.delivered !== !!local[i].delivered);
-		if (!liveChanged && !tickChanged) return local;
+		// A saved entry the host rewrote in place (a command's progress line settled to its
+		// outcome, M22) keeps its id: its text is what changed.
+		const savedChanged = next.some((entry, i) => !entry.hostLive && entry.text !== local[i].text);
+		if (!liveChanged && !tickChanged && !savedChanged) return local;
 	}
 	return next;
 }
