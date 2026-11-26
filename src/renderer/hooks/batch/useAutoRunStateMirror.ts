@@ -72,6 +72,11 @@ export function buildMirroredBatchState(
 		// connected must not read as having started when the tab opened, so fall
 		// back to the previous mirror's value rather than to `Date.now()`.
 		startTime: incoming.startTime ?? base.startTime,
+		// The owner's active-time tracker (`useTimeTracking`) runs where the run runs, and a frame
+		// does not carry it: the default's `accumulatedElapsedMs: 0` would freeze the ELAPSED readout
+		// at 0s. With neither set, the readout counts from `startTime` (`autoRunActiveElapsedMs()`).
+		accumulatedElapsedMs: undefined,
+		lastActiveTimestamp: undefined,
 
 		errorPaused: incoming.errorPaused ?? false,
 		errorDocumentIndex: incoming.errorDocumentIndex,
