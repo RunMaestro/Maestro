@@ -169,8 +169,8 @@ function markUnanswered(sessionId: string, noteId: string, waiting: boolean): vo
 	else unansweredNotes.delete(sessionId);
 }
 
-/** The host's id for a note this window showed first under its own, by that id. */
-const hostNoteIds = new Map<string, string>();
+/** The host's id for each note this window showed first under its own, by agent, then by that id. */
+const hostNoteIds = new Map<string, Map<string, string>>();
 
 /**
  * Hosted agents whose host does not know the steering op (an older host). A list cannot answer
@@ -216,7 +216,9 @@ function forwardToHost(
 				hostsWithoutSteering.delete(sessionId);
 				const hostId = answer.note?.id;
 				if (options.localNoteId && typeof hostId === 'string' && hostId) {
-					hostNoteIds.set(options.localNoteId, hostId.slice(0, 200));
+					const ids = hostNoteIds.get(sessionId) ?? new Map<string, string>();
+					ids.set(options.localNoteId, hostId.slice(0, 200));
+					hostNoteIds.set(sessionId, ids);
 				}
 			} else {
 				if (sent && !sent.ok && sent.unsupported) hostsWithoutSteering.add(sessionId);
@@ -276,6 +278,18 @@ function settleRefusal(
 		detail: `${reason ?? 'The host refused it'}${returned ? ' Your note is back in the Steer box.' : ''}`,
 		color: 'orange',
 	});
+}
+
+/**
+ * Forget what this window keeps about a hosted agent's steering on its host: the host's ids for
+ * its notes, whether its host knows the op, and the notes still waiting for a send's answer. The
+ * hosted sync calls it when the run ends and when the agent stops being hosted, so none of it
+ * outlives the run it belongs to.
+ */
+export function forgetHostedSteering(sessionId: string): void {
+	hostNoteIds.delete(sessionId);
+	hostsWithoutSteering.delete(sessionId);
+	unansweredNotes.delete(sessionId);
 }
 
 /**
@@ -391,7 +405,7 @@ export function cancelSteeringNote(sessionId: string, noteId: string): void {
 		// Named by the host's id once its send has answered (the queue runs this after it).
 		void forwardToHost(sessionId, () => ({
 			action: 'cancel',
-			noteId: hostNoteIds.get(noteId) ?? noteId,
+			noteId: hostNoteIds.get(sessionId)?.get(noteId) ?? noteId,
 		}));
 	}
 }

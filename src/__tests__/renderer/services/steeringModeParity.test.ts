@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	answerSteeringCommand,
 	cancelSteeringNote,
+	forgetHostedSteering,
 	refreshHostedSteering,
 	steeringBlocker,
 	submitSteeringNote,
@@ -74,6 +75,7 @@ beforeEach(() => {
 	listFails = false;
 	act.mockClear();
 	act.mockImplementation(hostAnswer);
+	forgetHostedSteering(SID);
 	(window as any).maestro = { ...((window as any).maestro || {}), federation: { act } };
 	useSettingsStore.setState({ federationHostedAgents: true });
 });
@@ -307,5 +309,37 @@ describe('a note the run never got keeps its text (P9)', () => {
 		const calls = act.mock.calls.length;
 		for (let i = 0; i < 5; i++) await refreshHostedSteering(SID);
 		expect(act.mock.calls.length).toBe(calls);
+	});
+});
+
+describe("what this window keeps about a host's steering ends with the run (P11)", () => {
+	it("names a note by this window's id once the run's ids are forgotten", async () => {
+		setUp('hosted');
+		const note = submitSteeringNote({ sessionId: SID, text: 'Earlier run', announce: false });
+		await settled();
+		forgetHostedSteering(SID);
+		act.mockClear();
+		cancelSteeringNote(SID, note!.id);
+		await settled();
+		expect(act).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'steer-auto-run',
+			input: { action: 'cancel', noteId: note!.id },
+		});
+	});
+
+	it('asks a host that did not know the op again in the next run', async () => {
+		setUp('hosted');
+		act.mockImplementation(async () => ({
+			ok: false,
+			error: 'The host is too old.',
+			code: 'unsupported',
+		}));
+		await refreshHostedSteering(SID);
+		const calls = act.mock.calls.length;
+		await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls);
+		forgetHostedSteering(SID);
+		await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls + 1);
 	});
 });
