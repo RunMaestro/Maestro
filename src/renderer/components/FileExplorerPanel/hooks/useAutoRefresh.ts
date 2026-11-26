@@ -11,6 +11,20 @@ import {
 	WEB_BRIDGE_STATE_EVENT,
 } from '../../../../shared/bridgeError';
 
+/** Seconds between automatic Files panel refreshes when an agent has not chosen one. */
+export const DEFAULT_FILE_TREE_AUTO_REFRESH_SECONDS = 180;
+
+/**
+ * How often an agent's Files panel re-reads its directory, in seconds (0 is off).
+ * One rule for every agent: a local, an SSH, and a hosted agent all refresh on
+ * this timer. No mode has a file watcher, so none sees a change sooner.
+ */
+export function fileTreeAutoRefreshSeconds(
+	session: Pick<Session, 'fileTreeAutoRefreshInterval'>
+): number {
+	return session.fileTreeAutoRefreshInterval ?? DEFAULT_FILE_TREE_AUTO_REFRESH_SECONDS;
+}
+
 interface UseAutoRefreshArgs {
 	sessionId: string;
 	autoRefreshInterval: number;
