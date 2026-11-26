@@ -660,6 +660,34 @@ describe('send command', () => {
 		expect(spawnAgent).not.toHaveBeenCalled();
 	});
 
+	it("takes --model for a hosted agent's local id, as it does for peer:agent, and refuses it for a local agent", async () => {
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValueOnce(
+			mockAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
+		vi.mocked(withPeerAgent).mockRejectedValueOnce(
+			new PeerResolveError('host-down', 'No host on build-box.', 3, 'build-box')
+		);
+
+		await send('agent-abc', 'Hello', { model: 'opus' });
+
+		expect(withPeerAgent).toHaveBeenCalledWith(
+			{ peer: 'build-box', agent: 'host-1' },
+			expect.any(Function)
+		);
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).not.toBe('INVALID_OPTION');
+
+		consoleSpy.mockClear();
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValueOnce(mockAgent());
+
+		await send('agent-abc', 'Hello', { model: 'opus' });
+
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTION');
+		expect(spawnAgent).not.toHaveBeenCalled();
+	});
+
 	it('lets a lifted agent through as an SSH agent while hosting was never switched on', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
 		vi.mocked(getSessionById).mockReturnValue(

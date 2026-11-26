@@ -11,6 +11,7 @@ import {
 	installHostedLaunchGuard,
 } from '../../../main/utils/hosted-launch-guard';
 import {
+	HOSTED_SSH_RUNS,
 	HOSTED_STATELESS_HELPERS,
 	cueAssistProcessId,
 	statelessHelperOfProcess,
@@ -18,12 +19,8 @@ import {
 } from '../../../shared/maestro-lib/agents/hosted-launch';
 import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
 
-const REAL_TURNS: HostedLaunchFeature[] = [
-	'group-chat-participant',
-	'consult',
-	'cue-run',
-	'groom-context',
-];
+/** Launches no list allows: a consult that did not go to the host, and an unnamed one-shot. */
+const UNLISTED: HostedLaunchFeature[] = ['consult', 'groom-context'];
 
 describe('checkHostedAgentLaunch', () => {
 	let hostedEnabled = true;
@@ -51,20 +48,33 @@ describe('checkHostedAgentLaunch', () => {
 	});
 
 	it.each(AGENT_MODES)(
-		'reports a real turn of a %s agent only when it is hosted, by feature name',
+		'lets a Cue run and a group chat turn of a %s agent through unreported: they run over SSH by decision',
 		(mode) => {
 			install(mode);
-			for (const feature of REAL_TURNS) {
+			for (const run of Object.keys(HOSTED_SSH_RUNS) as HostedLaunchFeature[]) {
+				expect(checkHostedAgentLaunch('agent-1', run)).toBe(
+					mode === 'hosted' ? 'allowed' : 'not-hosted'
+				);
+			}
+			expect(captureMessage).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(AGENT_MODES)(
+		'reports an unlisted launch of a %s agent only when it is hosted, by feature name',
+		(mode) => {
+			install(mode);
+			for (const feature of UNLISTED) {
 				expect(checkHostedAgentLaunch('agent-1', feature)).toBe(
 					mode === 'hosted' ? 'unlisted' : 'not-hosted'
 				);
 			}
 			if (mode === 'hosted') {
-				expect(captureMessage).toHaveBeenCalledTimes(REAL_TURNS.length);
+				expect(captureMessage).toHaveBeenCalledTimes(UNLISTED.length);
 				expect(captureMessage).toHaveBeenCalledWith(
-					'Hosted agent launch on this machine: cue-run',
+					'Hosted agent launch on this machine: consult',
 					'warning',
-					{ feature: 'cue-run', agentId: 'agent-1' }
+					{ feature: 'consult', agentId: 'agent-1' }
 				);
 			} else {
 				expect(captureMessage).not.toHaveBeenCalled();
@@ -76,6 +86,17 @@ describe('checkHostedAgentLaunch', () => {
 		install('hosted');
 		hostedEnabled = false;
 		expect(checkHostedAgentLaunch('agent-1', 'cue-run')).toBe('not-hosted');
+		expect(captureMessage).not.toHaveBeenCalled();
+	});
+
+	it('never blocks a launch: a store that cannot be read is not hosted, and is not reported', () => {
+		installHostedLaunchGuard({
+			sessions: () => {
+				throw new Error('store is locked');
+			},
+			hostedEnabled: () => true,
+		});
+		expect(checkHostedAgentLaunch('agent-1', 'consult')).toBe('not-hosted');
 		expect(captureMessage).not.toHaveBeenCalled();
 	});
 

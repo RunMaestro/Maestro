@@ -143,6 +143,9 @@ export function handQueuedItemToHost(sessionId: string, itemId: string): boolean
  */
 export async function sendTakenItemToHost(sessionId: string, item: QueuedItem): Promise<boolean> {
 	if (sendsInFlight.has(item.id)) return true;
-	await forwardToHost(sessionId, item, 0);
+	// A drain never takes a held item, so a held one here was sent on purpose (Force Send on a
+	// card the host refused earlier, or a retry). It runs now: sending it held would park it on
+	// the host and take its card away from the user who just asked for it to go.
+	await forwardToHost(sessionId, { ...item, paused: false }, 0);
 	return true;
 }

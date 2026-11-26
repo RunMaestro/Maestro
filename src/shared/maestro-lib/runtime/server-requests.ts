@@ -14,7 +14,11 @@
  */
 
 import type { AgentRecord } from '../store/records';
-import { parseWireTranscript } from '../../crossAgentTypes';
+import {
+	parseWireAgentName,
+	parseWireHandoffAnswer,
+	parseWireTranscript,
+} from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
@@ -989,6 +993,8 @@ export function createRequestHandler(
 			case 'cross_agent_ask': {
 				// An asker on another machine sends its own windowed context: the host holds no tab of it.
 				const transcript = parseWireTranscript(message.transcript);
+				const fromAgentName = parseWireAgentName(message.fromAgentName);
+				const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
 					question: typeof message.question === 'string' ? message.question : '',
@@ -996,11 +1002,9 @@ export function createRequestHandler(
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),
 					withContext: message.withContext === true,
 					...(transcript ? { transcript } : {}),
-					...(str(message.fromAgentName) ? { fromAgentName: str(message.fromAgentName) } : {}),
+					...(fromAgentName ? { fromAgentName } : {}),
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
-					...(typeof message.handoffAnswer === 'string'
-						? { handoffAnswer: message.handoffAnswer }
-						: {}),
+					...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
 					...(message.sideQuestion === true ? { sideQuestion: true } : {}),
 					...(str(message.targetTabId) ? { targetTabId: str(message.targetTabId) } : {}),
 				});

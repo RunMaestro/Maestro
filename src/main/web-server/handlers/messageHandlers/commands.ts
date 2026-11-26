@@ -17,7 +17,11 @@ import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
-import { parseWireTranscript } from '../../../../shared/crossAgentTypes';
+import {
+	parseWireAgentName,
+	parseWireHandoffAnswer,
+	parseWireTranscript,
+} from '../../../../shared/crossAgentTypes';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 import { getSettingsStore } from '../../../stores';
@@ -702,12 +706,8 @@ export function handleCrossAgentAsk(
 	const targetTabId = typeof message.targetTabId === 'string' ? message.targetTabId : undefined;
 	// An asker on another machine (a consult of a hosted agent): its own context, name, and hand-off.
 	const transcript = parseWireTranscript(message.transcript);
-	const fromAgentName =
-		typeof message.fromAgentName === 'string' && message.fromAgentName.trim()
-			? message.fromAgentName.trim()
-			: undefined;
-	const handoffAnswer =
-		typeof message.handoffAnswer === 'string' ? message.handoffAnswer : undefined;
+	const fromAgentName = parseWireAgentName(message.fromAgentName);
+	const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
 	const timeoutMs =
 		typeof message.timeoutMs === 'number' && Number.isFinite(message.timeoutMs)
 			? Math.min(Math.max(message.timeoutMs, MIN_CONSULT_TIMEOUT_MS), MAX_CONSULT_TIMEOUT_MS)

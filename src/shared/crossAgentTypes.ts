@@ -105,11 +105,20 @@ export interface RemoteAskerContext {
 
 /** The most transcript entries a consult accepts off the wire. A windowed context is far smaller. */
 export const MAX_WIRE_TRANSCRIPT_ENTRIES = 200;
+/** The longest text one wire transcript entry keeps. An entry a real asker sends is far shorter. */
+export const MAX_WIRE_TRANSCRIPT_TEXT = 100_000;
+/** The longest `source` a wire transcript entry may name (`user`, `ai`, `system`, ...). */
+export const MAX_WIRE_TRANSCRIPT_SOURCE = 32;
+/** The longest asker name a consult accepts off the wire: it names a tab and a History entry. */
+export const MAX_WIRE_AGENT_NAME = 120;
+/** The longest hand-off answer a consult accepts off the wire. */
+export const MAX_WIRE_HANDOFF_ANSWER = 400_000;
 
 /**
  * Read a consult's transcript off the wire (`consults.ask` from an asker on another machine).
- * Keeps only well-formed entries; undefined when the field is absent or holds none, so the
- * caller falls back to the context it reads itself.
+ * Keeps only well-formed entries, each bounded: this text comes from another machine and goes
+ * into a prompt. Undefined when the field is absent or holds none, so the caller falls back to
+ * the context it reads itself.
  */
 export function parseWireTranscript(value: unknown): CrossAgentTranscriptEntry[] | undefined {
 	if (!Array.isArray(value)) return undefined;
@@ -117,16 +126,32 @@ export function parseWireTranscript(value: unknown): CrossAgentTranscriptEntry[]
 	for (const raw of value.slice(-MAX_WIRE_TRANSCRIPT_ENTRIES)) {
 		if (!raw || typeof raw !== 'object') continue;
 		const entry = raw as Record<string, unknown>;
-		if (typeof entry.source !== 'string') continue;
+		if (typeof entry.source !== 'string' || entry.source.length > MAX_WIRE_TRANSCRIPT_SOURCE) {
+			continue;
+		}
 		entries.push({
 			source: entry.source,
-			...(typeof entry.text === 'string' ? { text: entry.text } : {}),
+			...(typeof entry.text === 'string'
+				? { text: entry.text.slice(0, MAX_WIRE_TRANSCRIPT_TEXT) }
+				: {}),
 			...(typeof entry.timestamp === 'number' && Number.isFinite(entry.timestamp)
 				? { timestamp: entry.timestamp }
 				: {}),
 		});
 	}
 	return entries.length > 0 ? entries : undefined;
+}
+
+/** Read the asker's display name off the wire: trimmed and bounded, or undefined when empty. */
+export function parseWireAgentName(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const name = value.trim().slice(0, MAX_WIRE_AGENT_NAME).trim();
+	return name || undefined;
+}
+
+/** Read a hand-off answer off the wire, bounded. Undefined when the field is not a string. */
+export function parseWireHandoffAnswer(value: unknown): string | undefined {
+	return typeof value === 'string' ? value.slice(0, MAX_WIRE_HANDOFF_ANSWER) : undefined;
 }
 
 /**

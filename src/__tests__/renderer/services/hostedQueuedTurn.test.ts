@@ -173,6 +173,21 @@ describe('hostedQueuedTurn', () => {
 		expect(queue()).toEqual([]);
 	});
 
+	it('runs a held card the user force-sends on the host now, not parked there held', async () => {
+		seed('hosted');
+		const item = queuedMessage({ text: 'refused earlier', paused: true });
+		const dispatched = await useAgentStore.getState().processQueuedItem('row', item, {
+			conductorProfile: '',
+			customAICommands: [],
+			speckitCommands: [],
+			openspecCommands: [],
+		});
+		expect(dispatched).toBe(true);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: 'refused earlier' });
+		expect(sends()[0][2].held).not.toBe(true);
+		expect(queue()).toEqual([]);
+	});
+
 	it('puts a drained item the host refused back at the head of the queue, held', async () => {
 		act$.mockResolvedValue({ ok: false, error: 'host is down' });
 		seed('hosted', [queuedMessage({ id: 'next' })]);

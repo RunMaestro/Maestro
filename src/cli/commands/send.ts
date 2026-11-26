@@ -352,15 +352,6 @@ export async function send(
 ): Promise<void> {
 	const route = routeAgentTarget(agentIdArg);
 	if (route.kind === 'peer') return sendToPeer(route.target, message, options);
-	if (options.model !== undefined || options.effort !== undefined) {
-		emitErrorJson(
-			`${options.model !== undefined ? '--model' : '--effort'} is for a peer's agent (peer:agent), where it applies to this one turn. For a local agent, set the model with update-agent.`,
-			'INVALID_OPTION'
-		);
-		process.exit(ExitCode.InvalidUsage);
-		return;
-	}
-
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
 	try {
@@ -381,6 +372,18 @@ export async function send(
 	// local turn would resume the session the host owns.
 	const hostRoute = liftedPeerTarget(agent);
 	if (hostRoute) return sendToPeer(hostRoute, message, options);
+
+	// Past this point the turn runs from this machine. `--model` and `--effort` apply to one turn
+	// on a host (a `peer:agent` target, or a hosted agent's own id above); a local agent has no
+	// per-turn override here.
+	if (options.model !== undefined || options.effort !== undefined) {
+		emitErrorJson(
+			`${options.model !== undefined ? '--model' : '--effort'} is for an agent that runs on a host (peer:agent, or a hosted agent's own id), where it applies to this one turn. For a local agent, set the model with update-agent.`,
+			'INVALID_OPTION'
+		);
+		process.exit(ExitCode.InvalidUsage);
+		return;
+	}
 
 	// Validate agent type is supported for CLI spawning
 	const def = getAgentDefinition(agent.toolType);
