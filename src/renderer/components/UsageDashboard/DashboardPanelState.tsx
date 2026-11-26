@@ -29,6 +29,8 @@ export interface DashboardPanelStateProps {
 	empty?: boolean;
 	/** Shown when `empty`. */
 	emptyMessage?: string;
+	/** A control drawn under the empty message (a Refresh when the emptiness may pass). */
+	emptyAction?: ReactNode;
 	/** Shown while loading. */
 	loadingMessage?: string;
 	/** Retry handler (`useDashboardResource().refresh`). Without it, no Retry button. */
@@ -59,6 +61,7 @@ export const DashboardPanelState = memo(function DashboardPanelState({
 	error,
 	empty = false,
 	emptyMessage = 'No data for this range',
+	emptyAction,
 	loadingMessage = 'Loading...',
 	onRetry,
 	minHeight = 96,
@@ -123,11 +126,12 @@ export const DashboardPanelState = memo(function DashboardPanelState({
 	if (empty) {
 		return (
 			<div
-				className="flex items-center justify-center text-center text-sm"
+				className="flex flex-col items-center justify-center gap-2 text-center text-sm"
 				style={placeholderStyle}
 				data-testid={`${testId}-empty`}
 			>
-				{emptyMessage}
+				<span>{emptyMessage}</span>
+				{emptyAction}
 			</div>
 		);
 	}

@@ -224,6 +224,7 @@ import {
 	statsPlanUsage,
 	statsQuery,
 	statsTokens,
+	statsProjectTokens,
 } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
@@ -4796,6 +4797,23 @@ encoreCommand(program, 'stats-tokens', 'usageStats', encoreFlags)
 	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
 	.option('--json', 'Output the full token usage object as JSON')
 	.action(statsTokens);
+
+// Not gated on Usage & Stats: a host answers a peer's dashboard whatever this machine's own
+// dashboard setting is, and this reads exactly what it answers.
+program
+	.command('stats-project-tokens')
+	.description(
+		"Show the token usage this machine's host answers a peer for projects kept here (SSH and hosted agents)"
+	)
+	.requiredOption('--provider <id>', 'Provider id (claude-code, codex, ...)')
+	.requiredOption(
+		'--project <path>',
+		'Working directory on this machine (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the conversations and unreadable providers as JSON')
+	.action(statsProjectTokens);
 
 program
 	.command('stats-indexing')

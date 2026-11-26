@@ -37,6 +37,15 @@ import {
 } from '../../shared/statsIndexing';
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
+import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	REMOTE_TOKEN_USAGE_TIMEOUT_MS,
+	chunkProjects,
+	parseProjectTokenUsageReply,
+	projectTokenUsageRequest,
+	type ProjectTokenUsageProject,
+	type ProjectTokenUsageResult,
+} from '../../shared/projectTokenUsage';
 import { usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
 import { exitIfMaestroNotRunning } from '../services/session-command';
@@ -77,6 +86,18 @@ interface TokenUsageResponse {
 
 interface StatsTokensOptions extends StatsOptions {
 	refresh?: boolean;
+}
+
+/**
+ * How long `stats-tokens` waits: the desktop's longest wait on a remote's host, plus the time a
+ * read of this machine's own transcripts takes.
+ */
+const TOKEN_USAGE_TIMEOUT_MS = REMOTE_TOKEN_USAGE_TIMEOUT_MS + 30_000;
+
+interface StatsProjectTokensOptions {
+	provider: string;
+	project: string[];
+	json?: boolean;
 }
 
 interface StatsQueryResponse {
@@ -142,9 +163,11 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
 
 	try {
 		const result = await withMaestroClient(async (client) => {
+			// The desktop may wait on the hosts of its SSH and hosted agents before it answers.
 			return client.sendCommand<TokenUsageResponse>(
 				{ type: 'get_token_usage', range, force: options.refresh === true },
-				'token_usage'
+				'token_usage',
+				TOKEN_USAGE_TIMEOUT_MS
 			);
 		});
 
@@ -155,6 +178,126 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
 
 		printTokenUsageSummary(range, result.data);
 	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+/**
+ * `maestro-cli stats-project-tokens` - what this machine's host (the desktop or a headless
+ * `maestro-cli host`) answers a Federation peer that asks for the token usage of projects whose
+ * conversations are kept here (`get_project_token_usage`). The same numbers a peer's Usage
+ * Dashboard merges in for an SSH or hosted agent on this machine.
+ */
+export async function statsProjectTokens(options: StatsProjectTokensOptions): Promise<void> {
+	// The paths are on this machine, where the host reads them, so a relative one is from here.
+	const projects = (options.project ?? []).map((projectPath) => ({
+		provider: options.provider,
+		projectPath: resolveCliPath(projectPath),
+	}));
+	if (!options.provider || projects.length === 0) {
+		handleCommandError(
+			new Error('Name a provider (--provider) and at least one project path (--project).'),
+			options.json
+		);
+	}
+	try {
+		// A host reads a bounded number of projects per request: ask in chunks and merge.
+		const answers: Array<{ project: ProjectTokenUsageProject; result: ProjectTokenUsageResult }> =
+			[];
+		await withMaestroClient(async (client) => {
+			for (const chunk of chunkProjects(projects)) {
+				const request = projectTokenUsageRequest(chunk);
+				const reply = await client.sendCommand<Record<string, unknown>>(
+					{ ...request },
+					PROJECT_TOKEN_USAGE_REPLY,
+					REMOTE_TOKEN_USAGE_TIMEOUT_MS
+				);
+				if (reply.success !== true) {
+					throw new Error(
+						typeof reply.error === 'string' ? reply.error : 'The host did not answer token usage.'
+					);
+				}
+				const usage = parseProjectTokenUsageReply(reply, request.projects);
+				if (!usage) throw new Error('The host did not answer token usage.');
+				request.projects.forEach((project, index) =>
+					answers.push({ project, result: usage.projects[index] })
+				);
+			}
+		});
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{
+						projects: answers.map(({ project, result }) => ({
+							...project,
+							status: result.status,
+							complete: result.complete,
+							// How many conversations the host left out of a read project (0 when none).
+							skippedFiles: result.skippedFiles ?? 0,
+							breakdowns: result.breakdowns,
+						})),
+					},
+					null,
+					2
+				)
+			);
+			return;
+		}
+		const breakdowns = answers.flatMap(({ result }) => result.breakdowns);
+		const costUnknown = breakdowns.some((b) =>
+			b.accounting
+				? b.accounting.cost.status === 'unknown'
+				: b.byModel.some((m) => m.accounting?.cost.status === 'unknown')
+		);
+		const totals = breakdowns.reduce(
+			(sum, b) => ({
+				inputTokens: sum.inputTokens + b.inputTokens,
+				outputTokens: sum.outputTokens + b.outputTokens,
+				cacheReadTokens: sum.cacheReadTokens + b.cacheReadTokens,
+				cacheCreationTokens: sum.cacheCreationTokens + b.cacheCreationTokens,
+				costUsd: sum.costUsd + b.costUsd,
+				costEstimated: sum.costEstimated || b.costEstimated,
+			}),
+			{
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+			}
+		);
+		const subject =
+			answers.length === 1 ? answers[0].project.projectPath : `${answers.length} projects`;
+		const lines = [
+			`Token usage of ${subject} (${options.provider})`,
+			`  Conversations:   ${breakdowns.length}`,
+			`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ` +
+				`${formatTokensCompact(totals.cacheReadTokens)} cache read / ${formatTokensCompact(totals.cacheCreationTokens)} cache creation`,
+			// A conversation whose cost is unknown contributes 0 to the sum: the sum is then not the cost.
+			`  API-equivalent cost: ${
+				costUnknown ? 'Unknown' : `${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`
+			}`,
+		];
+		for (const { project, result } of answers) {
+			if (result.complete && result.skippedFiles) {
+				const n = result.skippedFiles;
+				lines.push(
+					`  Not counted in full: ${project.projectPath} (${n === 1 ? '1 conversation' : `${n} conversations`} too large or unreadable)`
+				);
+			}
+			if (result.complete) continue;
+			const why =
+				result.status === 'unsupported'
+					? 'this host has no reader for the provider'
+					: result.status === 'failed'
+						? 'this host could not read it'
+						: 'only part of it was read';
+			lines.push(`  Not counted in full: ${project.projectPath} (${why})`);
+		}
+		console.log(lines.join('\n'));
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, stderrJson: true });
 		handleCommandError(error, options.json);
 	}
 }

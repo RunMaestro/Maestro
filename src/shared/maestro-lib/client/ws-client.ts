@@ -64,6 +64,13 @@ import {
 	type QueueSteerResult,
 } from '../../chatSteering';
 import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	parseProjectTokenUsageReply,
+	projectTokenUsageRequest,
+	type ProjectTokenUsage,
+	type ProjectTokenUsageProject,
+} from '../../projectTokenUsage';
+import {
 	BridgeConnection,
 	CommandTimeoutError,
 	ConnectionClosedError,
@@ -482,6 +489,13 @@ class WsMaestroClient implements MaestroClient {
 		remove: (agentId: string, entryId: string) => this.historyRemove(agentId, entryId),
 		update: (agentId: string, entryId: string, updates: HistoryEntryUpdates) =>
 			this.historyUpdate(agentId, entryId, updates),
+	};
+
+	readonly usage = {
+		projectTokens: (
+			projects: readonly ProjectTokenUsageProject[],
+			options?: { timeoutMs?: number }
+		) => this.usageProjectTokens(projects, options),
 	};
 
 	readonly settings = {
@@ -2063,6 +2077,31 @@ class WsMaestroClient implements MaestroClient {
 					typeof entry.type === 'string'
 			)
 		);
+	}
+
+	/**
+	 * Both host kinds answer it (a desktop and a headless host); an older host echoes it, which
+	 * reads as `unsupported`. The numbers are parsed as untrusted input.
+	 */
+	private async usageProjectTokens(
+		projects: readonly ProjectTokenUsageProject[],
+		options: { timeoutMs?: number } = {}
+	): Promise<ClientResult<ProjectTokenUsage>> {
+		const request = projectTokenUsageRequest(projects);
+		const sent = await this.send(
+			'usage.projectTokens',
+			{ ...request },
+			PROJECT_TOKEN_USAGE_REPLY,
+			options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('usage.projectTokens', sent.value);
+		if (!checked.ok) return checked;
+		const usage = parseProjectTokenUsageReply(sent.value, request.projects);
+		if (!usage) {
+			return this.fail('usage.projectTokens', 'failed', 'The host answered no token usage.');
+		}
+		return ok(usage);
 	}
 
 	/** The message `maestro-cli queue hold` sends a desktop, which a headless host answers too. */
