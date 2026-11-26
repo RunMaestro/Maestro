@@ -843,6 +843,25 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
 		});
 
+		it("kills the run's process before it releases the turn, so cleanup never races a live process", async () => {
+			const { result, run } = await startStuckRun();
+			const signal: AbortSignal = mockOnSpawnAgent.mock.calls[0][3].abortSignal;
+			const abortedAtKill: boolean[] = [];
+			window.maestro.process.kill = vi.fn(async () => {
+				abortedAtKill.push(signal.aborted);
+				return true;
+			});
+
+			await act(async () => {
+				result.current.stopBatchRun(SESSION_ID);
+			});
+
+			await waitFor(() => expect(run.finished).toBe(true));
+			expect(abortedAtKill.length).toBeGreaterThan(0);
+			expect(abortedAtKill.every((aborted) => aborted === false)).toBe(true);
+			expect(signal.aborted).toBe(true);
+		});
+
 		it('ends on abort-auto-run, paused on an error or not', async () => {
 			const { result, run } = await startStuckRun();
 

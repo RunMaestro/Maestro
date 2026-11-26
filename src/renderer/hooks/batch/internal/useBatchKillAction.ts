@@ -88,9 +88,6 @@ export function useBatchKillAction({
 			// history, process enumeration). Intentionally NOT deleted later - see
 			// the comment on the trailing power.removeReason call.
 			stopRequestedRefs.current[sessionId] = true;
-			// Release the runner from a turn it may never get back (a missed exit, a queue that
-			// never drains): its await settles now, so the loop reaches its stop check and cleanup.
-			abortAutoRunTurns(sessionId);
 
 			// 0. Flush Auto Run stats + history BEFORE we tear down timeTracking below.
 			//    stopTracking() deletes the tracker, so elapsed time must be captured now.
@@ -237,6 +234,12 @@ export function useBatchKillAction({
 			} catch (error) {
 				logger.error('[BatchProcessor:killBatchRun] Failed to kill process:', undefined, error);
 			}
+
+			// 1b. Release the runner from a turn it may never get back (a missed exit, a queue that
+			// never drains). After the kill, so the loop's own cleanup (its queue drain included)
+			// never runs while the run's process is still alive. An aborted spawn also kills its
+			// own process by its exact key, which covers one that started after the list above.
+			abortAutoRunTurns(sessionId);
 
 			// 2. (Stop flag was set synchronously at the top of this function, before any await.)
 

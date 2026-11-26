@@ -189,6 +189,8 @@ describe('useAgentExecution', () => {
 			success: false,
 			error: AUTO_RUN_TURN_ABORTED,
 		});
+		// The run's kill lists live processes only; the aborted turn ends its own by exact key.
+		expect(mockProcess.kill).toHaveBeenCalledWith(targetSessionId);
 	});
 
 	it('does not start a turn for an Auto Run already force-ended', async () => {
@@ -213,6 +215,7 @@ describe('useAgentExecution', () => {
 			})
 		).resolves.toMatchObject({ success: false, error: AUTO_RUN_TURN_ABORTED });
 		expect(mockProcess.spawn).not.toHaveBeenCalled();
+		expect(mockProcess.kill).not.toHaveBeenCalled();
 	});
 
 	it('spawns a batch agent and returns aggregated results', async () => {

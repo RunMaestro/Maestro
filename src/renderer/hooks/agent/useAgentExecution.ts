@@ -353,11 +353,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					};
 
 					// A force-ended Auto Run stops waiting for this turn: whatever this
-					// promise still holds (its exit, its queue-drain wait) is let go, and
-					// the run's own kill ends the process.
+					// promise still holds (its exit, its queue-drain wait) is let go, and the
+					// process is killed by its exact key. The run's kill lists live processes
+					// only, so a spawn still being registered would otherwise be missed.
 					const abortSignal = options?.abortSignal;
+					let spawnIssued = false;
 					if (abortSignal) {
-						const onAbort = () =>
+						const onAbort = () => {
+							if (spawnIssued) window.maestro.process.kill(targetSessionId).catch(() => {});
 							resolveOnce({
 								success: false,
 								error: AUTO_RUN_TURN_ABORTED,
@@ -365,6 +368,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								agentSessionId,
 								usageStats: taskUsageStats,
 							});
+						};
 						if (abortSignal.aborted) {
 							onAbort();
 							return;
@@ -737,6 +741,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					}
 
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
+					spawnIssued = true;
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,
