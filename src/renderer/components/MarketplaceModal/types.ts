@@ -63,8 +63,6 @@ export interface PlaybookDetailViewProps {
 	isLoadingDocument: boolean;
 	targetFolderName: string;
 	isImporting: boolean;
-	/** Whether this is a remote SSH session (disables local folder browsing) */
-	isRemoteSession: boolean;
 	runningVersion: string;
 	onBack: () => void;
 	onSelectDocument: (filename: string) => void;

@@ -19,6 +19,7 @@ import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
 import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers';
+import { browseAndPick, resetPathPicker } from '../../helpers/pathPicker';
 
 // Mock lucide-react
 vi.mock('lucide-react', async (importOriginal) => ({
@@ -73,6 +74,7 @@ describe('AutoRunSetupModal', () => {
 	});
 
 	afterEach(() => {
+		resetPathPicker();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
@@ -1578,7 +1580,7 @@ describe('AutoRunSetupModal', () => {
 			return { drawn, listDocsRemote };
 		};
 
-		it('draws the same modal for SSH and hosted agents and checks the folder on the remote', async () => {
+		it('draws the same modal in every mode and checks the folder where it lives', async () => {
 			const results = Object.fromEntries(
 				await AGENT_MODES.reduce<Promise<[AgentMode, Awaited<ReturnType<typeof renderMode>>][]>>(
 					async (acc, mode) => [...(await acc), [mode, await renderMode(mode)]],
@@ -1586,24 +1588,43 @@ describe('AutoRunSetupModal', () => {
 				)
 			) as Record<AgentMode, Awaited<ReturnType<typeof renderMode>>>;
 
-			expect(results.hosted).toEqual(results.ssh);
-			expect(results.ssh.drawn.placeholder).toBe('Enter remote path (e.g., /home/user/docs)');
-			expect(results.ssh.drawn.pickerTitle).toBe(
-				'Folder picker unavailable for a remote agent. Enter the remote path manually.'
+			expect(results.ssh.drawn).toEqual(results.local.drawn);
+			expect(results.hosted.drawn).toEqual(results.local.drawn);
+			expect(results.local.drawn.placeholder).toBe('Select Auto Run folder for Agent');
+			expect(results.local.drawn.pickerTitle).toBe(
+				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 			);
+			expect(results.local.drawn.pickerDisabled).toBe(false);
+			// Only the transport differs: the folder is read where it lives.
+			expect(results.local.listDocsRemote).toBeUndefined();
 			expect(results.ssh.listDocsRemote).toBe('r1');
+			expect(results.hosted.listDocsRemote).toBe('r1');
 			// No host name in the copy: the mode pill is the only mark that names the mode.
-			expect(results.ssh.drawn.text).not.toMatch(/SSH/);
+			expect(results.ssh.drawn.text).not.toMatch(/SSH|remote/i);
 		});
 
-		it('differs for a local agent only in the folder picker (the folder is on this disk)', async () => {
-			const local = await renderMode('local');
-			const ssh = await renderMode('ssh');
-
-			expect(local.drawn.pickerDisabled).toBe(false);
-			expect(ssh.drawn.pickerDisabled).toBe(true);
-			expect(local.drawn.text).toBe(ssh.drawn.text);
-			expect(local.listDocsRemote).toBeUndefined();
+		it.each(AGENT_MODES)('%s: Browse and Cmd+O both pick the folder', async (mode) => {
+			const sshRemoteId = getSessionSshRemoteId(createModeSession(mode));
+			const { container } = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={vi.fn()}
+					sessionName="Agent"
+					sshRemoteId={sshRemoteId}
+				/>
+			);
+			const input = screen.getByRole('textbox') as HTMLInputElement;
+			const picker = screen.getByTestId('folder-icon').closest('button') as HTMLButtonElement;
+			await browseAndPick(mode, () => fireEvent.click(picker), '/picked/docs');
+			expect(input.value).toBe('/picked/docs');
+			await browseAndPick(
+				mode,
+				// Keyboard events are handled by the wrapper div around Modal
+				() => fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'o', metaKey: true }),
+				'/picked/again'
+			);
+			expect(input.value).toBe('/picked/again');
 		});
 	});
 });

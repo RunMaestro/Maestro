@@ -52,7 +52,7 @@ describe('RemotePathStatus', () => {
 			/>
 		);
 
-		expect(screen.getByText('Checking remote path...')).toBeInTheDocument();
+		expect(screen.getByText('Checking path...')).toBeInTheDocument();
 	});
 
 	it('should show spinner with host name when checking with remoteHost', () => {
@@ -75,7 +75,7 @@ describe('RemotePathStatus', () => {
 			/>
 		);
 
-		expect(screen.getByText('Remote directory found')).toBeInTheDocument();
+		expect(screen.getByText('Directory found')).toBeInTheDocument();
 	});
 
 	it('should show success with host when valid and remoteHost provided', () => {

@@ -189,7 +189,9 @@ export function DirectorySelectionScreen({
 							theme={theme}
 							directories={state.additionalDirectories}
 							onChange={setAdditionalDirectories}
-							disableBrowse={isRemoteSession}
+							sshRemoteId={
+								isRemoteSession ? (state.sessionSshRemoteConfig?.remoteId ?? null) : undefined
+							}
 							nativelyEnforced={!!agentConfig?.capabilities?.supportsAdditionalDirectories}
 						/>
 					</div>
