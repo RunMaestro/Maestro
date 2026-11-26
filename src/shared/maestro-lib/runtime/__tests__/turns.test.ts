@@ -512,9 +512,16 @@ describe('runtime turns', () => {
 				['a value that is not an image', ['data:text/plain;base64,aGk=']],
 				['bytes that are not base64', ['data:image/png;base64,@@@@']],
 				['more images than a message may carry', Array.from({ length: 21 }, () => PNG)],
+				// M12: a malformed field refuses the send; it never becomes a text-only message.
+				['images that are not a list', PNG],
+				['a non-string entry beside a good image', [42, PNG]],
+				// M11: only the types a provider reads (the desktop's own list).
+				['an SVG', ['data:image/svg+xml;base64,PHN2Zy8+']],
 			])('refuses %s, and starts nothing', async (_label, images) => {
 				const runtime = await start();
-				const error = errorOf(await runtime.turns.send('a1', 't1', { text: 'x', images }));
+				const error = errorOf(
+					await runtime.turns.send('a1', 't1', { text: 'x', images: images as string[] })
+				);
 				expect(error.code).toBe('invalid');
 				expect(error.message).toMatch(/image/i);
 				expect(argvFiles).toEqual([]);

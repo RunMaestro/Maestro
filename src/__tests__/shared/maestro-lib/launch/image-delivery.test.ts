@@ -16,6 +16,7 @@ import {
 	planImageDelivery,
 	writeImageTempFile,
 } from '../../../../shared/maestro-lib/launch/image-delivery';
+import { PROVIDER_IMAGE_MEDIA_TYPES } from '../../../../shared/maestro-lib/providers/capabilities';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 /** A data URL whose image decodes to exactly `bytes` bytes. */
@@ -73,6 +74,21 @@ describe('admitTurnImages', () => {
 		['bytes that are not canonical base64', ['data:image/png;base64,abc']],
 	])('refuses %s', (_label, raw) => {
 		expect(admitTurnImages(raw)).toMatchObject({ ok: false });
+	});
+
+	// M11: the desktop's own list (PROVIDER_IMAGE_MEDIA_TYPES), never any `image/...`.
+	it.each(['image/svg+xml', 'image/x-icon', 'image/bmp', 'image/tiff'])(
+		'refuses a %s image, naming the types it takes',
+		(mediaType) => {
+			expect(admitTurnImages([`data:${mediaType};base64,AAAA`])).toEqual({
+				ok: false,
+				error: 'An attached image is not PNG, JPEG, GIF or WebP. Remove it and send again.',
+			});
+		}
+	);
+
+	it.each(PROVIDER_IMAGE_MEDIA_TYPES)('admits a %s image', (mediaType) => {
+		expect(admitTurnImages([`data:${mediaType};base64,AAAA`])).toMatchObject({ ok: true });
 	});
 
 	it('bounds the count, each image, and the total', () => {

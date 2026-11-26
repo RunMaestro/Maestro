@@ -718,6 +718,25 @@ describe('dispatch messages', () => {
 			});
 		});
 
+		// M12: nothing on the wire is dropped quietly. The runtime's `admitTurnImages()` refuses the
+		// whole send with the reason (see turns.test.ts), so the list reaches it as sent.
+		it.each([
+			['a value that is not a list', 'data:image/png;base64,AAAA'],
+			['a list with a non-string entry', [42, 'data:image/png;base64,AAAA']],
+		])('hands %s to the runtime whole, never a text-only send', async (_label, images) => {
+			const host = recordingClient({
+				activeTabId: 't-active',
+				send: () =>
+					fail('invalid', 'An attached image could not be read. Remove it and send again.'),
+			});
+			expect(await host.handle({ ...base, images })).toMatchObject({
+				type: 'command_result',
+				success: false,
+				error: 'An attached image could not be read. Remove it and send again.',
+			});
+			expect(host.named('turns.send')[0].args[2]).toEqual({ text: 'hello', images });
+		});
+
 		it('refuses a terminal command and a completion callback before sending anything', async () => {
 			const host = recordingClient({ activeTabId: 't-active' });
 			const terminal = await host.handle({ ...base, inputMode: 'terminal' });

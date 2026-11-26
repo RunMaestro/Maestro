@@ -22,6 +22,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { parseBase64DataUrl } from '../../dataUrl';
 import type { AgentCapabilities } from '../../types';
+import {
+	isProviderImageMediaType,
+	PROVIDER_IMAGE_MEDIA_TYPE_NAMES,
+} from '../providers/capabilities';
 import { buildImagePromptPrefix, parseDataUrl } from './image-refs';
 import { buildPromptArgv } from './prompt-delivery';
 
@@ -35,8 +39,6 @@ export const MAX_TURN_IMAGE_BYTES = 20 * 1024 * 1024;
  * here for its size alone.
  */
 export const MAX_TURN_IMAGE_TOTAL_BYTES = 23 * 1024 * 1024;
-
-const IMAGE_MEDIA_TYPE = /^image\/[a-z0-9][a-z0-9.+-]*$/;
 
 /** Whether a UTF-16 code unit is one of the 64 base64 alphabet characters (`A-Z a-z 0-9 + /`). */
 function isBase64AlphabetCode(code: number): boolean {
@@ -66,7 +68,8 @@ function base64ByteLength(base64: string): number | null {
 
 /**
  * A message's images as they arrived from another machine, admitted or refused whole. Only inline
- * `data:image/...;base64,` URLs are accepted: a `maestro-image://` ref names the SENDER's store,
+ * `data:image/...;base64,` URLs of a type a provider reads (`PROVIDER_IMAGE_MEDIA_TYPES`, the
+ * desktop's own list) are accepted: a `maestro-image://` ref names the SENDER's store,
  * and nothing off the wire may make this machine read its own disk. Count and bytes are bounded
  * (`MAX_TURN_IMAGES`, `MAX_TURN_IMAGE_BYTES`, `MAX_TURN_IMAGE_TOTAL_BYTES`). Absent or empty is
  * no images.
@@ -82,8 +85,20 @@ export function admitTurnImages(
 	const images: string[] = [];
 	for (const image of raw) {
 		const parsed = typeof image === 'string' ? parseBase64DataUrl(image) : null;
+		// Only the types a provider reads (the desktop's own list): an SVG or an `image/x-*` would
+		// reach a provider that refuses it, or a store that cannot name it.
+		if (
+			parsed &&
+			parsed.mediaType.startsWith('image/') &&
+			!isProviderImageMediaType(parsed.mediaType)
+		) {
+			return {
+				ok: false,
+				error: `An attached image is not ${PROVIDER_IMAGE_MEDIA_TYPE_NAMES}. Remove it and send again.`,
+			};
+		}
 		const bytes = parsed ? base64ByteLength(parsed.base64) : null;
-		if (!parsed || !IMAGE_MEDIA_TYPE.test(parsed.mediaType) || bytes === null || bytes === 0) {
+		if (!parsed || !parsed.mediaType.startsWith('image/') || bytes === null || bytes === 0) {
 			return {
 				ok: false,
 				error: 'An attached image could not be read. Remove it and send again.',

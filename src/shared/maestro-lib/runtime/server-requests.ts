@@ -299,12 +299,15 @@ function unsupportedDispatch(message: Request): string | undefined {
 	return undefined;
 }
 
-/** A dispatch message's images, when it carries any. */
+/**
+ * A dispatch message's images exactly as they came, when the field is present. Never filtered here:
+ * a malformed list or entry must reach `admitTurnImages()` (in `turns.send`), which refuses the
+ * whole send with the reason, rather than become a text-only message (M12).
+ */
 function imagesOf(message: Request): string[] | undefined {
-	const images = Array.isArray(message.images)
-		? message.images.filter((image): image is string => typeof image === 'string')
-		: [];
-	return images.length > 0 ? images : undefined;
+	if (message.images === undefined || message.images === null) return undefined;
+	if (Array.isArray(message.images) && message.images.length === 0) return undefined;
+	return message.images as string[];
 }
 
 /** The reply fields that say whether the message is running or waiting its turn. */
