@@ -1705,5 +1705,24 @@ describe('ssh-command-builder', () => {
 				wrapRemoteCommandWithPath(buildRemoteCommand({ command: 'claude', args: ['--version'] }))
 			);
 		});
+
+		it('does not log remote env secret values when building an SSH command', async () => {
+			const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+			try {
+				await buildSshCommand(
+					{ ...baseConfig, remoteEnv: { REMOTE_SECRET: 'super-secret-remote-val' } },
+					{
+						command: 'claude',
+						args: ['--version'],
+						env: { API_KEY: 'super-secret-call-val' },
+					}
+				);
+				const serialized = JSON.stringify(infoSpy.mock.calls);
+				expect(serialized).not.toContain('super-secret-remote-val');
+				expect(serialized).not.toContain('super-secret-call-val');
+			} finally {
+				infoSpy.mockRestore();
+			}
+		});
 	});
 });

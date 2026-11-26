@@ -6,7 +6,7 @@
  * folder, a `..` path out of it, a symlink in it that points out, a wrong name, and a folder are refused.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -26,6 +26,9 @@ vi.mock('electron', () => ({
 import {
 	checkFeedbackTraceBundle,
 	feedbackTraceBundlePath,
+	forgetFeedbackTraceBundle,
+	recordFeedbackTraceBundle,
+	resetCapturedFeedbackTraceBundlesForTests,
 } from '../../../main/profiling/feedback-trace';
 
 /** The timestamp `debug:stopProfilingToFile` builds, for a fixed time. */
@@ -55,15 +58,42 @@ describe('checkFeedbackTraceBundle', () => {
 		electronPaths.temp = bundleDir;
 	});
 
+	beforeEach(() => {
+		resetCapturedFeedbackTraceBundlesForTests();
+	});
+
+	afterEach(() => {
+		resetCapturedFeedbackTraceBundlesForTests();
+	});
+
 	afterAll(() => {
 		fs.rmSync(base, { recursive: true, force: true });
 	});
 
 	it('accepts a trace bundle the capture wrote, at its real path', async () => {
 		const candidate = path.join(bundleDir, VALID_NAME);
+		await recordFeedbackTraceBundle(candidate);
 		await expect(checkFeedbackTraceBundle(candidate)).resolves.toEqual({
 			ok: true,
 			realPath: candidate,
+		});
+	});
+
+	it('refuses a temp file with a valid bundle name that Maestro did not capture', async () => {
+		const candidate = path.join(bundleDir, VALID_NAME);
+		await expect(checkFeedbackTraceBundle(candidate)).resolves.toEqual({
+			ok: false,
+			reason: 'not a trace bundle Maestro captured',
+		});
+	});
+
+	it('refuses a previously captured bundle once forgotten', async () => {
+		const candidate = path.join(bundleDir, VALID_NAME);
+		await recordFeedbackTraceBundle(candidate);
+		forgetFeedbackTraceBundle(candidate);
+		await expect(checkFeedbackTraceBundle(candidate)).resolves.toEqual({
+			ok: false,
+			reason: 'not a trace bundle Maestro captured',
 		});
 	});
 
@@ -152,9 +182,13 @@ describe.skipIf(process.platform === 'win32')('checkFeedbackTraceBundle with sym
 	});
 
 	it('accepts a bundle when the bundle folder is reached through a symlink', async () => {
+		resetCapturedFeedbackTraceBundlesForTests();
 		electronPaths.temp = path.join(base, 'temp-link');
-		const result = await checkFeedbackTraceBundle(path.join(base, 'temp-link', VALID_NAME));
+		const linkedCandidate = path.join(base, 'temp-link', VALID_NAME);
+		await recordFeedbackTraceBundle(linkedCandidate);
+		const result = await checkFeedbackTraceBundle(linkedCandidate);
 		expect(result).toEqual({ ok: true, realPath: path.join(bundleDir, VALID_NAME) });
+		resetCapturedFeedbackTraceBundlesForTests();
 	});
 });
 
@@ -178,13 +212,16 @@ describe('feedbackTraceBundlePath', () => {
 	});
 
 	it('writes only names the check accepts', async () => {
+		resetCapturedFeedbackTraceBundlesForTests();
 		electronPaths.temp = bundleDir;
 		const written = feedbackTraceBundlePath(captureTimestamp(new Date()));
 		fs.writeFileSync(written, 'zip');
+		await recordFeedbackTraceBundle(written);
 		await expect(checkFeedbackTraceBundle(written)).resolves.toEqual({
 			ok: true,
 			realPath: written,
 		});
+		resetCapturedFeedbackTraceBundlesForTests();
 	});
 
 	it('throws for a timestamp the check would refuse', () => {

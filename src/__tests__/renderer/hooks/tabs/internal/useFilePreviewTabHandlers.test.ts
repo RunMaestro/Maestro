@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFilePreviewTabHandlers } from '../../../../../renderer/hooks/tabs/internal/useFilePreviewTabHandlers';
 import type { FilePreviewTab } from '../../../../../renderer/types';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../../../renderer/stores/mediaPlaybackStore';
 import { useUIStore } from '../../../../../renderer/stores/uiStore';
@@ -955,6 +956,94 @@ describe('useFilePreviewTabHandlers', () => {
 			expect(getSession().filePreviewTabs[1].editContent).toBeUndefined();
 			expect(getSession().filePreviewTabs[0]).toMatchObject({
 				path: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+		});
+
+		it('aborts navigation and preserves a draft typed while the target file is still loading', async () => {
+			setupDraftOnB({ editContent: undefined, editContentPath: undefined });
+			let resolveRead!: (value: string | null) => void;
+			vi.mocked(window.maestro.fs.readFile).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveRead = resolve;
+				})
+			);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			let pendingNav!: Promise<void>;
+			act(() => {
+				pendingNav = result.current.handleFileTabNavigateBack();
+			});
+
+			// User starts editing b.ts before a.ts finishes loading from disk.
+			act(() => {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => ({
+						...s,
+						filePreviewTabs: s.filePreviewTabs.map((t) =>
+							t.id === 'file-1'
+								? { ...t, editContent: 'typed during load', editContentPath: '/repo/b.ts' }
+								: t
+						),
+					}))
+				);
+			});
+
+			await act(async () => {
+				resolveRead('a on disk');
+				await pendingNav;
+			});
+
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				editContent: 'typed during load',
+				editContentPath: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+		});
+
+		it('aborts navigation if the user makes a fresh edit after confirming discard while loading', async () => {
+			setupDraftOnB();
+			let resolveRead!: (value: string | null) => void;
+			vi.mocked(window.maestro.fs.readFile).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveRead = resolve;
+				})
+			);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack();
+			});
+			expect(confirmOpen()).toBe(true);
+
+			act(() => {
+				confirmData()?.onConfirm();
+			});
+
+			// User types a new edit while the async read is in flight.
+			act(() => {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => ({
+						...s,
+						filePreviewTabs: s.filePreviewTabs.map((t) =>
+							t.id === 'file-1'
+								? { ...t, editContent: 'b edited again', editContentPath: '/repo/b.ts' }
+								: t
+						),
+					}))
+				);
+			});
+
+			await act(async () => {
+				resolveRead('a on disk');
+				await Promise.resolve();
+			});
+
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				editContent: 'b edited again',
+				editContentPath: '/repo/b.ts',
 				navigationIndex: 1,
 			});
 		});

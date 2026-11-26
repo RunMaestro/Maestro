@@ -325,10 +325,10 @@ export const LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Scripts Windows Script Host runs on open. Launchable only on Windows: other
- * systems open a `.js` in an editor.
+ * Scripts and ClickOnce shortcuts Windows runs on open. Launchable only on
+ * Windows: other systems open a `.js` in an editor.
  */
-const WINDOWS_LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set(['js', 'jse']);
+const WINDOWS_LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set(['js', 'jse', 'appref-ms']);
 
 /**
  * Whether the OS would run, install, or mount this file (or folder: an `.app`

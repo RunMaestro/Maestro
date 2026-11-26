@@ -3,12 +3,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import {
-	readSessions,
-	getConfigDirectory,
-	getSyncDir,
-	getSyncDirFallbackReason,
-} from '../services/storage';
+import { getConfigDirectory, readSessionsWithSyncResolution } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 
 interface CleanPlaybooksOptions {
@@ -21,6 +16,9 @@ interface OrphanScan {
 	orphaned: Array<{ sessionId: string; filePath: string }>;
 	/** How many agents the CLI read. Zero is not believed without `--force`. */
 	agentCount: number;
+	/** The sync directory and fallback state observed when the agent list was read. */
+	syncDir: string;
+	fallbackReason: string | undefined;
 }
 
 /** A guard stopped the run before it listed or removed anything. The message says why. */
@@ -38,15 +36,22 @@ function getPlaybooksDir(): string {
  */
 function findOrphanedPlaybooks(): OrphanScan {
 	const playbooksDir = getPlaybooksDir();
-	const scan: OrphanScan = { orphaned: [], agentCount: 0 };
+	const scan: OrphanScan = {
+		orphaned: [],
+		agentCount: 0,
+		syncDir: '',
+		fallbackReason: undefined,
+	};
 
 	try {
 		if (!fs.existsSync(playbooksDir)) {
 			return scan;
 		}
 
-		const sessions = readSessions();
+		const { sessions, syncDir, fallbackReason } = readSessionsWithSyncResolution();
 		scan.agentCount = sessions.length;
+		scan.syncDir = syncDir;
+		scan.fallbackReason = fallbackReason;
 		const sessionIds = new Set(sessions.map((s) => s.id));
 
 		const files = fs.readdirSync(playbooksDir);
@@ -87,25 +92,20 @@ function findOrphanedPlaybooks(): OrphanScan {
  *   user deleted every agent looks the same as a wrong data folder, so this one
  *   needs `--force`.
  */
-function untrustedListReason(
-	orphanedCount: number,
-	agentCount: number,
-	force: boolean
-): string | undefined {
-	const fallbackReason = getSyncDirFallbackReason();
-	if (fallbackReason) {
+function untrustedListReason(scan: OrphanScan, force: boolean): string | undefined {
+	if (scan.fallbackReason) {
 		return (
-			`Nothing was removed. The Storage Location in Settings > General is not in use (${fallbackReason}), ` +
-			`so maestro-cli read the agents from ${getSyncDir()}. That list can be empty or out of date, ` +
+			`Nothing was removed. The Storage Location in Settings > General is not in use (${scan.fallbackReason}), ` +
+			`so maestro-cli read the agents from ${scan.syncDir}. That list can be empty or out of date, ` +
 			'and playbooks of live agents would look orphaned. ' +
 			'Restore the folder, or choose Use Default in Settings > General > Storage Location, ' +
 			'then run this command again. --force does not override this check.'
 		);
 	}
-	if (agentCount === 0 && !force) {
+	if (scan.agentCount === 0 && !force) {
 		return (
-			`Nothing was removed. maestro-cli found no agents in ${getSyncDir()}, ` +
-			`so all ${orphanedCount} playbook file(s) would look orphaned. ` +
+			`Nothing was removed. maestro-cli found no agents in ${scan.syncDir}, ` +
+			`so all ${scan.orphaned.length} playbook file(s) would look orphaned. ` +
 			'If maestro-cli reads the wrong data folder, set MAESTRO_USER_DATA to the right one. ' +
 			'If you deleted every agent on purpose, run this command again with --force.'
 		);
@@ -115,7 +115,8 @@ function untrustedListReason(
 
 export function cleanPlaybooks(options: CleanPlaybooksOptions): void {
 	try {
-		const { orphaned, agentCount } = findOrphanedPlaybooks();
+		const scan = findOrphanedPlaybooks();
+		const { orphaned } = scan;
 
 		if (orphaned.length === 0) {
 			if (options.json) {
@@ -128,7 +129,7 @@ export function cleanPlaybooks(options: CleanPlaybooksOptions): void {
 
 		// With nothing to remove nothing is at risk, so the check waits for a real candidate.
 		// It also covers --dry-run: a preview built on a wrong list would only mislead.
-		const refusal = untrustedListReason(orphaned.length, agentCount, options.force === true);
+		const refusal = untrustedListReason(scan, options.force === true);
 		if (refusal) {
 			throw new CleanRefusedError(refusal);
 		}

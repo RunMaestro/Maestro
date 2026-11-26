@@ -26,9 +26,14 @@ export { realpathThroughAncestor } from '../../shared/pathUtils';
 
 /** Whether absolute path `child` is `parent` or inside it, compared as given (fold and resolve first). */
 export function isPathWithin(child: string, parent: string): boolean {
-	if (child === parent) return true;
-	const rel = path.relative(parent, child);
-	return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+	const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+	const c = norm(child);
+	const p = norm(parent);
+	if (c === p) return true;
+	// Use POSIX relative so case stays exact as given: on Windows, `path.relative`
+	// folds case internally and overrides a caller's explicit case-sensitive check.
+	const rel = path.posix.relative(p, c);
+	return rel !== '' && rel !== '..' && !rel.startsWith('../') && !path.posix.isAbsolute(rel);
 }
 
 /** Where a root-relative path really points. */

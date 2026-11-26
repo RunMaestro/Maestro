@@ -506,21 +506,32 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 
 		const leavesEdits =
 			currentTab.editContent !== undefined && historyEntry.path !== currentTab.path;
+		const expectedPath = currentTab.path;
+		const expectedEditContent = currentTab.editContent;
 
 		const moveToEntry = async () => {
 			try {
 				const content = await window.maestro.fs.readFile(historyEntry.path, currentTab.sshRemoteId);
 				if (content === null) return;
 
-				updateFileTab(currentSession.id, currentTab.id, (tab) => ({
-					...tab,
-					path: historyEntry.path,
-					name: historyEntry.name,
-					content,
-					scrollTop: historyEntry.scrollTop ?? 0,
-					navigationIndex: index,
-					...(leavesEdits ? { editContent: undefined, editContentPath: undefined } : {}),
-				}));
+				updateFileTab(currentSession.id, currentTab.id, (tab) => {
+					// Revalidate before replacing: the editor stays usable while `readFile` runs
+					// (notably over SSH). If the user typed new edits or navigated elsewhere in the
+					// meantime, keep their current state instead of silently wiping or carrying edits
+					// onto the destination file.
+					if (tab.path !== expectedPath || tab.editContent !== expectedEditContent) {
+						return tab;
+					}
+					return {
+						...tab,
+						path: historyEntry.path,
+						name: historyEntry.name,
+						content,
+						scrollTop: historyEntry.scrollTop ?? 0,
+						navigationIndex: index,
+						...(leavesEdits ? { editContent: undefined, editContentPath: undefined } : {}),
+					};
+				});
 			} catch (error) {
 				logger.error('Failed to navigate file tab history:', undefined, error);
 			}

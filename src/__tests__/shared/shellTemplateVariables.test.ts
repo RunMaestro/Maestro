@@ -210,6 +210,77 @@ describe('substituteShellTemplateVariables', () => {
 				);
 			}
 		);
+
+		it('refuses {{MAESTRO_CLI_PATH}} inside a quoted heredoc too', () => {
+			const template = "cat <<'EOF'\n{{MAESTRO_CLI_PATH}}\nEOF";
+			expect(() =>
+				substituteShellTemplateVariables(
+					template,
+					contextWith({}, { maestroCliPath: '/opt/maestro/maestro-cli.js' })
+				)
+			).toThrow(/\{\{MAESTRO_CLI_PATH\}\} is inside a quoted heredoc/);
+		});
+
+		it('does not end an unquoted heredoc on a line continued by a trailing backslash', () => {
+			const template = [
+				'cat <<EOF',
+				'prefix \\',
+				'EOF',
+				'still-body {{CUE_GH_TITLE}}',
+				'EOF',
+				'echo {{CUE_GH_TITLE}}',
+			].join('\n');
+			const result = substituteShellTemplateVariables(template, titled('x'));
+			expect(result.command).toBe(
+				[
+					'cat <<EOF',
+					'prefix \\',
+					'EOF',
+					`still-body \${${TITLE}}`,
+					'EOF',
+					`echo "\${${TITLE}}"`,
+				].join('\n')
+			);
+		});
+	});
+
+	describe('arithmetic contexts', () => {
+		it.each([
+			['$(( ... ))', 'echo $(( {{CUE_GH_TITLE}} + 1 ))'],
+			['tight $((...))', 'echo $(({{CUE_GH_TITLE}}))'],
+			['double-quoted "$(( ... ))"', 'echo "$(( {{CUE_GH_TITLE}} + 1 ))"'],
+			['Bash (( ... )) command', 'if (( {{CUE_GH_TITLE}} > 0 )); then echo ok; fi'],
+			['unquoted heredoc $(( ... ))', 'cat <<EOF\n$(( {{CUE_GH_TITLE}} + 1 ))\nEOF'],
+		])('refuses a placeholder inside %s', (_label, template) => {
+			expect(() => substituteShellTemplateVariables(template, titled('a[$(id)]'))).toThrow(
+				ShellTemplateError
+			);
+			expect(() => substituteShellTemplateVariables(template, titled('a[$(id)]'))).toThrow(
+				/shell arithmetic expression/
+			);
+		});
+
+		it('does not treat << inside $(( ... )) or (( ... )) as a heredoc', () => {
+			const arithExpansion = substituteShellTemplateVariables(
+				'echo $(( 1 << 2 ))\necho {{CUE_GH_TITLE}}',
+				titled('hello')
+			);
+			expect(arithExpansion.command).toBe(`echo $(( 1 << 2 ))\necho "\${${TITLE}}"`);
+
+			const arithCmd = substituteShellTemplateVariables(
+				'(( x = 1 << 2 ))\necho {{CUE_GH_TITLE}}',
+				titled('hello')
+			);
+			expect(arithCmd.command).toBe(`(( x = 1 << 2 ))\necho "\${${TITLE}}"`);
+		});
+
+		it('still treats grouped subshells ((a && b) || c) as normal commands, not arithmetic', () => {
+			const result = substituteShellTemplateVariables(
+				'((true && echo {{CUE_GH_TITLE}}) || echo fallback)',
+				titled('ok')
+			);
+			expect(result.command).toBe(`((true && echo "\${${TITLE}}") || echo fallback)`);
+		});
 	});
 });
 

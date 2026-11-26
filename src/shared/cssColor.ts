@@ -201,22 +201,23 @@ export function isValidCssColor(color: unknown): boolean {
 // unit. A hue may also carry `deg`. Arguments are separated by spaces and tabs
 // only, so a line break never passes.
 const STRICT_NUMBER = String.raw`[+-]?(?:\d+(?:\.\d+)?|\.\d+)`;
+const STRICT_PERCENT = `${STRICT_NUMBER}%`;
 const STRICT_ARG = `${STRICT_NUMBER}%?`;
 const STRICT_HUE = `${STRICT_NUMBER}(?:deg)?`;
 const STRICT_GAP = '[ \\t]';
 const ASCII_LETTERS = /^[A-Za-z]+$/;
 
 /**
- * `name(a, b, c)` and `name(a, b, c, alpha)` (comma syntax), or `name(a b c)`
- * and `name(a b c / alpha)` (CSS Color 4 space syntax). `first` is the pattern
- * of the first argument. Anchored, with no nested repetition, so a test cannot
- * backtrack catastrophically.
+ * `name(a, b, c)` and `name(a, b, c, alpha)` (legacy comma syntax), or
+ * `name(a b c)` and `name(a b c / alpha)` (CSS Color 4 space syntax). Legacy
+ * comma syntax enforces strict CSS Color rules (RGB cannot mix numbers and
+ * percentages; HSL requires percentage saturation and lightness) while modern
+ * space syntax accepts numeric or percentage channels. Anchored, with no nested
+ * repetition, so a test cannot backtrack catastrophically.
  */
-function strictColorFunction(names: string, first: string): RegExp {
-	const comma = `${STRICT_GAP}*,${STRICT_GAP}*`;
-	const commaArgs = `${first}${comma}${STRICT_ARG}${comma}${STRICT_ARG}(?:${comma}${STRICT_ARG})?`;
+function strictColorFunction(names: string, commaArgs: string, firstSpace: string): RegExp {
 	const spaceArgs =
-		`${first}${STRICT_GAP}+${STRICT_ARG}${STRICT_GAP}+${STRICT_ARG}` +
+		`${firstSpace}${STRICT_GAP}+${STRICT_ARG}${STRICT_GAP}+${STRICT_ARG}` +
 		`(?:${STRICT_GAP}*/${STRICT_GAP}*${STRICT_ARG})?`;
 	return new RegExp(
 		`^(?:${names})\\(${STRICT_GAP}*(?:${commaArgs}|${spaceArgs})${STRICT_GAP}*\\)$`,
@@ -224,8 +225,17 @@ function strictColorFunction(names: string, first: string): RegExp {
 	);
 }
 
-const STRICT_RGB_COLOR = strictColorFunction('rgba?', STRICT_ARG);
-const STRICT_HSL_COLOR = strictColorFunction('hsla?', STRICT_HUE);
+const STRICT_COMMA = `${STRICT_GAP}*,${STRICT_GAP}*`;
+const STRICT_RGB_COMMA_NUM = `${STRICT_NUMBER}${STRICT_COMMA}${STRICT_NUMBER}${STRICT_COMMA}${STRICT_NUMBER}(?:${STRICT_COMMA}${STRICT_ARG})?`;
+const STRICT_RGB_COMMA_PCT = `${STRICT_PERCENT}${STRICT_COMMA}${STRICT_PERCENT}${STRICT_COMMA}${STRICT_PERCENT}(?:${STRICT_COMMA}${STRICT_ARG})?`;
+const STRICT_HSL_COMMA = `${STRICT_HUE}${STRICT_COMMA}${STRICT_PERCENT}${STRICT_COMMA}${STRICT_PERCENT}(?:${STRICT_COMMA}${STRICT_ARG})?`;
+
+const STRICT_RGB_COLOR = strictColorFunction(
+	'rgba?',
+	`${STRICT_RGB_COMMA_NUM}|${STRICT_RGB_COMMA_PCT}`,
+	STRICT_ARG
+);
+const STRICT_HSL_COLOR = strictColorFunction('hsla?', STRICT_HSL_COMMA, STRICT_HUE);
 
 /**
  * True only for a color that is safe to write RAW into CSS text (a `<style>`

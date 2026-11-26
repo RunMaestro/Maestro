@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import {
 	buildHostCallHandlers,
 	purgePluginData,
@@ -3430,19 +3431,67 @@ describe('shell.openExternal on a local file', () => {
 	});
 
 	it('opens a file: URL inside a file: scope, and refuses one outside it', async () => {
-		const { open, openExternal } = handlersFor('file:///Users/me/Reports');
-		await expect(open('file:///Users/me/Reports/q3.pdf')).resolves.toEqual({ ok: true });
-		expect(openExternal).toHaveBeenCalledWith('file:///Users/me/Reports/q3.pdf', undefined);
+		const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-openext-')));
+		try {
+			const reportsDir = path.join(base, 'Reports');
+			const outsideDir = path.join(base, 'Outside');
+			fs.mkdirSync(reportsDir, { recursive: true });
+			fs.mkdirSync(outsideDir, { recursive: true });
+			const reportFile = path.join(reportsDir, 'q3.pdf');
+			const outsideFile = path.join(outsideDir, 'secret.pdf');
+			fs.writeFileSync(reportFile, 'ok');
+			fs.writeFileSync(outsideFile, 'secret');
 
-		await expect(open('file:///Applications/Calculator.app')).rejects.toThrow(
-			'permission denied: shell:openExternal'
-		);
-		await expect(
-			open('file:///Users/me/Reports/../../../Applications/Calculator.app')
-		).rejects.toThrow('permission denied: shell:openExternal');
-		await expect(open('https://github.com/acme/app/pull/1')).rejects.toThrow(
-			'permission denied: shell:openExternal'
-		);
-		expect(openExternal).toHaveBeenCalledTimes(1);
+			const { open, openExternal } = handlersFor(pathToFileURL(reportsDir).href);
+			await expect(open(pathToFileURL(reportFile).href)).resolves.toEqual({ ok: true });
+			expect(openExternal).toHaveBeenCalledWith(pathToFileURL(reportFile).href, undefined);
+
+			await expect(open(pathToFileURL(outsideFile).href)).rejects.toThrow(
+				'permission denied: shell:openExternal'
+			);
+			await expect(open(`${pathToFileURL(reportsDir).href}/../Outside/secret.pdf`)).rejects.toThrow(
+				'permission denied: shell:openExternal'
+			);
+			await expect(open('https://github.com/acme/app/pull/1')).rejects.toThrow(
+				'permission denied: shell:openExternal'
+			);
+			expect(openExternal).toHaveBeenCalledTimes(1);
+		} finally {
+			fs.rmSync(base, { recursive: true, force: true });
+		}
 	});
+
+	it.skipIf(process.platform === 'win32')(
+		're-authorizes symlink targets and refuses a symlink inside a file: scope pointing outside',
+		async () => {
+			const base = fs.realpathSync.native(
+				fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-openext-link-'))
+			);
+			try {
+				const reportsDir = path.join(base, 'Reports');
+				const outsideDir = path.join(base, 'Outside');
+				fs.mkdirSync(reportsDir, { recursive: true });
+				fs.mkdirSync(outsideDir, { recursive: true });
+				const innerFile = path.join(reportsDir, 'real.pdf');
+				const outsideFile = path.join(outsideDir, 'secret.pdf');
+				fs.writeFileSync(innerFile, 'ok');
+				fs.writeFileSync(outsideFile, 'secret');
+				const insideLink = path.join(reportsDir, 'alias.pdf');
+				const escapeLink = path.join(reportsDir, 'escape.pdf');
+				fs.symlinkSync(innerFile, insideLink);
+				fs.symlinkSync(outsideFile, escapeLink);
+
+				const { open, openExternal } = handlersFor(pathToFileURL(reportsDir).href);
+				await expect(open(pathToFileURL(escapeLink).href)).rejects.toThrow(
+					'permission denied: shell:openExternal'
+				);
+				expect(openExternal).not.toHaveBeenCalled();
+
+				await expect(open(pathToFileURL(insideLink).href)).resolves.toEqual({ ok: true });
+				expect(openExternal).toHaveBeenCalledWith(pathToFileURL(innerFile).href, undefined);
+			} finally {
+				fs.rmSync(base, { recursive: true, force: true });
+			}
+		}
+	);
 });

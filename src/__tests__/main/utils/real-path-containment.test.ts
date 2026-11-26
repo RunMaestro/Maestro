@@ -33,6 +33,15 @@ describe('isPathWithin', () => {
 		expect(isPathWithin(path.join(`${root}2`, 'a.md'), root)).toBe(false);
 		expect(isPathWithin(path.resolve('/etc/passwd'), root)).toBe(false);
 	});
+
+	it('preserves exact case even for Windows-style paths (callers fold case via foldPathCase)', () => {
+		expect(isPathWithin('D:\\Users\\me\\MAESTRO\\secret.json', 'D:\\Users\\me\\Maestro')).toBe(
+			false
+		);
+		expect(isPathWithin('D:\\Users\\me\\Maestro\\secret.json', 'D:\\Users\\me\\Maestro')).toBe(
+			true
+		);
+	});
 });
 
 describe('foldPathCase', () => {

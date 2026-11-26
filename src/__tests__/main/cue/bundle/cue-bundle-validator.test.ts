@@ -421,6 +421,7 @@ describe('validateCueBundle - paths no bundle may write', () => {
 		['a cue.yaml in a folder below the project root', 'workspaces/proj/sub/.maestro/cue.yaml'],
 		['a cue.yaml under another case', 'workspaces/proj/.MAESTRO/cue.yaml'],
 		['a cue.yaml under a trailing dot', 'workspaces/proj/.maestro./cue.yaml'],
+		['a cue.yaml under the NTFS short name', 'workspaces/proj/MAESTR~1/cue.yaml'],
 		[
 			'a cue.yaml in a .maestro folder nested in an owned one',
 			'workspaces/proj/.maestro/prompts/.maestro/cue.yaml',
@@ -448,5 +449,16 @@ describe('validateCueBundle - paths no bundle may write', () => {
 	it('still reports an unlisted .git entry as both unlisted and git metadata', async () => {
 		const result = await validate({ unlisted: { 'workspaces/proj/.git/hooks/pre-commit': 'x' } });
 		expect(codes(result.errors).sort()).toEqual(['git-metadata-path', 'unlisted-file']);
+	});
+
+	it('refuses an undeclared legacy maestro-cue.yaml at a workspace root', async () => {
+		const result = await validate({ files: withFiles('workspaces/proj/maestro-cue.yaml') });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				code: 'legacy-cue-config-path',
+				file: 'workspaces/proj/maestro-cue.yaml',
+			}),
+		]);
 	});
 });

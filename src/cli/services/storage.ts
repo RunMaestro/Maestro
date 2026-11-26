@@ -67,6 +67,26 @@ export function getSyncDirFallbackReason(): string | undefined {
 }
 
 /**
+ * Resolve the sync directory, any custom Storage Location fallback reason, and
+ * the session list in one pass so callers that guard destructive cleanup
+ * against a stale fallback list judge the exact resolution that produced the
+ * list (not a second resolution later).
+ */
+export function readSessionsWithSyncResolution(): {
+	sessions: SessionInfo[];
+	syncDir: string;
+	fallbackReason: string | undefined;
+} {
+	const resolved = resolveMaestroPaths();
+	const syncDir = resolved.syncDir;
+	return {
+		sessions: readSessionsStoreFile(syncDir).sessions,
+		syncDir,
+		fallbackReason: resolved.customSyncPathRejection,
+	};
+}
+
+/**
  * Store files the desktop opens under the sync directory. Must match the
  * stores `initializeStores()` (src/main/stores/instances.ts) gives
  * `cwd: _syncPath`, for every one of them the CLI reads; anything not listed

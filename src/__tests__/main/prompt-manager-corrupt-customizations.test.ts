@@ -203,7 +203,10 @@ describe('a customizations file that is not valid JSON', () => {
 	it('still starts when it cannot be moved aside, and says so', async () => {
 		const torn = tornDocument();
 		fs.writeFileSync(customizationsPath(), torn, 'utf-8');
-		// Neither the rename nor the copy works (a read-only volume, a sync client holding a lock).
+		// Neither linking, renaming, nor copying works (a read-only volume, a sync client holding a lock).
+		vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+			throw new Error('EACCES: permission denied, link');
+		});
 		vi.spyOn(fs, 'renameSync').mockImplementation(() => {
 			throw new Error('EACCES: permission denied, rename');
 		});

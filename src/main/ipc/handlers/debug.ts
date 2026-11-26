@@ -28,6 +28,8 @@ import {
 	finalizeCapture,
 	checkFeedbackTraceBundle,
 	feedbackTraceBundlePath,
+	forgetFeedbackTraceBundle,
+	recordFeedbackTraceBundle,
 } from '../../profiling';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -407,6 +409,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				// and debug:discardTrace run on the path the renderer hands back.
 				const bundlePath = feedbackTraceBundlePath(timestamp);
 				const finalized = await finalizeCapture(tracePath, bundlePath, outcome);
+				await recordFeedbackTraceBundle(finalized.path);
 				logger.info(`${LOG_CONTEXT} Performance profile captured for feedback: ${finalized.path}`);
 				return {
 					path: finalized.path,
@@ -430,6 +433,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			const trace = await checkFeedbackTraceBundle(filePath);
 			if (!trace.ok) return { success: false };
 			await fs.promises.unlink(trace.realPath).catch(() => {});
+			forgetFeedbackTraceBundle(trace.realPath);
 			return { success: true };
 		})
 	);

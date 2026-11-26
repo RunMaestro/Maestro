@@ -57,6 +57,8 @@ vi.mock('../../../../main/profiling', () => ({
 	setProfilingAutoStopHandler: vi.fn(),
 	finalizeCapture: vi.fn(),
 	checkFeedbackTraceBundle: vi.fn(),
+	recordFeedbackTraceBundle: vi.fn(),
+	forgetFeedbackTraceBundle: vi.fn(),
 	feedbackTraceBundlePath: vi.fn(
 		(timestamp: string) => `/Users/test/Desktop/maestro-profile-${timestamp}.zip`
 	),
@@ -420,8 +422,11 @@ describe('debug IPC handlers', () => {
 				bundlePath,
 				expect.objectContaining({ durationMs: 1500, categories: ['devtools.timeline'] })
 			);
-			// Raw trace temp file is cleaned up after bundling.
+			// Raw trace temp file is cleaned up after bundling, and the bundle is registered.
 			expect(fs.promises.unlink).toHaveBeenCalledWith(expect.stringContaining('maestro-trace-'));
+			expect(profiling.recordFeedbackTraceBundle).toHaveBeenCalledWith(
+				'/Users/test/Desktop/maestro-profile-x.zip'
+			);
 			expect(result).toMatchObject({
 				success: true,
 				path: '/Users/test/Desktop/maestro-profile-x.zip',
@@ -445,6 +450,7 @@ describe('debug IPC handlers', () => {
 			expect(profiling.checkFeedbackTraceBundle).toHaveBeenCalledWith(target);
 			expect(fs.promises.unlink).toHaveBeenCalledWith(realPath);
 			expect(fs.promises.unlink).toHaveBeenCalledTimes(1);
+			expect(profiling.forgetFeedbackTraceBundle).toHaveBeenCalledWith(realPath);
 			expect(result.success).toBe(true);
 		});
 

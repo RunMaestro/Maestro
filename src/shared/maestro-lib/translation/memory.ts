@@ -33,27 +33,48 @@ export interface IgnoredMemoryDirectory {
 	resolvedPath: string;
 }
 
+function toComparableRootPath(p: string): string {
+	// Convert backslashes only on Windows; on POSIX a backslash is a literal filename
+	// character, so `/tmp/check\repo` must not fold onto `/tmp/check/repo`.
+	return process.platform === 'win32' ? p.replace(/\\/g, '/') : p;
+}
+
 /**
- * Where a project-level `autoMemoryDirectory` really points when it leaves both the project and the provider's
- * config directory, else null. A repository writes its own `.claude/settings.json` and
- * `.claude/settings.local.json`, so it may name a folder inside itself, or inside the account's config
- * directory (where the default memory folder lives), and nothing else: `~/.ssh`, `../../` or an absolute path
- * elsewhere would make the Memory Viewer and a provider migration read files the repository has no claim to.
- * Symlinks are followed on both sides, through the nearest existing ancestor for a folder Claude has not
- * created yet. The compare is case-sensitive on purpose: an allow-list that mismatches on case rejects, it
- * never admits.
+ * Resolve a project-level `autoMemoryDirectory` and verify it stays inside the
+ * project or account config directory. Returns `{ allowed: true, resolvedPath }`
+ * when it stays inside, or `{ allowed: false, resolvedPath }` when it leaves
+ * both roots. A repository writes its own `.claude/settings.json` and
+ * `.claude/settings.local.json`, so it may name a folder inside itself, or inside
+ * the account's config directory (where the default memory folder lives), and
+ * nothing else: `~/.ssh`, `../../` or an absolute path elsewhere would make the
+ * Memory Viewer and a provider migration read files the repository has no claim
+ * to. Symlinks are followed on both sides, through the nearest existing ancestor
+ * for a folder Claude has not created yet. The compare is case-sensitive on
+ * purpose: an allow-list that mismatches on case rejects, it never admits.
  */
-function memoryDirectoryOutsideAllowedRoots(
+function checkProjectMemoryDirectory(
 	projectRoot: string,
 	accountRoot: string,
 	directory: string
-): string | null {
+): { allowed: boolean; resolvedPath: string; approvedPath?: string } {
 	const resolved = realpathThroughAncestor(path.resolve(projectRoot, expandTilde(directory)));
-	const posix = (p: string): string => p.replace(/\\/g, '/');
-	const inside = [projectRoot, accountRoot].some((root) =>
-		isPathAtOrUnderRoot(posix(resolved), posix(realpathThroughAncestor(path.resolve(root))))
-	);
-	return inside ? null : resolved;
+	const comparableResolved = toComparableRootPath(resolved);
+	for (const root of [projectRoot, accountRoot]) {
+		const absRoot = path.resolve(root);
+		const realRoot = realpathThroughAncestor(absRoot);
+		if (isPathAtOrUnderRoot(comparableResolved, toComparableRootPath(realRoot))) {
+			// Anchor the resolved relative path under the caller's root so repo-owned
+			// symlinks (e.g. `mem -> real-memory`) are dereferenced once at check time
+			// while preserving OS-level root aliases such as macOS `/var -> /private/var`.
+			const rel = path.relative(realRoot, resolved);
+			return {
+				allowed: true,
+				resolvedPath: resolved,
+				approvedPath: rel ? path.resolve(absRoot, rel) : absRoot,
+			};
+		}
+	}
+	return { allowed: false, resolvedPath: resolved };
 }
 
 /**
@@ -63,7 +84,8 @@ function memoryDirectoryOutsideAllowedRoots(
  *
  * The account's own value is the user's and is honored as written. A project-level value is not trusted: one
  * that leaves the project and the account's config directory is skipped (listed in `ignored`, so the caller
- * can say so) and the next value down applies, ending at the default.
+ * can say so) and the next value down applies, ending at the default. For an approved project-level value,
+ * the returned path is the resolved target that passed the check so callers read the approved target directly.
  */
 export async function discoverClaudeMemoryRoot(
 	projectRoot: string,
@@ -75,6 +97,7 @@ export async function discoverClaudeMemoryRoot(
 	ignored: IgnoredMemoryDirectory[];
 }> {
 	let directory: string | undefined;
+	let approvedProjectResolvedPath: string | undefined;
 	let source: 'default' | 'account' | 'project' = 'default';
 	const ignored: IgnoredMemoryDirectory[] = [];
 	const accountSettings = path.join(accountRoot, 'settings.json');
@@ -89,20 +112,23 @@ export async function discoverClaudeMemoryRoot(
 			);
 			if (typeof settings.autoMemoryDirectory === 'string' && settings.autoMemoryDirectory.trim()) {
 				const fromAccount = settingsPath === accountSettings;
-				const outside = fromAccount
-					? null
-					: memoryDirectoryOutsideAllowedRoots(
-							projectRoot,
-							accountRoot,
-							settings.autoMemoryDirectory
-						);
-				if (outside !== null) {
-					ignored.push({
-						settingsPath,
-						directory: settings.autoMemoryDirectory,
-						resolvedPath: outside,
-					});
-					continue;
+				if (!fromAccount) {
+					const check = checkProjectMemoryDirectory(
+						projectRoot,
+						accountRoot,
+						settings.autoMemoryDirectory
+					);
+					if (!check.allowed) {
+						ignored.push({
+							settingsPath,
+							directory: settings.autoMemoryDirectory,
+							resolvedPath: check.resolvedPath,
+						});
+						continue;
+					}
+					approvedProjectResolvedPath = check.approvedPath ?? check.resolvedPath;
+				} else {
+					approvedProjectResolvedPath = undefined;
 				}
 				directory = settings.autoMemoryDirectory;
 				source = fromAccount ? 'account' : 'project';
@@ -112,11 +138,14 @@ export async function discoverClaudeMemoryRoot(
 		}
 	}
 	return {
-		path: resolveClaudeMemoryPath(
-			directory ? projectRoot : memoryProjectRoot,
-			accountRoot,
-			directory
-		),
+		path:
+			source === 'project' && approvedProjectResolvedPath
+				? approvedProjectResolvedPath
+				: resolveClaudeMemoryPath(
+						directory ? projectRoot : memoryProjectRoot,
+						accountRoot,
+						directory
+					),
 		source,
 		ignored,
 	};

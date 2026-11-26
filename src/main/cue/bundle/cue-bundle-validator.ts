@@ -15,7 +15,12 @@
 import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
 import { compareVersions } from '../../../shared/pathUtils';
-import { CUE_PROMPTS_DIR, MAESTRO_DIR, PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import {
+	CUE_PROMPTS_DIR,
+	LEGACY_CUE_CONFIG_PATH,
+	MAESTRO_DIR,
+	PLAYBOOKS_DIR,
+} from '../../../shared/maestro-paths';
 import { foldPathSegment, hasGitMetadataSegment } from '../../../shared/pathContainment';
 import {
 	CUE_BUNDLE_LOCAL_PATH,
@@ -399,6 +404,8 @@ export function validateCueBundleArchive(
 			.filter(isRecord)
 			.flatMap((ws) => (typeof ws.cueConfig === 'string' ? [ws.cueConfig] : []))
 	);
+	// `maestr~1` is the NTFS 8.3 short name of `.maestro`; it opens the same folder on Windows.
+	const MAESTRO_DIR_NAMES = new Set([MAESTRO_DIR, 'maestr~1']);
 	for (const name of [...entries.keys()].sort()) {
 		if (hasGitMetadataSegment(name)) {
 			error(
@@ -409,10 +416,24 @@ export function validateCueBundleArchive(
 		}
 		if (declaredCueConfigs.has(name)) continue;
 		const segments = name.split(/[/\\]/);
+		// A root `maestro-cue.yaml` in a workspace is the legacy Cue config that the engine loads
+		// when `.maestro/cue.yaml` is absent; written as an ordinary file it would bypass shell
+		// command review and `--reject-shell-commands`.
+		if (
+			segments.length === 3 &&
+			segments[0] === 'workspaces' &&
+			foldPathSegment(segments[2]) === LEGACY_CUE_CONFIG_PATH
+		) {
+			error(
+				'legacy-cue-config-path',
+				`A bundle cannot carry an undeclared ${LEGACY_CUE_CONFIG_PATH} file; declare the workspace cue config in manifest.json instead`,
+				name
+			);
+		}
 		// Every `.maestro` in the path counts, so one nested inside an owned folder is held to the same rule.
 		const unowned = segments.some(
 			(segment, at) =>
-				foldPathSegment(segment) === MAESTRO_DIR &&
+				MAESTRO_DIR_NAMES.has(foldPathSegment(segment)) &&
 				!(segments.length - at > 2 && MAESTRO_BUNDLE_FOLDERS.has(segments[at + 1]))
 		);
 		if (unowned) {

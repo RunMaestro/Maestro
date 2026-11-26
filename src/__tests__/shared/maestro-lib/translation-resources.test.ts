@@ -542,4 +542,37 @@ describe('Grok project resource translation', () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it('re-checks realpath of a Claude project memory root at read time and blocks escapes outside project and account roots', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-memory-escape-'));
+		try {
+			const projectRoot = path.join(root, 'project');
+			const accountRoot = path.join(root, 'account');
+			const outside = path.join(root, 'outside');
+			await fs.mkdir(path.join(projectRoot, '.claude'), { recursive: true });
+			await fs.mkdir(accountRoot, { recursive: true });
+			await fs.mkdir(outside, { recursive: true });
+			await fs.writeFile(path.join(outside, 'secret.md'), 'top-secret-outside');
+			// Default memory path inside accountRoot is itself a symlink pointing outside both roots.
+			const defaultMemDir = resolveClaudeMemoryPath(projectRoot, accountRoot);
+			await fs.mkdir(path.dirname(defaultMemDir), { recursive: true });
+			await fs.symlink(outside, defaultMemDir, process.platform === 'win32' ? 'junction' : 'dir');
+
+			const resources = await collectTranslationResources(
+				{
+					provider: 'claude-code',
+					version: '2.1.112',
+					accountRoot,
+					projectRoot,
+				},
+				{ projectKnowledge: true, selectedUserResources: [] }
+			);
+			expect(resources.limitations).toContainEqual(
+				expect.objectContaining({ code: 'unsafe-resource-scope', severity: 'block' })
+			);
+			expect(JSON.stringify(resources)).not.toContain('top-secret-outside');
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 });

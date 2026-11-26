@@ -785,7 +785,13 @@ export async function buildSshCommand(
 	const wrappedCommand = wrapRemoteCommandWithPath(remoteCommand);
 	args.push(wrappedCommand);
 
-	// Log the exact command being built - use info level so it appears in system logs
+	// Bare agent invocation (command + args) for display in Process Details and
+	// logs, without the cd/env prefix or the bash PATH bootstrap wrapper.
+	const remoteCommandLine = buildShellCommand(remoteOptions.command, remoteOptions.args);
+
+	// Log connection metadata and the env-free bare command: `remoteCommand`,
+	// `wrappedCommand`, and the final `args` entry embed `remoteEnv` values in
+	// plain text, so none of those are logged.
 	logger.info('SSH command built for remote execution', '[ssh-command-builder]', {
 		host: config.host,
 		username: config.username || '(using SSH config/system default)',
@@ -796,19 +802,15 @@ export async function buildSshCommand(
 		// outlive the session that wrote them, so name them in the log rather than
 		// leaving them buried in the argv.
 		sshOptionOverrides: config.sshOptions,
-		remoteCommand,
-		wrappedCommand,
+		remoteCommandLine,
 		sshPath,
+		sshArgs: args.slice(0, -1),
 		sshArgsCount: args.length,
-		// Full command for debugging - escape quotes for readability
-		fullCommand: `${sshPath} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`,
 	});
 
 	return {
 		command: sshPath,
 		args,
-		// Bare agent invocation (command + args) for display in Process Details,
-		// without the cd/env prefix or the bash PATH bootstrap wrapper.
-		remoteCommandLine: buildShellCommand(remoteOptions.command, remoteOptions.args),
+		remoteCommandLine,
 	};
 }

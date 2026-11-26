@@ -1443,8 +1443,14 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				// Get the base args from the agent configuration
 				const args = [...agent.args];
 				const agentConfigValues = agents.providerConfig(chat.moderatorAgentId);
+				const loggedConfigValues = {
+					...agentConfigValues,
+					customEnvVars: agentConfigValues.customEnvVars
+						? maskEnvVarValues(agentConfigValues.customEnvVars as Record<string, unknown>)
+						: undefined,
+				};
 				logger.debug(
-					`[GroupChat:Debug] agentConfigValues for ${chat.moderatorAgentId}: ${JSON.stringify(agentConfigValues)}`
+					`[GroupChat:Debug] agentConfigValues for ${chat.moderatorAgentId}: ${JSON.stringify(loggedConfigValues)}`
 				);
 				const baseArgs = buildAgentArgs(agent, {
 					baseArgs: args,

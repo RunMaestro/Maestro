@@ -267,6 +267,26 @@ export async function collectTranslationResources(
 			continue;
 		}
 		if (
+			!managedDirectory &&
+			root.scope === 'project' &&
+			root.kind === 'memory' &&
+			!isPathAtOrUnderRoot(
+				process.platform === 'win32' ? realRoot.replace(/\\/g, '/') : realRoot,
+				process.platform === 'win32' ? realProjectRoot.replace(/\\/g, '/') : realProjectRoot
+			) &&
+			!isPathAtOrUnderRoot(
+				process.platform === 'win32' ? realRoot.replace(/\\/g, '/') : realRoot,
+				process.platform === 'win32' ? realAccountRoot.replace(/\\/g, '/') : realAccountRoot
+			)
+		) {
+			limitations.push({
+				code: 'unsafe-resource-scope',
+				severity: 'block',
+				message: `Project memory directory ${root.prefix} resolves outside both the project and account config roots.`,
+			});
+			continue;
+		}
+		if (
 			((root.scope === 'project' && root.kind !== 'memory') || managedDirectory) &&
 			!isPathAtOrUnderRoot(realRoot.replace(/\\/g, '/'), realProjectRoot.replace(/\\/g, '/'))
 		) {

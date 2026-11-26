@@ -36,7 +36,7 @@ import {
 import { getSettingsStore } from '../stores/getters';
 import { isInitialized } from '../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
-import { checkFeedbackTraceBundle } from '../profiling/feedback-trace';
+import { checkFeedbackTraceBundle, forgetFeedbackTraceBundle } from '../profiling/feedback-trace';
 import { captureFeedbackLiveDiagnosis } from './live-state';
 import {
 	formatLiveDiagnosisForIssue,
@@ -1775,9 +1775,10 @@ export async function submitFeedbackConversation(
 			}
 			filedReportFingerprints.add(fingerprint);
 			// The issue exists, so the trace has served its purpose. If creation
-			// failed above, it is kept for the retry.
+			// failed above, it is kept (and stays registered) for the retry.
 			if (performanceTracePath) {
 				await fs.unlink(performanceTracePath).catch(() => {});
+				forgetFeedbackTraceBundle(performanceTracePath);
 			}
 			return {
 				success: true,

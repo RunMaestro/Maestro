@@ -1154,10 +1154,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 					const result = await Promise.race([resultPromise, timeoutPromise]);
 
+					// When `command -v` exits non-zero with empty stderr, Node's `execFile`
+					// fallback message echoes the full SSH argv (including `remoteEnv`).
+					// Never log that argv echo.
+					const safeStderr = /^Command failed:/i.test(result.stderr)
+						? `SSH detection exited with code ${result.exitCode}`
+						: result.stderr;
 					logger.info(`SSH command result for '${agentDef.binaryName}'`, LOG_CONTEXT, {
 						exitCode: result.exitCode,
 						stdout: result.stdout,
-						stderr: result.stderr,
+						stderr: safeStderr,
 					});
 
 					// Check for SSH connection errors

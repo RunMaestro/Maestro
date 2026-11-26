@@ -24,7 +24,7 @@ describe('discoverClaudeMemoryRoot: a repository autoMemoryDirectory', () => {
 	let account: string;
 
 	beforeEach(async () => {
-		root = await fs.mkdtemp(path.join(os.tmpdir(), 'memory-directory-'));
+		root = realpathSync.native(await fs.mkdtemp(path.join(os.tmpdir(), 'memory-directory-')));
 		home = path.join(root, 'home');
 		project = path.join(root, 'project');
 		account = path.join(home, '.claude');
@@ -121,16 +121,28 @@ describe('discoverClaudeMemoryRoot: a repository autoMemoryDirectory', () => {
 		}
 	});
 
-	it('keeps a symlink inside the project that stays inside it', async () => {
+	it('keeps a symlink inside the project that stays inside it, returning its resolved target', async () => {
 		await fs.mkdir(path.join(project, 'real-memory'));
 		await fs.symlink(path.join(project, 'real-memory'), path.join(project, 'mem'), DIRECTORY_LINK);
 		await writeProjectSettings('mem');
 		await expect(discover()).resolves.toEqual({
-			path: path.join(project, 'mem'),
+			path: path.join(project, 'real-memory'),
 			source: 'project',
 			ignored: [],
 		});
 	});
+
+	it.skipIf(process.platform === 'win32')(
+		'does not treat a literal backslash in a sibling name as a path separator on POSIX',
+		async () => {
+			const sibling = `${project}\\memory`;
+			await writeProjectSettings(sibling);
+			const result = await discover();
+			expect(result.path).toBe(defaultMemory());
+			expect(result.source).toBe('default');
+			expect(result.ignored).toHaveLength(1);
+		}
+	);
 
 	it('holds .claude/settings.local.json to the same rule', async () => {
 		await writeProjectSettings('~/.ssh', 'settings.local.json');

@@ -82,6 +82,7 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 // Here it is a switch, so these tests pin what submit does with each answer.
 vi.mock('../../../../main/profiling/feedback-trace', () => ({
 	checkFeedbackTraceBundle: vi.fn(),
+	forgetFeedbackTraceBundle: vi.fn(),
 }));
 
 import fs from 'fs/promises';
@@ -100,7 +101,10 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
-import { checkFeedbackTraceBundle } from '../../../../main/profiling/feedback-trace';
+import {
+	checkFeedbackTraceBundle,
+	forgetFeedbackTraceBundle,
+} from '../../../../main/profiling/feedback-trace';
 import { clearFeedbackRepoVerdicts, resetFeedbackSubmissionGuard } from '../../../../main/feedback';
 import { feedbackReportFingerprint } from '../../../../shared/feedback';
 
@@ -1173,11 +1177,13 @@ describe('feedback handlers', () => {
 			expect(checkFeedbackTraceBundle).toHaveBeenCalledWith(tracePath);
 			expect(fs.readFile).toHaveBeenCalledWith(realTracePath);
 			expect(unlinked()).not.toContain(realTracePath);
+			expect(forgetFeedbackTraceBundle).not.toHaveBeenCalled();
 
 			const second = await submit(payload);
 			expect(second.success).toBe(true);
 			expect(unlinked()).toContain(realTracePath);
 			expect(unlinked()).not.toContain(tracePath);
+			expect(forgetFeedbackTraceBundle).toHaveBeenCalledWith(realTracePath);
 		});
 
 		it('refuses the whole submit when the trace path fails the check, and deletes nothing', async () => {

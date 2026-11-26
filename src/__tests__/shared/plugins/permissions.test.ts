@@ -346,6 +346,8 @@ describe('shell:openExternal on a local file', () => {
 		expect(allows(reports, 'file:///Users/me/Reports/..%2F..%2F..%2FApplications/x.app')).toBe(
 			false
 		);
+		expect(allows(reports, 'file:///Users/me/Reports%5Csecret.pdf')).toBe(false);
+		expect(allows(reports, 'file:///Users/me/Reports%5csecret.pdf')).toBe(false);
 	});
 
 	it('is never covered on another host, even by a file: scope naming that host', () => {

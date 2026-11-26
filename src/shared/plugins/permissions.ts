@@ -440,7 +440,8 @@ function isFileUrlTarget(target: string): boolean {
 }
 
 /** The decoded path of a local `file:` URL (no host), or null for anything
- * else: another scheme, a host, a malformed escape, or not a URL at all. */
+ * else: another scheme, a host, an encoded separator (`%2F`, `%5C`), a
+ * malformed escape, or not a URL at all. */
 function localFileUrlPath(value: string): string | null {
 	let parsed: URL;
 	try {
@@ -449,6 +450,11 @@ function localFileUrlPath(value: string): string | null {
 		return null;
 	}
 	if (parsed.protocol !== 'file:' || parsed.hostname !== '') return null;
+	// Encoded separators never belong in a local file URL: `%2F` is refused by
+	// `fileURLToPath`, and `%5C` stays a literal backslash on POSIX while
+	// `normalizePath` would otherwise fold it to `/`, confusing a sibling file
+	// `allowed\secret.pdf` with a child `allowed/secret.pdf`.
+	if (/%2f|%5c/i.test(parsed.pathname)) return null;
 	try {
 		return decodeURIComponent(parsed.pathname);
 	} catch {

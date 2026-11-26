@@ -152,8 +152,12 @@ describe('isLaunchableFile', () => {
 		expect(isLaunchableFile('/home/me/tool.appimage', { windows: false })).toBe(true);
 	});
 
-	it('counts .js and .jse only on Windows, where Windows Script Host runs them', () => {
-		for (const name of ['C:\\Users\\me\\run.js', 'C:\\Users\\me\\run.jse']) {
+	it('counts .js, .jse, and .appref-ms only on Windows, where Windows executes them', () => {
+		for (const name of [
+			'C:\\Users\\me\\run.js',
+			'C:\\Users\\me\\run.jse',
+			'C:\\Users\\me\\Launch.appref-ms',
+		]) {
 			expect(isLaunchableFile(name, { windows: true })).toBe(true);
 			expect(isLaunchableFile(name, { windows: false })).toBe(false);
 		}

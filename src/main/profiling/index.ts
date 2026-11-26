@@ -23,7 +23,12 @@ export {
 	BUFFER_STOP_THRESHOLD,
 } from './content-tracing';
 export { DEFAULT_TRACE_CATEGORIES, TRACE_BUFFER_SIZE_KB } from './categories';
-export { checkFeedbackTraceBundle, feedbackTraceBundlePath } from './feedback-trace';
+export {
+	checkFeedbackTraceBundle,
+	feedbackTraceBundlePath,
+	forgetFeedbackTraceBundle,
+	recordFeedbackTraceBundle,
+} from './feedback-trace';
 export type { FeedbackTraceBundleCheck } from './feedback-trace';
 export type { ProfilingStatus, StopProfilingResult, StopProfilingOutcome } from './types';
 export type { ProfilingOrigin } from './content-tracing';

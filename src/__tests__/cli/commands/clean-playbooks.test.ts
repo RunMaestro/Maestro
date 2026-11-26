@@ -27,6 +27,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { cleanPlaybooks } from '../../../cli/commands/clean-playbooks';
+import { readSessionsWithSyncResolution } from '../../../cli/services/storage';
 
 /**
  * A Storage Location the desktop would accept by every rule (absolute, no traversal, not a
@@ -368,5 +369,21 @@ describe('clean playbooks: a Storage Location that is not in use', () => {
 
 		expect(fs.existsSync(gone)).toBe(false);
 		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it('captures sessions and sync fallback status in one resolution pass', () => {
+		const lateMount = path.join(dataDir, 'late-sync-mount');
+		nameStorageLocation(lateMount);
+		writeAgents('old-agent');
+
+		const scan = readSessionsWithSyncResolution();
+		expect(scan.sessions.map((s) => s.id)).toEqual(['old-agent']);
+		expect(scan.syncDir).toBe(dataDir);
+		expect(scan.fallbackReason).toContain(`Custom sync path does not exist: ${lateMount}`);
+
+		// Even if the custom sync folder appears right after reading, the captured scan
+		// preserves the fallback status of the sessions that were actually read.
+		fs.mkdirSync(lateMount, { recursive: true });
+		expect(scan.fallbackReason).toContain(`Custom sync path does not exist: ${lateMount}`);
 	});
 });
