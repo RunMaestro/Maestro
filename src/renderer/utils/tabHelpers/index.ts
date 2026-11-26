@@ -60,7 +60,6 @@ import {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 } from './focusFields';
 import {
@@ -90,7 +89,6 @@ export {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
