@@ -218,31 +218,36 @@ function hostedTabError(
 }
 
 /**
- * Whether the host's running turn streamed answer output into `logs` that `prior` did not draw: a
- * live answer entry that is new or whose text moved on. The same event a local tab's data chunk is.
+ * Whether the answer of a turn this record watched run reached `logs`: an answer entry the host
+ * recorded (not a live one) that `prior` did not draw, while the tab was running or showing the
+ * turn's live entries. The same moment a local tab gets its answer as data (`markDelivered()`,
+ * `markUnread()`), at the provider's result. An answer that was already there when the
+ * transcript was first read (a conversation loaded at startup) is no new answer.
  */
-function streamedAnswer(prior: readonly LogEntry[], logs: readonly LogEntry[]): boolean {
+function answerArrived(local: AITab, logs: readonly LogEntry[]): boolean {
+	const prior = local.logs ?? [];
 	if (logs === prior) return false;
-	const drawn = new Map(prior.map((entry) => [entry.id, entry]));
+	const watchedRun = local.state === 'busy' || prior.some((entry) => entry.hostLive);
+	if (!watchedRun) return false;
+	const drawn = new Set(prior.map((entry) => entry.id));
 	return logs.some(
-		(entry) =>
-			entry.hostLive && ANSWER_SOURCES.has(entry.source) && drawn.get(entry.id)?.text !== entry.text
+		(entry) => !entry.hostLive && ANSWER_SOURCES.has(entry.source) && !drawn.has(entry.id)
 	);
 }
 
 /**
- * A tab's unread flag after the host streamed into it, by the rule a local tab follows
- * (`useAgentDataListener`): output marks it unread unless its agent is the active agent, it is the
- * agent's active AI tab (`activeTabId`, whichever panel is drawn), and it is scrolled to the
- * bottom; then the output clears it. A hidden tab is never set unread: it has no chip to clear it
- * from.
+ * A tab's unread flag once its answer arrived, by the rule a local tab follows
+ * (`useAgentDataListener`): the answer marks it unread unless its agent is the active agent, it
+ * is the agent's active AI tab (`activeTabId`, whichever panel is drawn), and it is scrolled to
+ * the bottom; then the answer clears it. A hidden tab is never set unread: it has no chip to clear
+ * it from.
  */
 function hostedTabUnread(
 	local: AITab,
 	logs: readonly LogEntry[],
 	watched: boolean
 ): boolean | undefined {
-	if (!streamedAnswer(local.logs ?? [], logs)) return local.hasUnread;
+	if (!answerArrived(local, logs)) return local.hasUnread;
 	const unread = !watched || local.isAtBottom === false;
 	return unread && isAiTabHidden(local) ? local.hasUnread : unread;
 }
