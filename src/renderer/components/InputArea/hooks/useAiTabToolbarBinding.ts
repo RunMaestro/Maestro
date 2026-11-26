@@ -16,13 +16,9 @@
 import { useCallback } from 'react';
 import type { AITab, ThinkingMode } from '../../../types';
 import { resolveTabPermissionMode } from '../../../../shared/agentMetadata';
-import {
-	selectSessionById,
-	updateSessionWith,
-	useSessionStore,
-} from '../../../stores/sessionStore';
-import { updateHostedTab } from '../../../services/hostedTurns';
-import { permissionModeFields, setShowThinkingFields } from '../../../utils/tabHelpers';
+import { updateSessionWith } from '../../../stores/sessionStore';
+import { setTabThinkingMode } from '../../../services/tabThinkingMode';
+import { permissionModeFields } from '../../../utils/tabHelpers';
 import type { PermissionMode } from '../components/ComposerOptionsSheet';
 
 export interface AiTabToolbarBinding {
@@ -53,15 +49,7 @@ export function useAiTabToolbarBinding(
 	const onThinkingModeChange = useCallback(
 		(mode: ThinkingMode) => {
 			if (!activeTabId) return;
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				aiTabs: s.aiTabs.map((t) =>
-					t.id === activeTabId ? { ...t, ...setShowThinkingFields(t, mode) } : t
-				),
-			}));
-			// A hosted agent's host decides whether its process streams thinking.
-			const session = selectSessionById(sessionId)(useSessionStore.getState());
-			if (session) updateHostedTab(session, activeTabId, { thinking: mode });
+			setTabThinkingMode(sessionId, activeTabId, mode);
 		},
 		[sessionId, activeTabId]
 	);
