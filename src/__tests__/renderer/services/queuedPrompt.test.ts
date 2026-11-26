@@ -25,12 +25,16 @@ const mergeMirrorQueuedItem = vi.fn(async () => undefined);
 const editMirrorQueuedItem = vi.fn(async () => undefined);
 const moveMirrorQueuedItem = vi.fn(async () => undefined);
 const sendMirrorQueuedItemNow = vi.fn(async () => undefined);
+const removeMirrorQueuedItem = vi.fn(async () => undefined);
+const setMirrorQueuedItemPaused = vi.fn(async () => undefined);
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
 	mergeMirrorQueuedItem: (...args: unknown[]) => mergeMirrorQueuedItem(...(args as [])),
 	editMirrorQueuedItem: (...args: unknown[]) => editMirrorQueuedItem(...(args as [])),
 	moveMirrorQueuedItem: (...args: unknown[]) => moveMirrorQueuedItem(...(args as [])),
 	sendMirrorQueuedItemNow: (...args: unknown[]) => sendMirrorQueuedItemNow(...(args as [])),
+	removeMirrorQueuedItem: (...args: unknown[]) => removeMirrorQueuedItem(...(args as [])),
+	setMirrorQueuedItemPaused: (...args: unknown[]) => setMirrorQueuedItemPaused(...(args as [])),
 }));
 
 import {
@@ -52,7 +56,7 @@ import {
 } from '../../../renderer/services/queuedPrompt';
 import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, agentModeFields, createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { QueuedItem, Session } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -447,6 +451,77 @@ describe('setQueuedItemPaused / toggleQueuedItemPaused', () => {
 		seed();
 		expect(toggleQueuedItemPaused('session-1', 'ghost')).toBe(false);
 		expect(setQueuedItemPaused('missing-session', 'ghost', true)).toBe(false);
+	});
+});
+
+// docs/parity/agent-ux-parity.md, Queue "Remove, Hold / Resume": the card's actions answer
+// the same and leave the owning queue in the same state for a local, an SSH, and a hosted
+// agent. A hosted agent's queue is its host's: the action goes there (applied below as the
+// host applies it), and the host's update redraws the card.
+describe('Remove, Hold / Resume mode parity', () => {
+	afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+	it('holds, resumes, and removes the same way in every mode', () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const outcomes = AGENT_MODES.map((mode) => {
+			removeMirrorQueuedItem.mockClear();
+			setMirrorQueuedItemPaused.mockClear();
+			const hostQueued = mode === 'hosted' ? true : undefined;
+			const queue: QueuedItem[] = ['q1', 'q2', 'q3'].map((id) => ({
+				id,
+				timestamp: 0,
+				tabId: 'b',
+				type: 'message',
+				text: id,
+				...(id === 'q3' ? { paused: true } : {}),
+				...(hostQueued ? { hostQueued } : {}),
+			}));
+			seed({
+				...agentModeFields(mode),
+				executionQueue: queue,
+			});
+			const answers = [
+				toggleQueuedItemPaused('session-1', 'q1'),
+				toggleQueuedItemPaused('session-1', 'q3'),
+				removeQueuedItem('session-1', 'q2'),
+			];
+			let owning = currentQueue();
+			if (mode === 'hosted') {
+				// Nothing changes here first: the host's queue update redraws the card.
+				expect(owning, mode).toEqual(queue);
+				expect(setMirrorQueuedItemPaused.mock.calls).toEqual([
+					['box', 'h1', 'q1', true],
+					['box', 'h1', 'q3', false],
+				]);
+				expect(removeMirrorQueuedItem.mock.calls).toEqual([['box', 'h1', 'q2']]);
+				for (const [, , id, paused] of setMirrorQueuedItemPaused.mock.calls as unknown as [
+					string,
+					string,
+					string,
+					boolean,
+				][])
+					owning = owning.map((i) => (i.id === id ? { ...i, paused: paused || undefined } : i));
+				for (const [, , id] of removeMirrorQueuedItem.mock.calls as unknown as [
+					string,
+					string,
+					string,
+				][])
+					owning = owning.filter((i) => i.id !== id);
+			} else {
+				expect(setMirrorQueuedItemPaused, mode).not.toHaveBeenCalled();
+				expect(removeMirrorQueuedItem, mode).not.toHaveBeenCalled();
+			}
+			return { answers, queue: owning.map((i) => ({ id: i.id, paused: !!i.paused })) };
+		});
+		expect(outcomes[0]).toEqual({
+			answers: [true, true, true],
+			queue: [
+				{ id: 'q1', paused: true },
+				{ id: 'q3', paused: false },
+			],
+		});
+		expect(outcomes[1]).toEqual(outcomes[0]);
+		expect(outcomes[2]).toEqual(outcomes[0]);
 	});
 });
 
