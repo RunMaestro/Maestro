@@ -7,10 +7,7 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import {
-	REMOTE_FOLDER_PICKER_UNAVAILABLE,
-	remotePathPlaceholder,
-} from '../../constants/remotePath';
+import { pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
@@ -446,13 +443,6 @@ export function NewInstanceModal({
 		}
 	};
 
-	const handleSelectFolder = React.useCallback(async () => {
-		const folder = await window.maestro.dialog.selectFolder();
-		if (folder) {
-			handleWorkingDirChange(folder);
-		}
-	}, [handleWorkingDirChange]);
-
 	// Resolve the SSH remote ID currently selected (pending or per-agent).
 	const effectiveSshRemoteId = useMemo(() => {
 		if (!isSshEnabled) return undefined;
@@ -461,6 +451,19 @@ export function NewInstanceModal({
 			: agentSshRemoteConfigs['_pending_'];
 		return config?.remoteId || undefined;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
+
+	// Browse is the same control in every mode: the native dialog for this disk, the remote
+	// folder picker when the agent will run on an SSH remote.
+	const handleSelectFolder = React.useCallback(async () => {
+		const folder = await pickDirectory({
+			sshRemoteId: isSshEnabled ? (effectiveSshRemoteId ?? null) : undefined,
+			title: 'Select Working Directory',
+			startPath: workingDir.trim() || undefined,
+		});
+		if (folder) {
+			handleWorkingDirChange(folder);
+		}
+	}, [isSshEnabled, effectiveSshRemoteId, workingDir, handleWorkingDirChange]);
 
 	// Debounced git repo detection - checks if the selected working dir is
 	// already a git repo so we can offer to `git init` it if not.
@@ -919,12 +922,12 @@ export function NewInstanceModal({
 	useEffect(() => {
 		if (!isOpen) return;
 		const handler = (e: KeyboardEvent) => {
-			// Handle Cmd+O for folder picker (disabled when SSH remote is active)
+			// The folder picker sits above this modal and owns the keyboard while it is open.
+			if (usePathPickerStore.getState().request) return;
+			// Handle Cmd+O for folder picker
 			if ((e.key === 'o' || e.key === 'O') && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
-				if (!isSshEnabled) {
-					handleSelectFolder();
-				}
+				void handleSelectFolder();
 				return;
 			}
 			// Handle Cmd+Enter or Cmd+S for creating agent
@@ -938,7 +941,7 @@ export function NewInstanceModal({
 		};
 		window.addEventListener('keydown', handler, true);
 		return () => window.removeEventListener('keydown', handler, true);
-	}, [isOpen, handleSelectFolder, handleCreate, isFormValid, isSshEnabled]);
+	}, [isOpen, handleSelectFolder, handleCreate, isFormValid]);
 
 	// Sort agents: supported first, then coming soon at the bottom. Each bucket is
 	// alphabetical by the name the row renders, matching the wizard's tile strip
@@ -1332,23 +1335,16 @@ export function NewInstanceModal({
 					label="Working Directory"
 					value={workingDir}
 					onChange={handleWorkingDirChange}
-					placeholder={
-						isSshEnabled ? remotePathPlaceholder('/home/user/project') : 'Select directory...'
-					}
+					placeholder="Select directory..."
 					error={validation.errorField === 'directory' ? validation.error : undefined}
 					monospace
 					heightClass="p-2"
 					addon={
 						<button
-							onClick={isSshEnabled ? undefined : handleSelectFolder}
-							disabled={isSshEnabled}
-							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
+							onClick={handleSelectFolder}
+							className="p-2 rounded border transition-colors row-hover"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							title={
-								isSshEnabled
-									? REMOTE_FOLDER_PICKER_UNAVAILABLE
-									: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
-							}
+							title={`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`}
 						>
 							<Folder className="w-5 h-5" />
 						</button>
@@ -1446,7 +1442,7 @@ export function NewInstanceModal({
 					theme={theme}
 					directories={additionalDirectories}
 					onChange={setAdditionalDirectories}
-					disableBrowse={isSshEnabled}
+					sshRemoteId={isSshEnabled ? (effectiveSshRemoteId ?? null) : undefined}
 					nativelyEnforced={
 						!!agents.find((a) => a.id === selectedAgent)?.capabilities
 							?.supportsAdditionalDirectories

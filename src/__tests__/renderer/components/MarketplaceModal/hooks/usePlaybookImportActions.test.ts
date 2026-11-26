@@ -2,6 +2,8 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePlaybookImportActions } from '../../../../../renderer/components/MarketplaceModal/hooks';
 import { makePlaybook } from '../_fixtures';
+import { AGENT_MODES } from '../../../../helpers/mockSession';
+import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../../../helpers/pathPicker';
 
 const notifyToastMock = vi.fn();
 const loggerErrorMock = vi.fn();
@@ -27,7 +29,6 @@ function setup(overrides: Partial<Parameters<typeof usePlaybookImportActions>[0]
 		autoRunFolderPath: '/autorun',
 		sessionId: 'session-1',
 		sshRemoteId: undefined,
-		isRemoteSession: false,
 		importPlaybook,
 		onImportComplete,
 		onClose,
@@ -132,14 +133,23 @@ describe('usePlaybookImportActions', () => {
 		expect(result.setTargetFolderName).toHaveBeenCalledWith('/picked/folder');
 	});
 
-	it('does not browse folders for remote sessions', async () => {
-		const result = setup({ isRemoteSession: true });
+	it.each(AGENT_MODES)(
+		'%s: browses for the folder where the import lands, starting in the Auto Run folder',
+		async (mode) => {
+			const result = setup({ sshRemoteId: mode === 'local' ? undefined : MODE_REMOTE_ID });
 
-		await act(async () => {
-			await result.result.current.handleBrowseFolder();
-		});
+			await browseAndPick(
+				mode,
+				() => void result.result.current.handleBrowseFolder(),
+				'/picked/playbooks'
+			);
 
-		expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
-		expect(result.setTargetFolderName).not.toHaveBeenCalled();
-	});
+			expect(result.setTargetFolderName).toHaveBeenCalledWith('/picked/playbooks');
+			if (mode !== 'local') {
+				// The remote picker opened in the Auto Run folder (asserted before the pick settled).
+				expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+			}
+			resetPathPicker();
+		}
+	);
 });

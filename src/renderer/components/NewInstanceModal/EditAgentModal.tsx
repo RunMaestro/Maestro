@@ -28,10 +28,7 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import {
-	REMOTE_FOLDER_PICKER_UNAVAILABLE,
-	remotePathPlaceholder,
-} from '../../constants/remotePath';
+import { pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
@@ -491,15 +488,6 @@ export function EditAgentModal({
 		return sshRemoteConfig?.enabled;
 	}, [sshRemoteConfig]);
 
-	// Get SSH remote host for display
-	const sshRemoteHost = useMemo(() => {
-		if (!isSshEnabled) return undefined;
-		const remoteId = sshRemoteConfig?.remoteId;
-		if (!remoteId) return undefined;
-		const remote = sshRemotes.find((r) => r.id === remoteId);
-		return remote?.host;
-	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
-
 	const trimmedWorkingDir = workingDir.trim();
 	// Compared as directories, so a trailing slash is not a move.
 	const workingDirChanged =
@@ -577,7 +565,7 @@ export function EditAgentModal({
 	// then workingDirOverride (user-specified remote path), then session.projectRoot.
 	const remotePathValidation = useRemotePathValidation({
 		isSshEnabled: !!isSshEnabled,
-		validateLocal: workingDirChanged && !isSshEnabled && !localWorkingDirRelative,
+		validateLocal: !isSshEnabled && !localWorkingDirRelative,
 		path: workingDirChanged
 			? trimmedWorkingDir
 			: (sshRemoteConfig?.workingDirOverride ?? session?.projectRoot ?? ''),
@@ -594,24 +582,21 @@ export function EditAgentModal({
 		if (!session) return undefined;
 		if (!trimmedWorkingDir) return 'Working directory is required';
 		if (localWorkingDirRelative) return 'Enter an absolute path';
-		// The SSH status line below the field reports remote failures.
-		if (workingDirChanged && !isSshEnabled && remotePathValidation.error) {
-			return remotePathValidation.error;
-		}
+		// The path status line below the field reports a missing directory, in every mode.
 		return undefined;
-	}, [
-		session,
-		trimmedWorkingDir,
-		localWorkingDirRelative,
-		workingDirChanged,
-		isSshEnabled,
-		remotePathValidation.error,
-	]);
+	}, [session, trimmedWorkingDir, localWorkingDirRelative, workingDirChanged, isSshEnabled]);
 
+	// Where Browse lists folders: this disk, the agent's remote, or `null` for an SSH draft whose
+	// remote is not resolved yet (the picker says so rather than browse the wrong disk).
+	const pickerRemoteId = isSshEnabled ? sshRemoteConfig?.remoteId || null : undefined;
 	const handleSelectFolder = useCallback(async () => {
-		const folder = await window.maestro.dialog.selectFolder();
+		const folder = await pickDirectory({
+			sshRemoteId: pickerRemoteId,
+			title: 'Select Working Directory',
+			startPath: workingDir.trim() || undefined,
+		});
 		if (folder) setWorkingDir(folder);
-	}, []);
+	}, [pickerRemoteId, workingDir]);
 
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
@@ -888,6 +873,8 @@ export function EditAgentModal({
 	useEffect(() => {
 		if (!isOpen) return;
 		const handler = (e: KeyboardEvent) => {
+			// The folder picker sits above this modal and owns the keyboard while it is open.
+			if (usePathPickerStore.getState().request) return;
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				if (isImeComposing(e)) return;
 				e.preventDefault();
@@ -1147,9 +1134,7 @@ export function EditAgentModal({
 						label="Working Directory"
 						value={workingDir}
 						onChange={setWorkingDir}
-						placeholder={
-							isSshEnabled ? remotePathPlaceholder('/home/user/project') : 'Select directory...'
-						}
+						placeholder="Select directory..."
 						error={workingDirError}
 						helperText={
 							workingDirBlocker ??
@@ -1164,24 +1149,18 @@ export function EditAgentModal({
 							<button
 								type="button"
 								onClick={handleSelectFolder}
-								disabled={isSshEnabled || !!workingDirBlocker}
-								className={`p-2 rounded border transition-colors ${isSshEnabled || workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
+								disabled={!!workingDirBlocker}
+								className={`p-2 rounded border transition-colors ${workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={isSshEnabled ? REMOTE_FOLDER_PICKER_UNAVAILABLE : 'Browse folders'}
+								title="Browse folders"
 								aria-label="Browse folders"
 							>
 								<Folder className="w-5 h-5" />
 							</button>
 						}
 					/>
-					{/* Remote path validation status (only shown when SSH is enabled) */}
-					{isSshEnabled && (
-						<RemotePathStatus
-							theme={theme}
-							validation={remotePathValidation}
-							remoteHost={sshRemoteHost}
-						/>
-					)}
+					{/* Path status, drawn the same way for a local and a remote directory */}
+					<RemotePathStatus theme={theme} validation={remotePathValidation} />
 				</div>
 
 				{/* Additional Directories: extra read/write grants beyond the working dir */}
@@ -1189,7 +1168,7 @@ export function EditAgentModal({
 					theme={theme}
 					directories={additionalDirectories}
 					onChange={setAdditionalDirectories}
-					disableBrowse={!!isSshEnabled}
+					sshRemoteId={pickerRemoteId}
 					nativelyEnforced={!!agent?.capabilities?.supportsAdditionalDirectories}
 				/>
 

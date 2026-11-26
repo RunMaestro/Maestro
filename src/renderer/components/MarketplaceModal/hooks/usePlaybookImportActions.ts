@@ -2,14 +2,15 @@ import { useCallback } from 'react';
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
+import { pickDirectory } from '../../../services/pathPicker';
 
 export interface UsePlaybookImportActionsParams {
 	selectedPlaybook: MarketplacePlaybook | null;
 	targetFolderName: string;
 	autoRunFolderPath: string;
 	sessionId: string;
+	/** The agent's SSH remote (SSH and hosted alike): where the import writes and Browse lists. */
 	sshRemoteId?: string;
-	isRemoteSession: boolean;
 	importPlaybook: (
 		playbook: MarketplacePlaybook,
 		targetFolderName: string,
@@ -28,7 +29,6 @@ export function usePlaybookImportActions({
 	autoRunFolderPath,
 	sessionId,
 	sshRemoteId,
-	isRemoteSession,
 	importPlaybook,
 	onImportComplete,
 	onClose,
@@ -69,12 +69,15 @@ export function usePlaybookImportActions({
 	]);
 
 	const handleBrowseFolder = useCallback(async () => {
-		if (isRemoteSession) return;
-		const folder = await window.maestro.dialog.selectFolder();
+		const folder = await pickDirectory({
+			sshRemoteId,
+			title: 'Select Import Folder',
+			startPath: autoRunFolderPath,
+		});
 		if (folder) {
 			setTargetFolderName(folder);
 		}
-	}, [isRemoteSession, setTargetFolderName]);
+	}, [sshRemoteId, autoRunFolderPath, setTargetFolderName]);
 
 	return { handleImport, handleBrowseFolder };
 }

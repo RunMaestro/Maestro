@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
 import { MarketplaceModal } from '../../../renderer/components/MarketplaceModal';
 import { makeManifest, makePlaybook, mockTheme } from './MarketplaceModal/_fixtures';
+import { AGENT_MODES } from '../../helpers/mockSession';
+import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 
 const mocks = vi.hoisted(() => ({
 	marketplaceState: null as any,
@@ -306,24 +308,32 @@ describe('MarketplaceModal', () => {
 		});
 	});
 
-	it('browses local folders but disables browse for remote sessions and forwards sshRemoteId', async () => {
-		const importPlaybook = vi.fn().mockResolvedValue({ success: true });
-		renderMarketplace({ sshRemoteId: 'remote-1' }, { importPlaybook });
+	it.each(AGENT_MODES)(
+		'%s: draws the same Browse, picks where the import lands, and forwards the remote',
+		async (mode) => {
+			const sshRemoteId = mode === 'local' ? undefined : MODE_REMOTE_ID;
+			const importPlaybook = vi.fn().mockResolvedValue({ success: true });
+			renderMarketplace({ sshRemoteId }, { importPlaybook });
 
-		fireEvent.click(screen.getByText('Alpha Playbook'));
-		await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
+			fireEvent.click(screen.getByText('Alpha Playbook'));
+			await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
 
-		expect(screen.getByTitle('Browse is not available for remote sessions')).toBeDisabled();
-		fireEvent.click(screen.getByText('Import Playbook'));
+			const browse = screen.getByTitle('Browse for folder');
+			expect(browse).not.toBeDisabled();
+			await browseAndPick(mode, () => fireEvent.click(browse), '/picked/import');
+			await waitFor(() => expect(screen.getByDisplayValue('/picked/import')).toBeTruthy());
 
-		await waitFor(() => {
-			expect(importPlaybook).toHaveBeenCalledWith(
-				expect.objectContaining({ id: 'alpha' }),
-				'alpha-playbook',
-				'/autorun',
-				'session-1',
-				'remote-1'
-			);
-		});
-	});
+			fireEvent.click(screen.getByText('Import Playbook'));
+			await waitFor(() => {
+				expect(importPlaybook).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'alpha' }),
+					'/picked/import',
+					'/autorun',
+					'session-1',
+					sshRemoteId
+				);
+			});
+			resetPathPicker();
+		}
+	);
 });

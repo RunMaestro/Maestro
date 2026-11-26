@@ -8,6 +8,8 @@ import { logger } from '../../utils/logger';
 import { useBatchStore } from '../../stores/batchStore';
 import { readTaskCountsAndContent } from './useAutoRunDocumentLoader';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
+import { pickDirectory } from '../../services/pathPicker';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	reserveGoalRunLaunch,
@@ -84,18 +86,6 @@ export interface UseAutoRunHandlersReturn {
 }
 
 /**
- * Get the SSH remote ID for a session, checking both runtime and config values.
- * Returns undefined for local sessions.
- *
- * Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
- * we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
- */
-function getSshRemoteId(session: Session | null): string | undefined {
-	if (!session) return undefined;
-	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-}
-
-/**
  * Hook that provides handlers for Auto Run operations.
  * Extracted from App.tsx to reduce file size and improve maintainability.
  *
@@ -130,7 +120,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 
-			const sshRemoteId = getSshRemoteId(activeSession);
+			const sshRemoteId = getSessionSshRemoteId(activeSession);
 			let result: { success: boolean; files?: string[]; tree?: AutoRunTreeNode[] } | null = null;
 
 			try {
@@ -364,7 +354,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	const getDocumentTaskCount = useCallback(async (filename: string) => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession?.autoRunFolderPath) return 0;
-		const sshRemoteId = getSshRemoteId(activeSession);
+		const sshRemoteId = getSessionSshRemoteId(activeSession);
 		const result = await window.maestro.autorun.readDoc(
 			activeSession.autoRunFolderPath,
 			filename + '.md',
@@ -433,7 +423,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession?.autoRunFolderPath) return;
 
-			const sshRemoteId = getSshRemoteId(activeSession);
+			const sshRemoteId = getSessionSshRemoteId(activeSession);
 			// Load new document content
 			const result = await window.maestro.autorun.readDoc(
 				activeSession.autoRunFolderPath,
@@ -473,7 +463,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			const silent = options?.silent === true;
 			const sessionId = activeSession.id;
 			const folderPath = activeSession.autoRunFolderPath;
-			const sshRemoteId = getSshRemoteId(activeSession);
+			const sshRemoteId = getSessionSshRemoteId(activeSession);
 			const previousCount = autoRunDocumentList.length;
 			// The list and the task counts are written after awaits. A refresh
 			// that was overtaken by a newer one, or whose session is no longer
@@ -534,26 +524,23 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	);
 
 	// Auto Run open setup handler
-	// If no folder is configured, directly open folder picker
+	// If no folder is configured, directly open the folder picker (the native dialog for a local
+	// agent, the remote folder picker for an SSH or hosted one: the same step in every mode).
 	// If folder exists, open modal to allow changing it
 	const handleAutoRunOpenSetup = useCallback(async () => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.autoRunFolderPath) {
 			// Folder exists - open modal to change it
 			setAutoRunSetupModalOpen(true);
-		} else {
-			// No folder - directly open folder picker
-			const sshRemoteId = getSshRemoteId(activeSession);
-			if (sshRemoteId) {
-				// SSH remote session - must use modal for path input (no folder picker)
-				setAutoRunSetupModalOpen(true);
-			} else {
-				// Local session - use native folder picker
-				const folder = await window.maestro.dialog.selectFolder();
-				if (folder) {
-					handleAutoRunFolderSelected(folder);
-				}
-			}
+			return;
+		}
+		const folder = await pickDirectory({
+			sshRemoteId: getSessionSshRemoteId(activeSession),
+			title: 'Select Auto Run Folder',
+			startPath: activeSession?.cwd,
+		});
+		if (folder) {
+			handleAutoRunFolderSelected(folder);
 		}
 	}, [setAutoRunSetupModalOpen, handleAutoRunFolderSelected]);
 
@@ -563,7 +550,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession?.autoRunFolderPath) return false;
 
-			const sshRemoteId = getSshRemoteId(activeSession);
+			const sshRemoteId = getSessionSshRemoteId(activeSession);
 			try {
 				// Create the document with empty content so placeholder hint shows
 				const result = await window.maestro.autorun.writeDoc(

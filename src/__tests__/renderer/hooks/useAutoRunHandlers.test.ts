@@ -19,7 +19,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAutoRunHandlers } from '../../../renderer/hooks';
 import type { Session, BatchRunConfig } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
+import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
@@ -1613,6 +1618,38 @@ describe('useAutoRunHandlers', () => {
 
 			expect(mockDeps.setAutoRunSetupModalOpen).toHaveBeenCalledWith(true);
 		});
+
+		// Parity: the first folder pick is the same step in every mode (the native dialog for a
+		// local agent, the remote folder picker for an SSH or hosted one), never the setup modal.
+		it.each(AGENT_MODES)(
+			'%s: with no folder yet, opens the folder picker and reads the pick where it lives',
+			async (mode) => {
+				vi.useRealTimers();
+				const mockSession = createMockSession({
+					...agentModeFields(mode),
+					autoRunFolderPath: undefined,
+					cwd: '/work/project',
+				});
+				const mockDeps = createMockDeps();
+				seedActiveSession(mockSession);
+				const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+				await browseAndPick(
+					mode,
+					() => void result.current.handleAutoRunOpenSetup(),
+					'/picked/autorun'
+				);
+
+				expect(mockDeps.setAutoRunSetupModalOpen).not.toHaveBeenCalledWith(true);
+				await waitFor(() =>
+					expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith(
+						'/picked/autorun',
+						mode === 'local' ? undefined : MODE_REMOTE_ID
+					)
+				);
+				resetPathPicker();
+			}
+		);
 	});
 
 	// ============================================================================

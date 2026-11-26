@@ -24,7 +24,6 @@ export function PlaybookDetailView({
 	isLoadingDocument,
 	targetFolderName,
 	isImporting,
-	isRemoteSession,
 	runningVersion,
 	onBack,
 	onSelectDocument,
@@ -172,7 +171,6 @@ export function PlaybookDetailView({
 				playbook={playbook}
 				targetFolderName={targetFolderName}
 				isImporting={isImporting}
-				isRemoteSession={isRemoteSession}
 				runningVersion={runningVersion}
 				onTargetFolderChange={onTargetFolderChange}
 				onBrowseFolder={onBrowseFolder}
