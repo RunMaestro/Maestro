@@ -108,12 +108,33 @@ function syncHostedAutoRun(
 		notifyAutoRunComplete(mirroredRunCompleteInfo(sessionId, sessionName, before));
 	}
 	if (ended) {
-		// The run's end drops the notes no task took, as a local run's end does; the host's replies stay.
+		// The run's end drops the notes no task took, as a local run's end does. The host records a
+		// task's reply before its last frame, so a reply still to come is read now.
 		clearPendingSteeringNotes(sessionId);
-	} else if (connected && frame?.isRunning && awaitsHostSteering(sessionId)) {
-		// The run moved on: a task may have taken the waiting notes, or replied to them.
-		void refreshHostedSteering(sessionId);
+		if (connected && awaitsHostSteering(sessionId)) void refreshHostedSteering(sessionId);
+		steeringPositions.delete(sessionId);
+	} else if (connected && frame?.isRunning) {
+		// First seen (a new window, a reload, another client's note), or the run moved to another
+		// task: what the host holds may have changed. Read it again.
+		const position = runPosition(frame);
+		const moved = steeringPositions.get(sessionId) !== position;
+		steeringPositions.set(sessionId, position);
+		if (moved || awaitsHostSteering(sessionId)) void refreshHostedSteering(sessionId);
 	}
+}
+
+/** Where each hosted run was when its steering was last read, by record id. */
+const steeringPositions = new Map<string, string>();
+
+/** A run's place: a task taking notes or replying moves it. */
+function runPosition(frame: AutoRunBroadcastState): string {
+	return [
+		frame.currentDocumentIndex,
+		frame.completedTasksAcrossAllDocs,
+		frame.currentTaskIndex,
+		frame.goalIteration,
+		frame.loopIteration,
+	].join(':');
 }
 
 /** Whether a hosted record shows a note the host may since have taken, or a reply still to come. */
@@ -264,8 +285,7 @@ export function feedHostedAutoRunActivity(push: MirrorPush): boolean {
 		return true;
 	}
 	if (activity.kind !== 'tool' || typeof activity.toolName !== 'string') return true;
-	// The reasoning that led to the call lands before it, in arrival order.
-	hostedThoughts.flush();
+	// `captureToolActivity()` lands the reasoning before the call first.
 	captureToolActivity(sessionId, processId, {
 		toolName: activity.toolName,
 		state: activity.state,

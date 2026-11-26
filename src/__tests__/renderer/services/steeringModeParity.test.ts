@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	answerSteeringCommand,
 	cancelSteeringNote,
 	refreshHostedSteering,
 	steeringBlocker,
@@ -22,8 +23,10 @@ const SID = 'agent-1';
 /** What the host holds, answered to each `steer-auto-run` the way a host answers it. */
 let hostPending: Array<{ id: string; text: string; timestamp: number }>;
 let hostRefuses: string | null;
+let listFails: boolean;
 const act = vi.fn(async (_peer: string, _agent: string, action: any) => {
 	const input = action.input;
+	if (input.action === 'list' && listFails) return { ok: false, error: 'The host is down' };
 	if (input.action === 'send') {
 		if (hostRefuses) {
 			return {
@@ -65,6 +68,7 @@ const settled = () => refreshHostedSteering(SID);
 beforeEach(() => {
 	hostPending = [];
 	hostRefuses = null;
+	listFails = false;
 	act.mockClear();
 	(window as any).maestro = { ...((window as any).maestro || {}), federation: { act } };
 	useSettingsStore.setState({ federationHostedAgents: true });
@@ -128,6 +132,52 @@ describe('Auto Run Steer across modes (P5)', () => {
 		submitSteeringNote({ sessionId: SID, text: 'Too late', announce: false });
 		await settled();
 		expect(useAutoRunSteeringStore.getState().notes[SID]).toEqual([]);
+	});
+
+	it("cancels a note sent moments ago by the host's id, not this window's", async () => {
+		setUp('hosted');
+		const note = submitSteeringNote({ sessionId: SID, text: 'Never mind', announce: false });
+		// Cancelled before the host answered the send: the window still shows its own id.
+		cancelSteeringNote(SID, note!.id);
+		await settled();
+		expect(act).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'steer-auto-run',
+			input: { action: 'cancel', noteId: 'host-1' },
+		});
+		expect(hostPending).toEqual([]);
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toEqual([]);
+	});
+
+	it('drops a refused note even when the host list cannot be read', async () => {
+		setUp('hosted');
+		hostRefuses = 'No Auto Run is active on this agent';
+		listFails = true;
+		submitSteeringNote({ sessionId: SID, text: 'Too late', announce: false });
+		await settled();
+		expect(useAutoRunSteeringStore.getState().notes[SID] ?? []).toEqual([]);
+	});
+
+	it("answers a CLI steering verb on a hosted agent with the host's own result", async () => {
+		setUp('hosted');
+		expect(
+			await answerSteeringCommand({ action: 'send', sessionId: SID, text: 'From the CLI' })
+		).toEqual({ success: true, note: { id: 'host-1', text: 'From the CLI', timestamp: 7 } });
+		hostRefuses = 'The host refused';
+		expect(await answerSteeringCommand({ action: 'send', sessionId: SID, text: 'again' })).toEqual({
+			success: false,
+			error: 'The host refused',
+		});
+		expect(await answerSteeringCommand({ action: 'list', sessionId: SID })).toMatchObject({
+			success: true,
+			pending: [{ id: 'host-1', text: 'From the CLI' }],
+		});
+		// A local agent's verbs are answered here, as before.
+		setUp('local');
+		expect(await answerSteeringCommand({ action: 'list', sessionId: SID })).toMatchObject({
+			success: true,
+			steerable: true,
+			pending: [],
+		});
 	});
 
 	it('still refuses a run another client owns, and sends nothing for a local or SSH run', async () => {

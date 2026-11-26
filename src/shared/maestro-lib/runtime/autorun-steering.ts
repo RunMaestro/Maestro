@@ -14,6 +14,7 @@
 
 import {
 	MAX_PENDING_STEERING_NOTES,
+	MAX_STEERING_NOTE_LENGTH,
 	normalizeSteeringNoteText,
 	type AutoRunSteeringNote,
 } from '../../autorunSteering';
@@ -96,7 +97,15 @@ export function createSteeringLedger(options: SteeringLedgerOptions): SteeringLe
 
 			if (input.action === 'send') {
 				if (blocker) return { success: false, error: blocker };
-				const text = normalizeSteeringNoteText(input.text ?? '');
+				// Refused, never cut: a note cut off mid-sentence is an instruction nobody wrote.
+				const trimmed = (input.text ?? '').trim();
+				if (trimmed.length > MAX_STEERING_NOTE_LENGTH) {
+					return {
+						success: false,
+						error: `Steering note is ${trimmed.length} characters; the limit is ${MAX_STEERING_NOTE_LENGTH}`,
+					};
+				}
+				const text = normalizeSteeringNoteText(trimmed);
 				if (!text) return { success: false, error: 'A steering note needs some text' };
 				if (waiting.length >= MAX_PENDING_STEERING_NOTES) {
 					return {

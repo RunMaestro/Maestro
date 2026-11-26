@@ -57,6 +57,11 @@ describe('createSteeringLedger', () => {
 		expect(steering.command('a1', { action: 'send', text: 'one more' }, null)).toMatchObject({
 			success: false,
 		});
+		expect(steering.command('a1', { action: 'cancel', noteId: 'id-1' }, null).success).toBe(true);
+		expect(steering.command('a1', { action: 'send', text: 'x'.repeat(4001) }, null)).toEqual({
+			success: false,
+			error: 'Steering note is 4001 characters; the limit is 4000',
+		});
 		expect(steering.command('a1', { action: 'list' }, 'No run')).toMatchObject({
 			steerable: false,
 		});

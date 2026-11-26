@@ -429,7 +429,8 @@ describe('runtime Auto Run', () => {
 			expect(tool).toMatchObject({
 				toolName: 'Read',
 				toolCallId: 'call-read-1',
-				state: { file_path: '/w/src/a.ts' },
+				// The call's raw arguments ride under `input`, as the desktop's own tool events carry them.
+				state: { status: 'running', input: { file_path: '/w/src/a.ts' } },
 			});
 			// The reasoning that led to the call goes out before it, and both before the answer.
 			expect(kinds.indexOf('thinking')).toBeLessThan(kinds.indexOf('tool'));

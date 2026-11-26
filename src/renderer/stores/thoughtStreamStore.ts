@@ -560,6 +560,7 @@ export interface ThoughtCoalescer {
 export function createThoughtCoalescer(flushMs: number = THOUGHT_FLUSH_MS): ThoughtCoalescer {
 	const buffer = new Map<string, Map<string, string>>();
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	let coalescer: ThoughtCoalescer;
 
 	const flush = () => {
 		if (timer !== null) {
@@ -575,7 +576,7 @@ export function createThoughtCoalescer(flushMs: number = THOUGHT_FLUSH_MS): Thou
 		}
 	};
 
-	return {
+	coalescer = {
 		add(sessionId, tabId, text) {
 			if (!text) return;
 			let tabs = buffer.get(sessionId);
@@ -592,9 +593,17 @@ export function createThoughtCoalescer(flushMs: number = THOUGHT_FLUSH_MS): Thou
 			}
 		},
 		flush,
-		dispose: flush,
+		dispose() {
+			liveCoalescers.delete(coalescer);
+			flush();
+		},
 	};
+	liveCoalescers.add(coalescer);
+	return coalescer;
 }
+
+/** Every coalescer still feeding the store, so a tool call can land after the reasoning before it. */
+const liveCoalescers = new Set<ThoughtCoalescer>();
 
 /** A tool lifecycle event, as a provider reports it (`process:tool-execution`, or a host). */
 export interface ToolActivityEvent {
@@ -606,15 +615,19 @@ export interface ToolActivityEvent {
 }
 
 /**
- * Put one tool event on a session's timeline as one plain-language line. The
- * local tool listener and a hosted run's feed both call this, so a call reads
- * the same whichever machine ran it.
+ * Put one tool event on a session's timeline as one plain-language line, after
+ * any reasoning still being coalesced. The local tool listener and a hosted
+ * run's feed both call this, so a call reads the same, in the same place,
+ * whichever machine ran it.
  */
 export function captureToolActivity(
 	sessionId: string,
 	tabId: string,
 	toolEvent: ToolActivityEvent
 ): void {
+	// The reasoning buffered before this call lands first, whichever feed buffered it, so a
+	// call sits after the thought that led to it in every mode.
+	for (const coalescer of liveCoalescers) coalescer.flush();
 	const state =
 		typeof toolEvent.state === 'object' && toolEvent.state !== null
 			? (toolEvent.state as { input?: unknown })

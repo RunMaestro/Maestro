@@ -164,6 +164,36 @@ describe('Auto Run Thought Stream across modes (P5)', () => {
 		expect(hosted).toEqual(local);
 	});
 
+	it('puts a tool call after the reasoning still being joined before it, in every mode', () => {
+		for (const mode of AGENT_MODES) {
+			useThoughtStreamStore.setState({ panelSessionId: null, buffers: {} });
+			useSessionStore.setState({ sessions: [createModeSession(mode, { id: SESSION_ID })] });
+			const thinking = renderHook(() => useThoughtStreamCaptureListener());
+			const tools = renderHook(() => useThoughtStreamToolListener());
+			act(() => {
+				if (mode === 'hosted') {
+					const processId = 'h1-batch-1';
+					const push = (activity: Record<string, unknown>) =>
+						feedHostedAutoRunActivity({
+							peerId: 'box',
+							event: { type: 'agent.autorunActivity', agentId: 'h1', activity },
+						} as MirrorPush);
+					push({ kind: 'thinking', at: 1, processId, text: 'Reading first' });
+					push({ kind: 'tool', at: 2, processId, toolName: 'Read', state: READ_RUNNING });
+				} else {
+					const processId = `${SESSION_ID}-batch-1`;
+					thinkingHandler?.(processId, 'Reading first');
+					toolHandler?.(processId, { toolName: 'Read', state: READ_RUNNING, timestamp: 2 });
+				}
+				vi.advanceTimersByTime(THOUGHT_FLUSH_MS);
+			});
+			thinking.unmount();
+			tools.unmount();
+			const kinds = drawnStream().entries.map((entry) => ('thought' in entry ? 'thought' : 'tool'));
+			expect({ mode, kinds }).toEqual({ mode, kinds: ['thought', 'tool'] });
+		}
+	});
+
 	it('feeds nothing for a host agent no record is drawn as, or with hosted agents off', () => {
 		useSessionStore.setState({ sessions: [createModeSession('hosted', { id: SESSION_ID })] });
 		const activity = { kind: 'thinking', at: 1, processId: 'x-batch-1', text: 'hmm' };

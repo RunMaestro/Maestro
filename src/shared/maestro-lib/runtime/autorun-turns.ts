@@ -40,6 +40,7 @@ import type { AutoRunTurnResult, AutoRunTurnRequest } from '../autorun/engine-ty
 import { createIdleWatchdog } from '../control/idle-watchdog';
 import { logger } from '../host';
 import { createOutputParser } from '../parsers/parser-factory';
+import type { TurnToolCall } from '../client/types';
 import type { MaestroPaths } from '../paths/resolve';
 import { readSettingsStore } from '../store/read-stores';
 import { sshRecordOf } from '../agents/rules';
@@ -80,6 +81,24 @@ export type AutoRunStreamEvent =
 			state?: unknown;
 			toolCallId?: string;
 	  };
+
+/**
+ * A tool call in the desktop's own `process:tool-execution` state shape (`{ status, input }`).
+ * A provider's own state already has it; a call announced in an assistant message carries only its
+ * raw arguments, which go under `input` so the call's line still names its file or command.
+ */
+export function toolStateOf(tool: TurnToolCall): Record<string, unknown> {
+	const detail = tool.detail;
+	if (
+		typeof detail === 'object' &&
+		detail !== null &&
+		!Array.isArray(detail) &&
+		('status' in detail || 'input' in detail)
+	) {
+		return detail as Record<string, unknown>;
+	}
+	return { status: tool.status, ...(detail !== undefined ? { input: detail } : {}) };
+}
 
 export interface AutoRunTurnRunnerOptions {
 	agentId: string;
@@ -247,7 +266,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 								kind: 'tool',
 								processId: sessionId,
 								toolName: event.tool.name,
-								...(event.tool.detail !== undefined ? { state: event.tool.detail } : {}),
+								state: toolStateOf(event.tool),
 								...(event.tool.id ? { toolCallId: event.tool.id } : {}),
 							});
 						}

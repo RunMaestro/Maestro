@@ -606,11 +606,12 @@ export async function startHostedAutoRun(
  */
 export function steerHostedAutoRun(
 	session: Pick<Session, 'liftedTo'> | null | undefined,
-	input: SteeringCommandInput
+	input: SteeringCommandInput,
+	options: { quiet?: boolean } = {}
 ): Promise<SteeringCommandResult | null> | undefined {
 	const target = hostedTargetOf(session);
 	if (!target) return undefined;
-	return steerMirrorAutoRun(target.peerId, target.agentId, input);
+	return steerMirrorAutoRun(target.peerId, target.agentId, input, options);
 }
 
 /**

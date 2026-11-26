@@ -370,14 +370,21 @@ export async function steerMirrorQueuedItem(
 /**
  * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss). The host's
  * answer as is, a refusal included (`success: false`, no toast: the caller says it where the user
- * looked). Null when the host could not be reached (already a red toast).
+ * looked). Null when the host could not be reached (a red toast, unless `quiet`).
  */
 export async function steerMirrorAutoRun(
 	peerId: string,
 	agentId: string,
-	input: SteeringCommandInput
+	input: SteeringCommandInput,
+	options: { quiet?: boolean } = {}
 ): Promise<SteeringCommandResult | null> {
-	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'steer-auto-run', input });
+	const action = { kind: 'steer-auto-run' as const, input };
+	// `quiet`: a background read, whose failure is not news (the next one tries again).
+	if (options.quiet) {
+		const answer = await callMirroredAgentAction(peerId, agentId, action);
+		return answer?.ok && answer.result.kind === 'steer-auto-run' ? answer.result.result : null;
+	}
+	const result = await actOnMirroredAgent(peerId, agentId, action);
 	return result?.kind === 'steer-auto-run' ? result.result : null;
 }
 
