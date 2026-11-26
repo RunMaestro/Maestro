@@ -560,7 +560,6 @@ export interface ThoughtCoalescer {
 export function createThoughtCoalescer(flushMs: number = THOUGHT_FLUSH_MS): ThoughtCoalescer {
 	const buffer = new Map<string, Map<string, string>>();
 	let timer: ReturnType<typeof setTimeout> | null = null;
-	let coalescer: ThoughtCoalescer;
 
 	const flush = () => {
 		if (timer !== null) {
@@ -576,7 +575,7 @@ export function createThoughtCoalescer(flushMs: number = THOUGHT_FLUSH_MS): Thou
 		}
 	};
 
-	coalescer = {
+	const coalescer: ThoughtCoalescer = {
 		add(sessionId, tabId, text) {
 			if (!text) return;
 			let tabs = buffer.get(sessionId);
