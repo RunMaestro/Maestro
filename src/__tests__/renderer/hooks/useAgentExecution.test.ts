@@ -10,6 +10,7 @@ import {
 	observeEffortRejection,
 } from '../../../renderer/services/effortRejection';
 import { getEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
+import { AUTO_RUN_TURN_ABORTED } from '../../../renderer/hooks/batch/internal/autoRunTurnAbort';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -135,6 +136,83 @@ describe('useAgentExecution', () => {
 		resetEffortRejections();
 		vi.useRealTimers();
 		Object.assign(window.maestro, originalMaestro);
+	});
+
+	it('lets go of an Auto Run turn when its run is force-ended, even one still waiting on the queue', async () => {
+		// The turn exits, but a queued message keeps the agent busy and never drains: before the
+		// abort signal, this spawn polled forever and its Auto Run stayed "stopping".
+		const queued: QueuedItem = {
+			id: 'queued-1',
+			timestamp: 1700000000100,
+			tabId: 'tab-1',
+			type: 'message',
+			text: 'Queued message',
+		};
+		const session = createMockSession({
+			state: 'busy',
+			executionQueue: [queued],
+			aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
+		});
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: vi.fn().mockResolvedValue(undefined) },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+		const controller = new AbortController();
+		let settled = false;
+		const spawnPromise = result.current
+			.spawnAgentForSession(session.id, 'Batch task', undefined, {
+				isAutoRun: true,
+				abortSignal: controller.signal,
+			})
+			.then((value) => {
+				settled = true;
+				return value;
+			});
+
+		await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledTimes(1));
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId, 0);
+		});
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(settled).toBe(false);
+
+		controller.abort();
+
+		await expect(spawnPromise).resolves.toMatchObject({
+			success: false,
+			error: AUTO_RUN_TURN_ABORTED,
+		});
+	});
+
+	it('does not start a turn for an Auto Run already force-ended', async () => {
+		const session = createMockSession({ aiTabs: [createMockTab({ state: 'idle' })] });
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+		const controller = new AbortController();
+		controller.abort();
+
+		await expect(
+			result.current.spawnAgentForSession(session.id, 'Batch task', undefined, {
+				isAutoRun: true,
+				abortSignal: controller.signal,
+			})
+		).resolves.toMatchObject({ success: false, error: AUTO_RUN_TURN_ABORTED });
+		expect(mockProcess.spawn).not.toHaveBeenCalled();
 	});
 
 	it('spawns a batch agent and returns aggregated results', async () => {

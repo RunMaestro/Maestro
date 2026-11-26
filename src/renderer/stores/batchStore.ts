@@ -118,6 +118,15 @@ export function isMirroredBatchRun(sessionId: string): boolean {
 	return useBatchStore.getState().batchRunStates[sessionId]?.mirrored === true;
 }
 
+/**
+ * True when this agent's Auto Run is running and was already asked to stop. A further stop or
+ * abort on it is a force-end (`killBatchRun`), which is what ends a run whose turn never settles.
+ */
+export function isAutoRunAlreadyStopping(sessionId: string): boolean {
+	const state = useBatchStore.getState().batchRunStates[sessionId];
+	return state?.isRunning === true && state.isStopping === true;
+}
+
 /** List of session IDs with active batches */
 export function selectActiveBatchSessionIds(s: BatchStoreState): string[] {
 	return Object.entries(s.batchRunStates)

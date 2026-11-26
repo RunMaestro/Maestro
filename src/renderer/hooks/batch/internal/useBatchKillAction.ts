@@ -9,6 +9,7 @@ import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import { aggregateAutoRunHistoryTotals, mergeFinalSummaryTotals } from './batchFinalSummary';
+import { abortAutoRunTurns } from './autoRunTurnAbort';
 
 interface TimeTrackingApi {
 	getElapsedTime: (sessionId: string) => number;
@@ -87,6 +88,9 @@ export function useBatchKillAction({
 			// history, process enumeration). Intentionally NOT deleted later - see
 			// the comment on the trailing power.removeReason call.
 			stopRequestedRefs.current[sessionId] = true;
+			// Release the runner from a turn it may never get back (a missed exit, a queue that
+			// never drains): its await settles now, so the loop reaches its stop check and cleanup.
+			abortAutoRunTurns(sessionId);
 
 			// 0. Flush Auto Run stats + history BEFORE we tear down timeTracking below.
 			//    stopTracking() deletes the tracker, so elapsed time must be captured now.
