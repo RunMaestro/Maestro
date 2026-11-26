@@ -11,6 +11,8 @@ import {
 	type LiveTurn,
 } from '../../../../shared/maestro-lib/client/live-turn';
 import type { TurnEvent } from '../../../../shared/maestro-lib/client/types';
+import type { ParsedEvent } from '../../../../shared/maestro-lib/parsers/agent-output-parser';
+import { createTurnEventMapper } from '../../../../shared/maestro-lib/turns/turn-events';
 
 function ids() {
 	let n = 0;
@@ -58,6 +60,42 @@ describe('foldLiveTurn', () => {
 		expect(turn?.entries.map((entry) => [entry.source, entry.text])).toEqual([
 			['thinking', '42'],
 			['stdout', '42'],
+		]);
+	});
+
+	// T10: no text is compared. A provider that tags reasoning keeps an answer chunk equal to the
+	// reasoning chunk before it, in the window's live tail (coalesced or not) and on the host.
+	it('keeps an answer chunk equal to the reasoning chunk before it, through the host mapper (T10)', () => {
+		const strip = (turn: LiveTurn | undefined) => turn?.entries.map((e) => [e.source, e.text]);
+		for (const agentId of ['codex', 'grok', 'opencode', 'kilo', 'omp', 'antigravity']) {
+			const mapper = createTurnEventMapper({ agentId, now: () => 1 });
+			const parsed: ParsedEvent[] = [
+				{ type: 'text', text: '\n\n', isPartial: true, isReasoning: true },
+				{ type: 'text', text: '\n\n', isPartial: true },
+				{ type: 'text', text: 'Done.', isPartial: true },
+			];
+			const events = parsed.flatMap((event) =>
+				mapper.map(event).map((mapped) => ({ ...mapped, at: 1 }) as TurnEvent)
+			);
+			const expected = [
+				['thinking', '\n\n'],
+				['stdout', '\n\nDone.'],
+			];
+			expect(strip(foldAll(events))).toEqual(expected);
+			expect(strip(foldAll(coalesceTurnEvents(events)))).toEqual(expected);
+		}
+	});
+
+	it('draws each Claude partial once, so an older window that knows no flag never draws it twice (T10)', () => {
+		const mapper = createTurnEventMapper({ agentId: 'claude-code', now: () => 1 });
+		const parsed: ParsedEvent[] = [
+			{ type: 'text', text: 'Looking.', isPartial: true },
+			{ type: 'result', text: 'Looking.' },
+		];
+		const events = parsed.flatMap((event) => mapper.map(event));
+		expect(events).toEqual([
+			{ kind: 'thinking', text: 'Looking.' },
+			{ kind: 'text', text: 'Looking.' },
 		]);
 	});
 
