@@ -32,9 +32,9 @@ import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { resolveGroupChatAutoRunTarget } from '../utils/groupChatAutoRun';
 import {
 	consumeGroupChatAutoRun,
-	hasGroupChatAutoRun,
 	peekGroupChatAutoRun,
 	registerGroupChatAutoRun,
+	type GroupChatAutoRunEntry,
 } from '../utils/groupChatAutoRunRegistry';
 import { DEFAULT_BATCH_PROMPT } from '../hooks/batch/batchUtils';
 import { generateId } from '../utils/ids';
@@ -82,6 +82,20 @@ function resolveParticipantAgent(trigger: GroupChatAutoRunTrigger): Session | un
 	return findSessionForParticipantName(trigger.participantName, sessions);
 }
 
+/**
+ * Agents whose launch this window drives has not returned yet. `startBatchRun`
+ * is awaited to the run's end, so this is "the run is still going here", even
+ * after a chat timeout has cleared its entry and reset its batch state. A new
+ * request for the agent is refused until then, so the earlier run's completion
+ * can never take the newer request's entry.
+ */
+const launchesInFlight = new Set<string>();
+
+/** Forget launches a test left pending. Tests only. */
+export function resetGroupChatAutoRunLaunchesForTests(): void {
+	launchesInFlight.clear();
+}
+
 interface LaunchWatch {
 	stop: () => void;
 	/** Whether this window's own run (not a mirror) ever started for the agent. */
@@ -99,13 +113,14 @@ interface LaunchWatch {
  */
 function watchLaunch(
 	sessionId: string,
+	entry: GroupChatAutoRunEntry,
 	trigger: GroupChatAutoRunTrigger,
 	hostDrivesRun: boolean
 ): LaunchWatch {
 	let lastMirror: BatchRunState | undefined;
 	let ownRun = false;
 	const unsubscribe = useBatchStore.subscribe((state) => {
-		if (!hasGroupChatAutoRun(sessionId)) {
+		if (peekGroupChatAutoRun(sessionId) !== entry) {
 			unsubscribe();
 			return;
 		}
@@ -121,7 +136,7 @@ function watchLaunch(
 		}
 		if (!lastMirror) return; // the mirror has not appeared yet
 		unsubscribe();
-		if (!consumeGroupChatAutoRun(sessionId)) return;
+		if (!consumeGroupChatAutoRun(sessionId, entry)) return;
 		void report(
 			trigger,
 			groupChatAutoRunSummary({
@@ -222,34 +237,42 @@ export async function startGroupChatAutoRun(
 		);
 		return;
 	}
-	if (waiting || useBatchStore.getState().batchRunStates[session.id]?.isRunning) {
+	if (
+		waiting ||
+		launchesInFlight.has(session.id) ||
+		useBatchStore.getState().batchRunStates[session.id]?.isRunning
+	) {
 		await fail(
 			`Agent "${session.name}" is already running an Auto Run. Ask again when that run ends.`
 		);
 		return;
 	}
 	// Register before the launch: a run can end before startBatchRun returns.
-	registerGroupChatAutoRun(session.id, trigger.groupChatId, trigger.participantName);
+	const entry = registerGroupChatAutoRun(session.id, trigger.groupChatId, trigger.participantName);
 	// The host drives a hosted agent's run; this window drives every other one.
+	// A hosted run stays guarded by its entry and its mirror instead.
 	const hostDrivesRun = Boolean(hostedTargetOf(session));
-	const watch = watchLaunch(session.id, trigger, hostDrivesRun);
+	const watch = watchLaunch(session.id, entry, trigger, hostDrivesRun);
+	if (!hostDrivesRun) launchesInFlight.add(session.id);
 	try {
 		await startBatchRun(session.id, config, folderPath);
 	} catch (err) {
 		watch.stop();
-		if (consumeGroupChatAutoRun(session.id)) {
+		if (consumeGroupChatAutoRun(session.id, entry)) {
 			await fail(ipcErrorMessage(err));
 		}
 		return;
+	} finally {
+		launchesInFlight.delete(session.id);
 	}
 	// A run this window drives starts here (its own, non-mirrored batch state)
 	// and its completion consumes the entry. If none started, `startBatchRun`
 	// declined the launch (it showed the reason in a notice), even when another
 	// window's run is on screen as a mirror. A run a host drives is only ever a
 	// mirror here: the host took it, and the mirror's end reports it.
-	if (hasGroupChatAutoRun(session.id) && !watch.sawOwnRun() && !hostDrivesRun) {
+	if (peekGroupChatAutoRun(session.id) === entry && !watch.sawOwnRun() && !hostDrivesRun) {
 		watch.stop();
-		consumeGroupChatAutoRun(session.id);
+		consumeGroupChatAutoRun(session.id, entry);
 		await fail('Maestro declined to start the run. Its notice says why.');
 	}
 }

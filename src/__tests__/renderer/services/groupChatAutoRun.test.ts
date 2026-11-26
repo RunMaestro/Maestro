@@ -16,12 +16,14 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
 	groupChatAutoRunFailure,
+	resetGroupChatAutoRunLaunchesForTests,
 	startGroupChatAutoRun,
 } from '../../../renderer/services/groupChatAutoRun';
 import { useGroupChatAutoRunTrigger } from '../../../renderer/hooks/groupChat/useGroupChatAutoRunTrigger';
 import {
 	consumeGroupChatAutoRun,
 	hasGroupChatAutoRun,
+	registerGroupChatAutoRun,
 } from '../../../renderer/utils/groupChatAutoRunRegistry';
 import { AGENT_MODES, createModeSession } from '../../helpers/mockSession';
 
@@ -89,6 +91,7 @@ beforeEach(() => {
 afterEach(() => {
 	(window.maestro as unknown as Record<string, unknown>).groupChat = savedGroupChat;
 	consumeGroupChatAutoRun('agent-1');
+	resetGroupChatAutoRunLaunchesForTests();
 });
 
 describe('startGroupChatAutoRun in every mode', () => {
@@ -284,6 +287,42 @@ describe('startGroupChatAutoRun refusals reach the chat', () => {
 		}
 	);
 
+	it.each(['local', 'ssh'] as const)(
+		'refuses a new request while an earlier %s run is still going after its chat timed out',
+		async (mode) => {
+			setAgent(mode);
+			let finishFirst: () => void = () => {};
+			const first = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						finishFirst = resolve;
+					})
+			);
+			const firstRequest = startGroupChatAutoRun(trigger, first);
+			await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+			// chat-1 times out: its entry is cleared and the batch state reset, while
+			// the run itself is still going in this window.
+			consumeGroupChatAutoRun('agent-1');
+			useBatchStore.setState({ batchRunStates: { 'agent-1': { ...DEFAULT_BATCH_STATE } } });
+			const second = vi.fn();
+
+			await startGroupChatAutoRun({ ...trigger, groupChatId: 'chat-2' }, second);
+
+			expect(second).not.toHaveBeenCalled();
+			expect(reportAutoRunComplete).toHaveBeenCalledWith(
+				'chat-2',
+				'Client',
+				expect.stringContaining('is already running an Auto Run')
+			);
+			// Once the earlier run returns, the agent takes requests again.
+			finishFirst();
+			await firstRequest;
+			const third = launcherFor(mode).launch;
+			await startGroupChatAutoRun({ ...trigger, groupChatId: 'chat-3' }, third);
+			expect(third).toHaveBeenCalledTimes(1);
+		}
+	);
+
 	it('refuses when Auto Run is turned off, before registering', async () => {
 		setAgent('local');
 		useSettingsStore.setState({ autoRunDisabled: true });
@@ -461,5 +500,16 @@ describe('useGroupChatAutoRunTrigger', () => {
 	it('does not listen in a window that is not the lifecycle owner', () => {
 		renderHook(() => useGroupChatAutoRunTrigger({ enabled: false, startBatchRun: vi.fn() }));
 		expect(onAutoRunTriggered).not.toHaveBeenCalled();
+	});
+});
+
+describe('groupChatAutoRunRegistry launch identity', () => {
+	it('a late cleanup with an earlier launch entry leaves the newer entry in place', () => {
+		const earlier = registerGroupChatAutoRun('agent-9', 'chat-1', 'Client');
+		const newer = registerGroupChatAutoRun('agent-9', 'chat-2', 'Client');
+
+		expect(consumeGroupChatAutoRun('agent-9', earlier)).toBeUndefined();
+		expect(consumeGroupChatAutoRun('agent-9', newer)).toBe(newer);
+		expect(hasGroupChatAutoRun('agent-9')).toBe(false);
 	});
 });
