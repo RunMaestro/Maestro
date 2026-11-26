@@ -29,6 +29,7 @@ import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab } from './peerMirrorView';
+import { isAiTabHidden } from './unifiedTabOrderUtils';
 
 /** One tab's transcript as the mirror holds it (`MirrorTranscriptSlot`, the fields read here). */
 export interface HostedTranscript {
@@ -46,6 +47,8 @@ export interface HostedProjectionInput {
 	liveTurns?: Readonly<Record<string, LiveTurn>>;
 	/** What waits in the host's queue for this agent. */
 	queue?: readonly QueuedTurn[];
+	/** This record is the agent the window shows now (the unread rule reads it). */
+	viewing?: boolean;
 }
 
 const persistedViews = new WeakMap<readonly LogEntryRecord[], LogEntry[]>();
@@ -213,11 +216,41 @@ function hostedTabError(
 	return error;
 }
 
+/**
+ * Whether the host's running turn streamed answer output into `logs` that `prior` did not draw: a
+ * live answer entry that is new or whose text moved on. The same event a local tab's data chunk is.
+ */
+function streamedAnswer(prior: readonly LogEntry[], logs: readonly LogEntry[]): boolean {
+	if (logs === prior) return false;
+	const drawn = new Map(prior.map((entry) => [entry.id, entry]));
+	return logs.some(
+		(entry) =>
+			entry.hostLive && ANSWER_SOURCES.has(entry.source) && drawn.get(entry.id)?.text !== entry.text
+	);
+}
+
+/**
+ * A tab's unread flag after the host streamed into it, by the rule a local tab follows
+ * (`useAgentDataListener`): output marks it unread unless the person is looking at it (its agent
+ * and tab are the visible ones, scrolled to the bottom), and reading it clears it. A hidden tab is
+ * never set unread: it has no chip to clear it from.
+ */
+function hostedTabUnread(
+	local: AITab,
+	logs: readonly LogEntry[],
+	watched: boolean
+): boolean | undefined {
+	if (!streamedAnswer(local.logs ?? [], logs)) return local.hasUnread;
+	const unread = !watched || local.isAtBottom === false;
+	return unread && isAiTabHidden(local) ? local.hasUnread : unread;
+}
+
 function projectTab(
 	local: AITab,
 	host: AITabRecord,
 	logs: LogEntry[],
-	liveTurn: LiveTurn | undefined
+	liveTurn: LiveTurn | undefined,
+	watched: boolean
 ): AITab {
 	const busy = host.state === 'busy';
 	const thinkingStartTime = busy
@@ -228,6 +261,7 @@ function projectTab(
 	const starred = host.starred === true;
 	const state = busy ? 'busy' : 'idle';
 	const agentError = hostedTabError(local, busy, logs);
+	const hasUnread = hostedTabUnread(local, logs, watched);
 	if (
 		local.name === name &&
 		local.agentSessionId === agentSessionId &&
@@ -235,11 +269,22 @@ function projectTab(
 		local.state === state &&
 		local.thinkingStartTime === thinkingStartTime &&
 		local.logs === logs &&
-		local.agentError === agentError
+		local.agentError === agentError &&
+		local.hasUnread === hasUnread
 	) {
 		return local;
 	}
-	return { ...local, name, agentSessionId, starred, state, thinkingStartTime, logs, agentError };
+	return {
+		...local,
+		name,
+		agentSessionId,
+		starred,
+		state,
+		thinkingStartTime,
+		logs,
+		agentError,
+		...(hasUnread !== undefined ? { hasUnread } : {}),
+	};
 }
 
 /**
@@ -303,7 +348,8 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 			local,
 			host,
 			logsFor(local.id, local.logs ?? []),
-			input.liveTurns?.[liveTurnKey(agent.id, local.id)]
+			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
+			input.viewing === true && local.id === session.activeTabId
 		);
 		if (next !== local) changed = true;
 		aiTabs.push(next);
