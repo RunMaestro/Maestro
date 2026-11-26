@@ -2082,12 +2082,6 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				updated.harnessControlMode = undefined;
 				continue;
 			}
-			// `exec` is the default, so it is stored the way the Edit Agent modal
-			// stores it: as an unset field.
-			if (key === 'codexTransport' && value === 'exec') {
-				updated.codexTransport = undefined;
-				continue;
-			}
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
 		}
 

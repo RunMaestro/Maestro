@@ -1020,7 +1020,6 @@ export function applyAgentConfigPatch(
 		touched += 1;
 		let value = patch[key];
 		if (key === 'customEffort' && typeof value === 'string') value = value.trim() || null;
-		if (key === 'codexTransport' && value === 'exec') value = null;
 		if (key === 'harnessControlMode' && value === 'current') value = null;
 		if (value === null) delete next[key];
 		else next[key] = value;

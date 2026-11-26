@@ -158,9 +158,11 @@ describe('steerQueuedItem', () => {
 
 	it('reports why an item is not steerable instead of steering it', async () => {
 		// The CLI surfaces this reason; the button never renders for it. A Codex agent
-		// on the default exec transport has no steering channel.
+		// on the exec transport has no steering channel.
 		useSessionStore.setState({
-			sessions: [{ ...steerableSession([item()]), toolType: 'codex' } as Session],
+			sessions: [
+				{ ...steerableSession([item()]), toolType: 'codex', codexTransport: 'exec' } as Session,
+			],
 		});
 
 		const result = await steerQueuedItem('sess-1', 'item-a');
@@ -352,7 +354,9 @@ describe('steerQueuedItemOrExplain', () => {
 	it('says why a message cannot be steered, and leaves it queued', async () => {
 		// The Steer button is hidden for this; a chord has nothing to hide.
 		useSessionStore.setState({
-			sessions: [{ ...steerableSession([item()]), toolType: 'codex' } as Session],
+			sessions: [
+				{ ...steerableSession([item()]), toolType: 'codex', codexTransport: 'exec' } as Session,
+			],
 		});
 
 		const result = await steerQueuedItemOrExplain('sess-1', 'item-a');

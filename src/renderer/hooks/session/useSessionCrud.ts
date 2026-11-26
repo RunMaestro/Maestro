@@ -27,7 +27,7 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
-import type { CodexTransport } from '../../../shared/codexTransport';
+import { isCodexTransport, type CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
@@ -294,8 +294,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// value already means off and storing `false` on every non-Codex
 					// agent would be noise in every session record.
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
-					// Same rule: `exec` is the default, so only the opt-in is stored.
-					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					// An explicit choice is stored as given, exec included: an absent value now
+					// means the default (app-server), so `exec` must not be dropped here.
+					codexTransport: isCodexTransport(codexTransport) ? codexTransport : undefined,
 					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 					claudeInteractive: newAgentClaudeInteractive(agentId),
 				};

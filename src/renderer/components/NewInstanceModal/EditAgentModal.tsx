@@ -51,6 +51,7 @@ import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agen
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 import { isImeComposing } from '../../utils/ime';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import { CODEX_DEFAULT_TRANSPORT, resolveCodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 /**
@@ -126,7 +127,7 @@ export function EditAgentModal({
 	// rule: reset credits are finite and irreversible.
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
 	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
-	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
+	const [codexTransport, setCodexTransport] = useState<CodexTransport>(CODEX_DEFAULT_TRANSPORT);
 	const [harnessControlMode, setHarnessControlMode] = useState<HarnessControlMode>('current');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
@@ -444,10 +445,17 @@ export function EditAgentModal({
 		setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 		setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 		setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
-		// Read the stored value, not `resolveCodexTransport`: that answers `exec`
-		// for a non-Codex agent, and saving it back would erase the preference
-		// of an agent that was moved off Codex and may move back.
-		setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
+		// Codex shows what its turns actually use (an unset value is the default).
+		// Other agents keep the stored value: `resolveCodexTransport` answers `exec`
+		// for them, and saving that back would erase the preference of an agent that
+		// was moved off Codex and may move back.
+		setCodexTransport(
+			session.toolType === 'codex'
+				? resolveCodexTransport(session)
+				: session.codexTransport === 'app-server'
+					? 'app-server'
+					: 'exec'
+		);
 		setHarnessControlMode(session.harnessControlMode === 'native' ? 'native' : 'current');
 
 		return () => {

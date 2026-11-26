@@ -393,7 +393,7 @@ describe('update-agent command', () => {
 			expect(consoleSpy).toHaveBeenCalledWith('  Codex transport: app-server');
 		});
 
-		it('clears the field for exec, the default transport', async () => {
+		it('stores an explicit exec rather than clearing it (unset now means app-server)', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 			codexAgent();
 			const sendCommand = vi.fn().mockResolvedValue({
@@ -405,7 +405,7 @@ describe('update-agent command', () => {
 			await updateAgent('agent-1', { codexTransport: 'exec' });
 
 			expect(sendCommand).toHaveBeenCalledWith(
-				expect.objectContaining({ configPatch: { codexTransport: null } }),
+				expect.objectContaining({ configPatch: { codexTransport: 'exec' } }),
 				'update_session_config_result'
 			);
 			expect(consoleSpy).toHaveBeenCalledWith('  Codex transport: exec');

@@ -76,7 +76,7 @@ export interface SpawnProcessConfig {
 	// Optional override for the maestro-p binary path. When unset/empty, the
 	// spawner falls back to the bundled maestro-p script.
 	maestroPPath?: string;
-	// Codex transport ('exec' default, 'app-server' opt-in). Like maestroPMode,
+	// Codex transport ('app-server' default, 'exec' opt-out). Like maestroPMode,
 	// the authoritative value is read from the persisted session; this is only
 	// a fallback for callers that pass it inline.
 	codexTransport?: CodexTransport;

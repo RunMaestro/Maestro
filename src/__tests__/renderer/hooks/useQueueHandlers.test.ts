@@ -1094,10 +1094,12 @@ describe('useQueueHandlers', () => {
 			expect(updated.executionQueue).toEqual([item]);
 		});
 
-		it('does not steer a non-Claude agent', async () => {
+		it('does not steer a Codex agent on the exec transport', async () => {
 			const item = createQueuedItem({ id: 'item-a', text: 'go left' });
 			useSessionStore.setState({
-				sessions: [{ ...steerableSession([item]), toolType: 'codex' } as Session],
+				sessions: [
+					{ ...steerableSession([item]), toolType: 'codex', codexTransport: 'exec' } as Session,
+				],
 			});
 
 			await steerItem('item-a');

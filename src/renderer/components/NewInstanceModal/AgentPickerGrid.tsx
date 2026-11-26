@@ -4,6 +4,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { ProviderAvailabilityBar } from '../ui/ProviderAvailabilityBar';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { isBetaAgent } from '../../../shared/agentMetadata';
+import { CODEX_DEFAULT_TRANSPORT } from '../../../shared/codexTransport';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { SUPPORTED_AGENTS } from './types';
@@ -307,7 +308,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 													? (value) => onCodexAutoResetChange(agent.id, value)
 													: undefined
 											}
-											codexTransport={codexTransportByAgent?.[agent.id] ?? 'exec'}
+											codexTransport={codexTransportByAgent?.[agent.id] ?? CODEX_DEFAULT_TRANSPORT}
 											onCodexTransportChange={
 												onCodexTransportChange
 													? (value) => onCodexTransportChange(agent.id, value)

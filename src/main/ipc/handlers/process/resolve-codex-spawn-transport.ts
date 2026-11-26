@@ -13,7 +13,7 @@ type PersistedSessionRecord = {
  * The persisted agent record is authoritative, the same way
  * `resolveClaudeSpawnContext` reads `maestroPMode`: a renderer holding a stale
  * copy of the agent must not route a turn differently from what is saved. When
- * a record exists its value wins outright, even when it is absent (= `exec`).
+ * a record exists its value wins outright, even when it is absent (= the default).
  * The inline `config.codexTransport` is only consulted when no record matches,
  * which is the case for spawns under a synthetic session id.
  *

@@ -138,7 +138,7 @@ describe('SendMenuPopover', () => {
 	});
 
 	it('offers agent settings in the Steer help for Codex on exec', () => {
-		seed({ toolType: 'codex' });
+		seed({ toolType: 'codex', codexTransport: 'exec' });
 		renderMenu();
 		fireEvent.click(screen.getByLabelText('How steering works on this agent'));
 		expect(screen.getByTestId('steer-help')).toHaveTextContent('exec transport');

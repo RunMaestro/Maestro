@@ -207,8 +207,8 @@ export interface AgentPickerGridProps {
 	/** Codex automatic usage resets, per agent id. Defaults off when absent. */
 	codexAutoResetByAgent?: Record<string, boolean>;
 	onCodexAutoResetChange?: (agentId: string, value: boolean) => void;
-	/** Codex transport, per agent id. Defaults to `exec` when absent. */
-	codexTransportByAgent?: Record<string, CodexTransport>;
+	/** Codex transport, per agent id. Absent means the default (app-server). */
+	codexTransportByAgent?: Partial<Record<string, CodexTransport>>;
 	onCodexTransportChange?: (agentId: string, value: CodexTransport) => void;
 	/** Native protocol mode, per agent id. Defaults to current. */
 	harnessControlModeByAgent?: Record<string, HarnessControlMode>;

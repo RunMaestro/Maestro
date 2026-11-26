@@ -176,9 +176,8 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 				`--codex-transport expects ${CODEX_TRANSPORTS.join(' or ')}, got "${options.codexTransport}"`
 			);
 		}
-		// Only the opt-in is stored; `exec` clears the field, matching the Edit
-		// Agent modal, where Standard leaves `codexTransport` unset.
-		patch.codexTransport = transport === 'app-server' ? transport : null;
+		// Stored as given: an unset field now means the default (app-server).
+		patch.codexTransport = transport;
 	}
 
 	return Object.keys(patch).length > 0 ? patch : undefined;

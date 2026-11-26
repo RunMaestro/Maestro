@@ -23,7 +23,11 @@ import {
 	toClaudeTokenModeSource,
 	type ClaudeTokenMode,
 } from '../../../shared/claudeTokenMode';
-import { CODEX_TRANSPORTS, type CodexTransport } from '../../../shared/codexTransport';
+import {
+	CODEX_DEFAULT_TRANSPORT,
+	CODEX_TRANSPORTS,
+	type CodexTransport,
+} from '../../../shared/codexTransport';
 import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/opencodeAgentArg';
 import {
 	supportsNativeControl,
@@ -518,7 +522,7 @@ export function AgentConfigPanel({
 	detectedMaestroPPath,
 	codexAutoResetOnExhaustion = false,
 	onCodexAutoResetChange,
-	codexTransport = 'exec',
+	codexTransport = CODEX_DEFAULT_TRANSPORT,
 	onCodexTransportChange,
 	harnessControlMode = 'current',
 	onHarnessControlModeChange,
@@ -928,9 +932,10 @@ export function AgentConfigPanel({
 						theme={theme}
 					/>
 					<p className="text-xs opacity-50 mt-2">
-						codex exec is the default and runs every turn. codex app-server is experimental: it runs
-						local interactive chat turns so a queued message can steer a turn that is already
-						running. SSH, image, Auto Run, and Cue turns keep using codex exec.
+						codex app-server is the default: it streams reasoning and runs local interactive chat
+						turns so a queued message can steer a turn that is already running. codex exec is the
+						explicit alternative and never shows reasoning. Image, Auto Run, and Cue turns use codex
+						exec on either setting.
 					</p>
 				</div>
 			)}

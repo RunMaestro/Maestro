@@ -948,7 +948,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
 	});
 
-	it('defaults a Codex agent to codex exec', () => {
+	it('defaults a Codex agent to codex app-server', () => {
 		render(
 			<AgentConfigPanel
 				{...createDefaultProps({ agent: codexAgent(), onCodexTransportChange: vi.fn() })}
@@ -956,14 +956,14 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		);
 
 		expect(screen.getByText('Codex Transport')).toBeInTheDocument();
-		const standard = screen.getByText('codex exec').closest('button');
+		const exec = screen.getByText('codex exec').closest('button');
 		const appServer = screen.getByText('codex app-server').closest('button');
-		expect(standard?.className).toContain('ring-2');
-		expect(appServer?.className).not.toContain('ring-2');
-		// The help text names the experimental status and the turns that stay on exec.
-		expect(screen.getByText(/codex app-server is experimental/)).toBeInTheDocument();
+		expect(appServer?.className).toContain('ring-2');
+		expect(exec?.className).not.toContain('ring-2');
+		// The help text names the default and the turns that stay on exec.
+		expect(screen.getByText(/codex app-server is the default/)).toBeInTheDocument();
 		expect(
-			screen.getByText(/SSH, image, Auto Run, and Cue turns keep using codex exec/)
+			screen.getByText(/Image, Auto Run, and Cue turns use codex exec on either setting/)
 		).toBeInTheDocument();
 	});
 
@@ -978,7 +978,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		expect(onCodexTransportChange).toHaveBeenCalledWith('app-server');
 	});
 
-	it('shows a stored app-server choice as selected with the same hint over SSH', () => {
+	it('shows a stored app-server choice as selected, over SSH too (SSH turns run app-server)', () => {
 		render(
 			<AgentConfigPanel
 				{...createDefaultProps({
@@ -992,8 +992,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 
 		const appServer = screen.getByText('codex app-server').closest('button');
 		expect(appServer?.className).toContain('ring-2');
-		expect(screen.queryByText(/This agent runs over SSH/)).not.toBeInTheDocument();
-		expect(screen.getByText(/SSH, image, Auto Run, and Cue turns keep using/)).toBeInTheDocument();
+		expect(screen.queryByText(/so its turns use codex exec/)).not.toBeInTheDocument();
 	});
 });
 

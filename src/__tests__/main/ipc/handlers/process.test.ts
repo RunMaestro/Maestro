@@ -2026,10 +2026,10 @@ describe('process IPC handlers', () => {
 				expect(spawnCall.codexTransport).toBe('app-server');
 			});
 
-			it('defaults to exec when the persisted agent has no setting', async () => {
+			it('defaults to app-server when the persisted agent has no setting', async () => {
 				persist([{ id: 'codex-agent' }]);
 				const spawnCall = await spawnCodex();
-				expect(spawnCall.codexTransport).toBe('exec');
+				expect(spawnCall.codexTransport).toBe('app-server');
 			});
 
 			it('lets the persisted record outrank a stale inline value', async () => {

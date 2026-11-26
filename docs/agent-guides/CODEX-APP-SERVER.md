@@ -1,8 +1,8 @@
 # Codex App-Server Transport (design note)
 
-An OPT-IN, per-agent transport that runs a Codex turn on `codex app-server` (JSON-RPC over stdio) instead of `codex exec --json`. The point is `turn/steer`: an app-server turn accepts input while it runs, so the Steer button can reach a Codex turn the way it already reaches a Claude turn on maestro-p (see "Steering a Claude turn that is ALREADY RUNNING" in `CLAUDE.md`).
+The DEFAULT per-agent transport (an explicit `exec` opts out) that runs a Codex turn on `codex app-server` (JSON-RPC over stdio) instead of `codex exec --json`. The point is `turn/steer`: an app-server turn accepts input while it runs, so the Steer button can reach a Codex turn the way it already reaches a Claude turn on maestro-p (see "Steering a Claude turn that is ALREADY RUNNING" in `CLAUDE.md`).
 
-**`codex exec` stays the default.** The app-server path is experimental, local-only, text-only, and falls back to `codex exec` whenever it cannot start.
+**`app-server` is the default** (an unset `codexTransport` resolves to it; an explicit `exec` is stored and honored). Image, Auto Run, Cue, and batch turns fall back to `codex exec` whenever they cannot run on the app server, and so does any turn whose server cannot start.
 
 Everything below was derived from live traffic recorded with codex-cli 0.162.1 on 2026-10-11, in `src/__tests__/fixtures/codex-app-server/` (format in that folder's `README.md`). A reference such as `plain-turn:6` means line 6 of `plain-turn.jsonl`. Parameter names that the fixtures do not exercise were read from `codex app-server generate-json-schema`.
 

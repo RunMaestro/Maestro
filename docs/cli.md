@@ -708,8 +708,8 @@ maestro-cli update-agent <agent-id> --provider codex --dry-run --json
 maestro-cli update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
 maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json
 
-# Opt a Codex agent into the experimental app-server transport (enables steering)
-maestro-cli update-agent <agent-id> --codex-transport app-server
+# Run a Codex agent on the codex exec transport instead of the default app-server
+maestro-cli update-agent <agent-id> --codex-transport exec
 
 # Update SSH execution config (use "none" to revert to local)
 maestro-cli update-agent <agent-id> --ssh-remote <remote-id> --ssh-cwd /remote/workdir
@@ -727,34 +727,34 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 
 `--convert` opts into the desktop's native conversation translation flow; every translation option below implies it. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
 
-| Flag                               | Description                                                                                                           | Default |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                 | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                 | -       |
-| `-d, --cwd <path>`                 | New working directory (resolved to absolute). Agent must be stopped                                                   | -       |
-| `--ssh-remote <id>`                | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                 | -       |
-| `--ssh-cwd <path>`                 | Working directory override on the SSH remote. Agent must be stopped                                                   | -       |
-| `--sync-history-to-remote <bool>`  | Sync history entries to `.maestro/history/` on the remote host                                                        | -       |
-| `--nudge <message>`                | Nudge message appended to every message. Empty string clears                                                          | -       |
-| `--new-session-message <message>`  | Message prefixed to the first message of new sessions. Empty string clears                                            | -       |
-| `--custom-path <path>`             | Override the agent binary path. Empty string clears                                                                   | -       |
-| `--custom-args <args>`             | Custom CLI arguments. Empty string clears                                                                             | -       |
-| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                        | -       |
-| `--clear-env`                      | Clear all per-agent environment variables                                                                             | -       |
-| `--model <model>`                  | Model override (e.g. sonnet, opus). Empty string clears                                                               | -       |
-| `--effort <level>`                 | Effort/reasoning level override. Empty string clears                                                                  | -       |
-| `--context-window <size>`          | Context window size in tokens. `0` or `none` clears                                                                   | -       |
-| `--token-source <mode>`            | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                        | -       |
-| `--maestro-p-path <path>`          | Override the maestro-p binary path. Empty string clears                                                               | -       |
-| `--codex-transport <transport>`    | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only | -       |
-| `--provider <type>`                | Switch the agent to another provider without converting (desktop required)                                            | -       |
-| `--convert`                        | With `--provider`: convert native conversations and project memory too (opt-in)                                       | -       |
-| `--dry-run`                        | Plan translation without native writes; requires `--provider`                                                         | -       |
-| `--accept-translation-limitations` | Accept the reported conversion limits; blocked plans remain blocked                                                   | -       |
-| `--migration <action>`             | Plan, apply, inspect status, recover, or roll back a migration                                                        | -       |
-| `--migration-plan <id>`            | Apply a reviewed plan or inspect, recover, or roll back a specific operation                                          | -       |
-| `--translation-resource <path>`    | Include one selected user resource; repeatable, without importing account-global data                                 | -       |
-| `--force`                          | Alias for `--accept-translation-limitations`                                                                          | -       |
-| `--json`                           | Machine-readable JSON output                                                                                          | -       |
+| Flag                               | Description                                                                                                              | Default |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `-g, --group <id>`                 | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                    | -       |
+| `-d, --cwd <path>`                 | New working directory (resolved to absolute). Agent must be stopped                                                      | -       |
+| `--ssh-remote <id>`                | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                    | -       |
+| `--ssh-cwd <path>`                 | Working directory override on the SSH remote. Agent must be stopped                                                      | -       |
+| `--sync-history-to-remote <bool>`  | Sync history entries to `.maestro/history/` on the remote host                                                           | -       |
+| `--nudge <message>`                | Nudge message appended to every message. Empty string clears                                                             | -       |
+| `--new-session-message <message>`  | Message prefixed to the first message of new sessions. Empty string clears                                               | -       |
+| `--custom-path <path>`             | Override the agent binary path. Empty string clears                                                                      | -       |
+| `--custom-args <args>`             | Custom CLI arguments. Empty string clears                                                                                | -       |
+| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                           | -       |
+| `--clear-env`                      | Clear all per-agent environment variables                                                                                | -       |
+| `--model <model>`                  | Model override (e.g. sonnet, opus). Empty string clears                                                                  | -       |
+| `--effort <level>`                 | Effort/reasoning level override. Empty string clears                                                                     | -       |
+| `--context-window <size>`          | Context window size in tokens. `0` or `none` clears                                                                      | -       |
+| `--token-source <mode>`            | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                           | -       |
+| `--maestro-p-path <path>`          | Override the maestro-p binary path. Empty string clears                                                                  | -       |
+| `--codex-transport <transport>`    | Codex transport: `app-server` (default: streams reasoning, enables steering a running turn) or `exec`. Codex agents only | -       |
+| `--provider <type>`                | Switch the agent to another provider without converting (desktop required)                                               | -       |
+| `--convert`                        | With `--provider`: convert native conversations and project memory too (opt-in)                                          | -       |
+| `--dry-run`                        | Plan translation without native writes; requires `--provider`                                                            | -       |
+| `--accept-translation-limitations` | Accept the reported conversion limits; blocked plans remain blocked                                                      | -       |
+| `--migration <action>`             | Plan, apply, inspect status, recover, or roll back a migration                                                           | -       |
+| `--migration-plan <id>`            | Apply a reviewed plan or inspect, recover, or roll back a specific operation                                             | -       |
+| `--translation-resource <path>`    | Include one selected user resource; repeatable, without importing account-global data                                    | -       |
+| `--force`                          | Alias for `--accept-translation-limitations`                                                                             | -       |
+| `--json`                           | Machine-readable JSON output                                                                                             | -       |
 
 The flag table below covers `create-agent`:
 
