@@ -361,16 +361,22 @@ export async function sendHostedTurn(
 		held?: boolean;
 		overrides?: TurnOverrides;
 		nameFrom?: { text: string; label?: string };
+		/**
+		 * Takes a refusal that sent nothing because the host is not connected, instead of the red
+		 * toast, so the caller can keep the message for a retry (`keepTurnForHost()`).
+		 */
+		onHostUnavailable?: (message: string) => void;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
 	if (!target.agent) {
-		notifyToast({
-			color: 'red',
-			title: 'Message not sent',
-			message: `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`,
-		});
+		const message = `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`;
+		if (opts.onHostUnavailable) {
+			opts.onHostUnavailable(message);
+			return null;
+		}
+		notifyToast({ color: 'red', title: 'Message not sent', message });
 		return null;
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
@@ -403,7 +409,8 @@ export async function sendHostedTurn(
 		text,
 		opts.overrides ? { ...hostedTurnOverrides(tab), ...opts.overrides } : hostedTurnOverrides(tab),
 		images,
-		opts.held
+		opts.held,
+		opts.onHostUnavailable
 	);
 	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).

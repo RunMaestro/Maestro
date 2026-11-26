@@ -132,7 +132,14 @@ export async function actOnMirroredAgent(
 	agentId: string,
 	action: PeerAgentAction
 ): Promise<PeerAgentActionResult | null> {
-	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	return settleMirroredAnswer(action, await callMirroredAgentAction(peerId, agentId, action));
+}
+
+/** An action's answer as `actOnMirroredAgent()` reports it: the result, or a red toast and null. */
+function settleMirroredAnswer(
+	action: PeerAgentAction,
+	answer: MirroredActionAnswer | null
+): PeerAgentActionResult | null {
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
 	const error = answer.unknown
@@ -140,6 +147,15 @@ export async function actOnMirroredAgent(
 		: answer.error;
 	notifyToast({ color: 'red', title: ACTION_FAILURE_TITLES[action.kind], message: error });
 	return null;
+}
+
+/**
+ * Whether an answer says the peer was not connected, so nothing reached the host: the one refusal
+ * a caller may send again without any risk of the host running it twice. A send whose receipt was
+ * lost (`unknown`) never counts.
+ */
+export function isHostUnavailableAnswer(answer: MirroredActionAnswer | null): boolean {
+	return !!answer && !answer.ok && answer.code === 'host-unavailable' && !answer.unknown;
 }
 
 /**
@@ -154,17 +170,29 @@ export async function sendToMirroredTab(
 	text: string,
 	overrides?: TurnOverrides,
 	images?: readonly string[],
-	held?: boolean
+	held?: boolean,
+	/**
+	 * Takes a refusal that sent nothing because the peer is not connected
+	 * (`isHostUnavailableAnswer()`), instead of the red toast: the caller keeps the message for a
+	 * retry. Answers null, as any refusal does.
+	 */
+	onHostUnavailable?: (message: string) => void
 ): Promise<TurnSendReceipt | null> {
 	const clean = normalizeTurnOverrides(overrides);
-	const result = await actOnMirroredAgent(peerId, agentId, {
+	const action: PeerAgentAction = {
 		kind: 'send',
 		tabId,
 		text,
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		...(clean ? { overrides: clean } : {}),
 		...(held === true ? { held: true } : {}),
-	});
+	};
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (onHostUnavailable && answer && !answer.ok && isHostUnavailableAnswer(answer)) {
+		onHostUnavailable(answer.error);
+		return null;
+	}
+	const result = settleMirroredAnswer(action, answer);
 	return result?.kind === 'send' ? result.receipt : null;
 }
 

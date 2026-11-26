@@ -34,6 +34,13 @@ vi.mock('../../../renderer/services/hostedTurns', async (importOriginal) => {
 	};
 });
 
+// A hosted send its host could not take is kept for a retry; its own suite covers the keep.
+vi.mock('../../../renderer/services/hostedQueuedTurn', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../renderer/services/hostedQueuedTurn')>();
+	return { ...actual, keepTurnForHost: vi.fn(() => true) };
+});
+
 // Steer Running Turn on a hosted agent steers the item the host queued; its own suite covers it.
 vi.mock('../../../renderer/services/chatSteering', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/services/chatSteering')>();
@@ -58,6 +65,7 @@ import { useInputProcessing } from '../../../renderer/hooks/input/useInputProces
 import { askSideQuestion } from '../../../renderer/services/sideQuestion';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
+import { keepTurnForHost } from '../../../renderer/services/hostedQueuedTurn';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	createMirroredPeer,
@@ -1796,7 +1804,7 @@ describe('useInputProcessing', () => {
 				session.activeTabId,
 				'hello',
 				expect.any(Array),
-				{ held: false, nameFrom: { text: 'hello' } }
+				{ held: false, nameFrom: { text: 'hello' }, onHostUnavailable: expect.any(Function) }
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			// Nothing is drawn here: the host's record brings the bubble. Only Up-arrow recall is.
@@ -1804,6 +1812,57 @@ describe('useInputProcessing', () => {
 			expect(live.aiTabs).toEqual(session.aiTabs);
 			expect(live.aiCommandHistory).toEqual(['hello']);
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('keeps a message the host could not take (not connected) for a retry, and clears the draft', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(keepTurnForHost).mockClear();
+			vi.mocked(keepTurnForHost).mockReturnValue(true);
+			vi.mocked(sendHostedTurn).mockImplementation(async (_s, _t, _x, _i, opts) => {
+				opts?.onHostUnavailable?.('Not connected to peer "build-box" (lost). Nothing was sent.');
+				return null;
+			});
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(keepTurnForHost).toHaveBeenCalledWith(
+				session.id,
+				expect.objectContaining({ type: 'message', text: 'hello', tabId: session.activeTabId }),
+				'Not connected to peer "build-box" (lost). Nothing was sent.'
+			);
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			vi.mocked(sendHostedTurn).mockReset();
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+		});
+
+		it('leaves the draft in place when a message the host could not take is not kept', async () => {
+			vi.mocked(keepTurnForHost).mockClear();
+			vi.mocked(keepTurnForHost).mockReturnValue(false);
+			vi.mocked(sendHostedTurn).mockImplementation(async (_s, _t, _x, _i, opts) => {
+				opts?.onHostUnavailable?.('Not connected.');
+				return null;
+			});
+			mockSetInputValue.mockClear();
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(keepTurnForHost).toHaveBeenCalledTimes(1);
+			expect(mockSetInputValue).not.toHaveBeenCalledWith('');
+			vi.mocked(keepTurnForHost).mockReturnValue(true);
+			vi.mocked(sendHostedTurn).mockReset();
+			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
 		});
 
 		it('Queue Held sends the message held to the host, as a local Queue Held queues it paused', async () => {
@@ -1822,7 +1881,7 @@ describe('useInputProcessing', () => {
 				session.activeTabId,
 				'later',
 				expect.any(Array),
-				{ held: true, nameFrom: { text: 'later' } }
+				{ held: true, nameFrom: { text: 'later' }, onHostUnavailable: expect.any(Function) }
 			);
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -1901,7 +1960,7 @@ describe('useInputProcessing', () => {
 							session.activeTabId,
 							command,
 							expect.any(Array),
-							{ held: false }
+							{ held: false, onHostUnavailable: expect.any(Function) }
 						);
 						expect(handler, mode).not.toHaveBeenCalled();
 					} else {

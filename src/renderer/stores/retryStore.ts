@@ -408,6 +408,18 @@ export function registerAgentErrorSurfacer(
 	agentErrorSurfacer = fn;
 }
 
+/**
+ * Raise an agent error through the listener that owns error UI, as though the turn's process had
+ * reported it on `processSessionId`. For a failure that happened before any process existed here:
+ * a hosted agent's send its host could not take. The same retry, transcript card and outage
+ * surfacing follow as for a spawned turn. False when no listener is registered.
+ */
+export function raiseAgentError(processSessionId: string, error: AgentError): boolean {
+	if (!agentErrorSurfacer) return false;
+	agentErrorSurfacer(processSessionId, error);
+	return true;
+}
+
 function keyFor(sessionId: string, tabId: string): string {
 	return `${sessionId}:${tabId}`;
 }

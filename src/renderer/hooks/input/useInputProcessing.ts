@@ -69,6 +69,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
 import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
+import { keepTurnForHost } from '../../services/hostedQueuedTurn';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -682,14 +683,44 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					? holdComposerSubmit(hostedKey, hostedSubmit)
 					: undefined;
 				let receipt: Awaited<ReturnType<typeof sendHostedTurn>> = null;
-				try {
-					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
-						held: options?.hold === true,
-						// Named from what the user typed, as a local send is (chips only: their blocks).
-						...(composerSendNamesTab(text, customAICommands, activeSession)
-							? { nameFrom: { text: text.trim() ? text : hostedText } }
-							: {}),
+				// A host that is not connected sends nothing; the message is then kept for an automatic
+				// retry, as an SSH agent's is when its link is down (`keepTurnForHost()`).
+				let kept = false;
+				const hostedTab = activeSession.aiTabs.find((tab) => tab.id === targetTabId);
+				const keepForHost = (message: string) => {
+					if (!hostedTab || options?.hold === true) return false;
+					const item = buildQueuedMessageItem({
+						session: activeSession,
+						tab: hostedTab,
+						text: hostedText,
+						images: hostedImages,
+						planMentions: false,
 					});
+					return keepTurnForHost(activeSession.id, item, message);
+				};
+				try {
+					// An earlier message of this tab still waits for its retry: this one waits behind it.
+					if (hostedTab && hasPendingRetry(activeSession.id, hostedTab.id)) {
+						kept = keepForHost('');
+					} else {
+						let unavailable: string | undefined;
+						receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
+							held: options?.hold === true,
+							// Named from what the user typed, as a local send is (chips only: their blocks).
+							...(composerSendNamesTab(text, customAICommands, activeSession)
+								? { nameFrom: { text: text.trim() ? text : hostedText } }
+								: {}),
+							onHostUnavailable: (message) => {
+								unavailable = message;
+							},
+						});
+						if (!receipt && unavailable !== undefined) {
+							kept = keepForHost(unavailable);
+							if (!kept && (!hostedTab || options?.hold === true)) {
+								notifyToast({ color: 'red', title: 'Message not sent', message: unavailable });
+							}
+						}
+					}
 				} finally {
 					releaseSubmit?.();
 				}
@@ -698,7 +729,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (options?.steer && receipt?.status === 'queued' && targetTabId) {
 					void steerHostedSentMessage(activeSession, targetTabId, receipt.itemId);
 				}
-				if (receipt && isComposerSubmit) {
+				if ((receipt || kept) && isComposerSubmit) {
 					setInputValue('');
 					if (!usingOverrideImages) setStagedImages([]);
 					clearSentDesignPicks();
@@ -706,7 +737,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 				}
 				// Up arrow recalls it, as it recalls a message a local send took.
-				if (receipt) {
+				if (receipt || kept) {
 					updateSessionWith(activeSession.id, (s) => {
 						const aiCommandHistory = withRecallEntry(s.aiCommandHistory, text);
 						return aiCommandHistory.length === (s.aiCommandHistory?.length ?? 0)
