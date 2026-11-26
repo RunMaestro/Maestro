@@ -20,6 +20,8 @@ import {
 const LOCAL = path.join('tmp', 'maestro-remote-downloads', 'abc', 'notes.md');
 const REMOTE = '/home/me/project/notes.md';
 const WHEN = new Date(2026, 10, 26, 10, 15, 0);
+/** The copy a refetch fetches into, named as `watch()` names it. */
+const COPY = { localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' };
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
@@ -41,9 +43,23 @@ let writeRemote: Mock<
 >;
 let close: Mock<() => void>;
 
-function service(overrides: { maxWatched?: number; maxBytes?: number; fileEvents?: boolean } = {}) {
+type ServiceOverrides = {
+	maxWatched?: number;
+	maxKnown?: number;
+	maxBytes?: number;
+	fileEvents?: boolean;
+};
+
+function service(overrides: ServiceOverrides = {}) {
+	return createRemoteCopyWriteBack(baseDeps(overrides));
+}
+
+/** The test's in-memory files and remote, as the service's dependencies. */
+function baseDeps(
+	overrides: ServiceOverrides = {}
+): Parameters<typeof createRemoteCopyWriteBack>[0] {
 	const { fileEvents = true, ...rest } = overrides;
-	return createRemoteCopyWriteBack({
+	return {
 		watchFile: (_localPath, handler, errorHandler) => {
 			// Without file events (as on a machine that never delivers them) only the poll sees a save.
 			if (fileEvents) onChange = handler;
@@ -74,7 +90,7 @@ function service(overrides: { maxWatched?: number; maxBytes?: number; fileEvents
 		pollMs: 1000,
 		now: () => WHEN,
 		...rest,
-	});
+	};
 }
 
 /** The app saves the copy; the watcher fires and the debounce runs out. */
@@ -106,7 +122,7 @@ function reopen(
 	writeBack: ReturnType<typeof service>,
 	{ duringDownload, duringStage }: { duringDownload?: () => void; duringStage?: () => void } = {}
 ) {
-	return writeBack.refetch(LOCAL, {
+	return writeBack.refetch(COPY, {
 		download: async () => {
 			duringDownload?.();
 			return remoteFile;
@@ -145,6 +161,203 @@ afterEach(() => {
 });
 
 describe('remote copy write-back', () => {
+	it('an Open after a restart keeps a change the last run never sent, before the fetch replaces it', async () => {
+		// The last run saved the copy, then quit while the remote was down: the
+		// change is only here, and this run has no record of the copy.
+		localFiles.set(LOCAL, Buffer.from('unsent change'));
+		const writeBack = service();
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		const keptAt = keptVersionPath(LOCAL, WHEN);
+		expect(localFiles.get(keptAt)?.toString()).toBe('unsent change');
+		expect(localFiles.get(LOCAL)?.toString()).toBe('fetched');
+		expect(events).toEqual([
+			{ kind: 'kept', remotePath: REMOTE, sshRemoteId: 'r1', keptAt, replaced: true },
+		]);
+	});
+
+	it('an Open with no record of the copy keeps nothing when the copy already holds the remote bytes', async () => {
+		const writeBack = service();
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		expect([...localFiles.keys()]).toEqual([LOCAL]);
+		expect(events).toEqual([]);
+	});
+
+	it('an Open with no record of the copy keeps it, and fetches nothing over it, when keeping fails', async () => {
+		localFiles.set(LOCAL, Buffer.from('unsent change'));
+		const writeBack = createRemoteCopyWriteBack({
+			...baseDeps(),
+			createLocal: async () => {
+				throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			},
+		});
+		await expect(reopen(writeBack)).rejects.toThrow('EACCES');
+		expect(localFiles.get(LOCAL)?.toString()).toBe('unsent change');
+		expect(discarded).toBe(1);
+	});
+
+	it('an Open with no record of the copy leaves it alone when the app saves it while it is being kept', async () => {
+		localFiles.set(LOCAL, Buffer.from('unsent change'));
+		const writeBack = createRemoteCopyWriteBack({
+			...baseDeps(),
+			createLocal: async (keptAt, bytes) => {
+				localFiles.set(keptAt, bytes);
+				// The editor still has the copy open and saves it now.
+				localFiles.set(LOCAL, Buffer.from('saved while keeping'));
+			},
+		});
+		await expect(reopen(writeBack)).resolves.toBe('kept');
+		expect(localFiles.get(LOCAL)?.toString()).toBe('saved while keeping');
+		const keptAt = keptVersionPath(LOCAL, WHEN);
+		expect(localFiles.get(keptAt)?.toString()).toBe('unsent change');
+		expect(discarded).toBe(1);
+		// That save is not on the remote: it goes there, over the bytes just fetched.
+		await writeBack.idle();
+		expect(events).toEqual([
+			{ kind: 'kept', remotePath: REMOTE, sshRemoteId: 'r1', keptAt, replaced: false },
+			{ kind: 'saved', remotePath: REMOTE, sshRemoteId: 'r1' },
+		]);
+		expect(writeRemote).toHaveBeenCalledWith(
+			REMOTE,
+			Buffer.from('saved while keeping'),
+			'r1',
+			sha(Buffer.from('fetched'))
+		);
+		expect(remoteFile.toString()).toBe('saved while keeping');
+		// The Open's watch then starts from what the remote holds, not from the copy.
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await saveCopy(writeBack, 'later');
+		expect(remoteFile.toString()).toBe('later');
+		expect(events.map((e) => e.kind)).toEqual(['kept', 'saved', 'saved']);
+	});
+
+	it('sends a save made while an unknown copy is kept, even when the fetched file is too large to send back', async () => {
+		localFiles.set(LOCAL, Buffer.from('unsent change'));
+		remoteFile = Buffer.from('a remote file past the cap');
+		const writeBack = createRemoteCopyWriteBack({
+			...baseDeps({ maxBytes: 16 }),
+			createLocal: async (keptAt, bytes) => {
+				localFiles.set(keptAt, bytes);
+				localFiles.set(LOCAL, Buffer.from('small save'));
+			},
+		});
+		await expect(reopen(writeBack)).resolves.toBe('kept');
+		await writeBack.idle();
+		// The copy holds the save, which is within the cap: it is sent.
+		expect(writeRemote).toHaveBeenCalledWith(
+			REMOTE,
+			Buffer.from('small save'),
+			'r1',
+			sha(Buffer.from('a remote file past the cap'))
+		);
+		await expect(
+			writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' })
+		).resolves.toBeUndefined();
+	});
+
+	it('an Open with no record of the copy sends a save made before its watch starts', async () => {
+		const writeBack = service();
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		// The app saves the copy before the renderer asks for the watch.
+		localFiles.set(LOCAL, Buffer.from('early save'));
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await vi.advanceTimersByTimeAsync(1000 + 60);
+		await writeBack.idle();
+		expect(writeRemote).toHaveBeenCalledWith(
+			REMOTE,
+			Buffer.from('early save'),
+			'r1',
+			sha(Buffer.from('fetched'))
+		);
+		expect(remoteFile.toString()).toBe('early save');
+	});
+
+	it('does not keep naming a copy forgotten past the cap whose last send failed', async () => {
+		writeRemote.mockRejectedValue(new Error('Connection refused'));
+		const writeBack = service({ maxWatched: 1, maxKnown: 1 });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		localFiles.set(LOCAL, Buffer.from('edited'));
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		// Watching a second copy forgets the first; its last send fails.
+		await writeBack.watch({ localPath: other, remotePath: '/home/me/other.md', sshRemoteId: 'r1' });
+		await writeBack.idle();
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		expect(writeBack.pendingCopies()).toEqual([]);
+	});
+
+	it('still names a copy whose send failed after its watch stopped, beside one still being sent', async () => {
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		const writeBack = await watched();
+		await writeBack.watch({ localPath: other, remotePath: '/home/me/other.md', sshRemoteId: 'r1' });
+		// notes.md fails at once; other.md hangs (a dead connection).
+		writeRemote.mockImplementation(async (remotePath) => {
+			if (remotePath === REMOTE) throw new Error('Connection refused');
+			return new Promise(() => undefined);
+		});
+		localFiles.set(LOCAL, Buffer.from('edited'));
+		localFiles.set(other, Buffer.from('edited too'));
+		void writeBack.dispose();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		expect(writeBack.pendingCopies()).toEqual(
+			expect.arrayContaining([
+				{ remotePath: REMOTE, sshRemoteId: 'r1' },
+				{ remotePath: '/home/me/other.md', sshRemoteId: 'r1' },
+			])
+		);
+		expect(writeBack.pendingCopies()).toHaveLength(2);
+	});
+
+	it('names a copy whose save grew past the cap until a fresh Open keeps that save beside it', async () => {
+		const writeBack = service({ maxBytes: 16 });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await saveCopy(writeBack, 'a save past the size cap');
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		expect(writeRemote).not.toHaveBeenCalled();
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		// Open again: the save is kept beside the copy, and the copy holds the remote bytes.
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		expect(localFiles.get(keptVersionPath(LOCAL, WHEN))?.toString()).toBe(
+			'a save past the size cap'
+		);
+		expect(writeBack.pendingCopies()).toEqual([]);
+	});
+
+	it('names a copy saved again after a conflict, whose later save is only in the copy', async () => {
+		const writeBack = await watched();
+		remoteFile = Buffer.from('someone else');
+		await saveCopy(writeBack, 'first');
+		// The conflict kept that save beside the copy: nothing unsent yet.
+		expect(writeBack.pendingCopies()).toEqual([]);
+		await saveCopy(writeBack, 'second');
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		await writeBack.dispose();
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+	});
+
+	it('stops naming a copy once a later send of it lands', async () => {
+		writeRemote.mockRejectedValueOnce(new Error('Connection refused'));
+		const writeBack = await watched();
+		await saveCopy(writeBack, 'edited');
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		await saveCopy(writeBack, 'edited again');
+		expect(writeBack.pendingCopies()).toEqual([]);
+	});
+
+	it('names the copies whose change is not sent yet', async () => {
+		writeRemote.mockImplementation(() => new Promise(() => undefined));
+		const writeBack = await watched();
+		expect(writeBack.pendingCopies()).toEqual([]);
+		localFiles.set(LOCAL, Buffer.from('edited'));
+		onChange?.();
+		// Waiting out its debounce, then being sent: pending both times.
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		await vi.advanceTimersByTimeAsync(60);
+		expect(writeRemote).toHaveBeenCalledTimes(1);
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+	});
+
 	it('writes a saved change back to the remote file, over the bytes it was fetched from', async () => {
 		const writeBack = await watched();
 		await saveCopy(writeBack, 'edited');
@@ -253,7 +466,7 @@ describe('remote copy write-back', () => {
 		const writeBack = await watched();
 		await saveCopy(writeBack, 'edited');
 		const download = vi.fn(async () => remoteFile);
-		await expect(writeBack.refetch(LOCAL, { download, stage: stageAt(LOCAL) })).resolves.toBe(
+		await expect(writeBack.refetch(COPY, { download, stage: stageAt(LOCAL) })).resolves.toBe(
 			'kept'
 		);
 		expect(download).not.toHaveBeenCalled();
@@ -501,7 +714,7 @@ describe('remote copy write-back', () => {
 		await saveCopy(writeBack, 'first');
 		await saveCopy(writeBack, 'second');
 		await expect(
-			writeBack.refetch(LOCAL, {
+			writeBack.refetch(COPY, {
 				download: async () => {
 					throw new Error('Connection refused');
 				},
@@ -518,7 +731,7 @@ describe('remote copy write-back', () => {
 		localFiles.set(other, Buffer.from('x'));
 		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
 		await expect(
-			writeBack.refetch(LOCAL, {
+			writeBack.refetch(COPY, {
 				download: async () => {
 					await writeBack.watch({
 						localPath: other,
@@ -636,7 +849,7 @@ describe('remote copy write-back', () => {
 		localFiles.set(LOCAL, Buffer.from('fetched'));
 		hashRemoteFails = true;
 		const download = vi.fn(async () => remoteFile);
-		await expect(writeBack.refetch(LOCAL, { download, stage: stageAt(LOCAL) })).resolves.toBe(
+		await expect(writeBack.refetch(COPY, { download, stage: stageAt(LOCAL) })).resolves.toBe(
 			'kept'
 		);
 		expect(download).not.toHaveBeenCalled();
