@@ -1458,7 +1458,7 @@ program
 // complement `auto-run` (which launches) for full lifecycle control.
 program
 	.command('stop-auto-run')
-	.description('Stop the active Auto Run for an agent')
+	.description('Stop the active Auto Run for an agent (on a run already stopping, end it now)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => stopAutoRun(options.agent, options));
@@ -1479,7 +1479,7 @@ program
 
 program
 	.command('abort-auto-run')
-	.description('Abort an error-paused Auto Run')
+	.description('Abort an error-paused Auto Run (on a run already stopping, end it now)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => abortAutoRun(options.agent, options));

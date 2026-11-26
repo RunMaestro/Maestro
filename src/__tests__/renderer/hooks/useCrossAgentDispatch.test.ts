@@ -5,6 +5,7 @@ import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
 	ensureConsultTab,
+	releaseConsultTab,
 	sendCrossAgentRequest,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
@@ -16,6 +17,8 @@ import {
 } from '../../../renderer/utils/tabHelpers';
 import { createMockSession } from '../../helpers/mockSession';
 import type { CrossAgentResponseChunk } from '../../../shared/crossAgentTypes';
+import { REMOTE_ASKER_SESSION_PREFIX } from '../../../shared/crossAgentTypes';
+import { MAX_CONSULT_TABS_PER_AGENT } from '../../../shared/maestro-lib/agents/rules';
 
 /**
  * Isolated tests for the pure chunk-accumulation logic behind
@@ -342,6 +345,73 @@ describe('ensureConsultTab', () => {
 		expect(b.targetTabId).not.toBe(a.targetTabId);
 		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
 		expect(target.aiTabs.filter((t) => t.consultOrigin)).toHaveLength(2);
+	});
+
+	it.each([
+		['a local asker (one consult tab per asking tab)', 'scratch'],
+		['a remote asker (one consult tab per asker key)', `${REMOTE_ASKER_SESSION_PREFIX}peer`],
+	])(
+		'keeps the target at MAX_CONSULT_TABS_PER_AGENT for %s, replacing the oldest',
+		(_label, sourceSessionId) => {
+			seedTarget();
+			const ids: string[] = [];
+			for (let i = 0; i <= MAX_CONSULT_TABS_PER_AGENT; i++) {
+				const id = ensureConsultTab({
+					targetSessionId: 'target',
+					sourceSessionId,
+					sourceTabId: `asker-${i}`,
+					sourceAgentName: 'Asker',
+					question: `q-${i}`,
+				})!.targetTabId;
+				ids.push(id);
+				// The consult finished, as its terminal chunk would release it.
+				releaseConsultTab('target', id);
+			}
+
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+			const consults = target.aiTabs.filter((t) => t.consultOrigin);
+			expect(consults).toHaveLength(MAX_CONSULT_TABS_PER_AGENT);
+			// The first pairing was the least recently used one, so its slot went to the newest.
+			expect(consults.some((t) => t.id === ids[0])).toBe(false);
+			expect(target.unifiedTabOrder.some((ref) => ref.id === ids[0])).toBe(false);
+			expect(consults.some((t) => t.id === ids[MAX_CONSULT_TABS_PER_AGENT])).toBe(true);
+			// The person's own tab and view are untouched.
+			expect(target.aiTabs[0].id).toBe('main-tab');
+			expect(target.activeTabId).toBe('main-tab');
+		}
+	);
+
+	it("never hands a running consult's tab to a new pairing at the cap", () => {
+		seedTarget();
+		const ids: string[] = [];
+		for (let i = 0; i < MAX_CONSULT_TABS_PER_AGENT; i++) {
+			ids.push(
+				ensureConsultTab({
+					targetSessionId: 'target',
+					sourceSessionId: `${REMOTE_ASKER_SESSION_PREFIX}peer`,
+					sourceTabId: `asker-${i}`,
+					sourceAgentName: 'Asker',
+					question: `q-${i}`,
+				})!.targetTabId
+			);
+		}
+		// The oldest consult is still running; every other one finished.
+		ids.slice(1).forEach((id) => releaseConsultTab('target', id));
+
+		ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: `${REMOTE_ASKER_SESSION_PREFIX}peer`,
+			sourceTabId: 'asker-new',
+			sourceAgentName: 'Asker',
+			question: 'q-new',
+		});
+
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		const consults = target.aiTabs.filter((t) => t.consultOrigin);
+		expect(consults).toHaveLength(MAX_CONSULT_TABS_PER_AGENT);
+		expect(consults.some((t) => t.id === ids[0])).toBe(true);
+		expect(consults.some((t) => t.id === ids[1])).toBe(false);
+		releaseConsultTab('target', ids[0]);
 	});
 
 	it('returns null when the target session no longer exists', () => {

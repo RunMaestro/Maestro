@@ -628,6 +628,48 @@ describe('ClaudeSessionStorage', () => {
 		});
 	});
 
+	describe('readSessionMessages - a missing or unreadable transcript, in every mode', () => {
+		const sshConfig = { id: 'r1', host: 'box', port: 22 } as unknown as SshRemoteConfig;
+		const errno = (code: string) => Object.assign(new Error(code), { code });
+		const EMPTY = { messages: [], total: 0, hasMore: false };
+
+		// A hosted agent's host reads its own disk, so it takes the local path below.
+		it.each(['local', 'hosted'])(
+			'reads a missing transcript as an empty conversation for a %s agent',
+			async () => {
+				vi.mocked(fs.access).mockRejectedValue(errno('ENOENT'));
+				vi.mocked(fs.readFile).mockRejectedValue(errno('ENOENT'));
+				await expect(storage.readSessionMessages('/project', 'gone')).resolves.toMatchObject(EMPTY);
+			}
+		);
+
+		it('reads a missing transcript as an empty conversation for an SSH agent', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: false, error: 'File not found: x' });
+			await expect(
+				storage.readSessionMessages('/project', 'gone', undefined, sshConfig)
+			).resolves.toMatchObject(EMPTY);
+		});
+
+		it.each(['local', 'hosted'])(
+			'rejects a transcript that exists and cannot be read for a %s agent',
+			async () => {
+				vi.mocked(fs.access).mockResolvedValue(undefined);
+				vi.mocked(fs.readFile).mockRejectedValue(errno('EACCES'));
+				await expect(storage.readSessionMessages('/project', 'locked')).rejects.toThrow('EACCES');
+			}
+		);
+
+		it('rejects a transcript that exists and cannot be read for an SSH agent', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({
+				success: false,
+				error: 'Permission denied: x',
+			});
+			await expect(
+				storage.readSessionMessages('/project', 'locked', undefined, sshConfig)
+			).rejects.toThrow('Permission denied: x');
+		});
+	});
+
 	describe('readSessionMessages - account lookup', () => {
 		it("reads a transcript from another account's dir when the default has none", async () => {
 			const workDir = path.join(path.sep, 'home', '.claude-work');

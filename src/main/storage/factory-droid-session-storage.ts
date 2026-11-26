@@ -31,6 +31,7 @@ import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
+import { readLocalTranscript, readRemoteTranscript } from './transcript-read';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
 import { MESSAGE_NOT_IN_TRANSCRIPT, type DeleteMessagePairResult } from '../agents/session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
@@ -180,33 +181,35 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 		return `~/.factory/sessions/${encodedPath}`;
 	}
 
+	/** The `message` records of a session JSONL text, skipping lines that do not parse. */
+	private parseSessionMessages(content: string): FactoryMessage[] {
+		const messages: FactoryMessage[] = [];
+		for (const line of content.split('\n')) {
+			if (!line.trim()) continue;
+			try {
+				const parsed = JSON.parse(line);
+				if (parsed.type === 'message' && parsed.message) {
+					messages.push(parsed as FactoryMessage);
+				}
+			} catch (error) {
+				logger.debug('Skipping unparseable JSONL line', LOG_CONTEXT, { error });
+			}
+		}
+		return messages;
+	}
+
 	/**
-	 * Load and parse messages from a session JSONL file
+	 * Load and parse messages from a session JSONL file. Lenient: a session list or a search reads
+	 * many files and skips the ones it cannot read. A conversation read uses `readLocalTranscript`.
 	 */
 	private async loadSessionMessages(
 		sessionPath: string,
 		suppliedContent?: string
 	): Promise<FactoryMessage[]> {
 		try {
-			const content = suppliedContent ?? (await fs.readFile(sessionPath, 'utf-8'));
-			const lines = content
-				.trim()
-				.split('\n')
-				.filter((l) => l.trim());
-			const messages: FactoryMessage[] = [];
-
-			for (const line of lines) {
-				try {
-					const parsed = JSON.parse(line);
-					if (parsed.type === 'message' && parsed.message) {
-						messages.push(parsed as FactoryMessage);
-					}
-				} catch (error) {
-					logger.debug('Skipping unparseable JSONL line', LOG_CONTEXT, { error });
-				}
-			}
-
-			return messages;
+			return this.parseSessionMessages(
+				suppliedContent ?? (await fs.readFile(sessionPath, 'utf-8'))
+			);
 		} catch (error) {
 			logger.debug(`Failed to load session messages: ${sessionPath}`, LOG_CONTEXT, { error });
 			return [];
@@ -214,46 +217,22 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * Load and parse messages from a remote session JSONL file via SSH
+	 * Load and parse messages from a remote session JSONL file via SSH. Lenient, like
+	 * `loadSessionMessages`. A conversation read uses `readRemoteTranscript`.
 	 */
 	private async loadSessionMessagesRemote(
 		sessionPath: string,
 		sshConfig: SshRemoteConfig
 	): Promise<FactoryMessage[]> {
-		try {
-			const result = await readFileRemote(sessionPath, sshConfig);
-			if (!result.success || !result.data) {
-				logger.debug(
-					`Failed to load remote session messages: ${sessionPath} - ${result.error}`,
-					LOG_CONTEXT
-				);
-				return [];
-			}
-
-			const lines = result.data
-				.trim()
-				.split('\n')
-				.filter((l) => l.trim());
-			const messages: FactoryMessage[] = [];
-
-			for (const line of lines) {
-				try {
-					const parsed = JSON.parse(line);
-					if (parsed.type === 'message' && parsed.message) {
-						messages.push(parsed as FactoryMessage);
-					}
-				} catch (error) {
-					logger.debug('Skipping unparseable JSONL line (remote)', LOG_CONTEXT, { error });
-				}
-			}
-
-			return messages;
-		} catch (error) {
-			logger.debug(`Failed to load remote session messages: ${sessionPath}`, LOG_CONTEXT, {
-				error,
-			});
+		const result = await readFileRemote(sessionPath, sshConfig);
+		if (!result.success || !result.data) {
+			logger.debug(
+				`Failed to load remote session messages: ${sessionPath} - ${result.error}`,
+				LOG_CONTEXT
+			);
 			return [];
 		}
+		return this.parseSessionMessages(result.data);
 	}
 
 	/**
@@ -509,19 +488,21 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		// Load messages either locally or via SSH
-		let factoryMessages: FactoryMessage[];
+		// Load messages either locally or via SSH. A transcript that does not exist is an empty
+		// conversation; one that exists and cannot be read rejects, in every mode (transcript-read.ts).
+		let content: string | null;
 
 		if (sshConfig) {
 			const projectDir = this.getRemoteProjectSessionDir(projectPath);
 			const sessionPath = `${projectDir}/${sessionId}.jsonl`;
-			factoryMessages = await this.loadSessionMessagesRemote(sessionPath, sshConfig);
+			content = await readRemoteTranscript(sessionPath, sshConfig);
 		} else {
 			const sessionPath =
 				options?.filePath ??
 				path.join(this.getProjectSessionDir(projectPath), `${sessionId}.jsonl`);
-			factoryMessages = await this.loadSessionMessages(sessionPath, options?.content);
+			content = options?.content ?? (await readLocalTranscript(sessionPath));
 		}
+		const factoryMessages = this.parseSessionMessages(content ?? '');
 
 		const sessionMessages: SessionMessage[] = [];
 
