@@ -484,6 +484,23 @@ describe('ClaudeSessionStorage', () => {
 		});
 	});
 
+	it('says which transcripts it found but could not read, and not one that is simply gone', async () => {
+		vi.mocked(fs.readdir).mockResolvedValue(['locked.jsonl', 'gone.jsonl'] as never);
+		vi.mocked(fs.stat).mockImplementation(async (file) => {
+			if (String(file).includes('gone')) {
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			}
+			throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+		});
+		const observer = vi.fn();
+		expect(
+			await storage.listSessions('/local/project', undefined, undefined, {
+				onSkippedFile: observer,
+			})
+		).toEqual([]);
+		expect(observer.mock.calls).toEqual([[{ sizeBytes: 0, reason: 'unreadable' }]]);
+	});
+
 	it('says which transcripts a listing left out as too large to read, locally and over SSH', async () => {
 		const big = 200 * 1024 * 1024;
 		vi.mocked(fs.readdir).mockResolvedValue(['big.jsonl'] as never);

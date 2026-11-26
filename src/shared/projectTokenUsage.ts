@@ -93,8 +93,8 @@ export interface ProjectTokenUsageResult {
 	 */
 	complete: boolean;
 	/**
-	 * Conversations of the project the host left out because their transcripts are too large to
-	 * read. The rest is counted, and the project is named as partial, never quietly short.
+	 * Conversations of the project the host left out because their transcripts are too large or
+	 * unreadable. The rest is counted, and the project is named as partial, never quietly short.
 	 */
 	skippedFiles?: number;
 }

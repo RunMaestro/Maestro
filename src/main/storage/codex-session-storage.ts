@@ -207,7 +207,9 @@ async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {
 async function parseSessionFile(
 	filePath: string,
 	sessionId: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	/** Called when the file is there but could not be read (never for an oversized or empty one). */
+	onUnreadable?: () => void
 ): Promise<AgentSessionInfo | null> {
 	try {
 		if (stats.size > MAX_SESSION_FILE_SIZE) {
@@ -226,6 +228,8 @@ async function parseSessionFile(
 			mtimeMs: stats.mtimeMs,
 		});
 	} catch (error) {
+		// Left out of every total from here on: say so, unless the file is simply gone.
+		if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') onUnreadable?.();
 		// RangeError: Invalid string length occurs when a single line is too large for
 		// V8 string allocation. This is expected and not worth reporting to Sentry.
 		if (error instanceof RangeError) {
@@ -294,10 +298,15 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Find all session files, organized by date directories
 	 */
 	private async findAllSessionFiles(
-		accountDir?: string
+		accountDir?: string,
+		/** Counts the date folders that are there but could not be listed (their rollouts are missed). */
+		unreadable?: { dirs: number }
 	): Promise<Array<{ filePath: string; filename: string }>> {
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
+		const missed = (error: unknown): void => {
+			if (unreadable && (error as NodeJS.ErrnoException)?.code !== 'ENOENT') unreadable.dirs++;
+		};
 
 		try {
 			await fs.access(sessionsDir);
@@ -314,7 +323,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			try {
 				const yearStat = await fs.stat(yearDir);
 				if (!yearStat.isDirectory()) continue;
-			} catch {
+			} catch (error) {
+				missed(error);
 				continue;
 			}
 
@@ -327,7 +337,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				try {
 					const monthStat = await fs.stat(monthDir);
 					if (!monthStat.isDirectory()) continue;
-				} catch {
+				} catch (error) {
+					missed(error);
 					continue;
 				}
 
@@ -351,7 +362,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 								});
 							}
 						}
-					} catch {
+					} catch (error) {
+						missed(error);
 						continue;
 					}
 				}
@@ -624,11 +636,15 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	private async scanLocalSessions(accountDir?: string): Promise<{
 		sessions: AgentSessionInfo[];
 		fileCount: number;
-		/** Rollouts past the size cap, never parsed, with the working directory their first line names. */
+		/**
+		 * Rollouts left out (past the size cap, or unreadable), with the working directory their first
+		 * line names when it can be read.
+		 */
 		oversized: Array<{ file: SkippedSessionFile; cwd: string | undefined }>;
 	}> {
 		const sessionsDir = this.getSessionsDir(accountDir);
-		const allSessionFiles = await this.findAllSessionFiles(accountDir);
+		const unreadableDirs = { dirs: 0 };
+		const allSessionFiles = await this.findAllSessionFiles(accountDir, unreadableDirs);
 
 		const cache = (await loadCodexSessionCache()) || {
 			version: CODEX_SESSION_CACHE_VERSION,
@@ -659,6 +675,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 					});
 				}
 			} catch (error) {
+				// Listed but not stattable: its usage is missing, and its project unknown.
+				if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+					oversized.push({ file: { sizeBytes: 0, reason: 'unreadable' }, cwd: undefined });
+				}
 				logger.error(`Error stating Codex session file: ${filename}`, LOG_CONTEXT, error);
 				captureException(error, { operation: 'codexStorage:statSessionFile', filename });
 				continue;
@@ -671,10 +691,21 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			}
 
 			const sessionId = extractSessionIdFromFilename(filename) || filename;
-			const session = await parseSessionFile(filePath, sessionId, {
-				size: stats.size,
-				mtimeMs: stats.mtimeMs,
-			});
+			let unreadableFile = false;
+			const session = await parseSessionFile(
+				filePath,
+				sessionId,
+				{ size: stats.size, mtimeMs: stats.mtimeMs },
+				() => {
+					unreadableFile = true;
+				}
+			);
+			if (unreadableFile) {
+				oversized.push({
+					file: { sizeBytes: stats.size, reason: 'unreadable' },
+					cwd: await readRolloutCwd(filePath),
+				});
+			}
 
 			if (session) {
 				cache.sessions[filePath] = { session, fileMtimeMs: stats.mtimeMs };
@@ -710,6 +741,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 		// Sort by modified date (newest first)
 		sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+		// A date folder that could not be listed may hold rollouts of any project.
+		for (let i = 0; i < unreadableDirs.dirs; i++) {
+			oversized.push({ file: { sizeBytes: 0, reason: 'unreadable' }, cwd: undefined });
+		}
 		return { sessions, fileCount: allSessionFiles.length, oversized };
 	}
 

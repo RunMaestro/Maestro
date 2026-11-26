@@ -325,7 +325,9 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		expect(totals).toEqual({ local: 2, ssh: 2, hosted: 2 });
 		expect(notes.ssh).toBe(notes.local);
 		expect(notes.hosted).toBe(notes.local);
-		expect(notes.local).toContain('Not counted: 1 conversation of Build Box (too large to read).');
+		expect(notes.local).toContain(
+			'Not counted: 1 conversation of Build Box (too large or unreadable).'
+		);
 		expect(notes.local).not.toMatch(/SSH|remote|hosted|federation/i);
 	});
 

@@ -283,6 +283,29 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		expect(single).toHaveBeenCalledTimes(1);
 	});
 
+	it('counts a date folder it could not list against every project', async () => {
+		vi.mocked(fs.access).mockResolvedValue(undefined);
+		vi.mocked(fs.readdir).mockImplementation((async (dir: string) => {
+			if (String(dir).endsWith('sessions')) return ['2026'];
+			if (String(dir).endsWith('2026')) return ['11'];
+			if (String(dir).endsWith('11')) return ['20', '21'];
+			if (String(dir).endsWith('20')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			return [];
+		}) as never);
+		vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true, size: 1, mtimeMs: 1 } as any);
+		vi.mocked(fs.readFile).mockImplementation(async () => {
+			throw new Error('no cache');
+		});
+		const skipped: Array<[string, string]> = [];
+		await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+			onSkippedFile: (projectPath, file) => skipped.push([projectPath, file.reason]),
+		});
+		expect(skipped).toEqual([
+			['/work/a', 'unreadable'],
+			['/work/b', 'unreadable'],
+		]);
+	});
+
 	it('keeps distinct response items around malformed rows after shared native parsing', async () => {
 		vi.spyOn(storage, 'findSessionFile').mockResolvedValue('/isolated/rollout.jsonl');
 		vi.mocked(fs.readFile).mockResolvedValue(

@@ -234,15 +234,19 @@ export interface SessionOriginInfo {
 	contextUsage?: number;
 }
 
-/** One transcript a listing left out because it is too large to read. */
+/**
+ * One transcript a listing left out: past the size cap (`too-large`), or there but not readable
+ * (`unreadable`: a permission error, a read that failed, a folder of transcripts that could not be
+ * listed). A transcript that is simply gone is not one of these. `sizeBytes` is 0 when unknown.
+ */
 export interface SkippedSessionFile {
 	sizeBytes: number;
-	reason: 'too-large';
+	reason: 'too-large' | 'unreadable';
 }
 
 /**
  * Observes one `listSessions` call. A storage that leaves a transcript out
- * (one past its size cap) says so here, so a total read from the listing can be
+ * (one past its size cap, or one it could not read) says so here, so a total read from the listing can be
  * named partial instead of quietly short. A storage with no cap ignores it.
  */
 export interface SessionListObserver {

@@ -222,7 +222,7 @@ export interface TokenUsageExclusions {
 	remoteRefreshing?: boolean;
 	/**
 	 * Agents whose totals are counted but short: some of their conversations
-	 * have transcripts too large to read (here or on another computer), and
+	 * have transcripts too large or unreadable (here or on another computer), and
 	 * `conversations` says how many are left out.
 	 */
 	partialAgents?: Array<{ name: string; conversations: number }>;

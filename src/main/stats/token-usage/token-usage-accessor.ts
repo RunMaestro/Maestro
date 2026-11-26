@@ -391,7 +391,7 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<LocalCollectio
 }
 
 /**
- * The local projects a storage read only in part (transcripts too large to read), named the way
+ * The local projects a storage read only in part (transcripts too large or unreadable), named the way
  * an agent on another computer is: by the agents working there, else by the folder.
  */
 function localPartialAgents(

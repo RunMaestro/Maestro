@@ -313,7 +313,7 @@ export interface ProjectBreakdowns {
 	unsupportedProviders: string[];
 	failedProjects: Set<string>;
 	byProject: Map<string, SessionTokenBreakdown[]>;
-	/** Per project, how many transcripts a storage left out (too large to read). */
+	/** Per project, how many transcripts a storage left out (too large or unreadable). */
 	skippedProjects: Map<string, number>;
 }
 

@@ -281,7 +281,7 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 			if (result.complete && result.skippedFiles) {
 				const n = result.skippedFiles;
 				lines.push(
-					`  Not counted in full: ${project.projectPath} (${n === 1 ? '1 conversation' : `${n} conversations`} too large to read)`
+					`  Not counted in full: ${project.projectPath} (${n === 1 ? '1 conversation' : `${n} conversations`} too large or unreadable)`
 				);
 			}
 			if (result.complete) continue;

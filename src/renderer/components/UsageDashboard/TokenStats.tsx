@@ -481,11 +481,11 @@ export function tokenCoverageNotes(
 	if (unread.length > 0) {
 		skipped.push(`${unread.join(', ')} (conversations on another computer that could not be read)`);
 	}
-	// Counted, but short by the conversations whose transcripts are too large to
-	// read: named with how many, wherever those transcripts are.
+	// Counted, but short by the conversations whose transcripts are too large or
+	// unreadable: named with how many, wherever those transcripts are.
 	for (const { name, conversations } of data.excluded.partialAgents ?? []) {
 		skipped.push(
-			`${conversations === 1 ? '1 conversation' : `${conversations} conversations`} of ${name} (too large to read)`
+			`${conversations === 1 ? '1 conversation' : `${conversations} conversations`} of ${name} (too large or unreadable)`
 		);
 	}
 	if (pending.length > 0 && !options.readFailed) {

@@ -49,7 +49,7 @@ export interface RemoteBreakdowns {
 	/** Every `provider|projectPath` pair of the agents given, counted or not. */
 	pairs: Set<string>;
 	/**
-	 * Counted agents whose host left conversations out (too large to read), with how many: their
+	 * Counted agents whose host left conversations out (too large or unreadable), with how many: their
 	 * totals are short by those and are named, never quietly short.
 	 */
 	partial: Array<{ agent: RemoteTokenAgent; skippedFiles: number }>;
