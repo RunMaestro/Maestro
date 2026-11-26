@@ -788,7 +788,6 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					noteSession(parsed.sessionId);
 					await sessionWrite;
 				}
-				let previous: TurnEvent | undefined;
 				for (const event of mapper.map(parsed)) {
 					if (event.kind === 'session') {
 						if (provider !== 'grok') noteSession(event.providerSessionId);
@@ -796,12 +795,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					}
 					const sent = emitTurn(agentId, tabId, event);
 					if (sent.kind === 'tool') ranTool = true;
-					// A partial that is both a thinking chunk and answer text (`partialTextRoute()`) is
-					// one stream on the desktop: its answer copy does not close the thinking block.
-					const answerCopy =
-						sent.kind === 'text' && previous?.kind === 'thinking' && previous.text === sent.text;
-					previous = sent;
-					if (!answerCopy && keepsCards(sent, streamed) && isStickyTab(agentId, tabId)) {
+					// The fold a client's live tail runs too: the answer copy of a partial that is also a
+					// thinking chunk (`partialTextRoute()`) neither shows twice nor closes the block.
+					if (keepsCards(sent, streamed) && isStickyTab(agentId, tabId)) {
 						streamed = foldLiveTurn(streamed, sent, foldContext) ?? streamed;
 					}
 				}

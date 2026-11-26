@@ -34,6 +34,33 @@ describe('liveTurnKey', () => {
 });
 
 describe('foldLiveTurn', () => {
+	// T2 review: a Claude partial is a thinking chunk and the same words as answer text
+	// (`partialTextRoute()`). A local or SSH tab draws one thinking stream for it; so does a
+	// hosted tab's live tail, which skips the answer copy.
+	it('draws a partial that is both thinking and answer once, as one thinking stream', () => {
+		const turn = foldAll([
+			{ kind: 'thinking', at: 1, text: 'First part. ' },
+			{ kind: 'text', at: 1, text: 'First part. ' },
+			{ kind: 'thinking', at: 2, text: 'Second part.' },
+			{ kind: 'text', at: 2, text: 'Second part.' },
+		]);
+		expect(turn?.entries.map((entry) => [entry.source, entry.text])).toEqual([
+			['thinking', 'First part. Second part.'],
+		]);
+		expect(turn?.thinkingTail).toBeUndefined();
+	});
+
+	it('still draws answer text that is not a copy of the thinking before it', () => {
+		const turn = foldAll([
+			{ kind: 'thinking', at: 1, text: 'Plan it.' },
+			{ kind: 'text', at: 2, text: 'Done.' },
+		]);
+		expect(turn?.entries.map((entry) => [entry.source, entry.text])).toEqual([
+			['thinking', 'Plan it.'],
+			['stdout', 'Done.'],
+		]);
+	});
+
 	it('appends the user entry and marks the turn busy on start', () => {
 		const entry = { id: 'u1', timestamp: 1, source: 'user', text: 'hi' };
 		const turn = foldAll([
