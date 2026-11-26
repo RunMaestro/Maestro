@@ -760,7 +760,8 @@ export type SteerBlockedReason =
 	| 'too-long'
 	| 'paused'
 	| 'waiting-for-connection'
-	| 'ssh-remote'
+	| 'native-local-only'
+	| 'maestro-p-outdated'
 	| 'steer-in-flight'
 	| 'tui-command-prefix'
 	| 'read-only'
@@ -806,6 +807,22 @@ function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
 }
 
 /**
+ * Whether the agent's SSH remote runs a maestro-p too old to relay a steer, as
+ * the most recent spawn recorded it. Read only while the agent runs on that remote:
+ * a hosted agent (judged through `hostRunView`, which drops the SSH fields) or one
+ * moved back to this machine keeps a stale record until its next spawn rewrites it,
+ * and that record says nothing about where its turns run now.
+ */
+export function remoteMaestroPCannotSteer(
+	session: Pick<Session, 'claudeInteractive' | 'sshRemoteId' | 'sessionSshRemoteConfig'>
+): boolean {
+	return (
+		session.claudeInteractive?.steeringUnavailable === 'maestro-p-outdated' &&
+		isSessionRemote(session)
+	);
+}
+
+/**
  * Whether a queued message can be STEERED into the turn already running on its
  * tab, rather than waiting for that turn to finish.
  *
@@ -826,8 +843,15 @@ function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
  * route has no input channel into a running turn, and the negotiated ACP route
  * advertises no in-progress input operation (`GROK_ACP_PORT_SUPPORT.steering` and
  * `grokSteeringAvailability()` in src/shared/maestro-lib/grok/route.ts, which main
- * answers every Grok steer from). Checked before the SSH test so a remote Grok
- * agent names the provider gap, the one that holds wherever it runs.
+ * answers every Grok steer from). Checked first so every Grok agent names the
+ * provider gap, the one that holds wherever it runs.
+ *
+ * Where the agent runs does not change the answer: a Claude TUI turn on an SSH
+ * remote steers through the remote's own maestro-p (see `sendRemoteSteeringRequest`
+ * in src/main/process-manager/steering-client.ts), so local, SSH and hosted agents
+ * get the same reasons. The remote facts that can stop it are recorded by the
+ * spawn (`claudeInteractive.steeringUnavailable`) or are the transport's own
+ * limit (`native-local-only`).
  *
  * `dynamic` mode is the interesting case and the reason this reads
  * `session.claudeInteractive.mode` rather than the configured token mode. A dynamic
@@ -840,7 +864,7 @@ function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
  *
  * Neither is worth guessing around, because this predicate decides whether to SHOW
  * a control, and the truth is established at the moment it is used: maestro-p opens
- * a steering channel only for a local interactive turn, so a steer against a turn
+ * a steering channel only for an interactive turn, so a steer against a turn
  * that is really on API finds nothing listening and comes back `refused` with
  * `not-running`, leaving the message queued. Being wrong here costs a button that
  * declines with a reason; being wrong the other way hides a working feature.
@@ -896,8 +920,11 @@ export function getSteerEligibility(
 		session.harnessControlMode === 'native' &&
 		supportsNativeSteering(session.toolType);
 	if (nativeSteering) {
-		// Native control is local-only; its adapter owns the in-turn protocol channel.
-		if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
+		// LOCKED (parity F2): native control never starts a turn over SSH (handle-spawn
+		// refuses the spawn: "Native ACP control is currently local-only"), so there is
+		// no remote turn for its adapter's in-turn channel to reach. Named as the
+		// transport's limit, which the agent settings can change, not as a mode rule.
+		if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'native-local-only' };
 	} else if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
 		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
@@ -908,14 +935,16 @@ export function getSteerEligibility(
 		if (resolveCodexTransport(session) !== 'app-server') {
 			return { canSteer: false, blockedReason: 'codex-exec' };
 		}
-	} else if (isSessionRemote(session)) {
-		// A Claude TUI on another host has no local socket to type into. Main would
-		// refuse every attempt, so the button would be a control that can only decline.
-		return { canSteer: false, blockedReason: 'ssh-remote' };
 	} else if (session.toolType !== 'claude-code') {
 		return { canSteer: false, blockedReason: 'not-claude' };
 	} else if (session.claudeInteractive?.mode !== 'interactive') {
 		return { canSteer: false, blockedReason: 'api-token-source' };
+	} else if (remoteMaestroPCannotSteer(session)) {
+		// A Claude TUI steers wherever it runs: on an SSH remote the spawn names a
+		// socket there and main relays the steer through the remote's own maestro-p.
+		// The one remote fact that stops it is a maestro-p too old to relay, which the
+		// spawn records, so the control declines before anyone clicks.
+		return { canSteer: false, blockedReason: 'maestro-p-outdated' };
 	}
 	// Steering TYPES text into the composer, so an item with nothing to type has
 	// nothing to steer with.
@@ -1033,8 +1062,9 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'too-long': `${STEERING_TOO_LONG_DETAIL[0].toUpperCase()}${STEERING_TOO_LONG_DETAIL.slice(1)}.`,
 	paused: 'The message is paused. Resume it from its queued card.',
 	'waiting-for-connection': 'The message is waiting for the agent to reconnect.',
-	'ssh-remote':
-		'This turn runs on an SSH remote, where its input channel cannot be reached from here. Queue the message and it sends when the turn ends.',
+	'native-local-only':
+		'Native control runs only on this machine, so it cannot run this agent over SSH. Select the current transport in the agent settings to run and steer it.',
+	'maestro-p-outdated': 'Update maestro-p on this remote to steer.',
 	'steer-in-flight': 'A steer for this message is already waiting for an answer.',
 	'tui-command-prefix':
 		'A message that starts with / or ! would run as a command in the running turn.',

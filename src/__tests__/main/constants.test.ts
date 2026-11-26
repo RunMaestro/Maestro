@@ -15,6 +15,8 @@ import {
 	debugLog,
 	MAX_GROUP_CHAT_BUFFER_SIZE,
 	resolveSharedDataPath,
+	resolveDemoShowInactive,
+	DEMO_SHOW_INACTIVE_ENV,
 } from '../../main/constants';
 
 describe('main/constants', () => {
@@ -29,6 +31,21 @@ describe('main/constants', () => {
 			expect(resolveSharedDataPath('/data/maestro', { enabled: true, path: '/tmp/demo' })).toBe(
 				'/tmp/demo'
 			);
+		});
+	});
+
+	describe('resolveDemoShowInactive', () => {
+		it('shows windows inactive only for a demo instance that asks for it', () => {
+			expect(resolveDemoShowInactive({ [DEMO_SHOW_INACTIVE_ENV]: '1' }, true)).toBe(true);
+		});
+
+		it('ignores the env var outside demo mode', () => {
+			expect(resolveDemoShowInactive({ [DEMO_SHOW_INACTIVE_ENV]: '1' }, false)).toBe(false);
+		});
+
+		it('keeps the normal activating show when the env var is unset or not 1', () => {
+			expect(resolveDemoShowInactive({}, true)).toBe(false);
+			expect(resolveDemoShowInactive({ [DEMO_SHOW_INACTIVE_ENV]: 'true' }, true)).toBe(false);
 		});
 	});
 

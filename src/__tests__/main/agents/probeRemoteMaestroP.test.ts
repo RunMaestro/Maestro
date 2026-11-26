@@ -20,6 +20,7 @@ import {
 } from '../../../main/agents/probeRemoteMaestroP';
 import {
 	getRemoteMaestroPAvailable,
+	getRemoteMaestroPCanSteer,
 	__clearRemoteMaestroPCache,
 } from '../../../main/agents/remoteMaestroPCache';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -41,14 +42,42 @@ describe('probeRemoteMaestroP', () => {
 		buildSshCommand.mockClear();
 	});
 
-	it('launch-tests `maestro-p --version` rather than checking the path', async () => {
+	it('launch-tests `maestro-p --version --capabilities` rather than checking the path', async () => {
 		execFileNoThrow.mockResolvedValue({ exitCode: 0, stdout: '0.16.20-RC\n', stderr: '' });
 		await probeRemoteMaestroP(remote);
-		// The probe must actually run maestro-p, not just `command -v` it.
+		// The probe must actually run maestro-p, not just `command -v` it. The
+		// capabilities flag follows `--version`, so an older maestro-p answers the
+		// version and exits without reading it.
 		expect(buildSshCommand).toHaveBeenCalledWith(
 			remote,
-			expect.objectContaining({ command: 'maestro-p', args: ['--version'] })
+			expect.objectContaining({ command: 'maestro-p', args: ['--version', '--capabilities'] })
 		);
+	});
+
+	it('caches that the remote can steer when maestro-p advertises the steering relay', async () => {
+		execFileNoThrow.mockResolvedValue({
+			exitCode: 0,
+			stdout: '1.2.0\ncapabilities: steer-relay\n',
+			stderr: '',
+		});
+		expect(await probeRemoteMaestroP(remote)).toBe(true);
+		expect(getRemoteMaestroPCanSteer('remote-1')).toBe(true);
+	});
+
+	it('caches that an older maestro-p (version line only) cannot steer', async () => {
+		execFileNoThrow.mockResolvedValue({ exitCode: 0, stdout: '0.16.20-RC\n', stderr: '' });
+		expect(await probeRemoteMaestroP(remote)).toBe(true);
+		expect(getRemoteMaestroPCanSteer('remote-1')).toBe(false);
+	});
+
+	it('leaves steering unknown when the probe could not reach the remote', async () => {
+		execFileNoThrow.mockResolvedValue({
+			exitCode: 255,
+			stdout: '',
+			stderr: 'ssh: connect to host example.com port 22: Connection refused',
+		});
+		await probeRemoteMaestroP(remote);
+		expect(getRemoteMaestroPCanSteer('remote-1')).toBeUndefined();
 	});
 
 	it('caches true when maestro-p launches (exit 0 with a version line)', async () => {
