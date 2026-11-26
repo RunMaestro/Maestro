@@ -406,23 +406,25 @@ async function downloadRemoteDirToLocal(
 		// The first failure stops the rest from starting, and the reads already
 		// running settle before the staging folder is removed under them.
 		const failures: unknown[] = [];
-		// A size the listing could not report is checked once the bytes are here, the same rule.
+		// Every file is checked again once its bytes are here, the same rule: a size the listing
+		// could not report counts now, and a file that grew since the listing counts at its real
+		// size, so neither slips past the budget.
 		let fetchedTotal = listedTotal;
+		// With a size still unknown, the running total is a lower bound.
+		const someSizeUnknown = files.some((file) => file.size === null);
 		await mapWithConcurrency(files, REMOTE_FOLDER_DOWNLOAD_CONCURRENCY, async (file) => {
 			if (failures.length > 0) return;
 			try {
 				const local = path.join(staging, ...file.segments);
 				await fs.mkdir(path.dirname(local), { recursive: true });
 				const bytes = await readRemoteFileBytes(file.remote, sshConfig);
-				if (file.size === null) {
-					fetchedTotal += bytes.length;
-					const over = remoteFolderTooLarge(
-						fetchedTotal,
-						{ name: file.rel, size: bytes.length },
-						true
-					);
-					if (over) throw new Error(over);
-				}
+				fetchedTotal += bytes.length - (file.size ?? 0);
+				const over = remoteFolderTooLarge(
+					fetchedTotal,
+					{ name: file.rel, size: bytes.length },
+					someSizeUnknown
+				);
+				if (over) throw new Error(over);
 				await fs.writeFile(local, bytes);
 			} catch (error) {
 				failures.push(error);

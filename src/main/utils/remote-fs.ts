@@ -1958,9 +1958,18 @@ export interface ListTreeOptions {
 	withSizes?: boolean;
 }
 
-/** `find -L` reports a symlink loop with one of these (GNU, BSD); the walk already skipped it. */
-const FIND_LOOP_REPORT =
-	/File system loop detected|causes a cycle|Too many levels of symbolic links/;
+/**
+ * Whether one `find -L` error line (under `LC_ALL=C`) is a symlink-loop report, which the walk
+ * already skipped. Read from the line's structure, never from words anywhere in it: a path is
+ * remote text, and a folder named "causes a cycle" must not hide its own permission error.
+ * GNU opens the line with the diagnostic (every path in it starts with a quote or `./`); BSD and
+ * the ELOOP case end it with the reason, after the final `: `, which a quoted path cannot reach.
+ */
+function isFindLoopReport(line: string): boolean {
+	if (line.startsWith('find: File system loop detected; ')) return true;
+	const reason = line.slice(line.lastIndexOf(': ') + 2);
+	return reason === 'directory causes a cycle' || reason === 'Too many levels of symbolic links';
+}
 
 /**
  * The first real failure in a strict walk's `find` errors (run under `LC_ALL=C`), as a message
@@ -1970,7 +1979,7 @@ const FIND_LOOP_REPORT =
 export function strictListingFailure(stderr: string, rootPath: string): string | null {
 	for (const raw of stderr.split('\n')) {
 		const line = raw.replace(/\r$/, '').trim();
-		if (!line || FIND_LOOP_REPORT.test(line)) continue;
+		if (!line || isFindLoopReport(line)) continue;
 		// GNU: find: './secret': Permission denied. BSD: find: ./secret: Permission denied.
 		const match = /^find:\s*['\u2018`"]?(.*?)['\u2019`"]?:\s*([^:]+)$/.exec(line);
 		const where = match ? match[1].replace(/^\.\/?/, '') : '';

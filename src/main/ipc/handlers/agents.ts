@@ -894,7 +894,8 @@ export async function readRemoteDebugFacts(sshRemote: SshRemoteConfig): Promise<
 	try {
 		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
 		const result = await Promise.race([
-			execSshCommand(sshRemote, sshCommand),
+			// The subprocess has the same bound as the race, so a hung probe never outlives it.
+			execSshCommand(sshRemote, sshCommand, { timeout: SSH_MODEL_TIMEOUT_MS }),
 			new Promise<never>((_, reject) => {
 				timer = setTimeout(
 					() => reject(new Error('SSH debug facts timed out')),

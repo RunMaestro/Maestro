@@ -1677,5 +1677,23 @@ describe('AutoRunSetupModal', () => {
 			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
 			expect(screen.getByText(UNRESOLVED_REMOTE_MESSAGE)).toBeInTheDocument();
 		});
+
+		it('an SSH agent with no remote resolved yet cannot commit a typed folder by Continue or Enter', async () => {
+			const onFolderSelected = vi.fn();
+			const { container } = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={vi.fn()}
+					onFolderSelected={onFolderSelected}
+					sshRemoteId={null}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/srv/docs' } });
+			const continueButton = screen.getByRole('button', { name: 'Continue' });
+			expect(continueButton).toBeDisabled();
+			fireEvent.click(continueButton);
+			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'Enter' });
+			expect(onFolderSelected).not.toHaveBeenCalled();
+		});
 	});
 });

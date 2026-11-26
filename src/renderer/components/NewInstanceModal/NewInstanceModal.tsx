@@ -7,7 +7,12 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { pathPickerRemoteId, pickDirectory, usePathPickerStore } from '../../services/pathPicker';
+import {
+	pathPickerRemoteId,
+	pickDirectory,
+	UNRESOLVED_REMOTE_MESSAGE,
+	usePathPickerStore,
+} from '../../services/pathPicker';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
@@ -26,6 +31,7 @@ import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
 import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
+import type { RemotePathValidationState } from './types';
 import { AgentPickerGrid } from './AgentPickerGrid';
 import {
 	filterToAvailableProviders,
@@ -41,6 +47,13 @@ import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { useAgentModelEffortOptions } from '../../hooks/agent/useAgentModelEffortOptions';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 
+/** The path-status row for an SSH draft whose remote is not chosen yet. */
+const UNRESOLVED_PATH_STATUS: RemotePathValidationState = {
+	checking: false,
+	valid: false,
+	isDirectory: false,
+	error: UNRESOLVED_REMOTE_MESSAGE,
+};
 export function NewInstanceModal({
 	isOpen,
 	onClose,
@@ -188,6 +201,15 @@ export function NewInstanceModal({
 		return config?.enabled && !!config?.remoteId;
 	}, [selectedAgent, agentSshRemoteConfigs]);
 
+	// An SSH draft with no remote chosen yet (a duplicate of such an agent): its path lives on no
+	// machine Maestro can check, so the status row says so instead of checking this disk.
+	const isSshRemoteUnresolved = useMemo(() => {
+		const config = selectedAgent
+			? agentSshRemoteConfigs[selectedAgent]
+			: agentSshRemoteConfigs['_pending_'];
+		return !!config?.enabled && !config?.remoteId;
+	}, [selectedAgent, agentSshRemoteConfigs]);
+
 	// Get SSH remote host for display (moved up for use in validation)
 	// Also works with pending config when no agent is selected
 	const sshRemoteHost = useMemo(() => {
@@ -205,8 +227,8 @@ export function NewInstanceModal({
 	// path the same way, so the status row under the field reads the same in every mode.
 	const remotePathValidation = useRemotePathValidation({
 		isSshEnabled: !!isSshEnabled,
-		validateLocal: true,
-		path: isSshEnabled ? workingDir : expandTilde(workingDir),
+		validateLocal: !isSshRemoteUnresolved,
+		path: isSshEnabled ? workingDir : expandTilde(workingDir.trim()),
 		sshRemoteId: (agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'])
 			?.remoteId,
 	});
@@ -1368,7 +1390,12 @@ export function NewInstanceModal({
 				/>
 
 				{/* Path status, drawn the same way for a local and a remote directory */}
-				{workingDir.trim() && <RemotePathStatus theme={theme} validation={remotePathValidation} />}
+				{workingDir.trim() && (
+					<RemotePathStatus
+						theme={theme}
+						validation={isSshRemoteUnresolved ? UNRESOLVED_PATH_STATUS : remotePathValidation}
+					/>
+				)}
 
 				{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
 				{workingDir.trim() && gitRepoStatus === 'not-repo' && (

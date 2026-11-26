@@ -487,6 +487,23 @@ describe('filesystem handlers', () => {
 			expect(fs.rename).not.toHaveBeenCalled();
 		});
 
+		it('checks a file that grew since the listing at its real size, before writing it', async () => {
+			vi.mocked(listTreeRemote).mockResolvedValue({
+				success: true,
+				data: { directories: [], files: ['app.log'], truncated: false, fileSizes: [10] },
+			});
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.alloc(REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES + 1).toString('base64'),
+			});
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(
+				/too large to copy to this computer \(50\.0 MB\): app\.log alone is 50\.0 MB/
+			);
+			expect(fs.writeFile).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+		});
+
 		it('copies a folder within the budget', async () => {
 			vi.mocked(listTreeRemote).mockResolvedValue({
 				success: true,

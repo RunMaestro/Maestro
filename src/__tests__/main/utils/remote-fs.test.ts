@@ -3361,6 +3361,17 @@ describe('strictListingFailure', () => {
 		).toBeNull();
 	});
 
+	it('a folder named like a loop report does not hide its own permission error', () => {
+		for (const line of [
+			"find: './causes a cycle': Permission denied",
+			"find: './x: Too many levels of symbolic links': Permission denied",
+			"find: './File system loop detected; y': Permission denied",
+			'find: ./directory causes a cycle: Permission denied',
+		]) {
+			expect(strictListingFailure(line, '/srv/x'), line).toContain('Permission denied');
+		}
+	});
+
 	it('cuts a long hostile name to a readable length', () => {
 		const message = strictListingFailure(`find: './${'x'.repeat(5000)}': Permission denied`, '/r');
 		expect(message!.length).toBeLessThan(400);

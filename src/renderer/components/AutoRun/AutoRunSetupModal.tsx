@@ -131,6 +131,9 @@ export function AutoRunSetupModal({
 	};
 
 	const handleContinue = () => {
+		// An agent whose SSH remote is not resolved has no machine to read the folder from, so
+		// the folder is not committed (Continue and Enter alike); the check row says why.
+		if (sshRemoteId === null) return;
 		if (selectedFolder) {
 			// Expand tilde before passing to callback
 			const expandedPath = expandTilde(selectedFolder.trim());
@@ -175,7 +178,7 @@ export function AutoRunSetupModal({
 						onCancel={onClose}
 						onConfirm={handleContinue}
 						confirmLabel="Continue"
-						confirmDisabled={!selectedFolder}
+						confirmDisabled={!selectedFolder || sshRemoteId === null}
 						confirmButtonRef={continueButtonRef}
 					/>
 				}

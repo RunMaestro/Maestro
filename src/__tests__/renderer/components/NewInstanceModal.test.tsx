@@ -10,7 +10,10 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { usePathPickerStore } from '../../../renderer/services/pathPicker';
+import {
+	UNRESOLVED_REMOTE_MESSAGE,
+	usePathPickerStore,
+} from '../../../renderer/services/pathPicker';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
@@ -4491,7 +4494,10 @@ describe('NewInstanceModal', () => {
 					sourceSession={createModeSession(mode, { name: 'Src', cwd: '/srv/start' })}
 				/>
 			);
-			await waitFor(() => expect(screen.getByLabelText('Working Directory')).toBeInTheDocument());
+			// The duplicate seeds the field after detection; edit it only once the seed landed.
+			await waitFor(() =>
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/srv/start')
+			);
 			fireEvent.change(screen.getByLabelText('Working Directory'), {
 				target: { value: '/srv/project' },
 			});
@@ -4514,6 +4520,59 @@ describe('NewInstanceModal', () => {
 			expect(results.local.lastStat).toEqual(['/srv/project', undefined]);
 			expect(results.ssh.lastStat).toEqual(['/srv/project', 'r1']);
 			expect(results.hosted.lastStat).toEqual(['/srv/project', 'r1']);
+		});
+
+		it('an SSH draft with no remote chosen yet says so and checks nothing on this machine', async () => {
+			vi.mocked(window.maestro.fs.stat).mockReset();
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				isDirectory: true,
+				isFile: false,
+			} as any);
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={createModeSession('ssh', {
+						name: 'Src',
+						cwd: '/srv/start',
+						sshRemoteId: undefined,
+						sessionSshRemoteConfig: { enabled: true, remoteId: null },
+					})}
+				/>
+			);
+			expect(
+				await screen.findByText(UNRESOLVED_REMOTE_MESSAGE, undefined, { timeout: 3000 })
+			).toBeInTheDocument();
+			expect(screen.queryByText('Directory found')).not.toBeInTheDocument();
+			expect(window.maestro.fs.stat).not.toHaveBeenCalled();
+		});
+
+		it('a padded local ~ path is expanded and checked like the one Create uses', async () => {
+			vi.mocked(window.maestro.fs.stat).mockReset();
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				isDirectory: true,
+				isFile: false,
+			} as any);
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+			await waitFor(() => expect(screen.getByLabelText('Working Directory')).toBeInTheDocument());
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '  ~/project  ' },
+			});
+			expect(
+				await screen.findByText('Directory found', undefined, { timeout: 3000 })
+			).toBeInTheDocument();
+			expect(window.maestro.fs.stat).toHaveBeenLastCalledWith('/home/testuser/project', undefined);
 		});
 
 		it('a local path that is not there shows the same error row an SSH one does', async () => {

@@ -1087,6 +1087,11 @@ describe('agents IPC handlers', () => {
 						whichCommand: REMOTE_WHICH_COMMAND,
 					});
 					expect(result.debugInfo.error).toContain('command -v claude');
+					// The facts probe's ssh child has the same bound as the wait for it.
+					const factsCall = vi
+						.mocked(execFileNoThrow)
+						.mock.calls.find(([, args]) => (args ?? []).join(' ').includes('uname -s'));
+					expect(factsCall?.[3]).toMatchObject({ timeout: expect.any(Number) });
 					// The agents come back tagged with the remote they were detected on.
 					expect(result.agents.find((a: any) => a.id === 'claude-code')).toBeDefined();
 				}

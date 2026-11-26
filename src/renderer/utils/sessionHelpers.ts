@@ -381,6 +381,9 @@ export function getSessionSshRemoteId(
  */
 export function isSessionRemote(session: SessionSshInfo | null | undefined): boolean {
 	if (!session) return false;
+	// SSH switched off in the agent's settings wins over the last spawn's `sshRemoteId`, which
+	// stays on the record until the next spawn: that agent now runs on this machine.
+	if (session.sessionSshRemoteConfig?.enabled === false) return false;
 	return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
 }
 
