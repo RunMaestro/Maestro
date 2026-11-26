@@ -273,6 +273,7 @@ describe('aggregate', () => {
 			notCountedAgents: [],
 			pendingAgents: [],
 			remoteRefreshing: false,
+			partialAgents: [],
 		});
 	});
 
@@ -563,7 +564,9 @@ describe('Grok native lifetime accounting', () => {
 				new Set(vi.mocked(cache.set).mock.calls.map(([, , bd]) => bd.accounting?.scopeId)).size
 			).toBe(2);
 			for (const account of accounts)
-				expect(listSessions).toHaveBeenCalledWith(project, undefined, account);
+				expect(listSessions).toHaveBeenCalledWith(project, undefined, account, {
+					onSkippedFile: expect.any(Function),
+				});
 		});
 
 		it('refreshes usage-only changes and unavailable usage despite unchanged metadata', async () => {

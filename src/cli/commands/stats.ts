@@ -270,6 +270,12 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 			`  API-equivalent cost: ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`,
 		];
 		for (const { project, result } of answers) {
+			if (result.complete && result.skippedFiles) {
+				const n = result.skippedFiles;
+				lines.push(
+					`  Not counted in full: ${project.projectPath} (${n === 1 ? '1 conversation' : `${n} conversations`} too large to read)`
+				);
+			}
 			if (result.complete) continue;
 			const why =
 				result.status === 'unsupported'

@@ -264,6 +264,22 @@ describe('project token usage reply', () => {
 		expect(parsed!.projects[0].complete).toBe(false);
 	});
 
+	it('carries how many conversations were too large to read, and reads a bad count as not complete', () => {
+		const frame = wire({
+			projects: [{ status: 'read', breakdowns: [breakdown()], complete: true, skippedFiles: 2 }],
+		});
+		const parsed = parseProjectTokenUsageReply(frame, ASKED)!;
+		expect(parsed.projects[0]).toMatchObject({ complete: true, skippedFiles: 2 });
+		for (const bad of [-1, 1.5, 'two', 1e9]) {
+			const spoiled = JSON.parse(JSON.stringify(frame)) as {
+				projects: Array<Record<string, unknown>>;
+			};
+			spoiled.projects[0].skipped = bad;
+			const read = parseProjectTokenUsageReply(spoiled, ASKED)!;
+			expect(read.projects[0].complete).toBe(false);
+		}
+	});
+
 	it('keeps only known coverage and origin words', () => {
 		const parsed = parseProjectTokenUsageReply(
 			replyWith({ coverage: 'everything', origin: 'robot' }),

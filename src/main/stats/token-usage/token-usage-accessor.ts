@@ -142,6 +142,7 @@ function noExclusions(): TokenUsageExclusions {
 		notCountedAgents: [],
 		pendingAgents: [],
 		remoteRefreshing: false,
+		partialAgents: [],
 	};
 }
 
@@ -225,7 +226,7 @@ const requestRemoteTokenUsage: RemoteTokenUsageRequest = async (remoteId, projec
 async function collectRemoteAgentBreakdowns(
 	agents: readonly RemoteTokenAgent[]
 ): Promise<RemoteBreakdowns> {
-	if (agents.length === 0) return { breakdowns: [], notCounted: [], pairs: new Set() };
+	if (agents.length === 0) return { breakdowns: [], notCounted: [], pairs: new Set(), partial: [] };
 	return withStatsIndexing(
 		{ id: 'remote-token-usage', label: 'Token usage on other computers', reason: 'index' },
 		async (progress) => {
@@ -257,6 +258,7 @@ function refreshRemote(agents: readonly RemoteTokenAgent[]): Promise<RemoteEntry
 				pairs: new Set(
 					agents.map((agent) => remoteProjectPairKey(agent.provider, agent.projectPath))
 				),
+				partial: [],
 			};
 		}
 		const entry = { computedAt: Date.now(), agentIds, result };
@@ -330,6 +332,12 @@ function withRemote(local: LocalCollection, remote: RemoteRead): Collection {
 				.map((agent) => agent.name),
 			pendingAgents: pending.map((agent) => agent.name),
 			remoteRefreshing: remote.refreshing,
+			partialAgents: [
+				...(local.excluded.partialAgents ?? []),
+				...(result?.partial ?? [])
+					.filter(({ agent }) => current.has(agent.id))
+					.map(({ agent, skippedFiles }) => ({ name: agent.name, conversations: skippedFiles })),
+			],
 		},
 	};
 }
@@ -349,7 +357,44 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<LocalCollectio
 		onError: (error) => void captureException(error),
 	});
 	cache.prune(local.liveKeys);
+	excluded.partialAgents = localPartialAgents(local.skippedProjects);
 	return { breakdowns: local.breakdowns, excluded, remotePairs };
+}
+
+/**
+ * The local projects a storage read only in part (transcripts too large to read), named the way
+ * an agent on another computer is: by the agents working there, else by the folder.
+ */
+function localPartialAgents(
+	skippedProjects: ReadonlyMap<string, number>
+): Array<{ name: string; conversations: number }> {
+	if (skippedProjects.size === 0) return [];
+	let records: AgentRecord[] = [];
+	if (storesInitialized()) {
+		try {
+			records = getLiveSessions() as AgentRecord[];
+		} catch (error) {
+			void captureException(error, { operation: 'tokenUsage:readLocalAgents' });
+		}
+	}
+	const remoteIds = new Set(remoteTokenAgentsOf(records).map((agent) => agent.id));
+	const partial: Array<{ name: string; conversations: number }> = [];
+	for (const [key, conversations] of skippedProjects) {
+		const [agentType, projectPath] = key.split('\u0000');
+		const names = records
+			.filter(
+				(record) =>
+					!remoteIds.has(record.id) &&
+					record.toolType === agentType &&
+					(record.cwd === projectPath || record.projectRoot === projectPath)
+			)
+			.map((record) => (typeof record.name === 'string' && record.name ? record.name : record.id));
+		partial.push({
+			name: names.length > 0 ? [...new Set(names)].join(', ') : projectLabel(projectPath),
+			conversations,
+		});
+	}
+	return partial;
 }
 
 /**

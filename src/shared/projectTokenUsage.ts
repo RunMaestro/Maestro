@@ -53,6 +53,8 @@ export const MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS = 50_000;
 const MAX_MODELS_PER_SESSION = 64;
 /** A token count past this is not a real conversation. */
 const MAX_TOKENS = 1e13;
+/** More skipped transcripts than this in one project is not a real answer. */
+const MAX_SKIPPED_FILES = 1e6;
 /** A cost past this (USD) is not a real conversation. */
 const MAX_COST_USD = 1e7;
 /** The largest timestamp a Date can hold. */
@@ -87,6 +89,11 @@ export interface ProjectTokenUsageResult {
 	 * the requester) every record held together.
 	 */
 	complete: boolean;
+	/**
+	 * Conversations of the project the host left out because their transcripts are too large to
+	 * read. The rest is counted, and the project is named as partial, never quietly short.
+	 */
+	skippedFiles?: number;
 }
 
 /** What a host answers: one result per project, in the order the request named them. */
@@ -344,6 +351,9 @@ export function projectTokenUsageReplyFrame(usage: ProjectTokenUsage): Json {
 				...(kept.length < project.breakdowns.length || !project.complete
 					? { truncated: true }
 					: {}),
+				...(project.skippedFiles && project.skippedFiles > 0
+					? { skipped: project.skippedFiles }
+					: {}),
 			};
 		}),
 	};
@@ -583,6 +593,9 @@ export function parseProjectTokenUsageReply(
 				? (raw.status as ProjectTokenUsageStatus)
 				: 'failed';
 		let complete = status === 'read' && raw.truncated !== true;
+		// A count that does not hold together cannot say how short the total is: not complete.
+		const skipped = raw.skipped === undefined ? 0 : boundedNumber(raw.skipped, MAX_SKIPPED_FILES);
+		if (skipped === undefined || !Number.isInteger(skipped)) complete = false;
 		const breakdowns: SessionTokenBreakdown[] = [];
 		for (const entry of raw.breakdowns) {
 			if (room <= 0) {
@@ -597,7 +610,8 @@ export function parseProjectTokenUsageReply(
 				complete = false;
 			}
 		}
-		projects.push({ status, breakdowns, complete });
+		const skippedFiles = skipped !== undefined && Number.isInteger(skipped) ? skipped : 0;
+		projects.push({ status, breakdowns, complete, ...(skippedFiles > 0 ? { skippedFiles } : {}) });
 	}
 	return { projects };
 }

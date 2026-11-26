@@ -220,6 +220,12 @@ export interface TokenUsageExclusions {
 	 * `waitForRemote` (the dashboard does, and fills them in when they land).
 	 */
 	remoteRefreshing?: boolean;
+	/**
+	 * Agents whose totals are counted but short: some of their conversations
+	 * have transcripts too large to read (here or on another computer), and
+	 * `conversations` says how many are left out.
+	 */
+	partialAgents?: Array<{ name: string; conversations: number }>;
 }
 
 /**

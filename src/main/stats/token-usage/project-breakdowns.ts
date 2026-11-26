@@ -13,7 +13,11 @@
  * optional `cache` adds the dashboard's per-session breakdown cache on top.
  */
 
-import type { AgentSessionInfo, AgentSessionStorage } from '../../agents/session-storage';
+import type {
+	AgentSessionInfo,
+	AgentSessionStorage,
+	SkippedSessionFile,
+} from '../../agents/session-storage';
 import {
 	DEFAULT_ACCOUNT_KEY,
 	type ModelTokenUsage,
@@ -222,9 +226,17 @@ export function toBreakdown(
 export type ProjectSessionStorage = Pick<AgentSessionStorage, 'listSessions'> & {
 	listSessionsForProjects?(
 		projectPaths: readonly string[],
-		accountDir?: string
+		accountDir?: string,
+		observer?: { onSkippedFile?(projectPath: string, file: SkippedSessionFile): void }
 	): Promise<Map<string, AgentSessionInfo[]>>;
 };
+
+/** One project's listing for one account: its sessions, and how many transcripts it left out. */
+interface ProjectListing {
+	sessions: AgentSessionInfo[];
+	/** Transcripts the storage did not read (past its size cap): the total is short by these. */
+	skipped: number;
+}
 
 /**
  * Runs the session listings of a host: a listing asked for again while it is still running joins
@@ -299,6 +311,8 @@ export interface ProjectBreakdowns {
 	unsupportedProviders: string[];
 	failedProjects: Set<string>;
 	byProject: Map<string, SessionTokenBreakdown[]>;
+	/** Per project, how many transcripts a storage left out (too large to read). */
+	skippedProjects: Map<string, number>;
 }
 
 /** The key a failed project is recorded under. */
@@ -317,19 +331,32 @@ async function listAccountProjects(
 	projects: readonly string[],
 	accountDir: string | undefined,
 	gate: SessionListGate
-): Promise<Map<string, AgentSessionInfo[] | Error>> {
+): Promise<Map<string, ProjectListing | Error>> {
 	const account = accountDir ?? '';
-	const listed = new Map<string, AgentSessionInfo[] | Error>();
+	const listed = new Map<string, ProjectListing | Error>();
 	const asError = (error: unknown): Error =>
 		error instanceof Error ? error : new Error(String(error));
+	// The skips are counted inside the gated listing, so an ask that joins it gets them too.
 	if (storage.listSessionsForProjects && projects.length > 1) {
 		const listMany = storage.listSessionsForProjects.bind(storage);
 		try {
-			const byProject = await gate.run(
+			const result = await gate.run(
 				canonicalJson(['many', agentType, account, [...projects]]),
-				() => listMany(projects, accountDir)
+				async () => {
+					const skipped = new Map<string, number>();
+					const byProject = await listMany(projects, accountDir, {
+						onSkippedFile: (projectPath) =>
+							skipped.set(projectPath, (skipped.get(projectPath) ?? 0) + 1),
+					});
+					return { byProject, skipped };
+				}
 			);
-			for (const projectPath of projects) listed.set(projectPath, byProject.get(projectPath) ?? []);
+			for (const projectPath of projects) {
+				listed.set(projectPath, {
+					sessions: result.byProject.get(projectPath) ?? [],
+					skipped: result.skipped.get(projectPath) ?? 0,
+				});
+			}
 		} catch (error) {
 			for (const projectPath of projects) listed.set(projectPath, asError(error));
 		}
@@ -339,9 +366,15 @@ async function listAccountProjects(
 		try {
 			listed.set(
 				projectPath,
-				await gate.run(canonicalJson(['one', agentType, account, projectPath]), () =>
-					storage.listSessions(projectPath, undefined, accountDir)
-				)
+				await gate.run(canonicalJson(['one', agentType, account, projectPath]), async () => {
+					let skipped = 0;
+					const sessions = await storage.listSessions(projectPath, undefined, accountDir, {
+						onSkippedFile: () => {
+							skipped++;
+						},
+					});
+					return { sessions, skipped };
+				})
 			);
 		} catch (error) {
 			listed.set(projectPath, asError(error));
@@ -363,6 +396,7 @@ export async function collectProjectBreakdowns(
 	const unsupported = new Set<string>();
 	const failedProjects = new Set<string>();
 	const byProject = new Map<string, SessionTokenBreakdown[]>();
+	const skippedProjects = new Map<string, number>();
 	const gate = deps.gate ?? UNGATED;
 	// One walk can fail for several projects at once; report it once.
 	const reported = new Set<Error>();
@@ -383,7 +417,7 @@ export async function collectProjectBreakdowns(
 		const accountDirs = await deps.accountDirsFor(agentType);
 		const accounts: Array<string | undefined> = accountDirs.length ? accountDirs : [undefined];
 		// Each account is listed once for all its projects (one walk where the storage can).
-		const listings: Array<Map<string, AgentSessionInfo[] | Error>> = [];
+		const listings: Array<Map<string, ProjectListing | Error>> = [];
 		for (const accountDir of accounts) {
 			listings.push(await listAccountProjects(agentType, storage, projects, accountDir, gate));
 		}
@@ -394,14 +428,18 @@ export async function collectProjectBreakdowns(
 			byProject.set(projectKey(agentType, projectPath), own);
 			accounts.forEach((accountDir, index) => {
 				const accountKey = accountDir ?? DEFAULT_ACCOUNT_KEY;
-				const sessions = listings[index].get(projectPath) ?? [];
-				if (sessions instanceof Error) {
-					if (!reported.has(sessions)) deps.onError?.(sessions);
-					reported.add(sessions);
+				const listing = listings[index].get(projectPath) ?? { sessions: [], skipped: 0 };
+				if (listing instanceof Error) {
+					if (!reported.has(listing)) deps.onError?.(listing);
+					reported.add(listing);
 					failedProjects.add(projectKey(agentType, projectPath));
 					return;
 				}
-				for (const info of sessions) {
+				if (listing.skipped > 0) {
+					const key = projectKey(agentType, projectPath);
+					skippedProjects.set(key, (skippedProjects.get(key) ?? 0) + listing.skipped);
+				}
+				for (const info of listing.sessions) {
 					// Grok IDs are scoped to account/cwd, and aliased project queries
 					// can return the same native directory more than once.
 					const key = tokenCacheKey(
@@ -436,6 +474,7 @@ export async function collectProjectBreakdowns(
 		unsupportedProviders: [...unsupported].sort(),
 		failedProjects,
 		byProject,
+		skippedProjects,
 	};
 }
 
@@ -472,7 +511,13 @@ export async function projectTokenUsage(
 		const breakdowns = (read.byProject.get(key) ?? []).map((breakdown) =>
 			breakdown.projectPath === projectPath ? breakdown : { ...breakdown, projectPath }
 		);
-		return { status, breakdowns, complete: status === 'read' };
+		const skippedFiles = read.skippedProjects.get(key) ?? 0;
+		return {
+			status,
+			breakdowns,
+			complete: status === 'read',
+			...(skippedFiles > 0 ? { skippedFiles } : {}),
+		};
 	});
 	return { projects: results };
 }

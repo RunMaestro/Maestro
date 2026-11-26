@@ -47,6 +47,7 @@ import type {
 	DeleteMessagePairResult,
 } from '../agents';
 import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
+import type { SessionListObserver } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type {
 	ClaudeSessionOrigin,
@@ -547,15 +548,22 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	async listSessions(
 		projectPath: string,
 		sshConfig?: SshRemoteConfig,
-		configDir?: string
+		configDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig, configDir);
+			return this.listSessionsRemote(projectPath, sshConfig, configDir, observer);
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
 		const files = await this.statProjectSessionFiles(projectDir);
+		// Past the size cap a transcript is never parsed (`parseSessionFile`): say so.
+		for (const file of files) {
+			if (file.sizeBytes > MAX_SESSION_FILE_SIZE) {
+				observer?.onSkippedFile?.({ sizeBytes: file.sizeBytes, reason: 'too-large' });
+			}
+		}
 
 		if (files.length === 0) {
 			// Still a full listing, so still prune: a project whose transcripts were
@@ -590,7 +598,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	private async listSessionsRemote(
 		projectPath: string,
 		sshConfig: SshRemoteConfig,
-		configDir?: string
+		configDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
@@ -604,6 +613,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		}
 
 		const sessionFiles = (dirResult.data || []).filter((entry) => entry.size > 0);
+		for (const entry of sessionFiles) {
+			if (entry.size > MAX_SESSION_FILE_SIZE) {
+				observer?.onSkippedFile?.({ sizeBytes: entry.size, reason: 'too-large' });
+			}
+		}
 
 		const sessions = await mapWithConcurrency(
 			sessionFiles,

@@ -253,6 +253,36 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		expect(byProject.get('/elsewhere')).toEqual([]);
 	});
 
+	it('names an oversized rollout against the project its first line names, and an unreadable one against every project', async () => {
+		const big = 200 * 1024 * 1024;
+		vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+			{ filePath: '/fake/big-a.jsonl', filename: 'rollout-a.jsonl' },
+			{ filePath: '/fake/big-unknown.jsonl', filename: 'rollout-b.jsonl' },
+		]);
+		vi.mocked(fs.stat).mockResolvedValue({ size: big, mtimeMs: 1_000 } as any);
+		vi.mocked(readFirstJsonlLine).mockImplementation(async (file) =>
+			String(file).includes('big-a')
+				? JSON.stringify({ type: 'session_meta', payload: { cwd: '/work/a' } })
+				: null
+		);
+		vi.mocked(fs.readFile).mockImplementation(async () => {
+			throw new Error('no cache');
+		});
+		const skipped: Array<[string, number]> = [];
+		const byProject = await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+			onSkippedFile: (projectPath, file) => skipped.push([projectPath, file.sizeBytes]),
+		});
+		expect(byProject.get('/work/a')).toEqual([]);
+		expect(skipped).toEqual([
+			['/work/a', big],
+			['/work/a', big],
+			['/work/b', big],
+		]);
+		const single = vi.fn();
+		await storage.listSessions('/work/b', undefined, undefined, { onSkippedFile: single });
+		expect(single).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps distinct response items around malformed rows after shared native parsing', async () => {
 		vi.spyOn(storage, 'findSessionFile').mockResolvedValue('/isolated/rollout.jsonl');
 		vi.mocked(fs.readFile).mockResolvedValue(

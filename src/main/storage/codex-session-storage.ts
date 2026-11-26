@@ -38,6 +38,7 @@ import type {
 } from '../agents';
 import type { DeleteMessagePairResult } from '../agents';
 import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
+import type { SessionListObserver, SkippedSessionFile } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
@@ -125,6 +126,33 @@ function isSessionForProject(sessionProjectPath: string, projectPath: string): b
 		? normalizedProject
 		: `${normalizedProject}${path.sep}`;
 	return normalizedSession.startsWith(prefix);
+}
+
+/** The working directory a rollout's first line (`session_meta`) names, if it can be read. */
+async function readRolloutCwd(filePath: string): Promise<string | undefined> {
+	try {
+		const firstLine = await readFirstJsonlLine(filePath);
+		if (!firstLine) return undefined;
+		const metadata = JSON.parse(firstLine) as { payload?: { cwd?: unknown }; cwd?: unknown };
+		const cwd = metadata?.payload?.cwd ?? metadata?.cwd;
+		return typeof cwd === 'string' && cwd ? cwd : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The oversized rollouts that belong to `projectPath`. One whose working directory could not be
+ * read may belong to any project, so it counts against every one: a total is then named short
+ * rather than quietly short.
+ */
+function skippedForProject(
+	oversized: ReadonlyArray<{ file: SkippedSessionFile; cwd: string | undefined }>,
+	projectPath: string
+): SkippedSessionFile[] {
+	return oversized
+		.filter(({ cwd }) => cwd === undefined || isSessionForProject(cwd, projectPath))
+		.map(({ file }) => file);
 }
 
 interface CodexSessionCacheEntry {
@@ -593,9 +621,12 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * first: one walk of its rollouts, served from the parse cache where a file
 	 * is unchanged. Callers filter by project.
 	 */
-	private async scanLocalSessions(
-		accountDir?: string
-	): Promise<{ sessions: AgentSessionInfo[]; fileCount: number }> {
+	private async scanLocalSessions(accountDir?: string): Promise<{
+		sessions: AgentSessionInfo[];
+		fileCount: number;
+		/** Rollouts past the size cap, never parsed, with the working directory their first line names. */
+		oversized: Array<{ file: SkippedSessionFile; cwd: string | undefined }>;
+	}> {
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const allSessionFiles = await this.findAllSessionFiles(accountDir);
 
@@ -606,6 +637,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		};
 
 		const sessions: AgentSessionInfo[] = [];
+		const oversized: Array<{ file: SkippedSessionFile; cwd: string | undefined }> = [];
 		const currentFilePaths = new Set<string>();
 		let cacheUpdated = false;
 
@@ -617,6 +649,15 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				const fileStat = await fs.stat(filePath);
 				if (fileStat.size === 0) continue;
 				stats = { size: fileStat.size, mtimeMs: fileStat.mtimeMs };
+				if (stats.size > MAX_SESSION_FILE_SIZE) {
+					// Never parsed (`parseSessionFile`), so its usage is missing from every
+					// total. Its first line names its working directory, so the listing can
+					// say which project is short.
+					oversized.push({
+						file: { sizeBytes: stats.size, reason: 'too-large' },
+						cwd: await readRolloutCwd(filePath),
+					});
+				}
 			} catch (error) {
 				logger.error(`Error stating Codex session file: ${filename}`, LOG_CONTEXT, error);
 				captureException(error, { operation: 'codexStorage:statSessionFile', filename });
@@ -669,7 +710,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 		// Sort by modified date (newest first)
 		sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
-		return { sessions, fileCount: allSessionFiles.length };
+		return { sessions, fileCount: allSessionFiles.length, oversized };
 	}
 
 	/**
@@ -680,11 +721,15 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 */
 	async listSessionsForProjects(
 		projectPaths: readonly string[],
-		accountDir?: string
+		accountDir?: string,
+		observer?: { onSkippedFile?(projectPath: string, file: SkippedSessionFile): void }
 	): Promise<Map<string, AgentSessionInfo[]>> {
-		const { sessions: all } = await this.scanLocalSessions(accountDir);
+		const { sessions: all, oversized } = await this.scanLocalSessions(accountDir);
 		const byProject = new Map<string, AgentSessionInfo[]>();
 		for (const projectPath of projectPaths) {
+			for (const skipped of skippedForProject(oversized, projectPath)) {
+				observer?.onSkippedFile?.(projectPath, skipped);
+			}
 			const sessions = all.filter(
 				(session) => session.projectPath && isSessionForProject(session.projectPath, projectPath)
 			);
@@ -702,13 +747,17 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	async listSessions(
 		projectPath: string,
 		sshConfig?: SshRemoteConfig,
-		accountDir?: string
+		accountDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
 			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
 		}
-		const { sessions: all, fileCount } = await this.scanLocalSessions(accountDir);
+		const { sessions: all, fileCount, oversized } = await this.scanLocalSessions(accountDir);
+		for (const skipped of skippedForProject(oversized, projectPath)) {
+			observer?.onSkippedFile?.(skipped);
+		}
 		const sessions = all.filter(
 			(session) => session.projectPath && isSessionForProject(session.projectPath, projectPath)
 		);

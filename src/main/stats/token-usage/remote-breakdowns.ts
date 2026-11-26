@@ -48,6 +48,11 @@ export interface RemoteBreakdowns {
 	notCounted: RemoteTokenAgent[];
 	/** Every `provider|projectPath` pair of the agents given, counted or not. */
 	pairs: Set<string>;
+	/**
+	 * Counted agents whose host left conversations out (too large to read), with how many: their
+	 * totals are short by those and are named, never quietly short.
+	 */
+	partial: Array<{ agent: RemoteTokenAgent; skippedFiles: number }>;
 }
 
 /** The pair key the stats lifecycle rows are compared by. */
@@ -153,13 +158,17 @@ export async function collectRemoteBreakdowns(
 	const breakdowns: SessionTokenBreakdown[] = [];
 	/** `remoteId NUL provider NUL projectPath` of every project its host read whole. */
 	const countedProjects = new Set<string>();
+	/** Skipped transcripts per counted project, under the same key. */
+	const skippedByProject = new Map<string, number>();
 	const seen = new Set<string>();
 	for (const { remoteId, chunk, usage } of answers) {
 		if (!usage) continue;
 		chunk.forEach((project, index) => {
 			const result = usage.projects[index];
 			if (!result?.complete) return;
-			countedProjects.add(`${remoteId}\u0000${project.provider}\u0000${project.projectPath}`);
+			const projectId = `${remoteId}\u0000${project.provider}\u0000${project.projectPath}`;
+			countedProjects.add(projectId);
+			if (result.skippedFiles) skippedByProject.set(projectId, result.skippedFiles);
 			for (const breakdown of result.breakdowns) {
 				const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.projectPath}\u0000${breakdown.sessionId}`;
 				if (seen.has(key)) continue;
@@ -168,17 +177,18 @@ export async function collectRemoteBreakdowns(
 			}
 		});
 	}
+	const projectIdOf = (agent: RemoteTokenAgent): string =>
+		`${agent.remoteId}\u0000${agent.provider}\u0000${agent.projectPath}`;
 	const counted = new Set(
-		agents
-			.filter((agent) =>
-				countedProjects.has(`${agent.remoteId}\u0000${agent.provider}\u0000${agent.projectPath}`)
-			)
-			.map((agent) => agent.id)
+		agents.filter((agent) => countedProjects.has(projectIdOf(agent))).map((agent) => agent.id)
 	);
 
 	return {
 		breakdowns,
 		notCounted: agents.filter((agent) => !counted.has(agent.id)),
 		pairs,
+		partial: agents
+			.filter((agent) => counted.has(agent.id) && skippedByProject.has(projectIdOf(agent)))
+			.map((agent) => ({ agent, skippedFiles: skippedByProject.get(projectIdOf(agent)) ?? 0 })),
 	};
 }

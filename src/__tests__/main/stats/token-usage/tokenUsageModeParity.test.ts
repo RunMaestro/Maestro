@@ -196,6 +196,7 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 			notCountedAgents: [],
 			pendingAgents: [],
 			remoteRefreshing: false,
+			partialAgents: [],
 		});
 		expect(results.local.notes.join(' ')).not.toContain('Not counted');
 		expect(results.ssh).toEqual(results.local);
@@ -298,5 +299,33 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 			expect(refreshed.totals.sessionCount).toBe(4);
 			expect(refreshed.excluded.remoteRefreshing).toBe(false);
 		}
+	});
+
+	it('counts the rest and names the agent when a conversation is too large to read, the same in every mode', async () => {
+		const notes: Record<string, string> = {};
+		const totals: Record<string, number> = {};
+		for (const mode of AGENT_MODES) {
+			setMode(mode);
+			listSessions.mockImplementation((async (
+				_projectPath: string,
+				_ssh: unknown,
+				_account: unknown,
+				observer?: { onSkippedFile?(file: { sizeBytes: number; reason: 'too-large' }): void }
+			) => {
+				observer?.onSkippedFile?.({ sizeBytes: 200 * 1024 * 1024, reason: 'too-large' });
+				return CONVERSATIONS;
+			}) as never);
+			const aggregate = await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+			totals[mode] = aggregate.totals.sessionCount;
+			expect(aggregate.excluded.partialAgents).toEqual([{ name: 'Build Box', conversations: 1 }]);
+			expect(aggregate.excluded.notCountedAgents).toEqual([]);
+			notes[mode] = tokenCoverageNotes(aggregate).join(' ');
+		}
+		listSessions.mockImplementation(async () => CONVERSATIONS);
+		expect(totals).toEqual({ local: 2, ssh: 2, hosted: 2 });
+		expect(notes.ssh).toBe(notes.local);
+		expect(notes.hosted).toBe(notes.local);
+		expect(notes.local).toContain('Not counted: 1 conversation of Build Box (too large to read).');
+		expect(notes.local).not.toMatch(/SSH|remote|hosted|federation/i);
 	});
 });
