@@ -176,6 +176,8 @@ interface WatchedCopy {
 	baseline: string;
 	/** Hash of the copy's bytes last kept beside it after a conflict (safe to replace). */
 	kept: string | null;
+	/** Hash of bytes sent in a write that failed: it may still have landed on the remote. */
+	unconfirmed: string | null;
 	/**
 	 * Why this copy no longer saves back, once the user was told: the remote
 	 * changed under it, it grew past the cap, or its watcher failed. A fresh
@@ -376,18 +378,29 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				});
 				return;
 			}
+			const remoteHash = await deps.hashRemote(remotePath, sshRemoteId);
 			// The copy holds what the remote holds (a fresh fetch replaced it): nothing to send.
-			if ((await deps.hashRemote(remotePath, sshRemoteId)) === localHash) {
+			if (remoteHash === localHash) {
 				entry.baseline = localHash;
+				entry.unconfirmed = null;
 				return;
 			}
+			// A write that failed with its connection may have landed after all (it
+			// finishes on the remote): those bytes are this copy's, not a change by
+			// someone else.
+			if (entry.unconfirmed !== null && remoteHash === entry.unconfirmed) {
+				entry.baseline = entry.unconfirmed;
+			}
+			entry.unconfirmed = localHash;
 			const outcome = await deps.writeRemote(remotePath, local, sshRemoteId, entry.baseline);
 			if (outcome === 'written') {
 				entry.baseline = localHash;
+				entry.unconfirmed = null;
 				entry.kept = null;
 				deps.notify({ kind: 'saved', remotePath, sshRemoteId });
 				return;
 			}
+			entry.unconfirmed = null;
 			const keptAt = await keepVersion(localPath, local);
 			entry.kept = localHash;
 			entry.halted = 'conflict';
@@ -452,6 +465,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					sshRemoteId,
 					baseline: hashOf(fetched),
 					kept: null,
+					unconfirmed: null,
 					halted: tooLarge ? 'too-large' : null,
 					watcher: { close: () => undefined },
 					watcherLost: tooLarge,
@@ -519,6 +533,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 						entry.lastStat = null;
 						entry.baseline = hashOf(bytes);
 						entry.kept = null;
+						entry.unconfirmed = null;
 						// A fresh copy saves back again, unless it is too large to.
 						entry.halted = bytes.length > maxBytes ? 'too-large' : null;
 					}

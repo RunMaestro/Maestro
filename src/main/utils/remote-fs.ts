@@ -252,9 +252,15 @@ async function execRemoteCommand(
 	config: SshRemoteConfig,
 	remoteCommand: string,
 	deps: RemoteFsDeps = defaultDeps,
-	input?: string
+	input?: string,
+	/**
+	 * `retry: false` for a command that must not run twice: after a dropped
+	 * connection the first run may still be going on the remote.
+	 */
+	{ retry = true }: { retry?: boolean } = {}
 ): Promise<ExecResult> {
-	const { maxRetries, baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
+	const { baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
+	const maxRetries = retry ? DEFAULT_RETRY_CONFIG.maxRetries : 0;
 	let lastResult: ExecResult | null = null;
 
 	// Resolve SSH binary path (critical for Windows where spawn() doesn't search PATH)
@@ -1582,10 +1588,13 @@ const REMOTE_SHA256_NO_TOOL = 5;
 /**
  * The lines of a remote `/bin/sh` script that define `sum <file>` (the file's
  * SHA-256 in hex, from `sha256sum` or `shasum`), and exit
- * {@link REMOTE_SHA256_NO_TOOL} when the host has neither.
+ * {@link REMOTE_SHA256_NO_TOOL} when the host has neither. The file goes in on
+ * stdin, so its name never reaches the output (GNU `sha256sum` escapes a name
+ * with a backslash by prefixing the line), and a file that cannot be read makes
+ * `sum` fail instead of printing nothing.
  */
 const REMOTE_SHA256_PRELUDE = [
-	'sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d" " -f1; }',
+	'sum() { if command -v sha256sum >/dev/null 2>&1; then __d=$(sha256sum < "$1") || return 1; else __d=$(shasum -a 256 < "$1") || return 1; fi; printf "%s\\n" "${__d%% *}"; }',
 	'command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || exit ' +
 		REMOTE_SHA256_NO_TOOL,
 ];
@@ -1608,7 +1617,7 @@ export async function sha256FileRemote(
 		`f=${shellEscapeRemotePath(filePath)}`,
 		...REMOTE_SHA256_PRELUDE,
 		'[ -f "$f" ] || exit 0',
-		'sum "$f"',
+		'sum "$f" || exit 1',
 	].join('\n');
 	const result = await execRemoteCommand(sshRemote, `/bin/sh -c ${shellEscape(script)}`, deps);
 	if (result.exitCode === REMOTE_SHA256_NO_TOOL) {
@@ -1667,18 +1676,23 @@ export async function replaceFileRemoteIfUnchanged(
 		'trap \'rm -f "$tmp"\' EXIT',
 		'base64 -d > "$tmp" || exit 1',
 		`[ -f "$f" ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
-		'cur=$(sum "$f")',
+		'cur=$(sum "$f") || exit 1',
 		`[ "$cur" = ${contentSha256} ] && exit 0`,
 		`[ "$cur" = ${expectedSha256} ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
 		// Ignored signals are inherited, so the `cat` survives the hang-up too.
 		"trap '' HUP PIPE",
 		'cat "$tmp" > "$f"',
 	].join('\n');
+	// Never run twice: a retry after a dropped connection would hash the target
+	// while the first run's copy (which survives the hang-up) is still writing it,
+	// and read its own half-written bytes as a change by someone else. A failure
+	// is reported instead; the next save finds the copy landed and counts it.
 	const result = await execRemoteCommand(
 		sshRemote,
 		`/bin/sh -c ${shellEscape(script)}`,
 		deps,
-		content.toString('base64')
+		content.toString('base64'),
+		{ retry: false }
 	);
 	if (result.exitCode === 0) return { success: true };
 	if (result.exitCode === REPLACE_IF_UNCHANGED_CHANGED) {

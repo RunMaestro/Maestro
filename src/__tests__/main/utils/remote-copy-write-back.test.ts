@@ -531,6 +531,20 @@ describe('remote copy write-back', () => {
 		expect(remoteFile.toString()).toBe('edited!');
 	});
 
+	it('a save after a write that failed but landed counts that write, never as a conflict', async () => {
+		const writeBack = await watched();
+		// The connection drops, but the remote finishes the write.
+		writeRemote.mockImplementationOnce(async (_p, bytes) => {
+			remoteFile = bytes;
+			throw new Error('Connection reset by peer');
+		});
+		await saveCopy(writeBack, 'first');
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		await saveCopy(writeBack, 'second');
+		expect(remoteFile.toString()).toBe('second');
+		expect(events.map((e) => e.kind)).toEqual(['failed', 'saved']);
+	});
+
 	it('names the kept version beside the copy', () => {
 		expect(keptVersionPath(LOCAL, WHEN)).toBe(
 			path.join(path.dirname(LOCAL), 'notes (your version 20261126-101500).md')

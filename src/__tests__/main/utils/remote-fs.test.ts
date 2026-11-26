@@ -2657,6 +2657,29 @@ finally:
 			}
 		);
 
+		it.skipIf(process.platform === 'win32')(
+			'hashes a file whose name holds a backslash, and fails on a file it cannot read',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sha-'));
+				try {
+					const file = path.join(dir, 'back\\slash.md');
+					fs.writeFileSync(file, 'fetched');
+					await expect(sha256FileRemote(file, baseConfig, deps())).resolves.toEqual({
+						success: true,
+						data: createHash('sha256').update('fetched').digest('hex'),
+					});
+					// Root reads every file, so the unreadable case needs a normal user.
+					if (process.getuid?.() === 0) return;
+					fs.chmodSync(file, 0o000);
+					const unreadable = await sha256FileRemote(file, baseConfig, deps());
+					expect(unreadable.success).toBe(false);
+					expect(unreadable.error).toContain('Permission denied');
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
 		it('says so when the remote has no hash tool', async () => {
 			const result = await sha256FileRemote(
 				'/srv/a.md',
@@ -2786,6 +2809,43 @@ finally:
 				expect(result).toEqual({ success: true });
 			}
 		);
+
+		it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+			'reads a target it cannot read as a failure, never as a change by someone else',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o200);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result.success).toBe(false);
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('Permission denied');
+			}
+		);
+
+		it('never runs the write twice after a dropped connection', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'client_loop: send disconnect: Broken pipe',
+				exitCode: 255,
+			});
+			const result = await replaceFileRemoteIfUnchanged(
+				'/srv/a.md',
+				Buffer.from('edited'),
+				sha('fetched'),
+				baseConfig,
+				deps
+			);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			expect(result.success).toBe(false);
+			expect(result.changed).toBeUndefined();
+		});
 
 		it('streams the bytes on stdin and refuses a malformed digest', async () => {
 			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
