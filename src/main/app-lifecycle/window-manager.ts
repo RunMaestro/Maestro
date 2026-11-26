@@ -83,6 +83,11 @@ export interface WindowManagerDependencies {
 	 * skips registry cleanup since the registry is discarded with the process.
 	 */
 	getIsQuitting?: () => boolean;
+	/**
+	 * Show every window with `showInactive()` instead of the default
+	 * activating show. Only a demo instance sets it (`DEMO_SHOW_INACTIVE`).
+	 */
+	showInactive?: boolean;
 }
 
 /** Window manager instance */
@@ -126,6 +131,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		getConfirmQuit,
 		windowRegistry,
 		getIsQuitting,
+		showInactive = false,
 	} = deps;
 	const maestroCliPath = resolveBundledCliPathSync();
 	const preloadAdditionalArguments = maestroCliPath
@@ -190,6 +196,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			...(linuxWindowIcon ? { icon: linuxWindowIcon } : {}),
 			...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
 			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
+			...(showInactive ? { show: false } : {}),
 			webPreferences: {
 				preload: preloadPath,
 				additionalArguments: preloadAdditionalArguments,
@@ -201,6 +208,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				webviewTag: true,
 			},
 		});
+
+		// Created hidden above; show it before any maximize, which would
+		// otherwise show (and activate) it.
+		if (showInactive) browserWindow.showInactive();
 
 		// Restore maximized/fullscreen state after window is created
 		if (bounds?.isFullScreen) {
