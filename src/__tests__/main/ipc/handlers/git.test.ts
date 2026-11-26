@@ -3955,6 +3955,62 @@ export function Component() {
 			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('gh');
 		});
 
+		describe('with an SSH remote', () => {
+			const sshRemote = { id: 'ssh-remote-123', name: 'devbox', host: 'devbox.example.com' };
+
+			beforeEach(() => {
+				mockSettingsStore.get.mockReturnValue([sshRemote]);
+			});
+
+			it('runs both probes on the remote, where gh pr create runs', async () => {
+				const sshCommandBuilder = await import('../../../../main/utils/ssh-command-builder');
+				const cliDetection = await import('../../../../main/utils/cliDetection');
+				vi.mocked(sshCommandBuilder.buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['devbox.example.com', 'gh'],
+				});
+				vi.mocked(execFile.execFileNoThrow)
+					.mockResolvedValueOnce({ stdout: 'gh version 2.40.1', stderr: '', exitCode: 0 })
+					.mockResolvedValueOnce({ stdout: '', stderr: 'not logged in', exitCode: 1 });
+
+				const handler = handlers.get('git:checkGhCli');
+				const result = await handler!({} as any, undefined, 'ssh-remote-123');
+
+				expect(sshCommandBuilder.buildSshCommand).toHaveBeenCalledWith(sshRemote, {
+					command: 'gh',
+					args: ['--version'],
+				});
+				expect(sshCommandBuilder.buildSshCommand).toHaveBeenCalledWith(sshRemote, {
+					command: 'gh',
+					args: ['auth', 'status'],
+				});
+				expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(2);
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalledWith(
+					'gh',
+					expect.anything(),
+					expect.anything(),
+					expect.anything()
+				);
+				// The one-slot cache holds the local verdict only.
+				expect(cliDetection.setCachedGhStatus).not.toHaveBeenCalled();
+				expect(result).toEqual({ installed: true, authenticated: false });
+			});
+
+			it('reads a remote without gh as not installed', async () => {
+				vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'gh: command not found',
+					exitCode: 127,
+				});
+
+				const handler = handlers.get('git:checkGhCli');
+				const result = await handler!({} as any, undefined, 'ssh-remote-123');
+
+				expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
+				expect(result).toEqual({ installed: false, authenticated: false });
+			});
+		});
+
 		it('should return installed: true and authenticated: true when gh is installed and authed', async () => {
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
