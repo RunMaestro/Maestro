@@ -1137,11 +1137,7 @@ function restoreWindows() {
 		}
 	}
 
-	const focusWindow = focusSpec ? created[specs.indexOf(focusSpec)] : undefined;
-	// A demo instance launched to show inactive must not take focus either.
-	if (focusWindow && !focusWindow.isDestroyed() && !DEMO_SHOW_INACTIVE) {
-		focusWindow.focus();
-	}
+	windowManager.focusRestoredWindow(focusSpec ? created[specs.indexOf(focusSpec)] : undefined);
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)

@@ -111,6 +111,11 @@ export interface WindowManager {
 		sessionIds: string[],
 		bounds?: Partial<SharedWindowState>
 	) => BrowserWindow;
+	/**
+	 * Focus the window a layout restore selected. Skipped when windows show
+	 * inactive, so a restored demo never takes the keyboard either.
+	 */
+	focusRestoredWindow: (browserWindow: BrowserWindow | undefined) => void;
 }
 
 /**
@@ -420,6 +425,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 	};
 
 	return {
+		focusRestoredWindow: (browserWindow) => {
+			if (showInactive || !browserWindow || browserWindow.isDestroyed()) return;
+			browserWindow.focus();
+		},
 		createWindow: (options?: {
 			sessionIds?: string[];
 			bounds?: Partial<SharedWindowState>;

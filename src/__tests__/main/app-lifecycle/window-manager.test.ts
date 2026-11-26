@@ -396,6 +396,32 @@ describe('app-lifecycle/window-manager', () => {
 			expect(lastBrowserWindowOptions).not.toHaveProperty('show');
 			expect(mockWindowInstance.showInactive).not.toHaveBeenCalled();
 		});
+
+		const restoredWindow = (destroyed = false) => ({
+			focus: vi.fn(),
+			isDestroyed: vi.fn(() => destroyed),
+		});
+		type RestoredWindow = Parameters<Awaited<ReturnType<typeof build>>['focusRestoredWindow']>[0];
+
+		it('does not focus the window a layout restore selected when set', async () => {
+			const win = restoredWindow();
+			(await build(true)).focusRestoredWindow(win as unknown as RestoredWindow);
+			expect(win.focus).not.toHaveBeenCalled();
+		});
+
+		it('focuses the window a layout restore selected when not set', async () => {
+			const win = restoredWindow();
+			(await build()).focusRestoredWindow(win as unknown as RestoredWindow);
+			expect(win.focus).toHaveBeenCalledTimes(1);
+		});
+
+		it('skips a destroyed or missing restored window', async () => {
+			const win = restoredWindow(true);
+			const manager = await build();
+			manager.focusRestoredWindow(win as unknown as RestoredWindow);
+			manager.focusRestoredWindow(undefined);
+			expect(win.focus).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('createWindow', () => {
