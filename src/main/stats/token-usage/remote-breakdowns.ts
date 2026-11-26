@@ -133,29 +133,34 @@ export async function collectRemoteBreakdowns(
 
 	// A host reads at most MAX_PROJECT_TOKEN_USAGE_PROJECTS per request, so a remote with more
 	// projects is asked in chunks (`chunkProjects`); each chunk stands or falls on its own.
-	const asks = [...byRemote].flatMap(([remoteId, remoteAgents]) =>
-		chunkProjects(
-			remoteAgents.map((agent) => ({ provider: agent.provider, projectPath: agent.projectPath }))
-		).map((chunk) => ({ remoteId, chunk }))
-	);
-	// A remote is done once every one of its chunks settles, whichever finishes last.
-	const outstanding = new Map<string, number>();
-	for (const { remoteId } of asks) outstanding.set(remoteId, (outstanding.get(remoteId) ?? 0) + 1);
-	const answers = await Promise.all(
-		asks.map(async ({ remoteId, chunk }) => {
-			let usage: ProjectTokenUsage | undefined;
-			try {
-				usage = await withTimeout(request(remoteId, chunk, timeoutMs), timeoutMs);
-			} catch (error) {
-				options.onError?.(error);
-				usage = undefined;
+	// Remotes are asked in parallel; one remote's chunks one after another. A reply can be large,
+	// and two large replies in flight on one peer socket can overrun its send backlog and close it
+	// (`sendBounded`), dropping every message on that connection with them.
+	const perRemote = await Promise.all(
+		[...byRemote].map(async ([remoteId, remoteAgents]) => {
+			const chunks = chunkProjects(
+				remoteAgents.map((agent) => ({ provider: agent.provider, projectPath: agent.projectPath }))
+			);
+			const settled: Array<{
+				remoteId: string;
+				chunk: ProjectTokenUsageProject[];
+				usage: ProjectTokenUsage | undefined;
+			}> = [];
+			for (const chunk of chunks) {
+				let usage: ProjectTokenUsage | undefined;
+				try {
+					usage = await withTimeout(request(remoteId, chunk, timeoutMs), timeoutMs);
+				} catch (error) {
+					options.onError?.(error);
+					usage = undefined;
+				}
+				settled.push({ remoteId, chunk, usage });
 			}
-			const left = (outstanding.get(remoteId) ?? 1) - 1;
-			outstanding.set(remoteId, left);
-			if (left === 0) options.onRemoteDone?.();
-			return { remoteId, chunk, usage };
+			options.onRemoteDone?.();
+			return settled;
 		})
 	);
+	const answers = perRemote.flat();
 
 	// Only a project its host read whole counts, and only its numbers are merged: a project that
 	// failed, was cut short, or held a record that did not check out leaves its agent named, so

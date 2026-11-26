@@ -202,6 +202,36 @@ describe('collectRemoteBreakdowns', () => {
 	});
 });
 
+describe('large replies on one peer connection', () => {
+	it("asks one remote's chunks one after another, and different remotes at once", async () => {
+		const agents = [
+			...Array.from({ length: 70 }, (_, i) =>
+				agent({ id: `a${i}`, name: `A${i}`, projectPath: `/p/${i}` })
+			),
+			agent({ id: 'other', name: 'Other', remoteId: 'r2', projectPath: '/q' }),
+		];
+		const inFlight = new Map<string, number>();
+		const peak = new Map<string, number>();
+		let concurrentRemotes = 0;
+		let peakRemotes = 0;
+		const merged = await collectRemoteBreakdowns(agents, async (remoteId, projects) => {
+			inFlight.set(remoteId, (inFlight.get(remoteId) ?? 0) + 1);
+			peak.set(remoteId, Math.max(peak.get(remoteId) ?? 0, inFlight.get(remoteId)!));
+			concurrentRemotes++;
+			peakRemotes = Math.max(peakRemotes, concurrentRemotes);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			inFlight.set(remoteId, inFlight.get(remoteId)! - 1);
+			concurrentRemotes--;
+			return {
+				projects: projects.map(() => ({ status: 'read' as const, breakdowns: [], complete: true })),
+			};
+		});
+		expect(peak.get('r1')).toBe(1);
+		expect(peakRemotes).toBe(2);
+		expect(merged.notCounted).toEqual([]);
+	});
+});
+
 describe('one conversation under two folders asked', () => {
 	it('counts a rollout once when agents at a parent and a child folder both hold it, in either order', async () => {
 		const agents = [
