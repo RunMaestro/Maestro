@@ -13,7 +13,7 @@ import {
 	ImageIcon,
 	Merge,
 } from 'lucide-react';
-import type { Theme, QueuedItem, QueuedItemEditPatch } from '../types';
+import type { Theme, QueuedItem, ModalSaveOutcome, QueuedItemEditPatch } from '../types';
 import type {
 	BusyTabSummary,
 	ForceSendEligibility,
@@ -86,7 +86,7 @@ interface QueuedItemsListProps {
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	// Edit a queued message's prompt text and attached images. Only wired for
 	// message items (commands have no image attachments).
-	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>;
 	// Fold a queued message into the message drawn directly above it.
 	onMergeQueuedItem?: (itemId: string) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;

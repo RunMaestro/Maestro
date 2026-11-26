@@ -44,13 +44,14 @@ import {
 	updateSessionWith,
 	useSessionStore,
 } from '../stores/sessionStore';
-import type { AITab, Session, UnifiedTabRef } from '../types';
+import type { AITab, ModalSaveOutcome, Session, UnifiedTabRef } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
 import { appendBlockToDraft } from '../utils/quoteSelection';
 import { insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
 import {
 	actOnMirroredAgent,
+	actOnMirroredAgentQuietly,
 	closeMirrorTab,
 	interruptMirroredAgent,
 	renameMirrorTab,
@@ -487,6 +488,27 @@ export function renameHostedTab(
 	if (target && isHostTab(target, tabId)) {
 		void renameMirrorTab(target.peerId, target.agentId, tabId, name);
 	}
+}
+
+/**
+ * Rename a host tab and wait for the host's answer, for Rename Tab: a name the host refused keeps
+ * the modal open with what the person typed, and the reason in it (no toast). Null for a tab that
+ * is not a host's (a local or SSH rename, which is applied here and cannot be refused).
+ */
+export function renameHostedTabSettled(
+	session: Pick<Session, 'liftedTo'> | null | undefined,
+	tabId: string,
+	name: string
+): Promise<ModalSaveOutcome> | null {
+	const target = hostedTargetOf(session);
+	if (!target || !isHostTab(target, tabId)) return null;
+	return actOnMirroredAgentQuietly(target.peerId, target.agentId, {
+		kind: 'rename-tab',
+		tabId,
+		name,
+	}).then((answer) =>
+		'error' in answer ? { saved: false, reason: answer.error } : { saved: true }
+	);
 }
 
 /**

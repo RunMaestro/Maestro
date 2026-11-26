@@ -1,17 +1,23 @@
 import React, { memo, useRef, useState } from 'react';
-import type { Theme } from '../types';
+import type { ModalSaveOutcome, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, MODAL_BUTTON_BASE_CLASS, MODAL_BUTTON_SECONDARY_CLASS } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { isImeComposing } from '../utils/ime';
+import { useModalSave } from '../hooks/ui/useModalSave';
+import { ModalSaveError } from './ui/ModalSaveError';
 
 interface RenameTabModalProps {
 	theme: Theme;
 	initialName: string;
 	agentSessionId?: string | null;
 	onClose: () => void;
-	onRename: (newName: string) => void;
+	/**
+	 * Apply the name. The modal closes only when it answers `saved`: a name a hosted agent's host
+	 * refused keeps the modal open with what the person typed and the reason in it.
+	 */
+	onRename: (newName: string) => Promise<ModalSaveOutcome>;
 	/** Callback to trigger auto-naming (dismisses modal, shows spinner in tab) */
 	onAutoName?: () => void;
 	/** Whether the tab has conversation logs (controls Auto button visibility) */
@@ -39,10 +45,12 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 		? `Rename ${agentSessionId.split('-')[0].toUpperCase()}...`
 		: 'Enter tab name...';
 
-	const handleRename = () => {
-		onRename(value.trim());
-		onClose();
-	};
+	const { save, saving, saveError } = useModalSave(
+		() => onRename(value.trim()),
+		onClose,
+		'RenameTabModal'
+	);
+	const handleRename = () => void save();
 
 	const showAutoButton = !!onAutoName && !!hasLogs;
 
@@ -98,13 +106,14 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 					<button
 						type="button"
 						onClick={handleRename}
+						disabled={saving}
 						className={MODAL_BUTTON_BASE_CLASS}
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
 					>
-						Rename
+						{saving ? 'Renaming...' : 'Rename'}
 					</button>
 				</>
 			}
@@ -118,6 +127,7 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 				onKeyDown={handleKeyDown}
 				placeholder={placeholder}
 			/>
+			<ModalSaveError theme={theme} reason={saveError} />
 		</Modal>
 	);
 });

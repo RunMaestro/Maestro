@@ -49,6 +49,7 @@ import type {
 	QueuedItem,
 	UnifiedTabRef,
 	PaneRects,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { SlashCommand } from './types';
@@ -204,7 +205,7 @@ export interface MainPanelContentProps {
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onMergeQueuedItem?: (itemId: string) => void;
-	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;

@@ -24,7 +24,7 @@ describe('RenameTabModal', () => {
 
 	beforeEach(() => {
 		mockOnClose = vi.fn();
-		mockOnRename = vi.fn();
+		mockOnRename = vi.fn(async () => ({ saved: true as const }));
 	});
 
 	afterEach(() => {
@@ -183,7 +183,7 @@ describe('RenameTabModal', () => {
 			expect(mockOnRename).not.toHaveBeenCalled();
 		});
 
-		it('calls onRename and onClose when Rename button is clicked', () => {
+		it('calls onRename and onClose when Rename button is clicked', async () => {
 			render(
 				<TestWrapper>
 					<RenameTabModal
@@ -198,7 +198,52 @@ describe('RenameTabModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
 			expect(mockOnRename).toHaveBeenCalledWith('My Tab');
-			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(mockOnClose).toHaveBeenCalledTimes(1));
+		});
+
+		it('stays open with the typed name and the reason when the rename is refused (P6)', async () => {
+			mockOnRename.mockResolvedValueOnce({ saved: false, reason: 'The host is offline.' });
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Typed name' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			await waitFor(() =>
+				expect(screen.getByRole('alert')).toHaveTextContent('Not saved: The host is offline.')
+			);
+			expect(mockOnClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('textbox')).toHaveValue('Typed name');
+			expect(screen.getByRole('button', { name: 'Rename' })).not.toBeDisabled();
+		});
+
+		it('stays open and shows the error when the rename throws', async () => {
+			mockOnRename.mockRejectedValueOnce(new Error('IPC closed'));
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			await waitFor(() =>
+				expect(screen.getByRole('alert')).toHaveTextContent('Not saved: IPC closed')
+			);
+			expect(mockOnClose).not.toHaveBeenCalled();
 		});
 
 		it('calls onClose when X button is clicked', () => {
@@ -243,7 +288,7 @@ describe('RenameTabModal', () => {
 			expect(input).toHaveValue('New Name');
 		});
 
-		it('submits on Enter key', () => {
+		it('submits on Enter key', async () => {
 			render(
 				<TestWrapper>
 					<RenameTabModal
@@ -259,7 +304,7 @@ describe('RenameTabModal', () => {
 			fireEvent.keyDown(input, { key: 'Enter' });
 
 			expect(mockOnRename).toHaveBeenCalledWith('My Tab');
-			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(mockOnClose).toHaveBeenCalledTimes(1));
 		});
 
 		it('trims whitespace when submitting', () => {

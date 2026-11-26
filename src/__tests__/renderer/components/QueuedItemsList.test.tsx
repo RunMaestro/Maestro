@@ -425,7 +425,7 @@ describe('QueuedItemsList edit modal', () => {
 	const editable = item({ id: 'q1', text: 'a queued message' });
 
 	function renderList(queue: QueuedItem[] = [editable]) {
-		const onEditQueuedItem = vi.fn();
+		const onEditQueuedItem = vi.fn(async () => ({ saved: true as const }));
 		const utils = render(
 			<LayerStackProvider>
 				<QueuedItemsList
@@ -526,7 +526,7 @@ describe('QueuedItemsList edit modal', () => {
 				<QueuedItemsList
 					executionQueue={[item({ id: 'q2', text: 'the next one' })]}
 					theme={mockTheme}
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -546,7 +546,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={[editable, item({ id: 'q-other', tabId: 'tab-2' })]}
 					theme={mockTheme}
 					activeTabId="tab-1"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -565,7 +565,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={queue}
 					theme={mockTheme}
 					activeTabId="tab-1"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -576,7 +576,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={queue}
 					theme={mockTheme}
 					activeTabId="tab-2"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);

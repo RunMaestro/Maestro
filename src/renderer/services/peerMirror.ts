@@ -140,11 +140,38 @@ export async function actOnMirroredAgent(
 	const answer = await callMirroredAgentAction(peerId, agentId, action);
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
-	const error = answer.unknown
+	notifyToast({
+		color: 'red',
+		title: ACTION_FAILURE_TITLES[action.kind],
+		message: mirroredActionError(answer),
+	});
+	return null;
+}
+
+/** Why an action on a hosted agent has no result: its host never answered. */
+export const HOST_NO_ANSWER_REASON =
+	"The agent's host did not answer. It may be offline: check the agent in Maestro.";
+
+/**
+ * `actOnMirroredAgent` with no toast, for a modal that shows the reason itself and keeps what the
+ * person typed (Edit Queued Message, Rename Tab): the host's result, or why it did not take the
+ * action (the host's own words, or `HOST_NO_ANSWER_REASON`).
+ */
+export async function actOnMirroredAgentQuietly(
+	peerId: string,
+	agentId: string,
+	action: PeerAgentAction
+): Promise<{ result: PeerAgentActionResult } | { error: string }> {
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (!answer) return { error: HOST_NO_ANSWER_REASON };
+	return answer.ok ? { result: answer.result } : { error: mirroredActionError(answer) };
+}
+
+/** The words for an action the host did not take, as the red toast and a modal's own line say it. */
+function mirroredActionError(answer: Extract<MirroredActionAnswer, { ok: false }>): string {
+	return answer.unknown
 		? `${answer.error} The host may have taken it: check the tab before sending again.`
 		: answer.error;
-	notifyToast({ color: 'red', title: ACTION_FAILURE_TITLES[action.kind], message: error });
-	return null;
 }
 
 /**
