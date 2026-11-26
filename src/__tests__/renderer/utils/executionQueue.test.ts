@@ -28,6 +28,7 @@ import {
 } from '../../../renderer/utils/executionQueue';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
@@ -1174,11 +1175,48 @@ describe('getSteerEligibility', () => {
 		).toBe('waiting-for-connection');
 	});
 
-	it('refuses an SSH Claude agent, whose TUI runs on another host', () => {
-		const claude = steerableSession({
-			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
-		} as Partial<Session>);
-		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
+	it.each(AGENT_MODES)('steers a %s Claude TUI agent the same way (parity F1)', (mode) => {
+		const session = steerableSession(agentModeFields(mode));
+		const queued = { ...item, hostQueued: mode === 'hosted' || undefined };
+		expect(getSteerEligibility(session, queued)).toEqual({ canSteer: true });
+		// The blocked reasons are the same in every mode too.
+		expect(getSteerEligibility(session, { ...queued, text: '/compact' })).toEqual(
+			getSteerEligibility(steerableSession(), { ...item, text: '/compact' })
+		);
+	});
+
+	it('refuses an SSH Claude agent whose remote maestro-p is too old to relay a steer', () => {
+		const outdated = {
+			claudeInteractive: {
+				mode: 'interactive' as const,
+				modeReason: 'auto' as const,
+				steeringUnavailable: 'maestro-p-outdated' as const,
+			},
+		};
+		const ssh = steerableSession({ ...agentModeFields('ssh'), ...outdated });
+		expect(getSteerEligibility(ssh, item).blockedReason).toBe('maestro-p-outdated');
+		expect(describeSteerBlocked('maestro-p-outdated')).toBe(
+			'Update maestro-p on this remote to steer.'
+		);
+		// A version fact about the remote: the same record on an agent whose turns run
+		// elsewhere (local, or on its host) says nothing about them.
+		expect(getSteerEligibility(steerableSession(outdated), item).canSteer).toBe(true);
+		expect(
+			getSteerEligibility(steerableSession({ ...agentModeFields('hosted'), ...outdated }), {
+				...item,
+				hostQueued: true,
+			}).canSteer
+		).toBe(true);
+	});
+
+	it('names the native transport, not SSH, for a native-control agent on a remote (F2 lock)', () => {
+		const native = steerableSession({
+			...agentModeFields('ssh'),
+			toolType: 'copilot-cli',
+			harnessControlMode: 'native',
+			claudeInteractive: undefined,
+		});
+		expect(getSteerEligibility(native, item).blockedReason).toBe('native-local-only');
 	});
 
 	it("steers a hosted agent's host item as a local one: its host runs the TUI, not SSH", () => {
@@ -1327,7 +1365,8 @@ describe('shouldOfferSteer', () => {
 			'too-long',
 			'paused',
 			'waiting-for-connection',
-			'ssh-remote',
+			'native-local-only',
+			'maestro-p-outdated',
 			'steer-in-flight',
 			'tui-command-prefix',
 		] as const) {
@@ -1378,7 +1417,8 @@ describe('describeSteerBlocked', () => {
 			'too-long',
 			'paused',
 			'waiting-for-connection',
-			'ssh-remote',
+			'native-local-only',
+			'maestro-p-outdated',
 			'steer-in-flight',
 			'tui-command-prefix',
 			'read-only',

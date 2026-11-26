@@ -28,6 +28,7 @@ import { generateId } from '../../../utils/ids';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
 import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
+import type { SteeringUnavailableReason } from '../../../../shared/chatSteering';
 
 /**
  * Last-announced effective mode per provider (`configDirKey`), so the Dynamic
@@ -93,6 +94,7 @@ export function useAgentClaudeModeResolvedListener(): void {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: SteeringUnavailableReason;
 				}
 			) => {
 				// Window scoping: ignore agents this window doesn't own (broadcast events).
@@ -147,7 +149,8 @@ export function useAgentClaudeModeResolvedListener(): void {
 							current &&
 							current.mode === resolution.mode &&
 							current.modeReason === resolution.reason &&
-							current.lastUsageSnapshotKey === resolution.configDirKey
+							current.lastUsageSnapshotKey === resolution.configDirKey &&
+							current.steeringUnavailable === resolution.steeringUnavailable
 						) {
 							return s;
 						}
@@ -158,6 +161,9 @@ export function useAgentClaudeModeResolvedListener(): void {
 								mode: resolution.mode,
 								modeReason: resolution.reason,
 								lastUsageSnapshotKey: resolution.configDirKey,
+								...(resolution.steeringUnavailable
+									? { steeringUnavailable: resolution.steeringUnavailable }
+									: {}),
 							},
 						};
 

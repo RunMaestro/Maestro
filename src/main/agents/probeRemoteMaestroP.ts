@@ -32,6 +32,11 @@ import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
 import type { SshRemoteConfig } from '../../shared/types';
 import {
+	MAESTRO_P_CAPABILITIES_FLAG,
+	parseMaestroPCapabilities,
+	STEERING_RELAY_CAPABILITY,
+} from '../../shared/chatSteering';
+import {
 	setRemoteMaestroPAvailable,
 	getRemoteMaestroPAvailable,
 	isRemoteMaestroPProbeStale,
@@ -56,9 +61,13 @@ export async function probeRemoteMaestroP(sshRemote: SshRemoteConfig): Promise<b
 	// Run maestro-p for real (not `command -v`): a successful `--version` proves
 	// node is present and the whole module graph - including the node-pty native
 	// addon the TUI needs - resolves on this host.
+	//
+	// `--capabilities` after `--version` asks a current maestro-p for what it can do
+	// (the steering relay). An older one answers `--version` first and exits, so the
+	// missing line reads as "cannot steer" and the probe never runs anything else.
 	const remoteOptions: RemoteCommandOptions = {
 		command: 'maestro-p',
-		args: ['--version'],
+		args: ['--version', MAESTRO_P_CAPABILITIES_FLAG],
 	};
 
 	try {
@@ -93,7 +102,9 @@ export async function probeRemoteMaestroP(sshRemote: SshRemoteConfig): Promise<b
 
 		const cleanedOutput = stripAnsi(result.stdout).trim();
 		const available = result.exitCode === 0 && VERSION_OUTPUT_REGEX.test(cleanedOutput);
-		setRemoteMaestroPAvailable(sshRemote.id, available);
+		const canSteer =
+			available && parseMaestroPCapabilities(cleanedOutput).includes(STEERING_RELAY_CAPABILITY);
+		setRemoteMaestroPAvailable(sshRemote.id, available, Date.now(), canSteer);
 		if (available) {
 			logger.info(
 				`maestro-p launches on remote (version ${cleanedOutput.split('\n')[0]}) (${sshRemote.host})`,

@@ -23,6 +23,8 @@
 
 import * as fs from 'fs';
 import * as net from 'net';
+import * as os from 'os';
+import * as path from 'path';
 
 import {
 	oversizeSteeringRequestId,
@@ -258,3 +260,39 @@ export function isNamedPipePath(socketPath: string): boolean {
 
 /** Cap on one un-terminated control line. A steer is a sentence, not a stream. */
 export const MAX_PENDING_LINE_BYTES = 64 * 1024;
+
+/**
+ * The real path for a socket the caller named, expanding a home-relative `~/`
+ * form. A turn on an SSH remote is handed one of those (see
+ * `remoteSteeringSocketSpec` in src/shared/chatSteering.ts), because the desktop
+ * that names it does not know the remote's home. Any other path is used as is.
+ */
+export function resolveSteeringSocketPath(spec: string, home: string = os.homedir()): string {
+	if (spec === '~') return home;
+	if (spec.startsWith('~/')) return path.join(home, spec.slice(2));
+	return spec;
+}
+
+/**
+ * Create the folder a home-relative socket lives in, owner-only. Only for the
+ * `~/` form: a caller-named absolute path sits in a folder the caller already
+ * owns (the local temp dir), and maestro-p has no business creating folders there.
+ * Returns false when the folder cannot be made, so the turn runs un-steerable.
+ */
+export function ensureSteeringSocketDir(
+	spec: string,
+	warn: (message: string) => void,
+	home: string = os.homedir()
+): boolean {
+	if (!spec.startsWith('~/')) return true;
+	const dir = path.dirname(resolveSteeringSocketPath(spec, home));
+	try {
+		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+		return true;
+	} catch (err) {
+		warn(
+			`maestro-p: could not create the steering folder (${String(err)}); this turn cannot be steered.`
+		);
+		return false;
+	}
+}

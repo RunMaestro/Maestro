@@ -21,6 +21,11 @@ import { MaestroSettings } from '../persistence';
 import type { ClaudeSpawnContext } from './resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from './spawn-types';
 import type { ProcessConfig } from '../../../process-manager/types';
+import {
+	remoteSteeringSocketFor,
+	type RemoteSteeringChannel,
+} from '../../../process-manager/steering-client';
+import { STEERING_SOCKET_ENV_VAR } from '../../../../shared/chatSteering';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -58,6 +63,11 @@ export interface SshSpawnWrapResult {
 	shellToUse: string | undefined;
 	/** The app-server launch for a Codex turn that wants it, beside the exec wrapper. */
 	codexAppServerSsh: CodexAppServerSshLaunch | undefined;
+	/**
+	 * The steering channel of a Claude TUI turn whose remote maestro-p serves the
+	 * steering relay; `undefined` for every other turn.
+	 */
+	remoteSteering: RemoteSteeringChannel | undefined;
 }
 
 /**
@@ -92,6 +102,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 	let sshStdinScript: string | undefined;
 	let sshRemoteCommand: string | undefined;
 	let codexAppServerSsh: CodexAppServerSshLaunch | undefined;
+	let remoteSteering: RemoteSteeringChannel | undefined;
 
 	const {
 		isClaudeCode,
@@ -100,6 +111,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		claudeDecisionRealBinPath,
 		claudeResolvedRemote,
 		acceptWorkspaceTrust,
+		remoteMaestroPCanSteer,
 	} = claudeContext;
 
 	// ========================================================================
@@ -161,6 +173,20 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 							acceptWorkspaceTrust,
 						})
 					: null;
+
+			// Chat steering over SSH: the same decision the local interactive spawn
+			// makes (a TUI turn gets a channel), with the socket on the REMOTE, where
+			// maestro-p binds it. Only for a maestro-p that serves the steering relay;
+			// an older one gets no channel, and the spawn context's write-back tells
+			// the Steer controls why. Derived from the process key, as locally, so the
+			// steer finds it without being handed it.
+			if (remoteInteractive && remoteMaestroPCanSteer === true) {
+				remoteSteering = {
+					remote: sshResult.config,
+					command: remoteInteractive.command,
+					socket: remoteSteeringSocketFor(config.sessionId),
+				};
+			}
 
 			// Determine the command to run on the remote host
 			const remoteCommand =
@@ -226,6 +252,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 				...globalShellEnvVars,
 				...(effectiveCustomEnvVars || {}),
 				...(remoteInteractive?.env || {}),
+				...(remoteSteering ? { [STEERING_SOCKET_ENV_VAR]: remoteSteering.socket } : {}),
 				// Only this map crosses to the remote host, so the turn-origin
 				// marker that buildChildProcessEnv() stamps locally has to be
 				// re-stated here or every SSH turn looks hand-typed.
@@ -336,5 +363,6 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		useShell,
 		shellToUse,
 		codexAppServerSsh,
+		remoteSteering,
 	};
 }

@@ -51,7 +51,18 @@ import {
 	steeringTextMatches,
 	type SteeringResultFrame,
 } from '../shared/chatSteering';
-import { startSteeringServer, type SteeringServer } from './steering-server';
+import {
+	ensureSteeringSocketDir,
+	resolveSteeringSocketPath,
+	startSteeringServer,
+	type SteeringServer,
+} from './steering-server';
+import {
+	formatVersionWithCapabilities,
+	parseMaestroPEarlyMode,
+	runSteeringRelay,
+	type MaestroPEarlyMode,
+} from './steering-relay';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import {
 	formatScreenTailReport,
@@ -186,10 +197,15 @@ program
 	.allowUnknownOption(true)
 	.allowExcessArguments(true);
 
+// Invocations that are not turns (the capabilities probe, the steering relay),
+// recognized before commander answers `--version` and before parseArgs would
+// forward an unknown flag to claude.
+const earlyMode = parseMaestroPEarlyMode(process.argv.slice(2));
+
 // Commander handles --help/--version (prints and exits 0). For everything
 // else it returns and falls through to our own parseArgs walker - commander's
 // option schema doesn't know about claude's flag surface, so we re-parse.
-program.parse(process.argv);
+if (!earlyMode) program.parse(process.argv);
 
 function resolveConfigDir(): string {
 	const envDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1167,9 +1183,14 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const steeringSocketPath = steeringEnabled
 		? process.env[STEERING_SOCKET_ENV_VAR]?.trim()
 		: undefined;
-	if (steeringSocketPath) {
+	const warnSteering = (message: string): void => {
+		process.stderr.write(`${message}\n`);
+	};
+	// A turn on an SSH remote is handed a home-relative path (the desktop does not
+	// know this host's home); its folder is made owner-only here.
+	if (steeringSocketPath && ensureSteeringSocketDir(steeringSocketPath, warnSteering)) {
 		steeringServer = startSteeringServer({
-			socketPath: steeringSocketPath,
+			socketPath: resolveSteeringSocketPath(steeringSocketPath),
 			onSteer: (id, text): Promise<SteeringResultFrame> => {
 				const handling = handleSteer(id, text);
 				steersInFlight.add(handling);
@@ -1669,7 +1690,31 @@ for (const stream of [process.stdout, process.stderr]) {
 	});
 }
 
-main().catch((err) => {
+/** Answer an invocation that is not a turn. Resolves with the exit code. */
+async function runEarlyMode(mode: MaestroPEarlyMode): Promise<number> {
+	if (mode.kind === 'capabilities') {
+		process.stdout.write(formatVersionWithCapabilities(VERSION));
+		return 0;
+	}
+	if (mode.kind === 'usage-error') {
+		process.stderr.write(`maestro-p: ${mode.message}\n`);
+		return 2;
+	}
+	return runSteeringRelay({
+		socketSpec: mode.socketSpec,
+		stdinText: fs.readFileSync(0, 'utf-8'),
+		writeLine: (line) => {
+			process.stdout.write(`${line}\n`);
+		},
+	});
+}
+
+(earlyMode
+	? runEarlyMode(earlyMode).then((code) => {
+			process.exitCode = code;
+		})
+	: main()
+).catch((err) => {
 	const message = err instanceof Error ? err.message : String(err);
 	process.stderr.write(`maestro-p: ${message}\n`);
 	process.exit(1);
