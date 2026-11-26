@@ -14,11 +14,11 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 }));
 
 import {
-	HOSTED_HISTORY_CLOCK_SKEW_MS,
 	notifyHistoryEntryAdded,
 	watchHostedHistoryCommand,
 } from '../../../renderer/services/historyEntryToast';
 import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
+import { readMirrorTranscript } from '../../../renderer/services/peerMirror';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -194,15 +194,12 @@ describe('historyEntryToast', () => {
 		expect(toastOf()).toEqual([]);
 	});
 
-	it("ignores an older run's saved line: by id when the tab was read before, else by time", async () => {
+	it("ignores an older run's saved line, which the baseline read before the send holds", async () => {
 		hydrateHost();
 		useSessionStore.setState({
 			sessions: [createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' })],
 		});
-		const sentAt = Date.now();
-		// Read before the send: the old line's id is in the baseline.
 		const stop = watchHostedHistoryCommand('row', { peerId: 'box', agentId: 'h1' }, 't1', {
-			sentAt,
 			baseline: new Set(['old']),
 		});
 		hostTabHolds([line('old', HISTORY_COMMAND_TEXT.saved('old run'))]);
@@ -211,21 +208,26 @@ describe('historyEntryToast', () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(toastOf()).toEqual([]);
 		stop();
+	});
 
-		// Never read: a line older than the send (beyond the clock skew) is an older run.
-		transcript$.mockReset();
-		hostTabHolds([
-			line('old', HISTORY_COMMAND_TEXT.saved('old run'), sentAt - HOSTED_HISTORY_CLOCK_SKEW_MS - 1),
-		]);
-		resetStores(usePeerMirrorStore);
+	it('raises no toast when the tab cannot be read before the send, even once a read recovers', async () => {
 		hydrateHost();
-		const stopAgain = watchHostedHistoryCommand('row', { peerId: 'box', agentId: 'h1' }, 't1', {
-			sentAt,
-		});
-		await vi.waitFor(() => expect(transcript$).toHaveBeenCalled());
+		const session = createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' });
+		useSessionStore.setState({ sessions: [session] });
+		// The read before the send fails: no baseline tells an earlier run's line from this one's.
+		transcript$.mockRejectedValueOnce(new Error('host busy'));
+		expect(await sendHostedTurn(session, 't1', '/history', [])).toEqual({ status: 'ran' });
+		// A later read recovers and holds a run saved just before this send.
+		hostTabHolds([line('old', HISTORY_COMMAND_TEXT.saved('earlier run'), Date.now() - 5_000)]);
+		await readMirrorTranscript('box', 'h1', 't1');
+		hostTabHolds([
+			line('old', HISTORY_COMMAND_TEXT.saved('earlier run'), Date.now() - 5_000),
+			line('p1', HISTORY_COMMAND_TEXT.saved('this run')),
+		]);
+		hostWroteTab();
+		await readMirrorTranscript('box', 'h1', 't1');
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(toastOf()).toEqual([]);
-		stopAgain();
 	});
 
 	it('stops watching once its time is up', async () => {
@@ -235,7 +237,6 @@ describe('historyEntryToast', () => {
 			sessions: [createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' })],
 		});
 		watchHostedHistoryCommand('row', { peerId: 'box', agentId: 'h1' }, 't1', {
-			sentAt: Date.now(),
 			baseline: new Set(),
 			timeoutMs: 1_000,
 		});
