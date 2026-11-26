@@ -54,7 +54,7 @@ import type {
 	ClaudeSessionOriginsData,
 } from '../stores/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
-import { forEachJsonlLine } from '../utils/jsonl-stream';
+import { forEachLocalTranscriptLine, readRemoteTranscript } from './transcript-read';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
 export type { ClaudeSessionOriginsData } from '../stores/types';
@@ -789,18 +789,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			if (message) page.push(message);
 		};
 
+		// A transcript that does not exist is an empty conversation; one that exists and cannot be
+		// read rejects, in every mode (see transcript-read.ts).
 		if (sshConfig) {
 			const projectDir = this.getRemoteEncodedProjectDir(projectPath);
 			const sessionFile = `${projectDir}/${sessionId}.jsonl`;
-			const result = await readFileRemote(sessionFile, sshConfig);
-			if (!result.success || !result.data) {
-				logger.error(
-					`Failed to read remote session messages: ${sessionFile} - ${result.error}`,
-					LOG_CONTEXT
-				);
-				return { messages: [], total: 0, hasMore: false };
-			}
-			for (const line of result.data.split('\n')) {
+			const content = await readRemoteTranscript(sessionFile, sshConfig);
+			for (const line of (content ?? '').split('\n')) {
 				if (line.trim()) collect(line);
 			}
 		} else {
@@ -812,7 +807,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				}
 			} else {
 				// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
-				await forEachJsonlLine(sessionFile, collect);
+				await forEachLocalTranscriptLine(sessionFile, collect);
 			}
 		}
 
