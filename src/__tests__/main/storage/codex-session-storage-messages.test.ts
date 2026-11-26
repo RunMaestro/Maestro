@@ -25,6 +25,9 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
+// The session cache lives under the app data folder (read with a CommonJS require of electron).
+vi.mock('../../../main/utils/app-user-data', () => ({ getAppUserDataDir: () => '/tmp' }));
+
 // Mock remote-fs
 vi.mock('../../../main/utils/remote-fs', () => ({
 	readFileRemote: vi.fn(),
@@ -47,7 +50,16 @@ vi.mock('../../../main/utils/jsonl-stream', async () =>
 	(await import('../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
 );
 
+// The real parse, wrapped so a test can make one read fail.
+vi.mock('../../../main/transcript-parse/transcript-parse-pool', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../main/transcript-parse/transcript-parse-pool')>();
+	return { ...actual, runTranscriptParse: vi.fn(actual.runTranscriptParse) };
+});
+
 import fs from 'fs/promises';
+import { runTranscriptParse } from '../../../main/transcript-parse/transcript-parse-pool';
+import { captureException } from '../../../main/utils/sentry';
 import { CodexSessionStorage } from '../../../main/storage/codex-session-storage';
 import { readDirRemote, readFileRemote, statRemote } from '../../../main/utils/remote-fs';
 import { readFirstJsonlLine } from '../../../main/utils/jsonl-stream';
@@ -231,6 +243,198 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 			});
 		}
 	);
+
+	it('lists several projects from one walk of the rollouts, each as listSessions would', async () => {
+		const project = 'C:\\Users\\test\\project';
+		const findAll = vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+			{
+				filePath: '/fake/rollout.jsonl',
+				filename: 'rollout-20260308_031029-019ccb6c-c0fd-7b70-92b7-558f514099c6.jsonl',
+			},
+		]);
+		vi.mocked(fs.stat).mockResolvedValue({ size: 200, mtimeMs: 1_000 } as any);
+		vi.mocked(fs.readFile).mockImplementation(async (file) => {
+			if (String(file).includes('codex-sessions-cache')) throw new Error('no cache');
+			return createSessionContent();
+		});
+		const byProject = await storage.listSessionsForProjects([project, '/elsewhere']);
+		expect(findAll).toHaveBeenCalledTimes(1);
+		const single = await storage.listSessions(project);
+		expect(byProject.get(project)).toEqual(single);
+		expect(byProject.get(project)).toHaveLength(1);
+		expect(byProject.get('/elsewhere')).toEqual([]);
+	});
+
+	it('names an oversized rollout against the project its first line names, and an unreadable one against every project', async () => {
+		const big = 200 * 1024 * 1024;
+		vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+			{ filePath: '/fake/big-a.jsonl', filename: 'rollout-a.jsonl' },
+			{ filePath: '/fake/big-unknown.jsonl', filename: 'rollout-b.jsonl' },
+		]);
+		vi.mocked(fs.stat).mockResolvedValue({ size: big, mtimeMs: 1_000 } as any);
+		vi.mocked(readFirstJsonlLine).mockImplementation(async (file) =>
+			String(file).includes('big-a')
+				? JSON.stringify({ type: 'session_meta', payload: { cwd: '/work/a' } })
+				: null
+		);
+		vi.mocked(fs.readFile).mockImplementation(async () => {
+			throw new Error('no cache');
+		});
+		const skipped: Array<[string, number]> = [];
+		const byProject = await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+			onSkippedFile: (projectPath, file) => skipped.push([projectPath, file.sizeBytes]),
+		});
+		expect(byProject.get('/work/a')).toEqual([]);
+		expect(skipped).toEqual([
+			['/work/a', big],
+			['/work/a', big],
+			['/work/b', big],
+		]);
+		const single = vi.fn();
+		await storage.listSessions('/work/b', undefined, undefined, { onSkippedFile: single });
+		expect(single).toHaveBeenCalledTimes(1);
+	});
+
+	it('counts a date folder it could not list against every project', async () => {
+		vi.mocked(fs.access).mockResolvedValue(undefined);
+		vi.mocked(fs.readdir).mockImplementation((async (dir: string) => {
+			if (String(dir).endsWith('sessions')) return ['2026'];
+			if (String(dir).endsWith('2026')) return ['11'];
+			if (String(dir).endsWith('11')) return ['20', '21'];
+			if (String(dir).endsWith('20')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			return [];
+		}) as never);
+		vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true, size: 1, mtimeMs: 1 } as any);
+		vi.mocked(fs.readFile).mockImplementation(async () => {
+			throw new Error('no cache');
+		});
+		const skipped: Array<[string, string]> = [];
+		await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+			onSkippedFile: (projectPath, file) => skipped.push([projectPath, file.reason]),
+		});
+		expect(skipped).toEqual([
+			['/work/a', 'unreadable'],
+			['/work/b', 'unreadable'],
+		]);
+	});
+
+	describe('a walk that cannot read everything', () => {
+		const eacces = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+		const cachedSession = (projectPath: string) => ({
+			sessionId: 'cached',
+			projectPath,
+			timestamp: '2026-01-20T10:00:00Z',
+			modifiedAt: '2026-01-20T10:00:00Z',
+			firstMessage: '',
+			messageCount: 1,
+			sizeBytes: 10,
+			inputTokens: 1,
+			outputTokens: 1,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			durationSeconds: 0,
+		});
+		/** Serve `entries` as the session cache, and nothing else through readFile. */
+		function serveCache(entries: Record<string, unknown>) {
+			vi.mocked(fs.readFile).mockImplementation((async (file: string) => {
+				if (String(file).includes('stats-cache')) {
+					return JSON.stringify({ version: 6, lastProcessedAt: 1, sessions: entries });
+				}
+				throw new Error('no transcript');
+			}) as never);
+		}
+		const writeFile = vi.fn();
+		beforeEach(() => {
+			Object.assign(fs, { writeFile, mkdir: vi.fn() });
+			writeFile.mockReset();
+		});
+
+		it('keeps the rollouts of a readable month when another cannot be listed, and the cache of the one it missed', async () => {
+			const sessionsDir: string = (storage as any).getSessionsDir();
+			const january = path.join(sessionsDir, '2026', '01', '20', 'rollout-jan.jsonl');
+			const february = path.join(sessionsDir, '2026', '02', '03', 'rollout-feb.jsonl');
+			serveCache({
+				[january]: { session: cachedSession('/work/a'), fileMtimeMs: 5 },
+				[february]: { session: cachedSession('/work/a'), fileMtimeMs: 5 },
+			});
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.readdir).mockImplementation((async (dir: string) => {
+				if (dir === sessionsDir) return ['2026'];
+				if (dir === path.join(sessionsDir, '2026')) return ['01', '02'];
+				if (dir === path.join(sessionsDir, '2026', '01')) return ['20'];
+				if (dir === path.join(sessionsDir, '2026', '02')) throw eacces();
+				if (dir === path.join(sessionsDir, '2026', '01', '20')) return ['rollout-jan.jsonl'];
+				return [];
+			}) as never);
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				size: 10,
+				mtimeMs: 1,
+			} as any);
+			const skipped: string[] = [];
+			const byProject = await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+				onSkippedFile: (projectPath) => skipped.push(projectPath),
+			});
+			expect(byProject.get('/work/a')?.map((s) => s.sessionId)).toEqual(['cached']);
+			expect(skipped).toEqual(['/work/a', '/work/b']);
+			// February's entry is not pruned on a walk that could not see it.
+			expect(writeFile).not.toHaveBeenCalled();
+		});
+
+		it('says a sessions folder that is there but cannot be opened misses every project', async () => {
+			vi.mocked(fs.access).mockRejectedValue(eacces());
+			serveCache({});
+			const skipped: Array<[string, string]> = [];
+			await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+				onSkippedFile: (projectPath, file) => skipped.push([projectPath, file.reason]),
+			});
+			expect(skipped).toEqual([
+				['/work/a', 'unreadable'],
+				['/work/b', 'unreadable'],
+			]);
+		});
+
+		it('never serves an older cached reading of a rollout now too large, and reads only a bounded header', async () => {
+			const big = 200 * 1024 * 1024;
+			vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+				{ filePath: '/fake/grown.jsonl', filename: 'rollout-grown.jsonl' },
+			]);
+			serveCache({ '/fake/grown.jsonl': { session: cachedSession('/work/a'), fileMtimeMs: 9 } });
+			vi.mocked(fs.stat).mockResolvedValue({ size: big, mtimeMs: 1 } as any);
+			vi.mocked(readFirstJsonlLine).mockResolvedValue(
+				JSON.stringify({ type: 'session_meta', payload: { cwd: '/work/a' } })
+			);
+			const skipped = vi.fn();
+			const byProject = await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+				onSkippedFile: skipped,
+			});
+			expect(byProject.get('/work/a')).toEqual([]);
+			expect(skipped).toHaveBeenCalledTimes(1);
+			expect(readFirstJsonlLine).toHaveBeenCalledWith('/fake/grown.jsonl', {
+				maxBytes: expect.any(Number),
+			});
+		});
+
+		it('names an unreadable rollout without reporting it as a bug, at the stat and at the read', async () => {
+			vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+				{ filePath: '/fake/locked.jsonl', filename: 'rollout-locked.jsonl' },
+				{ filePath: '/fake/unread.jsonl', filename: 'rollout-unread.jsonl' },
+			]);
+			serveCache({});
+			vi.mocked(fs.stat).mockImplementation((async (file: string) => {
+				if (String(file).includes('locked')) throw eacces();
+				return { size: 10, mtimeMs: 1 };
+			}) as never);
+			vi.mocked(runTranscriptParse).mockRejectedValueOnce(eacces());
+			const skipped: string[] = [];
+			await storage.listSessionsForProjects(['/work/a', '/work/b'], undefined, {
+				onSkippedFile: (projectPath, file) => skipped.push(`${projectPath} ${file.reason}`),
+			});
+			expect(skipped).toContain('/work/a unreadable');
+			expect(skipped.filter((entry) => entry === '/work/a unreadable')).toHaveLength(2);
+			expect(captureException).not.toHaveBeenCalled();
+		});
+	});
 
 	it('keeps distinct response items around malformed rows after shared native parsing', async () => {
 		vi.spyOn(storage, 'findSessionFile').mockResolvedValue('/isolated/rollout.jsonl');
