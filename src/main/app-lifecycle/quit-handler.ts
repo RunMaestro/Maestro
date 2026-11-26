@@ -17,7 +17,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
-import { captureException } from '../utils/sentry';
+import { captureException, captureMessage } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
@@ -140,6 +140,11 @@ export interface QuitHandlerDependencies {
 	 * {@link REMOTE_WRITE_FLUSH_MAX_MS}.
 	 */
 	flushPendingRemoteWrites?: () => Promise<unknown>;
+	/**
+	 * The remote copies whose change is still not sent, named when the quit stops
+	 * waiting: those changes stay only in the copies on this machine.
+	 */
+	listPendingRemoteWrites?: () => string[];
 }
 
 /** Quit handler state */
@@ -208,6 +213,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		windowStateStore,
 		getWindowRegistry,
 		flushPendingRemoteWrites,
+		listPendingRemoteWrites,
 	} = deps;
 
 	/**
@@ -225,7 +231,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				resolve();
 			};
 			const bound = setTimeout(() => {
-				logger.warn('Quit stopped waiting for remote copy writes', 'Shutdown');
+				reportUnsentRemoteWrites();
 				finish();
 			}, REMOTE_WRITE_FLUSH_MAX_MS);
 			void Promise.resolve()
@@ -236,6 +242,28 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				.finally(finish);
 		});
 		return flush;
+	}
+
+	/**
+	 * The bound ran out: name the copies whose change did not reach the remote
+	 * (it stays in the copy, and the next Open keeps it beside the fetched file).
+	 * Sentry hears the count only, never the user's paths.
+	 */
+	function reportUnsentRemoteWrites(): void {
+		let unsent: string[] = [];
+		try {
+			unsent = listPendingRemoteWrites?.() ?? [];
+		} catch (err) {
+			logger.warn(`Could not list unsent remote copy writes: ${err}`, 'Shutdown');
+		}
+		logger.warn('Quit stopped waiting for remote copy writes', 'Shutdown', {
+			waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
+			unsent,
+		});
+		void captureMessage('Quit stopped waiting for remote copy writes', 'warning', {
+			waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
+			unsentCount: unsent.length,
+		});
 	}
 
 	const state: QuitHandlerState = {

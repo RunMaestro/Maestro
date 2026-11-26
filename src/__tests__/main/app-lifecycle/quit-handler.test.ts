@@ -95,6 +95,12 @@ vi.mock('../../../main/dataview/dataview-service', () => ({
 	shutdownDataviewService: (...args: unknown[]) => mockShutdownDataview(...args),
 }));
 
+const mockCaptureMessage = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn().mockResolvedValue(undefined),
+	captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+}));
+
 // Platform is controllable per-test: the update-install hard-exit only applies
 // on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
 let mockIsMacOS = true;
@@ -734,6 +740,51 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(process.kill).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(1);
 			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('names the remote copies still not sent when it stops waiting, and tells Sentry only how many', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			const unsent = ['/home/me/notes.md (SSH remote r1)'];
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+				listPendingRemoteWrites: () => unsent,
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS);
+			expect(mockLogger.warn).toHaveBeenCalledWith(
+				'Quit stopped waiting for remote copy writes',
+				'Shutdown',
+				expect.objectContaining({ unsent })
+			);
+			// A message, not an exception, and never the user's paths.
+			expect(mockCaptureMessage).toHaveBeenCalledWith(
+				'Quit stopped waiting for remote copy writes',
+				'warning',
+				{ waitedMs: REMOTE_WRITE_FLUSH_MAX_MS, unsentCount: 1 }
+			);
+			vi.useRealTimers();
+		});
+
+		it('says nothing to Sentry when the remote copy writes land in time', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: async () => undefined,
+				listPendingRemoteWrites: () => [],
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(mockCaptureMessage).not.toHaveBeenCalled();
 			vi.useRealTimers();
 		});
 
