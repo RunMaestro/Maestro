@@ -154,29 +154,62 @@ describe('Document Graph across agent modes', () => {
 		expect(buildGraphData).not.toHaveBeenCalled();
 	});
 
-	it('reads a link inside a preview from the remote and root that preview came from', async () => {
+	const previewView = (sshRemoteId: string, rootPath = '/test') => (
+		<DocumentGraphView
+			isOpen
+			onClose={vi.fn()}
+			theme={theme}
+			rootPath={rootPath}
+			focusFilePath="/test/index.md"
+			sshRemoteId={sshRemoteId}
+		/>
+	);
+
+	it('reads a link inside a preview from the remote that preview came from', async () => {
 		mindMapNodes.current = [{ id: 'a.md', nodeType: 'document', filePath: 'a.md' }];
 		const readFile = vi.fn().mockResolvedValue('# Doc');
 		(window as any).maestro.fs = { ...(window as any).maestro.fs, readFile };
-		const view = (sshRemoteId: string, rootPath = '/test') => (
-			<DocumentGraphView
-				isOpen
-				onClose={vi.fn()}
-				theme={theme}
-				rootPath={rootPath}
-				focusFilePath="/test/index.md"
-				sshRemoteId={sshRemoteId}
-			/>
-		);
-		const { rerender } = render(view('r1'));
+		render(previewView('r1'));
 		fireEvent.click(await screen.findByTestId('mind-map-mock'));
 		await waitFor(() => expect(readFile).toHaveBeenCalledWith('/test/a.md', 'r1'));
 
-		// The agent's remote and root change while the preview of r1's document stays open.
-		rerender(view('r2', '/other'));
 		fireEvent.click(await screen.findByTestId('preview-link'));
 
-		await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
-		expect(readFile).toHaveBeenLastCalledWith('/test/b.md', 'r1');
+		await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('/test/b.md', 'r1'));
+	});
+
+	it('closes a preview when the graph moves to another root or remote, so its links never mix disks', async () => {
+		mindMapNodes.current = [{ id: 'a.md', nodeType: 'document', filePath: 'a.md' }];
+		const readFile = vi.fn().mockResolvedValue('# Doc');
+		(window as any).maestro.fs = { ...(window as any).maestro.fs, readFile };
+		const { rerender } = render(previewView('r1'));
+		fireEvent.click(await screen.findByTestId('mind-map-mock'));
+		await screen.findByTestId('preview-link');
+
+		// The agent's remote and root change under the open preview of r1's document.
+		rerender(previewView('r2', '/other'));
+
+		await waitFor(() => expect(screen.queryByTestId('preview-link')).toBeNull());
+	});
+
+	it('drops a preview read still in flight when the graph moves to another remote', async () => {
+		mindMapNodes.current = [{ id: 'a.md', nodeType: 'document', filePath: 'a.md' }];
+		let finishRead: (content: string) => void = () => {};
+		const readFile = vi.fn(
+			() =>
+				new Promise<string>((resolve) => {
+					finishRead = resolve;
+				})
+		);
+		(window as any).maestro.fs = { ...(window as any).maestro.fs, readFile };
+		const { rerender } = render(previewView('r1'));
+		fireEvent.click(await screen.findByTestId('mind-map-mock'));
+		await waitFor(() => expect(readFile).toHaveBeenCalledWith('/test/a.md', 'r1'));
+
+		rerender(previewView('r2'));
+		finishRead('# r1 doc');
+
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(screen.queryByTestId('preview-link')).toBeNull();
 	});
 });

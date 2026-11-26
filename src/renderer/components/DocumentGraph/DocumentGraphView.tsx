@@ -343,6 +343,8 @@ export function DocumentGraphView({
 	// Preview navigation history (for back/forward through wiki link clicks)
 	const [previewHistory, setPreviewHistory] = useState<PreviewEntry[]>([]);
 	const [previewHistoryIndex, setPreviewHistoryIndex] = useState(-1);
+	/** Bumped when the graph's root or remote changes, so a preview read for the old one is dropped. */
+	const previewTargetRef = useRef(0);
 
 	// All markdown files discovered during scanning (for wiki-link resolution)
 	const [allMarkdownFiles, setAllMarkdownFiles] = useState<string[]>([]);
@@ -1371,10 +1373,12 @@ export function DocumentGraphView({
 
 			setPreviewLoading(true);
 			setPreviewError(null);
+			const target = previewTargetRef.current;
 
 			try {
 				const remoteId = from ? from.remoteId : fileOpRemoteId(sshRemoteId);
 				const content = await window.maestro.fs.readFile(fullPath, remoteId);
+				if (target !== previewTargetRef.current) return;
 
 				if (content === null) {
 					throw new Error('Unable to read file contents.');
@@ -1399,6 +1403,7 @@ export function DocumentGraphView({
 				});
 				setPreviewHistoryIndex((prev) => prev + 1);
 			} catch (err) {
+				if (target !== previewTargetRef.current) return;
 				setPreviewFile(null);
 				setPreviewError(err instanceof Error ? err.message : 'Failed to load preview.');
 			} finally {
@@ -1418,6 +1423,14 @@ export function DocumentGraphView({
 		setPreviewHistory([]);
 		setPreviewHistoryIndex(-1);
 	}, []);
+
+	// A preview belongs to the disk and the graph it was read from: its links, wiki-link tree
+	// and images resolve there. When the graph moves to another root or remote (the agent
+	// changed under it), the preview closes, and a read still in flight for it lands nowhere.
+	useEffect(() => {
+		previewTargetRef.current += 1;
+		handlePreviewClose();
+	}, [rootPath, sshRemoteId, handlePreviewClose]);
 
 	/**
 	 * Navigate back in preview history
