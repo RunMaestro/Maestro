@@ -1535,15 +1535,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))
 					) {
 						const item: QueuedItem = {
-							...withQueuedTurnOverrides(
-								buildQueuedMessageItem({
-									session,
-									tab: targetTab,
-									text: command,
-									images,
-									mentionRouting,
-								}),
-								turnOverrides
+							...withAgentText(
+								withQueuedTurnOverrides(
+									buildQueuedMessageItem({
+										session,
+										tab: targetTab,
+										text: command,
+										images,
+										mentionRouting,
+									}),
+									turnOverrides
+								)
 							),
 							...(held && { paused: true }),
 						};

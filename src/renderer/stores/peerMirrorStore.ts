@@ -277,8 +277,8 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				state,
 				peerId,
 				setAgentQueue(peer, event.agentId, event.items, {
-					started: event.started,
-					namesStarts: event.namesStarts,
+					exit: event.exit,
+					namesExits: event.namesExits,
 				}).peer
 			);
 		case 'agent.autorun':

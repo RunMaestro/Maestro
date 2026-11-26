@@ -28,7 +28,11 @@
  */
 
 import type { QueuedItem, Session } from '../types';
-import type { TurnOverrides, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
+import type {
+	QueueExit,
+	TurnOverrides,
+	TurnSendReceipt,
+} from '../../shared/maestro-lib/client/types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import {
 	applyQueuedItemAbort,
@@ -57,6 +61,8 @@ import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { hostTabTurnStartedAt } from '../utils/hostedSession';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
+import { appendAgentNotes } from '../../shared/maestro-lib/turns/prompt';
+import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
 import { queuedItemNamingText } from './tabAutoNaming';
 
 /**
@@ -159,8 +165,13 @@ function forwardToHost(
 	}
 	// Named from the message as the local drain names a tab it runs (`queuedItemNamingText()`).
 	const namingText = queuedItemNamingText(item);
-	// What the consult will tell the turn, before it fires: a refused turn consults nobody.
-	const agentNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
+	// What the consult will tell the turn, before it fires: a refused turn consults nobody. Notes
+	// the item already carries (a Federation sender's) go first.
+	const mentionNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
+	const agentNotes =
+		item.agentNotes && mentionNotes
+			? appendAgentNotes(item.agentNotes, mentionNotes)
+			: (item.agentNotes ?? mentionNotes);
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
 	const overrides = queuedItemHostOverrides(item);
 	const send = sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
@@ -273,6 +284,8 @@ const mentionsAwaitingHostStart = new Map<
 		goneAt?: number;
 		/** When the host's receipt said it was queued (this machine's clock; only for the time limit). */
 		queuedAt: number;
+		/** When the host's queue last showed it (this machine's clock): the time limit runs from here. */
+		lastSeenQueuedAt?: number;
 	}
 >();
 
@@ -344,9 +357,10 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
 /**
  * Fire the consults of turns the host queued once they start.
  *
- * A host that names its starts (`hostStarts`, the mirror's `queueStarts`) says which item a start
- * took, in the same message that takes it out of the queue: that item fires, and one that left the
- * queue unnamed was removed, so nobody is consulted for it. Nothing is read from the tab's state.
+ * A host that names how each item leaves its queue (`hostExits`, the mirror's `queueExits`) says
+ * so in the same message that takes it out: a start fires, a removal is let go, and an item gone
+ * from the list without a name is still on its way (its start is in flight), so it waits. Nothing
+ * is read from the tab's state.
  *
  * An older headless host, and a desktop host, name none. Then the item started when it is not in
  * the host's queue and its tab reads busy with a turn that is not the one it was queued behind (the
@@ -357,11 +371,12 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
  * as removed (time, not syncs: this window's own writes run the sync again in between).
  *
  * A consult that is let go without running (removed, or not in the host's queue for
- * `HOST_START_MENTION_TTL_MS`) leaves the note a local mention that cannot run leaves.
+ * `HOST_START_MENTION_TTL_MS` since it was last seen there) leaves the note a local mention that
+ * cannot run leaves.
  */
 export function fireHostStartedMentions(
 	session: Session,
-	hostStarts?: readonly string[],
+	hostExits?: readonly QueueExit[],
 	now = Date.now()
 ): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
@@ -372,27 +387,28 @@ export function fireHostStartedMentions(
 		if (waiting.sessionId !== session.id) continue;
 		const tabId = waiting.item.tabId || session.activeTabId;
 		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
-		if (!hostStarts?.includes(hostItemId)) {
+		const exit = queueExitOf(hostExits, hostItemId);
+		if (exit !== 'started') {
+			if (exit === 'removed') {
+				letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
+				continue;
+			}
 			if (hostQueued.has(hostItemId)) {
 				waiting.seenQueued = true;
+				waiting.lastSeenQueuedAt = now;
 				if (!waiting.aheadKnown) {
 					waiting.aheadKnown = true;
 					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
 				}
 				continue;
 			}
-			// Not waiting in the host's queue for longer than any turn runs: let it go, and say so.
-			if (now - waiting.queuedAt > HOST_START_MENTION_TTL_MS) {
+			// Not in the host's queue for longer than any turn runs: let it go, and say so.
+			if (now - (waiting.lastSeenQueuedAt ?? waiting.queuedAt) > HOST_START_MENTION_TTL_MS) {
 				letGoOfHostStart(hostItemId, waiting, 'its message never started on the host.');
 				continue;
 			}
-			// Named starts: unnamed and gone after it was seen waiting is a removal.
-			if (hostStarts) {
-				if (waiting.seenQueued) {
-					letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
-				}
-				continue;
-			}
+			// Named exits: gone without a name, its start (or its first frame) is still coming.
+			if (hostExits) continue;
 			// Its turn is one that started at another time than the turn ahead, both in the host's
 			// clock. With no turn ahead known (the tab read idle), the next turn it runs is it.
 			const started =

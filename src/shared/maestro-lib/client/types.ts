@@ -498,6 +498,12 @@ export function readTurnAgentText(
 	return value.trim() ? { ok: true, value } : { ok: true };
 }
 
+/** How a waiting item left a host's queue, as a host that names it says (`queue.changed`). */
+export interface QueueExit {
+	itemId: string;
+	exit: 'started' | 'removed';
+}
+
 /** A turn's agent-only text (`TurnInput.agentContext`, `agentNotes`), as one value. */
 export type TurnAgentText = Pick<TurnInput, 'agentContext' | 'agentNotes'>;
 
@@ -1061,13 +1067,14 @@ export type MaestroEvent =
 			type: 'queue.changed';
 			agentId: string;
 			items: QueuedTurn[];
-			/** The host's id of the item whose start made this change: it left the queue to run. */
-			started?: string;
+			/** How the item this change took out of the queue left it: its turn started, or it went. */
+			exit?: QueueExit;
 			/**
-			 * This host names every start (`started`), so an item that left the queue without one
-			 * was removed. An older headless host, and a desktop host, do not say it.
+			 * This host names every item that leaves its queue (`exit`), so one that is gone from a
+			 * list without a name is still on its way (its start is in flight). An older headless
+			 * host, and a desktop host, do not say it.
 			 */
-			namesStarts?: true;
+			namesExits?: true;
 	  }
 	/**
 	 * A run's progress, from the host's `autorun_state` and the run's own

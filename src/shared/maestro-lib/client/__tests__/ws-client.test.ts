@@ -1533,29 +1533,56 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
-		it('reads the item a start took, and that the host names its starts (M14)', async () => {
+		it('reads how an item left the queue, and that the host names every exit (M14)', async () => {
 			await connect();
 			bridge.push({
 				type: 'queue_changed',
 				sessionId: A1,
 				items: [],
-				namesStarts: true,
-				started: 'q1',
+				namesExits: true,
+				exit: { itemId: 'q1', exit: 'started' },
 			});
-			// A malformed or oversized id is not passed on as one; an older host sends neither field.
-			bridge.push({ type: 'queue_changed', sessionId: A1, items: [], started: 42 });
 			bridge.push({
 				type: 'queue_changed',
 				sessionId: A1,
 				items: [],
-				namesStarts: 'yes',
-				started: 'x'.repeat(201),
+				namesExits: true,
+				exit: { itemId: 'q2', exit: 'removed' },
+			});
+			// A malformed exit is not passed on as one; an older host sends neither field.
+			bridge.push({ type: 'queue_changed', sessionId: A1, items: [], exit: { itemId: 42 } });
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [],
+				namesExits: 'yes',
+				exit: { itemId: 'x'.repeat(201), exit: 'started' },
+			});
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [],
+				exit: { itemId: 'q3', exit: 'paused' },
 			});
 			await vi.waitFor(() =>
-				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(3)
+				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(5)
 			);
 			expect(events.filter((event) => event.type === 'queue.changed')).toEqual([
-				{ type: 'queue.changed', agentId: A1, items: [], namesStarts: true, started: 'q1' },
+				{
+					type: 'queue.changed',
+					agentId: A1,
+					items: [],
+					namesExits: true,
+					exit: { itemId: 'q1', exit: 'started' },
+				},
+				{
+					type: 'queue.changed',
+					agentId: A1,
+					items: [],
+					namesExits: true,
+					exit: { itemId: 'q2', exit: 'removed' },
+				},
+				{ type: 'queue.changed', agentId: A1, items: [] },
 				{ type: 'queue.changed', agentId: A1, items: [] },
 				{ type: 'queue.changed', agentId: A1, items: [] },
 			]);

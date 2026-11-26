@@ -3145,6 +3145,27 @@ describe('useRemoteIntegration', () => {
 				dispatchEventSpy.mockRestore();
 			});
 
+			it("rides on the item a hosted agent's own line holds here, for its drain to send on (CodeRabbit on #2148)", () => {
+				const session = createMockSession({
+					...agentModeFields('hosted'),
+					id: 'session-1',
+					state: 'idle',
+					aiTabs: [createMockTab({ id: 'tab-1' })],
+					activeTabId: 'tab-1',
+					// A consult's hold waits in this machine's line for the tab.
+					executionQueue: [
+						{ id: 'hold', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'held line' },
+					],
+				});
+				useSettingsStore.setState({ federationHostedAgents: true });
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				enqueue('chan-agent-text-hosted-line');
+
+				expect(queuedItem()).toMatchObject(agentText);
+			});
+
 			it('rides on the item a busy tab queues', () => {
 				const session = createMockSession({
 					id: 'session-1',

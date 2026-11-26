@@ -16,7 +16,7 @@ import { peerAgentRef } from '../agents/lift-pointer';
 import type { AgentRecord, GroupRecord } from '../store/records';
 import { foldLiveTurn, liveTurnKey, type LiveTurn, type LiveTurnContext } from './live-turn';
 import type { PeerConnectErrorCode } from './peer-connection';
-import type { MaestroEvent, QueuedTurn, TurnEvent } from './types';
+import type { MaestroEvent, QueuedTurn, QueueExit, TurnEvent } from './types';
 
 /** How the desktop's connection to a peer stands. The failure codes are `PeerConnectErrorCode`. */
 export type PeerMirrorConnection =
@@ -47,12 +47,12 @@ export interface MirroredPeer {
 	 */
 	queues: Record<string, QueuedTurn[]>;
 	/**
-	 * The host queue items that last left the queue to run, by agent id, oldest first, at most
-	 * `MAX_MIRRORED_QUEUE_STARTS`. An entry (even empty) means the host names its starts
-	 * (`queue.changed` `namesStarts`), so an item that left without being named was removed. An agent
-	 * of a host that does not name them (an older headless host, a desktop host) has no entry.
+	 * How the host queue items that last left the queue left it (started or removed), by agent id,
+	 * oldest first, at most `MAX_MIRRORED_QUEUE_EXITS`. An entry (even empty) means the host names
+	 * every exit (`queue.changed` `namesExits`), so an item gone without a name is still on its way.
+	 * An agent of a host that does not name them (an older headless host, a desktop host) has none.
 	 */
-	queueStarts?: Record<string, string[]>;
+	queueExits?: Record<string, QueueExit[]>;
 	/**
 	 * Each agent's running Auto Run, as the host's last `autorun_state` frame drew it, by agent id.
 	 * An agent with no run has no entry. A run's figures stay through a disconnect, like the queue:
@@ -88,15 +88,15 @@ export type MirrorEvent =
 	/** A turn event as received. Fold it with `foldLiveTurn()`. */
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
 	/**
-	 * What waits in the agent's host queue now, in order. Replaces what was held. `started` and
-	 * `namesStarts` as on `queue.changed`.
+	 * What waits in the agent's host queue now, in order. Replaces what was held. `exit` and
+	 * `namesExits` as on `queue.changed`.
 	 */
 	| {
 			type: 'agent.queue';
 			agentId: string;
 			items: QueuedTurn[];
-			started?: string;
-			namesStarts?: true;
+			exit?: QueueExit;
+			namesExits?: true;
 	  }
 	/** The agent's Auto Run as the host drew it now; `null` when it has none. Replaces what was held. */
 	| { type: 'agent.autorun'; agentId: string; state: AutoRunBroadcastState | null }
@@ -244,45 +244,53 @@ function pruneByAgent<T>(
 	return out;
 }
 
-/** How many started host queue items the mirror keeps per agent (`MirroredPeer.queueStarts`). */
-export const MAX_MIRRORED_QUEUE_STARTS = 32;
+/** How many queue exits the mirror keeps per agent (`MirroredPeer.queueExits`). */
+export const MAX_MIRRORED_QUEUE_EXITS = 32;
+
+/** How `itemId` left its host's queue, when the host named it; undefined while not named. */
+export function queueExitOf(
+	exits: readonly QueueExit[] | undefined,
+	itemId: string
+): QueueExit['exit'] | undefined {
+	return exits?.find((exit) => exit.itemId === itemId)?.exit;
+}
 
 /**
  * Replace what waits in one agent's host queue (a `queue.changed`, or a read of the queue after a
  * reconnect or a wake). An agent the peer does not have is ignored; an empty list drops the entry.
- * A change a start made (`starts.started`) adds that item to the agent's recent starts; a read of
- * the queue names no start and leaves them as they are.
+ * A change that names how an item left (`exits.exit`) adds it to the agent's recent exits; a read
+ * of the queue names none and leaves them as they are.
  */
 export function setAgentQueue(
 	peer: MirroredPeer,
 	agentId: string,
 	items: QueuedTurn[],
-	starts: { started?: string; namesStarts?: boolean } = {}
+	exits: { exit?: QueueExit; namesExits?: boolean } = {}
 ): MirrorStep {
 	if (!peer.agents.some((agent) => agent.id === agentId)) return { peer, push: [] };
 	const had = peer.queues[agentId];
-	const knewStarts = peer.queueStarts?.[agentId];
-	const namesStarts = starts.namesStarts === true;
-	const startsChange = !!starts.started || (namesStarts && !knewStarts);
-	if (!had?.length && !items.length && !startsChange) return { peer, push: [] };
+	const knewExits = peer.queueExits?.[agentId];
+	const namesExits = exits.namesExits === true;
+	const exitsChange = !!exits.exit || (namesExits && !knewExits);
+	if (!had?.length && !items.length && !exitsChange) return { peer, push: [] };
 	const queues = { ...peer.queues };
 	if (items.length) queues[agentId] = items;
 	else delete queues[agentId];
-	let queueStarts = peer.queueStarts;
-	if (namesStarts) {
-		const ids = [...(knewStarts ?? [])];
-		if (starts.started && !ids.includes(starts.started)) ids.push(starts.started);
-		queueStarts = { ...peer.queueStarts, [agentId]: ids.slice(-MAX_MIRRORED_QUEUE_STARTS) };
+	let queueExits = peer.queueExits;
+	if (namesExits) {
+		const kept = (knewExits ?? []).filter((known) => known.itemId !== exits.exit?.itemId);
+		const next = exits.exit ? [...kept, exits.exit] : kept;
+		queueExits = { ...peer.queueExits, [agentId]: next.slice(-MAX_MIRRORED_QUEUE_EXITS) };
 	}
 	return {
-		peer: { ...peer, queues, ...(queueStarts ? { queueStarts } : {}) },
+		peer: { ...peer, queues, ...(queueExits ? { queueExits } : {}) },
 		push: [
 			{
 				type: 'agent.queue',
 				agentId,
 				items,
-				...(starts.started ? { started: starts.started } : {}),
-				...(namesStarts ? { namesStarts: true as const } : {}),
+				...(exits.exit ? { exit: exits.exit } : {}),
+				...(namesExits ? { namesExits: true as const } : {}),
 			},
 		],
 	};
@@ -339,7 +347,7 @@ export function replacePeerAgents(
 		groups,
 		liveTurns: pruneByTabs(peer.liveTurns, keys),
 		queues: pruneByAgent(peer.queues, agents),
-		...(peer.queueStarts ? { queueStarts: pruneByAgent(peer.queueStarts, agents) } : {}),
+		...(peer.queueExits ? { queueExits: pruneByAgent(peer.queueExits, agents) } : {}),
 		autoRuns: pruneByAgent(peer.autoRuns, agents),
 		staleTabs: pruneByTabs(peer.staleTabs, keys),
 		lastSyncAt: now,
@@ -395,8 +403,8 @@ function removeAgent(peer: MirroredPeer, agentId: string): MirrorStep {
 	};
 	const queues = { ...peer.queues };
 	delete queues[agentId];
-	const queueStarts = peer.queueStarts ? { ...peer.queueStarts } : undefined;
-	if (queueStarts) delete queueStarts[agentId];
+	const queueExits = peer.queueExits ? { ...peer.queueExits } : undefined;
+	if (queueExits) delete queueExits[agentId];
 	const autoRuns = { ...peer.autoRuns };
 	delete autoRuns[agentId];
 	const next: MirroredPeer = {
@@ -404,7 +412,7 @@ function removeAgent(peer: MirroredPeer, agentId: string): MirrorStep {
 		agents: peer.agents.filter((agent) => agent.id !== agentId),
 		liveTurns: keep(peer.liveTurns),
 		queues,
-		...(queueStarts ? { queueStarts } : {}),
+		...(queueExits ? { queueExits } : {}),
 		autoRuns,
 		staleTabs: keep(peer.staleTabs),
 	};
@@ -476,8 +484,8 @@ export function applyPeerEvent(
 			return applyTurn(peer, event.agentId, event.tabId, event.event, ctx);
 		case 'queue.changed':
 			return setAgentQueue(peer, event.agentId, event.items, {
-				started: event.started,
-				namesStarts: event.namesStarts,
+				exit: event.exit,
+				namesExits: event.namesExits,
 			});
 		case 'autorun': {
 			const run = event.event;

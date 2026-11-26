@@ -128,6 +128,7 @@ import type {
 	MaestroEvent,
 	ProviderInfo,
 	QueuedTurn,
+	QueueExit,
 	QueuedTurnEdit,
 	SettingsChange,
 	TabPatch,
@@ -191,6 +192,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
+}
+
+/** A `queue_changed` frame's `exit`, or undefined when it is not one this client can read. */
+function parseQueueExit(raw: unknown): QueueExit | undefined {
+	if (!isObject(raw)) return undefined;
+	const itemId = asString(raw.itemId);
+	if (!itemId || itemId.length > MAX_QUEUE_ITEM_ID_CHARS) return undefined;
+	return raw.exit === 'started' || raw.exit === 'removed' ? { itemId, exit: raw.exit } : undefined;
 }
 
 /**
@@ -1083,14 +1092,14 @@ class WsMaestroClient implements MaestroClient {
 				// A headless host's own frame: the desktop sends none (see `queue.changed`).
 				const agentId = asString(frame.sessionId);
 				if (!agentId || !Array.isArray(frame.items)) break;
-				// The item a start took, from a host that names its starts (an older one sends neither).
-				const started = asString(frame.started);
+				// How an item left, from a host that names it (an older one sends neither field).
+				const exit = parseQueueExit(frame.exit);
 				this.emit({
 					type: 'queue.changed',
 					agentId,
 					items: parseQueuedTurns(frame.items),
-					...(frame.namesStarts === true ? { namesStarts: true as const } : {}),
-					...(started && started.length <= MAX_QUEUE_ITEM_ID_CHARS ? { started } : {}),
+					...(frame.namesExits === true ? { namesExits: true as const } : {}),
+					...(exit ? { exit } : {}),
 				});
 				break;
 			}

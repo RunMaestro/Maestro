@@ -39,6 +39,7 @@ import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { QueuedItem } from '../../../renderer/types';
+import type { QueueExit } from '../../../shared/maestro-lib/client/types';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -93,6 +94,9 @@ function seed(mode: AgentMode, executionQueue: QueuedItem[] = []) {
 
 const queue = () => useSessionStore.getState().sessions[0].executionQueue ?? [];
 const sends = () => act$.mock.calls.filter(([, , action]) => action?.kind === 'send');
+
+/** A host's word that `itemId` left its queue to run. */
+const started = (itemId: string): QueueExit => ({ itemId, exit: 'started' });
 
 const queuedMessage = (overrides: Partial<QueuedItem> = {}): QueuedItem => ({
 	id: 'q1',
@@ -1016,7 +1020,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				);
 			});
 
-			it('a host that names its starts: the named item consults in either order, a removal never', async () => {
+			it('a host that names its exits: the named start consults in either order, a named removal never', async () => {
 				const id = `d-${routing}`;
 				const text = await drainQueued(id, routing);
 				hostSays(id, text, { queued: true, busy: 100 });
@@ -1027,27 +1031,47 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 				// The queue change that names it, with the tab still idle between turns.
 				hostSays(id, text, { queued: false });
-				fireHostStartedMentions(row(), [id]);
+				fireHostStartedMentions(row(), [started(id)]);
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 
 				sendCrossAgentRequest.mockReset();
 				const removed = `e-${routing}`;
 				const again = await drainQueued(removed, routing);
 				hostSays(removed, again, { queued: true, busy: 100 });
-				fireHostStartedMentions(row(), [id]);
+				fireHostStartedMentions(row(), [started(id)]);
 				hostSays(removed, again, { queued: false, busy: 100 });
-				fireHostStartedMentions(row(), [id]);
-				// Its tab runs a later turn: the host never named this item, so it was removed.
+				fireHostStartedMentions(row(), [started(id), { itemId: removed, exit: 'removed' }]);
+				// Its tab runs a later turn: the host named this item removed, so nobody is asked.
 				hostSays(removed, again, { queued: false, busy: 300 });
-				fireHostStartedMentions(row(), [id]);
+				fireHostStartedMentions(row(), [started(id), { itemId: removed, exit: 'removed' }]);
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			});
+
+			it('a host that names its exits: a start still in flight is never taken for a removal (CodeRabbit on #2148)', async () => {
+				const id = `f-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row(), []);
+				// Another message was queued while this one's start was in flight: the snapshot
+				// leaves it out and names no exit for it.
+				hostSays(id, text, { queued: false, busy: 100 });
+				fireHostStartedMentions(row(), []);
+				fireHostStartedMentions(row(), [], Date.now() + HOST_QUEUE_START_GRACE_MS + 1);
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(
+					'Nothing was asked of Backend: the message was removed before it ran.'
+				);
+				// Then its start is named.
+				hostSays(id, text, { queued: false, busy: 200 });
+				fireHostStartedMentions(row(), [started(id)]);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
 		});
 
 		describe('a hand-off', () => {
-			const releasesWithItsAnswer = (text: string, hostStarts?: string[]) => {
+			const releasesWithItsAnswer = (text: string, hostExits?: QueueExit[]) => {
 				hostSays('', text, { queued: false, logs: true });
-				followHostedHandoffs(row(), undefined, hostStarts);
+				followHostedHandoffs(row(), undefined, hostExits);
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
 					targetSessionId: 'backend',
@@ -1097,22 +1121,39 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				releasesWithItsAnswer(text);
 			});
 
-			it('a host that names its starts: the named item runs and hands off, with no tab inference', async () => {
+			it('a host that names its exits: the named start runs and hands off, with no tab inference', async () => {
 				const text = await drainQueued('h-c', 'handoff');
 				hostSays('h-c', text, { queued: true, busy: 100 });
 				followHostedHandoffs(row(), undefined, []);
-				hostSays('h-c', text, { queued: false });
-				followHostedHandoffs(row(), undefined, ['h-c']);
+				hostSays('h-c', text, { queued: false, busy: 200 });
+				followHostedHandoffs(row(), undefined, [started('h-c')]);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
-				releasesWithItsAnswer(text, ['h-c']);
+				releasesWithItsAnswer(text, [started('h-c')]);
 			});
 
-			it('a host that names its starts: an unnamed item gone from its queue was removed', async () => {
+			it('a named start on a tab that still reads idle never releases from a transcript older than it (CodeRabbit on #2148)', async () => {
+				const text = await drainQueued('h-e', 'handoff');
+				hostSays('h-e', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row(), undefined, []);
+				// Named started, its busy state not here yet, and the saved transcript current.
+				hostSays('h-e', text, { queued: false });
+				const current = { read: vi.fn(), isCurrent: () => true };
+				followHostedHandoffs(row(), current, [started('h-e')]);
+				followHostedHandoffs(row(), current, [started('h-e')]);
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				// Its own saved answer, once the host wrote it, is what releases it.
+				releasesWithItsAnswer(text, [started('h-e')]);
+			});
+
+			it('a host that names its exits: a named removal drops it with a note; an unnamed gap waits', async () => {
 				const text = await drainQueued('h-d', 'handoff');
 				hostSays('h-d', text, { queued: true, busy: 100 });
 				followHostedHandoffs(row(), undefined, []);
 				hostSays('h-d', text, { queued: false, busy: 300 });
 				followHostedHandoffs(row(), undefined, []);
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
+				followHostedHandoffs(row(), undefined, [{ itemId: 'h-d', exit: 'removed' }]);
 				expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 			});
@@ -1199,6 +1240,21 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 		});
 
+		it('the time limit runs from when the host queue last showed it, not from the receipt (CodeRabbit on #2148)', async () => {
+			await queueOnHost('m15-long', 100);
+			const later = Date.now() + HOST_START_MENTION_TTL_MS + 60_000;
+			// Still waiting on the host 13 hours later...
+			busy(100, 'm15-long');
+			fireHostStartedMentions(row(), [], later);
+			// ...then it starts, and its start shows a moment after it left the queue.
+			busy(100);
+			fireHostStartedMentions(row(), [], later + 1);
+			expect(notes()).toEqual([]);
+			busy(200);
+			fireHostStartedMentions(row(), [started('m15-long')], later + 2);
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		});
+
 		it('one the host queue never shows lets go past the time limit; one it shows stays', async () => {
 			await queueOnHost('m15-shown', 100);
 			busy(100, 'm15-shown');
@@ -1214,14 +1270,16 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			busy(200);
 			fireHostStartedMentions(row(), []);
 			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			// The one still shown waits for its exit to be named; name it, so no later test sees it.
+			fireHostStartedMentions(row(), [{ itemId: 'm15-shown', exit: 'removed' }]);
 		});
 
-		it('a removal the host names (by naming no start) leaves the note a local mention leaves', async () => {
+		it('a removal the host names leaves the note a local mention leaves', async () => {
 			await queueOnHost('m15-removed', 100);
 			busy(100, 'm15-removed');
 			fireHostStartedMentions(row(), []);
 			busy(100);
-			fireHostStartedMentions(row(), []);
+			fireHostStartedMentions(row(), [{ itemId: 'm15-removed', exit: 'removed' }]);
 			expect(notes()).toEqual([
 				'Nothing was asked of Backend: the message was removed before it ran.',
 			]);

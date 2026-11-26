@@ -27,7 +27,8 @@
  * attributed bubble, and no follow-up turn is sent back to the source agent.
  */
 
-import type { TurnSendReceipt } from '../../shared/maestro-lib/client/types';
+import type { QueueExit, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
+import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
 import type { AITab, ConsultHoldTarget, LogEntry, MentionHandoff, Session } from '../types';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
@@ -274,29 +275,40 @@ function ownTurnEntries(logs: LogEntry[], afterEntryId: string | undefined): Log
  *   read busy counts once its answer follows the entry the tab ended on when it was sent.
  *
  * A turn the host queued starts as `fireHostStartedMentions()` reads it: named by a host that names
- * its starts (`hostStarts`), else inferred from the tab's state with the turn ahead recorded once
- * (`seen-queued`), and a turn that left the queue (`left-queue`) dropped unless its tab reads busy
- * with it within `HOST_QUEUE_START_GRACE_MS`.
+ * how each item leaves its queue (`hostExits`), else inferred from the tab's state with the turn
+ * ahead recorded once (`seen-queued`), and a turn that left the queue (`left-queue`) dropped unless
+ * its tab reads busy with it within `HOST_QUEUE_START_GRACE_MS`. A named start runs once the tab
+ * reads busy with a turn that is not the one ahead; until then only its own saved answer ends it,
+ * never a transcript that was current before the start.
  */
 export function hostedHandoffStep(
 	tab: Pick<AITab, 'state' | 'pendingMentionHandoff' | 'logs' | 'thinkingStartTime'>,
 	hostQueueItemIds: ReadonlySet<string>,
 	transcriptCurrent = false,
-	hostStarts?: readonly string[],
+	hostExits?: readonly QueueExit[],
 	now = Date.now()
 ): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' | 'left-queue' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
 	const queued = hostTurn.stage === 'sent' ? hostTurn.queueItemId : undefined;
-	// The host said this item started: the turn runs (or ran) now.
-	if (queued && hostStarts?.includes(queued)) return 'running';
+	const exit = queued ? queueExitOf(hostExits, queued) : undefined;
+	if (exit === 'removed') return 'drop';
+	if (exit === 'started') {
+		const ownTurnBusy =
+			tab.state === 'busy' &&
+			(!hostTurn.seenQueued || tab.thinkingStartTime !== hostTurn.turnStartedAt);
+		if (ownTurnBusy) return 'running';
+		if (tab.state === 'busy' || tab.logs.some((entry) => entry.hostLive)) return 'wait';
+		if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId))) return 'release';
+		return transcriptCurrent ? 'wait' : 'read';
+	}
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) {
 		// The turn ahead is what the tab runs when it is first seen waiting, never overwritten.
 		return hostTurn.seenQueued ? 'wait' : 'seen-queued';
 	}
 	if (queued) {
-		// Named starts: gone unnamed after it was seen waiting, it was taken out of the queue.
-		if (hostStarts) return hostTurn.seenQueued ? 'drop' : 'wait';
+		// Named exits: gone without a name, its start (or its first frame) is still coming.
+		if (hostExits) return 'wait';
 		// Inferred: it runs once the tab is busy with a turn that started at another time, soon
 		// after it left the queue. Later than that it was removed: nothing it never ran is handed off.
 		const goneFor = hostTurn.goneAt === undefined ? 0 : now - hostTurn.goneAt;
@@ -389,8 +401,8 @@ export function followHostedHandoffs(
 		/** The tab's saved transcript is loaded and nothing marked it stale since. */
 		isCurrent: (tabId: string) => boolean;
 	} = { read: () => {}, isCurrent: () => false },
-	/** The host queue items that last started, when the host names its starts. */
-	hostStarts?: readonly string[],
+	/** How the host queue items that last left it left, when the host names that. */
+	hostExits?: readonly QueueExit[],
 	now = Date.now()
 ): void {
 	armDeferredHostedHandoffs(session.id);
@@ -403,7 +415,7 @@ export function followHostedHandoffs(
 			tab,
 			hostQueueItemIds,
 			transcript.isCurrent(tab.id),
-			hostStarts,
+			hostExits,
 			now
 		);
 		if (step === 'running') {

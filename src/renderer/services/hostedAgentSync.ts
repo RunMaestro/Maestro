@@ -22,6 +22,7 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueExit } from '../../shared/maestro-lib/client/types';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
@@ -56,8 +57,8 @@ function hostedInput(session: { liftedTo?: unknown }):
 			input: HostedProjectionInput;
 			connected: boolean;
 			autoRun: AutoRunBroadcastState | null;
-			/** The host queue items that last started, when the host names its starts. */
-			queueStarts: readonly string[] | undefined;
+			/** How the host queue items that last left it left, when the host names that. */
+			queueExits: readonly QueueExit[] | undefined;
 	  }
 	| undefined {
 	const pointer = readLiftedTo(session.liftedTo);
@@ -71,7 +72,7 @@ function hostedInput(session: { liftedTo?: unknown }):
 		agentId: agent.id,
 		connected: peer.connection === 'connected',
 		autoRun: peer.autoRuns?.[agent.id] ?? null,
-		queueStarts: peer.queueStarts?.[agent.id],
+		queueExits: peer.queueExits?.[agent.id],
 		input: {
 			agent,
 			transcripts: mirror.transcripts[pointer.peer],
@@ -215,7 +216,7 @@ export function syncHostedAgents(): void {
 			);
 		}
 		// A consult of a turn the host queued fires as that turn starts.
-		fireHostStartedMentions(next, hosted.queueStarts);
+		fireHostStartedMentions(next, hosted.queueExits);
 		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
 		// answer the host saved: a background tab's transcript is read for it.
 		const slotOf = (tabId: string) =>
@@ -239,7 +240,7 @@ export function syncHostedAgents(): void {
 					return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
 				},
 			},
-			hosted.queueStarts
+			hosted.queueExits
 		);
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;

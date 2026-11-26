@@ -11,7 +11,8 @@ import {
 	createMirroredPeer,
 	findMirrorPeer,
 	markAllTabsStale,
-	MAX_MIRRORED_QUEUE_STARTS,
+	MAX_MIRRORED_QUEUE_EXITS,
+	queueExitOf,
 	mirrorKey,
 	replacePeerAgents,
 	setAgentAutoRun,
@@ -225,40 +226,61 @@ describe('host queues', () => {
 		expect(step.push.map((e) => e.type)).toEqual(['agent.queue']);
 	});
 
-	it('keeps the items a host names as started, bounded, and only for a host that names them (M14)', () => {
+	it('keeps how items left the queue, bounded, and only for a host that names it (M14)', () => {
 		let peer = peerWith([agent('a1'), agent('a2')]);
-		// A queue read, or a host that names no starts, records none.
+		// A queue read, or a host that names no exits, records none.
 		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;
 		peer = applyPeerEvent(
 			peer,
 			{ type: 'queue.changed', agentId: 'a2', items: [waiting('q9')] },
 			ctx()
 		).peer;
-		expect(peer.queueStarts).toBeUndefined();
+		expect(peer.queueExits).toBeUndefined();
 
 		// A start that empties the queue, even of an item this mirror never held, is named.
 		const started = applyPeerEvent(
 			peer,
-			{ type: 'queue.changed', agentId: 'a1', items: [], namesStarts: true, started: 'q0' },
+			{
+				type: 'queue.changed',
+				agentId: 'a1',
+				items: [],
+				namesExits: true,
+				exit: { itemId: 'q0', exit: 'started' },
+			},
 			ctx()
 		);
-		expect(started.peer.queueStarts).toEqual({ a1: ['q0'] });
+		expect(started.peer.queueExits).toEqual({ a1: [{ itemId: 'q0', exit: 'started' }] });
 		expect(started.push).toEqual([
-			{ type: 'agent.queue', agentId: 'a1', items: [], namesStarts: true, started: 'q0' },
+			{
+				type: 'agent.queue',
+				agentId: 'a1',
+				items: [],
+				namesExits: true,
+				exit: { itemId: 'q0', exit: 'started' },
+			},
 		]);
-		peer = started.peer;
-		for (let n = 1; n <= MAX_MIRRORED_QUEUE_STARTS + 5; n++) {
-			peer = setAgentQueue(peer, 'a1', [], { namesStarts: true, started: `s${n}` }).peer;
+		expect(queueExitOf(started.peer.queueExits?.a1, 'q0')).toBe('started');
+		expect(queueExitOf(started.peer.queueExits?.a1, 'q1')).toBeUndefined();
+		peer = setAgentQueue(started.peer, 'a1', [], {
+			namesExits: true,
+			exit: { itemId: 'q1', exit: 'removed' },
+		}).peer;
+		expect(queueExitOf(peer.queueExits?.a1, 'q1')).toBe('removed');
+		for (let n = 1; n <= MAX_MIRRORED_QUEUE_EXITS + 5; n++) {
+			peer = setAgentQueue(peer, 'a1', [], {
+				namesExits: true,
+				exit: { itemId: `s${n}`, exit: 'started' },
+			}).peer;
 		}
-		expect(peer.queueStarts?.a1).toHaveLength(MAX_MIRRORED_QUEUE_STARTS);
-		expect(peer.queueStarts?.a1?.at(-1)).toBe(`s${MAX_MIRRORED_QUEUE_STARTS + 5}`);
+		expect(peer.queueExits?.a1).toHaveLength(MAX_MIRRORED_QUEUE_EXITS);
+		expect(peer.queueExits?.a1?.at(-1)?.itemId).toBe(`s${MAX_MIRRORED_QUEUE_EXITS + 5}`);
 		// A later queue read keeps them; the agent leaving drops them.
-		expect(setAgentQueue(peer, 'a1', [waiting('q2')]).peer.queueStarts?.a1).toHaveLength(
-			MAX_MIRRORED_QUEUE_STARTS
+		expect(setAgentQueue(peer, 'a1', [waiting('q2')]).peer.queueExits?.a1).toHaveLength(
+			MAX_MIRRORED_QUEUE_EXITS
 		);
 		const removed = applyPeerEvent(peer, { type: 'agent.removed', agentId: 'a1' }, ctx());
-		expect(removed.peer.queueStarts).toEqual({});
-		expect(replacePeerAgents(peer, [agent('a2')], [], 2000).peer.queueStarts).toEqual({});
+		expect(removed.peer.queueExits).toEqual({});
+		expect(replacePeerAgents(peer, [agent('a2')], [], 2000).peer.queueExits).toEqual({});
 	});
 
 	it('a snapshot keeps the queues of agents still there and drops the rest', () => {

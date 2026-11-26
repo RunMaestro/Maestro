@@ -892,6 +892,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// new process must advertise the same entry before it is submitted.
 					const nativeText = slashInput!;
 					if (await refuseChangedCommand()) return false;
+					// The native command must reach Grok exactly as typed, so it has no place for a
+					// Federation sender's agent-only text: refuse it rather than run without it.
+					if (item.agentContext || item.agentNotes) {
+						await settleUnsentCommand(
+							`${item.command} is a Grok command that runs exactly as typed, so it cannot carry a consult's replies or the @mention notes. Send it without an @mention, or as a message.`
+						);
+						return false;
+					}
 					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(sessionId, item);
 					if (deps.isCancelled?.()) {
 						await settleUnsentCommand();

@@ -24,7 +24,7 @@ import {
 import { nativeAccountRef } from '../../../agentAccountDir';
 import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
-import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
+import type { ClientResult, QueuedTurn, QueueExit, TurnEvent } from '../../client/types';
 import { MAX_TURN_AGENT_TEXT_CHARS } from '../../client/types';
 import type { HistoryEntry } from '../../../types';
 import { parseSynopsis } from '../../../synopsis';
@@ -1385,18 +1385,18 @@ describe('runtime turns', () => {
 			expect(changes[1]).toEqual([]);
 		});
 
-		it('names the item a start took out of the queue, and only on that change (M14)', async () => {
+		it('names how each item leaves the queue: a start or a removal, on that change only (M14)', async () => {
 			hold = true;
 			const runtime = await start();
 			const turn = watch(runtime);
-			const changes: Array<{ items: QueuedTurn[]; started?: string; namesStarts?: true }> = [];
+			const changes: Array<{ items: QueuedTurn[]; exit?: QueueExit; namesExits?: true }> = [];
 			runtime.events.subscribe(
 				(event) => {
 					if (event.type === 'queue.changed') {
 						changes.push({
 							items: event.items,
-							...(event.started ? { started: event.started } : {}),
-							...(event.namesStarts ? { namesStarts: event.namesStarts } : {}),
+							...(event.exit ? { exit: event.exit } : {}),
+							...(event.namesExits ? { namesExits: event.namesExits } : {}),
 						});
 					}
 				},
@@ -1413,14 +1413,14 @@ describe('runtime turns', () => {
 
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome(2);
-			// Added, added, removed (no start named), then the start of `second`, in one message.
-			expect(changes.map((change) => change.started)).toEqual([
+			// Added, added (no exit), the removal of `third`, then the start of `second`.
+			expect(changes.map((change) => change.exit)).toEqual([
 				undefined,
 				undefined,
-				undefined,
-				queued.itemId,
+				{ itemId: removed.itemId, exit: 'removed' },
+				{ itemId: queued.itemId, exit: 'started' },
 			]);
-			expect(changes.every((change) => change.namesStarts === true)).toBe(true);
+			expect(changes.every((change) => change.namesExits === true)).toBe(true);
 			expect(changes[3].items).toEqual([]);
 		});
 

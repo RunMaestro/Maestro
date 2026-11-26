@@ -2363,7 +2363,9 @@ describe('agentStore', () => {
 				}
 			);
 
-			it.each(['advertised', 'absent'] as const)(
+			// `agent-text`: a Federation sender's agent-only text cannot ride a command that must reach
+			// Grok exactly as typed, so it is refused, never run without it (CodeRabbit on #2148).
+			it.each(['advertised', 'absent', 'agent-text'] as const)(
 				'drains a native command only as the admitted intent (%s)',
 				async (catalog) => {
 					const session = createMockSession({
@@ -2396,7 +2398,7 @@ describe('agentStore', () => {
 					mockDiscoverSlashCommands.mockResolvedValue({
 						status: 'discovered',
 						commands:
-							catalog === 'advertised'
+							catalog !== 'absent'
 								? [
 										{
 											name: 'review',
@@ -2421,12 +2423,15 @@ describe('agentStore', () => {
 							effort: 'high',
 						},
 					});
-					const item = buildQueuedMessageItem({
-						session,
-						tab: session.aiTabs[0],
-						slashCommand: true,
-						text: '/review src/a.ts',
-					});
+					const item = {
+						...buildQueuedMessageItem({
+							session,
+							tab: session.aiTabs[0],
+							slashCommand: true,
+							text: '/review src/a.ts',
+						}),
+						...(catalog === 'agent-text' ? { agentNotes: 'Your answer goes to Backend.' } : {}),
+					};
 					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(session.id, item);
 					useSessionStore.getState().setSessions([applyQueuedItemDispatch(session, item)]);
 
@@ -2442,6 +2447,18 @@ describe('agentStore', () => {
 							source: 'error',
 							text: expect.stringContaining('not advertised for this Grok conversation'),
 						});
+						return;
+					}
+					if (catalog === 'agent-text') {
+						expect(dispatched).toBe(false);
+						expect(mockSpawn).not.toHaveBeenCalled();
+						expect(updated.aiTabs[0].logs.at(-1)).toMatchObject({
+							source: 'error',
+							text: expect.stringContaining("cannot carry a consult's replies"),
+						});
+						expect(updated.executionQueue.find((queued) => queued.id === item.id)?.paused).toBe(
+							true
+						);
 						return;
 					}
 					expect(dispatched).toBe(true);
