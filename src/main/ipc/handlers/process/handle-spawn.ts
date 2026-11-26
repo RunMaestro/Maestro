@@ -1714,6 +1714,8 @@ async function handleProcessSpawnImpl(
 		tabId: spawnTabId(config),
 		// SSH app-server launch, when this Codex turn wants app-server.
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
+		// Steering channel of a Claude TUI turn on an SSH remote (maestro-p serves it there).
+		remoteSteering: sshWrap.remoteSteering,
 	};
 	const assertSpawnAllowed = () => {
 		signal.throwIfAborted();

@@ -1768,6 +1768,12 @@ export interface Session {
 		mode: 'interactive' | 'api';
 		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
+		/**
+		 * Why the most recent TUI turn has no steering channel when the settings say
+		 * it should (its SSH remote's maestro-p predates the steering relay). Absent
+		 * when the turn can be steered. Written by the spawner with `mode`.
+		 */
+		steeringUnavailable?: import('../../shared/chatSteering').SteeringUnavailableReason;
 	};
 }
 
