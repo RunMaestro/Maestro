@@ -54,6 +54,9 @@ import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agent
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
+import { parseWireAskerKey } from '../../crossAgentTypes';
+import { parseWireClosedTabs } from '../../closedTabHistory';
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
 	parseQueueSteerResult,
@@ -138,6 +141,8 @@ import {
 const LOG_CONTEXT = '[WsMaestroClient]';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** How long Stop waits for a host to confirm it stopped a consult. An older host never answers. */
+const CONSULT_CANCEL_TIMEOUT_MS = 10_000;
 /** The host's own consult bounds (`handleCrossAgentAsk` clamps again). */
 const DEFAULT_CONSULT_TIMEOUT_MS = 600_000;
 const MIN_CONSULT_TIMEOUT_MS = 10_000;
@@ -394,6 +399,9 @@ class WsMaestroClient implements MaestroClient {
 		create: (agentId: string) => this.tabsCreate(agentId),
 		rename: (agentId: string, tabId: string, name: string) => this.tabsRename(agentId, tabId, name),
 		close: (agentId: string, tabId: string) => this.tabsClose(agentId, tabId),
+		closed: (agentId: string) => this.tabsClosed(agentId),
+		reopen: (agentId: string, target: { index?: number; tabId?: string }) =>
+			this.tabsReopen(agentId, target),
 		star: (agentId: string, tabId: string, starred: boolean) =>
 			this.tabsStar(agentId, tabId, starred),
 		update: (agentId: string, tabId: string, patch: TabPatch) =>
@@ -473,6 +481,7 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly consults = {
 		ask: (input: ConsultAskInput) => this.consultsAsk(input),
+		cancel: (input: { askerKey: string }) => this.consultsCancel(input),
 	};
 
 	readonly history = {
@@ -2471,6 +2480,7 @@ class WsMaestroClient implements MaestroClient {
 				withContext: input.withContext === true,
 				...(input.transcript ? { transcript: input.transcript } : {}),
 				...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),
+				...(input.askerKey ? { askerKey: input.askerKey } : {}),
 				timeoutMs,
 				...(input.handoffAnswer !== undefined ? { handoffAnswer: input.handoffAnswer } : {}),
 				...(input.sideQuestion === true ? { sideQuestion: true } : {}),
@@ -2489,6 +2499,66 @@ class WsMaestroClient implements MaestroClient {
 		}
 		const text = asString(reply.error);
 		return this.fail(method, classifyFailure(text), text ?? `${who} did not answer.`);
+	}
+
+	/** The agent's closed-tab stack on the host (`closed_tab_command` list), bounded. */
+	private async tabsClosed(agentId: string): Promise<ClientResult<ClosedTabSummary[]>> {
+		const method: ClientMethod = 'tabs.closed';
+		const sent = await this.send(
+			method,
+			{ type: 'closed_tab_command', action: 'list', sessionId: agentId },
+			'closed_tab_command_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		return checked.ok ? ok(parseWireClosedTabs(checked.value.closedTabs)) : checked;
+	}
+
+	/** Reopen a closed AI tab on the host in the background (`closed_tab_command` reopen). */
+	private async tabsReopen(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>> {
+		const method: ClientMethod = 'tabs.reopen';
+		const sent = await this.send(
+			method,
+			{
+				type: 'closed_tab_command',
+				action: 'reopen',
+				sessionId: agentId,
+				...(target.tabId ? { tabId: target.tabId } : { index: target.index ?? 0 }),
+				background: true,
+			},
+			'closed_tab_command_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const tabId = asString(checked.value.tabId);
+		if (!tabId || (checked.value.tabType !== undefined && checked.value.tabType !== 'ai')) {
+			return this.fail(method, 'rejected', 'The host did not reopen an AI tab.');
+		}
+		return ok({ tabId, ...(checked.value.wasDuplicate === true ? { wasDuplicate: true } : {}) });
+	}
+
+	/** Stop one remote asker's consults on the host (`cross_agent_cancel`). */
+	private async consultsCancel(input: {
+		askerKey: string;
+	}): Promise<ClientResult<{ canceled: number }>> {
+		const method: ClientMethod = 'consults.cancel';
+		const askerKey = parseWireAskerKey(input.askerKey);
+		if (!askerKey) return this.fail(method, 'invalid', 'The asker key is not valid.');
+		const sent = await this.send(
+			method,
+			{ type: 'cross_agent_cancel', askerKey },
+			'cross_agent_cancel_result',
+			{ timeoutMs: CONSULT_CANCEL_TIMEOUT_MS }
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const canceled = checked.value.canceled;
+		return ok({ canceled: typeof canceled === 'number' && canceled > 0 ? canceled : 0 });
 	}
 
 	// =======================================================================

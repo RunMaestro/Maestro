@@ -2,7 +2,7 @@
  * Commands domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: send_command, switch_mode,
- * interrupt_turn, select_session, cross_agent_ask.
+ * interrupt_turn, select_session, cross_agent_ask, cross_agent_cancel.
  */
 
 import { logger } from '../../../utils/logger';
@@ -19,8 +19,10 @@ import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import {
 	parseWireAgentName,
+	parseWireAskerKey,
 	parseWireHandoffAnswer,
 	parseWireTranscript,
+	remoteAskerConsultKey,
 } from '../../../../shared/crossAgentTypes';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -708,6 +710,7 @@ export function handleCrossAgentAsk(
 	const transcript = parseWireTranscript(message.transcript);
 	const fromAgentName = parseWireAgentName(message.fromAgentName);
 	const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
+	const askerKey = parseWireAskerKey(message.askerKey);
 	const timeoutMs =
 		typeof message.timeoutMs === 'number' && Number.isFinite(message.timeoutMs)
 			? Math.min(Math.max(message.timeoutMs, MIN_CONSULT_TIMEOUT_MS), MAX_CONSULT_TIMEOUT_MS)
@@ -753,6 +756,7 @@ export function handleCrossAgentAsk(
 			...(targetTabId ? { targetTabId } : {}),
 			...(transcript ? { transcript } : {}),
 			...(fromAgentName ? { fromAgentName } : {}),
+			...(askerKey ? { askerKey } : {}),
 			...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
 			timeoutMs,
 		})
@@ -766,4 +770,45 @@ export function handleCrossAgentAsk(
 				'Failed to consult agent'
 			);
 		});
+}
+
+/**
+ * Handle cross_agent_cancel - Stop on an asker on another machine (a consult of a hosted agent).
+ *
+ * Its consults run here keyed on its asker key (`remoteAskerConsultKey`), so only those stop: a key
+ * that is not one stops nothing, never the stand-in tab other askers share. Each ends as a stopped
+ * consult on its consult tab and in History, as Stop on a local asker ends the consults it started.
+ */
+export async function handleCrossAgentCancel(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) =>
+		ctx.send(client, {
+			type: 'cross_agent_cancel_result',
+			requestId: message.requestId,
+			...payload,
+		});
+	const askerKey = parseWireAskerKey(message.askerKey);
+	if (!askerKey) {
+		reply({ success: false, error: 'The asker key is not valid.' });
+		return;
+	}
+	try {
+		const { cancelCrossAgentRequestsForSource } =
+			await import('../../../cross-agent/cross-agent-router');
+		const canceled = cancelCrossAgentRequestsForSource(
+			remoteAskerConsultKey(askerKey).sourceSessionId
+		);
+		reply({ success: true, canceled });
+	} catch (error) {
+		ctx.reportHandlerError(
+			client,
+			error,
+			'cross_agent_cancel',
+			{ requestId: message.requestId },
+			'Failed to stop the consult'
+		);
+	}
 }

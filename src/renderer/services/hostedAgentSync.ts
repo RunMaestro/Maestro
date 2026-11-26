@@ -117,10 +117,12 @@ export function syncHostedAgents(): void {
 		if (!hosted) continue;
 		hostedIds.add(session.id);
 		syncHostedAutoRun(session.id, hosted.autoRun);
-		const next = projectHostedSession(session, hosted.input);
+		// The unread rule reads whether this agent is the one on screen, as a local tab's does.
+		const input = { ...hosted.input, viewing: session.id === activeSessionId };
+		const next = projectHostedSession(session, input);
 		if (next !== session) {
 			updateSessionWith(session.id, (current) =>
-				current === session ? next : projectHostedSession(current, hosted.input)
+				current === session ? next : projectHostedSession(current, input)
 			);
 		}
 		if (session.id !== activeSessionId || !hosted.connected) continue;

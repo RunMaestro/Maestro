@@ -56,6 +56,7 @@ import {
 	handleSwitchMode,
 	handleSelectSession,
 	handleCrossAgentAsk,
+	handleCrossAgentCancel,
 	handleInterruptTurn,
 } from './commands';
 import {
@@ -393,6 +394,10 @@ export class WebSocketMessageHandler {
 
 			case 'cross_agent_ask':
 				handleCrossAgentAsk(this.ctx, client, message);
+				break;
+
+			case 'cross_agent_cancel':
+				void handleCrossAgentCancel(this.ctx, client, message);
 				break;
 
 			case 'switch_mode':

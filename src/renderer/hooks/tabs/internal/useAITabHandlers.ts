@@ -52,11 +52,16 @@ export function useAITabHandlers(
 		if (!activeSessionId) return;
 
 		// A hosted agent's AI tabs live on its host: the host makes the tab, and it shows here
-		// at once (`openHostedTab()`); the host sync fills it in.
+		// at once (`openHostedTab()`) with the same defaults a local new tab starts with; the host
+		// sync fills it in.
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!isWebDesktop() && hostedTargetOf(activeSession)) {
 			inputRef?.current?.focus();
-			if (activeSession) void openHostedTab(activeSession);
+			if (activeSession) {
+				void openHostedTab(activeSession, {
+					fields: { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking },
+				});
+			}
 			return;
 		}
 

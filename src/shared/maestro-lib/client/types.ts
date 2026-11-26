@@ -1,3 +1,4 @@
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * The `MaestroClient` interface: the one surface the TUI programs against.
@@ -97,6 +98,8 @@ export type ClientMethod =
 	| 'tabs.star'
 	| 'tabs.update'
 	| 'tabs.transcript'
+	| 'tabs.closed'
+	| 'tabs.reopen'
 	| 'turns.send'
 	| 'turns.interrupt'
 	| 'turns.queue.list'
@@ -125,6 +128,7 @@ export type ClientMethod =
 	| 'groupChats.rename'
 	| 'groupChats.remove'
 	| 'consults.ask'
+	| 'consults.cancel'
 	| 'settings.get'
 	| 'settings.sshRemotes'
 	| 'providers.list'
@@ -397,6 +401,21 @@ export interface TabsApi {
 	rename(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	/** The tab moves to the host's closed-tab history. */
 	close(agentId: string, tabId: string): Promise<ClientResult<void>>;
+	/**
+	 * The agent's closed-tab stack, newest first (what Cmd+Shift+T reopens next is index 0),
+	 * bounded as a stack here is (`parseWireClosedTabs()`). A host that keeps none answers
+	 * `unsupported`.
+	 */
+	closed?(agentId: string): Promise<ClientResult<ClosedTabSummary[]>>;
+	/**
+	 * Reopen one closed AI tab in the background (the host's view does not move): the newest, or the
+	 * one closed as `tabId`. `wasDuplicate`: the conversation was already open, and `tabId` names
+	 * that tab.
+	 */
+	reopen?(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>>;
 	star(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	update(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
 	/** CH-5. The tab's transcript as the host persisted it, oldest first. */
@@ -806,6 +825,12 @@ export interface ConsultAskInput {
 	transcript?: CrossAgentTranscriptEntry[];
 	/** The asker's display name, for an asker the host does not hold: names the consult tab. */
 	fromAgentName?: string;
+	/**
+	 * For an asker the host does not hold: who it is, as (machine, agent, tab)
+	 * (`buildRemoteAskerKey()`). The host keeps one consult tab per key; without one, every such
+	 * asker shares one.
+	 */
+	askerKey?: string;
 	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
 	timeoutMs?: number;
 	/**
@@ -844,6 +869,13 @@ export interface ConsultsApi {
 	 * stopped; the error message says which. A partial answer is not returned.
 	 */
 	ask(input: ConsultAskInput): Promise<ClientResult<ConsultAnswer>>;
+	/**
+	 * Stop the consults one asker on another machine (`askerKey`, `buildRemoteAskerKey()`) has
+	 * running here, as Stop on a local asker ends the consults it started. Each ends as a stopped
+	 * consult on its consult tab and in History. Answers how many were stopped; a host that cannot
+	 * stop them answers `unsupported`.
+	 */
+	cancel?(input: { askerKey: string }): Promise<ClientResult<{ canceled: number }>>;
 }
 
 // ---------------------------------------------------------------------------

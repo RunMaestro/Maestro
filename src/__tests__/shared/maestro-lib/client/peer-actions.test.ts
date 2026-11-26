@@ -11,6 +11,7 @@ import {
 	runPeerAgentAction,
 } from '../../../../shared/maestro-lib/client/peer-actions';
 import type { ClientResult, MaestroClient } from '../../../../shared/maestro-lib/client/types';
+import { buildRemoteAskerKey } from '../../../../shared/crossAgentTypes';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -350,6 +351,89 @@ describe('runPeerAgentAction', () => {
 		});
 	});
 
+	it('names the asker to the host by (this machine, asking agent, asking tab), for its own consult tab', async () => {
+		const { client, asClient } = fakeClient();
+		client.consults.ask.mockResolvedValue({ ok: true, value: { answer: 'a' } });
+		await runPeerAgentAction(
+			asClient,
+			agent,
+			{ kind: 'consult', question: 'q', asker: { agentId: 'src', tabId: 'tab-1' } },
+			{ originHost: 'laptop' }
+		);
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'q',
+			askerKey: buildRemoteAskerKey({ machine: 'laptop', agentId: 'src', tabId: 'tab-1' }),
+		});
+	});
+
+	it('carries Stop to the host for the consults that asker has running there (G1)', async () => {
+		const { client, asClient } = fakeClient();
+		const cancel = vi.fn().mockResolvedValue({ ok: true, value: { canceled: 1 } });
+		(client.consults as unknown as { cancel: typeof cancel }).cancel = cancel;
+		expect(
+			await runPeerAgentAction(
+				asClient,
+				agent,
+				{ kind: 'consult-cancel', asker: { agentId: 'src', tabId: 'tab-1' } },
+				{ originHost: 'laptop' }
+			)
+		).toEqual(ok({ kind: 'consult-cancel', canceled: 1 }));
+		expect(cancel).toHaveBeenCalledWith({
+			askerKey: buildRemoteAskerKey({ machine: 'laptop', agentId: 'src', tabId: 'tab-1' }),
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'consult-cancel', asker: { agentId: 'a', tabId: 't' } })
+		).toEqual({ kind: 'consult-cancel', asker: { agentId: 'a', tabId: 't' } });
+		expect(() => parsePeerAgentAction({ kind: 'consult-cancel' })).toThrow('Missing asker');
+	});
+
+	it('answers unsupported for Stop on a host client with no consult cancel', async () => {
+		const { asClient } = fakeClient();
+		const stopped = await runPeerAgentAction(asClient, agent, {
+			kind: 'consult-cancel',
+			asker: { agentId: 'src', tabId: 'tab-1' },
+		});
+		expect(stopped.ok).toBe(false);
+		if (!stopped.ok) expect(stopped.error.code).toBe('unsupported');
+	});
+
+	it('reads the host closed-tab stack bounded, and reopens one there (G5)', async () => {
+		const { client, asClient } = fakeClient();
+		const tabs = client.tabs as unknown as Record<string, unknown>;
+		tabs.closed = vi.fn(async () =>
+			ok([
+				{ index: 7, type: 'ai', label: 'Tax', tabId: 'h-tax', closedAt: 5, agentSessionId: 's1' },
+				{ type: 'bogus', tabId: 'x' },
+			])
+		);
+		tabs.reopen = vi.fn(async () => ok({ tabId: 'h-tax' }));
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'closed-tabs' })).toEqual(
+			ok({
+				kind: 'closed-tabs',
+				closedTabs: [
+					{ index: 0, type: 'ai', label: 'Tax', tabId: 'h-tax', closedAt: 5, agentSessionId: 's1' },
+				],
+			})
+		);
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'reopen-tab', tabId: 'h-tax' })
+		).toEqual(ok({ kind: 'reopen-tab', tabId: 'h-tax' }));
+		expect(tabs.reopen).toHaveBeenCalledWith('a1', { tabId: 'h-tax' });
+		expect(parsePeerAgentAction({ kind: 'reopen-tab' })).toEqual({ kind: 'reopen-tab', index: 0 });
+		expect(() => parsePeerAgentAction({ kind: 'reopen-tab', index: -1 })).toThrow();
+		expect(parsePeerAgentAction({ kind: 'closed-tabs', extra: 1 })).toEqual({
+			kind: 'closed-tabs',
+		});
+	});
+
+	it('answers unsupported for closed tabs on a host client that keeps none', async () => {
+		const { asClient } = fakeClient();
+		const read = await runPeerAgentAction(asClient, agent, { kind: 'closed-tabs' });
+		expect(read.ok).toBe(false);
+		if (!read.ok) expect(read.error.code).toBe('unsupported');
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };
@@ -516,6 +600,17 @@ describe('parsePeerAgentAction', () => {
 			kind: 'consult',
 			question: 'how?',
 		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'consult',
+				question: 'how?',
+				asker: { agentId: 'src', tabId: 'tab-1', extra: 1 },
+				askerKey: 'forged/key/here',
+			})
+		).toEqual({ kind: 'consult', question: 'how?', asker: { agentId: 'src', tabId: 'tab-1' } });
+		expect(
+			parsePeerAgentAction({ kind: 'consult', question: 'how?', asker: { agentId: 'src' } })
+		).toEqual({ kind: 'consult', question: 'how?' });
 		expect(
 			parsePeerAgentAction({
 				kind: 'update-agent',

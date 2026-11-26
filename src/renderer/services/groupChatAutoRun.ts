@@ -1,0 +1,278 @@
+/**
+ * Start the Auto Run a group chat moderator's `!autorun @Agent` asked for.
+ *
+ * Main emits `groupChat:autoRunTriggered` and then waits for
+ * `groupChat:reportAutoRunComplete` before the synthesis round. This module is
+ * the renderer half: it finds the participant's agent, lists its Auto Run
+ * documents where the agent's files live, and starts the run through the same
+ * `startBatchRun` every other launcher uses, so a local, an SSH and a hosted
+ * agent all start the same way (a hosted agent's run goes to its host inside
+ * `startBatchRun`).
+ *
+ * Completion goes back to the chat on one of two paths, picked by who drives
+ * the run, never by the agent's mode:
+ * - A run this window drives ends in the batch processor's `onComplete`, which
+ *   consumes the registry entry and reports the summary (useBatchHandlers).
+ * - A run another process drives (a hosted agent's run on its host) is only a
+ *   mirror here, and its end is that mirror going away. `watchMirroredRunEnd`
+ *   reports it from the last figures the mirror showed.
+ *
+ * A run that cannot start is reported to the chat at once, so the moderator
+ * learns why instead of waiting for the participant timeout.
+ */
+
+import type { BatchRunConfig, BatchRunState, Session } from '../types';
+import { findSessionForParticipantName } from '../../shared/group-chat-types';
+import { groupChatAutoRunSummary } from '../../shared/maestro-lib/groupchat/autorun-summary';
+import { useSessionStore } from '../stores/sessionStore';
+import { useBatchStore } from '../stores/batchStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { hostedTargetOf } from './hostedTurns';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
+import { resolveGroupChatAutoRunTarget } from '../utils/groupChatAutoRun';
+import {
+	consumeGroupChatAutoRun,
+	peekGroupChatAutoRun,
+	registerGroupChatAutoRun,
+	type GroupChatAutoRunEntry,
+} from '../utils/groupChatAutoRunRegistry';
+import { DEFAULT_BATCH_PROMPT } from '../hooks/batch/batchUtils';
+import { generateId } from '../utils/ids';
+import { ipcErrorMessage } from '../../shared/serializeError';
+import { logger } from '../utils/logger';
+
+export type GroupChatStartBatchRun = (
+	sessionId: string,
+	config: BatchRunConfig,
+	folderPath: string
+) => Promise<void> | void;
+
+export interface GroupChatAutoRunTrigger {
+	groupChatId: string;
+	participantName: string;
+	/** A single document the directive named (`!autorun @Agent:plan.md`). */
+	targetFilename?: string;
+	/** The participant's agent (`Session.id`), when main resolved it. */
+	agentId?: string;
+}
+
+/** The reply a chat logs when the run never started. */
+export function groupChatAutoRunFailure(participantName: string, reason: string): string {
+	return `⚠️ Auto Run could not start for @${participantName}: ${reason}`;
+}
+
+function report(trigger: GroupChatAutoRunTrigger, summary: string): Promise<void> {
+	return window.maestro.groupChat
+		.reportAutoRunComplete(trigger.groupChatId, trigger.participantName, summary)
+		.then(() => undefined)
+		.catch((err: unknown) => {
+			logger.error('[GroupChat:AutoRun] Failed to report to the group chat:', undefined, err);
+		});
+}
+
+/**
+ * The participant's agent: by id when main sent one, else by name as the router
+ * matches it. An id that matches no agent is NOT retried by name: a linked
+ * participant whose agent is gone must never resolve to another agent that
+ * happens to carry the same name (`findParticipantSourceAgent`).
+ */
+function resolveParticipantAgent(trigger: GroupChatAutoRunTrigger): Session | undefined {
+	const sessions = useSessionStore.getState().sessions;
+	if (trigger.agentId) return sessions.find((session) => session.id === trigger.agentId);
+	return findSessionForParticipantName(trigger.participantName, sessions);
+}
+
+/**
+ * Agents whose launch this window drives has not returned yet. `startBatchRun`
+ * is awaited to the run's end, so this is "the run is still going here", even
+ * after a chat timeout has cleared its entry and reset its batch state. A new
+ * request for the agent is refused until then, so the earlier run's completion
+ * can never take the newer request's entry.
+ */
+const launchesInFlight = new Set<string>();
+
+/** Forget launches a test left pending. Tests only. */
+export function resetGroupChatAutoRunLaunchesForTests(): void {
+	launchesInFlight.clear();
+}
+
+interface LaunchWatch {
+	stop: () => void;
+	/** Whether this window's own run (not a mirror) ever started for the agent. */
+	sawOwnRun: () => boolean;
+}
+
+/**
+ * Watch the agent's batch state from before the launch, so a run that ends at
+ * once is still seen. Records whether this window's own run started, which is
+ * how a launch `startBatchRun` declined is told apart. When the launch hands
+ * the run to a host (`hostDrivesRun`), the run is a mirror here and the
+ * mirror's end reports it; otherwise a mirror is another window's run and is
+ * never reported as this one. Stops watching when the entry is consumed
+ * elsewhere (the batch processor's own completion, a failed start).
+ */
+function watchLaunch(
+	sessionId: string,
+	entry: GroupChatAutoRunEntry,
+	trigger: GroupChatAutoRunTrigger,
+	hostDrivesRun: boolean
+): LaunchWatch {
+	let lastMirror: BatchRunState | undefined;
+	let ownRun = false;
+	const unsubscribe = useBatchStore.subscribe((state) => {
+		if (peekGroupChatAutoRun(sessionId) !== entry) {
+			unsubscribe();
+			return;
+		}
+		const current = state.batchRunStates[sessionId];
+		if (current?.isRunning && current.mirrored !== true) {
+			ownRun = true;
+			return;
+		}
+		if (!hostDrivesRun) return;
+		if (current?.mirrored === true && current.isRunning) {
+			lastMirror = current;
+			return;
+		}
+		if (!lastMirror) return; // the mirror has not appeared yet
+		unsubscribe();
+		if (!consumeGroupChatAutoRun(sessionId, entry)) return;
+		void report(
+			trigger,
+			groupChatAutoRunSummary({
+				wasStopped: lastMirror.isStopping === true,
+				completedTasks: lastMirror.completedTasksAcrossAllDocs || lastMirror.completedTasks,
+				totalTasks: lastMirror.totalTasksAcrossAllDocs || lastMirror.totalTasks,
+				documentsProcessed: lastMirror.documents?.length ?? 0,
+			})
+		);
+	});
+	return { stop: unsubscribe, sawOwnRun: () => ownRun };
+}
+
+/**
+ * Start the participant's Auto Run, or tell the chat why it could not start.
+ * Resolves once the run has been handed to `startBatchRun` (or refused).
+ */
+export async function startGroupChatAutoRun(
+	trigger: GroupChatAutoRunTrigger,
+	startBatchRun: GroupChatStartBatchRun
+): Promise<void> {
+	const fail = (reason: string) => {
+		logger.warn(`[GroupChat:AutoRun] ${reason}`);
+		return report(trigger, groupChatAutoRunFailure(trigger.participantName, reason));
+	};
+
+	const session = resolveParticipantAgent(trigger);
+	if (!session) {
+		await fail(
+			`No Maestro agent named "${trigger.participantName}" found. Make sure the agent exists and is open.`
+		);
+		return;
+	}
+	// Refusals `startBatchRun` would make, made here so the chat hears the reason.
+	if (useSettingsStore.getState().autoRunDisabled) {
+		await fail('Auto Run is turned off in this Maestro (Settings).');
+		return;
+	}
+	const folderPath = session.autoRunFolderPath;
+	if (!folderPath) {
+		await fail(
+			`Agent "${session.name}" has no Auto Run folder configured. Open the agent, go to the Auto Run tab, and configure a folder first.`
+		);
+		return;
+	}
+
+	let allFiles: string[];
+	try {
+		// The folder is listed where the agent's files are, as the Auto Run panel lists it.
+		const listing = await window.maestro.autorun.listDocs(
+			folderPath,
+			getSessionSshRemoteId(session)
+		);
+		if (!listing.success) {
+			await fail(`Failed to read the Auto Run folder: ${listing.error || 'unknown error'}`);
+			return;
+		}
+		allFiles = listing.files || [];
+	} catch (err) {
+		await fail(`Failed to read the Auto Run folder: ${ipcErrorMessage(err)}`);
+		return;
+	}
+	if (allFiles.length === 0) {
+		await fail(
+			`No Auto Run documents found in "${folderPath}". Create a document in the Auto Run tab first.`
+		);
+		return;
+	}
+	const target = resolveGroupChatAutoRunTarget(allFiles, trigger.targetFilename);
+	if ('error' in target) {
+		await fail(`${target.error} in "${folderPath}" for "${session.name}".`);
+		return;
+	}
+
+	const config: BatchRunConfig = {
+		documents: target.files.map((filename) => ({
+			id: generateId(),
+			filename,
+			resetOnCompletion: false,
+			isDuplicate: false,
+		})),
+		prompt: DEFAULT_BATCH_PROMPT,
+		loopEnabled: false,
+		maxLoops: null,
+	};
+
+	// One registry entry per agent: a second request must not take over the
+	// completion the first one is waiting for. Checked with no `await` between
+	// the check and the registration, so two requests whose folder listings
+	// overlap cannot both pass it.
+	const waiting = peekGroupChatAutoRun(session.id);
+	if (waiting?.groupChatId === trigger.groupChatId) {
+		// This chat already waits on this agent's run, and that run's end answers
+		// it. Reporting a refusal here would resolve the participant early and let
+		// main complete the run it is still waiting on.
+		logger.info(
+			`[GroupChat:AutoRun] @${trigger.participantName} already runs an Auto Run for this chat; its result answers this request`
+		);
+		return;
+	}
+	if (
+		waiting ||
+		launchesInFlight.has(session.id) ||
+		useBatchStore.getState().batchRunStates[session.id]?.isRunning
+	) {
+		await fail(
+			`Agent "${session.name}" is already running an Auto Run. Ask again when that run ends.`
+		);
+		return;
+	}
+	// Register before the launch: a run can end before startBatchRun returns.
+	const entry = registerGroupChatAutoRun(session.id, trigger.groupChatId, trigger.participantName);
+	// The host drives a hosted agent's run; this window drives every other one.
+	// A hosted run stays guarded by its entry and its mirror instead.
+	const hostDrivesRun = Boolean(hostedTargetOf(session));
+	const watch = watchLaunch(session.id, entry, trigger, hostDrivesRun);
+	if (!hostDrivesRun) launchesInFlight.add(session.id);
+	try {
+		await startBatchRun(session.id, config, folderPath);
+	} catch (err) {
+		watch.stop();
+		if (consumeGroupChatAutoRun(session.id, entry)) {
+			await fail(ipcErrorMessage(err));
+		}
+		return;
+	} finally {
+		launchesInFlight.delete(session.id);
+	}
+	// A run this window drives starts here (its own, non-mirrored batch state)
+	// and its completion consumes the entry. If none started, `startBatchRun`
+	// declined the launch (it showed the reason in a notice), even when another
+	// window's run is on screen as a mirror. A run a host drives is only ever a
+	// mirror here: the host took it, and the mirror's end reports it.
+	if (peekGroupChatAutoRun(session.id) === entry && !watch.sawOwnRun() && !hostDrivesRun) {
+		watch.stop();
+		consumeGroupChatAutoRun(session.id, entry);
+		await fail('Maestro declined to start the run. Its notice says why.');
+	}
+}

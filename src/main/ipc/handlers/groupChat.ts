@@ -1383,9 +1383,10 @@ Respond with ONLY the summary text, no additional commentary.`;
 	groupChatEmitters.emitAutoRunTriggered = (
 		groupChatId: string,
 		participantName: string,
-		filename?: string
+		filename?: string,
+		agentId?: string
 	): void => {
-		safeSend('groupChat:autoRunTriggered', groupChatId, participantName, filename);
+		safeSend('groupChat:autoRunTriggered', groupChatId, participantName, filename, agentId);
 	};
 
 	/**

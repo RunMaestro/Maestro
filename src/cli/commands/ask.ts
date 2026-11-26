@@ -21,7 +21,9 @@
 
 import { getSessionById, resolveAgentId } from '../services/storage';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
+import * as os from 'os';
 import { readCallerIdentity } from '../../shared/agentDelegation';
+import { buildRemoteAskerKey, CROSS_AGENT_ASK_TAB_ID } from '../../shared/crossAgentTypes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import {
 	PeerResolveError,
@@ -127,9 +129,25 @@ export async function ask(agentId: string, question: string, options: AskOptions
 			fail(timeoutError);
 			return;
 		}
+		// An agent's own shell names it, as a local ask does: the host keeps one consult tab per
+		// asking (machine, agent), named after it, so a follow-up continues that thread.
+		const caller = readCallerIdentity(process.env);
+		const callerName = caller?.agentId ? getSessionById(caller.agentId)?.name : undefined;
+		const askerFields: Record<string, unknown> = caller?.agentId
+			? {
+					askerKey: buildRemoteAskerKey({
+						machine: os.hostname(),
+						agentId: caller.agentId,
+						tabId: CROSS_AGENT_ASK_TAB_ID,
+					}),
+					...(callerName ? { fromAgentName: callerName } : {}),
+				}
+			: {};
 		try {
 			await withPeerAgent(target, ({ agent, peer, withBridge }) =>
-				consult(withBridge, agent.id, question, {}, peerTimeoutMs, options, fail, { peer })
+				consult(withBridge, agent.id, question, askerFields, peerTimeoutMs, options, fail, {
+					peer,
+				})
 			);
 		} catch (error) {
 			if (!(error instanceof PeerResolveError)) throw error;

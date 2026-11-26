@@ -53,6 +53,14 @@ export const HOSTED_SSH_RUNS = {
 	/** A group chat turn: writes only to the group chat's own transcript. */
 	'group-chat-participant':
 		'writes only to the group chat transcript; the moderator reads the host busy state through isBusyOnHost()',
+	/**
+	 * A Pianola-managed consult or hand-off (`managedQueue`): the native queue admits, journals, and
+	 * releases it on this machine (process id, pid, step generation), which a host cannot do for a
+	 * queue it does not hold. As for a local target it is a fresh session with no consult tab and no
+	 * resume, so it writes nothing into the agent's tabs and the asking tab shows the same bubble.
+	 */
+	'managed-consult':
+		"the native queue's admission stays here; a fresh session with no consult tab, as for a local target",
 } as const;
 
 export type HostedSshRun = keyof typeof HOSTED_SSH_RUNS;
@@ -94,7 +102,8 @@ export function statelessHelperOfProcess(
  * What a launch of `feature` for this agent record is: `not-hosted` (no pointer, or hosted agents
  * are off: it runs as the SSH or local agent it is), `allowed` (a stateless helper, or a run
  * `HOSTED_SSH_RUNS` names), or `unlisted` (a hosted agent's launch this file does not allow: the
- * caller reports it; today a consult that did not go to the host, and an unnamed one-shot).
+ * caller reports it; today an unmanaged consult that did not go to the host, and an unnamed
+ * one-shot).
  */
 export function hostedLaunchVerdict(
 	agent: { liftedTo?: unknown } | undefined,

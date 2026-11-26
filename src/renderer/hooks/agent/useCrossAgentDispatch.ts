@@ -34,7 +34,7 @@ import {
 import { parseSynopsis } from '../../../shared/synopsis';
 import { settleConsultHold, settleManagedQueue } from '../../services/crossAgentConsultHold';
 import { hostedTargetOf, type HostedTarget } from '../../services/hostedTurns';
-import { askMirrorConsult } from '../../services/peerMirror';
+import { askMirrorConsult, cancelMirrorConsult } from '../../services/peerMirror';
 import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
@@ -663,16 +663,25 @@ function sendHostedConsult(
 			...fields,
 		});
 	};
+	// The host keeps one consult tab per asking (machine, agent, tab), as this machine keeps one per
+	// asking tab, so a follow-up from this tab continues its own thread there.
+	const asker = { agentId: opts.sourceSessionId, tabId: opts.sourceTabId };
 	hostedConsults.set(requestId, {
 		sourceSessionId: opts.sourceSessionId,
 		sourceTabId: opts.sourceTabId,
-		stop: () => finish({ canceled: true }),
+		// Stop ends the wait here at once and the run on the host, so the host records the consult
+		// as stopped, as main records a local target's.
+		stop: () => {
+			finish({ canceled: true });
+			void cancelMirrorConsult(host.peerId, host.agentId, asker);
+		},
 	});
 
 	return askMirrorConsult(host.peerId, host.agentId, {
 		question: opts.userPrompt,
 		...(transcript.length > 0 ? { transcript } : {}),
 		fromAgentName: opts.sourceAgentName,
+		asker,
 		...(opts.handoffAnswer !== undefined ? { handoffAnswer: opts.handoffAnswer } : {}),
 	}).then((reply) => {
 		if ('error' in reply) finish({ error: reply.error });

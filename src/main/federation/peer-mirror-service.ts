@@ -33,6 +33,7 @@
 import * as os from 'os';
 
 import { generateUUID } from '../../shared/uuid';
+import { withOwnHostAsLocal } from '../../shared/history';
 import {
 	PeerConnectError,
 	connectPeerClient,
@@ -311,7 +312,8 @@ export class PeerMirrorService {
 		const read = (async () => {
 			const listed = await client.history.list(agentId);
 			if (!listed.ok) throw new Error(`Peer "${peerId}": ${listed.error.message}`);
-			return listed.value;
+			// A turn sent from here carries this machine's name (`originHost`); it reads as local.
+			return withOwnHostAsLocal(listed.value, this.deps.originHost ?? os.hostname());
 		})();
 		this.historyCache.set(key, read);
 		// A failed read is not kept: the next open asks again.
