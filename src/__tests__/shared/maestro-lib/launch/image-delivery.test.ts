@@ -5,7 +5,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import * as v8 from 'v8';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import {
 	admitTurnImages,
@@ -20,6 +21,32 @@ const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 /** A data URL whose image decodes to exactly `bytes` bytes. */
 const imageOfBytes = (bytes: number) =>
 	`data:image/png;base64,${Buffer.alloc(bytes, 1).toString('base64')}`;
+
+// First in the file, so no earlier test has compiled a pattern with optimization on. An aged host
+// compiles new regexps without optimization; a pattern over a multi-megabyte payload then overflows
+// the backtrack stack (see src/shared/dataUrl.ts). `--no-regexp-optimization` puts this worker in
+// that state.
+describe('admitTurnImages on multi-megabyte images with regexp optimization off', () => {
+	beforeAll(() => {
+		v8.setFlagsFromString('--no-regexp-optimization');
+	});
+
+	afterAll(() => {
+		v8.setFlagsFromString('--regexp-optimization');
+	});
+
+	it('admits a 4 MB screenshot without scanning it with a regexp', () => {
+		const screenshot = imageOfBytes(4 * 1024 * 1024);
+		expect(admitTurnImages([screenshot])).toEqual({ ok: true, images: [screenshot] });
+	});
+
+	it('still refuses a multi-megabyte payload with a character outside base64', () => {
+		const base64 = Buffer.alloc(4 * 1024 * 1024, 1).toString('base64');
+		const middle = base64.length / 2;
+		const broken = `${base64.slice(0, middle)}*${base64.slice(middle + 1)}`;
+		expect(admitTurnImages([`data:image/png;base64,${broken}`])).toMatchObject({ ok: false });
+	});
+});
 
 describe('admitTurnImages', () => {
 	it('admits none, and inline image data URLs in order', () => {

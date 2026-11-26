@@ -38,12 +38,30 @@ export const MAX_TURN_IMAGE_TOTAL_BYTES = 23 * 1024 * 1024;
 
 const IMAGE_MEDIA_TYPE = /^image\/[a-z0-9][a-z0-9.+-]*$/;
 
-/** Decoded size of a canonical, padded base64 string, or `null` when it is not one. */
+/** Whether a UTF-16 code unit is one of the 64 base64 alphabet characters (`A-Z a-z 0-9 + /`). */
+function isBase64AlphabetCode(code: number): boolean {
+	return (
+		(code >= 65 && code <= 90) ||
+		(code >= 97 && code <= 122) ||
+		(code >= 48 && code <= 57) ||
+		code === 43 ||
+		code === 47
+	);
+}
+
+/**
+ * Decoded size of a canonical, padded base64 string, or `null` when it is not one. A plain
+ * `charCodeAt` loop, never a regexp: a pattern run over a multi-megabyte payload overflows V8's
+ * regexp backtrack stack in a long-lived process (see `src/shared/dataUrl.ts`).
+ */
 function base64ByteLength(base64: string): number | null {
-	if (base64.length === 0 || base64.length % 4 !== 0) return null;
-	if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return null;
+	const length = base64.length;
+	if (length === 0 || length % 4 !== 0) return null;
 	const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
-	return (base64.length / 4) * 3 - padding;
+	for (let index = length - padding - 1; index >= 0; index -= 1) {
+		if (!isBase64AlphabetCode(base64.charCodeAt(index))) return null;
+	}
+	return (length / 4) * 3 - padding;
 }
 
 /**
