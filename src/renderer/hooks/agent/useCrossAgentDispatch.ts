@@ -23,6 +23,7 @@ import type { LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
+import { consultTabToReplace } from '../../../shared/maestro-lib/agents/rules';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
 import {
@@ -272,7 +273,19 @@ export function ensureConsultTab(opts: {
 		// consult must leave the target's view exactly as the user left it. Missing
 		// activeGroupId in particular would silently pop the target out of a tiled
 		// group it was displaying.
-		const created = createTab(session, {
+		// At the cap, the least recently used hidden consult tab gives up its slot (the same rule
+		// a headless host applies), and the new pairing starts on a fresh tab of its own.
+		const replaced = consultTabToReplace(session.aiTabs);
+		const base = replaced
+			? {
+					...session,
+					aiTabs: session.aiTabs.filter((t) => t.id !== replaced.id),
+					unifiedTabOrder: session.unifiedTabOrder.filter(
+						(ref) => !(ref.type === 'ai' && ref.id === replaced.id)
+					),
+				}
+			: session;
+		const created = createTab(base, {
 			name: buildConsultTabName(opts.sourceAgentName),
 			logs: [questionEntry],
 			saveToHistory: false,
