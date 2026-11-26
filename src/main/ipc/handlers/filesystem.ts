@@ -27,6 +27,7 @@ import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
+import * as chokidar from 'chokidar';
 
 import { logger } from '../../utils/logger';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
@@ -68,6 +69,12 @@ import { resolveDirentType } from '../../utils/dirent-utils';
 import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
+import {
+	createRemoteCopyWriteBack,
+	type RemoteCopyWriteBack,
+	type RemoteCopyWriteBackEvent,
+} from '../../utils/remote-copy-write-back';
+import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
 import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
 import { getHostDirectoryInfo } from '../../utils/host-directory';
@@ -570,7 +577,89 @@ async function deleteLocalPath(targetPath: string, recursive: boolean): Promise<
 	}
 }
 
-export function registerFilesystemHandlers(): void {
+/** The words for one write-back outcome, sent on the existing toast and flash channels. */
+function announceWriteBack(
+	safeSend: SafeSendFn | undefined,
+	event: RemoteCopyWriteBackEvent
+): void {
+	if (!safeSend) return;
+	const name = path.posix.basename(event.remotePath);
+	if (event.kind === 'saved') {
+		safeSend('remote:notifyCenterFlash', {
+			message: 'Saved to the remote host',
+			detail: name,
+			color: 'green',
+			duration: 2000,
+		});
+		return;
+	}
+	safeSend('remote:notifyToast', {
+		title:
+			event.kind === 'conflict' ? 'Not saved to the remote host' : 'Save to the remote host failed',
+		message:
+			event.kind === 'conflict'
+				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}.`
+				: `${name}: ${event.message}. Your change is still in the copy on this computer.`,
+		color: 'red',
+		dismissible: true,
+	});
+}
+
+function sshConfigOrThrow(sshRemoteId: string): SshRemoteConfig {
+	const sshConfig = getSshRemoteById(sshRemoteId);
+	if (!sshConfig) throw new Error(`SSH remote not found: ${sshRemoteId}`);
+	return sshConfig;
+}
+
+/**
+ * The write-back for remote copies opened in another app (`fs:watchRemoteCopy`).
+ * Its watchers do not keep the app alive, and each watches one file.
+ */
+function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopyWriteBack {
+	return createRemoteCopyWriteBack({
+		watchFile: (localPath, onChange) => {
+			const watcher = chokidar.watch(localPath, {
+				ignoreInitial: true,
+				persistent: false,
+				// An app that saves by writing a sibling and renaming it over the file
+				// still reads as one change to this path.
+				atomic: true,
+				awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+			});
+			watcher.on('add', onChange);
+			watcher.on('change', onChange);
+			watcher.on('error', (error) =>
+				logger.warn('Remote copy watcher failed', 'fs:watchRemoteCopy', {
+					localPath,
+					error: String(error),
+				})
+			);
+			return { close: () => watcher.close() };
+		},
+		readLocal: (localPath) => fs.readFile(localPath),
+		writeLocal: (localPath, bytes) => fs.writeFile(localPath, bytes),
+		readRemote: (remotePath, sshRemoteId) =>
+			readRemoteFileBytes(remotePath, sshConfigOrThrow(sshRemoteId)),
+		writeRemote: async (remotePath, bytes, sshRemoteId) => {
+			const result = await writeFileRemote(remotePath, bytes, sshConfigOrThrow(sshRemoteId));
+			if (!result.success) throw new Error(result.error || 'The remote write failed');
+		},
+		notify: (event) => announceWriteBack(safeSend, event),
+	});
+}
+
+let remoteCopyWriteBack: RemoteCopyWriteBack | null = null;
+
+export interface FilesystemHandlerDependencies {
+	/** Broadcast to the renderers: the write-back of a remote copy reports through it. */
+	safeSend?: SafeSendFn;
+}
+
+export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies = {}): void {
+	remoteCopyWriteBack?.dispose();
+	remoteCopyWriteBack = createFilesystemWriteBack(deps.safeSend);
+	const writeBack = remoteCopyWriteBack;
+
 	// Get user home directory
 	ipcMain.handle('fs:homeDir', () => {
 		return os.homedir();
@@ -864,6 +953,18 @@ export function registerFilesystemHandlers(): void {
 			return { success: true, path: destPath };
 		}
 	);
+
+	// Watch the copy `fs:downloadRemoteFile` fetched for a remote file (no
+	// destination named), and write a change saved in another app back to the
+	// remote file. The copy's path is derived here, never taken from the caller,
+	// so only a fetched copy can be sent to the remote. Call it right after the
+	// fetch: the copy's bytes now are what the remote held.
+	ipcMain.handle('fs:watchRemoteCopy', async (_, remotePath: string, sshRemoteId: string) => {
+		sshConfigOrThrow(sshRemoteId);
+		const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+		await writeBack.watch({ localPath, remotePath, sshRemoteId });
+		return { path: localPath };
+	});
 
 	// Download a remote SSH folder (its whole tree) to a temp folder on this
 	// machine, for actions that must hand a real folder to the OS (the Files

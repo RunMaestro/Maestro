@@ -23,6 +23,25 @@ vi.mock('electron', () => ({
 	},
 }));
 
+// The write-back watcher of a remote copy: each test fires its events by hand.
+const chokidarWatchers: Array<{ path: string; handlers: Map<string, Function>; close: Function }> =
+	[];
+vi.mock('chokidar', () => ({
+	watch: vi.fn((watchedPath: string) => {
+		const watcher = {
+			path: watchedPath,
+			handlers: new Map<string, Function>(),
+			close: vi.fn(),
+			on(event: string, handler: Function) {
+				watcher.handlers.set(event, handler);
+				return watcher;
+			},
+		};
+		chokidarWatchers.push(watcher);
+		return watcher;
+	}),
+}));
+
 // Mock the drag-out icon so the handler doesn't reach into Electron's nativeImage.
 vi.mock('../../../../main/utils/file-tree-walk', () => ({
 	walkLocalFileTree: vi.fn(),
@@ -246,6 +265,89 @@ describe('filesystem handlers', () => {
 			const result = await handler({}, '/work/a/notes.pdf', 'r1', '/Users/me/notes.pdf');
 			expect(result).toEqual({ success: true, path: '/Users/me/notes.pdf' });
 			expect(fs.rename).toHaveBeenCalledWith(expect.any(String), '/Users/me/notes.pdf');
+		});
+	});
+
+	describe('fs:watchRemoteCopy', () => {
+		const safeSend = vi.fn();
+		const fetched = Buffer.from('fetched');
+
+		beforeEach(() => {
+			chokidarWatchers.length = 0;
+			registerFilesystemHandlers({ safeSend });
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: fetched.toString('base64'),
+			} as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true } as any);
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		/** The app saves the copy as `text`; the watcher fires and the debounce runs out. */
+		async function saveCopyAs(text: string): Promise<void> {
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from(text) as any);
+			chokidarWatchers[0].handlers.get('change')!();
+			await vi.advanceTimersByTimeAsync(1000);
+		}
+
+		it('watches the copy the download made, never a path the caller names', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			const download = await registeredHandlers.get('fs:downloadRemoteFile')!(
+				{},
+				'/work/a/notes.md',
+				'r1'
+			);
+			const watched = await registeredHandlers.get('fs:watchRemoteCopy')!(
+				{},
+				'/work/a/notes.md',
+				'r1'
+			);
+			expect(watched.path).toBe(download.path);
+			expect(chokidarWatchers.map((w) => w.path)).toEqual([download.path]);
+		});
+
+		it('refuses an unknown remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as any);
+			await expect(
+				registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'gone')
+			).rejects.toThrow('SSH remote not found: gone');
+		});
+
+		it('writes a saved change back to the remote file and flashes that it did', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			await saveCopyAs('edited');
+			expect(writeFileRemote).toHaveBeenCalledWith('/work/a/notes.md', Buffer.from('edited'), {
+				id: 'r1',
+			});
+			expect(safeSend).toHaveBeenCalledWith(
+				'remote:notifyCenterFlash',
+				expect.objectContaining({ message: 'Saved to the remote host', detail: 'notes.md' })
+			);
+		});
+
+		it('keeps the user version and raises a toast when the remote file changed', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: Buffer.from('someone else').toString('base64'),
+			} as any);
+			await saveCopyAs('edited');
+			expect(writeFileRemote).not.toHaveBeenCalled();
+			const kept = vi.mocked(fs.writeFile).mock.calls.at(-1)!;
+			expect(path.basename(kept[0] as string)).toMatch(/^notes \(your version \d{8}-\d{6}\)\.md$/);
+			expect(kept[1]).toEqual(Buffer.from('edited'));
+			expect(safeSend).toHaveBeenCalledWith(
+				'remote:notifyToast',
+				expect.objectContaining({ title: 'Not saved to the remote host', color: 'red' })
+			);
 		});
 	});
 

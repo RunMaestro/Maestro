@@ -295,6 +295,7 @@ The File Explorer works seamlessly with remote agents:
 - Open and edit files directly
 - Use `@` file mentions to reference remote files in prompts
 - Compress a folder into a `.zip` on the remote host (requires `zip` there)
+- **Open in Default App** and **Reveal** hand your computer's app a copy of the remote file. A change you save in that app goes back to the remote file while Maestro runs. If the remote file changed since you opened it, Maestro does not overwrite it: it keeps your version beside the copy and tells you where.
 
 ### Remote Auto Run
 
