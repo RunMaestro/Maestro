@@ -101,10 +101,24 @@ export interface GrokModelsCacheRead {
  * Returns null when the file is absent, malformed, or lists no visible model.
  */
 export function readGrokModelsCache(accountDir: string): GrokModelsCacheRead | null {
+	let text: string;
 	try {
-		const cache = parseJsonWithBom<{ models?: unknown }>(
-			fs.readFileSync(path.join(accountDir, 'models_cache.json'), 'utf8')
-		);
+		text = fs.readFileSync(path.join(accountDir, 'models_cache.json'), 'utf8');
+	} catch {
+		logger.debug('Grok models_cache.json unavailable or malformed', LOG_CONTEXT);
+		return null;
+	}
+	return parseGrokModelsCache(text);
+}
+
+/**
+ * Parse the text of a Grok `models_cache.json`, wherever it was read (this
+ * machine's disk, or an SSH remote's through {@link probeRemoteGrokContextWindows}).
+ * Takes the same fields as {@link readGrokModelsCache}; null when malformed.
+ */
+export function parseGrokModelsCache(text: string): GrokModelsCacheRead | null {
+	try {
+		const cache = parseJsonWithBom<{ models?: unknown }>(text);
 		const entries = cache?.models;
 		if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
 			throw new Error('models_cache.json has no models map');
@@ -137,6 +151,40 @@ export function readGrokModelsCache(accountDir: string): GrokModelsCacheRead | n
 		logger.debug('Grok models_cache.json unavailable or malformed', LOG_CONTEXT);
 		return null;
 	}
+}
+
+/**
+ * Keep a Grok snapshot's per-account windows in step with the account's
+ * models_cache.json: replace that account's entry, or drop it when the cache
+ * is absent, malformed or reports no window, so the gauge goes unknown rather
+ * than keeping a stale size. Only a snapshot already marked ok is patched;
+ * detection owns the readiness status. `remoteId` names the SSH remote whose
+ * snapshot holds the account (absent for this machine), so a remote or hosted
+ * agent's gauge reads the windows its own machine's account reported.
+ */
+export function recordGrokAccountContextWindows(
+	accountKey: string | null,
+	read: GrokModelsCacheRead | null,
+	options: { selectedModel?: string; observedDefaultModel?: string; remoteId?: string } = {}
+): void {
+	const { selectedModel, observedDefaultModel, remoteId } = options;
+	const previous = capabilitySnapshots.get('grok', remoteId);
+	if (!accountKey || previous?.status !== 'ok') return;
+	const all = { ...previous.accountModelContextWindows };
+	const before = ownEntry(all, accountKey);
+	const defaultModel =
+		observedDefaultModel?.trim() || (selectedModel?.trim() ? before?.defaultModel : undefined);
+	if (read && Object.keys(read.contextWindows).length > 0) {
+		all[accountKey] = { windows: read.contextWindows, ...(defaultModel ? { defaultModel } : {}) };
+	} else {
+		delete all[accountKey];
+	}
+	if (canonicalJson(before ?? null) === canonicalJson(ownEntry(all, accountKey) ?? null)) return;
+	capabilitySnapshots.markOk(
+		'grok',
+		{ accountModelContextWindows: Object.keys(all).length > 0 ? all : undefined },
+		remoteId
+	);
 }
 
 /**
@@ -835,7 +883,7 @@ export class AgentDetector {
 			env.GROK_HOME = accountDir;
 			const accountKey = resolveAgentAccountKey('grok', { GROK_HOME: accountDir }, os.homedir());
 			const cacheRead = readGrokModelsCache(accountDir);
-			this.recordGrokContextWindows(accountKey, cacheRead, context.model);
+			recordGrokAccountContextWindows(accountKey, cacheRead, { selectedModel: context.model });
 			const discovered = (values: string[]): AgentDiscoveryResult => {
 				const stale = configuredValue && !values.includes(configuredValue);
 				return {
@@ -885,7 +933,9 @@ export class AgentDetector {
 			// The observation names the account's current model; with none configured
 			// it is the default whose cached window the gauge may use.
 			if (!context.model?.trim() && configuration.model?.trim())
-				this.recordGrokContextWindows(accountKey, cacheRead, undefined, configuration.model);
+				recordGrokAccountContextWindows(accountKey, cacheRead, {
+					observedDefaultModel: configuration.model,
+				});
 			// Only hashes/menus enter the existing ephemeral caches. Each read still
 			// requires a current host receipt, even when a matching cache entry exists.
 			const key = `grok:${createHash('sha256')
@@ -926,36 +976,6 @@ export class AgentDetector {
 			logger.debug('Grok discovery unavailable: owned observation unavailable', LOG_CONTEXT);
 			return fallback('discovery-unavailable');
 		}
-	}
-
-	/**
-	 * Keep the Grok snapshot's per-account windows in step with the account's
-	 * models_cache.json: replace that account's entry, or drop it when the cache
-	 * is absent, malformed or reports no window, so the gauge goes unknown rather
-	 * than keeping a stale size. Only a snapshot already marked ok is patched;
-	 * detection owns the readiness status.
-	 */
-	private recordGrokContextWindows(
-		accountKey: string | null,
-		read: GrokModelsCacheRead | null,
-		selectedModel: string | undefined,
-		observedDefaultModel?: string
-	): void {
-		const previous = capabilitySnapshots.get('grok');
-		if (!accountKey || previous?.status !== 'ok') return;
-		const all = { ...previous.accountModelContextWindows };
-		const before = ownEntry(all, accountKey);
-		const defaultModel =
-			observedDefaultModel?.trim() || (selectedModel?.trim() ? before?.defaultModel : undefined);
-		if (read && Object.keys(read.contextWindows).length > 0) {
-			all[accountKey] = { windows: read.contextWindows, ...(defaultModel ? { defaultModel } : {}) };
-		} else {
-			delete all[accountKey];
-		}
-		if (canonicalJson(before ?? null) === canonicalJson(ownEntry(all, accountKey) ?? null)) return;
-		capabilitySnapshots.markOk('grok', {
-			accountModelContextWindows: Object.keys(all).length > 0 ? all : undefined,
-		});
 	}
 
 	/**

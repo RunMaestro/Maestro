@@ -214,9 +214,8 @@ export function ShellCommandCard({
 					<span
 						className="text-2xs hidden sm:inline"
 						style={{ color: theme.colors.textDim }}
-						title={shell.remoteName ? `${shell.remoteName}:${shell.cwd}` : shell.cwd}
+						title={shell.cwd}
 					>
-						{shell.remoteName ? `${shell.remoteName}:` : ''}
 						{truncatePath(shell.cwd, 32)}
 					</span>
 

@@ -228,6 +228,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeQueueItem: vi
 			.fn()
 			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
+		editQueueItem: vi.fn().mockResolvedValue({ success: true, found: true }),
+		moveQueueItem: vi.fn().mockResolvedValue({ success: true, moved: true }),
+		sendQueueItemNow: vi.fn().mockResolvedValue({ success: true, sent: true }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -594,6 +597,27 @@ describe('WebSocketMessageHandler', () => {
 			});
 			// An ask records its own pill in the renderer; the dispatch notice is not used.
 			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
+		});
+
+		it('forwards the context, name, and hand-off of an asker on another machine (Federation)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, 'junk'],
+				fromAgentName: ' Laptop Agent ',
+				handoffAnswer: 'the plan',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({
+						transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
+						fromAgentName: 'Laptop Agent',
+						handoffAnswer: 'the plan',
+					})
+				);
+			});
 		});
 
 		it('consults the target and returns the answer without touching its open tab', async () => {
@@ -3883,6 +3907,33 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('replies ran when the renderer ran one of its own commands, so no turn is awaited', async () => {
+			vi.mocked(callbacks.enqueueCommand).mockResolvedValueOnce({
+				success: true,
+				tabId: 'tab-1',
+				queued: false,
+				ran: true,
+			});
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: '/history',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response).toMatchObject({
+					type: 'enqueue_command_result',
+					success: true,
+					queued: false,
+					ran: true,
+					tabId: 'tab-1',
+				});
+			});
+		});
+
 		it('forwards a dispatch --queue --routing to the callback', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',
@@ -4140,6 +4191,133 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('merge_queue_item_result');
 			expect(response.success).toBe(false);
 			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Edit Queue Item (queue edit, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the checked edit and answers whether the item was there', async () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: 'rewritten',
+				turnSettings: { model: 'm' },
+			} as never);
+
+			await vi.waitFor(() => {
+				expect(callbacks.editQueueItem).toHaveBeenCalledWith('session-1', 'item-9', {
+					text: 'rewritten',
+					turnSettings: { model: 'm' },
+				});
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('edit_queue_item_result');
+				expect(response).toMatchObject({ success: true, found: true });
+			});
+		});
+
+		it('rejects a missing itemId or an empty text without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				text: 'x',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'edit_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: ' ',
+			} as never);
+			expect(lastSend()).toMatchObject({ success: false, error: 'Missing text' });
+			expect(callbacks.editQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Move Queue Item (queue move, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the move and answers whether it took', async () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: 0,
+				tabId: 'tab-1',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.moveQueueItem).toHaveBeenCalledWith('session-1', 'item-9', 0, 'tab-1');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'move_queue_item_result',
+					success: true,
+					moved: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId or a bad place without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				toIndex: 0,
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'move_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: -1,
+			} as never);
+			expect(lastSend()).toMatchObject({
+				success: false,
+				error: 'toIndex must be a whole number, 0 or more',
+			});
+			expect(callbacks.moveQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Send Queue Item Now (queue send-now, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the send and answers whether it started', async () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.sendQueueItemNow).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'send_queue_item_now_result',
+					success: true,
+					sent: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'send_queue_item_now_result', success: false });
+			expect(callbacks.sendQueueItemNow).not.toHaveBeenCalled();
 		});
 	});
 

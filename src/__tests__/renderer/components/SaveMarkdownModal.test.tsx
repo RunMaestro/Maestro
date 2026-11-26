@@ -6,7 +6,7 @@
  * - Basic rendering
  * - Form validation
  * - Save functionality
- * - SSH remote session behavior (folder browse button visibility, remote saving)
+ * - Mode parity: the same Browse in every mode; remote saving
  * - Keyboard interaction (Enter to save)
  * - Error handling
  */
@@ -16,6 +16,8 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SaveMarkdownModal } from '../../../renderer/components/SaveMarkdownModal';
 import type { Theme } from '../../../renderer/types';
+import { AGENT_MODES } from '../../helpers';
+import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 
 // Mock createPortal to render inline for testing
 vi.mock('react-dom', async () => {
@@ -47,6 +49,7 @@ beforeEach(() => {
 	(window as any).maestro = {
 		dialog: {
 			selectFolder: mockSelectFolder,
+			selectFile: vi.fn(),
 		},
 		fs: {
 			writeFile: mockWriteFile,
@@ -55,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	resetPathPicker();
 	vi.clearAllMocks();
 });
 
@@ -126,21 +130,27 @@ describe('SaveMarkdownModal', () => {
 	});
 
 	describe('SSH remote session behavior', () => {
-		it('hides folder browse button when isRemoteSession is true', () => {
-			render(<SaveMarkdownModal {...defaultProps} isRemoteSession={true} />);
-			expect(screen.queryByTitle('Browse for folder')).not.toBeInTheDocument();
-		});
+		describe.each(AGENT_MODES)('mode parity: %s agent', (mode) => {
+			const sshRemoteId = mode === 'local' ? undefined : MODE_REMOTE_ID;
 
-		it('shows folder browse button when isRemoteSession is false', () => {
-			render(<SaveMarkdownModal {...defaultProps} isRemoteSession={false} />);
-			expect(screen.getByTitle('Browse for folder')).toBeInTheDocument();
-		});
+			it('draws the same Browse button and folder field', () => {
+				render(<SaveMarkdownModal {...defaultProps} sshRemoteId={sshRemoteId} />);
+				const browse = screen.getByTitle('Browse for folder');
+				expect(browse).not.toBeDisabled();
+				expect(screen.getByPlaceholderText('/path/to/folder')).toBeInTheDocument();
+			});
 
-		it('allows manual path entry when isRemoteSession is true', () => {
-			render(<SaveMarkdownModal {...defaultProps} isRemoteSession={true} />);
-			const folderInput = screen.getByPlaceholderText('/path/to/folder');
-			fireEvent.change(folderInput, { target: { value: '/remote/path' } });
-			expect(folderInput).toHaveValue('/remote/path');
+			it('Browse picks a folder on the machine the file is saved to', async () => {
+				render(
+					<SaveMarkdownModal {...defaultProps} sshRemoteId={sshRemoteId} defaultFolder="/start" />
+				);
+				await browseAndPick(
+					mode,
+					() => fireEvent.click(screen.getByTitle('Browse for folder')),
+					'/picked/folder'
+				);
+				expect(screen.getByPlaceholderText('/path/to/folder')).toHaveValue('/picked/folder');
+			});
 		});
 
 		it('passes sshRemoteId to writeFile when saving to remote', async () => {
@@ -148,7 +158,6 @@ describe('SaveMarkdownModal', () => {
 			render(
 				<SaveMarkdownModal
 					{...defaultProps}
-					isRemoteSession={true}
 					sshRemoteId="ssh-remote-123"
 					defaultFolder="/home/user"
 				/>
@@ -171,7 +180,7 @@ describe('SaveMarkdownModal', () => {
 
 		it('saves without sshRemoteId when not provided', async () => {
 			mockWriteFile.mockResolvedValue({ success: true });
-			render(<SaveMarkdownModal {...defaultProps} isRemoteSession={false} />);
+			render(<SaveMarkdownModal {...defaultProps} />);
 
 			const filenameInput = screen.getByPlaceholderText('document.md');
 			fireEvent.change(filenameInput, { target: { value: 'local-doc.md' } });
@@ -799,7 +808,6 @@ describe('SaveMarkdownModal', () => {
 				<SaveMarkdownModal
 					{...defaultProps}
 					onOpenInTab={onOpenInTab}
-					isRemoteSession={true}
 					sshRemoteId="ssh-remote-456"
 				/>
 			);

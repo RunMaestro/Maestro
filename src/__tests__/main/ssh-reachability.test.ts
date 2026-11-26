@@ -77,6 +77,48 @@ describe('ssh-reachability', () => {
 		expect(getUnreachableSshRemotes()).toHaveLength(1);
 	});
 
+	describe('a live Federation connection to the remote', () => {
+		const configureWithTransport = (live: (remoteId: string) => boolean) =>
+			configureSshReachability({
+				resolveRemote: (id) => (id === remote.id ? remote : undefined),
+				probe,
+				emit: (event) => emitted.push(event),
+				hasLiveTransport: live,
+			});
+
+		it('makes an exit 255 cost no probe and no dialog while it is held', async () => {
+			const live = vi.fn(() => true);
+			configureWithTransport(live);
+			noteSshExit(remote, 255);
+			noteSshExit(remote, 'ETIMEDOUT');
+			await flush();
+
+			expect(live).toHaveBeenCalledWith('r1');
+			expect(probe).not.toHaveBeenCalled();
+			expect(emitted).toHaveLength(0);
+		});
+
+		it('still probes once the connection is gone', async () => {
+			configureWithTransport(() => false);
+			noteSshExit(remote, 255);
+			await flush();
+
+			expect(probe).toHaveBeenCalledTimes(1);
+			expect(emitted).toHaveLength(1);
+		});
+
+		it('does not hide a remote already known to be down, or block an explicit check', async () => {
+			noteSshExit(remote, 255);
+			await flush();
+			expect(emitted).toHaveLength(1);
+
+			configureWithTransport(() => true);
+			await checkSshRemote(remote.id);
+			expect(probe).toHaveBeenCalledTimes(2);
+			expect(getUnreachableSshRemotes()).toHaveLength(1);
+		});
+	});
+
 	it('emits nothing when the confirming probe gets through (a transient drop)', async () => {
 		probe.mockResolvedValue(UP);
 		noteSshExit(remote, 255);

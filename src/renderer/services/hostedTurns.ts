@@ -5,23 +5,43 @@
  * in here for a record with a `liftedTo` pointer:
  *
  * - `sendHostedTurn()`: the composer's send, with images and this tab's own model, effort,
- *   read-only, and save to History as the sender's `TurnOverrides`. A busy tab queues on the host.
+ *   read-only, and save to History as the sender's `TurnOverrides`, and any context a merge or
+ *   session recovery left for the turn. A busy tab queues on the host.
  * - `interruptHostedTurn()`: Stop (the pill, the shortcut, `maestro-cli interrupt`).
  * - `openHostedTab()`, `closeHostedTab()`, `renameHostedTab()`, `starHostedTab()`: the strip.
+ * - `startHostedConversation()`: a new tab this machine built (Fork, Summarize & Continue).
+ * - `updateHostedTab()`: a tab setting the host must hold before a turn starts (thinking).
+ * - `settleHostedWizardTab()`: a wizard that ran here hands its tab name and session to the host.
+ * - `startHostedAutoRun()`, `controlHostedAutoRun()`: the Auto Run panel's Run, Stop, and pause
+ *   choices. The host runs the loop; its progress draws here as this record's run
+ *   (`hostedAgentSync.ts`).
  *
  * Every call goes through `services/peerMirror.ts` (`actOnMirroredAgent()`), which toasts a
  * failure and never queues here: a host that is down refuses at once.
  */
 
+import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
-import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
+import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
+import type {
+	TabPatch,
+	TurnOverrides,
+	TurnSendReceipt,
+} from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { BatchRunConfig } from '../../shared/types';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { updateSessionWith } from '../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../stores/sessionStore';
 import type { AITab, Session } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
+import { appendBlockToDraft } from '../utils/quoteSelection';
 import { setActiveTab } from '../utils/tabHelpers';
 import {
 	actOnMirroredAgent,
@@ -61,9 +81,21 @@ export function hostedTargetOf(
 	return { peerId: pointer.peer, agentId: pointer.agentId, ...(agent ? { agent } : {}) };
 }
 
+/**
+ * Tabs `openHostedTab()` opened, by `peer/agent/tab`. The host's answer can reach this machine
+ * before its update lists the tab; a send to it in that moment must not open a second one.
+ */
+const openedHostTabs = new Set<string>();
+const hostTabKey = (target: HostedTarget, tabId: string) =>
+	`${target.peerId}/${target.agentId}/${tabId}`;
+
 /** Whether `tabId` is one of the host's tabs (a lift keeps tab ids, so most local tabs are). */
 export function isHostTab(target: HostedTarget, tabId: string | undefined): boolean {
-	return !!tabId && !!target.agent?.aiTabs?.some((tab) => tab.id === tabId);
+	if (!tabId) return false;
+	return (
+		openedHostTabs.has(hostTabKey(target, tabId)) ||
+		!!target.agent?.aiTabs?.some((tab) => tab.id === tabId)
+	);
 }
 
 /** The tab's own composer settings as this sender's overrides for one turn. */
@@ -77,73 +109,220 @@ export function hostedTurnOverrides(tab: AITab | undefined): TurnOverrides | und
 	return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
-/** Show `tabId` on the record, adding a blank tab for it until the host's update fills it in. */
-function focusHostTab(sessionId: string, tabId: string): void {
+/** Where a new host tab goes in the strip, and what it carries until the host's update fills it. */
+export interface HostedTabPlacement {
+	/** Right after this tab, as a local tab created at a position goes. Absent: at the end. */
+	afterTabId?: string;
+	/**
+	 * Fields only this record holds (a permission mode, a local-only notice in `logs`). The host's
+	 * update keeps them: a projection takes the name, session, and state from the host, and merges
+	 * local-only log entries with the host's in time order (`mergeHostedLogs()`).
+	 */
+	fields?: Partial<Omit<AITab, 'id'>>;
+	/** Leave the visible tab alone (`maestro-cli tab compact --background`). */
+	background?: boolean;
+}
+
+/** `list` with `item` moved (or added) right after the first element `isAnchor` matches. */
+function placeAfter<T>(
+	list: readonly T[],
+	item: T,
+	isItem: (x: T) => boolean,
+	isAnchor: (x: T) => boolean
+): T[] {
+	const rest = list.filter((x) => !isItem(x));
+	const at = rest.findIndex(isAnchor);
+	return at === -1 ? [...rest, item] : [...rest.slice(0, at + 1), item, ...rest.slice(at + 1)];
+}
+
+/**
+ * Show `tabId` on the record, adding a blank tab for it until the host's update fills it in. The
+ * host's update may land first (it appends the tab); a placement then moves it into place.
+ */
+function focusHostTab(sessionId: string, tabId: string, placement: HostedTabPlacement = {}): void {
 	updateSessionWith(sessionId, (session) => {
+		const { afterTabId, fields } = placement;
+		const existing = session.aiTabs.find((tab) => tab.id === tabId);
 		let next = session;
-		if (!next.aiTabs.some((tab) => tab.id === tabId)) {
+		if (!existing || afterTabId || fields) {
+			const base = existing ?? mirrorTab({ id: tabId });
+			const seededLogs = fields?.logs ?? [];
+			const tab: AITab = {
+				...base,
+				...fields,
+				logs: [
+					...seededLogs,
+					...(base.logs ?? []).filter((log) => !seededLogs.some((s) => s.id === log.id)),
+				],
+			};
+			const isTab = (candidate: AITab) => candidate.id === tabId;
+			const isRef = (ref: { type: string; id: string }) => ref.type === 'ai' && ref.id === tabId;
 			next = {
-				...next,
-				aiTabs: [...next.aiTabs, mirrorTab({ id: tabId })],
-				unifiedTabOrder: [...(next.unifiedTabOrder ?? []), { type: 'ai', id: tabId }],
+				...session,
+				aiTabs: afterTabId
+					? placeAfter(session.aiTabs, tab, isTab, (candidate) => candidate.id === afterTabId)
+					: existing
+						? session.aiTabs.map((candidate) => (isTab(candidate) ? tab : candidate))
+						: [...session.aiTabs, tab],
+				unifiedTabOrder:
+					afterTabId || !existing
+						? placeAfter(
+								session.unifiedTabOrder ?? [],
+								{ type: 'ai', id: tabId },
+								isRef,
+								(ref) => !!afterTabId && ref.type === 'ai' && ref.id === afterTabId
+							)
+						: session.unifiedTabOrder,
 			};
 		}
+		if (placement.background) return next;
 		return setActiveTab(next, tabId)?.session ?? next;
 	});
 }
 
-/** Open a tab on the host and show it. Answers the new tab's id, or null when the host refused. */
+/**
+ * Open a tab on the host and show it, at `placement` when given. Answers the new tab's id, or null
+ * when the host refused.
+ */
 export async function openHostedTab(
-	session: Pick<Session, 'id' | 'liftedTo'>
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	placement?: HostedTabPlacement
 ): Promise<string | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
 	const result = await actOnMirroredAgent(target.peerId, target.agentId, { kind: 'new-tab' });
 	if (result?.kind !== 'new-tab') return null;
-	focusHostTab(session.id, result.tabId);
+	openedHostTabs.add(hostTabKey(target, result.tabId));
+	focusHostTab(session.id, result.tabId, placement);
 	return result.tabId;
 }
 
 /**
+ * A new conversation that starts from what this machine built: a fork of a hosted tab (with a
+ * first turn), or a compacted tab (Summarize & Continue, whose summary is its transcript).
+ */
+export interface HostedConversationStart extends HostedTabPlacement {
+	/** The tab's name, on the host too (the host's update would clear a name only held here). */
+	name: string;
+	/**
+	 * The first turn's prompt. The host records it as the tab's first user message. Absent: the
+	 * tab opens and waits for the person's first message, as a local compacted tab does.
+	 */
+	prompt?: string;
+}
+
+/**
+ * Start a conversation in a new host tab, as a local fork or compaction starts one in a new tab:
+ * the tab opens where `start` places it and takes its name on the host. With a prompt, its first
+ * turn runs there with the tab's own model, effort, read-only, and save to History. The new tab's
+ * id, or null when the host refused the tab or its first turn (a refusal shows as a toast). A
+ * refused first turn leaves the open tab with the prompt as its draft, ready to send again. Null
+ * for an agent that is not hosted.
+ */
+export async function startHostedConversation(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	start: HostedConversationStart
+): Promise<string | null> {
+	const target = hostedTargetOf(session);
+	if (!target) return null;
+	const tabId = await openHostedTab(session, {
+		afterTabId: start.afterTabId,
+		fields: { ...start.fields, name: start.name },
+		...(start.background ? { background: true } : {}),
+	});
+	if (!tabId) return null;
+	await renameMirrorTab(target.peerId, target.agentId, tabId, start.name);
+	if (start.prompt === undefined) return tabId;
+	const tab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	const receipt = await sendToMirroredTab(
+		target.peerId,
+		target.agentId,
+		tabId,
+		start.prompt,
+		hostedTurnOverrides(tab)
+	);
+	if (receipt) return tabId;
+	// The host opened the tab but refused its first turn (the refusal is already a toast). Keep
+	// the prompt as the tab's draft, so the context is not lost and Enter sends it again. Text the
+	// person typed while the send was pending stays too, after the prompt.
+	const prompt = start.prompt;
+	updateAiTab(session.id, tabId, (current) => ({
+		...current,
+		inputValue: appendBlockToDraft(prompt, current.inputValue ?? ''),
+	}));
+	return null;
+}
+
+/**
  * Send what the person typed to the host. A tab the host does not have (a conversation kept from
- * before the move) cannot resume there, so the message opens a new host tab. True when the host
- * took it (ran or queued); the caller clears the composer then.
+ * before the move) cannot resume there, so the message opens a new host tab. The host's receipt
+ * when it took the message (ran, queued, or held), null when it did not; the caller clears the
+ * composer on a receipt. A `queued` receipt names the host's queue item (what a steer acts on).
+ * `opts.held` is Queue Held: the host queues the message paused, even on an idle tab.
+ * `opts.overrides` are a sender's own chips for this one message (a Federation client's
+ * `TurnInput.overrides`); they win over the tab's settings, as they do on a local queued item.
  */
 export async function sendHostedTurn(
 	session: Session,
 	tabId: string | undefined,
 	text: string,
-	images: readonly string[]
-): Promise<boolean> {
+	images: readonly string[],
+	opts: { held?: boolean; overrides?: TurnOverrides } = {}
+): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
-	if (!target) return false;
+	if (!target) return null;
 	if (!target.agent) {
 		notifyToast({
 			color: 'red',
 			title: 'Message not sent',
 			message: `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`,
 		});
-		return false;
+		return null;
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
 	let hostTabId = tabId;
 	if (!isHostTab(target, tabId)) {
 		hostTabId = (await openHostedTab(session)) ?? undefined;
-		if (!hostTabId) return false;
+		if (!hostTabId) return null;
 		notifyToast({
 			color: 'theme',
 			title: 'Sent in a new tab',
 			message: `That conversation is the copy kept from before the move, so it continues in a new tab on ${target.peerId}.`,
 		});
 	}
-	return sendToMirroredTab(
+	// Merge context, Send to Agent, and session recovery leave context for the tab's next turn. A
+	// local send prepends it to the prompt (`takePendingMergedContext()`); the host does the same
+	// from its own tab, so it goes there first and the transcript shows only the typed message.
+	const mergedContext = tab?.pendingMergedContext;
+	if (mergedContext) {
+		const handed = await actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'update-tab',
+			tabId: hostTabId as string,
+			patch: { mergedContext },
+		});
+		if (!handed) return null;
+	}
+	const receipt = await sendToMirroredTab(
 		target.peerId,
 		target.agentId,
 		hostTabId as string,
 		text,
-		hostedTurnOverrides(tab),
-		images
+		opts.overrides ? { ...hostedTurnOverrides(tab), ...opts.overrides } : hostedTurnOverrides(tab),
+		images,
+		opts.held
 	);
+	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
+	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).
+	if (receipt && mergedContext && tabId) {
+		updateAiTab(session.id, tabId, (candidate) =>
+			candidate.pendingMergedContext === mergedContext
+				? { ...candidate, pendingMergedContext: undefined }
+				: candidate
+		);
+	}
+	return receipt;
 }
 
 /** Stop the host's turn on one tab, or every busy tab without `tabId`. */
@@ -158,18 +337,62 @@ export async function interruptHostedTurn(
 /** Close a host tab too (the local close is the caller's). A kept local tab has none. */
 export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string): void {
 	const target = hostedTargetOf(session);
-	if (target && isHostTab(target, tabId)) void closeMirrorTab(target.peerId, target.agentId, tabId);
+	if (!target || !isHostTab(target, tabId)) return;
+	openedHostTabs.delete(hostTabKey(target, tabId));
+	void closeMirrorTab(target.peerId, target.agentId, tabId);
 }
 
 /** Rename a host tab too. An empty name clears it. */
 export function renameHostedTab(
-	session: Pick<Session, 'liftedTo'>,
+	session: Pick<Session, 'liftedTo'> | null | undefined,
 	tabId: string,
 	name: string
 ): void {
 	const target = hostedTargetOf(session);
 	if (target && isHostTab(target, tabId)) {
 		void renameMirrorTab(target.peerId, target.agentId, tabId, name);
+	}
+}
+
+/**
+ * Push one tab's composer setting to the host too. Model, effort, read-only, and save to History
+ * travel with each turn (`hostedTurnOverrides()`); a setting that decides what the host's process
+ * streams, such as thinking, has to be on the host's tab before the turn starts.
+ */
+export function updateHostedTab(
+	session: Pick<Session, 'liftedTo'>,
+	tabId: string,
+	patch: TabPatch
+): void {
+	const target = hostedTargetOf(session);
+	if (target && isHostTab(target, tabId)) {
+		void actOnMirroredAgent(target.peerId, target.agentId, { kind: 'update-tab', tabId, patch });
+	}
+}
+
+/**
+ * A wizard that ran here for a hosted tab ends as a local one does: the tab keeps the name the
+ * wizard gave it and resumes the wizard's provider session (`flattenWizardIntoTab()`). Both live
+ * on the host's tab, which runs the next turn, so push whichever differs there. Reads the tab as
+ * the flatten left it in the store; the host's name and session come back on the next sync. A
+ * no-op for an agent that is not hosted.
+ */
+export function settleHostedWizardTab(sessionId: string, tabId: string): void {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const target = hostedTargetOf(session);
+	if (!session || !target) return;
+	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
+	const hostTab = target.agent?.aiTabs?.find((candidate) => candidate.id === tabId);
+	if (!tab || !hostTab) return;
+	if (tab.name && tab.name !== hostTab.name) {
+		void renameMirrorTab(target.peerId, target.agentId, tabId, tab.name);
+	}
+	if (tab.agentSessionId && tab.agentSessionId !== hostTab.agentSessionId) {
+		void actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'update-tab',
+			tabId,
+			patch: { agentSessionId: tab.agentSessionId },
+		});
 	}
 }
 
@@ -183,4 +406,74 @@ export function starHostedTab(
 	if (target && isHostTab(target, tabId)) {
 		void starMirrorTab(target.peerId, target.agentId, tabId, starred);
 	}
+}
+
+/**
+ * Start an Auto Run on the host: the Auto Run panel's Run for a hosted agent. The host runs the
+ * loop, as it does for `maestro-cli auto-run`, over the same documents (the folder the panel
+ * reads on the host's machine over SSH), prompt, loop, model, and effort. True when the host took it;
+ * a refusal shows as a toast. A no-op (false) for an agent that is not hosted.
+ *
+ * Not carried: a worktree, the task selection mode, and the auto-resume policy. The host runs the
+ * documents in its own checkout, in order, with its own auto-resume settings.
+ */
+export async function startHostedAutoRun(
+	session: Pick<Session, 'name' | 'liftedTo' | 'autoRunFolderPath'>,
+	config: BatchRunConfig,
+	folderPath: string
+): Promise<boolean> {
+	const target = hostedTargetOf(session);
+	if (!target) return false;
+	const goal = config.goalConfig;
+	if (goal) {
+		const result = await actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'goal-run',
+			launch: {
+				goal: goal.goal,
+				...(goal.exitCriteria.trim() ? { exitCriteria: goal.exitCriteria } : {}),
+				maxIterations: goal.maxIterations,
+				...(config.model ? { model: config.model } : {}),
+				...(config.effort ? { effort: config.effort } : {}),
+			},
+		});
+		return result?.kind === 'goal-run';
+	}
+	// The documents were listed from `folderPath`, the folder the panel reads on the host's machine
+	// over SSH, so each is named by its full path under it. The host's own folder is only a fallback:
+	// it can lag a folder chosen here (the settings sync keeps one outside the working directory
+	// behind), and a document outside it is refused by the host instead of running the wrong file.
+	const hostFolder =
+		folderPath || session.autoRunFolderPath || target.agent?.autoRunFolderPath || '';
+	const result = await actOnMirroredAgent(target.peerId, target.agentId, {
+		kind: 'auto-run',
+		launch: {
+			documents: config.documents.map((document) => ({
+				file: joinPath(hostFolder, `${document.filename}.md`),
+				...(document.resetOnCompletion ? { resetOnCompletion: true } : {}),
+			})),
+			...(config.loopEnabled ? { loop: true } : {}),
+			...(config.loopEnabled && typeof config.maxLoops === 'number'
+				? { maxLoops: config.maxLoops }
+				: {}),
+			...(config.model ? { model: config.model } : {}),
+			...(config.effort ? { effort: config.effort } : {}),
+			...(config.prompt.trim() ? { prompt: config.prompt } : {}),
+			...(config.ignoreModelHints ? { ignoreModelHints: true } : {}),
+		},
+	});
+	return result?.kind === 'auto-run';
+}
+
+/**
+ * Stop a hosted agent's run, or answer its pause, on the host that runs it. A refusal shows as a
+ * toast. False for an agent that is not hosted, so the caller acts on its own run instead.
+ */
+export function controlHostedAutoRun(
+	session: Pick<Session, 'liftedTo'> | null | undefined,
+	control: AutoRunControl
+): boolean {
+	const target = hostedTargetOf(session);
+	if (!target) return false;
+	void actOnMirroredAgent(target.peerId, target.agentId, { kind: 'auto-run-control', control });
+	return true;
 }

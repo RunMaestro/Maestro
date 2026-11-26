@@ -24,6 +24,7 @@ vi.stubGlobal('window', {
 import { spawnPtyForTab, isSpawnInFlight } from '../../../renderer/services/terminalSpawn';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, TerminalTab } from '../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
 import {
 	updateTerminalTabPid,
 	restartTerminalTab,
@@ -38,7 +39,7 @@ function tab(overrides: Partial<TerminalTab> = {}): TerminalTab {
 }
 
 let onPid: (tabId: string, pid: number) => void;
-let onSpawnFailure: (tabId: string, isPersistent: boolean, message: string) => void;
+let onSpawnFailure: (tabId: string, message: string) => void;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -173,16 +174,28 @@ describe('spawnPtyForTab', () => {
 		expect(ids).toEqual(['sess-1-terminal-tab-1', 'sess-2-terminal-tab-1']);
 	});
 
-	it('reports a failed spawn as non-persistent for a scratch tab', async () => {
-		spawnTerminalTab.mockResolvedValue({ success: false });
+	it.each(AGENT_MODES)(
+		'reports a failed spawn of a scratch tab the same way in a %s agent',
+		async (mode) => {
+			spawnTerminalTab.mockResolvedValue({ success: false });
 
-		await spawnPtyForTab({ session: session(), tab: tab(), onPid, onSpawnFailure });
+			await spawnPtyForTab({
+				session: session(agentModeFields(mode)),
+				tab: tab(),
+				onPid,
+				onSpawnFailure,
+			});
 
-		expect(onSpawnFailure).toHaveBeenCalledWith('tab-1', false, expect.stringContaining('shell'));
-		expect(onPid).not.toHaveBeenCalled();
-	});
+			// The caller keeps the tab for restart in every mode; only the message names the cause.
+			expect(onSpawnFailure).toHaveBeenCalledWith(
+				'tab-1',
+				mode === 'local' ? expect.stringContaining('shell') : expect.stringContaining('SSH')
+			);
+			expect(onPid).not.toHaveBeenCalled();
+		}
+	);
 
-	it('treats a startup-command tab as persistent so it is kept, not closed', async () => {
+	it('reports a failed startup-command tab the same way', async () => {
 		spawnTerminalTab.mockResolvedValue({ success: false });
 
 		await spawnPtyForTab({
@@ -192,20 +205,7 @@ describe('spawnPtyForTab', () => {
 			onSpawnFailure,
 		});
 
-		expect(onSpawnFailure).toHaveBeenCalledWith('tab-1', true, expect.any(String));
-	});
-
-	it('treats an SSH session tab as persistent and names SSH in the message', async () => {
-		spawnTerminalTab.mockResolvedValue({ success: false });
-
-		await spawnPtyForTab({
-			session: session({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } as never }),
-			tab: tab(),
-			onPid,
-			onSpawnFailure,
-		});
-
-		expect(onSpawnFailure).toHaveBeenCalledWith('tab-1', true, expect.stringContaining('SSH'));
+		expect(onSpawnFailure).toHaveBeenCalledWith('tab-1', expect.any(String));
 	});
 
 	it('releases the in-flight guard when the spawn throws', async () => {
@@ -213,7 +213,7 @@ describe('spawnPtyForTab', () => {
 
 		await spawnPtyForTab({ session: session(), tab: tab(), onPid, onSpawnFailure });
 
-		expect(onSpawnFailure).toHaveBeenCalledWith('tab-1', false, 'boom');
+		expect(onSpawnFailure).toHaveBeenCalledWith('tab-1', 'boom');
 		// A stuck guard would make the tab unspawnable for the rest of the session.
 		expect(isSpawnInFlight('sess-1', 'tab-1')).toBe(false);
 	});

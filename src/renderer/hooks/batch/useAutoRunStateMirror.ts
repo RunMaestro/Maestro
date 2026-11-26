@@ -16,6 +16,8 @@ import type { BatchRunState } from '../../types';
 import { useBatchStore } from '../../stores/batchStore';
 import { DEFAULT_BATCH_STATE } from './batchReducer';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { hostedTargetOf } from '../../services/hostedTurns';
 
 /**
  * Tooltip for an Auto Run control disabled because the run belongs to another
@@ -281,12 +283,22 @@ export function useAutoRunStateMirror(): void {
 	}, []);
 }
 
-/** Native mirrors stay read-only; web/Lite controls are dispatched to the owner. */
+/**
+ * Native mirrors stay read-only; web/Lite controls are dispatched to the owner, and a hosted
+ * agent's controls to its Federation host (`controlHostedAutoRun()`), so neither is read-only.
+ */
 export function useIsMirroredBatchRun(sessionId: string | undefined): boolean {
-	return useBatchStore(
+	const mirrored = useBatchStore(
 		useCallback(
 			(s) => !isWebDesktop() && s.batchRunStates[sessionId ?? '']?.mirrored === true,
 			[sessionId]
 		)
 	);
+	const hosted = useSessionStore(
+		useCallback(
+			(s) => mirrored && hostedTargetOf(selectSessionById(sessionId ?? '')(s)) !== undefined,
+			[mirrored, sessionId]
+		)
+	);
+	return mirrored && !hosted;
 }

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: vi.fn(() => []),
+	readSettings: vi.fn(() => ({})),
 	resolveSshRemoteId: vi.fn((id: string) => id),
 	// The real matcher, so the agent part resolves the way a local target does.
 	resolveAgentId: (ref: string, list: Array<{ id: string; name: string }>) => {
@@ -21,6 +22,8 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import { ExitCode } from '../../../cli/exit-codes';
+import { readSettings } from '../../../cli/services/storage';
+import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
 import {
 	PeerResolveError,
 	clientErrorExitCode,
@@ -29,6 +32,7 @@ import {
 	hostCallError,
 	listFederationPeers,
 	listHostAgents,
+	liftedPeerTarget,
 	parsePeerTarget,
 	peerAgentRef,
 	peerErrorCode,
@@ -181,6 +185,23 @@ describe('routeAgentTarget', () => {
 			kind: 'peer',
 			target: { peer: 'buildbox', agent: 'docs' },
 		});
+	});
+});
+
+// `send`, `dispatch` and `ask` address an agent by its local id the same way in every mode: a
+// local or SSH agent runs from here, a hosted one on its host (the `peer:agent` route).
+describe('liftedPeerTarget', () => {
+	it.each(AGENT_MODES)('%s: names the host route only for a hosted agent', (mode) => {
+		vi.mocked(readSettings).mockReturnValue({ federationHostedAgents: true } as never);
+		expect(liftedPeerTarget(agentModeFields(mode))).toEqual(
+			mode === 'hosted' ? { peer: 'box', agent: 'h1' } : undefined
+		);
+	});
+
+	it('leaves a lifted agent here while hosted agents are off, as its SSH agent', () => {
+		vi.mocked(readSettings).mockReturnValue({} as never);
+		expect(liftedPeerTarget(agentModeFields('hosted'))).toBeUndefined();
+		expect(liftedPeerTarget(undefined)).toBeUndefined();
 	});
 });
 

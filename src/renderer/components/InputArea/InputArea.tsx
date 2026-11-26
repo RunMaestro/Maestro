@@ -718,7 +718,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							theme={theme}
 							mode={isAiCommandDraft ? 'ai' : 'shell'}
 							cwd={resolveCommandCwd(session)}
-							remoteName={session.sshRemote?.name}
 							isGitRepo={session.isGitRepo}
 							model={aiCommandModel}
 							effort={aiCommandEffort}

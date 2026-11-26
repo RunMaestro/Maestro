@@ -12,10 +12,9 @@ const EMPTY_NAMES: ReadonlyMap<string, string> = new Map();
  * Remote id -> display name, for surfaces that label MANY agents at once (the
  * `@` mention picker, agent lists) and only need the name.
  *
- * {@link useSshRemotes} is the full CRUD hook and `useSshRemoteName` resolves a
- * SINGLE session's remote; neither fits a list, where one lookup table beats N
- * per-row fetches. This reads through the same `ssh-configs` ipcCache entry, so
- * mounting it alongside those hooks costs no extra IPC.
+ * {@link useSshRemotes} is the full CRUD hook; it does not fit a list, where one
+ * lookup table beats N per-row fetches. This reads through the same `ssh-configs`
+ * ipcCache entry, so every row's mode pill (`AgentModePill`) shares one IPC.
  *
  * Returns an empty map until the configs load. Callers should render a neutral
  * "SSH" label in that window rather than treating the agent as local.

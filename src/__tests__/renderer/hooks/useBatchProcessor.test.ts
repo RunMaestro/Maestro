@@ -942,6 +942,50 @@ describe('useBatchProcessor hook', () => {
 			useSettingsStore.setState({ autoRunDisabled: false });
 		});
 
+		it('starts a hosted agent run on its host, never here', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			const actOnHost = vi.fn().mockResolvedValue({ ok: true, result: { kind: 'auto-run' } });
+			maestro.federation = { act: actOnHost };
+			try {
+				const sessions = [createMockSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } })];
+				const groups = [createMockGroup()];
+
+				useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+				const { result } = renderHook(() =>
+					useBatchProcessor({
+						groups,
+						onUpdateSession: mockOnUpdateSession,
+						onSpawnAgent: mockOnSpawnAgent,
+						onAddHistoryEntry: mockOnAddHistoryEntry,
+					})
+				);
+
+				await act(async () => {
+					await result.current.startBatchRun(
+						sessions[0].id,
+						{
+							documents: [{ filename: 'test', resetOnCompletion: false }],
+							prompt: 'Test prompt',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					);
+				});
+
+				expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+				expect(actOnHost).toHaveBeenCalledWith('box', 'h1', {
+					kind: 'auto-run',
+					launch: { documents: [{ file: '/test/folder/test.md' }], prompt: 'Test prompt' },
+				});
+				// The host's frames draw the run; nothing runs here.
+				expect(result.current.batchRunStates[sessions[0].id]?.isRunning ?? false).toBe(false);
+			} finally {
+				delete maestro.federation;
+				useSettingsStore.setState({ federationHostedAgents: false });
+			}
+		});
+
 		it('should not start if session is not found', async () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];

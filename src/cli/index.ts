@@ -18,9 +18,12 @@ import { ask } from './commands/ask';
 import {
 	queueHold,
 	queueList,
+	queueEdit,
 	queueMerge,
+	queueMove,
 	queueRemove,
 	queueResume,
+	queueSendNow,
 	queueSteer,
 } from './commands/queue';
 import {
@@ -822,6 +825,35 @@ queue
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueMerge);
+
+queue
+	.command('edit <item-id>')
+	.description(
+		'Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('-t, --text <text>', 'The new message text (required)')
+	.option('--model <model>', 'Model the message runs with')
+	.option('--effort <effort>', 'Effort the message runs with')
+	.action(queueEdit);
+
+queue
+	.command('move <item-id>')
+	.description(
+		"Move a queued item to another place, like dragging its queued card. --to counts from 0 (the first item that waits); with --tab it counts only that tab's items, as the tab's queue list draws them."
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--to <position>', 'Where the item goes, 0 being the first (required)')
+	.option('--tab <tab-id>', "Count positions among this tab's items only")
+	.action(queueMove);
+
+queue
+	.command('send-now <item-id>')
+	.description(
+		"Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on."
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueSendNow);
 
 queue
 	.command('steer <item-id>')

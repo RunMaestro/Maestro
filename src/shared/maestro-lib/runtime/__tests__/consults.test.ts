@@ -278,6 +278,20 @@ describe('runtime consults', () => {
 			);
 			expect(promptOf(provider.callsFor('consult')[1].spec)).toContain('We chose Postgres.');
 		});
+
+		it('uses the context and name an asker on another machine sends, as it would its own tab', async () => {
+			const runtime = await start(ANSWER);
+			value(
+				await runtime.consults.ask({
+					targetAgentId: 'a2',
+					question: 'What did we pick?',
+					transcript: [{ source: 'user', text: 'We chose Postgres.', timestamp: 1 }],
+					fromAgentName: 'Laptop Agent',
+				})
+			);
+			expect(promptOf(provider.callsFor('consult')[0].spec)).toContain('We chose Postgres.');
+			expect(consultTab('a2').name).toBe('↩ Laptop Agent');
+		});
 	});
 
 	describe('continuity and failure (B17, B18)', () => {
@@ -340,6 +354,21 @@ describe('runtime consults', () => {
 					await runtime.consults.ask({ targetAgentId: 'a2', question: 'Hi', fromAgentId: 'a2' })
 				).code
 			).toBe('invalid');
+			expect(provider.calls).toEqual([]);
+		});
+
+		it('refuses a /btw side question rather than answering it as a consult', async () => {
+			const runtime = await start();
+			const refused = errorOf(
+				await runtime.consults.ask({
+					targetAgentId: 'a2',
+					question: 'which file?',
+					sideQuestion: true,
+					targetTabId: 't1',
+				})
+			);
+			expect(refused.code).toBe('rejected');
+			expect(refused.message).toContain('side questions (/btw)');
 			expect(provider.calls).toEqual([]);
 		});
 

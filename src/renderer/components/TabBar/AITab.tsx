@@ -30,10 +30,6 @@ export interface AITabProps {
 	/** Session-level agentSessionId fallback for tab title display */
 	sessionAgentSessionId?: string | null;
 	canClose: boolean;
-	/** Select only: no drag and no hover menu (see `TabBarProps.readOnly`). */
-	readOnly?: boolean;
-	/** Where this tab lives, drawn as a pill after its name (see `TabBarProps.tabLocations`). */
-	location?: { label: string; title: string };
 	/** Stable callback - receives tabId as first argument */
 	onSelect: (tabId: string) => void;
 	/** Stable callback - receives tabId as first argument */
@@ -117,8 +113,6 @@ export const AITab = memo(function AITab({
 	sessionId,
 	sessionAgentSessionId,
 	canClose,
-	readOnly = false,
-	location,
 	onSelect,
 	onClose,
 	onDragStart,
@@ -181,8 +175,6 @@ export const AITab = memo(function AITab({
 	} = useTabHoverOverlay({
 		registerRef,
 		shouldOpen: () => {
-			// A read-only tab offers no actions: every overlay entry acts on the tab.
-			if (readOnly) return false;
 			// Only show overlay if there's something meaningful to show:
 			// - Tabs with sessions or logs: always show (for session/context actions)
 			// - Tabs without sessions or logs: show only when a reorder action is
@@ -535,12 +527,12 @@ export const AITab = memo(function AITab({
 					handleTabSelect();
 				}
 			}}
-			draggable={!readOnly}
-			onDragStart={readOnly ? undefined : handleTabDragStart}
-			onDrag={readOnly ? undefined : handleTabDrag}
-			onDragOver={readOnly ? undefined : handleTabDragOver}
-			onDragEnd={readOnly ? undefined : onDragEnd}
-			onDrop={readOnly ? undefined : handleTabDrop}
+			draggable
+			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
+			onDragOver={handleTabDragOver}
+			onDragEnd={onDragEnd}
+			onDrop={handleTabDrop}
 		>
 			{/* Agent error pill - highlights tabs that have an active error for quick triage */}
 			{tab.agentError && (
@@ -642,17 +634,6 @@ export const AITab = memo(function AITab({
 			>
 				{displayName}
 			</span>
-
-			{location && (
-				<span
-					className="text-3xs px-1 py-0.5 rounded shrink-0"
-					style={{ color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }}
-					title={location.title}
-					data-testid="ai-tab-location"
-				>
-					{location.label}
-				</span>
-			)}
 
 			{tab.origin === 'relay' && (
 				<span

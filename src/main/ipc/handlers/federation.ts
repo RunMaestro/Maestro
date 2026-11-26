@@ -40,6 +40,7 @@ import {
 } from '../../federation/setup-host';
 import { resolveBundledCliPathSync } from '../../maestro-cli-manager';
 import { parsePeerAgentAction } from '../../../shared/maestro-lib/client/peer-actions';
+import { resolveToDataUrl } from '../../storage/session-image-store';
 import type {
 	PeerActionAnswer,
 	PeerMirrorSnapshot,
@@ -57,7 +58,17 @@ import {
 } from '../../federation/lift';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { setFederationWindow } from '../../federation/federation-window';
-import { isHistoryEntryType, type PaginatedResult } from '../../../shared/history';
+import {
+	historyLookbackCutoff,
+	isHistoryEntryType,
+	type PaginatedResult,
+} from '../../../shared/history';
+import {
+	hostedCueScopeAgents,
+	withHostedCueRuns,
+	type CueHistoryEntriesQuery,
+	type CueHistoryGroupsQuery,
+} from '../../utils/cue-history-merge';
 import type { HistoryEntry, HistoryEntryType } from '../../../shared/types';
 import {
 	pagePeerHistory,
@@ -75,9 +86,57 @@ export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	watchSessions?(onChange: () => void): () => void;
 	/** The all-windows push, for the automatic Federation snapshot. */
 	safeSend?: SafeSendFn;
+	/**
+	 * This machine's Cue runs, as History rows (`getCueHistoryEntries()`, `getCueHistoryGroups()`).
+	 * A hosted agent's Cue subscriptions run here, so its History panel lists them beside the
+	 * host's entries, as a local agent's panel does. Injected for the reason `history.ts` gives:
+	 * no static edge to the Cue SQLite layer.
+	 */
+	getCueHistoryEntries?: CueHistoryEntriesQuery;
+	getCueHistoryGroups?: CueHistoryGroupsQuery;
 };
 
 const LOG_CONTEXT = '[Federation]';
+
+/**
+ * A send's images as the bytes a local spawn would hand the provider. A staged image the store
+ * already relocated (after a restart, or replayed from a transcript) is a `maestro-image://` ref
+ * into THIS machine's store, which the host cannot read. A local or SSH turn resolves it at spawn
+ * (`parseDataUrl()`), so a hosted turn resolves it here, before the action leaves. A ref whose file
+ * is gone is dropped, as the local spawn drops it.
+ */
+export async function inlineSendImageRefs(action: unknown): Promise<unknown> {
+	if (!action || typeof action !== 'object') return action;
+	const raw = action as Record<string, unknown>;
+	if (raw.kind === 'send' && Array.isArray(raw.images)) {
+		return { ...raw, images: await inlineImageList(raw.images) };
+	}
+	// A queued card's Edit carries the images it keeps, which may be refs into this store too.
+	const edit = raw.edit as Record<string, unknown> | undefined;
+	if (
+		raw.kind === 'edit-queued' &&
+		edit &&
+		typeof edit === 'object' &&
+		Array.isArray(edit.images)
+	) {
+		return { ...raw, edit: { ...edit, images: await inlineImageList(edit.images) } };
+	}
+	return action;
+}
+
+/** Each string ref as its data URL; a ref whose file is gone is dropped, as a local spawn drops it. */
+async function inlineImageList(list: unknown[]): Promise<unknown[]> {
+	const images: unknown[] = [];
+	for (const image of list) {
+		if (typeof image !== 'string') {
+			images.push(image);
+			continue;
+		}
+		const inline = await resolveToDataUrl(image);
+		if (inline) images.push(inline);
+	}
+	return images;
+}
 
 function opts(operation: string) {
 	return { context: LOG_CONTEXT, operation };
@@ -104,6 +163,13 @@ function readTail(options: unknown): TranscriptReadOptions {
 	return { tail };
 }
 
+/** The stored agent records, as plain objects: anything else in the list is skipped. */
+function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+	return Array.isArray(value)
+		? value.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+		: [];
+}
+
 /** A lookback in hours, or null for all time. Anything else is all time. */
 function readLookback(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
@@ -127,6 +193,7 @@ function readHistoryQuery(query: unknown): PeerHistoryPageQuery {
 		lookbackHours: readLookback(raw.lookbackHours),
 		...(types ? { types } : {}),
 		hostKey: typeof raw.hostKey === 'string' && raw.hostKey ? raw.hostKey : null,
+		...(raw.groupCue === true ? { groupCue: true } : {}),
 		...(offset !== undefined || limit !== undefined
 			? {
 					pagination: {
@@ -189,6 +256,26 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				)
 		)
 	);
+	// A hosted agent's History: the host's entries, and this machine's Cue runs of the agent's
+	// local record (a host serves no Cue runs), merged before the page, graph, and bar jump.
+	const hostedHistory = async (
+		peerId: unknown,
+		agentId: unknown,
+		lookbackHours: number | null | undefined,
+		groupCue?: boolean
+	): Promise<HistoryEntry[]> => {
+		const peer = requireId(peerId, 'peer id');
+		const agent = requireId(agentId, 'agent id');
+		const entries = await requireService().history(peer, agent);
+		const records = arrayOfRecords(deps.readSessions());
+		const cutoff = historyLookbackCutoff(lookbackHours);
+		return withHostedCueRuns(
+			entries,
+			{ entries: deps.getCueHistoryEntries, groups: deps.getCueHistoryGroups },
+			hostedCueScopeAgents(records, peer, agent),
+			{ groupCue, since: cutoff > 0 ? cutoff : undefined }
+		);
+	};
 	ipcMain.handle(
 		'federation:historyPage',
 		withIpcErrorLogging(
@@ -198,11 +285,9 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				agentId: unknown,
 				query?: unknown
 			): Promise<PaginatedResult<HistoryEntry>> => {
-				const entries = await requireService().history(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id')
-				);
-				return pagePeerHistory(entries, readHistoryQuery(query));
+				const read = readHistoryQuery(query);
+				const entries = await hostedHistory(peerId, agentId, read.lookbackHours, read.groupCue);
+				return pagePeerHistory(entries, read);
 			}
 		)
 	);
@@ -216,12 +301,10 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				bucketCount: unknown,
 				lookbackHours: unknown
 			): Promise<HistoryGraphData> => {
-				const entries = await requireService().history(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id')
-				);
+				const lookback = readLookback(lookbackHours);
+				const entries = await hostedHistory(peerId, agentId, lookback);
 				const buckets = typeof bucketCount === 'number' ? bucketCount : 24;
-				return peerHistoryGraph(entries, buckets, readLookback(lookbackHours));
+				return peerHistoryGraph(entries, buckets, lookback);
 			}
 		)
 	);
@@ -239,11 +322,47 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
 					throw new Error('timestamp must be a number');
 				}
-				const entries = await requireService().history(
+				const lookback = readLookback(lookbackHours);
+				const entries = await hostedHistory(peerId, agentId, lookback);
+				return peerHistoryOffset(entries, timestamp, lookback, readTypes(types));
+			}
+		)
+	);
+	// The History panel's Delete and Validate on a mirrored agent: the same edits `history:delete`
+	// and `history:update` make on a local agent's History, made by its host.
+	ipcMain.handle(
+		'federation:historyDelete',
+		withIpcErrorLogging(
+			opts('historyDelete'),
+			async (peerId: unknown, agentId: unknown, entryId: unknown): Promise<boolean> =>
+				requireService().historyRemove(
 					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id')
+					requireId(agentId, 'agent id'),
+					requireId(entryId, 'entry id')
+				)
+		)
+	);
+	ipcMain.handle(
+		'federation:historyUpdate',
+		withIpcErrorLogging(
+			opts('historyUpdate'),
+			async (
+				peerId: unknown,
+				agentId: unknown,
+				entryId: unknown,
+				updates: unknown
+			): Promise<boolean> => {
+				const validated =
+					updates && typeof updates === 'object'
+						? (updates as { validated?: unknown }).validated
+						: undefined;
+				if (typeof validated !== 'boolean') throw new Error('validated must be a boolean');
+				return requireService().historyUpdate(
+					requireId(peerId, 'peer id'),
+					requireId(agentId, 'agent id'),
+					requireId(entryId, 'entry id'),
+					{ validated }
 				);
-				return peerHistoryOffset(entries, timestamp, readLookback(lookbackHours), readTypes(types));
 			}
 		)
 	);
@@ -268,7 +387,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				return service.act(
 					requireId(peerId, 'peer id'),
 					requireId(agentId, 'agent id'),
-					parsePeerAgentAction(action)
+					parsePeerAgentAction(await inlineSendImageRefs(action))
 				);
 			}
 		)

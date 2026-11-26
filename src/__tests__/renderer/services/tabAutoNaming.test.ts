@@ -20,9 +20,13 @@ import {
 	WIZARD_TAB_PLACEHOLDER_NAME,
 } from '../../../renderer/services/tabAutoNaming';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { renameHostedTab } from '../../../renderer/services/hostedTurns';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession, createMockAITab } from '../../helpers';
 import type { Session } from '../../../renderer/types';
+
+// A hosted tab's name reaches its host through this; hostedTurns.test.ts covers the wire.
+vi.mock('../../../renderer/services/hostedTurns', () => ({ renameHostedTab: vi.fn() }));
 
 const generateTabName = vi.fn<(config: unknown) => Promise<string | null>>();
 
@@ -77,6 +81,12 @@ describe('requestTabAutoName', () => {
 		expect(generateTabName).toHaveBeenCalledTimes(1);
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].name).toBe('Ingest Pipeline');
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].isGeneratingName).toBe(false);
+		// The same name goes to a hosted tab's host (a no-op for any other agent).
+		expect(renameHostedTab).toHaveBeenCalledWith(
+			expect.objectContaining({ id: session.id }),
+			'tab-1',
+			'Ingest Pipeline'
+		);
 	});
 
 	it('skips a tab that already has a name', () => {

@@ -8,7 +8,11 @@ vi.mock('../../../../main/utils/agent-busy', () => ({
 	isAgentBusy: vi.fn((session: { id: string }) => session.id === 'busy'),
 }));
 
-import { mapSessionsForMentions } from '../../../../main/ipc/bootstrap/session-mention-mapper';
+import {
+	mapSessionsForMentions,
+	type HostedBusySource,
+} from '../../../../main/ipc/bootstrap/session-mention-mapper';
+import { AGENT_MODES, agentModeFields } from '../../../helpers/mockSession';
 
 const remote = (id: string) => (id === 'r1' ? { id: 'r1', name: 'Box' } : undefined);
 
@@ -67,5 +71,67 @@ describe('mapSessionsForMentions', () => {
 			remote as never
 		);
 		expect(mapped.cwd).toBe('/full');
+	});
+	describe('the same participant in every mode (A1.9)', () => {
+		// The host's records as the peer mirror holds them: h1 is mid-turn there, h2 is free.
+		const host = (enabled = true): HostedBusySource => ({
+			hostingEnabled: () => enabled,
+			peers: () => [
+				{
+					peerId: 'box',
+					agents: [
+						{ id: 'h1', state: 'idle', aiTabs: [{ id: 't1', state: 'busy' }] },
+						{ id: 'h2', state: 'idle', aiTabs: [{ id: 't1', state: 'idle' }] },
+					] as never,
+				},
+			],
+		});
+
+		it.each(AGENT_MODES)(
+			'a %s agent mid-turn reads busy and a free one reads free, so a busy one waits alike',
+			(mode) => {
+				const fields = agentModeFields(mode);
+				// Where the turn runs: a process here for local and SSH, the host for hosted.
+				const running = {
+					...fields,
+					id: mode === 'hosted' ? 'running' : 'busy',
+					name: 'Running',
+					toolType: 'claude-code',
+					cwd: '/a',
+				};
+				const free = {
+					...fields,
+					...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h2', at: 1 } } : {}),
+					id: 'free',
+					name: 'Free',
+					toolType: 'claude-code',
+					cwd: '/b',
+				};
+				const mapped = mapSessionsForMentions(
+					[running, free],
+					remote as never,
+					{} as never,
+					host()
+				);
+
+				expect(mapped.map((s) => s.isBusy)).toEqual([true, false]);
+				expect(mapped[1]).toMatchObject({
+					sshRemoteName: mode === 'local' ? undefined : 'Box',
+					sshRemoteConfig: mode === 'local' ? undefined : { enabled: true, remoteId: 'r1' },
+				});
+			}
+		);
+
+		it('reads a hosted agent as its SSH agent when hosting is off', () => {
+			const hosted = {
+				...agentModeFields('hosted'),
+				id: 'running',
+				name: 'A',
+				toolType: 'claude-code',
+				cwd: '/a',
+			};
+			const [mapped] = mapSessionsForMentions([hosted], remote as never, {} as never, host(false));
+			expect(mapped.isBusy).toBe(false);
+		});
 	});
 });

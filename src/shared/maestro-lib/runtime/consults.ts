@@ -240,6 +240,15 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		if (disposed) return fail(method, 'host-unavailable', 'The runtime is closing.');
 		const question = input.question.trim();
 		if (!question) return fail(method, 'invalid', 'The question is empty.');
+		// A side question forks a desktop tab's provider session (`/btw`); answering it as a consult
+		// would add a turn to a consult tab instead, so refuse it rather than answer something else.
+		if (input.sideQuestion === true) {
+			return fail(
+				method,
+				'rejected',
+				'This host does not answer side questions (/btw). Run it on a desktop host.'
+			);
+		}
 		const record = repository.getAgent(input.targetAgentId);
 		if (!record) return fail(method, 'not-found', `No agent ${input.targetAgentId}.`);
 		if (input.fromAgentId && input.fromAgentId === input.targetAgentId) {
@@ -252,7 +261,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		}
 
 		const source = input.fromAgentId ? repository.getAgent(input.fromAgentId) : undefined;
-		const sourceName = source?.name ?? UNNAMED_ASKER;
+		const sourceName = source?.name ?? (input.fromAgentName?.trim() || UNNAMED_ASKER);
 		// Keyed on the CALLING AGENT and a constant tab, never the caller's active tab, so one consult
 		// tab per pairing survives the agent switching tabs and a follow-up resumes the thread (req-D2).
 		const key = {
@@ -263,9 +272,12 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 			Math.max(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.minTimeoutMs ?? MIN_TIMEOUT_MS),
 			MAX_TIMEOUT_MS
 		);
-		const { transcript, strategy } = input.withContext
-			? contextOf(source?.id, input.fromTabId, question)
-			: { transcript: [], strategy: inferContextStrategy(question) };
+		// An asker on another machine sent its own windowed context; this host holds no tab of it.
+		const { transcript, strategy } = input.transcript
+			? { transcript: input.transcript, strategy: inferContextStrategy(question) }
+			: input.withContext
+				? contextOf(source?.id, input.fromTabId, question)
+				: { transcript: [], strategy: inferContextStrategy(question) };
 
 		// The caller's clock covers the wait for an earlier consult on the same tab, too.
 		const requestId = ctx.newId();

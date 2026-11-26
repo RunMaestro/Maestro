@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { usePathPickerStore } from '../../../renderer/services/pathPicker';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
@@ -2571,6 +2572,45 @@ describe('NewInstanceModal', () => {
 			}
 		});
 
+		// A copy of an SSH agent whose remote is not resolved yet is still an SSH draft. Its
+		// folders are not on this disk, so neither Browse may open the native dialog.
+		it('an unresolved SSH draft never browses this machine', async () => {
+			render(
+				<NewInstanceModal
+					isOpen
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={{ ...source, sessionSshRemoteConfig: { enabled: true, remoteId: null } }}
+				/>
+			);
+			await act(async () => {});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			vi.mocked(window.maestro.dialog.selectFolder).mockClear();
+			vi.mocked(window.maestro.logger.toast).mockClear();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`));
+			});
+			expect(window.maestro.logger.toast).toHaveBeenCalledTimes(1);
+
+			// The Additional Directories rows browse the same place.
+			fireEvent.click(screen.getByText('Add Directory'));
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Browse folders'));
+			});
+			expect(window.maestro.logger.toast).toHaveBeenCalledTimes(2);
+			expect(window.maestro.logger.toast).toHaveBeenLastCalledWith(
+				'Nothing to browse yet',
+				expect.anything()
+			);
+			expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+			expect(usePathPickerStore.getState().request).toBeNull();
+		});
+
 		it.each([
 			{ host: 'local account B', remoteId: undefined, forced: false },
 			{ host: 'SSH account B', remoteId: 'remote-b', forced: false },
@@ -4589,6 +4629,149 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
 			});
 			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
+		});
+
+		it('seeds the SSH remote with presetSshRemoteId, so a remote folder makes a remote agent', async () => {
+			// "New Agent Here" on a folder in an SSH or hosted agent's Files panel: the
+			// folder is on the remote, so the new agent must start there, as a local
+			// folder starts a local agent.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/home/devuser/my-project/docs"
+					presetSshRemoteId="remote-1"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1');
+			});
+			const agentOption = await screen.findByRole('option', { name: /Claude Code/i });
+			await act(async () => {
+				fireEvent.click(agentOption);
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('docs');
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			expect(onCreate.mock.calls[0][1]).toBe('/home/devuser/my-project/docs');
+			expect(onCreate.mock.calls[0][11]).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/devuser/my-project/docs',
+				})
+			);
+		});
+
+		it('finishes seeding on the next remote when the preset remote is offline', async () => {
+			vi.mocked(window.maestro.agents.detect).mockImplementation(async (sshRemoteId?: string) =>
+				sshRemoteId === 'remote-1'
+					? [
+							{
+								...createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: false }),
+								error: 'Connection refused',
+							},
+						]
+					: [createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true })]
+			);
+			const remote = (id: string, host: string) => ({
+				id,
+				name: host,
+				host,
+				port: 22,
+				username: 'devuser',
+				privateKeyPath: '/path/to/key',
+				enabled: true,
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [remote('remote-1', 'down.example.com'), remote('remote-2', 'up.example.com')],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/home/devuser/my-project/docs"
+					presetSshRemoteId="remote-1"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Unable to Connect')).toBeInTheDocument();
+			});
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-2' } });
+			await waitFor(() => {
+				expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-2');
+			});
+			const agentOption = await screen.findByRole('option', { name: /Claude Code/i });
+			await act(async () => {
+				fireEvent.click(agentOption);
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on up.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// The interrupted seeding finished, so the draft is ready to create.
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			expect(onCreate.mock.calls[0][11]).toEqual(
+				expect.objectContaining({ enabled: true, remoteId: 'remote-2' })
+			);
 		});
 	});
 });

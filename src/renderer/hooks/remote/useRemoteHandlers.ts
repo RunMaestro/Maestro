@@ -46,6 +46,12 @@ import {
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { noteDirectDispatch } from '../../stores/retryStore';
 import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
+import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
+import {
+	runMaestroBuiltinCommand,
+	runsOutsideComposer,
+} from '../../services/maestroBuiltinCommands';
+import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -346,6 +352,31 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			const targetTab = requestedTab ?? getActiveTab(session);
 			const writeTabId = targetTab?.id;
 
+			// A hosted agent's turns run on its Federation host, so the message goes there as
+			// typed (the composer's `sendHostedTurn()`), with the tab's own settings. The host
+			// expands a slash command and runs `/history` and `/skills` itself. A managed Pianola
+			// admission stays with its native owner. The receipt is the host's: it took the
+			// message, or it said why not in a toast.
+			const hostedTarget = pianolaDispatchId ? undefined : hostedTargetOf(session);
+			const sendToHost = async () => {
+				const receipt = await sendHostedTurn(session, writeTabId, command, images ?? []);
+				reportDelivery(!!receipt, receipt ? undefined : 'host-refused');
+			};
+
+			// Maestro's own commands run for the tab now, busy or not, as the composer runs them,
+			// and in every mode: here for a local or SSH agent, on the host for a hosted one.
+			const builtin = literalPrompt ? null : parseMaestroBuiltinCommand(command, session.toolType);
+			if (builtin && runsOutsideComposer(builtin) && writeTabId) {
+				if (hostedTarget) {
+					await sendToHost();
+					return;
+				}
+				if (runMaestroBuiltinCommand(builtin, { sessionId, tabId: writeTabId })) {
+					reportDelivery(true);
+					return;
+				}
+			}
+
 			const grokCommandScope = canonicalJson({
 				...getGrokCommandScope({ ...session, activeTabId: writeTabId ?? session.activeTabId }),
 				pid: undefined,
@@ -398,6 +429,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			if (targetTab?.state === 'busy' && !force) {
 				logger.info('[Remote] Target tab is mid-turn, cannot process command');
 				reportDelivery(false, 'tab-busy');
+				return;
+			}
+
+			if (hostedTarget) {
+				await sendToHost();
 				return;
 			}
 

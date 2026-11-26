@@ -25,11 +25,13 @@ import type {
 	UsageStats,
 } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
+import type { QueueSteerResult } from '../../chatSteering';
 import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 import type { ExplicitHostEndpointSource } from './discovery';
+import type { CrossAgentTranscriptEntry } from '../../crossAgentTypes';
 
 // ---------------------------------------------------------------------------
 // Results and errors
@@ -99,7 +101,14 @@ export type ClientMethod =
 	| 'turns.queue.list'
 	| 'turns.queue.remove'
 	| 'turns.queue.setPaused'
+	| 'turns.queue.merge'
+	| 'turns.queue.steer'
+	| 'turns.queue.edit'
+	| 'turns.queue.move'
+	| 'turns.queue.sendNow'
 	| 'history.list'
+	| 'history.remove'
+	| 'history.update'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
 	| 'autoRun.stop'
@@ -357,6 +366,18 @@ export interface TabPatch {
 	effort?: string | null;
 	saveToHistory?: boolean;
 	enterToSend?: boolean | null;
+	/**
+	 * The provider session the tab's next turn resumes. Set when a conversation that ran elsewhere
+	 * for this tab (an inline wizard, over the SSH remote) hands its session to the tab, as a local
+	 * wizard promotes its session into its tab when it ends.
+	 */
+	agentSessionId?: string;
+	/**
+	 * Context the tab's next turn carries ahead of the typed message (`pendingMergedContext`), set
+	 * by Merge context, Send to Agent, and session recovery. The host prepends it to that turn's
+	 * prompt and clears it, as a local send does, so the transcript shows only the typed message.
+	 */
+	mergedContext?: string;
 }
 
 export interface TranscriptOptions {
@@ -411,6 +432,11 @@ export interface TurnInput {
 	 * field ignores it, and the turn runs on the host tab's settings.
 	 */
 	overrides?: TurnOverrides;
+	/**
+	 * Queue Held: the host queues the message paused, even on an idle tab, until someone resumes
+	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host refuses it.
+	 */
+	held?: boolean;
 }
 
 /** One sender's own tab choices, applied to this one turn only; never stored on the host tab. */
@@ -448,6 +474,12 @@ export function normalizeOriginHost(value: unknown): string | undefined {
 export type TurnSendReceipt =
 	/** The agent was idle; the turn is running now. */
 	| { status: 'started' }
+	/**
+	 * The text was one of Maestro's own commands (`/history`, `/skills`,
+	 * `parseMaestroBuiltinCommand()`), and the host ran it for the tab as its composer would. No
+	 * turn started: what it writes reaches the tab's transcript.
+	 */
+	| { status: 'ran' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
 	| {
 			status: 'queued';
@@ -468,6 +500,87 @@ export interface QueuedTurn {
 	text: string;
 	/** The host paused the queue on this item. */
 	paused: boolean;
+	/**
+	 * Model and effort captured when it was queued (an absent field: the agent's default applies).
+	 * Absent when the host did not say, so the card and the editor fall back to the tab's own.
+	 */
+	turnSettings?: QueuedTurnSettingsWire;
+	/**
+	 * The images it was queued with, as data URLs (the host resolves its own store refs before they
+	 * leave), so the card draws the thumbnails and its editor opens with them. Absent: none.
+	 */
+	images?: string[];
+}
+
+/**
+ * A waiting message's images off the wire: data URLs only, or `undefined` when there are none. A
+ * ref into another machine's image store cannot be drawn here, so anything else is dropped.
+ */
+export function parseQueuedTurnImages(raw: unknown): string[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	const images = raw.filter(
+		(image): image is string => typeof image === 'string' && image.startsWith('data:image/')
+	);
+	return images.length > 0 ? images : undefined;
+}
+
+/** A waiting message's own model and effort, as the queue wire carries them. */
+export interface QueuedTurnSettingsWire {
+	model?: string;
+	effort?: string;
+}
+
+/**
+ * A waiting message's `turnSettings` off the wire: only its non-empty string fields, or
+ * `undefined` when there is no object at all (the host did not say).
+ */
+export function parseQueuedTurnSettings(raw: unknown): QueuedTurnSettingsWire | undefined {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+	const { model, effort } = raw as Record<string, unknown>;
+	return {
+		...(typeof model === 'string' && model ? { model } : {}),
+		...(typeof effort === 'string' && effort ? { effort } : {}),
+	};
+}
+
+/**
+ * What an edit to a waiting message writes (the queued card's Edit). `text` replaces the item's.
+ * `turnSettings`, when present, is assigned whole, so a field left out means the agent's default;
+ * absent, the item keeps its own (a script that only rewrites the text). `images` likewise
+ * replaces the item's images when present and keeps them when absent.
+ */
+export interface QueuedTurnEdit {
+	text: string;
+	turnSettings?: QueuedTurnSettingsWire;
+	images?: string[];
+}
+
+/**
+ * An edit off the wire (`edit_queue_item`, the `edit-queued` peer action), checked: the text is a
+ * string with something in it, `turnSettings` an object, and `images` (when given) a list of
+ * strings. Returns the reason in `error` when it is not one.
+ */
+export function parseQueuedTurnEdit(
+	raw: Record<string, unknown>
+): { edit: QueuedTurnEdit } | { error: string } {
+	if (typeof raw.text !== 'string' || !raw.text.trim()) return { error: 'Missing text' };
+	const turnSettings = parseQueuedTurnSettings(raw.turnSettings);
+	if (raw.turnSettings !== undefined && !turnSettings) {
+		return { error: 'turnSettings must be an object' };
+	}
+	if (
+		raw.images !== undefined &&
+		(!Array.isArray(raw.images) || !raw.images.every((image) => typeof image === 'string'))
+	) {
+		return { error: 'images must be a list of strings' };
+	}
+	return {
+		edit: {
+			text: raw.text,
+			...(turnSettings ? { turnSettings } : {}),
+			...(raw.images !== undefined ? { images: raw.images as string[] } : {}),
+		},
+	};
 }
 
 export interface TurnToolCall {
@@ -528,6 +641,49 @@ export interface TurnsApi {
 			itemId: string,
 			paused: boolean
 		): Promise<ClientResult<{ found: boolean; paused: boolean }>>;
+		/**
+		 * Fold a waiting message into the waiting message above it on the same tab: the queued
+		 * card's Merge. The upper message keeps its id, place, hold, and settings; the texts join
+		 * with one blank line between. `merged: false` when there is nothing above it to merge into
+		 * (or it no longer waits).
+		 */
+		merge(
+			agentId: string,
+			itemId: string
+		): Promise<ClientResult<{ merged: boolean; mergedIntoId?: string }>>;
+		/**
+		 * Hand a waiting message to the turn already running on its tab: the queued card's Steer.
+		 * The host runs its own steer (the same `steerQueuedItem()` its Steer button runs), so the
+		 * message leaves its queue only once the agent has it, and comes back if it never takes it.
+		 * `outcome` says what happened; a headless host answers `unsupported`.
+		 */
+		steer(agentId: string, itemId: string): Promise<ClientResult<QueueSteerResult>>;
+		/**
+		 * Rewrite a waiting message in place: the queued card's Edit. It keeps its id, place, and
+		 * hold. `found: false` when no waiting message has that id (it may have started).
+		 */
+		edit(
+			agentId: string,
+			itemId: string,
+			edit: QueuedTurnEdit
+		): Promise<ClientResult<{ found: boolean }>>;
+		/**
+		 * Move a waiting message to `toIndex` (the queued card's drag). With `tabId`, the index
+		 * counts only that tab's waiting messages. `moved: false` when no waiting message has that
+		 * id or the index is out of range.
+		 */
+		move(
+			agentId: string,
+			itemId: string,
+			toIndex: number,
+			tabId?: string
+		): Promise<ClientResult<{ moved: boolean }>>;
+		/**
+		 * Run a waiting message now instead of in its turn (the queued card's Force Send). Beside
+		 * another tab's turn it runs in parallel. `sent: false` when no waiting message has that
+		 * id or its own tab is mid-turn.
+		 */
+		sendNow(agentId: string, itemId: string): Promise<ClientResult<{ sent: boolean }>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;
@@ -641,6 +797,13 @@ export interface ConsultAskInput {
 	fromTabId?: string;
 	/** Forward the asking tab's transcript as context. Off by default. */
 	withContext?: boolean;
+	/**
+	 * The context itself, for an asker the host does not hold (an agent on another machine
+	 * consulting this host's agent): already windowed, it wins over `withContext`.
+	 */
+	transcript?: CrossAgentTranscriptEntry[];
+	/** The asker's display name, for an asker the host does not hold: names the consult tab. */
+	fromAgentName?: string;
 	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
 	timeoutMs?: number;
 	/**
@@ -648,6 +811,14 @@ export interface ConsultAskInput {
 	 * answering a question. `question` is then the person's instruction.
 	 */
 	handoffAnswer?: string;
+	/**
+	 * Ask a `/btw` side question instead of consulting: the host answers from a throwaway fork of
+	 * the target's tab (`targetTabId`, or its active tab), with tools off, and nothing lands in that
+	 * tab's transcript. A headless host refuses it.
+	 */
+	sideQuestion?: boolean;
+	/** With `sideQuestion`: the target's AI tab to fork. */
+	targetTabId?: string;
 }
 
 export interface ConsultAnswer {
@@ -694,6 +865,23 @@ export interface HistoryApi {
 	 * (`.maestro/history/`), each carrying the `hostname` of the machine it came from.
 	 */
 	list(agentId: string, options?: HistoryListOptions): Promise<ClientResult<HistoryEntry[]>>;
+	/**
+	 * Delete one entry from the agent's own History (the History panel's Delete). `removed` is
+	 * false when the agent's own History has no such entry: a shared entry from another Maestro is
+	 * not this host's to delete.
+	 */
+	remove(agentId: string, entryId: string): Promise<ClientResult<{ removed: boolean }>>;
+	/** Change one entry of the agent's own History (the History panel's Validate). */
+	update(
+		agentId: string,
+		entryId: string,
+		updates: HistoryEntryUpdates
+	): Promise<ClientResult<{ updated: boolean }>>;
+}
+
+/** What `history.update` may change on an entry. */
+export interface HistoryEntryUpdates {
+	validated?: boolean;
 }
 
 export interface SettingsApi {

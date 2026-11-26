@@ -12,6 +12,8 @@
 import { useMemo } from 'react';
 import { useTabStore } from '../../stores/tabStore';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
+import { openFileInMaestroBrowser } from '../../services/fileActions';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 import type {
 	Session,
 	Theme,
@@ -535,19 +537,21 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				deps.setLastGraphFocusFilePath(relativePath);
 				deps.setIsGraphViewOpen(true);
 			},
-			// Open the active file preview in a new Maestro browser tab. Encodes
-			// each path segment so spaces and reserved chars survive the file:// URL.
+			// Open the active file preview in a new Maestro browser tab. A remote
+			// file opens its fetched local copy (services/fileActions).
 			onOpenInBrowser: () => {
 				const session = selectActiveSession(useSessionStore.getState());
 				if (!session?.activeFileTabId) return;
 				const activeFileTab = session.filePreviewTabs.find((t) => t.id === session.activeFileTabId);
 				if (!activeFileTab) return;
-				const encodedPath = activeFileTab.path
-					.split('/')
-					.map((seg) => encodeURIComponent(seg))
-					.join('/');
-				const url = `file://${encodedPath}`;
-				deps.handleOpenBrowserTabAt(url, { title: activeFileTab.name });
+				void openFileInMaestroBrowser(
+					{
+						path: activeFileTab.path,
+						sshRemoteId: activeFileTab.sshRemoteId ?? getSessionSshRemoteId(session),
+					},
+					deps.handleOpenBrowserTabAt,
+					activeFileTab.name
+				);
 			},
 			// Inline wizard callbacks handled inline to maintain closure access.
 			// Both name the tab: the hook's fallback is the last-touched wizard, which is

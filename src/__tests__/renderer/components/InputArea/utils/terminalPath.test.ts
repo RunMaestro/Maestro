@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatTerminalCwd } from '../../../../../renderer/components/InputArea/utils/terminalPath';
+import { AGENT_MODES, createModeSession } from '../../../../helpers';
 import { createInputAreaSession } from '../_fixtures';
 
 describe('InputArea terminalPath util', () => {
@@ -21,7 +22,7 @@ describe('InputArea terminalPath util', () => {
 		expect(formatTerminalCwd(session)).toBe('~/app');
 	});
 
-	it('prefixes SSH remote names and prefers remote cwd', () => {
+	it('prefers the remote cwd and never names the remote (the mode pill is the one mark)', () => {
 		const session = createInputAreaSession({
 			inputMode: 'terminal',
 			sshRemoteId: 'remote-1',
@@ -29,7 +30,24 @@ describe('InputArea terminalPath util', () => {
 			remoteCwd: '/home/ubuntu/repo',
 		});
 
-		expect(formatTerminalCwd(session)).toBe('PROD:~/repo');
+		expect(formatTerminalCwd(session)).toBe('~/repo');
+	});
+
+	it('mode parity: local, SSH, and hosted agents show their directory the same way', () => {
+		const [local, ssh, hosted] = AGENT_MODES.map((mode) =>
+			formatTerminalCwd(
+				createModeSession(mode, {
+					inputMode: 'terminal',
+					cwd: '/home/ubuntu/repo',
+					shellCwd: '/home/ubuntu/repo',
+					remoteCwd: '/home/ubuntu/repo',
+					sshRemote: { name: 'prod' } as any,
+				})
+			)
+		);
+		expect(local).toBe('~/repo');
+		expect(ssh).toBe(local);
+		expect(hosted).toBe(local);
 	});
 
 	it('falls back to configured SSH working directory', () => {

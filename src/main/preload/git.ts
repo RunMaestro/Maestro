@@ -493,8 +493,11 @@ export function createGitApi() {
 		/**
 		 * Check if GitHub CLI is installed and authenticated
 		 */
-		checkGhCli: (ghPath?: string): Promise<{ installed: boolean; authenticated: boolean }> =>
-			ipcRenderer.invoke('git:checkGhCli', ghPath),
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		): Promise<{ installed: boolean; authenticated: boolean }> =>
+			ipcRenderer.invoke('git:checkGhCli', ghPath, sshRemoteId),
 
 		/**
 		 * Create a GitHub Gist from file content

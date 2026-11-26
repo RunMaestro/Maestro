@@ -18,6 +18,7 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { describeSteerBlocked, getSteerEligibility } from './executionQueue';
 import { isSessionRemote } from './sessionHelpers';
+import { hostRunView } from './hostedSession';
 
 export type SendMenuAction = 'queue' | 'force' | 'hold' | 'steer';
 
@@ -87,7 +88,11 @@ export function getSteerSupport(
 		return {
 			kind: 'unsupported',
 			reason: 'ssh-remote',
-			detail: `This agent runs on an SSH remote. A turn on another host cannot be steered.`,
+			// LOCKED (parity B1.15): maestro-p opens its steering socket on the remote, and
+			// Maestro's steering client dials a local Unix socket; nothing forwards it. The
+			// row stays in the menu with this reason, in every mode.
+			detail:
+				"This agent runs on an SSH remote, where a running turn's input channel cannot be reached from here. Queue the message and it sends when the turn ends.",
 		};
 	}
 	if (session.toolType === 'claude-code') {
@@ -170,11 +175,19 @@ export interface SendMenuModel {
 export function buildSendMenuModel(
 	session: Session,
 	draft: { text: string; imageCount: number },
-	opts: { forcedParallelEnabled: boolean }
+	opts: {
+		forcedParallelEnabled: boolean;
+		/**
+		 * The agent is hosted: its turns run on a Federation host, on the host's own machine. Every
+		 * row works as it does locally; Steer is judged as the host would judge it (no SSH hop).
+		 */
+		hosted?: boolean;
+	}
 ): SendMenuModel {
 	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId);
 	const activeTabWorking = activeTab?.state === 'busy';
-	const steerSupport = getSteerSupport(session);
+	const runs = opts.hosted ? hostRunView(session) : session;
+	const steerSupport = getSteerSupport(runs);
 
 	const force: SendMenuRow = activeTabWorking
 		? {
@@ -197,7 +210,7 @@ export function buildSendMenuModel(
 	} else {
 		// The draft as the queued item it would become, judged by the same predicate
 		// the steer itself runs, so the row cannot promise what the steer refuses.
-		const eligibility = getSteerEligibility(session, {
+		const eligibility = getSteerEligibility(runs, {
 			tabId: session.activeTabId,
 			text: draft.text,
 			images: draft.imageCount > 0 ? new Array<string>(draft.imageCount).fill('') : undefined,

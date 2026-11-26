@@ -20,6 +20,7 @@ import {
 import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
+import { probeRemoteGrokContextWindows } from '../../agents/probeRemoteGrokContextWindows';
 import { execFileNoThrow } from '../../utils/execFile';
 import { discoverCodexSkills } from '../../agents/codex-skills';
 import {
@@ -719,6 +720,11 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	// availability unknown rather than caching a false.
 	if (connectionSucceeded) {
 		await probeRemoteMaestroP(sshRemote);
+		// A remote Grok agent's context window comes from the remote account's
+		// catalog, as a local one's comes from this machine's.
+		if (agents.some((agent) => agent.id === 'grok' && agent.available)) {
+			await probeRemoteGrokContextWindows(sshRemote);
+		}
 	}
 
 	return agents;
@@ -1090,6 +1096,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 							if (existing?.status !== 'auth_required') {
 								capabilitySnapshots.markOk(agentDef.id, { path }, sshConfig.id);
 							}
+							if (agentDef.id === 'grok') await probeRemoteGrokContextWindows(sshConfig);
 						} else if (!connectionError) {
 							capabilitySnapshots.markNotInstalled(agentDef.id, sshConfig.id);
 						}

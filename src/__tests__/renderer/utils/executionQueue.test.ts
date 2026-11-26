@@ -597,6 +597,27 @@ describe('applyQueuedItemEdit', () => {
 		expect(next[0].type).toBe('message');
 		expect(next[0].command).toBeUndefined();
 	});
+
+	// A queued `/plan auth` edited to plain text still ran `/plan`: the drain reads the command first.
+	it('turns a command edited into ordinary text back into a message', () => {
+		const queue: QueuedItem[] = [
+			{
+				...item('a'),
+				type: 'command',
+				text: undefined,
+				command: '/plan',
+				commandArgs: 'auth',
+				commandDescription: 'Plan it',
+			},
+		];
+
+		const next = applyQueuedItemEdit(queue, 'a', { ...patch(), text: 'Explain the design' });
+
+		expect(next[0]).toMatchObject({ type: 'message', text: 'Explain the design' });
+		expect(next[0].command).toBeUndefined();
+		expect(next[0].commandArgs).toBeUndefined();
+		expect(next[0].commandDescription).toBeUndefined();
+	});
 });
 
 // ============================================================================
@@ -1158,6 +1179,18 @@ describe('getSteerEligibility', () => {
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
 		} as Partial<Session>);
 		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
+	});
+
+	it("steers a hosted agent's host item as a local one: its host runs the TUI, not SSH", () => {
+		const hosted = steerableSession({
+			sshRemoteId: 'r1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>);
+		const local = steerableSession();
+		expect(getSteerEligibility(hosted, { ...item, hostQueued: true })).toEqual(
+			getSteerEligibility(local, item)
+		);
+		expect(getSteerEligibility(hosted, { ...item, hostQueued: true }).canSteer).toBe(true);
 	});
 
 	it('steers an SSH Codex agent on app-server, and names the transport for one on exec', () => {

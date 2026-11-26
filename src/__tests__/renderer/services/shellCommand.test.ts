@@ -284,7 +284,8 @@ describe('runShellCommand', () => {
 			remoteId: 'r1',
 			workingDirOverride: '/remote/path',
 		});
-		expect(getCard()?.shellCommand?.remoteName).toBe('builder');
+		// The remote's name is not stamped on the card: the mode pill is the one mark of mode.
+		expect(getCard()?.shellCommand).not.toHaveProperty('remoteName');
 
 		emitExit(config.sessionId, 0);
 		await promise;

@@ -17,6 +17,9 @@ import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/def
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { AgentDiscoveryResult } from '../../../../shared/types';
 import { resetStore } from '../../../helpers/resetStores';
+import { AGENT_MODES, createModeSession, type AgentMode } from '../../../helpers';
+import { browseAndPick, resetPathPicker } from '../../../helpers/pathPicker';
+import { usePathPickerStore } from '../../../../renderer/services/pathPicker';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -1224,10 +1227,15 @@ describe('EditAgentModal', () => {
 				});
 				await act(() => vi.advanceTimersByTimeAsync(600));
 				expect(window.maestro.fs.stat).not.toHaveBeenCalled();
+				// Browse stays the same control; with no remote resolved it says so and never
+				// browses this machine's disk in its place.
 				const browse = screen.getByRole('button', { name: 'Browse folders' });
-				expect(browse).toBeDisabled();
-				fireEvent.click(browse);
+				expect(browse).not.toBeDisabled();
+				await act(async () => {
+					fireEvent.click(browse);
+				});
 				expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+				expect(usePathPickerStore.getState().request).toBeNull();
 				fireEvent.click(screen.getByText('Save Changes'));
 				expect(onSave).not.toHaveBeenCalled();
 			}
@@ -2591,6 +2599,94 @@ describe('EditAgentModal', () => {
 			await sectionReady();
 
 			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Mode parity (local, SSH, hosted)', () => {
+		// A hosted agent keeps its SSH remote config for the files, so the modal reads the same
+		// persisted `sessionSshRemoteConfig` for an SSH and a hosted agent and draws the same form.
+		const renderMode = async (mode: AgentMode) => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'r1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			const session = createModeSession(mode, {
+				id: 'session-123',
+				name: 'My Agent',
+				projectRoot: '/home/user/project',
+				cwd: '/home/user/project',
+			});
+			const view = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			// The path status row is drawn for a local directory too, with the same copy.
+			await screen.findByText('Directory found');
+			const input = view.container.ownerDocument.getElementById(
+				'edit-agent-working-dir-input'
+			) as HTMLInputElement;
+			const picker = screen.getByRole('button', { name: 'Browse folders' }) as HTMLButtonElement;
+			const drawn = {
+				placeholder: input.placeholder,
+				pickerTitle: picker.title,
+				pickerDisabled: picker.disabled,
+				extraDirPlaceholder: !!screen.queryByPlaceholderText('/path/to/directory or ~/path'),
+			};
+			const text = view.container.ownerDocument.body.textContent;
+			await browseAndPick(mode, () => fireEvent.click(picker), '/picked/project');
+			const pickedValue = input.value;
+			resetPathPicker();
+			fireEvent.change(input, { target: { value: '/home/user/project' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+			const saved = onSave.mock.calls.at(-1);
+			view.unmount();
+			onSave.mockClear();
+			resetStore(useSessionStore);
+			return { drawn, text, pickedValue, saved };
+		};
+
+		it('draws the same path rows and Browse in every mode', async () => {
+			const results = Object.fromEntries(
+				await AGENT_MODES.reduce<Promise<[AgentMode, Awaited<ReturnType<typeof renderMode>>][]>>(
+					async (acc, mode) => [...(await acc), [mode, await renderMode(mode)]],
+					Promise.resolve([])
+				)
+			) as Record<AgentMode, Awaited<ReturnType<typeof renderMode>>>;
+
+			expect(results.ssh.drawn).toEqual(results.local.drawn);
+			expect(results.hosted.drawn).toEqual(results.local.drawn);
+			expect(results.local.drawn).toMatchObject({
+				placeholder: 'Select directory...',
+				pickerTitle: 'Browse folders',
+				pickerDisabled: false,
+			});
+			for (const mode of AGENT_MODES) {
+				// Browse picks through the one entry point: native here, remote picker on r1.
+				expect(results[mode].pickedValue).toBe('/picked/project');
+				expect(results[mode].saved).toBeDefined();
+				// No mode word and no host-specific path copy (the SSH selector's option list, the
+				// setting itself, is the only place a host name appears).
+				expect(results[mode].text).not.toMatch(/hosted|remote path|on dev\.example\.com/i);
+			}
+			// SSH and hosted read the same persisted remote config and save the same form.
+			expect(results.hosted.saved).toEqual(results.ssh.saved);
 		});
 	});
 });

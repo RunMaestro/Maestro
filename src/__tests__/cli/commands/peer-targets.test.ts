@@ -873,6 +873,23 @@ describe('peer:agent targets', () => {
 			expect(peer.release).toHaveBeenCalledTimes(1);
 		});
 
+		it('reports a Maestro command the host ran (/history) without waiting for a turn', async () => {
+			const peer = fakePeer(agentWith([]));
+			peer.client.turns.send.mockResolvedValue({ ok: true, value: { status: 'ran' } } as never);
+
+			await send(`${PEER}:docs`, '/history', {});
+
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				agentId: AGENT_ID,
+				success: true,
+				peer: PEER,
+				tabId: 'tab-new',
+				response: expect.stringContaining(`ran /history for tab tab-new`),
+			});
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(peer.release).toHaveBeenCalledTimes(1);
+		});
+
 		it('reports a forward dropped mid-turn as still running on the host, exit 3', async () => {
 			const peer = fakePeer(agentWith([]));
 

@@ -30,7 +30,13 @@ import {
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
+import {
+	findQueueMergeTarget,
+	joinMergedQueueText,
+	moveQueueEntry,
+} from '../../shared/maestro-lib/turns/queue';
 import { isSessionRemote } from './sessionHelpers';
+import { hostRunView } from './hostedSession';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -83,7 +89,18 @@ export function applyQueuedItemEdit(
 			turnSettings: patch.turnSettings,
 			...(crossAgent ?? {}),
 		};
-		if (!slashCommand) return edited;
+		if (!slashCommand) {
+			if (edited.type !== 'command') return edited;
+			// A command edited into ordinary text is a message again: the drain reads `command`
+			// before `text`, so a stale command would run in place of what the user typed.
+			return {
+				...edited,
+				type: 'message',
+				command: undefined,
+				commandArgs: undefined,
+				commandDescription: undefined,
+			};
+		}
 		return {
 			...edited,
 			type: 'command',
@@ -491,60 +508,14 @@ export function reorderQueueItem(
 	toIndex: number,
 	tabId?: string
 ): QueuedItem[] {
-	if (!tabId) {
-		const len = queue.length;
-		if (
-			fromIndex === toIndex ||
-			fromIndex < 0 ||
-			fromIndex >= len ||
-			toIndex < 0 ||
-			toIndex >= len
-		) {
-			return queue;
-		}
-		const moved = queue[fromIndex];
-		if (
-			moved.pendingAdmissionId ||
-			queue
-				.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1)
-				.some((item) => item.pendingAdmissionId && item.tabId === moved.tabId)
-		) {
-			return queue;
-		}
-		const next = [...queue];
-		const [removed] = next.splice(fromIndex, 1);
-		next.splice(toIndex, 0, removed);
-		return next;
-	}
-
-	// Tab-scoped reorder: collect this tab's items and the slots they occupy.
-	const slots: number[] = [];
-	const items: QueuedItem[] = [];
-	queue.forEach((item, i) => {
-		if (item.tabId === tabId) {
-			slots.push(i);
-			items.push(item);
-		}
-	});
-	const len = items.length;
-	if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) {
-		return queue;
-	}
-	if (
-		items
-			.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1)
-			.some((item) => item.pendingAdmissionId)
-	) {
-		return queue;
-	}
-	const reordered = [...items];
-	const [removed] = reordered.splice(fromIndex, 1);
-	reordered.splice(toIndex, 0, removed);
-	const next = [...queue];
-	slots.forEach((pos, idx) => {
-		next[pos] = reordered[idx];
-	});
-	return next;
+	const inScope = tabId ? (item: QueuedItem) => item.tabId === tabId : undefined;
+	const scoped = inScope ? queue.filter(inScope) : queue;
+	const moved = scoped[fromIndex];
+	if (!moved || toIndex < 0 || toIndex >= scoped.length) return queue;
+	// A pending admission hold neither moves nor is crossed by work on its tab.
+	const crossed = scoped.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1);
+	if (crossed.some((item) => item.pendingAdmissionId && item.tabId === moved.tabId)) return queue;
+	return moveQueueEntry(queue, fromIndex, toIndex, inScope) as QueuedItem[];
 }
 
 /**
@@ -566,18 +537,11 @@ function isMergeableQueueItem(item: QueuedItem): boolean {
  * The item a "merge into the message above" would fold `itemId` into: the
  * nearest EARLIER item for the same tab, since that is the card drawn directly
  * above it in the tab's queue. Null when there is none, or when either side is
- * not a plain message (see {@link isMergeableQueueItem}).
+ * not a plain message (see {@link isMergeableQueueItem}). The rule itself is
+ * `findQueueMergeTarget`, which a headless host's queue uses too.
  */
 export function findQueuedMergeTarget(queue: QueuedItem[], itemId: string): QueuedItem | null {
-	const index = queue.findIndex((i) => i.id === itemId);
-	if (index <= 0) return null;
-	const item = queue[index];
-	if (!isMergeableQueueItem(item)) return null;
-	for (let i = index - 1; i >= 0; i--) {
-		if (queue[i].tabId !== item.tabId) continue;
-		return isMergeableQueueItem(queue[i]) ? queue[i] : null;
-	}
-	return null;
+	return findQueueMergeTarget(queue, itemId, isMergeableQueueItem);
 }
 
 /**
@@ -596,12 +560,7 @@ export function mergeQueuedItemIntoPrevious(
 	const target = findQueuedMergeTarget(queue, itemId);
 	const item = queue.find((i) => i.id === itemId);
 	if (!target || !item) return null;
-	// Exactly one blank line between the two, so the second reads as its own
-	// paragraph: trailing whitespace of the first and leading blank lines of the
-	// second are dropped (the second's own indentation is kept).
-	const text = [target.text?.replace(/\s+$/, ''), item.text?.replace(/^(\s*\n)+/, '')]
-		.filter((t) => t && t.trim())
-		.join('\n\n');
+	const text = joinMergedQueueText(target.text, item.text);
 	const images = [...(target.images ?? []), ...(item.images ?? [])];
 	const merged: QueuedItem = {
 		...target,
@@ -887,7 +846,7 @@ function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
  * declines with a reason; being wrong the other way hides a working feature.
  */
 export function getSteerEligibility(
-	session: Session,
+	agent: Session,
 	item: Pick<
 		QueuedItem,
 		| 'tabId'
@@ -901,8 +860,12 @@ export function getSteerEligibility(
 		| 'pendingAdmissionId'
 		| 'readOnlyMode'
 		| 'dispatchCallback'
+		| 'hostQueued'
 	>
 ): SteerEligibility {
+	// A hosted agent's message waits on its host, which runs the turn on its own machine: it is
+	// judged as the host judges it, not as an SSH agent's.
+	const session = item.hostQueued ? hostRunView(agent) : agent;
 	if (item.pendingAdmissionId) return { canSteer: false, blockedReason: 'pending-admission' };
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) {
@@ -1070,7 +1033,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'too-long': `${STEERING_TOO_LONG_DETAIL[0].toUpperCase()}${STEERING_TOO_LONG_DETAIL.slice(1)}.`,
 	paused: 'The message is paused. Resume it from its queued card.',
 	'waiting-for-connection': 'The message is waiting for the agent to reconnect.',
-	'ssh-remote': 'A turn on an SSH remote cannot be steered.',
+	'ssh-remote':
+		'This turn runs on an SSH remote, where its input channel cannot be reached from here. Queue the message and it sends when the turn ends.',
 	'steer-in-flight': 'A steer for this message is already waiting for an answer.',
 	'tui-command-prefix':
 		'A message that starts with / or ! would run as a command in the running turn.',

@@ -167,6 +167,7 @@ export function foldLiveTurn(
 				timestamp: event.at,
 				source: 'error',
 				text: event.error.message,
+				agentError: event.error,
 			};
 			return { ...next, entries: [...next.entries, entry] };
 		}

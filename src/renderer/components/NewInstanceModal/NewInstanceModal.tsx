@@ -7,6 +7,7 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { pathPickerRemoteId, pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
@@ -49,6 +50,7 @@ export function NewInstanceModal({
 	sourceSession,
 	presetGroupId,
 	presetWorkingDir,
+	presetSshRemoteId,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [detectedSshRemoteId, setDetectedSshRemoteId] = useState<string | null>();
@@ -121,6 +123,14 @@ export function NewInstanceModal({
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const agentLoadSequence = useRef(0);
 	const initialSeedPending = useRef(false);
+	/**
+	 * The open's seeding finished (configs loaded, the draft marked ready). A first load that stops
+	 * early (its SSH remote is offline) leaves this false, so the redetect for the next remote the
+	 * user picks finishes the seeding instead of only refreshing availability.
+	 */
+	const initialSeedDone = useRef(false);
+	/** The duplicate source the open's seeding was started with, for a redetect that finishes it. */
+	const seedSource = useRef<Session | undefined>(undefined);
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
@@ -199,13 +209,23 @@ export function NewInstanceModal({
 	});
 
 	// Define handlers first before they're used in effects
-	const loadAgents = async (source?: Session, sshRemoteId?: string, redetect = false) => {
+	const loadAgents = async (requestedSource?: Session, sshRemoteId?: string, redetect = false) => {
+		if (!redetect) {
+			initialSeedDone.current = false;
+			seedSource.current = requestedSource;
+		}
+		// A redetect before the seeding finished picks the seeding up where it stopped.
+		const resumingSeed = redetect && !initialSeedDone.current;
+		const source = resumingSeed ? seedSource.current : requestedSource;
 		const sourceSshConfig: AgentSshRemoteConfig | undefined =
 			source?.sessionSshRemoteConfig ??
 			(source?.sshRemoteId ? { enabled: true, remoteId: source.sshRemoteId } : undefined);
-		const selectedSshRemoteId =
-			sshRemoteId ??
-			(sourceSshConfig?.enabled ? (sourceSshConfig.remoteId ?? undefined) : undefined);
+		// A redetect names the remote the user picked (none: this machine); only an open's seeding
+		// falls back to the source's.
+		const selectedSshRemoteId = redetect
+			? sshRemoteId
+			: (sshRemoteId ??
+				(sourceSshConfig?.enabled ? (sourceSshConfig.remoteId ?? undefined) : undefined));
 		const sequence = ++agentLoadSequence.current;
 		if (!redetect) {
 			initialSeedPending.current = true;
@@ -243,13 +263,13 @@ export function NewInstanceModal({
 			setAgents(detectedAgents);
 			setDetectedSshRemoteId(selectedSshRemoteId ?? null);
 			// A host change refreshes availability, not the user's draft selections.
-			if (redetect) return;
+			if (redetect && !resumingSeed) return;
 
 			// Per-agent config (path, args, env vars) starts empty - each agent gets its own config
 			// No provider-level loading - config is set per-agent during creation
-			// Only reset if NOT duplicating (source session will provide values)
-			// Also preserve SSH configs when re-detecting (sshRemoteId is provided during re-detection)
-			if (!source && !selectedSshRemoteId) {
+			// Only reset if NOT duplicating (source session will provide values).
+			// A remote seeded at open (presetSshRemoteId) keeps its SSH config.
+			if (!source) {
 				setCustomAgentPaths({});
 				setCustomAgentArgs({});
 				setCustomAgentEnvVars({});
@@ -258,7 +278,7 @@ export function NewInstanceModal({
 				setMaestroPPathByAgent({});
 				setRetryAvailabilityByAgent({});
 				setRetryTokenByAgent({});
-				setAgentSshRemoteConfigs({});
+				if (!selectedSshRemoteId) setAgentSshRemoteConfigs({});
 			}
 
 			// Load configurations for all agents (model, contextWindow - these are provider-level)
@@ -397,16 +417,21 @@ export function NewInstanceModal({
 				// unresolved stays remote (Create waits for a remote) rather than
 				// silently running the copy locally. Explicit disablement wins. The
 				// override is the copy's own directory, as in buildDuplicateAgentInput().
+				// Finishing a seeding the user moved to another remote keeps their pick.
+				const draftSshConfig = resumingSeed
+					? { enabled: !!selectedSshRemoteId, remoteId: selectedSshRemoteId ?? null }
+					: sourceSshConfig;
 				setAgentSshRemoteConfigs({
-					[toolType]: sourceSshConfig?.enabled
+					[toolType]: draftSshConfig?.enabled
 						? {
 								enabled: true,
-								remoteId: sourceSshConfig.remoteId ?? null,
+								remoteId: draftSshConfig.remoteId ?? null,
 								workingDirOverride: duplicate.cwd || undefined,
 							}
 						: { enabled: false, remoteId: null },
 				});
 			}
+			initialSeedDone.current = true;
 			setReadyDraftSource(source?.id ?? null);
 		} catch (error) {
 			logger.error('Failed to load agents:', undefined, error);
@@ -418,13 +443,6 @@ export function NewInstanceModal({
 		}
 	};
 
-	const handleSelectFolder = React.useCallback(async () => {
-		const folder = await window.maestro.dialog.selectFolder();
-		if (folder) {
-			handleWorkingDirChange(folder);
-		}
-	}, [handleWorkingDirChange]);
-
 	// Resolve the SSH remote ID currently selected (pending or per-agent).
 	const effectiveSshRemoteId = useMemo(() => {
 		if (!isSshEnabled) return undefined;
@@ -433,6 +451,32 @@ export function NewInstanceModal({
 			: agentSshRemoteConfigs['_pending_'];
 		return config?.remoteId || undefined;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
+
+	// Where Browse looks: this disk (`undefined`), the chosen remote, or `null` for an SSH draft
+	// with no remote resolved yet (a duplicate of such an agent). `isSshEnabled` is false for that
+	// draft, so it cannot route Browse: it would open the native dialog on the wrong machine.
+	const browseRemoteId = useMemo(
+		() =>
+			pathPickerRemoteId({
+				sessionSshRemoteConfig: selectedAgent
+					? agentSshRemoteConfigs[selectedAgent]
+					: agentSshRemoteConfigs['_pending_'],
+			}),
+		[selectedAgent, agentSshRemoteConfigs]
+	);
+
+	// Browse is the same control in every mode: the native dialog for this disk, the remote
+	// folder picker when the agent will run on an SSH remote.
+	const handleSelectFolder = React.useCallback(async () => {
+		const folder = await pickDirectory({
+			sshRemoteId: browseRemoteId,
+			title: 'Select Working Directory',
+			startPath: workingDir.trim() || undefined,
+		});
+		if (folder) {
+			handleWorkingDirChange(folder);
+		}
+	}, [browseRemoteId, workingDir, handleWorkingDirChange]);
 
 	// Debounced git repo detection - checks if the selected working dir is
 	// already a git repo so we can offer to `git init` it if not.
@@ -891,12 +935,12 @@ export function NewInstanceModal({
 	useEffect(() => {
 		if (!isOpen) return;
 		const handler = (e: KeyboardEvent) => {
-			// Handle Cmd+O for folder picker (disabled when SSH remote is active)
+			// The folder picker sits above this modal and owns the keyboard while it is open.
+			if (usePathPickerStore.getState().request) return;
+			// Handle Cmd+O for folder picker
 			if ((e.key === 'o' || e.key === 'O') && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
-				if (!isSshEnabled) {
-					handleSelectFolder();
-				}
+				void handleSelectFolder();
 				return;
 			}
 			// Handle Cmd+Enter or Cmd+S for creating agent
@@ -910,7 +954,7 @@ export function NewInstanceModal({
 		};
 		window.addEventListener('keydown', handler, true);
 		return () => window.removeEventListener('keydown', handler, true);
-	}, [isOpen, handleSelectFolder, handleCreate, isFormValid, isSshEnabled]);
+	}, [isOpen, handleSelectFolder, handleCreate, isFormValid]);
 
 	// Sort agents: supported first, then coming soon at the bottom. Each bucket is
 	// alphabetical by the name the row renders, matching the wizard's tile strip
@@ -956,9 +1000,16 @@ export function NewInstanceModal({
 	// user has typed (issue #827).
 	useEffect(() => {
 		if (isOpen) {
+			// A folder on an SSH remote ("New Agent Here" in an SSH or hosted agent's
+			// Files panel) seeds an agent on that remote, as a local folder seeds a
+			// local one. Set before detection so the providers are probed there.
+			const seedSshRemoteId = !sourceSession && presetSshRemoteId ? presetSshRemoteId : undefined;
+			if (seedSshRemoteId) {
+				setAgentSshRemoteConfigs({ _pending_: { enabled: true, remoteId: seedSshRemoteId } });
+			}
 			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
 			// This prevents the race condition where loadAgents would overwrite pre-filled values
-			loadAgents(sourceSession);
+			loadAgents(sourceSession, seedSshRemoteId);
 			// Keep all agents collapsed by default, or expand when duplicating to show custom config
 			if (sourceSession) {
 				setExpandedAgent(sourceSession.toolType);
@@ -984,7 +1035,14 @@ export function NewInstanceModal({
 		return () => {
 			agentLoadSequence.current++;
 		};
-	}, [isOpen, sourceSession?.id, presetGroupId, presetWorkingDir, handleWorkingDirChange]);
+	}, [
+		isOpen,
+		sourceSession?.id,
+		presetGroupId,
+		presetWorkingDir,
+		presetSshRemoteId,
+		handleWorkingDirChange,
+	]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails
@@ -1290,25 +1348,16 @@ export function NewInstanceModal({
 					label="Working Directory"
 					value={workingDir}
 					onChange={handleWorkingDirChange}
-					placeholder={
-						isSshEnabled
-							? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-							: 'Select directory...'
-					}
+					placeholder="Select directory..."
 					error={validation.errorField === 'directory' ? validation.error : undefined}
 					monospace
 					heightClass="p-2"
 					addon={
 						<button
-							onClick={isSshEnabled ? undefined : handleSelectFolder}
-							disabled={isSshEnabled}
-							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
+							onClick={handleSelectFolder}
+							className="p-2 rounded border transition-colors row-hover"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							title={
-								isSshEnabled
-									? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-									: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
-							}
+							title={`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`}
 						>
 							<Folder className="w-5 h-5" />
 						</button>
@@ -1406,7 +1455,7 @@ export function NewInstanceModal({
 					theme={theme}
 					directories={additionalDirectories}
 					onChange={setAdditionalDirectories}
-					disableBrowse={isSshEnabled}
+					sshRemoteId={browseRemoteId}
 					nativelyEnforced={
 						!!agents.find((a) => a.id === selectedAgent)?.capabilities
 							?.supportsAdditionalDirectories

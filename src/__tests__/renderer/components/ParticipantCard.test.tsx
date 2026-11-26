@@ -3,6 +3,9 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ParticipantCard } from '../../../renderer/components/ParticipantCard';
 import type { GroupChatParticipant } from '../../../shared/group-chat-types';
 import { mockTheme } from '../../helpers/mockTheme';
+import { AGENT_MODES, createModeSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 vi.mock('../../../renderer/utils/logger', () => ({ logger: { error: vi.fn() } }));
@@ -138,5 +141,49 @@ describe('ParticipantCard controls', () => {
 		await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Confirm' })));
 		expect(onRemove).toHaveBeenCalledExactlyOnceWith('Alice');
 		expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+	});
+});
+
+describe('ParticipantCard - mode parity (local, SSH, hosted)', () => {
+	const participant: GroupChatParticipant = {
+		name: 'Builder',
+		agentId: 'claude-code',
+		sourceSessionId: 'a1',
+		sessionId: 'group-chat-fixture-builder',
+		addedAt: 0,
+		sshRemoteName: 'build-box',
+	};
+
+	afterEach(() => {
+		useSessionStore.setState({ sessions: [] });
+		useSettingsStore.setState({ federationHostedAgents: false });
+	});
+
+	/** The card's mode pill text and its markup with the pill taken out. */
+	function drawCard(mode: (typeof AGENT_MODES)[number]) {
+		useSessionStore.setState({ sessions: [createModeSession(mode, { id: 'a1' })] });
+		const { container, unmount } = render(
+			<ParticipantCard theme={mockTheme} participant={participant} state="idle" />
+		);
+		const pills = container.querySelectorAll('[data-testid^="federation-badge-"]');
+		const pill = pills[0]?.textContent ?? '';
+		const clone = container.cloneNode(true) as HTMLElement;
+		clone
+			.querySelectorAll('[data-testid^="federation-badge-"]')
+			.forEach((badge) => badge.parentElement?.remove());
+		const html = clone.innerHTML;
+		unmount();
+		return { pill, count: pills.length, html };
+	}
+
+	it("draws the source agent's Left Bar mode pill and nothing else differs", () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const [local, ssh, hosted] = AGENT_MODES.map(drawCard);
+		expect([local.pill, ssh.pill, hosted.pill]).toEqual(['LOCAL', 'REMOTE', 'HOSTED']);
+		expect([local.count, ssh.count, hosted.count]).toEqual([1, 1, 1]);
+		// The remote's name is not drawn: the pill is the one mark of mode.
+		expect(ssh.html).not.toContain('build-box');
+		expect(ssh.html).toBe(local.html);
+		expect(hosted.html).toBe(local.html);
 	});
 });

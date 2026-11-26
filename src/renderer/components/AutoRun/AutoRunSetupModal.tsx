@@ -3,6 +3,7 @@ import { Folder, FileText, Play, CheckSquare } from 'lucide-react';
 import type { Theme } from '../../types';
 import { Modal, ModalFooter, FormInput } from '../ui';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { pickDirectory } from '../../services/pathPicker';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { isImeComposing } from '../../utils/ime';
 
@@ -12,8 +13,11 @@ interface AutoRunSetupModalProps {
 	onFolderSelected: (folderPath: string) => void;
 	currentFolder?: string; // Current folder path (for changing existing folder)
 	sessionName?: string; // Name of the agent session
-	sshRemoteId?: string; // SSH remote ID if agent uses remote execution
-	sshRemoteHost?: string; // SSH remote host for tooltip display
+	/**
+	 * The agent's SSH remote (`pathPickerRemoteId()`), set for an SSH and a hosted agent alike.
+	 * It only decides where the folder is read and browsed; the modal looks the same in every mode.
+	 */
+	sshRemoteId?: string;
 }
 
 export function AutoRunSetupModal({
@@ -23,7 +27,6 @@ export function AutoRunSetupModal({
 	currentFolder,
 	sessionName,
 	sshRemoteId,
-	sshRemoteHost,
 }: AutoRunSetupModalProps) {
 	const [selectedFolder, setSelectedFolder] = useState(currentFolder || '');
 	const [homeDir, setHomeDir] = useState<string>('');
@@ -35,10 +38,12 @@ export function AutoRunSetupModal({
 	}>({ checking: false, valid: false, docCount: 0 });
 	const continueButtonRef = useRef<HTMLButtonElement>(null);
 
-	// Fetch home directory on mount for tilde expansion
+	// Fetch home directory on mount for tilde expansion. A remote folder keeps its `~`: the
+	// remote's shell expands it (this machine's home is the wrong one there).
 	useEffect(() => {
+		if (sshRemoteId) return;
 		window.maestro.fs.homeDir().then(setHomeDir);
-	}, []);
+	}, [sshRemoteId]);
 
 	// Expand tilde in path
 	const expandTilde = (path: string): string => {
@@ -56,7 +61,7 @@ export function AutoRunSetupModal({
 		}
 
 		// If path starts with ~ but homeDir isn't loaded yet, wait
-		if (selectedFolder.startsWith('~') && !homeDir) {
+		if (selectedFolder.startsWith('~') && !homeDir && !sshRemoteId) {
 			setFolderValidation({ checking: true, valid: false, docCount: 0 });
 			return;
 		}
@@ -106,7 +111,11 @@ export function AutoRunSetupModal({
 	}, [selectedFolder, homeDir, sshRemoteId]);
 
 	const handleSelectFolder = async () => {
-		const folder = await window.maestro.dialog.selectFolder();
+		const folder = await pickDirectory({
+			sshRemoteId,
+			title: 'Select Auto Run Folder',
+			startPath: selectedFolder.trim() || currentFolder,
+		});
 		if (folder) {
 			setSelectedFolder(folder);
 			// Focus continue button after folder picker selection (not on typing)
@@ -127,13 +136,11 @@ export function AutoRunSetupModal({
 
 	// Handle custom keyboard shortcuts
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		// Handle Cmd+O for folder picker (disabled when SSH remote is active)
+		// Handle Cmd+O for folder picker
 		if ((e.key === 'o' || e.key === 'O') && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			e.stopPropagation();
-			if (!sshRemoteId) {
-				handleSelectFolder();
-			}
+			void handleSelectFolder();
 			return;
 		}
 		// Handle Enter for continue when folder is selected
@@ -236,25 +243,16 @@ export function AutoRunSetupModal({
 						value={selectedFolder}
 						onChange={setSelectedFolder}
 						placeholder={
-							sshRemoteId
-								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/docs)`
-								: sessionName
-									? `Select Auto Run folder for ${sessionName}`
-									: 'Select Auto Run folder'
+							sessionName ? `Select Auto Run folder for ${sessionName}` : 'Select Auto Run folder'
 						}
 						monospace
 						heightClass="p-2"
 						addon={
 							<button
-								onClick={sshRemoteId ? undefined : handleSelectFolder}
-								disabled={!!sshRemoteId}
-								className={`p-2 rounded border transition-colors ${sshRemoteId ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/5'}`}
+								onClick={handleSelectFolder}
+								className="p-2 rounded border transition-colors hover:bg-white/5"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={
-									sshRemoteId
-										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-										: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
-								}
+								title={`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`}
 							>
 								<Folder className="w-5 h-5" />
 							</button>

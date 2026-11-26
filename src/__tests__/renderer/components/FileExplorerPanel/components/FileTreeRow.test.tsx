@@ -1,9 +1,10 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { FileTreeRow } from '../../../../../renderer/components/FileExplorerPanel/components/FileTreeRow';
 import type { FlattenedNode } from '../../../../../renderer/components/FileExplorerPanel/types';
 import type { FileNode } from '../../../../../renderer/types/fileTree';
+import { AGENT_MODES } from '../../../../helpers';
 
 vi.mock('../../../../../renderer/utils/theme', () => ({
 	getExplorerFileIcon: (_name: string) => <span data-testid="file-icon" />,
@@ -371,5 +372,42 @@ describe('FileTreeRow', () => {
 		const dot = container.querySelector('[data-testid="git-change-indicator"]') as HTMLElement;
 		// Colorblind success = #00b48a
 		expect(dot.style.backgroundColor).toBe('rgb(0, 180, 138)');
+	});
+
+	// Double-clicking an HTML file opens the Maestro Browser in every mode. A file
+	// on the agent's SSH remote (SSH or hosted) is fetched to this machine first
+	// and the browser loads the fetched copy.
+	describe.each(AGENT_MODES)('HTML double-click in %s mode', (mode) => {
+		const original = (window as any).maestro;
+		afterEach(() => {
+			(window as any).maestro = original;
+		});
+
+		it('opens the Maestro Browser on a file:// URL on this machine', async () => {
+			const localCopy = '/tmp/maestro-remote-downloads/k/page.html';
+			const downloadRemoteFile = vi.fn().mockResolvedValue({ success: true, path: localCopy });
+			(window as any).maestro = { ...original, fs: { ...original?.fs, downloadRemoteFile } };
+			const onOpenBrowserTabAt = vi.fn();
+			const htmlNode: FileNode = { name: 'page.html', type: 'file' };
+			const { container } = render(
+				<FileTreeRow
+					{...defaultProps}
+					item={makeItem(htmlNode)}
+					htmlDoubleClickOpensInBrowser
+					onOpenBrowserTabAt={onOpenBrowserTabAt}
+					sshRemoteId={mode === 'local' ? undefined : 'r1'}
+				/>
+			);
+
+			fireEvent.doubleClick(container.querySelector('[data-file-index]')!);
+
+			await vi.waitFor(() =>
+				expect(onOpenBrowserTabAt).toHaveBeenCalledWith(
+					`file://${mode === 'local' ? '/project/page.html' : localCopy}`,
+					{ title: 'page.html' }
+				)
+			);
+			expect(defaultProps.handleFileClick).not.toHaveBeenCalled();
+		});
 	});
 });

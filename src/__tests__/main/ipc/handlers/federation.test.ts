@@ -32,7 +32,11 @@ vi.mock('../../../../main/utils/agent-busy', () => ({
 	isAgentBusy: () => false,
 }));
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { registerFederationHandlers } from '../../../../main/ipc/handlers/federation';
+import { configureImageStore } from '../../../../main/storage/session-image-store';
 import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../../shared/federationCommands';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
@@ -85,6 +89,8 @@ function fakeService() {
 		snapshot: vi.fn(() => ({ peers: [{ peerId: 'a' }] })),
 		transcript: vi.fn(async () => [{ id: 'e1' }]),
 		history: vi.fn(async () => peerHistory),
+		historyRemove: vi.fn(async () => true),
+		historyUpdate: vi.fn(async () => true),
 		reconnect: vi.fn(async (peerId: string) => ({ ok: true, peer: { peerId } })),
 		act: vi.fn(async () => ({ ok: true, result: { kind: 'new-tab', tabId: 't9' } })),
 		importAgent,
@@ -117,14 +123,16 @@ describe('federation IPC handlers', () => {
 		});
 	});
 
-	it('registers the fourteen federation channels', () => {
+	it('registers the sixteen federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'federation:act',
 			'federation:autoRun',
 			'federation:autoStatus',
+			'federation:historyDelete',
 			'federation:historyGraph',
 			'federation:historyOffset',
 			'federation:historyPage',
+			'federation:historyUpdate',
 			'federation:lift',
 			'federation:peers',
 			'federation:reconnect',
@@ -171,6 +179,10 @@ describe('federation IPC handlers', () => {
 			await expect(call('federation:historyPage', 'a', 'x', {})).rejects.toThrow(off);
 			await expect(call('federation:historyGraph', 'a', 'x', 24, null)).rejects.toThrow(off);
 			await expect(call('federation:historyOffset', 'a', 'x', NOW, null)).rejects.toThrow(off);
+			await expect(call('federation:historyDelete', 'a', 'x', 'h1')).rejects.toThrow(off);
+			await expect(
+				call('federation:historyUpdate', 'a', 'x', 'h1', { validated: true })
+			).rejects.toThrow(off);
 		});
 	});
 
@@ -216,6 +228,49 @@ describe('federation IPC handlers', () => {
 				tabId: 't1',
 				name: 'Plan',
 			});
+		});
+
+		it('sends a stored image ref as the data URL a local spawn would read', async () => {
+			// A staged image the store relocated (after a restart) is a ref into this machine's
+			// store. The host cannot read it, so it leaves as bytes; a ref whose file is gone is
+			// dropped, as the local spawn drops it.
+			const dir = mkdtempSync(join(tmpdir(), 'fed-act-images-'));
+			configureImageStore(dir);
+			const sha = 'a'.repeat(64);
+			mkdirSync(join(dir, 'session-images'), { recursive: true });
+			writeFileSync(join(dir, 'session-images', `${sha}.png`), Buffer.from('png-bytes'));
+			const fresh = 'data:image/png;base64,ZnJlc2g=';
+			await call('federation:act', 'a', 'x', {
+				kind: 'send',
+				tabId: 't1',
+				text: 'look',
+				images: [
+					fresh,
+					`maestro-image://store/${sha}.png`,
+					`maestro-image://store/${'b'.repeat(64)}.png`,
+				],
+			});
+			expect(service.act).toHaveBeenLastCalledWith('a', 'x', {
+				kind: 'send',
+				tabId: 't1',
+				text: 'look',
+				images: [fresh, `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`],
+			});
+			// A queued card's Edit keeps its images the same way.
+			await call('federation:act', 'a', 'x', {
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: 'look', images: [`maestro-image://store/${sha}.png`] },
+			});
+			expect(service.act).toHaveBeenLastCalledWith('a', 'x', {
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: {
+					text: 'look',
+					images: [`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`],
+				},
+			});
+			rmSync(dir, { recursive: true, force: true });
 		});
 
 		it('refuses a bad action before the service is touched', async () => {
@@ -266,6 +321,23 @@ describe('federation IPC handlers', () => {
 		});
 
 		describe('history', () => {
+			it('deletes and validates an entry through the service', async () => {
+				expect(await call('federation:historyDelete', 'a', 'x', 'h1')).toBe(true);
+				expect(service.historyRemove).toHaveBeenCalledWith('a', 'x', 'h1');
+				expect(await call('federation:historyUpdate', 'a', 'x', 'h1', { validated: false })).toBe(
+					true
+				);
+				expect(service.historyUpdate).toHaveBeenCalledWith('a', 'x', 'h1', { validated: false });
+			});
+
+			it('refuses an edit with no entry id or no boolean validated', async () => {
+				await expect(call('federation:historyDelete', 'a', 'x', '')).rejects.toThrow(/entry id/);
+				await expect(
+					call('federation:historyUpdate', 'a', 'x', 'h1', { summary: 'rewritten' })
+				).rejects.toThrow(/validated/);
+				expect(service.historyUpdate).not.toHaveBeenCalled();
+			});
+
 			it('pages the service History newest first, after the lookback and the filters', async () => {
 				const all = (await call('federation:historyPage', 'a', 'x')) as {
 					entries: Array<{ id: string }>;

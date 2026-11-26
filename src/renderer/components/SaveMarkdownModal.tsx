@@ -14,6 +14,7 @@ import type { Theme } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { isImeComposing } from '../utils/ime';
+import { pickDirectory } from '../services/pathPicker';
 
 export interface SaveMarkdownModalProps {
 	theme: Theme;
@@ -21,9 +22,7 @@ export interface SaveMarkdownModalProps {
 	onClose: () => void;
 	/** Default folder path to show initially */
 	defaultFolder?: string;
-	/** Whether the session is running over SSH (hides folder browser button) */
-	isRemoteSession?: boolean;
-	/** SSH remote ID for saving to remote filesystem */
+	/** SSH remote ID for saving to (and browsing) a remote filesystem; omit for a local agent */
 	sshRemoteId?: string;
 	/** Callback when file is successfully saved (e.g., to refresh file list) */
 	onFileSaved?: () => void;
@@ -41,7 +40,6 @@ export function SaveMarkdownModal({
 	content,
 	onClose,
 	defaultFolder = '',
-	isRemoteSession = false,
 	sshRemoteId,
 	onFileSaved,
 	onOpenInTab,
@@ -55,7 +53,11 @@ export function SaveMarkdownModal({
 
 	const handleBrowseFolder = async () => {
 		try {
-			const selectedFolder = await window.maestro.dialog.selectFolder();
+			const selectedFolder = await pickDirectory({
+				sshRemoteId,
+				title: 'Select Folder',
+				startPath: folder.trim() || defaultFolder,
+			});
 			if (selectedFolder) {
 				setFolder(selectedFolder);
 				setError(null);
@@ -184,21 +186,18 @@ export function SaveMarkdownModal({
 								color: theme.colors.textMain,
 							}}
 						/>
-						{/* Hide folder browser for remote sessions - native dialog can only browse local fs */}
-						{!isRemoteSession && (
-							<button
-								type="button"
-								onClick={handleBrowseFolder}
-								className="px-3 py-2 rounded border hover:bg-white/5 transition-colors"
-								style={{
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-								}}
-								title="Browse for folder"
-							>
-								<FolderOpen className="w-4 h-4" />
-							</button>
-						)}
+						<button
+							type="button"
+							onClick={handleBrowseFolder}
+							className="px-3 py-2 rounded border hover:bg-white/5 transition-colors"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+							title="Browse for folder"
+						>
+							<FolderOpen className="w-4 h-4" />
+						</button>
 					</div>
 				</div>
 

@@ -3,17 +3,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAiTabToolbarBinding } from '../../../../../renderer/components/InputArea/hooks/useAiTabToolbarBinding';
 import { createInputAreaSession } from '../_fixtures';
 import type { AITab } from '../../../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../../../helpers/mockSession';
 
 const mockUpdateSessionWith = vi.fn();
+const storeMocks = vi.hoisted(() => ({ sessions: [] as unknown[] }));
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
 	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+	useSessionStore: { getState: () => ({ sessions: storeMocks.sessions }) },
+	selectSessionById: (id: string) => (state: { sessions: { id: string }[] }) =>
+		state.sessions.find((session) => session.id === id),
+}));
+const mockUpdateHostedTab = vi.fn();
+vi.mock('../../../../../renderer/services/hostedTurns', () => ({
+	updateHostedTab: (...args: unknown[]) => mockUpdateHostedTab(...args),
 }));
 
 describe('useAiTabToolbarBinding', () => {
-	afterEach(() => mockUpdateSessionWith.mockClear());
+	afterEach(() => {
+		mockUpdateSessionWith.mockClear();
+		mockUpdateHostedTab.mockClear();
+		storeMocks.sessions = [];
+	});
 
-	function bind(tabOverrides: Partial<AITab> = {}) {
-		const base = createInputAreaSession();
+	function bind(tabOverrides: Partial<AITab> = {}, mode: (typeof AGENT_MODES)[number] = 'local') {
+		const base = createInputAreaSession(agentModeFields(mode));
 		const session = {
 			...base,
 			aiTabs: base.aiTabs.map((t) => (t.id === 'tab-1' ? { ...t, ...tabOverrides } : t)),
@@ -59,6 +72,45 @@ describe('useAiTabToolbarBinding', () => {
 		result.current.onThinkingModeChange('sticky');
 
 		expect(lastUpdatedTab(session).showThinking).toBe('sticky');
+	});
+
+	it('hands the thinking mode to the same tab on a hosted agent host (no-op for the others)', () => {
+		const { session, result } = bind();
+		storeMocks.sessions = [session];
+
+		result.current.onThinkingModeChange('on');
+
+		// updateHostedTab() is a no-op for a local or SSH agent, so every mode takes one path.
+		expect(mockUpdateHostedTab).toHaveBeenCalledWith(session, 'tab-1', { thinking: 'on' });
+	});
+
+	it('sets the thinking and permission pills the same way in every mode (mode parity)', () => {
+		// docs/parity/agent-ux-parity.md, Composer: one binding for every mode. The host
+		// hand-off is updateHostedTab(), a no-op for a local or SSH agent.
+		const outcomes = AGENT_MODES.map((mode) => {
+			mockUpdateSessionWith.mockClear();
+			mockUpdateHostedTab.mockClear();
+			const { session, result } = bind({}, mode);
+			storeMocks.sessions = [session];
+			result.current.onThinkingModeChange('sticky');
+			const thinking = lastUpdatedTab(session).showThinking;
+			result.current.onPermissionModeChange('readonly');
+			const { permissionMode, readOnlyMode } = lastUpdatedTab(session);
+			return {
+				thinking,
+				permissionMode,
+				readOnlyMode,
+				hostCall: mockUpdateHostedTab.mock.calls.map((call) => call.slice(1)),
+			};
+		});
+		expect(outcomes[0]).toEqual({
+			thinking: 'sticky',
+			permissionMode: 'readonly',
+			readOnlyMode: true,
+			hostCall: [['tab-1', { thinking: 'sticky' }]],
+		});
+		expect(outcomes[1]).toEqual(outcomes[0]);
+		expect(outcomes[2]).toEqual(outcomes[0]);
 	});
 
 	it('writes nothing without an active tab', () => {

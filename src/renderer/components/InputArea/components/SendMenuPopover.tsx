@@ -22,6 +22,7 @@ import { useComposerInputStore, selectAiComposerValue } from '../../../stores/co
 import { getModalActions } from '../../../stores/modalStore';
 import { FORCED_PARALLEL_SEND_EVENT, HOLD_SEND_EVENT } from '../../../hooks/input/useInputKeyDown';
 import { requestSteerSend } from '../../../services/chatSteering';
+import { hostedTargetOf } from '../../../services/hostedTurns';
 import { openAgentSettings } from '../../../services/agentNavigation';
 import { openUrl } from '../../../utils/openUrl';
 import {
@@ -72,6 +73,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 	const session = useActiveSession();
 	const draftText = useComposerInputStore(selectAiComposerValue);
 	const forcedParallelEnabled = useSettingsStore((s) => s.forcedParallelExecution);
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const sendButtonMenu = useSettingsStore((s) => s.sendButtonMenu);
@@ -82,9 +84,16 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 	const model = useMemo(
 		() =>
 			session
-				? buildSendMenuModel(session, { text: draftText, imageCount }, { forcedParallelEnabled })
+				? buildSendMenuModel(
+						session,
+						{ text: draftText, imageCount },
+						{
+							forcedParallelEnabled,
+							hosted: hostingOn === true && hostedTargetOf(session) !== undefined,
+						}
+					)
 				: null,
-		[session, draftText, imageCount, forcedParallelEnabled]
+		[session, draftText, imageCount, forcedParallelEnabled, hostingOn]
 	);
 
 	useClickOutside([popoverRef, anchorRef] as React.RefObject<HTMLElement | null>[], onClose, true, {

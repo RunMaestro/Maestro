@@ -58,6 +58,25 @@ describe('mergeHostedLogs', () => {
 		expect(merged.map((entry) => entry.id)).toEqual(['a', 'b', 'c']);
 	});
 
+	it('places an entry written here where it happened, as a local tab holds it', () => {
+		// A wizard that ran here flattens its turns into the tab after the host's earlier ones.
+		const merged = mergeHostedLogs(
+			[
+				local('h1', { timestamp: 10 }),
+				local('h2', { timestamp: 20 }),
+				local('wizard-q', { timestamp: 30 }),
+				local('wizard-a', { timestamp: 40 }),
+			],
+			[
+				{ ...record('h1'), timestamp: 10 },
+				{ ...record('h2'), timestamp: 20 },
+				{ ...record('h3'), timestamp: 50 },
+			],
+			undefined
+		);
+		expect(merged.map((entry) => entry.id)).toEqual(['h1', 'h2', 'wizard-q', 'wizard-a', 'h3']);
+	});
+
 	it('keeps local entries untouched while the host transcript was never read', () => {
 		const logs = [local('a')];
 		expect(mergeHostedLogs(logs, undefined, undefined)).toBe(logs);
@@ -158,6 +177,42 @@ describe('projectHostedSession', () => {
 		expect(nextRunnableQueueItem(next.executionQueue)).toBeUndefined();
 	});
 
+	it('redraws a host card when only its images, model, or command arguments changed', () => {
+		const base = {
+			itemId: 'q1',
+			tabId: 't1',
+			text: 'next',
+			queuedAt: 5,
+			kind: 'message' as const,
+			paused: false,
+		};
+		const first = projectHostedSession(hostedRow(), { agent: host(), queue: [base] });
+		const images = projectHostedSession(first, {
+			agent: host(),
+			queue: [{ ...base, images: ['data:image/png;base64,AA'] }],
+		});
+		expect(images.executionQueue[0].images).toEqual(['data:image/png;base64,AA']);
+		const model = projectHostedSession(images, {
+			agent: host(),
+			queue: [{ ...base, images: ['data:image/png;base64,AA'], turnSettings: { model: 'opus' } }],
+		});
+		expect(model.executionQueue[0].turnSettings).toEqual({ model: 'opus' });
+		const command = { ...base, kind: 'command' as const, text: '/plan auth' };
+		const plan = projectHostedSession(model, { agent: host(), queue: [command] });
+		const replan = projectHostedSession(plan, {
+			agent: host(),
+			queue: [{ ...command, text: '/plan billing' }],
+		});
+		expect(replan.executionQueue[0].commandArgs).toBe('billing');
+		// Unchanged: the same record, so nothing redraws.
+		expect(
+			projectHostedSession(replan, {
+				agent: host(),
+				queue: [{ ...command, text: '/plan billing' }],
+			})
+		).toBe(replan);
+	});
+
 	it('leaves a running terminal command in charge of the busy state', () => {
 		const session = { ...hostedRow(), state: 'busy' as const, busySource: 'terminal' as const };
 		const next = projectHostedSession(session, { agent: host() });
@@ -168,6 +223,76 @@ describe('projectHostedSession', () => {
 	it('returns the same record when it already matches the host', () => {
 		const first = projectHostedSession(hostedRow(), { agent: host() });
 		expect(projectHostedSession(first, { agent: host() })).toBe(first);
+	});
+
+	describe('the error banner', () => {
+		const key = liveTurnKey('h1', 't1');
+		const error = {
+			type: 'auth_expired' as const,
+			message: 'Login expired',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 7,
+		};
+		const errorEntry: LogEntryRecord = {
+			id: 'err',
+			timestamp: 7,
+			source: 'error',
+			text: 'Login expired',
+			agentError: error,
+		};
+		const failed = (session = hostedRow()) =>
+			projectHostedSession(session, {
+				agent: host(),
+				liveTurns: { [key]: { startedAt: 1, busy: false, entries: [errorEntry] } },
+			});
+
+		it("raises the tab's and the agent's error when the host's turn reports one, as a local error does", () => {
+			const next = failed();
+			expect(next.aiTabs[0].agentError).toEqual(error);
+			expect(next.agentError).toEqual(error);
+			expect(next.agentErrorTabId).toBe('t1');
+			expect(next.state).toBe('error');
+			// The host runs the queue, so the queue pause a local error adds is not taken here.
+			expect(next.agentErrorPaused).toBeFalsy();
+			// The error card draws with its details, as a local one does.
+			expect(next.aiTabs[0].logs.at(-1)?.agentError).toEqual(error);
+		});
+
+		it('stays dismissed once the user dismisses it', () => {
+			const raised = failed();
+			const dismissed = {
+				...raised,
+				agentError: undefined,
+				agentErrorTabId: undefined,
+				state: 'idle' as const,
+				aiTabs: raised.aiTabs.map((tab) => ({ ...tab, agentError: undefined })),
+			};
+			const next = failed(dismissed);
+			expect(next.aiTabs[0].agentError).toBeUndefined();
+			expect(next.agentError).toBeUndefined();
+			expect(next.state).toBe('idle');
+		});
+
+		it('clears when the next turn starts, as a local send clears it', () => {
+			const raised = failed();
+			const next = projectHostedSession(raised, {
+				agent: host({ aiTabs: [{ id: 't1', agentSessionId: 's1', state: 'busy' }] }),
+			});
+			expect(next.aiTabs[0].agentError).toBeUndefined();
+			expect(next.agentError).toBeUndefined();
+			expect(next.state).toBe('busy');
+		});
+
+		it('raises nothing for an old error in a transcript that loads later', () => {
+			const next = projectHostedSession(hostedRow(), {
+				agent: host(),
+				transcripts: { [key]: { entries: [errorEntry], loaded: true } },
+			});
+			expect(next.aiTabs[0].agentError).toBeUndefined();
+			expect(next.agentError).toBeUndefined();
+			expect(next.state).toBe('idle');
+		});
 	});
 });
 

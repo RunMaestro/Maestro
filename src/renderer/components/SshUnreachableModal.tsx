@@ -13,13 +13,19 @@
  * user is not working with is tracked silently and appears the moment they go
  * to one of its agents.
  *
+ * It takes the agent error modal's slot with a transport-specific cause, and
+ * draws that modal's chrome (the Connection Error icon, the same width): a
+ * connection loss exists only where a connection exists, so the dialog is the
+ * same for every agent that has one (an SSH agent and a hosted agent alike).
+ *
  * Self-sourced from `sshOutageStore`; mounted once by `AppAgentModals`.
  */
 
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Server, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 
 import { Modal } from './ui/Modal';
+import { getErrorIcon } from './AgentErrorModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { selectOpenSshOutages, useSshOutageStore } from '../stores/sshOutageStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
@@ -114,9 +120,13 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 			title={`Can't reach "${remoteName}" over SSH`}
 			priority={MODAL_PRIORITIES.SSH_UNREACHABLE}
 			onClose={handleDismiss}
-			width={520}
+			width={480}
 			zIndex={10001}
-			headerIcon={<Server className="w-5 h-5" style={{ color: theme.colors.error }} />}
+			// The agent error modal's chrome for a connection error: the same icon, size, and width,
+			// so a lost connection carries no mode mark beyond the agent's pill.
+			headerIcon={
+				<span style={{ color: theme.colors.error }}>{getErrorIcon('network_error')}</span>
+			}
 			testId="ssh-unreachable-modal"
 			footer={
 				<div className="flex items-center gap-3 w-full">

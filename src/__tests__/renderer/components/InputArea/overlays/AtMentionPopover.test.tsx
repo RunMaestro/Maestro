@@ -1,12 +1,17 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AtMentionPopover } from '../../../../../renderer/components/InputArea/overlays/AtMentionPopover';
 import type {
 	MentionCategory,
 	MentionPickerItem,
 } from '../../../../../renderer/hooks/input/useMentionPicker';
 import { ipcCache } from '../../../../../renderer/services/ipcWrapper';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { AGENT_MODES, createModeSession } from '../../../../helpers';
 import { createItemRefs, inputAreaTheme } from '../_fixtures';
+
+type AgentMode = (typeof AGENT_MODES)[number];
 
 /**
  * Post-Phase-01 the popover is driven by the unified `items` / `counts` /
@@ -47,7 +52,7 @@ describe('AtMentionPopover', () => {
 	};
 
 	beforeEach(() => {
-		// The SSH name lookup reads through the shared 30s ipcCache entry, so a
+		// The mode pill's SSH name lookup reads through the shared 30s ipcCache entry, so a
 		// prior test's configs would otherwise leak into the next one.
 		ipcCache.invalidate('ssh-configs');
 	});
@@ -126,68 +131,49 @@ describe('AtMentionPopover', () => {
 		).toBeInTheDocument();
 	});
 
-	describe('SSH pill on agent rows', () => {
-		const agentItems: MentionPickerItem[] = [
-			{
-				kind: 'agent',
-				value: '@Local ',
-				displayText: 'Local',
-				targetSessionId: 'local',
-				toolType: 'claude-code',
-				isSshRemote: false,
-				sshRemoteId: null,
-				score: 1,
-			},
-			{
-				kind: 'agent',
-				value: '@Remote ',
-				displayText: 'Remote',
-				targetSessionId: 'remote',
-				toolType: 'claude-code',
-				isSshRemote: true,
-				sshRemoteId: 'remote-1',
-				score: 1,
-			},
-		];
+	describe('mode parity (local, SSH, hosted)', () => {
+		const agentItem: MentionPickerItem = {
+			kind: 'agent',
+			value: '@Builder ',
+			displayText: 'Builder',
+			targetSessionId: 'a1',
+			toolType: 'claude-code',
+			score: 1,
+		};
 
-		function renderAgents() {
-			return renderPopover({
-				items: agentItems,
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] });
+			useSettingsStore.setState({ federationHostedAgents: false });
+		});
+
+		/** The agent row's pill text and its markup with the pill taken out. */
+		function drawRow(mode: AgentMode) {
+			useSessionStore.setState({ sessions: [createModeSession(mode, { id: 'a1' })] });
+			const { unmount } = renderPopover({
+				items: [agentItem],
 				category: 'agents' as MentionCategory,
 				filter: '',
 			});
+			const row = screen.getByText('Builder').closest('button')!;
+			const pills = row.querySelectorAll('[data-testid^="federation-badge-"]');
+			const pill = pills[0]?.textContent ?? '';
+			const clone = row.cloneNode(true) as HTMLElement;
+			clone
+				.querySelectorAll('[data-testid^="federation-badge-"]')
+				.forEach((badge) => badge.parentElement?.remove());
+			const html = clone.innerHTML;
+			unmount();
+			return { pill, count: pills.length, html };
 		}
 
-		it('labels an SSH agent with its resolved remote name and leaves local rows bare', async () => {
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
-				success: true,
-				configs: [{ id: 'remote-1', name: 'build-box' }],
-			} as never);
-
-			renderAgents();
-
-			await waitFor(() => expect(screen.getByText('build-box')).toBeInTheDocument());
-
-			// The pill lives on the SSH row only - absence means local.
-			const remoteRow = screen.getByText('Remote').closest('button')!;
-			const localRow = screen.getByText('Local').closest('button')!;
-			expect(remoteRow).toContainElement(screen.getByText('build-box'));
-			expect(localRow.textContent).not.toMatch(/build-box|SSH/);
-		});
-
-		it('falls back to a generic SSH label when the remote name cannot be resolved', async () => {
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
-				success: true,
-				configs: [],
-			} as never);
-
-			renderAgents();
-
-			// Still marked remote: a missing name must never read as "local".
-			await waitFor(() => expect(screen.getByText('SSH')).toBeInTheDocument());
-			expect(screen.getByText('Remote').closest('button')).toContainElement(
-				screen.getByText('SSH')
-			);
+		it('draws the Left Bar mode pill on an agent row and nothing else differs', () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			const [local, ssh, hosted] = AGENT_MODES.map(drawRow);
+			expect([local.pill, ssh.pill, hosted.pill]).toEqual(['LOCAL', 'REMOTE', 'HOSTED']);
+			expect([local.count, ssh.count, hosted.count]).toEqual([1, 1, 1]);
+			expect(local.html).toContain('Builder');
+			expect(ssh.html).toBe(local.html);
+			expect(hosted.html).toBe(local.html);
 		});
 	});
 

@@ -2,9 +2,10 @@
  * The lift plan: the record-only refusals, the remote working directory, and the `import_agent`
  * payload with the summary a person reads before anything moves.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SshRemoteConfig } from '../../../types';
+import { setMaestroLibImageRefResolver } from '../../host';
 import type { AgentRecord } from '../../store/records';
 import { liftRefusal, liftRemoteCwd, liftSshRemoteId, planAgentLift } from '../lift-plan';
 
@@ -207,6 +208,67 @@ describe('planAgentLift', () => {
 		expect(kinds).toEqual(
 			expect.arrayContaining(['queued-image:q1', 'queued-command:q2', 'queued-command:q3'])
 		);
+	});
+
+	describe('with an image store registered', () => {
+		const STORED = 'maestro-image://store/abc.png';
+		const STORED_DATA = `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`;
+
+		afterEach(() => setMaestroLibImageRefResolver(() => null));
+
+		function registerStore(): void {
+			setMaestroLibImageRefResolver((ref) =>
+				ref === STORED ? { buffer: Buffer.from('png-bytes'), mediaType: 'image/png' } : null
+			);
+		}
+
+		it('moves a stored image on a queued message as its bytes', () => {
+			registerStore();
+			const plan = planAgentLift({
+				agent: sshAgent({
+					executionQueue: [
+						{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'next', images: [STORED] },
+					],
+				}),
+				remote,
+				peer: 'build-box',
+				withEnv: false,
+			});
+			expect(plan.input.queue).toEqual([{ tabId: 'tab-1', text: 'next', images: [STORED_DATA] }]);
+			expect(plan.summary.stays.map((stay) => stay.kind)).not.toContain('queued-image');
+		});
+
+		it('moves transcript images as their bytes and drops a ref this machine cannot read', () => {
+			registerStore();
+			const plan = planAgentLift({
+				agent: sshAgent({
+					aiTabs: [
+						{
+							id: 'tab-1',
+							name: 'Main',
+							agentSessionId: 'sess-1',
+							logs: [
+								{
+									id: 'l1',
+									timestamp: 1,
+									source: 'user',
+									text: 'see',
+									images: [STORED, 'data:image/png;base64,AA', 'maestro-image://store/gone.png'],
+								},
+								{ id: 'l2', timestamp: 2, source: 'ai', text: 'ok' },
+							],
+						},
+					],
+					activeTabId: 'tab-1',
+				}),
+				remote,
+				peer: 'build-box',
+				withEnv: false,
+			});
+			const logs = plan.input.tabs[0].logs;
+			expect(logs[0].images).toEqual([STORED_DATA, 'data:image/png;base64,AA']);
+			expect(logs[1]).not.toHaveProperty('images');
+		});
 	});
 
 	it('keeps an Auto Run folder under the cwd and drops one outside it', () => {

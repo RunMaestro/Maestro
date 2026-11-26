@@ -1,6 +1,6 @@
 /**
- * The Left Bar's Federation badge: `SSH` or `Federated`, and a hover card that explains the
- * difference and names the next step for an SSH agent.
+ * The mode pill: `LOCAL`, `REMOTE`, or `HOSTED`, and a hover card that explains the difference
+ * and names the next step for a remote (SSH) agent.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -13,9 +13,31 @@ import {
 import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('federationBadgeCopy', () => {
+	it('labels the three modes LOCAL, REMOTE, and HOSTED', () => {
+		expect(federationBadgeCopy({ kind: 'local' }).label).toBe('LOCAL');
+		expect(federationBadgeCopy({ kind: 'ssh', hostReady: false, canFederate: false }).label).toBe(
+			'REMOTE'
+		);
+		expect(federationBadgeCopy({ kind: 'hosted', peerName: 'build' }).label).toBe('HOSTED');
+		expect(federationBadgeCopy({ kind: 'local' }).lines).toEqual([
+			'This Maestro starts every turn on this machine.',
+		]);
+	});
+
+	it('says when a remote agent could not reach its remote', () => {
+		const copy = federationBadgeCopy({
+			kind: 'ssh',
+			remoteName: 'build',
+			connectionFailed: true,
+			hostReady: false,
+			canFederate: true,
+		});
+		expect(copy.lines[0]).toBe('Could not reach the remote on build over SSH.');
+	});
+
 	it('explains a hosted agent: leads with the benefit, then who owns it', () => {
 		const copy = federationBadgeCopy({ kind: 'hosted', peerName: 'build' });
-		expect(copy.label).toBe('Hosted');
+		expect(copy.label).toBe('HOSTED');
 		expect(copy.title).toBe('Hosted on build');
 		expect(copy.lines[0]).toBe('Keeps running while this machine sleeps or is off.');
 		expect(copy.lines[1]).toMatch(/Maestro host on build owns this agent/);
@@ -33,7 +55,7 @@ describe('federationBadgeCopy', () => {
 			error: 'ssh timed out',
 		});
 		expect(down.lines.slice(2)).toEqual([
-			'Not connected to build. Showing the last known state. Reconnect from the banner in its view.',
+			'Not connected to build. Showing the last known state. To reconnect, run Reconnect Federation Peer from Quick Actions.',
 			'ssh timed out',
 		]);
 		const pending = federationBadgeCopy({
@@ -47,8 +69,8 @@ describe('federationBadgeCopy', () => {
 	it('explains an SSH agent and names the next step', () => {
 		const base = { kind: 'ssh' as const, remoteName: 'build' };
 		const install = federationBadgeCopy({ ...base, hostReady: false, canFederate: true });
-		expect(install.label).toBe('SSH');
-		expect(install.title).toBe('SSH agent on build');
+		expect(install.label).toBe('REMOTE');
+		expect(install.title).toBe('Remote agent on build (SSH)');
 		expect(install.lines[0]).toMatch(/^Stops when this machine sleeps/);
 		expect(install.lines.at(-1)).toMatch(/Move to Host: Maestro sets up a host/);
 
@@ -80,9 +102,11 @@ describe('FederationBadge', () => {
 			/>
 		);
 		const badge = screen.getByTestId('federation-badge-ssh');
-		expect(badge).toHaveTextContent('SSH');
+		expect(badge).toHaveTextContent('REMOTE');
 		fireEvent.mouseEnter(badge.parentElement as HTMLElement);
-		expect(screen.getByTestId('federation-badge-card')).toHaveTextContent('SSH agent on build');
+		expect(screen.getByTestId('federation-badge-card')).toHaveTextContent(
+			'Remote agent on build (SSH)'
+		);
 	});
 
 	it('turns red with the reason and the fix when automatic Federation is blocked', () => {

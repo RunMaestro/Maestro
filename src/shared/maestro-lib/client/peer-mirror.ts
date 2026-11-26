@@ -10,6 +10,7 @@
 // Pure: no I/O, no clock of its own. M5 (the desktop as a runtime subscriber) can reuse the
 // `snapshot` and `agent.*` rules as they stand.
 
+import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import { peerAgentRef } from '../agents/lift-pointer';
 import type { AgentRecord, GroupRecord } from '../store/records';
 import { foldLiveTurn, liveTurnKey, type LiveTurn, type LiveTurnContext } from './live-turn';
@@ -44,6 +45,12 @@ export interface MirroredPeer {
 	 * nothing waiting has no entry. Kept through a disconnect, like the agents.
 	 */
 	queues: Record<string, QueuedTurn[]>;
+	/**
+	 * Each agent's running Auto Run, as the host's last `autorun_state` frame drew it, by agent id.
+	 * An agent with no run has no entry. A run's figures stay through a disconnect, like the queue:
+	 * the run goes on on the host, and the host replays every live run when the connection resumes.
+	 */
+	autoRuns: Record<string, AutoRunBroadcastState>;
 	/** Tabs whose transcript must be read again on next open, by `liveTurnKey(agentId, tabId)`. */
 	staleTabs: Record<string, true>;
 	/** When the agent list was last replaced whole, epoch ms. */
@@ -74,6 +81,8 @@ export type MirrorEvent =
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
 	/** What waits in the agent's host queue now, in order. Replaces what was held. */
 	| { type: 'agent.queue'; agentId: string; items: QueuedTurn[] }
+	/** The agent's Auto Run as the host drew it now; `null` when it has none. Replaces what was held. */
+	| { type: 'agent.autorun'; agentId: string; state: AutoRunBroadcastState | null }
 	/** Read this tab's transcript again on next open (now, when it is open). */
 	| { type: 'tab.stale'; agentId: string; tabId: string }
 	/** Every tab is stale: the connection could not resume, or the desktop woke up. */
@@ -115,6 +124,7 @@ export function createMirroredPeer(input: {
 		groups: [],
 		liveTurns: {},
 		queues: {},
+		autoRuns: {},
 		staleTabs: {},
 	};
 }
@@ -200,14 +210,15 @@ function pruneByTabs<T>(record: Record<string, T>, keys: Set<string>): Record<st
 	return out;
 }
 
-/** Keep only the queues of agents the peer still has. */
-function pruneQueues(
-	queues: Record<string, QueuedTurn[]>,
+/** Keep only the entries (queues, Auto Runs) of agents the peer still has. */
+function pruneByAgent<T>(
+	byAgent: Record<string, T>,
 	agents: readonly AgentRecord[]
-): Record<string, QueuedTurn[]> {
+): Record<string, T> {
 	const ids = new Set(agents.map((agent) => agent.id));
-	const out: Record<string, QueuedTurn[]> = {};
-	for (const [agentId, items] of Object.entries(queues)) if (ids.has(agentId)) out[agentId] = items;
+	const out: Record<string, T> = {};
+	for (const [agentId, value] of Object.entries(byAgent))
+		if (ids.has(agentId)) out[agentId] = value;
 	return out;
 }
 
@@ -227,6 +238,27 @@ export function setAgentQueue(
 	if (items.length) queues[agentId] = items;
 	else delete queues[agentId];
 	return { peer: { ...peer, queues }, push: [{ type: 'agent.queue', agentId, items }] };
+}
+
+/**
+ * Replace one agent's Auto Run with the host's frame (`null` or a frame that is not running clears
+ * it). An agent the peer does not have is ignored.
+ */
+export function setAgentAutoRun(
+	peer: MirroredPeer,
+	agentId: string,
+	state: AutoRunBroadcastState | null
+): MirrorStep {
+	if (!peer.agents.some((agent) => agent.id === agentId)) return { peer, push: [] };
+	const running = state?.isRunning ? state : null;
+	if (!running && !peer.autoRuns[agentId]) return { peer, push: [] };
+	const autoRuns = { ...peer.autoRuns };
+	if (running) autoRuns[agentId] = running;
+	else delete autoRuns[agentId];
+	return {
+		peer: { ...peer, autoRuns },
+		push: [{ type: 'agent.autorun', agentId, state: running }],
+	};
 }
 
 /** Mark every tab stale (a connection that did not resume, a wake). */
@@ -258,7 +290,8 @@ export function replacePeerAgents(
 		agents,
 		groups,
 		liveTurns: pruneByTabs(peer.liveTurns, keys),
-		queues: pruneQueues(peer.queues, agents),
+		queues: pruneByAgent(peer.queues, agents),
+		autoRuns: pruneByAgent(peer.autoRuns, agents),
 		staleTabs: pruneByTabs(peer.staleTabs, keys),
 		lastSyncAt: now,
 	};
@@ -313,11 +346,14 @@ function removeAgent(peer: MirroredPeer, agentId: string): MirrorStep {
 	};
 	const queues = { ...peer.queues };
 	delete queues[agentId];
+	const autoRuns = { ...peer.autoRuns };
+	delete autoRuns[agentId];
 	const next: MirroredPeer = {
 		...peer,
 		agents: peer.agents.filter((agent) => agent.id !== agentId),
 		liveTurns: keep(peer.liveTurns),
 		queues,
+		autoRuns,
 		staleTabs: keep(peer.staleTabs),
 	};
 	return {
@@ -353,9 +389,10 @@ function applyTurn(
 }
 
 /**
- * Apply one event from the peer's client. Tab, settings, Auto Run, and group chat events change
- * nothing: every tab change is followed by an `agent.updated`, and Auto Run and group chat
- * mirroring are out of scope. A `queue.changed` replaces the agent's queue.
+ * Apply one event from the peer's client. Tab, settings, and group chat events change nothing:
+ * every tab change is followed by an `agent.updated`, and group chat mirroring is out of scope.
+ * A `queue.changed` replaces the agent's queue; an Auto Run `state` replaces its run. A run's
+ * output and usage are not held: the host's History and the agent's tabs carry them.
  */
 export function applyPeerEvent(
 	peer: MirroredPeer,
@@ -387,6 +424,13 @@ export function applyPeerEvent(
 			return applyTurn(peer, event.agentId, event.tabId, event.event, ctx);
 		case 'queue.changed':
 			return setAgentQueue(peer, event.agentId, event.items);
+		case 'autorun': {
+			const run = event.event;
+			if (run.kind !== 'state') return { peer, push: [] };
+			// Only a wire event carries the frame; without one, only a clear can be applied.
+			if (run.frame === undefined && run.state !== null) return { peer, push: [] };
+			return setAgentAutoRun(peer, event.agentId, run.frame ?? null);
+		}
 		default:
 			return { peer, push: [] };
 	}

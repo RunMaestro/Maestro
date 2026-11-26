@@ -19,20 +19,17 @@
 // name a LOCAL agent and its transcript, which the host cannot see, so they are
 // refused there rather than dropped.
 
-import { getSessionById, readSettings, resolveAgentId } from '../services/storage';
-import {
-	AGENT_LIFTED_CODE,
-	hostedAgentsEnabled,
-	liftedSendRefusal,
-} from '../../shared/maestro-lib/agents/lift-pointer';
+import { getSessionById, resolveAgentId } from '../services/storage';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import {
 	PeerResolveError,
 	peerErrorCode,
+	liftedPeerTarget,
 	routeAgentTarget,
 	withPeerAgent,
+	type PeerTarget,
 } from '../services/peer-resolver';
 import { ExitCode } from '../exit-codes';
 
@@ -103,20 +100,23 @@ export async function ask(agentId: string, question: string, options: AskOptions
 
 	const timeoutError = `--timeout must be between ${MIN_TIMEOUT_SECONDS} and ${MAX_TIMEOUT_SECONDS} seconds`;
 
-	const route = routeAgentTarget(agentId);
-	if (route.kind === 'peer') {
-		// A side question forks a desktop tab; a peer's host has no tab to fork.
-		if (options.btw === true || options.tab !== undefined) {
-			fail(
-				`${options.btw === true ? '--btw' : '--tab'} forks a tab on this desktop, which the host on peer "${route.target.peer}" does not offer. Ask without it.`,
-				{},
-				ExitCode.InvalidUsage
-			);
-			return;
-		}
+	const sideQuestion = options.btw === true;
+	if (options.tab !== undefined && !sideQuestion) {
+		fail('--tab only applies to --btw');
+		return;
+	}
+	if (sideQuestion && options.withContext) {
+		fail('--with-context does not apply to --btw: a side question already reads the tab');
+		return;
+	}
+
+	// A peer's agent answers on its host: the question goes there over the peer link.
+	const askOnPeer = async (target: PeerTarget) => {
+		// `--btw` (and its `--tab`) rides the same message: a desktop host forks its own tab, as a
+		// `/btw` typed there does. A headless host refuses it.
 		if (options.from !== undefined || options.withContext) {
 			fail(
-				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${route.target.peer}" cannot see. Ask without it.`,
+				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${target.peer}" cannot see. Ask without it.`,
 				{},
 				ExitCode.InvalidUsage
 			);
@@ -128,7 +128,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 			return;
 		}
 		try {
-			await withPeerAgent(route.target, ({ agent, peer, withBridge }) =>
+			await withPeerAgent(target, ({ agent, peer, withBridge }) =>
 				consult(withBridge, agent.id, question, {}, peerTimeoutMs, options, fail, { peer })
 			);
 		} catch (error) {
@@ -139,8 +139,10 @@ export async function ask(agentId: string, question: string, options: AskOptions
 				error.exitCode
 			);
 		}
-		return;
-	}
+	};
+
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') return askOnPeer(route.target);
 
 	let targetSessionId: string;
 	try {
@@ -149,14 +151,9 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		fail(error instanceof Error ? error.message : String(error));
 		return;
 	}
-	// A lifted agent answers on its host now, so the question goes there.
-	const liftedRefusal = liftedSendRefusal(getSessionById(targetSessionId) ?? {}, () =>
-		hostedAgentsEnabled(readSettings() as Record<string, unknown>)
-	);
-	if (liftedRefusal) {
-		fail(liftedRefusal, { code: AGENT_LIFTED_CODE });
-		return;
-	}
+	// A hosted agent answers on its host, so the question goes there, as it does for `peer:agent`.
+	const hostRoute = liftedPeerTarget(getSessionById(targetSessionId));
+	if (hostRoute) return askOnPeer(hostRoute);
 
 	const caller = readCallerIdentity(process.env);
 	let fromSessionId: string | undefined;
@@ -169,15 +166,6 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		}
 	} else {
 		fromSessionId = caller?.agentId;
-	}
-	const sideQuestion = options.btw === true;
-	if (options.tab !== undefined && !sideQuestion) {
-		fail('--tab only applies to --btw');
-		return;
-	}
-	if (sideQuestion && options.withContext) {
-		fail('--with-context does not apply to --btw: a side question already reads the tab');
-		return;
 	}
 	// A side question forks a tab and never writes to it, so an agent asking
 	// about its own conversation is fine; a consult of itself would deadlock.

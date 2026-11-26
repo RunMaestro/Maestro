@@ -1,8 +1,9 @@
 import { useHasHeadlessActivity } from '../../stores/headlessActivityStore';
 import { memo } from 'react';
-import { Folder, GitBranch, Bot, Clock, Server } from 'lucide-react';
+import { Folder, GitBranch, Bot, Clock } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import { getContextColor, formatActiveTime } from '../../utils/theme';
+import { AgentModePill } from './AgentModePill';
 
 interface SessionTooltipContentProps {
 	session: Session;
@@ -39,66 +40,17 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				</span>
 				{session.toolType !== 'terminal' && (
 					<>
-						{session.sessionSshRemoteConfig?.enabled && session.sshConnectionFailed && (
-							<span
-								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold"
-								style={{
-									backgroundColor: theme.colors.error + '30',
-									color: theme.colors.error,
-								}}
-								title="SSH connection failed"
-							>
-								<Server className="w-3 h-3" />
-								{!(session.isGitRepo || session.worktreeBranch) && (
-									<span className="uppercase">REMOTE</span>
-								)}
-							</span>
-						)}
-						{session.isGitRepo || session.worktreeBranch ? (
-							<>
-								{session.sessionSshRemoteConfig?.enabled && !session.sshConnectionFailed && (
-									<span
-										className="flex items-center px-1.5 py-0.5 rounded text-3xs font-bold"
-										style={{
-											backgroundColor: theme.colors.success + '30',
-											color: theme.colors.success,
-										}}
-										title="Remote SSH"
-									>
-										<Server className="w-3 h-3" />
-									</span>
-								)}
-								<span
-									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.accent + '30',
-										color: theme.colors.accent,
-									}}
-								>
-									GIT
-								</span>
-							</>
-						) : session.sessionSshRemoteConfig?.enabled ? (
-							!session.sshConnectionFailed && (
-								<span
-									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-									}}
-								>
-									REMOTE
-								</span>
-							)
-						) : (
+						{/* The mode pill, the same one the row and the header draw. */}
+						<AgentModePill theme={theme} session={session} />
+						{(session.isGitRepo || session.worktreeBranch) && (
 							<span
 								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 								style={{
-									backgroundColor: theme.colors.textDim + '20',
-									color: theme.colors.textDim,
+									backgroundColor: theme.colors.accent + '30',
+									color: theme.colors.accent,
 								}}
 							>
-								LOCAL
+								GIT
 							</span>
 						)}
 					</>
@@ -118,7 +70,6 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 			</div>
 			<div className="text-2xs capitalize mb-2" style={{ color: theme.colors.textDim }}>
 				{hasHeadlessActivity ? 'busy' : session.state} • {session.toolType}
-				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
 
 			<div

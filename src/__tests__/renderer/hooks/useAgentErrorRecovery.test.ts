@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentErrorRecovery } from '../../../renderer/hooks';
 import type { AgentError } from '../../../shared/types';
+import { AGENT_MODES, createModeSession } from '../../helpers';
+import { isSessionRemote } from '../../../renderer/utils/sessionHelpers';
 
 const baseError: AgentError = {
 	type: 'auth_expired',
@@ -241,19 +243,27 @@ describe('useAgentErrorRecovery', () => {
 			expect(result.current.recoveryActions).toEqual([]);
 		});
 
-		it('never offers in-app install for an SSH remote agent', () => {
-			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+		it.each(AGENT_MODES)('offers the same Install action, first, for a %s agent', (mode) => {
+			// The host is Windows, so a remote agent's POSIX command is visibly its own.
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'win32';
+			const session = createModeSession(mode);
 			const { result } = renderHook(() =>
 				useAgentErrorRecovery({
-					error: notInstalled,
-					agentId: 'codex',
+					error: { ...notInstalled, agentId: 'claude-code' },
+					agentId: 'claude-code',
 					sessionId: 's1',
-					isRemote: true,
+					isRemote: isSessionRemote(session),
 					onInstall: vi.fn(),
 					onRetry: vi.fn(),
 				})
 			);
-			expect(result.current.recoveryActions).toEqual([]);
+			const [install, retry] = result.current.recoveryActions;
+			expect(install).toMatchObject({ id: 'install', label: 'Install Claude Code', primary: true });
+			expect(retry).toMatchObject({ id: 'retry', primary: false });
+			// The command is the one for the machine the turn runs on.
+			expect(install.description).toContain(
+				mode === 'local' ? 'install.ps1' : 'curl -fsSL https://claude.ai/install.sh'
+			);
 		});
 
 		it('withholds Install and keeps Try Again as primary when Node.js runtime is missing', () => {

@@ -12,6 +12,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import type { MergeOptions } from '../../../renderer/components/MergeSessionModal';
 import * as contextGroomer from '../../../renderer/services/contextGroomer';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { SetStateAction } from 'react';
 import type { MergeRequest } from '../../../renderer/types/contextMerge';
 
@@ -775,6 +776,55 @@ describe('useMergeSessionWithSessions: Grok carry-over', () => {
 		sessions = all;
 		useSessionStore.setState({ sessions: all });
 	}
+
+	it.each(['local', 'ssh', 'hosted'] as const)(
+		'merges into an existing tab of a %s agent the same way: one note, the context for its next turn',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: mode === 'hosted' });
+			try {
+				const source = grokSource([
+					{ id: 's-1', timestamp: 1, source: 'user', text: 'SOURCE_QUESTION' },
+				]);
+				seed(
+					source,
+					target(
+						'claude-code',
+						{},
+						{
+							...(mode === 'local'
+								? {}
+								: { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+							...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+						}
+					)
+				);
+				const { result } = render();
+				let merge;
+				await act(async () => {
+					merge = await result.current.executeMerge(
+						source,
+						'grok-tab',
+						'target',
+						'target-tab',
+						intoTab
+					);
+				});
+				expect(merge).toMatchObject({ success: true });
+				// The send that follows routes it: spawn here or over SSH, or hand it to the host
+				// ahead of the message (`sendHostedTurn()`).
+				const tab = injectedTab();
+				expect(tab.pendingMergedContext).toContain('User: SOURCE_QUESTION');
+				expect(tab.autoSendOnActivate).toBe(true);
+				expect(tab.inputValue).toContain('merging context from another session ("Grok Source")');
+				expect(tab.logs.map((log) => log.text)).toEqual([
+					'TARGET_OWN_HISTORY',
+					'Context merged from "Grok Source".',
+				]);
+			} finally {
+				useSettingsStore.setState({ federationHostedAgents: false });
+			}
+		}
+	);
 
 	it('injects only the ordered Grok source, labelled by provider and cwd, without account identity', async () => {
 		const source = grokSource([

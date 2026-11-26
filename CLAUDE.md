@@ -100,7 +100,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
-- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `pathToFileUrl(path)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
@@ -121,6 +121,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether an absolute path exists, from render code:** `checkPathExists()` in `src/renderer/utils/fileLinks/pathExistence.ts`, `usePathExistence(sshRemoteId?)` in `src/renderer/hooks/utils/usePathExistence.ts` (async-filled cache; `remarkFileLinks` links a spaced absolute path only once it exists)
 - **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
+- **A file action that hands a file to this machine (open, reveal, play, save a copy):** `openFileInDefaultApp()`, `revealInFileManager()`, `openFolderInFileManager()`, `openFileInMaestroBrowser()`, `saveCopyOfFile()`, `resolveOpenSource()`, `fetchLocalCopy()` in `src/renderer/services/fileActions.ts`
+- **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
 
 #### Main process: stores, persistence, platform
 
@@ -228,13 +230,13 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`
 - **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `buildSshForwardMasterArgs()`, `buildSshMuxArgs()`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
 - **Which env vars a Federation lift sends:** `planLiftEnv()`, `providerSessionDirSelector()`, `liftSessionDirProblem()` in `src/shared/maestro-lib/agents/lift-env.ts`
-- **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `hostedPointer()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
 - **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftedAutoRunFolder()`, `liftSshRemoteId()` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
 - **Importing a lifted agent on a host (headless or desktop, `import_agent`):** `planAgentImport()` in `src/shared/maestro-lib/agents/import-plan.ts`; `importAgentIntoDesktop()` in `src/main/federation/import-agent.ts`; `importInputFromMessage()` in `src/shared/maestro-lib/runtime/server-requests.ts`
 - **Running a Federation lift (CLI and desktop Move to Host):** `runLift()`, `formatLiftPlan()`, `LiftRunError`, `providerEnvVarsOf()` in `src/shared/maestro-lib/agents/lift-run.ts`; `liftAgentFromDesktop()` in `src/main/federation/lift.ts`
 - **Moving a hosted agent back from its host (CLI and desktop Move Back from Host):** `runReturnFromHost()`, `withReturnedFromHost()`, `readReturnedFromHost()` in `src/shared/maestro-lib/agents/lift-return.ts`; `returnAgentFromDesktop()` in `src/main/federation/lift.ts`
 - **Keeping a hosted agent's settings on its host (Federation):** `planLiftedSettingsSync()`, `liftFollowUpPatch()` in `src/shared/maestro-lib/agents/lift-settings-sync.ts`; `startLiftedAgentSettingsSync()` in `src/renderer/services/liftedAgentSettingsSync.ts`
-- **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `hostCallError()`, `peerErrorCode()` in `src/cli/services/peer-resolver.ts`
+- **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `liftedPeerTarget()`, `hostCallError()` in `src/cli/services/peer-resolver.ts`
 - **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
 - **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
 - **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
@@ -242,9 +244,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Keeping a Federation host running across reboots (service):** `installRemoteService()`, `buildRemoteServiceScript()`, `describeRemoteService()` in `src/shared/maestro-lib/client/remote-service.ts`
 - **Automatic Federation (keep hosts, install, move SSH agents):** `AutoFederationCoordinator` in `src/main/federation/auto-federation.ts`; `useFederationAutoStore` in `src/renderer/stores/federationAutoStore.ts`; types in `src/shared/federationAuto.ts`
 - **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
-- **How a local agent stands with Federation (badge, Move to Host):** `agentFederationStatus()`, `canMoveToHost()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
+- **How a local agent stands with Federation (badge, Move to Host):** `agentFederationStatus()`, `canMoveToHost()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<AgentModePill>` in `src/renderer/components/SessionList/AgentModePill.tsx`
+- **The words for an agent's mode (Local / Remote / Hosted):** `AGENT_MODE_LABELS`, `agentModePillLabel()`, `agentModeKind()` in `src/renderer/utils/agentModeLabels.ts`
 - **Which hosted agents the Left Bar shows, and adding one:** `liftedAgentKeys()`, `findLiftedAgent()` in `src/shared/maestro-lib/agents/lift-pointer.ts`; `listHostedAgents()`, `addHostedAgent()`, `resolveHostAgentRef()` in `src/renderer/services/hostedAgents.ts`
 - **A hosted agent drawn as its own Left Bar record (renderer):** `projectHostedSession()` in `src/renderer/utils/hostedSession.ts`; `startHostedAgentSync()` in `src/renderer/services/hostedAgentSync.ts`; `sendHostedTurn()`, `interruptHostedTurn()`, `openHostedTab()` in `src/renderer/services/hostedTurns.ts`
+- **A turn queued on this machine for a hosted agent:** `handQueuedItemToHost()`, `sendTakenItemToHost()`, `isQueuedItemForHost()`, `queuedItemHostSend()` in `src/renderer/services/hostedQueuedTurn.ts`
+- **Whether a provider launch for a hosted agent may start on this machine:** `checkHostedAgentLaunch()` in `src/main/utils/hosted-launch-guard.ts`; `HOSTED_STATELESS_HELPERS`, `statelessHelperOfProcess()`, `hostedLaunchVerdict()` in `src/shared/maestro-lib/agents/hosted-launch.ts`
+- **Consulting a hosted agent on its host:** `askMirrorConsult()` in `src/renderer/services/peerMirror.ts`; `RemoteAskerContext`, `parseWireTranscript()` in `src/shared/crossAgentTypes.ts`; `cancelHostedConsults()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`
+- **A hosted agent's History with this machine's Cue runs:** `withHostedCueRuns()`, `hostedCueScopeAgents()` in `src/main/utils/cue-history-merge.ts`
 - **The peer mirror's store and record adapters (renderer):** `usePeerMirrorStore`, `reducePeerMirrorPush()` in `src/renderer/stores/peerMirrorStore.ts`; `mirrorTab()`, `mirrorLogEntry()` in `src/renderer/utils/peerMirrorView.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
@@ -271,6 +278,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
 - **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
+- **Detecting or installing an agent's CLI where the agent runs:** `useRemoteAgentDetection()` in `src/renderer/hooks/agent/useRemoteAgentDetection.ts`; `agentInstallPlatform()` in `src/shared/agentInstall.ts`; `loginTerminalSshConfig(session)` in `src/renderer/components/LoginTerminal.tsx`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
@@ -361,6 +369,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
+- **Maestro's own slash commands (`/history`, `/skills`, `/wizard`, `/btw`):** `parseMaestroBuiltinCommand()` in `src/shared/maestroBuiltinCommands.ts`; `runMaestroBuiltinCommand()`, `registerMaestroBuiltinCommandHandlers()` in `src/renderer/services/maestroBuiltinCommands.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`

@@ -27,6 +27,19 @@ function fakeClient() {
 				setPaused: vi.fn(async (_agentId: string, itemId: string, paused: boolean) =>
 					ok({ found: itemId !== 'gone', paused })
 				),
+				edit: vi.fn(async (_agentId: string, itemId: string) => ok({ found: itemId !== 'gone' })),
+				move: vi.fn(async (_agentId: string, itemId: string) => ok({ moved: itemId !== 'gone' })),
+				sendNow: vi.fn(async (_agentId: string, itemId: string) => ok({ sent: itemId !== 'gone' })),
+				merge: vi.fn(async (_agentId: string, itemId: string) =>
+					ok(itemId === 'gone' ? { merged: false } : { merged: true, mergedIntoId: 'q0' })
+				),
+				steer: vi.fn(async (_agentId: string, itemId: string) =>
+					ok(
+						itemId === 'gone'
+							? { outcome: 'not-found' as const }
+							: { outcome: 'delivered' as const, verdict: 'delivered' as const }
+					)
+				),
 			},
 		},
 		tabs: {
@@ -38,6 +51,17 @@ function fakeClient() {
 		},
 		agents: {
 			update: vi.fn(async () => ok({ applied: ['model' as const, 'nudgeMessage' as const] })),
+		},
+		consults: {
+			ask: vi.fn(async () => ok({ answer: 'src/foo.ts', agentName: 'docs' })),
+		},
+		autoRun: {
+			launch: vi.fn(async () => ok(undefined)),
+			launchGoal: vi.fn(async () => ok({ tabId: 't-goal' })),
+			stop: vi.fn(async () => ok(undefined)),
+			resume: vi.fn(async () => ok(undefined)),
+			skip: vi.fn(async () => ok(undefined)),
+			abort: vi.fn(async () => ok(undefined)),
 		},
 	};
 	return { client, asClient: client as unknown as MaestroClient };
@@ -256,6 +280,116 @@ describe('runPeerAgentAction', () => {
 		).toEqual(ok({ kind: 'pause-queued', itemId: 'gone', found: false, paused: false }));
 	});
 
+	it('merges a waiting message into the one above it on the host', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'merge-queued', itemId: 'q1' })
+		).toEqual(ok({ kind: 'merge-queued', itemId: 'q1', merged: true, mergedIntoId: 'q0' }));
+		expect(client.turns.queue.merge).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'merge-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'merge-queued', itemId: 'gone', merged: false }));
+	});
+
+	it("steers a waiting message on the host and hands back the host's outcome", async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'steer-queued', itemId: 'q1' })
+		).toEqual(
+			ok({
+				kind: 'steer-queued',
+				itemId: 'q1',
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			})
+		);
+		expect(client.turns.queue.steer).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'steer-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'steer-queued', itemId: 'gone', result: { outcome: 'not-found' } }));
+	});
+
+	it("asks a /btw side question of the host's tab, as `ask --btw` does", async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'side-question',
+				tabId: 't1',
+				question: 'which file?',
+			})
+		).toEqual(ok({ kind: 'side-question', tabId: 't1', answer: 'src/foo.ts' }));
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'which file?',
+			sideQuestion: true,
+			targetTabId: 't1',
+		});
+	});
+
+	it('consults the host agent for an asker on another machine, with its context and name', async () => {
+		const { client, asClient } = fakeClient();
+		const transcript = [{ source: 'user', text: 'we drop events', timestamp: 1 }];
+		client.consults.ask.mockResolvedValueOnce({
+			ok: true,
+			value: { answer: 'Use a queue.', agentName: 'Docs' },
+		});
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'consult',
+				question: 'how do we buffer?',
+				transcript,
+				fromAgentName: 'Source',
+				handoffAnswer: 'the plan',
+			})
+		).toEqual(ok({ kind: 'consult', answer: 'Use a queue.', agentName: 'Docs' }));
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'how do we buffer?',
+			transcript,
+			fromAgentName: 'Source',
+			handoffAnswer: 'the plan',
+		});
+	});
+
+	it('edits a waiting message on the host', async () => {
+		const { client, asClient } = fakeClient();
+		const edit = { text: 'new', turnSettings: { model: 'm' } };
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'edit-queued', itemId: 'q1', edit })
+		).toEqual(ok({ kind: 'edit-queued', itemId: 'q1', found: true }));
+		expect(client.turns.queue.edit).toHaveBeenCalledWith('a1', 'q1', edit);
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'edit-queued', itemId: 'gone', edit })
+		).toEqual(ok({ kind: 'edit-queued', itemId: 'gone', found: false }));
+	});
+
+	it('moves a waiting message on the host, in its tab when one is named', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'move-queued',
+				itemId: 'q1',
+				toIndex: 0,
+				tabId: 't1',
+			})
+		).toEqual(ok({ kind: 'move-queued', itemId: 'q1', moved: true }));
+		expect(client.turns.queue.move).toHaveBeenCalledWith('a1', 'q1', 0, 't1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'move-queued', itemId: 'gone', toIndex: 1 })
+		).toEqual(ok({ kind: 'move-queued', itemId: 'gone', moved: false }));
+		expect(client.turns.queue.move).toHaveBeenLastCalledWith('a1', 'gone', 1, undefined);
+	});
+
+	it('sends a waiting message now on the host', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'send-now-queued', itemId: 'q1' })
+		).toEqual(ok({ kind: 'send-now-queued', itemId: 'q1', sent: true }));
+		expect(client.turns.queue.sendNow).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'send-now-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'send-now-queued', itemId: 'gone', sent: false }));
+	});
+
 	it('passes a failed queue call through untouched', async () => {
 		const { client, asClient } = fakeClient();
 		const failure = {
@@ -326,6 +460,62 @@ describe('parsePeerAgentAction', () => {
 			itemId: 'q1',
 			paused: false,
 		});
+		expect(parsePeerAgentAction({ kind: 'merge-queued', itemId: 'q1', extra: 1 })).toEqual({
+			kind: 'merge-queued',
+			itemId: 'q1',
+		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: 'new', turnSettings: { model: 'm', extra: 1 }, images: [] },
+			})
+		).toEqual({
+			kind: 'edit-queued',
+			itemId: 'q1',
+			edit: { text: 'new', turnSettings: { model: 'm' }, images: [] },
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: 'only text' } })
+		).toEqual({ kind: 'edit-queued', itemId: 'q1', edit: { text: 'only text' } });
+		expect(
+			parsePeerAgentAction({ kind: 'move-queued', itemId: 'q1', toIndex: 2, tabId: 't1', x: 1 })
+		).toEqual({ kind: 'move-queued', itemId: 'q1', toIndex: 2, tabId: 't1' });
+		expect(parsePeerAgentAction({ kind: 'move-queued', itemId: 'q1', toIndex: 0 })).toEqual({
+			kind: 'move-queued',
+			itemId: 'q1',
+			toIndex: 0,
+		});
+		expect(parsePeerAgentAction({ kind: 'send-now-queued', itemId: 'q1', extra: 1 })).toEqual({
+			kind: 'send-now-queued',
+			itemId: 'q1',
+		});
+		expect(parsePeerAgentAction({ kind: 'steer-queued', itemId: 'q1', extra: 1 })).toEqual({
+			kind: 'steer-queued',
+			itemId: 'q1',
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'side-question', tabId: 't1', question: '  which file? ' })
+		).toEqual({ kind: 'side-question', tabId: 't1', question: 'which file?' });
+		expect(
+			parsePeerAgentAction({
+				kind: 'consult',
+				question: ' how? ',
+				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, { text: 'no source' }, 'junk'],
+				fromAgentName: ' Source ',
+				handoffAnswer: '',
+			})
+		).toEqual({
+			kind: 'consult',
+			question: 'how?',
+			transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
+			fromAgentName: 'Source',
+			handoffAnswer: '',
+		});
+		expect(parsePeerAgentAction({ kind: 'consult', question: 'how?', transcript: [] })).toEqual({
+			kind: 'consult',
+			question: 'how?',
+		});
 		expect(
 			parsePeerAgentAction({
 				kind: 'update-agent',
@@ -361,6 +551,22 @@ describe('parsePeerAgentAction', () => {
 			tabId: 't1',
 			patch: { thinking: 'sticky', enterToSend: null, saveToHistory: false },
 		});
+		// A wizard that ran on the laptop hands the host tab its provider session.
+		expect(
+			parsePeerAgentAction({
+				kind: 'update-tab',
+				tabId: 't1',
+				patch: { agentSessionId: 'wizard-session' },
+			})
+		).toEqual({ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: 'wizard-session' } });
+		// A merge into a hosted tab hands the host the context for the tab's next turn.
+		expect(
+			parsePeerAgentAction({
+				kind: 'update-tab',
+				tabId: 't1',
+				patch: { mergedContext: 'Additional context' },
+			})
+		).toEqual({ kind: 'update-tab', tabId: 't1', patch: { mergedContext: 'Additional context' } });
 	});
 
 	it('refuses a settings patch with an unknown field, a bad value, or nothing in it', () => {
@@ -392,6 +598,34 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { name: 'x' } })
 		).toThrow('Unknown tab settings field: name');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { agentSessionId: '' } })
+		).toThrow("Invalid value for tab settings field 'agentSessionId'");
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { mergedContext: '' } })
+		).toThrow("Invalid value for tab settings field 'mergedContext'");
+	});
+
+	it('carries Queue Held through to turns.send, and reads it only as a strict true', async () => {
+		const { client, asClient } = fakeClient();
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: 'later',
+			held: true,
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'later', held: true });
+		expect(parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', held: true })).toEqual({
+			kind: 'send',
+			tabId: 't1',
+			text: 'hi',
+			held: true,
+		});
+		for (const notHeld of [false, 'yes', 1]) {
+			expect(
+				parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', held: notHeld })
+			).toEqual({ kind: 'send', tabId: 't1', text: 'hi' });
+		}
 	});
 
 	it('reads a send with turn overrides: checked fields kept, an empty set dropped', () => {
@@ -479,6 +713,38 @@ describe('parsePeerAgentAction', () => {
 		expect(() => parsePeerAgentAction({ kind: 'pause-queued', paused: true })).toThrow(
 			'Missing queued item id'
 		);
+		expect(() => parsePeerAgentAction({ kind: 'merge-queued' })).toThrow('Missing queued item id');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: ' ' } })
+		).toThrow('Missing text');
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: 'x', images: ['/tmp/a.png'] },
+			})
+		).toThrow('images must be a list of data URLs');
+		expect(() => parsePeerAgentAction({ kind: 'steer-queued' })).toThrow('Missing queued item id');
+		expect(() =>
+			parsePeerAgentAction({ kind: 'side-question', tabId: 't1', question: ' ' })
+		).toThrow('The question is empty.');
+		expect(() => parsePeerAgentAction({ kind: 'consult', question: ' ' })).toThrow(
+			'The question is empty.'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'side-question', question: 'q' })).toThrow(
+			'Missing tab id'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'send-now-queued' })).toThrow(
+			'Missing queued item id'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'move-queued', toIndex: 0 })).toThrow(
+			'Missing queued item id'
+		);
+		for (const toIndex of [-1, 0.5, '2', undefined]) {
+			expect(() => parsePeerAgentAction({ kind: 'move-queued', itemId: 'q1', toIndex })).toThrow(
+				'toIndex must be a whole number, 0 or more'
+			);
+		}
 		expect(() =>
 			parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: 'yes' })
 		).toThrow('paused must be true or false');
@@ -504,6 +770,92 @@ describe('peerActionErrorMessage', () => {
 	it('names the peer for a host refusal', () => {
 		expect(peerActionErrorMessage('build', { code: 'not-found', message: 'No such tab' })).toBe(
 			'Peer "build": No such tab'
+		);
+	});
+});
+
+describe('Auto Run actions', () => {
+	const launch = { documents: [{ file: '/docs/phase-1.md' }], prompt: 'Work it' };
+
+	it('starts a run with autoRun.launch and a goal run with autoRun.launchGoal', async () => {
+		const { client, asClient } = fakeClient();
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'auto-run', launch })).toEqual(
+			ok({ kind: 'auto-run' })
+		);
+		expect(client.autoRun.launch).toHaveBeenCalledWith('a1', launch);
+		const goal = { goal: 'Ship it', maxIterations: null };
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'goal-run', launch: goal })).toEqual(
+			ok({ kind: 'goal-run', tabId: 't-goal' })
+		);
+		expect(client.autoRun.launchGoal).toHaveBeenCalledWith('a1', goal);
+	});
+
+	it.each(['stop', 'resume', 'skip', 'abort'] as const)(
+		'sends the %s control to the same client method',
+		async (control) => {
+			const { client, asClient } = fakeClient();
+			expect(
+				await runPeerAgentAction(asClient, agent, { kind: 'auto-run-control', control })
+			).toEqual(ok({ kind: 'auto-run-control', control }));
+			expect(client.autoRun[control]).toHaveBeenCalledWith('a1');
+		}
+	);
+
+	it('reads a launch that crossed IPC, checked by the launch rules', () => {
+		expect(
+			parsePeerAgentAction({
+				kind: 'auto-run',
+				launch: {
+					documents: [{ file: '/docs/a.md', resetOnCompletion: true, extra: 1 }],
+					loop: true,
+					maxLoops: 2,
+					model: ' ',
+					prompt: 'Go',
+				},
+			})
+		).toEqual({
+			kind: 'auto-run',
+			launch: {
+				documents: [{ file: '/docs/a.md', resetOnCompletion: true }],
+				loop: true,
+				maxLoops: 2,
+				prompt: 'Go',
+			},
+		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'goal-run',
+				launch: { goal: ' Ship ', exitCriteria: '', maxIterations: null },
+			})
+		).toEqual({ kind: 'goal-run', launch: { goal: 'Ship', maxIterations: null } });
+		expect(parsePeerAgentAction({ kind: 'auto-run-control', control: 'skip' })).toEqual({
+			kind: 'auto-run-control',
+			control: 'skip',
+		});
+	});
+
+	it('refuses a bad launch or control before any host call', () => {
+		expect(() => parsePeerAgentAction({ kind: 'auto-run' })).toThrow('Missing launch');
+		expect(() => parsePeerAgentAction({ kind: 'auto-run', launch: { documents: 'a' } })).toThrow(
+			'documents must be a list'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'auto-run', launch: { documents: [] } })).toThrow(
+			'Pick at least one document.'
+		);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'auto-run', launch: { documents: [{ file: 3 }] } })
+		).toThrow('A document has no file.');
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'auto-run',
+				launch: { documents: [{ file: '/a.md' }], maxLoops: '2' },
+			})
+		).toThrow('maxLoops must be a number');
+		expect(() => parsePeerAgentAction({ kind: 'goal-run', launch: { goal: ' ' } })).toThrow(
+			'Say what the run should achieve.'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'auto-run-control', control: 'kill' })).toThrow(
+			'Unknown Auto Run control: kill'
 		);
 	});
 });

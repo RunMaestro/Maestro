@@ -20,7 +20,12 @@ import {
 	createMockAITab as createBaseMockAITab,
 	createMockFileTab as createBaseMockFileTab,
 } from '../../helpers/mockTab';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import { setLiveDraft, clearLiveDraft, getLiveDraft } from '../../../renderer/utils/liveDraftStore';
 
 // ============================================================================
@@ -2632,5 +2637,149 @@ describe('useTerminalTabHandlers - handleCloseTerminalTab', () => {
 			.getState()
 			.sessions.find((s) => s.id === 'test-session') as Session;
 		expect(session.terminalTabs).toHaveLength(0);
+	});
+});
+
+// ============================================================================
+// Mode parity (docs/parity/agent-ux-parity.md, Tab bar): a local, an SSH, and a hosted
+// agent's tab strip answers New tab, Close, and Star the same way. Only the transport
+// differs: a hosted agent's action also reaches its host (`federation.act`).
+// ============================================================================
+
+describe('mode parity: tab bar actions', () => {
+	const maestro = window.maestro as unknown as Record<string, unknown>;
+	const federationAct = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useModalStore.setState({ modals: new Map() });
+		useSettingsStore.setState({
+			defaultSaveToHistory: true,
+			defaultShowThinking: undefined,
+			federationHostedAgents: true,
+		} as any);
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[
+				{
+					id: 'h1',
+					name: 'Docs',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 'tab-1' }, { id: 'tab-2' }],
+				},
+			],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		federationAct.mockReset();
+		federationAct.mockImplementation(
+			async (_peer: string, _agent: string, action: { kind: string }) =>
+				action.kind === 'new-tab'
+					? { ok: true, result: { kind: 'new-tab', tabId: 'tab-new' } }
+					: { ok: true, result: { kind: action.kind } }
+		);
+		maestro.federation = { act: federationAct };
+		if (!(window.maestro.agentSessions as any).setSessionStarred) {
+			(window.maestro.agentSessions as any).setSessionStarred = vi
+				.fn()
+				.mockResolvedValue(undefined);
+		}
+	});
+
+	afterEach(() => {
+		cleanup();
+		delete maestro.federation;
+		usePeerMirrorStore.setState({ peers: {} } as any);
+		useSettingsStore.setState({ federationHostedAgents: false } as any);
+	});
+
+	function mount(mode: (typeof AGENT_MODES)[number]) {
+		const tabs = [
+			createMockAITab({ id: 'tab-1', agentSessionId: 'agent-1' }),
+			createMockAITab({ id: 'tab-2', agentSessionId: 'agent-2' }),
+		];
+		const session = createModeSession(mode, {
+			id: 'test-session',
+			aiTabs: tabs,
+			activeTabId: 'tab-1',
+			filePreviewTabs: [],
+			activeFileTabId: null,
+			unifiedTabOrder: tabs.map((t) => ({ type: 'ai' as const, id: t.id })),
+			closedTabHistory: [],
+			unifiedClosedTabHistory: [],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		return renderHook(() => useTabHandlers());
+	}
+
+	async function newTabOutcome(mode: (typeof AGENT_MODES)[number]) {
+		const { result, unmount } = mount(mode);
+		await act(async () => {
+			result.current.handleNewTab();
+		});
+		const session = getSession();
+		const added = session.aiTabs.find((t) => t.id !== 'tab-1' && t.id !== 'tab-2');
+		const order = session.unifiedTabOrder ?? [];
+		unmount();
+		return {
+			tabCount: session.aiTabs.length,
+			addedIsActive: !!added && session.activeTabId === added.id,
+			addedIsLastInStrip: !!added && order[order.length - 1]?.id === added.id,
+			addedName: added?.name ?? null,
+			addedLogs: added?.logs.length,
+			addedState: added?.state,
+			addedStarred: !!added?.starred,
+		};
+	}
+
+	it('New tab adds one empty tab at the end of the strip and shows it, in every mode', async () => {
+		const outcomes = [];
+		for (const mode of AGENT_MODES) outcomes.push(await newTabOutcome(mode));
+		expect(outcomes[0]).toEqual({
+			tabCount: 3,
+			addedIsActive: true,
+			addedIsLastInStrip: true,
+			addedName: null,
+			addedLogs: 0,
+			addedState: 'idle',
+			addedStarred: false,
+		});
+		expect(outcomes[1]).toEqual(outcomes[0]);
+		expect(outcomes[2]).toEqual(outcomes[0]);
+		// Transport only: the hosted tab was made by its host.
+		expect(federationAct).toHaveBeenCalledTimes(1);
+		expect(federationAct).toHaveBeenCalledWith('box', 'h1', { kind: 'new-tab' });
+	});
+
+	it('Close and Star change the strip the same way in every mode', () => {
+		const outcomes = AGENT_MODES.map((mode) => {
+			const { result, unmount } = mount(mode);
+			act(() => {
+				result.current.handleTabStar('tab-2', true);
+			});
+			act(() => {
+				result.current.handleTabClose('tab-1');
+			});
+			const session = getSession();
+			unmount();
+			return {
+				tabs: session.aiTabs.map((t) => ({ id: t.id, starred: !!t.starred })),
+				activeTabId: session.activeTabId,
+				order: (session.unifiedTabOrder ?? []).map((ref) => ref.id),
+			};
+		});
+		expect(outcomes[0]).toEqual({
+			tabs: [{ id: 'tab-2', starred: true }],
+			activeTabId: 'tab-2',
+			order: ['tab-2'],
+		});
+		expect(outcomes[1]).toEqual(outcomes[0]);
+		expect(outcomes[2]).toEqual(outcomes[0]);
+		// Transport only: the hosted agent's host hears both actions; local and SSH send nothing.
+		expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
+			{ kind: 'star-tab', tabId: 'tab-2', starred: true },
+			{ kind: 'close-tab', tabId: 'tab-1' },
+		]);
 	});
 });

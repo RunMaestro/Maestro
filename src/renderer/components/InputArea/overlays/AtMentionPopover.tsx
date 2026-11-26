@@ -10,8 +10,8 @@ import {
 } from '../../../hooks/input/useMentionPicker';
 import { getAgentIcon } from '../../../constants/agentIcons';
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
-import { useSshRemoteNames } from '../../../hooks/remote/useSshRemoteNames';
-import { SshRemotePill } from '../../ui/SshRemotePill';
+import { AgentModePill } from '../../SessionList/AgentModePill';
+import { selectSessionById, useSessionStore } from '../../../stores/sessionStore';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface AtMentionPopoverProps {
@@ -68,6 +68,21 @@ const EMPTY_LABELS: Record<MentionCategory, string> = {
 const NO_OTHER_AGENTS_LABEL =
 	'No other agents available - open another agent in the Left Bar to consult it.';
 
+/**
+ * An agent row's mode: the target agent's own `LOCAL` / `REMOTE` / `HOSTED` pill, the one the Left
+ * Bar and header draw for it, so the picker shows mode exactly as they do.
+ */
+const MentionAgentModePill = memo(function MentionAgentModePill({
+	theme,
+	sessionId,
+}: {
+	theme: Theme;
+	sessionId: string;
+}) {
+	const session = useSessionStore(selectSessionById(sessionId));
+	return session ? <AgentModePill theme={theme} session={session} /> : null;
+});
+
 const ZERO_COUNTS: Record<MentionCategory, number> = {
 	all: 0,
 	files: 0,
@@ -96,10 +111,6 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 	inputRef,
 	showCategoryBar = true,
 }: AtMentionPopoverProps) {
-	// Resolved before the early return (hooks can't sit behind a conditional).
-	// One shared, cached lookup labels every SSH row in the list.
-	const sshRemoteNames = useSshRemoteNames();
-
 	// The picker stays mounted while open (even with zero rows) so the category
 	// bar and empty-state row remain visible - it never silently collapses.
 	if (!isOpen || isTerminalMode) {
@@ -230,15 +241,8 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 										</span>
 									)}
 									<span className="flex-1 truncate font-medium">{item.displayText}</span>
-									{/* Where the message will actually run. No pill means local -
-									    the same convention the Left Bar and header use. */}
-									{!isGroup && item.isSshRemote && (
-										<SshRemotePill
-											remoteName={
-												item.sshRemoteId ? sshRemoteNames.get(item.sshRemoteId) : undefined
-											}
-											className="max-w-[140px]"
-										/>
+									{!isGroup && item.targetSessionId && (
+										<MentionAgentModePill theme={theme} sessionId={item.targetSessionId} />
 									)}
 									{!isGroup && item.toolType && (
 										<span className="text-2xs opacity-50 flex-shrink-0">

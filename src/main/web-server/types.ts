@@ -1,6 +1,6 @@
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
-import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
+import type { QueuedTurnEdit, TurnOverrides } from '../../shared/maestro-lib/client/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -8,6 +8,7 @@ import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { RemoteAskerContext } from '../../shared/crossAgentTypes';
 import type { InterruptTurnResult } from '../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry, DesktopSessionsSnapshot } from '../../shared/desktopTabs';
@@ -566,7 +567,7 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
  * of streaming it into a chat bubble, because the caller here is an agent
  * waiting on a tool result rather than a human reading a transcript.
  */
-export type ConsultAgentParams = {
+export type ConsultAgentParams = RemoteAskerContext & {
 	targetSessionId: string;
 	question: string;
 	/** The calling agent, when it named itself. Attribution + continuity. */
@@ -630,6 +631,11 @@ export type EnqueueCommandResult = {
 	queueLength?: number;
 	/** Id of the queued item, for later tracking or removal. */
 	itemId?: string;
+	/**
+	 * True when the text was one of Maestro's own commands (`/history`, `/skills`) and the renderer
+	 * ran it for the tab, as the composer does, instead of starting a turn.
+	 */
+	ran?: boolean;
 	error?: string;
 	/**
 	 * Machine-readable cause of a failure, so callers can react to a specific
@@ -678,6 +684,13 @@ export interface QueuedItemSnapshot {
 	paused?: boolean;
 	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
 	mentionRouting?: MentionRouting;
+	/** Model and effort captured when it was queued. */
+	turnSettings?: { model?: string; effort?: string };
+	/**
+	 * The images it was queued with: store refs from the renderer; data URLs on the wire when the
+	 * client asked for them (`list_queue` `inlineImages`), and left out otherwise.
+	 */
+	images?: string[];
 }
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the
@@ -724,6 +737,27 @@ export type MergeQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<MergeQueueItemResult>;
+/** `maestro-cli queue edit`: whether a waiting item had that id to rewrite. */
+export type EditQueueItemResult = { success: boolean; found: boolean; error?: string };
+export type EditQueueItemCallback = (
+	sessionId: string,
+	itemId: string,
+	edit: QueuedTurnEdit
+) => Promise<EditQueueItemResult>;
+/** `maestro-cli queue move`: whether a waiting item had that id and the place was in range. */
+export type MoveQueueItemResult = { success: boolean; moved: boolean; error?: string };
+export type MoveQueueItemCallback = (
+	sessionId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+) => Promise<MoveQueueItemResult>;
+/** `maestro-cli queue send-now`: whether the waiting item was dispatched out of turn. */
+export type SendQueueItemNowResult = { success: boolean; sent: boolean; error?: string };
+export type SendQueueItemNowCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SendQueueItemNowResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (

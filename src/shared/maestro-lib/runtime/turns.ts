@@ -44,6 +44,7 @@ import {
 	type TabSessionUpdate,
 } from '../agents/rules';
 import { liftedSendRefusal } from '../agents/lift-pointer';
+import { parseMaestroBuiltinCommand } from '../../maestroBuiltinCommands';
 import type { EventBus } from '../client/event-bus';
 import type {
 	ClientError,
@@ -58,7 +59,11 @@ import type {
 	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
+import {
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnSettings,
+} from '../client/types';
 import { logger } from '../host';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
@@ -66,6 +71,7 @@ import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
 import {
 	createExecutionQueue,
+	joinMergedQueueText,
 	TurnCollisionError,
 	type ExecutionQueue,
 	type QueueEvent,
@@ -196,6 +202,7 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		kind: 'message',
 		text: item.text,
 		paused: item.paused === true,
+		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
 	};
 }
 
@@ -368,6 +375,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			isWorktree,
 		});
 
+		// A fenced runtime could not write this turn down, so it must not launch the provider either:
+		// the item stays held instead of starting a process that is stopped at its first record.
+		const fenced = repository.writeRefusal();
+		if (fenced) throw new Error(fenced);
 		const started = await deps.runAgentTurn(turn, {
 			sessionId: `${agentId}-ai-${item.tabId}`,
 			grokLaunchScope: host.grokLaunchScope,
@@ -751,6 +762,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
+		// Maestro's own commands run in a desktop's composer (or for a send it receives). This host
+		// has nothing to run one, and the provider would get the literal text as a message.
+		const builtin = parseMaestroBuiltinCommand(input.text, record.toolType);
+		if (builtin) {
+			return fail(
+				method,
+				'unsupported',
+				`${builtin.name} runs on a desktop host. This host is headless, so it cannot run it.`
+			);
+		}
 		const tabRecord = repository.getTab(agentId, tabId);
 		if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
 		const agent = toTurnAgent(record);
@@ -828,6 +849,63 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				}
 				const found = queues.get(agentId)?.setPaused(itemId, paused) ?? false;
 				return ok({ found, paused });
+			},
+			merge: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.merge', 'not-found', `No agent ${agentId}.`);
+				}
+				// The upper message is the turn that runs first: it keeps its own settings and hold.
+				const mergedIntoId =
+					queues.get(agentId)?.merge(itemId, (upper, lower) => ({
+						...upper,
+						text: joinMergedQueueText(upper.text, lower.text),
+					})) ?? null;
+				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
+			},
+			// A headless host runs `claude --print` and `codex exec`, which take no input once a turn
+			// starts. Refused, so the message stays queued and sends when the turn ends.
+			steer: async (agentId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.steer', 'not-found', `No agent ${agentId}.`);
+				}
+				return fail(
+					'turns.queue.steer',
+					'unsupported',
+					'This host cannot steer a running turn. The message stays queued and sends when the turn ends.'
+				);
+			},
+			edit: async (agentId, itemId, edit) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.edit', 'not-found', `No agent ${agentId}.`);
+				}
+				// A headless host queues no images, so an edit that carries some is refused whole
+				// rather than run without them.
+				if (edit.images && edit.images.length > 0) {
+					return fail(
+						'turns.queue.edit',
+						'unsupported',
+						'This host does not queue images. Edit the message without them.'
+					);
+				}
+				const found =
+					queues.get(agentId)?.update(itemId, (item) => ({
+						...item,
+						text: edit.text,
+						...(edit.turnSettings ? { turnSettings: { ...edit.turnSettings } } : {}),
+					})) ?? false;
+				return ok({ found });
+			},
+			move: async (agentId, itemId, toIndex, tabId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.move', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok({ moved: queues.get(agentId)?.move(itemId, toIndex, tabId) ?? false });
+			},
+			sendNow: async (agentId, itemId) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.sendNow', 'not-found', `No agent ${agentId}.`);
+				}
+				return ok({ sent: queues.get(agentId)?.sendNow(itemId) ?? false });
 			},
 		},
 

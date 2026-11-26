@@ -67,7 +67,7 @@ interface HistoryPanelProps {
 	/**
 	 * Where the entries come from. Default: the desktop's own History of `session`
 	 * (`localHistorySource`), or, for a hosted agent (`liftedTo`), its host's
-	 * (`mirrorHistorySource`), where its turns are recorded now. Read-only there.
+	 * (`mirrorHistorySource`), where its turns are recorded now and its entries are edited.
 	 */
 	source?: HistorySource;
 	theme: Theme;
@@ -1235,7 +1235,7 @@ export const HistoryPanel = React.memo(
 								? () => handleOpenHistoryEntry(detailModalEntry)
 								: undefined
 						}
-						// A read-only source (a peer's host) draws no delete or validate control.
+						// A source without a handler draws no delete or validate control.
 						onDelete={historySource.remove ? handleDeleteEntry : undefined}
 						onUpdate={
 							historySource.update

@@ -270,7 +270,7 @@ describe('Git Preload API', () => {
 
 			const result = await api.checkGhCli();
 
-			expect(mockInvoke).toHaveBeenCalledWith('git:checkGhCli', undefined);
+			expect(mockInvoke).toHaveBeenCalledWith('git:checkGhCli', undefined, undefined);
 			expect(result.installed).toBe(true);
 			expect(result.authenticated).toBe(true);
 		});

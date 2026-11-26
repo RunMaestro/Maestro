@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Session } from '../../../renderer/types';
-import { createMockAITab, createMockSession } from '../../helpers';
+import { AGENT_MODES, agentModeFields, createMockAITab, createMockSession } from '../../helpers';
 import {
 	buildSendMenuModel,
 	getSteerSupport,
@@ -127,6 +127,54 @@ describe('buildSendMenuModel', () => {
 		expect(rowFor(session, 'force')).toMatchObject({ enabled: false });
 		expect(rowFor(session, 'queue').enabled).toBe(true);
 		expect(rowFor(session, 'hold').enabled).toBe(true);
+	});
+
+	it('local, SSH, and hosted agents get the same Queue, Force Send, and Queue Held rows', () => {
+		const draft = { text: 'hi', imageCount: 0 };
+		const opts = { forcedParallelEnabled: true };
+		const local = buildSendMenuModel(workingSession(), draft, opts);
+		const ssh = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, opts);
+		const hosted = buildSendMenuModel(workingSession(), draft, { ...opts, hosted: true });
+		const rows = (model: typeof local) => model.rows.filter((row) => row.action !== 'steer');
+		expect(rows(ssh)).toEqual(rows(local));
+		expect(rows(hosted)).toEqual(rows(local));
+		expect(hosted.rows.find((row) => row.action === 'hold')).toEqual({
+			action: 'hold',
+			enabled: true,
+		});
+	});
+
+	it('a hosted agent steers as a local agent does, though its record keeps its SSH remote', () => {
+		const draft = { text: 'also check the retry path', imageCount: 0 };
+		const opts = { forcedParallelEnabled: true };
+		const local = buildSendMenuModel(workingSession(), draft, opts);
+		// The host runs the turn on its own machine: the record's SSH remote is not the turn's hop.
+		const hosted = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, {
+			...opts,
+			hosted: true,
+		});
+		const ssh = buildSendMenuModel(workingSession({ sshRemoteId: 'remote-1' }), draft, opts);
+		expect(hosted.rows).toEqual(local.rows);
+		expect(hosted.steerSupport).toEqual({ kind: 'supported' });
+		expect(ssh.rows.find((row) => row.action === 'steer')).toMatchObject({ enabled: false });
+	});
+
+	it.each(AGENT_MODES)('keeps the Steer row in the menu for a %s agent', (mode) => {
+		const session = workingSession(agentModeFields(mode));
+		const model = buildSendMenuModel(
+			session,
+			{ text: 'also check the retry path', imageCount: 0 },
+			{ forcedParallelEnabled: true, hosted: mode === 'hosted' }
+		);
+		expect(model.rows.map((row) => row.action)).toEqual(['queue', 'force', 'steer', 'hold']);
+		const steer = model.rows.find((row) => row.action === 'steer')!;
+		if (mode === 'ssh') {
+			// LOCKED (B1.15): the steering socket is on the remote. The row stays, dead, with why.
+			expect(steer.enabled).toBe(false);
+			expect(steer.reason).toContain('Queue the message and it sends when the turn ends.');
+		} else {
+			expect(steer).toEqual({ action: 'steer', enabled: true });
+		}
 	});
 
 	it('reports whether any tab works, for a right-click on an idle agent', () => {
