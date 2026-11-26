@@ -942,6 +942,50 @@ describe('useWizardHandlers', () => {
 			}
 		);
 
+		it("drops a remote Claude agent's stale list when its remote cannot be asked", async () => {
+			const session = createMockSession({
+				...agentModeFields('ssh'),
+				agentCommands: [{ command: '/this-machine-only', description: 'Stale' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockRejectedValue(
+				new Error('bridge closed')
+			);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
+		});
+
+		it('finds the commands again here when a Claude agent moves off its remote', async () => {
+			const session = createMockSession({ ...agentModeFields('ssh'), agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/remote-only' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/remote-only',
+			]);
+
+			discover.mockResolvedValue([{ name: '/local-only' }]);
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, {
+					sshRemoteId: undefined,
+					sessionSshRemoteConfig: undefined,
+				});
+			});
+			await act(async () => {});
+
+			expect(discover).toHaveBeenLastCalledWith('claude-code', session.cwd, undefined, undefined);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/local-only',
+			]);
+		});
+
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {
 			const session = createMockSession({ agentCommands: undefined });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });

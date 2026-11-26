@@ -2,6 +2,7 @@ import * as os from 'os';
 import type { SshRemoteConfig } from '../../shared/types';
 import { startTurn } from '../../shared/maestro-lib/run/start-turn';
 import { buildSshCommand } from '../utils/ssh-command-builder';
+import { stripBlankEnvVars } from '../../shared/agentEnvironment';
 import { CodexAppServerRpc } from '../codex-app-server/rpc-client';
 import { isCodexResponse } from '../codex-app-server/protocol';
 import { planSpawnShell } from '../process-manager/utils/windowsSpawnShell';
@@ -36,7 +37,8 @@ export async function discoverCodexSkills(
 				command,
 				args: ['app-server'],
 				cwd,
-				env: { ...remote.config.remoteEnv, ...remote.env },
+				// A blank agent value cancels the remote's layer, then is dropped.
+				env: stripBlankEnvVars({ ...remote.config.remoteEnv, ...remote.env }),
 				useStdin: true,
 			}).then((ssh) => ({
 				...planSpawnShell(ssh.command, ssh.args, {}),

@@ -3056,6 +3056,41 @@ describe('agents IPC handlers', () => {
 			expect(await handler!({} as any, 'codex', '/test')).toEqual([]);
 		});
 
+		it("probes a local Claude with the agent's account, a blank value cancelling the global one", async () => {
+			handlers.clear();
+			registerAgentsHandlers({
+				...deps,
+				settingsStore: {
+					get: vi.fn((key: string) =>
+						key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: '/cfg/work' } : []
+					),
+					set: vi.fn(),
+				} as any,
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			});
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/x'] }) + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			await handler!({} as any, 'claude-code', '/proj', undefined, undefined, {
+				CLAUDE_CONFIG_DIR: '',
+				FOO: '1',
+			});
+
+			const options = vi.mocked(execFileNoThrow).mock.calls[0][3] as { env: NodeJS.ProcessEnv };
+			expect(options.env.FOO).toBe('1');
+			expect(options.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+		});
+
 		describe('on an SSH remote (an SSH or a hosted agent)', () => {
 			const remote = {
 				id: 'remote-1',

@@ -386,6 +386,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// Keep reconnects on the current effect's cancellable discovery operation.
 	const discoverCommandsRef = useRef<(() => void) | null>(null);
 	useEventListener(WEB_BRIDGE_STATE_EVENT, () => discoverCommandsRef.current?.());
+	// The machine each agent's stored command list was found on: 'local', or the
+	// SSH remote's id. In memory only: a list restored from disk was found on this
+	// machine (older builds looked nowhere else), and a remote agent replaces it.
+	const commandsFoundOnRef = useRef(new Map<string, string>());
 	useEffect(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
@@ -399,9 +403,18 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		// A list that is refreshed on focus is replaced whole. For a remote Claude
 		// agent that also drops commands an older build collected on this machine.
 		const replacesStored = refreshesStoredCommands(currentSession);
-		if (!replacesStored && currentSession.agentCommands?.length) return;
-
 		const sessionId = currentSession.id;
+		const foundOn = activeSshRemoteId ?? 'local';
+		const storedFoundOn = commandsFoundOnRef.current.get(sessionId);
+		if (!replacesStored && currentSession.agentCommands?.length) {
+			if (storedFoundOn === undefined || storedFoundOn === foundOn) return;
+			// The agent moved off the machine its list was found on: drop the list.
+			// Clearing it runs this effect again, which finds the commands here.
+			commandsFoundOnRef.current.set(sessionId, foundOn);
+			updateSessionWith(sessionId, (s) => ({ ...s, agentCommands: [] }));
+			return;
+		}
+
 		const projectRoot = currentSession.projectRoot;
 		let cancelled = false;
 
@@ -431,6 +444,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				);
 
 				if (customCommandObjects.length > 0) {
+					commandsFoundOnRef.current.set(sessionId, foundOn);
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
 						return {
@@ -475,6 +489,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					agentCommandObjects.length > 0 ||
 					(replacesStored && (agentSlashCommands !== null || activeSshRemoteId !== undefined))
 				) {
+					commandsFoundOnRef.current.set(sessionId, foundOn);
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
 						return {
@@ -486,6 +501,18 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					});
 				}
 			} catch (error) {
+				// A remote agent never keeps a list that was not found on its remote,
+				// even when the remote could not be asked this time.
+				if (
+					!cancelled &&
+					activeSshRemoteId !== undefined &&
+					commandsFoundOnRef.current.get(sessionId) !== foundOn
+				) {
+					commandsFoundOnRef.current.set(sessionId, foundOn);
+					updateSessionWith(sessionId, (s) =>
+						s.agentCommands?.length ? { ...s, agentCommands: [] } : s
+					);
+				}
 				if (!cancelled && !isExpectedBridgeError(error)) {
 					logger.error(
 						'[SlashCommandDiscovery] Failed to discover agent commands:',

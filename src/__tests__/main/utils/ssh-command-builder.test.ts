@@ -797,6 +797,24 @@ describe('ssh-command-builder', () => {
 		// agent configuration (system-controlled, not user input). This is
 		// intentional - escaping it would break PATH resolution.
 
+		it('never writes an env value to the log, while the command still carries it', async () => {
+			const info = vi.spyOn(logger, 'info');
+			try {
+				const result = await buildSshCommand(baseConfig, {
+					command: 'claude',
+					args: ['--print', '--', '/help'],
+					cwd: '/srv/project',
+					env: { ANTHROPIC_API_KEY: 'sk-secret-value-1234' },
+				});
+				expect(result.args.at(-1)).toContain('sk-secret-value-1234');
+				const logged = JSON.stringify(info.mock.calls);
+				expect(logged).not.toContain('sk-secret-value-1234');
+				expect(logged).toContain('ANTHROPIC_API_KEY');
+			} finally {
+				info.mockRestore();
+			}
+		});
+
 		it('prevents command injection via args', async () => {
 			const result = buildRemoteCommand({
 				command: 'echo',

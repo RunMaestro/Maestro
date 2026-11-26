@@ -26,6 +26,7 @@ import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
 import { createTtlPromiseCache } from '../utils/ttl-promise-cache';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { stripBlankEnvVars } from '../../shared/agentEnvironment';
 
 const LOG_CONTEXT = '[ClaudeSlashCommands]';
 
@@ -94,8 +95,9 @@ export async function probeClaudeSlashCommandsRemote(
 			command: binary,
 			args: [...args, '--', '/help'],
 			cwd,
-			// The agent's own vars (its `CLAUDE_CONFIG_DIR` account) over the remote's.
-			env: { ...sshRemote.remoteEnv, ...env },
+			// The agent's own vars (its `CLAUDE_CONFIG_DIR` account) over the remote's;
+			// a blank agent value cancels the remote's, then is dropped.
+			env: stripBlankEnvVars({ ...sshRemote.remoteEnv, ...env }),
 		});
 		const result = await execSshCommand(sshRemote, sshCommand, {
 			timeout: REMOTE_PROBE_TIMEOUT_MS,

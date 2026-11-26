@@ -223,6 +223,26 @@ describe('probeClaudeSlashCommandsRemoteCached', () => {
 		expect(execSshCommand).toHaveBeenCalledTimes(2);
 	});
 
+	it("lets a blank agent value cancel the remote's own, and never exports it", async () => {
+		vi.mocked(execSshCommand).mockResolvedValue({
+			stdout: initLine(['/help']),
+			stderr: '',
+			exitCode: 0,
+		});
+		const withAccount = {
+			...remote('acct'),
+			remoteEnv: { FOO: '1', CLAUDE_CONFIG_DIR: '~/.claude-work' },
+		} as unknown as SshRemoteConfig;
+
+		await probeClaudeSlashCommandsRemoteCached(withAccount, 'claude', '/srv/p', {
+			CLAUDE_CONFIG_DIR: '',
+		});
+		expect(buildSshCommand).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ env: { FOO: '1' } })
+		);
+	});
+
 	it('gives no list for an unreachable remote and asks again next time', async () => {
 		vi.mocked(execSshCommand).mockResolvedValue({ stdout: '', stderr: 'timed out', exitCode: 255 });
 

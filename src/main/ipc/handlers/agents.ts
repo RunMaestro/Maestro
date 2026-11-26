@@ -461,8 +461,10 @@ function localCodexCommandFiles(cwd: string, env: NodeJS.ProcessEnv): CodexComma
 }
 
 function remoteCodexCommandFiles(cwd: string, remote: CodexSkillsRemote): CodexCommandFiles {
-	// The remote's own CODEX_HOME, else its `~/.codex` (expanded by the remote shell).
-	const home = remote.env?.CODEX_HOME || remote.config.remoteEnv?.CODEX_HOME || '~/.codex';
+	// The agent's CODEX_HOME over the remote's (a blank one cancels it), else the
+	// remote's `~/.codex` (expanded by the remote shell).
+	const env = stripBlankEnvVars({ ...remote.config.remoteEnv, ...remote.env });
+	const home = env.CODEX_HOME || '~/.codex';
 	const join = path.posix.join;
 	return {
 		skillDirs: [join(cwd, '.codex', 'skills'), `${home}/skills`],
@@ -2049,10 +2051,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					// The agent's custom path is a path on the remote; else the remote's PATH finds it.
 					const binary = customPath || agentDef?.binaryName || agentId;
 					// The agent's own vars (its account: CLAUDE_CONFIG_DIR, CODEX_HOME), as its turns get.
+					// Kept raw: a blank value cancels the remote's own layer, and is
+					// dropped only once the layers are merged (in the probe).
 					const providerEnv = agentConfigsStore.get('configs', {})[agentId]?.customEnvVars;
-					const remoteEnv = stripBlankEnvVars(
-						effectiveAgentCustomEnvVars(customEnvVars, providerEnv)
-					);
+					const remoteEnv = effectiveAgentCustomEnvVars(customEnvVars, providerEnv);
 					if (agentId === 'claude-code') {
 						const names = await probeClaudeSlashCommandsRemoteCached(
 							sshRemote,
@@ -2134,11 +2136,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					// The init message of a `/help` probe names every command; see
 					// claude-slash-command-probe.ts. An agent with its own vars (its
 					// CLAUDE_CONFIG_DIR account) probes with them, as on a remote.
-					const agentEnv = stripBlankEnvVars(
-						effectiveAgentCustomEnvVars(
-							customEnvVars,
-							agentConfigsStore.get('configs', {})['claude-code']?.customEnvVars
-						)
+					// Raw, so a blank value still cancels the global layer underneath.
+					const agentEnv = effectiveAgentCustomEnvVars(
+						customEnvVars,
+						agentConfigsStore.get('configs', {})['claude-code']?.customEnvVars
 					);
 					const names = Object.keys(agentEnv).length
 						? await probeClaudeSlashCommands(
