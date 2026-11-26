@@ -309,6 +309,21 @@ describe('remote copy write-back', () => {
 		expect(writeBack.pendingCopies()).toHaveLength(2);
 	});
 
+	it('names a copy whose save grew past the cap until a fresh Open keeps that save beside it', async () => {
+		const writeBack = service({ maxBytes: 16 });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await saveCopy(writeBack, 'a save past the size cap');
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		expect(writeRemote).not.toHaveBeenCalled();
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		// Open again: the save is kept beside the copy, and the copy holds the remote bytes.
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		expect(localFiles.get(keptVersionPath(LOCAL, WHEN))?.toString()).toBe(
+			'a save past the size cap'
+		);
+		expect(writeBack.pendingCopies()).toEqual([]);
+	});
+
 	it('stops naming a copy once a later send of it lands', async () => {
 		writeRemote.mockRejectedValueOnce(new Error('Connection refused'));
 		const writeBack = await watched();

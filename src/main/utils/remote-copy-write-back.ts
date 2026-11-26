@@ -281,8 +281,10 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	/** Work in flight, with the copy it is for (for `idle()`, `dispose()`, `pendingCopies()`). */
 	const pending = new Map<Promise<void>, WatchedCopy>();
 	/**
-	 * Copies whose last send failed: the change is only in the copy until a later
-	 * send lands. Kept past `dispose()`, so the quit can still name them.
+	 * Copies whose change is only in the copy: the last send failed, or the copy
+	 * grew past the size cap. Cleared when the change is sent, kept beside the
+	 * copy, or replaced by a fetch, or the copy is forgotten. Kept past
+	 * `dispose()`, so the quit can still name them.
 	 */
 	const failed = new Set<WatchedCopy>();
 	/** Copies with a sync queued that has not started: it reads the copy when it runs. */
@@ -475,6 +477,8 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			if (entry.halted) return;
 			if (local.length > maxBytes) {
 				entry.halted = 'too-large';
+				// Not on the remote, and only in the copy: the quit names it.
+				if (!entry.forgotten) failed.add(entry);
 				deps.notify({
 					kind: 'failed',
 					remotePath,
@@ -646,6 +650,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 							// nowhere else: keep that beside it, and start over.
 							keptAt = await keepVersion(localPath, local);
 							entry.kept = localHash;
+							failed.delete(entry);
 						}
 					}
 				}
