@@ -2815,7 +2815,12 @@ describe('agents IPC handlers', () => {
 				await handlers.get('agents:discoverSlashCommands')!({}, 'codex', '/test', '~/bin/codex')
 			).toEqual([]);
 			expect(checkCustomPath).toHaveBeenCalledWith('~/bin/codex');
-			expect(discoverCodexSkills).toHaveBeenCalledWith(resolvedPath, '/test', expect.anything());
+			expect(discoverCodexSkills).toHaveBeenCalledWith(
+				resolvedPath,
+				'/test',
+				expect.anything(),
+				undefined
+			);
 		});
 
 		it('falls back to the detected binary when a session custom binary is invalid', async () => {
@@ -2826,7 +2831,12 @@ describe('agents IPC handlers', () => {
 				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
 			);
 			await handlers.get('agents:discoverSlashCommands')!({}, 'codex', '/test', '/missing/codex');
-			expect(discoverCodexSkills).toHaveBeenCalledWith(codexAgent.path, '/test', expect.anything());
+			expect(discoverCodexSkills).toHaveBeenCalledWith(
+				codexAgent.path,
+				'/test',
+				expect.anything(),
+				undefined
+			);
 		});
 
 		it('offers plugin and system skills reported by Codex, even outside the legacy skill dirs', async () => {
@@ -2873,7 +2883,8 @@ describe('agents IPC handlers', () => {
 			expect(discoverCodexSkills).toHaveBeenCalledWith(
 				'/custom/codex',
 				'/test',
-				expect.objectContaining({ CODEX_HOME: '/session' })
+				expect.objectContaining({ CODEX_HOME: '/session' }),
+				undefined
 			);
 		});
 
@@ -3029,20 +3040,86 @@ describe('agents IPC handlers', () => {
 			expect(await handler!({} as any, 'codex', '/test')).toEqual([]);
 		});
 
-		it("returns null for an SSH-remote Codex agent rather than this machine's commands", async () => {
-			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+		describe('on an SSH remote (an SSH or a hosted agent)', () => {
+			const remote = {
+				id: 'remote-1',
+				name: 'Dev Box',
+				host: 'dev.example.com',
+				username: 'dev',
+				port: 22,
+				enabled: true,
+			};
+			beforeEach(() => {
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: { get: vi.fn().mockReturnValue([remote]), set: vi.fn() } as any,
+				});
+				vi.mocked(buildSshCommand).mockImplementation(async (_remote, options) => ({
+					command: 'ssh',
+					args: [options.command, ...(options.args ?? [])],
+				}));
+			});
 
-			const [projectSkills] = getCodexSkillDirs('/test');
-			mockCodexDisk(
-				{ [projectSkills]: [{ name: 'local-only', isDirectory: () => true }] },
-				{ [path.join(projectSkills, 'local-only', 'SKILL.md')]: 'local body' }
-			);
+			it("discovers Codex skills on the remote, never this machine's", async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+				const [projectSkills] = getCodexSkillDirs('/test');
+				mockCodexDisk(
+					{ [projectSkills]: [{ name: 'local-only', isDirectory: () => true }] },
+					{ [path.join(projectSkills, 'local-only', 'SKILL.md')]: 'local body' }
+				);
+				vi.mocked(discoverCodexSkills).mockResolvedValueOnce([
+					{ name: 'remote-skill', prompt: '$remote-skill' },
+				]);
+				// The remote has no prompt folders.
+				vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 2, stdout: '', stderr: '' });
 
-			const handler = handlers.get('agents:discoverSlashCommands');
-			const result = await handler!({} as any, 'codex', '/test', undefined, 'remote-1');
+				const handler = handlers.get('agents:discoverSlashCommands');
+				const result = await handler!({} as any, 'codex', '/srv/test', undefined, 'remote-1', {
+					CODEX_HOME: '/srv/codex',
+				});
 
-			expect(result).toBeNull();
-			expect(fs.promises.readdir).not.toHaveBeenCalled();
+				expect(result).toEqual([{ name: 'remote-skill', prompt: '$remote-skill' }]);
+				expect(discoverCodexSkills).toHaveBeenLastCalledWith('codex', '/srv/test', process.env, {
+					config: expect.objectContaining({ id: 'remote-1' }),
+					env: { CODEX_HOME: '/srv/codex' },
+				});
+				expect(fs.promises.readdir).not.toHaveBeenCalled();
+				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+			});
+
+			it('runs the Claude /help probe on the remote, in the folder there', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout:
+						JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/deploy'] }) + '\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:discoverSlashCommands');
+				const result = await handler!({} as any, 'claude-code', '/srv/test', undefined, 'remote-1');
+
+				expect(result).toEqual([{ name: '/deploy' }]);
+				expect(buildSshCommand).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'remote-1' }),
+					expect.objectContaining({ command: 'claude', cwd: '/srv/test' })
+				);
+				// Nothing ran on this machine: only ssh was started.
+				for (const [command] of vi.mocked(execFileNoThrow).mock.calls) {
+					expect(command).toBe('ssh');
+				}
+				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+				expect(fs.existsSync).not.toHaveBeenCalled();
+			});
+
+			it('gives no list, and runs nothing here, when the remote is unknown', async () => {
+				const handler = handlers.get('agents:discoverSlashCommands');
+				const result = await handler!({} as any, 'claude-code', '/srv/test', undefined, 'gone');
+
+				expect(result).toBeNull();
+				expect(execFileNoThrow).not.toHaveBeenCalled();
+				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+			});
 		});
 
 		it('rethrows non-ENOENT errors from Codex discovery so Sentry sees them', async () => {

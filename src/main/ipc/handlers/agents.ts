@@ -22,7 +22,7 @@ import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabili
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { probeRemoteGrokContextWindows } from '../../agents/probeRemoteGrokContextWindows';
 import { execFileNoThrow } from '../../utils/execFile';
-import { discoverCodexSkills } from '../../agents/codex-skills';
+import { discoverCodexSkills, type CodexSkillsRemote } from '../../agents/codex-skills';
 import {
 	discoverGrokSlashCommands,
 	type GrokCommandDiscoveryResult,
@@ -36,7 +36,10 @@ import {
 	effectiveAgentCustomEnvVars,
 	resolveAgentAccountKey,
 } from '../../../shared/providerProfiles';
-import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
+import {
+	probeClaudeSlashCommands,
+	probeClaudeSlashCommandsRemoteCached,
+} from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -50,6 +53,8 @@ import {
 	RemoteCommandOptions,
 } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
+import { readDirRemote, readFileRemote } from '../../utils/remote-fs';
+import { stripBlankEnvVars } from '../../../shared/agentEnvironment';
 import {
 	discoverAgentModels,
 	discoverModelsRemote,
@@ -414,15 +419,81 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
  * they are implemented inside the TUI and have no on-disk prompt to inline, so
  * offering them would send a literal "/compact" to the model.
  */
+/**
+ * The files Codex's disk fallback reads, on the machine Codex runs on: this
+ * one through `fs`, an SSH remote through the remote fs helpers. `null` means
+ * the entry is not there; any other local error is thrown.
+ */
+interface CodexCommandFiles {
+	skillDirs: string[];
+	promptDirs: string[];
+	join: (...parts: string[]) => string;
+	/** Names of the folders in `dir`. */
+	listDirs: (dir: string) => Promise<string[] | null>;
+	/** Names of every entry in `dir`. */
+	listNames: (dir: string) => Promise<string[] | null>;
+	readFile: (file: string) => Promise<string | null>;
+}
+
+function localCodexCommandFiles(cwd: string, env: NodeJS.ProcessEnv): CodexCommandFiles {
+	const missingAsNull = async <T>(read: () => Promise<T>): Promise<T | null> => {
+		try {
+			return await read();
+		} catch (error) {
+			if (isMissingEntryError(error)) return null;
+			throw error;
+		}
+	};
+	return {
+		skillDirs: getCodexSkillDirs(cwd, env),
+		promptDirs: getCodexPromptDirs(cwd, env),
+		join: path.join,
+		listDirs: (dir) =>
+			missingAsNull(async () =>
+				(await fs.promises.readdir(dir, { withFileTypes: true }))
+					.filter((entry) => entry.isDirectory())
+					.map((entry) => entry.name)
+			),
+		listNames: (dir) => missingAsNull(() => fs.promises.readdir(dir)),
+		readFile: (file) => missingAsNull(() => fs.promises.readFile(file, 'utf-8')),
+	};
+}
+
+function remoteCodexCommandFiles(cwd: string, remote: CodexSkillsRemote): CodexCommandFiles {
+	// The remote's own CODEX_HOME, else its `~/.codex` (expanded by the remote shell).
+	const home = remote.env?.CODEX_HOME || remote.config.remoteEnv?.CODEX_HOME || '~/.codex';
+	const join = path.posix.join;
+	return {
+		skillDirs: [join(cwd, '.codex', 'skills'), `${home}/skills`],
+		promptDirs: [join(cwd, '.codex', 'prompts'), `${home}/prompts`],
+		join,
+		listDirs: async (dir) => {
+			const result = await readDirRemote(dir, remote.config);
+			if (!result.success || !result.data) return null;
+			return result.data.filter((entry) => entry.isDirectory).map((entry) => entry.name);
+		},
+		listNames: async (dir) => {
+			const result = await readDirRemote(dir, remote.config);
+			return result.success && result.data ? result.data.map((entry) => entry.name) : null;
+		},
+		readFile: async (file) => {
+			const result = await readFileRemote(file, remote.config);
+			return result.success && typeof result.data === 'string' ? result.data : null;
+		},
+	};
+}
+
 async function discoverCodexSlashCommands(
 	cwd: string,
 	command: string,
-	env: NodeJS.ProcessEnv
+	env: NodeJS.ProcessEnv,
+	remote?: CodexSkillsRemote
 ): Promise<DiscoveredCommand[]> {
 	const commands = new Map<string, DiscoveredCommand>();
+	const files = remote ? remoteCodexCommandFiles(cwd, remote) : localCodexCommandFiles(cwd, env);
 	let nativeSkillsAvailable = false;
 	try {
-		for (const skill of await discoverCodexSkills(command, cwd, env)) {
+		for (const skill of await discoverCodexSkills(command, cwd, env, remote)) {
 			commands.set(skill.name, skill);
 		}
 		nativeSkillsAvailable = true;
@@ -447,63 +518,45 @@ async function discoverCodexSlashCommands(
 
 	// Skills: one directory per command, holding a SKILL.md.
 	const addSkillsFromDir = async (dir: string) => {
-		let entries: fs.Dirent[];
-		try {
-			entries = await fs.promises.readdir(dir, { withFileTypes: true });
-		} catch (error) {
-			if (isMissingEntryError(error)) {
-				logger.debug(`Codex skills directory not found: ${dir}`, LOG_CONTEXT);
-				return;
-			}
-			throw error;
+		const names = await files.listDirs(dir);
+		if (!names) {
+			logger.debug(`Codex skills directory not found: ${dir}`, LOG_CONTEXT);
+			return;
 		}
-		for (const entry of entries) {
-			if (!entry.isDirectory()) continue;
+		for (const name of names) {
 			// `.system/` holds Codex's own internal skills, and dotted names are
 			// hidden from its picker.
-			if (entry.name.startsWith('.')) continue;
-			if (commands.has(entry.name)) continue;
-			try {
-				const raw = await fs.promises.readFile(path.join(dir, entry.name, 'SKILL.md'), 'utf-8');
-				addCommand(entry.name, raw);
-			} catch (error) {
-				// A directory without a SKILL.md is not a skill.
-				if (!isMissingEntryError(error)) throw error;
-			}
+			if (name.startsWith('.')) continue;
+			if (commands.has(name)) continue;
+			// A directory without a SKILL.md is not a skill.
+			const raw = await files.readFile(files.join(dir, name, 'SKILL.md'));
+			if (raw !== null) addCommand(name, raw);
 		}
 	};
 
 	// Prompts: one .md file per command.
 	const addPromptsFromDir = async (dir: string) => {
-		let files: string[];
-		try {
-			files = await fs.promises.readdir(dir);
-		} catch (error) {
-			if (isMissingEntryError(error)) {
-				logger.debug(`Codex prompts directory not found: ${dir}`, LOG_CONTEXT);
-				return;
-			}
-			throw error;
+		const fileNames = await files.listNames(dir);
+		if (!fileNames) {
+			logger.debug(`Codex prompts directory not found: ${dir}`, LOG_CONTEXT);
+			return;
 		}
-		for (const file of files) {
+		for (const file of fileNames) {
 			if (!file.endsWith('.md')) continue;
 			const name = file.replace(/\.md$/, '');
 			if (commands.has(name)) continue;
-			try {
-				addCommand(name, await fs.promises.readFile(path.join(dir, file), 'utf-8'));
-			} catch (error) {
-				if (!isMissingEntryError(error)) throw error;
-			}
+			const content = await files.readFile(files.join(dir, file));
+			if (content !== null) addCommand(name, content);
 		}
 	};
 
 	// An authoritative empty result must stay empty (e.g. all skills disabled).
 	if (!nativeSkillsAvailable) {
-		for (const dir of getCodexSkillDirs(cwd, env)) {
+		for (const dir of files.skillDirs) {
 			await addSkillsFromDir(dir);
 		}
 	}
-	for (const dir of getCodexPromptDirs(cwd, env)) {
+	for (const dir of files.promptDirs) {
 		await addPromptsFromDir(dir);
 	}
 
@@ -1946,19 +1999,43 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return discoverOpenCodeSlashCommandsRemote(sshRemote, cwd);
 				}
 
-				const agent = await agentDetector.getAgent(agentId);
-				if (agentId === 'codex') {
-					// Codex skills/prompts live on the machine that runs the CLI.
-					// For an SSH-remote agent that is the remote host, so return
-					// nothing rather than offering this machine's commands - a
-					// command the remote Codex has never heard of is worse than none.
-					if (sshRemoteId) {
-						logger.debug(
-							'Skipping Codex slash command discovery for SSH remote agent',
+				// SSH remote (an SSH agent, or a hosted one, which keeps its remote):
+				// Claude and Codex commands live on the machine that runs the CLI, so
+				// discovery runs there, over SSH. It never falls back to this
+				// machine: a command the remote has never heard of is worse than none.
+				if (sshRemoteId && (agentId === 'claude-code' || agentId === 'codex')) {
+					const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
+					if (!sshRemote) {
+						logger.warn(
+							`SSH remote ${sshRemoteId} not found for slash command discovery`,
 							LOG_CONTEXT
 						);
 						return null;
 					}
+					const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
+					// The agent's custom path is a path on the remote; else the remote's PATH finds it.
+					const binary = customPath || agentDef?.binaryName || agentId;
+					if (agentId === 'claude-code') {
+						const names = await probeClaudeSlashCommandsRemoteCached(sshRemote, binary, cwd);
+						if (!names) return null;
+						logger.info(
+							`Discovered ${names.length} slash commands for ${agentId} on ${sshRemote.name}`,
+							LOG_CONTEXT
+						);
+						return names.map((name: string) => ({ name }));
+					}
+					const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
+					const remoteEnv = stripBlankEnvVars(
+						effectiveAgentCustomEnvVars(customEnvVars, providerEnv)
+					);
+					return discoverCodexSlashCommands(cwd, binary, process.env, {
+						config: sshRemote,
+						env: remoteEnv,
+					});
+				}
+
+				const agent = await agentDetector.getAgent(agentId);
+				if (agentId === 'codex') {
 					let commandPath = agent?.available ? agent.path || agent.command : undefined;
 					if (customPath) {
 						const detection = await checkCustomPath(customPath);

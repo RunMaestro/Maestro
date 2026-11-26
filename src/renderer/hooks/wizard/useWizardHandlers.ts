@@ -479,7 +479,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const discover = () => {
 			if (!isBridgeTransportReady()) return;
-			if (currentSession.toolType === 'claude-code') {
+			// `claude:getCommands` reads this machine's command folders. For an agent
+			// on an SSH remote (SSH or hosted) the probe below runs on the remote and
+			// names its commands, so this machine's are never mixed in.
+			if (currentSession.toolType === 'claude-code' && activeSshRemoteId === undefined) {
 				void fetchCustomCommands();
 			}
 			void discoverAgentCommands();

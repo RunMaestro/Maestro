@@ -893,6 +893,30 @@ describe('useWizardHandlers', () => {
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
 		});
 
+		// The `/` menu lists the commands found on the machine the agent runs on:
+		// this one for a local agent, the SSH remote (asked over SSH) for an SSH or
+		// hosted one. This machine's command folders never fill a remote agent's menu.
+		it.each(AGENT_MODES)('lists the commands found where a %s Claude agent runs', async (mode) => {
+			const session = createMockSession({ agentCommands: undefined, ...agentModeFields(mode) });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/review' }, { name: 'deploy' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			const remoteId = mode === 'local' ? undefined : 'r1';
+			expect(discover).toHaveBeenCalledWith('claude-code', session.cwd, undefined, remoteId);
+			expect((window as any).maestro.claude.getCommands).toHaveBeenCalledTimes(
+				mode === 'local' ? 1 : 0
+			);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/review',
+				'/deploy',
+			]);
+		});
+
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {
 			const session = createMockSession({ agentCommands: undefined });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });

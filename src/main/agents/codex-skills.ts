@@ -1,23 +1,50 @@
+import * as os from 'os';
+import type { SshRemoteConfig } from '../../shared/types';
 import { startTurn } from '../../shared/maestro-lib/run/start-turn';
+import { buildSshCommand } from '../utils/ssh-command-builder';
 import { CodexAppServerRpc } from '../codex-app-server/rpc-client';
 import { isCodexResponse } from '../codex-app-server/protocol';
 import { planSpawnShell } from '../process-manager/utils/windowsSpawnShell';
 
+/** Where Codex runs for an SSH agent: the remote, and the env to set there. */
+export interface CodexSkillsRemote {
+	config: SshRemoteConfig;
+	/** Set on the remote before `codex app-server` starts (the agent's own vars). */
+	env?: Record<string, string>;
+}
+
 /** Skills reported by Codex itself, including enabled plugins and system skills.
  * This only reads metadata: no thread or model turn is started.
+ *
+ * Codex runs where the agent runs: on this machine, or, with `remote`, on the
+ * SSH remote in the agent's folder there (`command` is then the binary on the
+ * remote, and `env` is this machine's env for the ssh client). The RPC is the
+ * same either way: ssh carries the JSON lines.
  */
 export async function discoverCodexSkills(
 	command: string,
 	cwd: string,
-	env: NodeJS.ProcessEnv
+	env: NodeJS.ProcessEnv,
+	remote?: CodexSkillsRemote
 ): Promise<Array<{ name: string; description?: string; prompt: string }>> {
 	const rpc = new CodexAppServerRpc((line) => {
 		if (!turn.child.stdin?.writable) throw new Error('Codex stdin is closed');
 		turn.child.stdin.write(`${line}\n`);
 	});
-	const shellPlan = planSpawnShell(command, ['app-server'], {});
+	const launch = remote
+		? await buildSshCommand(remote.config, {
+				command,
+				args: ['app-server'],
+				cwd,
+				env: { ...remote.config.remoteEnv, ...remote.env },
+				useStdin: true,
+			}).then((ssh) => ({
+				...planSpawnShell(ssh.command, ssh.args, {}),
+				cwd: os.homedir(),
+			}))
+		: { ...planSpawnShell(command, ['app-server'], {}), cwd };
 	const turn = startTurn(
-		{ ...shellPlan, cwd, env },
+		{ ...launch, env },
 		{
 			onLine: (line) => {
 				try {
