@@ -867,6 +867,56 @@ async function discoverOpenCodeSlashCommandsRemote(
 	}
 }
 
+/** How a remote looks up a binary (`detectAgentsRemote()`), named in a refresh's debug info. */
+export const REMOTE_WHICH_COMMAND = 'command -v';
+
+/** The host facts a refresh's debug info names, read from the machine the agent runs on. */
+export interface RemoteDebugFacts {
+	platform: string;
+	homeDir: string;
+	envPath: string;
+}
+
+const REMOTE_FACTS_UNKNOWN: RemoteDebugFacts = { platform: 'unknown', homeDir: '', envPath: '' };
+
+/**
+ * The remote's platform (`uname -s`, lowercased to match `process.platform`), home, and PATH, for
+ * the debug panel a failed refresh shows. A static script with no caller text in it. Any failure
+ * (unreachable host, timeout) leaves the facts unknown: the detection error is already the reason.
+ */
+export async function readRemoteDebugFacts(sshRemote: SshRemoteConfig): Promise<RemoteDebugFacts> {
+	const remoteOptions: RemoteCommandOptions = {
+		command: 'sh',
+		args: ['-c', 'uname -s; printf "%s\\n" "$HOME"; printf "%s\\n" "$PATH"'],
+		env: sshRemote.remoteEnv,
+	};
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+		const result = await Promise.race([
+			execSshCommand(sshRemote, sshCommand),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error('SSH debug facts timed out')),
+					SSH_MODEL_TIMEOUT_MS
+				);
+			}),
+		]);
+		if (result.exitCode !== 0) return REMOTE_FACTS_UNKNOWN;
+		const [platform = '', homeDir = '', envPath = ''] = stripAnsi(result.stdout)
+			.split('\n')
+			.map((line) => line.trim());
+		return { platform: platform.toLowerCase() || 'unknown', homeDir, envPath };
+	} catch (error) {
+		logger.warn(`Could not read debug facts from ${sshRemote.host}`, LOG_CONTEXT, {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return REMOTE_FACTS_UNKNOWN;
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
 	const translation =
@@ -888,43 +938,51 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			}
 	);
 
+	// Agents detected on an SSH remote. A remote that is not configured (or is switched off)
+	// returns every agent as unavailable with the reason, never this machine's agents: the
+	// caller asked about the remote, and this machine's answer would be the wrong one.
+	const detectAgentsOnRemote = async (sshRemoteId: string) => {
+		const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+		if (!sshConfig) {
+			// Return all agents as unavailable with error info instead of throwing
+			logger.warn(
+				`SSH remote not found or disabled: ${sshRemoteId}, returning unavailable agents`,
+				LOG_CONTEXT
+			);
+			return {
+				sshConfig: null,
+				agents: AGENT_DEFINITIONS.map((agentDef) =>
+					stripAgentFunctions(
+						{
+							...agentDef,
+							available: false,
+							path: undefined,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: `SSH remote configuration not found: ${sshRemoteId}`,
+						},
+						sshRemoteId
+					)
+				),
+			};
+		}
+		logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
+		const agents = await detectAgentsRemote(sshConfig);
+		logger.info(
+			`Detected ${agents.filter((a: any) => a.available).length} agents on remote`,
+			LOG_CONTEXT,
+			{
+				agents: agents.map((a: any) => a.id),
+			}
+		);
+		return { sshConfig, agents: agents.map((a) => stripAgentFunctions(a, sshConfig.id)) };
+	};
+
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
 		'agents:detect',
 		withIpcErrorLogging(handlerOpts('detect'), async (sshRemoteId?: string) => {
 			// If SSH remote ID provided, detect agents on remote host
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
-				if (!sshConfig) {
-					// Return all agents as unavailable with error info instead of throwing
-					logger.warn(
-						`SSH remote not found or disabled: ${sshRemoteId}, returning unavailable agents`,
-						LOG_CONTEXT
-					);
-					return AGENT_DEFINITIONS.map((agentDef) =>
-						stripAgentFunctions(
-							{
-								...agentDef,
-								available: false,
-								path: undefined,
-								capabilities: getAgentCapabilities(agentDef.id),
-								error: `SSH remote configuration not found: ${sshRemoteId}`,
-							},
-							sshRemoteId
-						)
-					);
-				}
-				logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
-				const agents = await detectAgentsRemote(sshConfig);
-				logger.info(
-					`Detected ${agents.filter((a: any) => a.available).length} agents on remote`,
-					LOG_CONTEXT,
-					{
-						agents: agents.map((a: any) => a.id),
-					}
-				);
-				return agents.map((a) => stripAgentFunctions(a, sshConfig.id));
-			}
+			if (sshRemoteId) return (await detectAgentsOnRemote(sshRemoteId)).agents;
 
 			// Local detection
 			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -938,10 +996,44 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// `agents:refresh` for a remote: detect there and, for one requested agent, the same debug
+	// facts the local refresh gives (binary, platform, home, PATH, the failed lookup), read from
+	// the remote. Remote detection has no cache to clear: every call probes the host.
+	const refreshAgentsOnRemote = async (sshRemoteId: string, agentId?: string) => {
+		const { sshConfig, agents } = await detectAgentsOnRemote(sshRemoteId);
+		if (!agentId) return { agents, debugInfo: null };
+		const agent = agents.find((a: any) => a?.id === agentId) as
+			| { binaryName?: string; available?: boolean; path?: string; error?: string }
+			| undefined;
+		const binaryName = agent?.binaryName || agentId;
+		const facts =
+			sshConfig && !agent?.available ? await readRemoteDebugFacts(sshConfig) : REMOTE_FACTS_UNKNOWN;
+		const debugInfo = {
+			agentId,
+			available: agent?.available || false,
+			path: agent?.path || null,
+			binaryName,
+			envPath: facts.envPath,
+			homeDir: facts.homeDir,
+			platform: facts.platform,
+			whichCommand: REMOTE_WHICH_COMMAND,
+			error: agent?.available
+				? null
+				: agent?.error ||
+					`${REMOTE_WHICH_COMMAND} ${binaryName} found nothing on ${sshConfig?.host ?? sshRemoteId}`,
+		};
+		logger.info(`Agent refresh debug info for ${agentId} on remote`, LOG_CONTEXT, debugInfo);
+		return { agents, debugInfo };
+	};
+
 	// Refresh agent detection with debug info (clears cache and returns detailed error info)
 	ipcMain.handle(
 		'agents:refresh',
-		withIpcErrorLogging(handlerOpts('refresh'), async (agentId?: string) => {
+		withIpcErrorLogging(handlerOpts('refresh'), async (agentId?: string, sshRemoteId?: string) => {
+			// An agent that runs on an SSH remote is re-detected THERE (the same check the
+			// config panel's `useRemoteAgentDetection()` runs), never on this machine.
+			if (sshRemoteId) return refreshAgentsOnRemote(sshRemoteId, agentId);
+
 			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
 			// Clear the cache to force re-detection
