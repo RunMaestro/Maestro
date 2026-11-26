@@ -72,6 +72,14 @@ export interface TuiDriverOptions {
 export const DEFAULT_COLS = 200;
 export const DEFAULT_ROWS = 50;
 export const QUIT_GRACE_MS = 2000;
+// How long quit() waits for claude to exit once the grace has run out and it
+// has been sent SIGTERM. claude writes its last transcript rows (the `/quit`
+// rows and the cost-state row) as it exits. If quit() resolves before that,
+// maestro-p exits first, so the next `--resume` turn of the same session can
+// start tailing while the old claude is still writing those rows (2026-11-26:
+// the next turn read the old `/exit` row as its prompt echo). Bounded, because
+// a claude that ignores SIGTERM must not hold the turn's result back.
+export const QUIT_TERM_GRACE_MS = 1000;
 // Gap between writing the prompt body and the terminating Enter. Claude's
 // TUI uses a multi-line input editor: when text and the trailing `\r` arrive
 // in a single PTY write (or back-to-back within the same input tick), the
@@ -978,16 +986,21 @@ export class TuiDriver extends EventEmitter {
 				return;
 			}
 			let settled = false;
+			let timer: NodeJS.Timeout;
 			const onExit = () => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
 				resolve();
 			};
-			const timer = setTimeout(() => {
+			const giveUp = () => {
 				if (settled) return;
 				settled = true;
 				this.off('exit', onExit);
+				resolve();
+			};
+			timer = setTimeout(() => {
+				if (settled) return;
 				try {
 					// killPty, not ptyProcess.kill('SIGTERM'): node-pty's Windows
 					// backend throws for ANY signal, and it throws from a deferred
@@ -995,8 +1008,16 @@ export class TuiDriver extends EventEmitter {
 					if (this.ptyProcess) killPty(this.ptyProcess, 'SIGTERM');
 				} catch {
 					// PTY may already be gone; nothing to escalate against.
+					giveUp();
+					return;
 				}
-				resolve();
+				if (this.exited) {
+					onExit();
+					return;
+				}
+				// Wait for the exit SIGTERM causes, so claude's last rows are on disk
+				// before the caller reports and exits (see QUIT_TERM_GRACE_MS).
+				timer = setTimeout(giveUp, QUIT_TERM_GRACE_MS);
 			}, QUIT_GRACE_MS);
 			this.once('exit', onExit);
 		});

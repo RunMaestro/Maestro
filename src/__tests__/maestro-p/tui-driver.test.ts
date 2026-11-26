@@ -85,6 +85,7 @@ import {
 	PROMPT_SETTLE_QUIET_MS,
 	PROMPT_TAB_SPACES,
 	QUIT_GRACE_MS,
+	QUIT_TERM_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
 	READY_TIMEOUT_MS,
@@ -1444,8 +1445,27 @@ describe('TuiDriver', () => {
 			const promise = driver.quit();
 			expect(mockPtyProcess.write).toHaveBeenCalledWith('/quit\r');
 			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
-			await promise;
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+			// A claude that ignores SIGTERM does not hold the result back for long.
+			await vi.advanceTimersByTimeAsync(QUIT_TERM_GRACE_MS);
+			await promise;
+		});
+
+		it('waits for the exit SIGTERM causes, so claude finishes writing its transcript', async () => {
+			const driver = await makeDriver();
+			let resolved = false;
+			const promise = driver.quit().then(() => {
+				resolved = true;
+			});
+			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
+			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+			// Still shutting down: resolving now would let the next resumed turn
+			// read this claude's last rows as its own.
+			await vi.advanceTimersByTimeAsync(QUIT_TERM_GRACE_MS / 2);
+			expect(resolved).toBe(false);
+			triggerExit(0);
+			await promise;
+			expect(resolved).toBe(true);
 		});
 
 		it('signals instead of typing /quit onto a prompt that was never submitted', async () => {
