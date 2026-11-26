@@ -135,17 +135,6 @@ export async function startGroupChatAutoRun(
 		return;
 	}
 	// Refusals `startBatchRun` would make, made here so the chat hears the reason.
-	// One registry entry per agent: a second request must not take over the
-	// completion the first one is waiting for.
-	if (
-		hasGroupChatAutoRun(session.id) ||
-		useBatchStore.getState().batchRunStates[session.id]?.isRunning
-	) {
-		await fail(
-			`Agent "${session.name}" is already running an Auto Run. Ask again when that run ends.`
-		);
-		return;
-	}
 	if (useSettingsStore.getState().autoRunDisabled) {
 		await fail('Auto Run is turned off in this Maestro (Settings).');
 		return;
@@ -198,6 +187,19 @@ export async function startGroupChatAutoRun(
 		maxLoops: null,
 	};
 
+	// One registry entry per agent: a second request must not take over the
+	// completion the first one is waiting for. Checked with no `await` between
+	// the check and the registration, so two requests whose folder listings
+	// overlap cannot both pass it.
+	if (
+		hasGroupChatAutoRun(session.id) ||
+		useBatchStore.getState().batchRunStates[session.id]?.isRunning
+	) {
+		await fail(
+			`Agent "${session.name}" is already running an Auto Run. Ask again when that run ends.`
+		);
+		return;
+	}
 	// Register before the launch: a run can end before startBatchRun returns.
 	registerGroupChatAutoRun(session.id, trigger.groupChatId, trigger.participantName);
 	const stopWatching = watchMirroredRunEnd(session.id, trigger);

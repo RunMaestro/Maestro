@@ -185,6 +185,36 @@ describe('startGroupChatAutoRun refusals reach the chat', () => {
 		}
 	);
 
+	it('refuses the second of two requests whose folder listings overlap', async () => {
+		setAgent('local');
+		const listings: Array<(value: { success: boolean; files: string[] }) => void> = [];
+		vi.mocked(window.maestro.autorun.listDocs).mockImplementation(
+			() => new Promise((resolve) => listings.push(resolve))
+		);
+		const first = inProgress();
+		const second = vi.fn();
+
+		const firstRequest = startGroupChatAutoRun(trigger, first);
+		const secondRequest = startGroupChatAutoRun({ ...trigger, groupChatId: 'chat-2' }, second);
+		await vi.waitFor(() => expect(listings).toHaveLength(2));
+		listings[0]({ success: true, files: ['plans/phase-01'] });
+		await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+		listings[1]({ success: true, files: ['plans/phase-01'] });
+		await secondRequest;
+
+		expect(second).not.toHaveBeenCalled();
+		expect(reportAutoRunComplete).toHaveBeenCalledWith(
+			'chat-2',
+			'Client',
+			expect.stringContaining('is already running an Auto Run')
+		);
+		expect(consumeGroupChatAutoRun('agent-1')).toEqual({
+			groupChatId: 'chat-1',
+			participantName: 'Client',
+		});
+		void firstRequest;
+	});
+
 	it('refuses when Auto Run is turned off, before registering', async () => {
 		setAgent('local');
 		useSettingsStore.setState({ autoRunDisabled: true });
