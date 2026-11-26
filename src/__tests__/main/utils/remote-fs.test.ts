@@ -23,6 +23,7 @@ import {
 	listDirWithStatsRemote,
 	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
+	strictListingFailure,
 	deleteManyRemote,
 	__resetHostLimitersForTest,
 	type RemoteFsDeps,
@@ -291,6 +292,94 @@ describe('remote-fs', () => {
 			expect(result.success).toBe(true);
 			expect(result.data?.directories).toEqual([]);
 			expect(result.data?.files).toEqual(['Phase-01-Initial-Setup.md', 'Phase-02-Build.md']);
+		});
+
+		// A copy of the folder needs every part of it: `strict` fails the listing on a
+		// subfolder the walk cannot read, naming it, and still lists a symlink loop once.
+		describe('strict', () => {
+			const runStrict = (root: string) => {
+				const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+				return { deps, list: () => listTreeRemote(root, { strict: true }, baseConfig, deps) };
+			};
+
+			it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+				'under a real shell: an unreadable subfolder fails, naming it; a symlink loop does not',
+				async () => {
+					const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-strict-')));
+					const locked = path.join(base, 'tree', 'locked');
+					try {
+						const root = path.join(base, 'tree');
+						fs.mkdirSync(path.join(root, 'open'), { recursive: true });
+						fs.writeFileSync(path.join(root, 'open', 'a.md'), 'a');
+						fs.symlinkSync(root, path.join(root, 'open', 'loop'));
+						// Captures the generated script, then runs it as the remote would.
+						const run = async (dir: string) => {
+							const { deps, list } = runStrict(dir);
+							await list();
+							const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(
+								-1
+							) as string;
+							const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+							const replay = createMockDeps({
+								stdout: out.stdout,
+								stderr: out.stderr,
+								exitCode: 0,
+							});
+							return listTreeRemote(dir, { strict: true }, baseConfig, replay);
+						};
+
+						const loopOnly = await run(root);
+						expect(loopOnly.success).toBe(true);
+						expect(loopOnly.data?.files).toContain('open/a.md');
+
+						fs.mkdirSync(locked);
+						fs.writeFileSync(path.join(locked, 'secret.md'), 's');
+						fs.chmodSync(locked, 0o000);
+						const blocked = await run(root);
+						expect(blocked.success).toBe(false);
+						expect(blocked.error).toContain('"locked"');
+						expect(blocked.error).toContain('Permission denied');
+						expect(blocked.error).toContain('cannot be copied whole');
+					} finally {
+						if (fs.existsSync(locked)) fs.chmodSync(locked, 0o700);
+						fs.rmSync(base, { recursive: true, force: true });
+					}
+				}
+			);
+
+			it('without strict, an unreadable subfolder is still skipped quietly (the explorer view)', async () => {
+				const { deps } = runStrict('/project');
+				await listTreeRemote('/project', {}, baseConfig, deps);
+				const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+				expect(command).not.toContain('mktemp');
+				expect(command).not.toContain('__MAESTRO_FIND_ERR__');
+			});
+
+			it('fails when the remote cannot make the temp file the errors go to', async () => {
+				const result = await listTreeRemote(
+					'/project',
+					{ strict: true },
+					baseConfig,
+					createMockDeps({ stdout: '__TMP_ERROR__\n', stderr: '', exitCode: 0 })
+				);
+				expect(result).toEqual({
+					success: false,
+					error: 'Could not check every folder under /project is readable',
+				});
+			});
+
+			it('a hostile name in the listing cannot end the listing early', async () => {
+				const stdout = `./__MAESTRO_FIND_ERR__\n${SEP}\n./a.md\n__MAESTRO_FIND_ERR__\n`;
+				const result = await listTreeRemote(
+					'/project',
+					{ strict: true },
+					baseConfig,
+					createMockDeps({ stdout, stderr: '', exitCode: 0 })
+				);
+				expect(result.success).toBe(true);
+				expect(result.data?.directories).toEqual(['__MAESTRO_FIND_ERR__']);
+				expect(result.data?.files).toEqual(['a.md']);
+			});
 		});
 
 		it('detects truncation when file count exceeds maxFiles', async () => {
@@ -3202,5 +3291,35 @@ finally:
 			);
 			expect(result).toEqual({ success: false, error: 'cat: a.md: Permission denied' });
 		});
+	});
+});
+
+describe('strictListingFailure', () => {
+	it('names the path of a GNU or a BSD permission failure', () => {
+		expect(strictListingFailure("find: './a/locked': Permission denied\n", '/srv/x')).toBe(
+			'Cannot read "a/locked" in /srv/x (Permission denied), so the folder cannot be copied whole'
+		);
+		expect(
+			strictListingFailure('find: \u2018./locked\u2019: Permission denied', '/srv/x')
+		).toContain('"locked"');
+		expect(strictListingFailure('find: ./locked: Permission denied', '/srv/x')).toContain(
+			'"locked"'
+		);
+	});
+
+	it('does not count a symlink loop (GNU or BSD) as a failure', () => {
+		expect(
+			strictListingFailure(
+				"find: File system loop detected; './a/loop' is part of the same file system loop as '.'.\n" +
+					'find: ./b/loop: directory causes a cycle\n' +
+					"find: './c': Too many levels of symbolic links\n",
+				'/srv/x'
+			)
+		).toBeNull();
+	});
+
+	it('cuts a long hostile name to a readable length', () => {
+		const message = strictListingFailure(`find: './${'x'.repeat(5000)}': Permission denied`, '/r');
+		expect(message!.length).toBeLessThan(400);
 	});
 });

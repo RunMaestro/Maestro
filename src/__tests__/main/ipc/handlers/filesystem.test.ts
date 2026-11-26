@@ -305,6 +305,22 @@ describe('filesystem handlers', () => {
 			expect(removedAt).toBeLessThan(Math.max(...order(fs.rename)));
 		});
 
+		it('lists strictly: a subfolder it cannot read fails the copy, naming it, before any byte is fetched', async () => {
+			const why =
+				'Cannot read "private" in /work/src (Permission denied), so the folder cannot be copied whole';
+			vi.mocked(listTreeRemote).mockResolvedValue({ success: false, error: why });
+			const handler = registeredHandlers.get('fs:downloadRemoteFolder')!;
+			await expect(handler({}, '/work/src', 'r1')).rejects.toThrow(why);
+			expect(listTreeRemote).toHaveBeenCalledWith(
+				'/work/src',
+				expect.objectContaining({ strict: true }),
+				{ id: 'r1' }
+			);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+			expect(fs.rm).not.toHaveBeenCalled();
+		});
+
 		it('leaves the earlier copy alone when a file cannot be fetched', async () => {
 			vi.mocked(listTreeRemote).mockResolvedValue({
 				success: true,

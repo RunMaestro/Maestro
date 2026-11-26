@@ -1941,6 +1941,38 @@ export interface ListTreeOptions {
 	 * to `maxDepth`. Omit for unlimited.
 	 */
 	maxFiles?: number;
+	/**
+	 * Fail instead of leaving out a part of the tree the walk cannot read. Without it an
+	 * unreadable subfolder is skipped quietly (the file explorer's view: show what can be read).
+	 * With it the listing fails with a message that names the first unreadable path, which is
+	 * what a copy of the folder needs: a copy that silently lacks a subfolder is a wrong copy.
+	 * The symlink-loop reports of `find -L` are not failures: the loop is listed once, as the
+	 * walk without `strict` lists it.
+	 */
+	strict?: boolean;
+}
+
+/** `find -L` reports a symlink loop with one of these (GNU, BSD); the walk already skipped it. */
+const FIND_LOOP_REPORT =
+	/File system loop detected|causes a cycle|Too many levels of symbolic links/;
+
+/**
+ * The first real failure in a strict walk's `find` errors (run under `LC_ALL=C`), as a message
+ * that names the path, or `null` when every report is a symlink loop. The path comes off the
+ * remote, so it is only ever shown, quoted, and cut to a readable length.
+ */
+export function strictListingFailure(stderr: string, rootPath: string): string | null {
+	for (const raw of stderr.split('\n')) {
+		const line = raw.replace(/\r$/, '').trim();
+		if (!line || FIND_LOOP_REPORT.test(line)) continue;
+		// GNU: find: './secret': Permission denied. BSD: find: ./secret: Permission denied.
+		const match = /^find:\s*['\u2018`"]?(.*?)['\u2019`"]?:\s*([^:]+)$/.exec(line);
+		const where = match ? match[1].replace(/^\.\/?/, '') : '';
+		const why = match ? match[2].trim() : line;
+		const shown = (where || rootPath).slice(0, 200);
+		return `Cannot read "${shown}" in ${rootPath} (${why}), so the folder cannot be copied whole`;
+	}
+	return null;
 }
 
 /**
@@ -2010,17 +2042,26 @@ export async function listTreeRemote(
 
 	const pruneClause = pruneTerms.length > 0 ? `\\( ${pruneTerms.join(' -o ')} \\) -prune -o` : '';
 
-	const dirFind = `find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type d -print 2>/dev/null`;
+	// Both finds walk the same tree with the same prune and depth, so the directory walk's
+	// errors are every unreadable folder. A strict walk keeps them (in a remote temp file, so they
+	// never mix into the listing) and prints them after the files; `LC_ALL=C` keeps the wording
+	// the loop filter reads. A file that cannot be read is not the walk's to find: the read fails.
+	const strict = options.strict === true;
+	const dirErrors = strict ? '2>"$__maestro_err"' : '2>/dev/null';
+	const dirFind = `${strict ? 'LC_ALL=C ' : ''}find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type d -print ${dirErrors}`;
 
 	const headTail = maxFiles !== undefined ? ` | head -n ${maxFiles + 1}` : '';
 	const fileFind = `find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type f -print 2>/dev/null${headTail}`;
 
 	const SEP = '__MAESTRO_FIND_SEP__';
+	const ERR_SEP = '__MAESTRO_FIND_ERR__';
 	const remoteCommand =
 		`cd ${escapedRoot} 2>/dev/null || { echo "__CD_ERROR__"; exit 0; }; ` +
+		(strict ? `__maestro_err=$(mktemp 2>/dev/null) || { echo "__TMP_ERROR__"; exit 0; }; ` : '') +
 		`${dirFind}; ` +
 		`echo "${SEP}"; ` +
-		`${fileFind}`;
+		`${fileFind}` +
+		(strict ? `; echo "${ERR_SEP}"; cat "$__maestro_err"; rm -f "$__maestro_err"` : '');
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
@@ -2034,12 +2075,31 @@ export async function listTreeRemote(
 	if (result.stdout.startsWith('__CD_ERROR__')) {
 		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
 	}
+	if (strict && result.stdout.startsWith('__TMP_ERROR__')) {
+		return { success: false, error: `Could not check every folder under ${rootPath} is readable` };
+	}
+
+	let stdout = result.stdout;
+	if (strict) {
+		// Every listed line starts with `./`, so the first marker line is the real one.
+		const errLine = `\n${ERR_SEP}\n`;
+		const errIdx = `\n${stdout}`.indexOf(errLine);
+		if (errIdx < 0) {
+			return {
+				success: false,
+				error: `Could not check every folder under ${rootPath} is readable`,
+			};
+		}
+		const failure = strictListingFailure(`\n${stdout}`.slice(errIdx + errLine.length), rootPath);
+		if (failure) return { success: false, error: failure };
+		stdout = `\n${stdout}`.slice(1, errIdx + 1);
+	}
 
 	// A root with no subdirectories prints the separator as the FIRST line, with
 	// no newline before it. Prefix one so the separator is always found;
 	// otherwise every file lands in the directory section and the file list is
 	// empty (a flat Auto Run playbook folder showed no documents over SSH).
-	const output = `\n${result.stdout}`;
+	const output = `\n${stdout}`;
 	const sepLine = `\n${SEP}\n`;
 	const sepIdx = output.indexOf(sepLine);
 	const dirSection = sepIdx >= 0 ? output.slice(0, sepIdx) : output;

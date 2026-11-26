@@ -255,7 +255,8 @@ const remoteFolderDownloads = createKeyedWriteQueue();
  * copy whole, so a file deleted on the remote does not linger. Refuses (throws)
  * a tree larger than {@link REMOTE_FOLDER_DOWNLOAD_MAX_FILES} or as deep as
  * {@link REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH} rather than handing back a partial
- * folder, and any listed path that would land outside `localDir`.
+ * folder, a tree with a subfolder it cannot read (the strict listing names it),
+ * and any listed path that would land outside `localDir`.
  */
 async function downloadRemoteDirToLocal(
 	remoteDir: string,
@@ -267,6 +268,9 @@ async function downloadRemoteDirToLocal(
 		{
 			maxDepth: REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
 			maxFiles: REMOTE_FOLDER_DOWNLOAD_MAX_FILES,
+			// A subfolder the walk cannot read fails the copy, naming it, before any byte is
+			// fetched: a copy that silently lacks a subfolder is a wrong copy.
+			strict: true,
 		},
 		sshConfig
 	);
