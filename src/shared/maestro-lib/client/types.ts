@@ -455,7 +455,8 @@ export interface TurnInput {
 	overrides?: TurnOverrides;
 	/**
 	 * Queue Held: the host queues the message paused, even on an idle tab, until someone resumes
-	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host refuses it.
+	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host older than this
+	 * field refuses it; a newer one queues it paused, as a desktop host does.
 	 */
 	held?: boolean;
 }
@@ -584,7 +585,11 @@ export interface QueuedTurnEdit {
 export function parseQueuedTurnEdit(
 	raw: Record<string, unknown>
 ): { edit: QueuedTurnEdit } | { error: string } {
-	if (typeof raw.text !== 'string' || !raw.text.trim()) return { error: 'Missing text' };
+	// An image-only message is a message: its Edit may keep the text empty while it keeps images.
+	const keepsImages = Array.isArray(raw.images) && raw.images.length > 0;
+	if (typeof raw.text !== 'string' || (!raw.text.trim() && !keepsImages)) {
+		return { error: 'Missing text' };
+	}
 	const turnSettings = parseQueuedTurnSettings(raw.turnSettings);
 	if (raw.turnSettings !== undefined && !turnSettings) {
 		return { error: 'turnSettings must be an object' };
@@ -676,7 +681,9 @@ export interface TurnsApi {
 		 * Hand a waiting message to the turn already running on its tab: the queued card's Steer.
 		 * The host runs its own steer (the same `steerQueuedItem()` its Steer button runs), so the
 		 * message leaves its queue only once the agent has it, and comes back if it never takes it.
-		 * `outcome` says what happened; a headless host answers `unsupported`.
+		 * `outcome` says what happened. A headless host types it into the Claude TUI turn it runs
+		 * (`runtime/steering.ts`) and answers `not-steerable` for a turn that takes no input; an older
+		 * headless host answers `unsupported`.
 		 */
 		steer(agentId: string, itemId: string): Promise<ClientResult<QueueSteerResult>>;
 		/**
@@ -841,7 +848,8 @@ export interface ConsultAskInput {
 	/**
 	 * Ask a `/btw` side question instead of consulting: the host answers from a throwaway fork of
 	 * the target's tab (`targetTabId`, or its active tab), with tools off, and nothing lands in that
-	 * tab's transcript. A headless host refuses it.
+	 * tab's transcript. A headless host answers it as a desktop host does (`runtime/side-questions.ts`);
+	 * one older than that refuses it with a message that says so.
 	 */
 	sideQuestion?: boolean;
 	/** With `sideQuestion`: the target's AI tab to fork. */

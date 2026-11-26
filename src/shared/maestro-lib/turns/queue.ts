@@ -227,6 +227,18 @@ export function joinMergedQueueText(upper: string | undefined, lower: string | u
 }
 
 /**
+ * The images of two merged messages: the upper message's, then the lower's, in attachment order.
+ * `undefined` when neither carries any, so a merged text-only message stays text-only.
+ */
+export function joinMergedQueueImages(
+	upper: readonly string[] | undefined,
+	lower: readonly string[] | undefined
+): string[] | undefined {
+	const images = [...(upper ?? []), ...(lower ?? [])];
+	return images.length > 0 ? images : undefined;
+}
+
+/**
  * A write turn may start beside running work only when all of that work, and everything
  * waiting, is read-only: no two writers share a working directory.
  */
@@ -241,6 +253,8 @@ function canWriteBypassQueue<T extends QueueItem>(item: T, view: QueueView<T>): 
  * bridge-connection hold, which the TUI does not have. The Auto Run hold arrives as `holdsTree`.
  */
 export function decideSubmit<T extends QueueItem>(item: T, view: QueueView<T>): 'run' | 'queue' {
+	// Queue Held: a message submitted paused waits, even on an idle tab, until someone resumes it.
+	if (item.paused) return 'queue';
 	// A retry counting down holds the tab even though the tab reads idle: sending now burns
 	// against the same wall. This outranks force-parallel, which only skips tab serialization.
 	if (view.isRetryHeld?.(item.tabId)) return 'queue';
@@ -295,6 +309,12 @@ export interface ExecutionQueue<T extends QueueItem> {
 	setPaused(id: string, paused: boolean): boolean;
 	/** Take a waiting item out. Returns false when it is not waiting (it may already be running). */
 	remove(id: string): boolean;
+	/**
+	 * Put an item that left the queue back at its head: a steer the agent never took. The head,
+	 * because the person asked for it sooner than anything behind it. It runs when its tab is free,
+	 * unless it comes back paused.
+	 */
+	returnToFront(item: T): void;
 	/**
 	 * Fold a waiting item into the waiting item above it on the same tab (`findQueueMergeTarget`):
 	 * the queued card's Merge. `combine` builds the upper item that remains (it keeps its id and
@@ -543,6 +563,13 @@ export function createExecutionQueue<T extends QueueItem>(
 			// A removed head can unblock what is behind it.
 			drain();
 			return true;
+		},
+
+		returnToFront(item) {
+			if (disposed) return;
+			entries.unshift({ item, state: 'queued' });
+			emit({ type: 'queued', item, position: 0 });
+			drain();
 		},
 
 		merge(id, combine) {

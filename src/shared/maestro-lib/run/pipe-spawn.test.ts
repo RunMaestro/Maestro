@@ -274,6 +274,32 @@ describe('planPipeSpawn', () => {
 			);
 		});
 
+		it('refuses the turn, and removes what it wrote, when an image could not be written', async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pipe-spawn-images-'));
+			let call = 0;
+			expect(() =>
+				planPipeSpawn(
+					base({
+						toolType: 'codex',
+						args: ['exec'],
+						prompt: 'look',
+						images: [png, png],
+						imageArgs: (file) => ['-i', file],
+					}),
+					{
+						saveImageToTempFile: (_dataUrl, index) => {
+							if (++call === 2) return null;
+							const file = path.join(dir, `img-${index}.png`);
+							fs.writeFileSync(file, 'x');
+							return file;
+						},
+					}
+				)
+			).toThrow(/could not be written/);
+			await vi.waitFor(() => expect(fs.readdirSync(dir)).toEqual([]));
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
 		it('refuses a file-based provider when the host gave no way to write the file', () => {
 			expect(() =>
 				planPipeSpawn(

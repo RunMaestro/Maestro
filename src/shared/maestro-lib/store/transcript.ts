@@ -62,6 +62,8 @@ export interface LogEntryRecord extends UnknownFields {
 	/** User messages: false while the agent has not accepted the message. */
 	delivered?: boolean;
 	readOnly?: boolean;
+	/** A user message steered into the turn already running (`SteeredMessageHeader`). */
+	steered?: boolean;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

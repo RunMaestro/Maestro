@@ -196,6 +196,11 @@ interface LaunchPlanCommon {
 	 */
 	stdin: string | undefined;
 	/**
+	 * The user prompt as this machine delivers it (translation knowledge bound), on a local plan.
+	 * What a caller that adds its own stdin message (images as stream-json) sends.
+	 */
+	deliveredPrompt?: string;
+	/**
 	 * The vars Maestro sets on top of the inherited environment, merged in tier
 	 * order (see `resolveAgentEnvVars`). What crosses to an SSH remote, and what
 	 * Process Details shows as "set by Maestro".
@@ -438,6 +443,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 				prompt.via === 'stdin' && prompt.format === 'raw' && effectivePrompt !== undefined
 					? encodeStdinPrompt(agent, effectivePrompt)
 					: undefined,
+			...(effectivePrompt !== undefined ? { deliveredPrompt: effectivePrompt } : {}),
 			envVars,
 			...(resolved
 				? {

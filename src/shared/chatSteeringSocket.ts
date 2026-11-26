@@ -2,19 +2,89 @@
 // src/shared/chatSteering.ts, server in src/maestro-p/steering-server.ts).
 //
 // Node-only (it opens a socket), so it is kept out of chatSteering.ts, which the
-// renderer imports for its types. Two callers share it, so the line between
-// "refused" and "unknown" is drawn in one place:
+// renderer imports for its types. Three callers share it, so the socket path and
+// the line between "refused" and "unknown" are drawn in one place:
 //   - the main process, for a turn on this machine (process-manager/steering-client.ts);
 //   - maestro-p's `--steer-relay` mode, for a turn on an SSH remote, where it runs
-//     on the remote beside the turn (src/maestro-p/steering-relay.ts).
+//     on the remote beside the turn (src/maestro-p/steering-relay.ts);
+//   - a headless host (`maestro-cli host`), for a turn it runs on its own machine
+//     (src/shared/maestro-lib/runtime/steering.ts).
 
+import * as crypto from 'crypto';
 import * as net from 'net';
+import * as os from 'os';
+import * as path from 'path';
 
 import {
 	parseSteeringResult,
+	STEERING_TOO_LONG_DETAIL,
+	steeringTextTooLong,
 	type SteeringRequestFrame,
 	type SteeringResultFrame,
 } from './chatSteering';
+import { isWindows } from './platformDetection';
+
+/**
+ * Socket path for a given process key (`${sessionId}-ai-${tabId}`).
+ *
+ * The key is HASHED rather than sanitized into the name, because a unix socket
+ * address is capped near 104 bytes on macOS and a session UUID plus a tab id plus
+ * a tmpdir already exceeds that - the socket would simply fail to bind, and
+ * steering would be silently unavailable with no obvious cause. A short hash is
+ * also stable across both callers, which is the whole point.
+ *
+ * Not a security boundary: anything able to read the directory can find the
+ * socket. What protects it is that the server only ever types into the TUI it
+ * owns, refuses when the editor is not accepting input, and caps the frame size.
+ */
+export function steeringSocketPathFor(processKey: string): string {
+	const digest = steeringSocketDigest(processKey);
+	// Node on Windows implements a local socket as a named pipe, whose address must
+	// live in the pipe namespace: a filesystem path there fails to bind, so every
+	// Windows turn would silently be un-steerable. The server recognizes this form
+	// and never stats or unlinks it (a pipe is not a file).
+	if (isWindows()) return `\\\\.\\pipe\\maestro-steer-${digest}`;
+	return path.join(os.tmpdir(), `maestro-steer-${digest}.sock`);
+}
+
+/** The short, stable name both ends derive from a process key. See {@link steeringSocketPathFor}. */
+export function steeringSocketDigest(processKey: string): string {
+	return crypto.createHash('sha1').update(processKey).digest('hex').slice(0, 16);
+}
+
+/** The answer for an over-cap steer, from every transport. Never sent. */
+export function steeringTooLongResult(id: string): SteeringResultFrame {
+	return {
+		type: 'steering',
+		id,
+		verdict: 'refused',
+		refusal: 'too-long',
+		detail: STEERING_TOO_LONG_DETAIL,
+	};
+}
+
+/**
+ * Ask a running maestro-p turn on THIS machine, listening on `socketPath`, to take
+ * `text` into the turn in flight. An over-cap text is refused here, never sent:
+ * the server would refuse it anyway. Same contract as
+ * {@link requestSteeringOverSocket}: always resolves, never rejects.
+ */
+export function steerOverSocket(options: {
+	socketPath: string;
+	text: string;
+	/** Correlation id. Echoed back on the verdict. */
+	id: string;
+	timeoutMs: number;
+	warn?: SteeringSocketRequest['warn'];
+}): Promise<SteeringResultFrame> {
+	if (steeringTextTooLong(options.text)) return Promise.resolve(steeringTooLongResult(options.id));
+	return requestSteeringOverSocket({
+		socketPath: options.socketPath,
+		frame: { type: 'steer', id: options.id, text: options.text },
+		timeoutMs: options.timeoutMs,
+		...(options.warn ? { warn: options.warn } : {}),
+	});
+}
 
 export interface SteeringSocketRequest {
 	socketPath: string;

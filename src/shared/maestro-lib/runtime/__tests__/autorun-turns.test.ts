@@ -53,7 +53,7 @@ describe('Auto Run turns: a refused effort', () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
 
-	function runner(replies: Reply[]) {
+	function runner(replies: Reply[], writeRefusal?: () => string | undefined) {
 		const record = {
 			id: 'a1',
 			name: 'Alpha',
@@ -64,7 +64,7 @@ describe('Auto Run turns: a refused effort', () => {
 		return createAutoRunTurnRunner({
 			agentId: 'a1',
 			paths: resolveMaestroPaths({ env: { MAESTRO_USER_DATA: dir } }),
-			repository: { getAgent: () => record },
+			repository: { getAgent: () => record, ...(writeRefusal ? { writeRefusal } : {}) },
 			registry: createProcessRegistry({ waitMs: 2_000 }),
 			statsRecorder: { recordQuery: async () => ({ ok: true, id: 'q1' }) },
 			host: { bundledPromptsDir: BUNDLED_PROMPTS },
@@ -115,6 +115,30 @@ describe('Auto Run turns: a refused effort', () => {
 		expect(efforts).toEqual(['minimal', undefined]);
 		expect(result).toMatchObject({ success: true, response: 'Done.' });
 		expect(getEffortRejection('claude-code', 'minimal')).toBeDefined();
+	});
+
+	it('starts nothing once the turn was stopped, or the host stopped being the writer', async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const stopped = await runner(['answer']).run({
+			purpose: 'synopsis',
+			prompt: 'sum up',
+			signal: controller.signal,
+		});
+		expect(stopped).toMatchObject({
+			success: false,
+			error: 'The turn was stopped before it started.',
+		});
+
+		const fenced = await runner(['answer'], () => 'Another process holds the data directory.').run({
+			purpose: 'synopsis',
+			prompt: 'sum up',
+		});
+		expect(fenced).toMatchObject({
+			success: false,
+			error: 'Another process holds the data directory.',
+		});
+		expect(efforts).toEqual([]);
 	});
 
 	it('does not retry a turn that sent no effort of its own', async () => {

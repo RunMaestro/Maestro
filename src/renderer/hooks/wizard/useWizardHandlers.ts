@@ -109,7 +109,13 @@ function resolveBuiltinCommandTarget(target: BuiltinCommandTarget | undefined): 
 	const session = selectSessionById(target.sessionId)(state) ?? undefined;
 	return { session, tab: session?.aiTabs.find((tab) => tab.id === target.tabId) };
 }
-import { formatRelativeTime } from '../../../shared/formatters';
+import {
+	formatClaudeSkillsMessage,
+	HISTORY_COMMAND_TEXT,
+	historySynopsisElapsedMs,
+	historySynopsisPrompt,
+	skillsCommandErrorText,
+} from '../../../shared/maestroBuiltinCommandText';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
@@ -823,7 +829,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					id: generateId(),
 					timestamp: Date.now(),
 					source: 'system',
-					text: 'No active agent session. Start a conversation first before using /history.',
+					text: HISTORY_COMMAND_TEXT.noSession,
 				};
 				addLogToTab(currentSession.id, errorLog, activeTab.id);
 				return;
@@ -833,18 +839,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'system',
-				text: 'Generating history synopsis...',
+				text: HISTORY_COMMAND_TEXT.pending,
 			};
 			addLogToTab(currentSession.id, pendingLog, activeTab.id);
 
 			try {
-				let synopsisPrompt: string;
-				if (activeTab.lastSynopsisTime) {
-					const timeAgo = formatRelativeTime(activeTab.lastSynopsisTime);
-					synopsisPrompt = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
-				} else {
-					synopsisPrompt = getAutorunSynopsisPrompt();
-				}
+				const synopsisPrompt = historySynopsisPrompt(
+					getAutorunSynopsisPrompt(),
+					activeTab.lastSynopsisTime
+				);
 				const synopsisTime = Date.now();
 
 				const result = await spawnBackgroundSynopsis(
@@ -871,7 +874,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 							...tab,
 							logs: tab.logs.map((log) =>
 								log.id === pendingLog.id
-									? { ...log, text: 'Nothing to report - no history entry created.' }
+									? { ...log, text: HISTORY_COMMAND_TEXT.nothingToReport }
 									: log
 							),
 						}));
@@ -891,9 +894,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						: null;
 					const groupName = group?.name || 'Ungrouped';
 
-					const elapsedTimeMs = activeTab.lastSynopsisTime
-						? synopsisTime - activeTab.lastSynopsisTime
-						: synopsisTime - activeTab.createdAt;
+					const elapsedTimeMs = historySynopsisElapsedMs(activeTab, synopsisTime);
 
 					addHistoryEntry({
 						type: 'AUTO',
@@ -913,7 +914,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						lastSynopsisTime: synopsisTime,
 						logs: tab.logs.map((log) =>
 							log.id === pendingLog.id
-								? { ...log, text: `Synopsis saved to history: ${parsed.shortSummary}` }
+								? { ...log, text: HISTORY_COMMAND_TEXT.saved(parsed.shortSummary) }
 								: log
 						),
 					}));
@@ -932,9 +933,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					updateAiTab(currentSession.id, activeTab.id, (tab) => ({
 						...tab,
 						logs: tab.logs.map((log) =>
-							log.id === pendingLog.id
-								? { ...log, text: 'Failed to generate history synopsis. Try again.' }
-								: log
+							log.id === pendingLog.id ? { ...log, text: HISTORY_COMMAND_TEXT.failed } : log
 						),
 					}));
 				}
@@ -944,7 +943,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					...tab,
 					logs: tab.logs.map((log) =>
 						log.id === pendingLog.id
-							? { ...log, text: `Error generating synopsis: ${(error as Error).message}` }
+							? { ...log, text: HISTORY_COMMAND_TEXT.error((error as Error).message) }
 							: log
 					),
 				}));
@@ -987,59 +986,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				const skills = await (window as any).maestro.claude.getSkills(currentSession.projectRoot);
 
-				let skillsMessage: string;
-				if (skills.length === 0) {
-					skillsMessage =
-						'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/SKILL.md` files in your project.';
-				} else {
-					const formatTokenCount = (tokens: number): string => {
-						if (tokens >= 1000) {
-							return `~${(tokens / 1000).toFixed(1)}k`;
-						}
-						return `~${tokens}`;
-					};
-
-					const projectSkills = skills.filter((s: { source: string }) => s.source === 'project');
-					const userSkills = skills.filter((s: { source: string }) => s.source === 'user');
-
-					const lines: string[] = [
-						`## Skills`,
-						'',
-						`${skills.length} skill${skills.length !== 1 ? 's' : ''} available`,
-						'',
-					];
-
-					if (projectSkills.length > 0) {
-						lines.push('### Project Skills');
-						lines.push('');
-						lines.push('| Skill | Tokens | Description |');
-						lines.push('|-------|--------|-------------|');
-						for (const skill of projectSkills) {
-							const desc =
-								skill.description && skill.description !== 'No description'
-									? skill.description
-									: '-';
-							lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
-						}
-						lines.push('');
-					}
-
-					if (userSkills.length > 0) {
-						lines.push('### User Skills');
-						lines.push('');
-						lines.push('| Skill | Tokens | Description |');
-						lines.push('|-------|--------|-------------|');
-						for (const skill of userSkills) {
-							const desc =
-								skill.description && skill.description !== 'No description'
-									? skill.description
-									: '-';
-							lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
-						}
-					}
-
-					skillsMessage = lines.join('\n');
-				}
+				const skillsMessage = formatClaudeSkillsMessage(skills);
 
 				const skillsLog: LogEntry = {
 					id: generateId(),
@@ -1054,7 +1001,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					id: generateId(),
 					timestamp: Date.now(),
 					source: 'system',
-					text: `Error listing skills: ${(error as Error).message}`,
+					text: skillsCommandErrorText((error as Error).message),
 				};
 				addLogToTab(currentSession.id, errorLog, activeTab.id);
 			}
