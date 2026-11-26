@@ -8,6 +8,7 @@ import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	closeHostedTab,
+	closingHostTabIds,
 	controlHostedAutoRun,
 	hostedTargetOf,
 	hostingEnabled,
@@ -260,6 +261,33 @@ describe('hostedTurns', () => {
 			{ kind: 'star-tab', tabId: 't1', starred: true },
 			{ kind: 'interrupt', tabId: 't1' },
 		]);
+	});
+
+	// Parity round 5, P1: a closed host tab is not drawn back while the host catches up.
+	it('holds a closed host tab as closing until the host drops it, and lets a refused close show again', async () => {
+		hydrateHost();
+		const session = row();
+		const target = () => hostedTargetOf(session)!;
+		act$.mockResolvedValueOnce({ ok: true, result: { kind: 'close-tab', tabId: 't1' } });
+		closeHostedTab(session, 't1');
+		await act(async () => {});
+		// The host still lists t1: it stays closing.
+		expect([...closingHostTabIds(target())]).toEqual(['t1']);
+		// The host's update drops it: the close is settled.
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 't2' }] }],
+			[],
+			2
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		expect([...closingHostTabIds(target())]).toEqual([]);
+		// A close the host refuses: the host still has the tab, so it may show again.
+		act$.mockResolvedValueOnce({ ok: false, error: 'Host refused.' });
+		closeHostedTab(session, 't2');
+		expect([...closingHostTabIds(target())]).toEqual(['t2']);
+		await act(async () => {});
+		expect([...closingHostTabIds(target())]).toEqual([]);
 	});
 
 	it('starts a conversation in a host tab placed after its source, named, with its first turn', async () => {

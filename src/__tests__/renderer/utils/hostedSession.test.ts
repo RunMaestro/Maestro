@@ -198,6 +198,51 @@ describe('projectHostedSession', () => {
 		expect(next.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1', 'kept', 't2']);
 	});
 
+	// Parity round 5, P1: a tab closed on the host is gone here and stays gone.
+	it('drops a tab the host reported and then closed, keeping one from before the move', () => {
+		const kept = createMockAITab({ id: 'kept', agentSessionId: 'older', logs: [local('k')] });
+		const session = hostedRow([
+			createMockAITab({ id: 't1' }),
+			kept,
+			createMockAITab({ id: 't2', agentSessionId: 's2' }),
+		]);
+		const seen = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2', agentSessionId: 's2' }] }),
+		});
+		expect(seen.aiTabs.find((tab) => tab.id === 't2')?.hostSeenAt).toBe(1);
+		expect(seen.aiTabs.find((tab) => tab.id === 'kept')?.hostSeenAt).toBeUndefined();
+		// The host closed t2: the record drops it and its strip slot; the kept tab stays.
+		const closed = projectHostedSession(seen, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'kept']);
+		expect(closed.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1', 'kept']);
+		expect(projectHostedSession(closed, { agent: host({ aiTabs: [{ id: 't1' }] }) })).toBe(closed);
+	});
+
+	it('never draws back a tab closed here while the host still lists it', () => {
+		const session = hostedRow([createMockAITab({ id: 't1' })]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2' }] }),
+			closing: new Set(['t2']),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		expect(next.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1']);
+	});
+
+	it('keeps a tab marked by an earlier hosting, and one the host only hid', () => {
+		const earlier = createMockAITab({ id: 'earlier', agentSessionId: 'e', hostSeenAt: 0 });
+		const hidden = createMockAITab({
+			id: 'consult',
+			agentSessionId: 'c',
+			hidden: true,
+			hostSeenAt: 1,
+		});
+		const session = hostedRow([createMockAITab({ id: 't1' }), earlier, hidden]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }] }),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'earlier', 'consult']);
+	});
+
 	it("drops an added agent's blank starting tab once the host has tabs", () => {
 		const session = hostedRow([createMockAITab({ id: 'blank', logs: [], agentSessionId: null })]);
 		const next = projectHostedSession(session, { agent: host() });

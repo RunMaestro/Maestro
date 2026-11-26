@@ -382,12 +382,46 @@ export async function interruptHostedTurn(
 	if (target) await interruptMirroredAgent(target.peerId, target.agentId, tabId);
 }
 
-/** Close a host tab too (the local close is the caller's). A kept local tab has none. */
+/**
+ * Tabs closed here whose close the host has not reported yet, by `peer/agent/tab`. Until the host's
+ * update drops the tab, the sync must not draw it back (`HostedProjectionInput.closing`).
+ */
+const closingHostTabs = new Set<string>();
+
+/**
+ * The tabs of `target` closed here that the host still lists. A close the host has reported (it no
+ * longer lists the tab) is settled and forgotten here.
+ */
+export function closingHostTabIds(target: HostedTarget): Set<string> {
+	const prefix = `${target.peerId}/${target.agentId}/`;
+	const listed = new Set((target.agent?.aiTabs ?? []).map((tab) => tab.id));
+	const closing = new Set<string>();
+	for (const key of [...closingHostTabs]) {
+		if (!key.startsWith(prefix)) continue;
+		const tabId = key.slice(prefix.length);
+		if (target.agent && !listed.has(tabId)) closingHostTabs.delete(key);
+		else closing.add(tabId);
+	}
+	return closing;
+}
+
+/**
+ * Close a host tab too (the local close is the caller's). A kept local tab has none. The tab stays
+ * closed here while the host catches up; a close the host refused (a red toast) lets the host's
+ * tab show again, because the host still has it.
+ */
 export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string): void {
 	const target = hostedTargetOf(session);
 	if (!target || !isHostTab(target, tabId)) return;
-	openedHostTabs.delete(hostTabKey(target, tabId));
-	void closeMirrorTab(target.peerId, target.agentId, tabId);
+	const key = hostTabKey(target, tabId);
+	openedHostTabs.delete(key);
+	closingHostTabs.add(key);
+	void closeMirrorTab(target.peerId, target.agentId, tabId).then((closed) => {
+		if (closed) return;
+		closingHostTabs.delete(key);
+		// The tab is still on the host: wake the sync so it draws it again.
+		usePeerMirrorStore.setState({});
+	});
 }
 
 /** Rename a host tab too. An empty name clears it. */

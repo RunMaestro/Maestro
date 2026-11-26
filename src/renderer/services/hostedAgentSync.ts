@@ -29,7 +29,7 @@ import {
 	type HostedProjectionInput,
 } from '../utils/hostedSession';
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
-import { hostingEnabled } from './hostedTurns';
+import { closingHostTabIds, hostingEnabled } from './hostedTurns';
 import { readMirrorTranscript } from './peerMirror';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
@@ -58,6 +58,7 @@ function hostedInput(session: { liftedTo?: unknown }):
 			transcripts: mirror.transcripts[pointer.peer],
 			liveTurns: peer.liveTurns,
 			queue: peer.queues[agent.id],
+			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }),
 		},
 	};
 }
