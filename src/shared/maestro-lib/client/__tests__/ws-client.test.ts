@@ -1921,6 +1921,24 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it('always launches, and never asks a host to save a playbook or run in a worktree (M8: the desktop does those itself)', async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			await client.autoRun.launch(A1, {
+				documents: [{ file: '/work/a1/.maestro/playbooks/first.md' }],
+				saveAsPlaybook: 'Mine',
+				worktree: { branchName: 'feat/x' },
+			} as never);
+			const message = bridge.sent('configure_auto_run')[0];
+			expect(message).toMatchObject({ launch: true });
+			// The refusals a headless host keeps for these (`server-requests.ts` `configure_auto_run`)
+			// are never reached from a hosted agent's panel: it saves a playbook and makes a
+			// worktree child on this machine (`resolveAutoRunDispatchTarget()`), then launches.
+			expect(message).not.toHaveProperty('saveAsPlaybook');
+			expect(message).not.toHaveProperty('worktree');
+			expect(message).not.toHaveProperty('worktreeTarget');
+		});
+
 		it('sends only what was chosen', async () => {
 			await connect();
 			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
